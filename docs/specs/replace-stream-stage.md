@@ -83,6 +83,10 @@ A predicate's parameter is the document; `$.<field>` inside it is the OUTER
 document (HR4), which a `$unionWith` body cannot reach — the refusal names the
 correlated `.filter`, which lowers to `$lookup` and carries it.
 
+`$$ = [<docs>]` lowers its documents under that same `$unionWith` boundary, so the
+list holds only what the program spells out — the rule and its two refusals live with
+the other spelling of it in [union-stage.md § A written list of documents](union-stage.md).
+
 ## Interaction with `$set` / `$unset`
 
 The update buffer flushes before `$$ = …`, so

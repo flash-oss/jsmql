@@ -523,6 +523,15 @@ export function pipelineOverOf(name: string): "foreign" | null {
   return (row(name) as { pipelineOver?: "foreign" } | undefined)?.pipelineOver ?? null;
 }
 
+/**
+ * What a `statement` body slot of this stage holds: `"pipeline"` when it starts a
+ * pipeline of its own, the closed list of stages when it is an UPDATE spec, and null
+ * when the row has no such slot. See the `statementBody` row fact.
+ */
+export function statementBodyOf(name: string): "pipeline" | readonly string[] | null {
+  return (row(name) as { statementBody?: "pipeline" | readonly string[] } | undefined)?.statementBody ?? null;
+}
+
 /** Every `mongo` row: the names that ARE MongoDB operators and stages, not JavaScript spellings. Read by the drift audits. */
 export function everyMongoName(): readonly string[] {
   return mongoNames();

@@ -985,6 +985,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         "$$ = $$.filter(o => o.active === true).map(d => ({ id: d._id, archived: $$$.archive.find(x => x._id === d._id) }));",
       ),
     ).toEqual([
+      { $match: { active: true } },
       {
         $lookup: {
           from: "archive",
@@ -995,7 +996,6 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         },
       },
       { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
-      { $match: { active: true } },
       { $replaceWith: { id: "$_id", archived: "$__jsmql.tmp.0" } },
     ]);
   });
@@ -1035,7 +1035,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     ]);
   });
 
-  it("pipeline-form predicate (correlates against outer-doc fields via $lookup.let) works nested inside $unionWith.pipeline", () => {
+  it("a correlated predicate nested inside $unionWith.pipeline — the pair, with the second equality's let var", () => {
     expect(
       jsmql(
         "$$ = $$$.users.filter(u => u.active === true).map(d => ({ archives: $$$.archive.filter(x => x.userId === d._id && x.tier === d.tier) }));",
@@ -1050,14 +1050,10 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
             {
               $lookup: {
                 from: "archive",
-                let: { jsmql_f1__id: "$_id", jsmql_f1_tier: "$tier" },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f1__id"] }, { $eq: ["$tier", "$$jsmql_f1_tier"] }] },
-                    },
-                  },
-                ],
+                localField: "_id",
+                foreignField: "userId",
+                let: { jsmql_f1_tier: "$tier" },
+                pipeline: [{ $match: { $expr: { $eq: ["$tier", "$$jsmql_f1_tier"] } } }],
                 as: "__jsmql.tmp.0",
               },
             },

@@ -23,7 +23,11 @@ says what the language HAS (see `src/compiler/CLAUDE.md`).
 - **Readable by a human.** Repetition is fine; a clever abstraction that hides
   which rows say what is not.
 - **A refusal carries the alternative.** `unsupported("…")` text tells the
-  developer what to write instead, in JSMQL terms.
+  developer what to write instead, in JSMQL terms. A method or global row may
+  add an `updateDoc` cell for that reason alone — the update document holds
+  constants, so the cell is always a refusal, and a row states it when the
+  general sentence for the position (`NO_CELL` in `src/compiler/emit/errors.ts`)
+  cannot name the row's own alternative (`new Date()` → `$currentDate`).
 
 ## The types ARE the audit — and each audit is made to fail
 

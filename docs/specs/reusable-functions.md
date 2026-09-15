@@ -52,6 +52,11 @@ value") maps directly. Both keywords (`const`/`let`) work; `kind` is recorded on
 the node but has no behavioural effect for functions (they aren't reassignable —
 they aren't values).
 
+The fork is per DECLARATOR, so a [declaration list](let-bindings.md#declaration-lists)
+may hold functions beside values and a later declarator may call an earlier
+function: `const double = (x) => x * 2, v = double($.p);` declares a `FuncDecl`
+and a `LetDecl`, exactly as the two `;`-separated statements do.
+
 ## AST
 
 Two additions in [src/registry/ast.ts](../../src/registry/ast.ts):
@@ -81,9 +86,10 @@ expression/declaration can start. See § The `function` keyword.
   parenthesised `(x) => …` form is recognised there, via `parsePrimary`'s
   `isLambdaStart`). Without this, `const f = x => …` would fail with
   `Unexpected token '=>'`.
-- **`parseDeclStatement()`** wraps `parseLetDecl()` at the two pipeline-statement
-  dispatch sites (`collectStatement`, `parseArrayLiteral`): if the parsed
-  initialiser is a `Lambda`, it returns a `FuncDecl`; otherwise a `LetDecl`. The
+- **`declarator()`** holds the fork itself, so every dispatch site inherits it —
+  the statement loop's declaration list (`bindings()`) and the bracketed
+  pipeline's single element (`binding()`) alike: if the parsed initialiser is a
+  `Lambda`, it returns a `FuncDecl`; otherwise a `LetDecl`. The
   block-body-arrow path (`parseExprBlockBody`) deliberately does **not** fork —
   functions are top-level-only, so a nested arrow-valued binding is rejected
   there with a precise "declare at the top level" message.

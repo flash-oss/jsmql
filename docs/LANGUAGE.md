@@ -493,16 +493,22 @@ time and the right one wins:
 
 ```js
 $.items[0]
-// → { $cond: {
-//       if: { $isArray: "$items" },
-//       then: { $arrayElemAt: ["$items", 0] },
-//       else: { $cond: {
-//         if: { $eq: [{ $type: "$items" }, "string"] },
-//         then: { $substrCP: ["$items", 0, 1] },
-//         else: { $getField: { field: "0", input: "$items" } }
-//       } }
+// → { $switch: {
+//       branches: [
+//         { case: { $isArray: "$items" }, then: { $arrayElemAt: ["$items", 0] } },
+//         { case: { $eq: [{ $type: "$items" }, "string"] }, then: { $substrCP: ["$items", 0, 1] } }
+//       ],
+//       default: { $getField: { field: "0", input: "$items" } }
 //     } }
 ```
+
+The dispatch is a `$switch` and never a nested `$cond`, because MongoDB optimises a
+`$cond`'s branches *before* it reads the test. Where the server holds the receiver as a
+constant — a `$lookup.let` variable, a `jsmql.compile` parameter — a `$cond` folds the
+branch that doesn't apply and the whole pipeline is refused before a document is read
+(`$.o = $$$.products.find({ _id: $.arr[0] })` answered *"can't convert from BSON type
+array to String"*). A `$switch` drops a branch whose case is false without evaluating it,
+so every receiver type answers the same as it always did.
 
 **A numeric object key builds the stringified field name.** JavaScript coerces every
 property key to a string, so `{ 0: 1 }` is the field `"0"` and `{ 0x10: 1 }` is `"16"` —
@@ -663,11 +669,11 @@ The full `$$$.<coll>.find/filter(...)` and `$$.push(...)` syntaxes are documente
 
 **Pipeline-mode only.** Lookups produce stages, not expressions — they're only valid where a Pipeline output makes sense (assigned to a field with `$.x = …`, used as the RHS of `let`, or read inline as part of a chained terminal). `jsmql.filter()`, `jsmql.update()`, and `jsmql.expr()` reject lookup syntax with an actionable message naming `jsmql.pipeline()` / `jsmql()` as the right entry point.
 
-**A chain that opens with one correlated equality is the pair.** A predicate that says exactly one thing — this foreign field equals that field of the outer document (`$.x`, or a `const` bound to one) — is the `localField` / `foreignField` join every MongoDB developer reads and writes, and the planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise (the same boundary a query document has) — so `{ productIds: myProductIds }` with an array on both sides joins the orders that share **one** element with the list, from the multikey index.
+**A chain that opens with a correlated equality is the pair.** A predicate that says this foreign field equals that field of the outer document (`$.x`, or a `const` bound to one) — alone, or as one `&&` condition among others — is the `localField` / `foreignField` join every MongoDB developer reads and writes, and the planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise (the same boundary a query document has) — so `{ productIds: myProductIds }` with an array on both sides joins the orders that share **one** element with the list, from the multikey index.
 
 **The links that follow it run in `pipeline` beside the pair.** MongoDB 5.0+ runs a `$lookup.pipeline` over the documents the pair matched, so a trailing `.toSorted(…)`, `.take(n)`, `.$group(…)` changes what the join *returns* and never what it *matches*: the same predicate is the same join with or without a `.take()`. `.find` is the pair with `{ $limit: 1 }` in that pipeline. The equality has to come first — after a sort or a cut it is a `$match` in place.
 
-Anything more in the predicate itself — a second condition, a comparison that is not an equality — is `let` + `pipeline` + `$expr`: every read of the outer document inside the predicate (`$._id`, a `let` binding) is carried into the stage's `let` clause under a correlation variable, and the predicate runs as a `$match` in the sub-pipeline. The pipeline form uses the foreign collection's index too (measured). A later link that reads the outer document keeps its `let` beside the pair.
+**The other `&&` conditions run beside the pair too.** `o.userId === $._id && o.status === "paid"` is the pair plus a `$match` in the pipeline, over the pair's matches: a constant condition stays a query document there, and a condition that reads a date, a computed value or a second outer field is `$expr`, with every read of the outer document (`$.tier`, a `let` binding) carried into the stage's `let` clause under a correlation variable. When the predicate has no such equality — every condition is a comparison that is not one, or the equality sits under `||` — the whole predicate is `let` + `pipeline` + `$expr`. The pipeline form uses the foreign collection's index too (measured). A later link that reads the outer document keeps its `let` beside the pair.
 
 ```js
 // One equality — the compact join, in either spelling
@@ -688,11 +694,23 @@ $.coPurchases = $$$.orders.filter({ productIds: mine }).take(100);
 //                 pipeline: [{ $limit: 100 }], as: "coPurchases" } },
 //    { $unset: "__jsmql" }]
 
-// A second condition needs the sub-pipeline
+// A second condition runs beside the pair, over its matches
 $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//                 pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]
+
+// A date bound is an expression, so it is `$expr` in that $match
+$.recent = $$$.orders.filter(o => o.userId === $._id && o.createdAt > new Date().minus(1, "year"));
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//                 pipeline: [{ $match: { $expr: { $gt: ["$createdAt",
+//                   { $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } }] } } }],
+//                 as: "recent" } }]
+
+// An equality under || is no pair: the whole predicate runs as one $match
+$.any = $$$.orders.filter(o => o.userId === $._id || o.total > 15);
 // → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//                 pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-//                 as: "paid" } }]
+//                 pipeline: [{ $match: { $or: [{ $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } }, { total: { $gt: 15 } }] } }],
+//                 as: "any" } }]
 
 // .find stops at the first match ($limit 1) and unwraps it, so the slot holds one document or nothing
 $.user = $$$.users.find(u => u._id === $.userId);
@@ -701,13 +719,14 @@ $.user = $$$.users.find(u => u._id === $.userId);
 //     { $set: { user: { $first: "$user" } } }
 //   ]
 
-// A compound predicate — the same route; `u.active` is the JavaScript truthiness test
+// A compound predicate — the pair, and `u.active` (the JavaScript truthiness test) beside it
 $.user = $$$.users.find(u => u._id === $.userId && u.active);
 // → [
 //     { $lookup: {
 //         from: "users",
-//         let: { jsmql_f0_userId: "$userId" },
-//         pipeline: [{ $match: { $expr: { $and: [{ $eq: ["$_id", "$$jsmql_f0_userId"] }, /* u.active is truthy */] } } }, { $limit: 1 }],
+//         localField: "userId",
+//         foreignField: "_id",
+//         pipeline: [{ $match: { $expr: /* u.active is truthy */ } }, { $limit: 1 }],
 //         as: "user"
 //       } },
 //     { $set: { user: { $first: "$user" } } }
@@ -796,6 +815,28 @@ let name = $$$.users.find(u => u._id === $.userId).name;
 // .find's $first is applied first; the trailing .name reads off the scalar slot
 ```
 
+**The materialised `$lookup` runs beside the stage that reads it.** A join written inside a callback reads the document that callback's *stage* receives, so the `$lookup` is placed directly ahead of that stage — never at the front of the statement. The callback parameter of a chain link names what the previous link produced, and the join follows it:
+
+```js
+$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length }));
+// → [{ $sortByCount: "$tag" },
+//    { $lookup: { from: "orders", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
+//    { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } }]
+```
+
+`g._id` is the group key `$sortByCount` made, and `localField: "_id"` reads it because the join stands after that stage. The same holds inside one `,`-joined run of writes: `$.k = $.pid, $.name = $$$.products.find({ _id: $.k }).name` joins on the `k` the first write made.
+
+**A join can't read a variable an enclosing callback binds.** `$lookup` is a stage, and a stage runs over whole documents — it cannot run once per element of an array inside one document. So a join whose predicate reads a `.map` / `.filter` / `.reduce` element is rejected, and the message names the two spellings that work:
+
+```js
+$.names = $.items.map(x => $$$.products.find({ _id: x.pid }).name);
+// ✗ 'x' is bound by an enclosing callback, and a read of another collection is a
+//   '$lookup' STAGE …
+
+$$ = $.items; $.name = $$$.products.find({ _id: $.pid }).name;     // ✅ each element is a document
+let ps = $$$.products.filter(p => p.ok); $.n = $.items.map(x => ps.length);  // ✅ joined once, outside
+```
+
 A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter` — a bare `$$$.coll.reduce(...)` would be a Cartesian product over the whole foreign collection and is rejected. `.length` and `.reduce` on a `.find()` result are also rejected with a targeted message — `.find` returns scalar-or-null (after `$set $first`), so array reductions over it aren't meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
 
 **Stream-method chains push into the `$lookup.pipeline` body.** A sequence of registered stream methods (the stream-method vocabulary in [src/registry/names.ts](../src/registry/names.ts) — e.g. `.map`, `.toSorted`, `.slice`) chained on a `$$$.<coll>` receiver becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
@@ -871,7 +912,7 @@ As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$
 
 **Caveats:**
 - **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); u.orders = $$$.orders.filter(o => o.userId === u._id); })`.
-  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope — the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param), or an outer-pipeline `let`/`const` declared before the lookup — is captured **once** into the `$lookup.let` of the level it belongs to (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings) and read at every deeper level through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream) — each resolving to its own var with no collision, and the value taken from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`); a bare `$$ = $$$.<coll>.aggregate(…)` (no filter) is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream, so the outer doc / count / `let` can't be read inside it — only `coll.length` is available there.
+  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope — the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param — computed on that ancestor's own pipeline, not on the one reading it), or an outer-pipeline `let`/`const` declared before the lookup — is captured **once** into the `$lookup.let` of the level it belongs to (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings) and read at every deeper level through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream) — each resolving to its own var with no collision, and the value taken from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`); a bare `$$ = $$$.<coll>.aggregate(…)` (no filter) is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream, so the outer doc / count / `let` can't be read inside it — only `coll.length` is available there.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema or driver `[DEF-013]` — see [DEFERRED.md](DEFERRED.md).
 - **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. For deterministic single-doc selection use `.aggregate((o) => { …; $sort({ … }); $limit(1); }).at(0)`.
 - **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
@@ -1092,13 +1133,31 @@ To count an **inner** sub-stream (not the root), use the 3rd callback param —
 `$$$.orders.filter(p).map((o, _i, coll) => coll.length)` (see *Cross-collection
 lookups* above). `$$.length` = root; `coll.length` = that sub-stream.
 
+Each handle counts **the stream the callback that bound it runs over**, at any depth.
+A body nested inside another can read both its own and every ancestor's at once, and
+each is taken from the right documents — the ancestor's count is computed on the
+ancestor's own pipeline and carried down through the `$lookup.let` it passes:
+
+```js
+$$ = $$$.orders.filter({ userId: $._id }).aggregate((o, _i, ordersColl) => {
+  o.items = $$$.items.filter({ orderId: o._id }).aggregate((t, _k, itemsColl) => {
+    t = { id: t._id, inThisOrder: itemsColl.length, ordersForUser: ordersColl.length };
+  });
+});
+```
+
 **Scope.** Pipeline-only — in a Filter / `jsmql.expr` there is no stream to
 count. `$$.length` is the root count at every depth: a `$lookup` body
 (predicate, `.aggregate` block, or `.map` chain) reads it through the
 `$lookup.let` capture above, a `$facet` branch and a declared function body read
 the stamped field directly. The one place it cannot reach is a `$$.push(…)`
-(`$unionWith`) body — that stage has no `let`, so the compiler refuses the read
-and names the join form that carries the value.
+(`$unionWith`) body — that stage has no `let`, so the compiler refuses
+the read and names the join form that carries the value. Two other positions refuse
+it for the same reason, each naming the rewrite that works: the body of a stage the
+server requires FIRST (`$geoNear`, `$documents`, `$search`, …), because the
+`$setWindowFields` would have to run ahead of a stage nothing may precede; and the
+body of the stage that writes the output (`$merge`'s `let`), because jsmql clears its
+scratch fields in the stage right before it.
 
 ### `$out`: write the pipeline to a collection
 
@@ -1336,7 +1395,7 @@ jsmql.expr('$.tags.split(",").toUpperCase()')
 //   Map over the array first, e.g. '.map(x => x.toUpperCase(...))', or take one element with '.at(0)'.
 ```
 
-Every method that applies to only one type takes part, in both directions — an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) is refused on a string, number, date or document receiver, and likewise for the string-only, number-only, date-only and document-only methods. Methods that genuinely accept more than one type are never refused: `.slice`, `.concat`, `.indexOf`, `.includes` and `.lastIndexOf` work on a string or an array, `.size` on an array or a document, `.clamp` on a number or a date, and `.toString` / `.getTime` on anything.
+Every method that applies to only one type takes part, in both directions — an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) is refused on a string, number, date or document receiver, and likewise for the string-only, number-only, date-only and document-only methods. Methods that genuinely accept more than one type are never refused: `.slice`, `.concat`, `.indexOf`, `.includes` and `.lastIndexOf` work on a string or an array, `.size` on an array or a document, `.clamp` and `.inRange` on a number or a date, and `.toString` / `.getTime` on anything.
 
 A receiver's type is known whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number), from `new Date(…)`, from a literal or a template string, or from `.length`.
 
@@ -1369,10 +1428,11 @@ the server.
 **Operator flattening:** Chained `&&`, `||`, `+`, `*`, and `??` operators are flattened into a single MongoDB array instead of nesting:
 ```js
 $.a + $.b + $.c                // → { $add: ["$a", "$b", "$c"] }
-$.x && $.y && $.z              // → { $and: ["$x", "$y", "$z"] }
-$.x || $.y || $.z              // → { $or: ["$x", "$y", "$z"] }
+$.a > 1 && $.b > 2 && $.c > 3  // → { $and: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }   (a Filter merges them into one query document)
+$.a > 1 || $.b > 2 || $.c > 3  // → { $or: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }
 $.a ?? $.b ?? $.c              // → { $ifNull: ["$a", "$b", "$c"] }
 ```
+Between plain values (`$.x && $.y`) the operators keep JavaScript's meaning — the result is the operand that decided, after the JavaScript truthiness test — see [Truthy and falsy](#truthy-and-falsy).
 
 **Context-sensitive `+`:** If any operand is a string literal or string-producing method, the entire chain becomes `$concat`:
 ```js
@@ -2367,6 +2427,7 @@ Value-mode methods on a number field (per-doc, not stream methods):
 $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
 $.n.inRange(10)        // 0 <= n < 10   (checked with $min/$max so negative ranges swap)
 $.n.inRange(5, 10)     // 5 <= n < 10
+$.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))   // a date reads the same range test
 $.n.round()            // { $round: ["$n", 0] }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
 $.n.round(2)           // { $round: ["$n", 2] }
 $.n.ceil()             // { $ceil: "$n" }
@@ -2446,7 +2507,7 @@ new Date(2024, 11, 31, 23, 59, 58, 999)
 new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
-new Date()                         // { $toDate: "$$NOW" }  (current date/time)
+new Date()                         // "$$NOW"  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
 new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
@@ -2531,7 +2592,7 @@ $.end.diff($.start, "day")
 // { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
 
 new Date().diff($._id, "day")      // how old is this document?
-// { $dateDiff: { startDate: "$_id", endDate: { $toDate: "$$NOW" }, unit: "day" } }
+// { $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" } }
 ```
 
 **The receiver is the later date**, so the result is `receiver − other` — the direction Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all use. `other` may be a date, a BSON timestamp, or an ObjectId (MongoDB reads the creation time out of the id), and so may the receiver.
@@ -3062,6 +3123,8 @@ jsmql.update("$.cnt += 1")               // → { $inc: { cnt: 1 } }
 jsmql.update("$.score *= 2")             // → { $mul: { score: 2 } }
 jsmql.update("delete $.tmp")             // → { $unset: { tmp: "" } }
 jsmql.update("$.updatedAt = new Date()") // → { $currentDate: { updatedAt: true } }
+// `new Date()` is the server's clock only as the whole write; `$.a = { t: new Date() }`
+// is refused, naming '$.a.t = new Date()' and the pipeline form.
 jsmql.update("delete $.a, delete $.b, $.status = 'done'")
 // → { $unset: { a: "", b: "" }, $set: { status: "done" } }
 
@@ -3087,7 +3150,7 @@ jsmql(`[
 // → [
 //     { $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] },   // `$.active` is the JavaScript truthiness test
 //                                 { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } },
-//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
+//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: "$$NOW" } },
 //     { $sort: { score: -1 } }
 //   ]
 ```
@@ -3816,6 +3879,12 @@ jsmql(`[{ $match: $.tags.includes("a") && $.tags.includes("b") }]`);
 jsmql(`[{ $match: $.name.match(/^a/i) }]`);
 // → [{ $match: { name: { $regex: /^a/i } } }]
 
+// Half-open range — field receiver, constant bounds
+jsmql(`[{ $match: $.age.inRange(18, 65) }]`);
+// → [{ $match: { age: { $gte: 18, $lt: 65 } } }]
+//   The bounds order at compile time, so `.inRange(65, 18)` is the same clause.
+//   A bound read at run time keeps the `$min`/`$max` expression under `$expr`.
+
 // Nested-array predicate
 jsmql(`[{ $match: $.items.some(it => it.qty > 5 && it.tag === "vip") }]`);
 // → [{ $match: { items: { $elemMatch: { qty: { $gt: 5 }, tag: "vip" } } } }]
@@ -3830,7 +3899,7 @@ jsmql(`[{ $match: typeof $.x === "bool" }]`);
 // → "boolean" is refused, with 'bool' named — see "typeof" under Operators
 jsmql(`[{ $match: $.items.length === 3 }]`);
 // → [{ $match: { $expr: { $eq: [{ $switch: { branches: [
-//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
+//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
 //       { case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] }, then: { $strLenCP: { $ifNull: ["$items", ""] } } }
 //     ], default: "$$REMOVE" } }, 3] } } }]
 //   `.length` vs a natural number is a string-or-array length (works on both, unlike a bare $size).
@@ -3912,6 +3981,57 @@ Lowers to:
                 final:    "$__jsmql.var.withShip" } },
   { $unset: "__jsmql" }
 ]
+```
+
+A `,` continues the declaration, exactly as it does in JavaScript, and a later declarator reads the ones before it:
+
+```js
+jsmql`
+  const start = new Date("2026-08-01"), end = start.plus(1, "month");
+  $.t.inRange(start, end);
+`;
+// → { t: { $gte: new Date("2026-08-01T00:00:00.000Z"),
+//          $lt:  new Date("2026-09-01T00:00:00.000Z") } }
+```
+
+**The `,` shares a stage; the `;` starts a new one.** This is the same rule writes follow (`$.a = 1, $.b = 2` is one `$set`, `$.a = 1; $.b = 2;` is two):
+
+```js
+jsmql`
+  let a = $.p, b = $.q;
+  $match(a > b);
+`;
+// → [
+//   { $set: { "__jsmql.var.a": "$p", "__jsmql.var.b": "$q" } },
+//   { $match: { $expr: { $gt: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+A declarator that reads one bound beside it starts the next stage, because a `$set` reads every field from the document that **enters** it. Nothing else breaks the run — below, `c` reads neither `a` nor `b`, so it joins `b`:
+
+```js
+jsmql`
+  let a = $.x, b = a + 1, c = $.y;
+  $.o = b + c;
+`;
+// → [
+//   { $set: { "__jsmql.var.a": "$x" } },
+//   { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] }, "__jsmql.var.c": "$y" } },
+//   { $set: { o: { $add: ["$__jsmql.var.b", "$__jsmql.var.c"] } } },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+Both declarators of the date example above are constants, so both fold at compile time and neither emits a stage at all.
+
+A declarator whose value is an arrow is a [reusable function](#reusable-functions), in a list as anywhere else. Every declarator needs a value — there is no `undefined` in MQL to bind, so `let x;` is an error naming `let x = <expr>`.
+
+Inside a block-body arrow the same rule binds `$let` variables instead of document fields, because `$let` also reads every variable from the enclosing scope:
+
+```js
+jsmql.expr`$.i.map((v) => { const d = v * 2, e = v + 1; return d + e; })`;
+// → { $map: { input: "$i", as: "v", in: { $let: { vars: { d: { $multiply: ["$$v", 2] }, e: { $add: ["$$v", 1] } }, in: { $add: ["$$d", "$$e"] } } } } }
 ```
 
 Why use `let` instead of `$.tmp = …; … ; delete $.tmp`:
@@ -4760,7 +4880,7 @@ jsmql.expr("$.createdAt.getFullYear()")
 
 // Days since creation
 jsmql.expr("$dateDiff($.createdAt, new Date(), 'day')")
-// → { $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" } }
+// → { $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" } }
 
 // Format date
 jsmql.expr('$dateToString($.createdAt, "%Y-%m-%d")')

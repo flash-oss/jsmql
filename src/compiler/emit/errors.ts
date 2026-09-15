@@ -49,6 +49,22 @@ const countWord = (args: Arity): string => {
 };
 
 /**
+ * The sentence for a name whose row has no cell for the position — the position's
+ * own reason, in the words the rows use for it, so a name a row never mentions in
+ * that position is refused like one that does. The name arrives quoted.
+ */
+const NO_CELL: Readonly<Record<Position, (quoted: string, bare: string) => string>> = {
+  value: (q) => `${q} has no value form here — see its 'where'.`,
+  filter: (q, b) => `${q} is a value, not a test. Compare it: '$.<field> === ${b}'.`,
+  stream: (q) => `${q} produces a value, not a stream of documents.`,
+  statement: (q, b) => `${q} computes a value, and a statement writes one. Assign it to a field: '$.<field> = ${b};'`,
+  group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
+  window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+  updateDoc: (q, b) =>
+    `${q} is computed on the server, and a document-form update takes constants. Use the pipeline form ('jsmql.pipeline("$.<field> = ${b}…;")'), which 'updateOne' accepts as well, or pass the value from your code.`,
+};
+
+/**
  * The error for a final `Selected` answer that is not a rule. `spelled` is how
  * the SOURCE wrote the name — `'.trim()'`, `'$abs'`, `'Math.max'` — because one
  * row answers for every spelling and only the caller knows which it saw.
@@ -137,7 +153,7 @@ export function refusalFor(
         pos,
       );
     case "noCell":
-      return new CodegenError(`${spelled} cannot stand in ${position} position.`, pos);
+      return new CodegenError(NO_CELL[position](spelled.startsWith("'") ? spelled : `'${spelled}'`, bare), pos);
     case "rule":
     case "dispatch":
       return new CodegenError(
@@ -464,6 +480,43 @@ export const mustBeFirstStage = (name: string, pos: number, why?: string): Codeg
     pos,
   );
 
+/**
+ * A stage that has to be FIRST whose own body reads a value that materialises a
+ * stage — `$geoNear({ …, query: { n: $$.length } })`. The hoisted stage has to run
+ * before the read and nothing may run before a first-only stage, so there is no
+ * placement at all. MEASURED: mongod answered "$geoNear was not the first stage in
+ * the pipeline after optimization".
+ */
+export const firstStageNeedsHoist = (
+  name: string,
+  hoisted: string,
+  pos: number,
+  /** The stage that HOLDS the name, when the rule belongs to an operator in its body (`$text` in a `$match`). */
+  carrier: string | null,
+): CodegenError => {
+  // The value the reader has to move is named after the stage jsmql had to make for it.
+  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ … }).<field>" : "$$.length";
+  const later = `$match($.<field> === ${value});`;
+  return new CodegenError(
+    carrier === null
+      ? `'${name}' has to be the FIRST stage of the pipeline, and a value in its body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of '${name}', so read that value in a LATER statement — '${name}({ … }); ${later}' — or, where the value IS one of the stage's settings, give it a constant or a 'jsmql.compile' parameter: the server reads a setting before it has any documents.`
+      : `'${name}' only runs in the pipeline's FIRST '${carrier}', and a value in that body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of that '${carrier}', so keep the '${name}' test on its own and make the other one a later stage: '${carrier}(${name}(…)); ${later}'.`,
+    pos,
+  );
+};
+
+/**
+ * `$merge({ into: "c", let: { v: $$.length } })` — the stage that writes the output
+ * reading a value jsmql materialised into a scratch field. The `__jsmql` cleanup is
+ * the stage before it and nothing may follow it, so the field is gone by then.
+ * MEASURED: "Use of undefined variable: v".
+ */
+export const terminalReadsScratch = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' writes the pipeline's output and has to be its LAST stage, and jsmql clears its scratch fields in the stage right before it — so a value this body reads ('$$.length', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first and read that field: '$.n = $$.length; ${name}({ … let: { v: $.n } … });'.`,
+    pos,
+  );
+
 /** Two stages that each have to be last. */
 export const twoTerminalStages = (name: string, already: string, pos: number): CodegenError =>
   new CodegenError(
@@ -673,6 +726,51 @@ export const shadowsOuterBinding = (kind: string, name: string, pos: number): Co
 export const noCorrelationSlot = (stage: string, pos: number): CodegenError =>
   new CodegenError(
     `'${stage}' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value.`,
+    pos,
+  );
+
+/**
+ * `$.items.map(x => $$$.c.find({ _id: x.k }))` — a join inside an expression that
+ * binds its own variable. The `$lookup` is a STAGE, hoisted out of the `$map`, so
+ * its body names a variable the server never bound there ("Use of undefined
+ * variable: x", measured).
+ */
+export const readsEnclosingVariable = (name: string, stage: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is bound by an enclosing callback, and a read of another collection is a '${stage}' STAGE: the server runs it over the documents, outside that callback, where '${name}' has no value. Make the elements documents first ('$$ = $.<array>;' — then each one is a document the join reads, '$.<field> = $$$.<coll>.find(…)'), or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);') and use that binding inside it.`,
+    pos,
+  );
+
+/**
+ * `$$.push({ n: $$$.c.find(p).n })` — a written document whose value materialises a
+ * stage. The documents run inside a `$unionWith` where `$documents` is the first
+ * stage, so nothing can stand ahead of them to produce the value, and the read is
+ * left as a path nothing writes (measured: the server answers `{}` for it).
+ */
+export const documentsNeedNoStage = (written: string, made: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${written}' writes the documents out as the program spells them, and this value needs a '${made}' stage of its own to produce it — the documents run where nothing may stand ahead of them. Append the other collection's documents themselves ('$$.push(...$$$.<coll>.filter(…))' for many, '$$.push($$$.<coll>.find({ … }))' for one), or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter.`,
+    pos,
+  );
+
+/**
+ * `$merge({ into: "c", whenMatched: [$sort({ a: 1 })] })` — a stage inside an UPDATE
+ * spec, which is not a pipeline. The server runs a closed set there and refuses the
+ * rest outright: MEASURED, "$sort is not allowed to be used within an update".
+ */
+export const notInUpdateSpec = (
+  name: string,
+  container: string,
+  allowed: readonly string[],
+  pos: number,
+): CodegenError =>
+  new CodegenError(
+    `'${name}' cannot stand inside '${container}': that body is an UPDATE, not a pipeline, and the server runs only ${allowed
+      .slice(0, -1)
+      .map((a) => `'${a}'`)
+      .join(
+        ", ",
+      )} and '${allowed[allowed.length - 1]}' there. Reshape the document with one of those, or do the work in the pipeline BEFORE '${container}' — its documents are what the update receives.`,
     pos,
   );
 

@@ -67,17 +67,111 @@ Two keywords in [src/compiler/lex/lexer.ts](../../src/compiler/lex/lexer.ts):
 
 A leading `let` (or its `const` alias) opens a declaration wherever a statement
 stands — at the top level, inside a bracketed pipeline, and inside a block body —
-and the declaration is `let <Ident> = <Expression>`. A missing identifier or a
-missing `=` is a position-marked `ParseError` that echoes the keyword as written
-(`Expected '=' after \`const x\``).
+and the declaration is `let <Ident> = <Expression>`. A missing identifier is a
+position-marked `ParseError` that echoes the keyword as written. So is a missing
+initialiser: a binding is a value and MQL has no `undefined` to hold the place of
+one, so `let x;` is refused with the spelling that works —
+`'let x' binds no value at position 0. jsmql has no 'undefined' to bind — write
+'let x = <expr>'.`
 
-One statement declares ONE binding: the declaration ends with its expression, and a
-`,` after it separates statements rather than opening a second binding. Several
-bindings are several statements — `let a = …; let b = …;`, or `[ let a = …, let b = …,
-… ]` inside a bracketed pipeline. Each takes its own `$set`, and that is what lets a
-binding read the one before it: a `$set` evaluates every field against the stage's
-INPUT document, so two bindings sharing a stage could not depend on each other
-(measured on `{ x: 10 }`: one stage answers `b: null`, two answer `b: 11`).
+### Declaration lists
+
+A `,` continues the declaration, exactly as JavaScript reads
+`const a = …, b = …;`. Each declarator is its OWN declaration, so a later one
+reads the ones before it, a foldable declarator emits no stage, and a declarator
+whose initialiser is an arrow is a reusable function
+([reusable-functions.md](reusable-functions.md)). An initialiser is required per
+declarator, and a trailing `,` is refused — JavaScript refuses both.
+
+**The `,` is the merge; the `;` is the stage boundary.** This is the rule
+[update ops](update-filter.md) already follow (`$.a = …, $.b = …` is one `$set`,
+`$.a = …; $.b = …;` is two), and declarations follow it too:
+
+```js
+let a = $.p, b = $.q;                  let a = $.p;
+$match(a > b);                         let b = $.q;
+                                       $match(a > b);
+// → [{ $set: { "__jsmql.var.a": "$p",   // → [{ $set: { "__jsmql.var.a": "$p" } },
+//              "__jsmql.var.b": "$q" } },//    { $set: { "__jsmql.var.b": "$q" } },
+//    { $match: … }, { $unset: … }]        //    { $match: … }, { $unset: … }]
+```
+
+#### Where a shared stage breaks
+
+A `$set` evaluates every field against the stage's INPUT document, so a
+declarator cannot read a sibling bound beside it. Measured on a running mongod
+over `{ x: 10 }`: `[{ $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": { $add:
+["$__jsmql.var.a", 1] } } }]` answers `b: null`, where the split form answers
+`b: 11`.
+
+The run therefore opens a new stage exactly at a declarator that reads one bound
+in the same stage, and nowhere else. The test is on the LOWERED value, so a
+dependency that arrives through an inlined function counts too:
+
+```js
+let a = $.x, b = a + 1, c = $.y;
+$.o = b + c;
+// → [{ $set: { "__jsmql.var.a": "$x" } },
+//    { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] },
+//              "__jsmql.var.c": "$y" } },
+//    { $set: { o: { $add: ["$__jsmql.var.b", "$__jsmql.var.c"] } } },
+//    { $unset: "__jsmql" }]
+```
+
+`c` reads neither `a` nor `b`, so it joins `b` rather than opening a third stage.
+
+Two more declarators end a run, both for the same reason — a stage would end up on
+the wrong side of the shared `$set`:
+
+- **One whose lowering is not a plain `$set`** — a `$lookup` a foreign read writes
+  into a binding's slot.
+- **One whose value HOISTS a stage of its own.** A foreign read in a VALUE position
+  (`let n = $$$.orders.filter(o => o.k === a).length`) leaves a `$set` behind and
+  puts its `$lookup` on the chain's prologue, which the chain flushes AHEAD of every
+  stage the statement returns. Shared with the sibling it correlates on, that
+  `$lookup` would run before the `$set` that binds the sibling and would correlate
+  on a field nothing has written: measured, `let a = $.x, b = $$$.c.filter(o => o.x
+  === a).length + 1;` answered `1` for every document where the `;` spelling
+  answered the real counts, and two chained joins were REJECTED by the server. The
+  declarator is therefore taken back (`Chain.rewind`) and lowered again as its own
+  statement, where the per-statement flush lands its prologue correctly.
+
+One that emits no stage at all (a folded constant, a function) groups with anything.
+
+#### Membership is the keyword, not adjacency
+
+Declarators of one declaration share the source offset of the KEYWORD that opened
+it. Adjacency in the statement list is not enough, because the constant fold
+REMOVES a folded declaration from that list: in `let a = $.x; let b = 5, c = $.y;`
+the folded `b` leaves `a` and `c` side by side, and grouping them would merge two
+declarations the developer separated with a `;`. They carry different keyword
+offsets, so they take a stage each.
+
+#### The same rule inside a block
+
+A block-body arrow binds `$let` variables rather than document fields
+([emit-pass.md](emit-pass.md#bindings-between-stages)), and `$let` evaluates every
+var in the ENCLOSING scope — mongod answers `Use of undefined variable: a` for
+`vars: { a: 5, b: { $add: ["$$a", 1] } }`. So the merge and the break are the
+same there, one `$let` per group:
+
+```js
+$.o = $.i.map((v) => { const d = v * 2, e = v + 1; return d + e; });
+// → { $let: { vars: { d: { $multiply: ["$$v", 2] }, e: { $add: ["$$v", 1] } },
+//             in: { $add: ["$$d", "$$e"] } } }
+
+$.o = $.i.map((v) => { const d = v * 2, e = d + 1; return e; });
+// → { $let: { vars: { d: { $multiply: ["$$v", 2] } },
+//             in: { $let: { vars: { e: { $add: ["$$d", 1] } }, in: "$$e" } } } }
+```
+
+Inside a bracketed `[…]` pipeline the `,` is already the ELEMENT separator, so a
+list is not read there: each element carries its own keyword
+(`[ let a = …, let b = …, … ]`), and each takes a stage of its own.
+
+The declaration's `pos` — the offset every codegen error about the binding
+forwards — is the KEYWORD for the first declarator and the declarator's own NAME
+for each one after it, so an error underlines the declarator it is about.
 
 A declaration ALONE is not a program: with no `;` to make the input a pipeline, a
 lone `let X = …` is refused with the two spellings that work — a trailing `;`, or

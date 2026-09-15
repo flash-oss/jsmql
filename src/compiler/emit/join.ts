@@ -1,11 +1,11 @@
 // Phase 5 — EMIT. The join road: a chain on another collection, `$$$.<coll>.<links>`,
 // as the `$lookup` it means, in every position it may stand.
 //
-// One road, two shapes. A body that OPENS with one correlated equality — a `$match`
-// that says nothing but `<foreign field> === <outer field>` — is the
-// `localField`/`foreignField` pair, whatever links follow it: they go into
-// `pipeline` beside the pair, which the server runs over the matched documents
-// only (MongoDB 5.0+). The pair is the join MongoDB's documentation is written in,
+// One road, two shapes. A body that OPENS with a correlated equality — a `$match`
+// whose predicate says `<foreign field> === <outer field>`, alone or as one `&&`
+// conjunct among others — is the `localField`/`foreignField` pair, whatever
+// follows it: the other conjuncts and the later links go into `pipeline` beside
+// the pair, which the server runs over the matched documents only (MongoDB 5.0+). The pair is the join MongoDB's documentation is written in,
 // the planner answers it from the foreign index (a multikey one when either side
 // is an array), and the server's own rules apply to it: a missing field counts as
 // null, and an array matches element-wise — two arrays join when they share one
@@ -223,17 +223,21 @@ function reads(v: unknown, name: string): boolean {
 }
 
 /**
- * The body's first stage, when it is one correlated equality and nothing else,
- * taken out as the `localField`/`foreignField` pair.
+ * The correlated equality the body's first stage carries, taken out as the
+ * `localField`/`foreignField` pair; what else that stage said stays as a `$match`.
  *
  * `{ let: { v: "$_id" }, pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$v"] } } }, …rest] }`
  * and `{ localField: "_id", foreignField: "uid", pipeline: […rest] }` run `rest` over
  * the same documents (MongoDB 5.0+ runs the pipeline over the pair's matches). The
- * pair's variable leaves `let` unless a later stage still reads it; a `let` beside
- * the pair is the concise correlated form, and the server accepts it (measured on
- * 8.3.7). A first stage that says more — a second clause, a comparison that is not
- * an equality, a side that is not a plain field path — keeps the body whole,
- * because only `$expr` can say it.
+ * equality may be one `&&` conjunct among others — `o.uid === $._id && o.t > d` is
+ * `{ $match: { $expr: { $and: [eq, gt] } } }` — and the pair reads it the same way:
+ * the conjuncts beside it, and the stage's query-document keys, stay as the
+ * pipeline's first `$match`, over the pair's matches. The pair's variable leaves
+ * `let` unless a later stage still reads it; a `let` beside the pair is the concise
+ * correlated form, and the server accepts it (measured on 8.3.7). A first stage
+ * with no such equality — a comparison that is not one, a side that is not a plain
+ * field path, an equality under `||` — keeps the body whole, because only `$expr`
+ * can say it.
  */
 function takePair(
   vars: Record<string, string> | null,
@@ -241,19 +245,28 @@ function takePair(
 ): { pair: Pair | null; let: Record<string, string> | null; pipeline: Stage[] } {
   const whole = { pair: null, let: vars, pipeline };
   if (vars === null || pipeline.length === 0) return whole;
-  const match = (pipeline[0] as { $match?: Record<string, unknown> }).$match;
-  if (match === undefined || Object.keys(match).length !== 1) return whole;
-  const eq = (match.$expr as { $eq?: unknown } | undefined)?.$eq;
-  if (!Array.isArray(eq) || eq.length !== 2) return whole;
-  for (const [name, read] of Object.entries(vars)) {
-    const localField = fieldPath(read);
-    if (localField === null) continue;
-    const variable = `$$${name}`;
-    const foreignField = fieldPath(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
-    if (foreignField === null) continue;
-    const rest = pipeline.slice(1);
-    const kept = Object.fromEntries(Object.entries(vars).filter(([n]) => n !== name || reads(rest, n)));
-    return { pair: { localField, foreignField }, let: Object.keys(kept).length > 0 ? kept : null, pipeline: rest };
+  const { $expr, ...query } = (pipeline[0] as { $match?: Record<string, unknown> }).$match ?? {};
+  if ($expr === undefined) return whole;
+  const and = ($expr as { $and?: unknown }).$and;
+  const conjuncts: unknown[] = Array.isArray(and) ? and : [$expr];
+  // The FIRST conjunct that is a correlated equality is the pair: the one the developer wrote first.
+  for (const [i, conjunct] of conjuncts.entries()) {
+    const eq = (conjunct as { $eq?: unknown }).$eq;
+    if (!Array.isArray(eq) || eq.length !== 2) continue;
+    for (const [name, read] of Object.entries(vars)) {
+      const localField = fieldPath(read);
+      if (localField === null) continue;
+      const variable = `$$${name}`;
+      const foreignField = fieldPath(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
+      if (foreignField === null) continue;
+      const others = conjuncts.filter((_, j) => j !== i);
+      const match: Record<string, unknown> = { ...query };
+      if (others.length === 1) match.$expr = others[0];
+      else if (others.length > 1) match.$expr = { $and: others };
+      const rest = [...(Object.keys(match).length > 0 ? [{ $match: match } as Stage] : []), ...pipeline.slice(1)];
+      const kept = Object.fromEntries(Object.entries(vars).filter(([n]) => n !== name || reads(rest, n)));
+      return { pair: { localField, foreignField }, let: Object.keys(kept).length > 0 ? kept : null, pipeline: rest };
+    }
   }
   return whole;
 }
@@ -292,9 +305,9 @@ function rebase(node: Expr, peeledTo: Expr, replacement: Expr): Expr {
 }
 
 /**
- * A chain in a VALUE position: the `$lookup` is hoisted ahead of the statement
- * into a scratch slot, and the value is what the rest of the chain makes of that
- * slot. The slot is bound as a typed name, so `.length` on an array slot is
+ * A chain in a VALUE position: the `$lookup` is hoisted ahead of the stage that
+ * reads it, into a scratch slot, and the value is what the rest of the chain makes
+ * of that slot. The slot is bound as a typed name, so `.length` on an array slot is
  * `$size` and `.total` on a document slot is a path.
  */
 export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {

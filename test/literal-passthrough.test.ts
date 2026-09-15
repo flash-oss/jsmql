@@ -312,7 +312,8 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
 
   it("the $-prefixed local field name flows through as a sanitized let var", () => {
     // `$._id` → let var `jsmql_f0__id` (not the server-rejected `_id`), referenced as `$$jsmql_f0__id`.
-    expect(jsmql(`$.u = $$$.users.find(u => u.refId === $._id && u.active);`)).toEqual([
+    // An equality under `||` is no pair, so the read stays a `let` var.
+    expect(jsmql(`$.u = $$$.users.find(u => (u.refId === $._id || u.altId === $._id) && u.active);`)).toEqual([
       {
         $lookup: {
           from: "users",
@@ -322,7 +323,7 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
               $match: {
                 $expr: {
                   $and: [
-                    { $eq: ["$refId", "$$jsmql_f0__id"] },
+                    { $or: [{ $eq: ["$refId", "$$jsmql_f0__id"] }, { $eq: ["$altId", "$$jsmql_f0__id"] }] },
                     { $ne: [{ $ifNull: ["$active", null] }, null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },

@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
 import { liveClient } from "./fixtures/live.ts";
+import { statementBodyOf } from "../src/compiler/rows.ts";
 
 /**
  * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with
@@ -96,11 +97,26 @@ describe("compiler/emit/statement — the writes", () => {
     expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
   });
 
-  it("places a stage a value needed ahead of the statement that needed it", () => {
+  it("places a stage a value needed ahead of the stage that needed it", () => {
     expect(compiled("$.n = $$.length;")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { n: "$__jsmql.length" } },
       { $unset: "__jsmql" },
+    ]);
+    // A `,`-joined run that splits into two `$set`s puts it between them: the count
+    // is the one the stage that reads it sees.
+    expect(compiled("$.k = $.tag, $.n = $$.length + $.k;")).toEqual([
+      { $set: { k: "$tag" } },
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $set: { n: { $add: ["$__jsmql.length", "$k"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    // A chain link is a stage too, so the count is the MATCHED stream's — the same
+    // answer the two-statement spelling gives.
+    expect(compiled("$$.$match({ ok: true }).map(d => ({ _id: d._id, n: $$.length }));")).toEqual([
+      { $match: { ok: true } },
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $replaceWith: { _id: "$_id", n: "$__jsmql.length" } },
     ]);
   });
 });
@@ -260,6 +276,57 @@ describe("compiler/emit/statement — bindings between stages", () => {
       { $unset: "__jsmql" },
     ]);
     expect(() => pipeline("const x = $.a; x = $.b;")).toThrow(/is a 'const' and cannot be assigned again/);
+  });
+
+  it("shares one $set across the declarators a `,` joined, and breaks it at a dependency", () => {
+    // The `,` merges and the `;` does not — the rule `$.a = …, $.b = …` follows.
+    expect(compiled("let a = $.x, b = $.y; $.o = a + b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(compiled("let a = $.x; let b = $.y; $.o = a + b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.b": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    // A `$set` evaluates every field against the stage's INPUT document, so a
+    // declarator that reads a sibling opens the next stage — and only there.
+    expect(compiled("let a = $.x, b = a + 1, c = $.y; $.o = b + c;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] }, "__jsmql.var.c": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.b", "$__jsmql.var.c"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    // a foldable declarator emits no stage in a list either
+    expect(compiled("const k = 2, n = k * 3; $.c = $.a * n;")).toEqual([{ $set: { c: { $multiply: ["$a", 6] } } }]);
+    // an arrow declarator is a reusable function, list or no list
+    expect(compiled("const dbl = (v) => v * 2, y = dbl($.a); $.c = dbl(y);")).toEqual([
+      { $set: { "__jsmql.var.y": { $let: { vars: { v: "$a" }, in: { $multiply: ["$$v", 2] } } } } },
+      { $set: { c: { $let: { vars: { v: "$__jsmql.var.y" }, in: { $multiply: ["$$v", 2] } } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("keeps a declarator whose value hoists a stage out of the shared $set", () => {
+    // A foreign read in a value position hoists its `$lookup` AHEAD of the
+    // statement. Shared with the sibling it correlates on, the join would run
+    // before the `$set` that binds that sibling and would correlate on a field
+    // nothing has written — silently wrong, and a server rejection when two joins
+    // chain. So it ends the run and takes its own stage, exactly as the `;`
+    // spelling does.
+    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $lookup: { from: "other", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
+      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
+      { $set: { o: "$__jsmql.var.b" } },
+      { $unset: "__jsmql" },
+    ]);
+    // and the `;` spelling of it is the same document, scratch slots included
+    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual(
+      compiled("let a = $.x; let b = $$$.other.filter(o => o.k === a).length; $.o = b;"),
+    );
   });
 
   it("loses a binding at a stage that replaces the document, and says so on the next read", () => {
@@ -653,5 +720,74 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
       { $set: { y: { $in: ["a", { $ifNull: ["$__jsmql.var.ids", []] }] } } },
       { $unset: "__jsmql" },
     ]);
+  });
+});
+
+describe("compiler/emit/statement — the update spec's closed set, against the server's own answer", () => {
+  // `$merge.whenMatched` is an UPDATE, not a pipeline: the server runs a closed set of
+  // stages there and refuses the rest outright. jsmql reads that set off the `$merge`
+  // row (`statementBody`), and this is the gate that keeps the row honest — it asks
+  // the server, one stage per run, and compares the two sets.
+  const ALLOWED = statementBodyOf("$merge");
+
+  /** A body each stage accepts, so a rejection is about the UPDATE and not the shape. */
+  const BODIES: Readonly<Record<string, unknown>> = {
+    $addFields: { z: 1 },
+    $set: { z: 1 },
+    $project: { z: 1 },
+    $unset: "qty",
+    $replaceRoot: { newRoot: { $mergeObjects: ["$$ROOT", { z: 1 }] } },
+    $replaceWith: { $mergeObjects: ["$$ROOT", { z: 1 }] },
+    $fill: { output: { a: { value: 0 } } },
+    $match: { a: 2 },
+    $limit: 1,
+    $skip: 0,
+    $sort: { a: 1 },
+    $count: "n",
+    $group: { _id: "$a" },
+    $unwind: "$items",
+    $sortByCount: "$a",
+    $redact: "$$KEEP",
+    $setWindowFields: { output: { w: { $count: {} } } },
+    $bucketAuto: { groupBy: "$a", buckets: 1 },
+    $sample: { size: 1 },
+  };
+
+  it("allows exactly what the server allows", async () => {
+    if (coll === null) {
+      expect(Array.isArray(ALLOWED) && ALLOWED.length > 0).toBe(true);
+      return;
+    }
+    expect(Array.isArray(ALLOWED)).toBe(true);
+    const c = coll;
+    const serverAllows: string[] = [];
+    for (const [name, body] of Object.entries(BODIES)) {
+      try {
+        await c.aggregate([{ $merge: { into: "update_spec_probe", whenMatched: [{ [name]: body }] } }]).toArray();
+        serverAllows.push(name);
+      } catch (e) {
+        // Anything BUT the update refusal means the probe body was wrong, not that the
+        // stage is banned — a silent miscount is the one failure this gate must not have.
+        const m = (e as Error).message;
+        expect(m, `'${name}' was refused for a reason other than the update spec`).toMatch(
+          /is not allowed to be used within an update/,
+        );
+      }
+    }
+    const registryAllows = (ALLOWED as readonly string[]).filter((n) => n in BODIES);
+    expect([...serverAllows].sort()).toEqual([...registryAllows].sort());
+    // and every name the row states is one this probe actually exercised
+    expect((ALLOWED as readonly string[]).filter((n) => !(n in BODIES))).toEqual([]);
+  });
+
+  it("refuses at compile time exactly the ones the server refuses", () => {
+    for (const name of Object.keys(BODIES)) {
+      const src = `$merge({ into: "c", whenMatched: [{ ${name}: ${JSON.stringify(BODIES[name])} }] });`;
+      if ((ALLOWED as readonly string[]).includes(name)) {
+        expect(() => pipeline(src), name).not.toThrow();
+      } else {
+        expect(() => pipeline(src), name).toThrow(/cannot stand inside '\$merge': that body is an UPDATE/);
+      }
+    }
   });
 });

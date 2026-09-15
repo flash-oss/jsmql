@@ -46,7 +46,15 @@ const shapes = (s) => {
   }
   return out;
 };
-const norm = (s) => s.replace(/<(Date|ObjectId)\s+([^>]*)>/g, "$2").replace(/[\s"']/g, "");
+const norm = (s) =>
+  s
+    .replace(/<(Date|ObjectId)\s+([^>]*)>/g, "$2")
+    .replace(/[\s"']/g, "")
+    .replace(/,([}\]])/g, "$1");
+// A claim line may end in a note of its own (`// → { … }   // the truthiness test`).
+const unnoted = (l) => l.replace(/^(\s*\/\/\s?)(.*?)(\s+\/\/.*)?$/, "$1$2");
+// A source in a quoted string carries the quote's escapes; the compiler wants the text.
+const unescape = (q, body) => (q === "`" ? body : body.split("\\" + q).join(q));
 
 let bad = 0,
   checked = 0;
@@ -64,36 +72,54 @@ for (const f of FILES) {
       continue;
     }
     if (!inBlock) continue;
-    if (/^\s*\/\/\s*→/.test(l)) {
+    const inline = /^(\S.*?)\s+\/\/\s*→\s*(.*)$/.exec(l);
+    if (inline !== null && !/^\s*\/\//.test(l)) {
+      src = [inline[1]];
+      srcLine = i + 1;
+      lines[i] = "// → " + inline[2];
+    }
+    if (/^\s*\/\/\s*→/.test(lines[i])) {
       let j = i;
       while (j + 1 < lines.length && /^\s*\/\//.test(lines[j + 1]) && !/^\s*\/\/\s*→/.test(lines[j + 1])) j++;
       const claim = lines
         .slice(i, j + 1)
-        .map((x) => x.replace(/^\s*\/\/\s?/, ""))
+        .map((x) => unnoted(x).replace(/^\s*\/\/\s?/, ""))
         .join(" ")
         .replace(/^→\s*/, "");
       const text = src.join("\n").trim();
       src = [];
       i = j;
-      if (text === "" || ELIDED.test(claim) || HOST.test(text)) continue;
-      const m = /^jsmql(\.\w+)?\(\s*[`"']([\s\S]*)[`"']\s*\)[;,]?$/.exec(text);
-      const source = m ? m[2] : text;
+      // A claim that opens on a key (`let: { … }`) or a host call (`find({ … })`) shows
+      // a piece of a document, not the document: illustrative.
+      if (text === "" || ELIDED.test(claim) || HOST.test(text) || !/^[[{]/.test(claim)) continue;
+      // `jsmql.stringify(<call>)` prints what the call returns — which is what this
+      // script prints anyway — so the claim is held to the inner call.
+      const inner = /^jsmql\.stringify\(([\s\S]*)\);?$/.exec(text);
+      const call = inner ? inner[1] : text;
+      // A template tag that interpolates nothing is the string form; one that does
+      // cannot run without its values and stays illustrative.
+      const m =
+        /^jsmql(\.\w+)?\(\s*([`"'])([\s\S]*)\2\s*\)[;,]?$/.exec(call) ?? /^jsmql(\.\w+)?(`)([\s\S]*)`;?$/.exec(call);
+      if (m !== null && m[2] === "`" && m[3].includes("${")) continue;
+      const source = m ? unescape(m[2], m[3]) : call;
       // A block that NAMES its entry point is held to it: `jsmql("…")` returning what
       // `jsmql.expr` returns is exactly the drift this catches (a Filter shown as an
       // aggregation expression). Only an unlabelled source may answer from either.
       const named = m?.[1];
       const entries =
-        named === ".expr"
-          ? [jsmql.expr]
-          : named === ".update"
-            ? [jsmql.update]
-            : named === ".filter"
-              ? [jsmql.filter]
-              : named === ".pipeline"
-                ? [jsmql.pipeline]
-                : m !== null
-                  ? [jsmql]
-                  : [jsmql, jsmql.expr];
+        named === ".validate"
+          ? [jsmql.validate]
+          : named === ".expr"
+            ? [jsmql.expr]
+            : named === ".update"
+              ? [jsmql.update]
+              : named === ".filter"
+                ? [jsmql.filter]
+                : named === ".pipeline"
+                  ? [jsmql.pipeline]
+                  : m !== null
+                    ? [jsmql]
+                    : [jsmql, jsmql.expr];
       checked++;
       const answers = entries.map((e) => {
         try {
@@ -110,7 +136,10 @@ for (const f of FILES) {
       // The claim is a shape (or a run of stages) inside prose; compare shapes only.
       const parts = shapes(claim);
       if (parts.length === 0) continue;
-      const forms = [norm(parts.join(",")), `[${norm(parts.join(","))}]`];
+      const forms = parts.flatMap((_, k) => {
+        const lead = norm(parts.slice(0, k + 1).join(","));
+        return [lead, `[${lead}]`];
+      });
       const ok = answers.some((a) => forms.includes(norm(a)));
       if (!ok) {
         bad++;

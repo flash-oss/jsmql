@@ -132,6 +132,26 @@ The target's shape is unambiguous against its neighbours: `$ = …` has the bare
 | `$$$.<coll> = …` inside `jsmql.filter(…)` / `jsmql.expr(…)` | Refused as a write: `… but received a write (\`$.x = …\`, \`delete $.x\`). Use jsmql.update() for an update document, or jsmql.pipeline() for a \`$set\` / \`$unset\` pipeline.` |
 | `$$$.<coll> = …` inside `jsmql.update(…)` | `A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.` |
 
+| `$merge({ into: "c", whenMatched: [$sort({ a: 1 })] })` — a stage an update spec does not run | `'$sort' cannot stand inside '$merge': that body is an UPDATE, not a pipeline, and the server runs only '$addFields', '$set', '$project', '$unset', '$replaceRoot', '$replaceWith' and '$fill' there. …` |
+| `$merge({ into: "c", let: { v: $$.length } })` — the stage that writes the output reading a materialised value | `'$merge' writes the pipeline's output and has to be its LAST stage, and jsmql clears its scratch fields in the stage right before it … Put the value in a field of the document first and read that field: '$.n = $$.length; $merge({ … let: { v: $.n } … });'` |
+
+**`whenMatched` is an UPDATE, not a pipeline.** MEASURED on mongod, one stage per run
+with a valid body: `$addFields`, `$set`, `$project`, `$unset`, `$replaceRoot`,
+`$replaceWith` and `$fill` run there, and every other stage answers "<name> is not
+allowed to be used within an update". The `$merge` row states that set as its
+`statementBody`, `place` refuses a stage the set does not name, and
+[test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) asks the server
+the same question and compares the two answers — so the row cannot drift from the
+deployment. (`$fill` is on the list because its constant form runs; a `$fill` body that
+states `sortBy` desugars server-side to a `$sort` and is refused there. jsmql cannot see
+that desugar, so it emits it and the server names `$sort`.)
+
+A stage the row files as LAST is not emitted where it stands: it is filed on the chain
+so nothing can land after it and the `__jsmql` cleanup always precedes it
+([emit-pass.md](emit-pass.md)). That order is what the last row above enforces — a body
+reading a scratch field would read one the `$unset` has already dropped, and MEASURED
+the server answers "Use of undefined variable: v".
+
 All errors carry a meaningful `.pos` (target node's `pos` for LHS shape
 errors, RHS node's `pos` for chain errors, offending later statement's
 `pos` for the trailing-stage guard).

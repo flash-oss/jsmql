@@ -44,7 +44,7 @@ import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
 import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
-import { cond, letOne, switchOn } from "./mql.ts";
+import { cond, letOne, readsRef, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { familyOfKind, isPresent, kindOf, sourceFamily } from "./types.ts";
@@ -100,7 +100,7 @@ function holdsBigInt(v: unknown): boolean {
 
 /**
  * The join road, lent by statement.ts at load: a chain on another collection in a
- * value position hoists its `$lookup` ahead of the statement. Registered rather
+ * value position hoists its `$lookup` ahead of the stage that reads it. Registered rather
  * than imported, because the road needs the statement target's link walker and
  * the statement target imports this file.
  */
@@ -416,7 +416,7 @@ export function locate(node: Expr, env: Env): Located | null {
   }
   if (node.type === "Ident" && env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
-    if (b.ref.kind === "var") return { kind: "var", ref: b.ref.ref };
+    if (b.ref.kind === "var") return { kind: "var", level: b.level, ref: b.ref.ref, hint: node.name };
     if (b.ref.kind === "document") return { kind: "f", level: b.level, path: b.ref.path, hint: node.name };
     if (b.ref.kind === "field") return { kind: "v", level: b.level, path: b.ref.slot.path, hint: node.name };
     return null;
@@ -432,7 +432,7 @@ export function locate(node: Expr, env: Env): Located | null {
   if (node.type === "MemberAccess" && !isPropertyRow(node)) {
     const base = locate(node.object, env);
     if (base === null) return null;
-    if (base.kind === "var") return { kind: "var", ref: `${base.ref}.${node.name}` };
+    if (base.kind === "var") return { ...base, ref: `${base.ref}.${node.name}` };
     // A field of the DOCUMENT is a root path, spelled as `$.x` spells it: `d.x` in
     // `$$.map(d => d.x)` is "$x", not "$$ROOT.x".
     return { ...base, path: base.path === "" ? node.name : `${base.path}.${node.name}`, hint: node.name };
@@ -486,6 +486,22 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
   return { $getField: { field: node.name, input } };
 }
 
+/**
+ * `x[i]` — the three meanings JavaScript gives an integer key, in the ONE the
+ * receiver proves, or a runtime dispatch over all three.
+ *
+ * The dispatch is a `$switch` and never a nested `$cond`, because the server
+ * OPTIMISES a `$cond`'s branches before it reads the test: MEASURED, a receiver
+ * the server holds as a constant — a `$lookup.let` variable, an injected value
+ * inside `$literal` — folds the branch that does not apply and the whole pipeline
+ * is refused before a document is read (`$.o = $$$.c.find({ _id: $.arr[0] })`
+ * answered "can't convert from BSON type array to String"; a string receiver
+ * answered "$arrayElemAt's first argument must be an array"). A `$switch` drops a
+ * branch whose case folds to false without optimising it, so every receiver type
+ * — array, string, document, number, null, missing — answers as it always did
+ * (measured, the two shapes agree on each). It is the flatter document too, and
+ * the reading every other runtime family dispatch here already uses.
+ */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
   // `$["a.b"]` — a field whose name is not a bare identifier.
@@ -510,17 +526,21 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
     if (known === "string") return charAt(wrapped(""));
     if (known === "object") return fieldAt(wrapped({}));
     const o = wrapped([]);
-    return cond(
-      truthOf({ $isArray: o }, true),
-      { $arrayElemAt: [o, i] },
-      cond(truthOf({ $eq: [{ $type: o }, "string"] }, true), charAt(o), fieldAt(o)),
+    return switchOn(
+      [
+        { case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, i] } },
+        { case: truthOf({ $eq: [{ $type: o }, "string"] }, true), then: charAt(o) },
+      ],
+      fieldAt(o),
     );
   }
   const key = { $toString: { $ifNull: [idx, ""] } };
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);
-  return cond(truthOf({ $isArray: o }, true), { $arrayElemAt: [o, idx] }, { $getField: { field: key, input: o } });
+  return switchOn([{ case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, idx] } }], {
+    $getField: { field: key, input: o },
+  });
 }
 
 // ── calls ────────────────────────────────────────────────────────────────────
@@ -1066,19 +1086,47 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
 
 // ── blocks ───────────────────────────────────────────────────────────────────
 
-/** `{ const y = …; return … }`: one `$let` per declaration the fold could not inline, innermost last. */
+/**
+ * `{ const y = …; return … }`: one `$let` per declaration the fold could not
+ * inline, innermost last — and ONE `$let` for the declarators a `,` joined, the
+ * same rule the `$set` road follows. `$let` evaluates every var in the ENCLOSING
+ * scope (mongod answers "Use of undefined variable" for a var that reads a
+ * sibling), so a joined declarator that reads one bound beside it opens a new
+ * `$let` there. See docs/specs/let-bindings.md.
+ */
 function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e: Expr, env: Env) => unknown): unknown {
   const seen = new Set<string>();
-  const step = (i: number, e: Env): unknown => {
+  // Each declarator lowers ONCE. One that breaks its group is already lowered, so
+  // it rides to the next `$let` rather than through `lowerValue` a second time —
+  // a second call would mint a second compiler name for the same value.
+  const step = (i: number, e: Env, carried: { value: unknown } | null): unknown => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
-    const d = node.decls[i];
-    if (seen.has(d.name)) throw E.redeclared(d.kind, d.name, d.pos);
-    seen.add(d.name);
-    const value = lowerValue(d.value, childEnv(e, node, "decls"));
-    const bound = e.param(d.name, kindOf(d.value, e), d.pos);
-    return letOne(bound.as as MongoVar, value, step(i + 1, bound.env));
+    const vars: Record<string, unknown> = {};
+    const refs: string[] = [];
+    let scope = e;
+    let j = i;
+    let carry = carried;
+    // Every declarator this `$let` holds: the head, then each one the `,` joined
+    // that reads none of the vars already in it.
+    for (;;) {
+      const d = node.decls[j];
+      if (seen.has(d.name)) throw E.redeclared(d.kind, d.name, d.pos);
+      const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
+      carry = null;
+      if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
+      seen.add(d.name);
+      const bound = scope.param(d.name, kindOf(d.value, scope), d.pos);
+      vars[bound.as as string] = value;
+      refs.push(`$$${bound.as as string}`);
+      scope = bound.env;
+      j++;
+      // Membership is the keyword's offset, so a declarator the fold removed
+      // cannot let a later one bridge a `;` the developer wrote.
+      if (j === node.decls.length || node.decls[j].group !== d.group) break;
+    }
+    return { $let: { vars, in: step(j, scope, null) } };
   };
-  return step(0, env);
+  return step(0, env, null);
 }
 
 /** The callback parameter kinds a row states, for a caller binding them. Unused parameters bind as "unknown". */

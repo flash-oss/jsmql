@@ -25,6 +25,8 @@
 // src/namespace.ts, the one home for jsmql's three namespaces.
 
 import type { Expr, Kind } from "../../registry/vocabulary.ts";
+// Type-only, so nothing is imported at run time and env.ts keeps importing this file.
+import type { Chain } from "./env.ts";
 import { UnknownIdentifierError, internalError } from "../../errors.ts";
 import { exprVar, letBindingVar, letFieldVar, letSysVar, tmpSlot } from "../../namespace.ts";
 
@@ -125,8 +127,15 @@ export type Ref =
    * block of STAGES that expands in place, rather than a value.
    */
   | { readonly kind: "function"; readonly lambda: Expr; readonly expanding: boolean }
-  /** A named stream — `const s = $$.filter(…)` — lowered where it is consumed. */
-  | { readonly kind: "streamHandle"; readonly source: Expr }
+  /**
+   * A named stream — a callback's collection parameter, `const s = $$.filter(…)`.
+   * `chain` is the (sub-)pipeline whose documents it names, kept because a value it
+   * materialises — its count — belongs on THAT pipeline and nowhere else: a
+   * `$facet` branch and a body over another collection each assemble a chain of
+   * their own, and a stamp written on the wrong one counts the wrong documents
+   * under the same field name.
+   */
+  | { readonly kind: "streamHandle"; readonly source: Expr; readonly chain: Chain }
   /**
    * A binding a document-replacing stage destroyed. Reading it is the
    * developer's error, and `fix` is the row's own advice:
@@ -176,13 +185,14 @@ export type Declared = Omit<Binding, "level">;
 
 /**
  * A value on one level of documents, as a READ on a possibly deeper level sees
- * it. `var` is a MongoDB variable, lexically scoped through every sub-pipeline
- * and so level-free. The rest name a document level and a path on it — "" for
- * the whole document — and how the variable that carries it across a `$lookup`
- * is named: `f` a field, `v` a `let` binding, `s` a system value.
+ * it. `var` is a MongoDB variable, lexically scoped: its level is the level it
+ * was BOUND on, because an expression that binds one does not cross into the
+ * sub-pipeline of a stage hoisted out of it. The rest name a document level and a
+ * path on it — "" for the whole document — and how the variable that carries it
+ * across a `$lookup` is named: `f` a field, `v` a `let` binding, `s` a system value.
  */
 export type Located =
-  | { readonly kind: "var"; readonly ref: string }
+  | { readonly kind: "var"; readonly level: number; readonly ref: string; readonly hint: string }
   | { readonly kind: "f" | "v" | "s"; readonly level: number; readonly path: string; readonly hint: string };
 
 /**

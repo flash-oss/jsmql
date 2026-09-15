@@ -245,7 +245,7 @@ keeps MongoDB's own reading.
 A query cell is a row fact: the comparison productions carry `strictEqualityQuery`
 and friends (the type test, the presence test, the modulo test, the null test, a
 field against a constant — in that order), `includes`/`startsWith`/`endsWith`/
-`match`/`some` carry theirs, `$sampleRate` states its one slot `constant`, a
+`match`/`some`/`inRange` carry theirs, `$sampleRate` states its one slot `constant`, a
 `number`, in the range `[0, 1]`. Each answers null where the operands are not a
 path and a constant, and null is the `FilterOut` contract for "wrap my value
 form". A row with no value form (a query-only operator) has nothing to wrap, so
@@ -256,7 +256,16 @@ root, and only its fields are paths — an outer callback's parameter read insid
 a nested one has no query form and takes the `$expr` road; the `$elemMatch`
 boundary records which parameter is its element), `constant` (a value the query
 language compares as written — never an array, a regex or a bigint), `query`,
-`nativeQuery` and `elementQuery`. The
+`nativeQuery` and `elementQuery`.
+
+`.inRange()` accepts its two bounds either way round, and the value form orders
+them at run time with `$min`/`$max`. A query clause has no such operator, so its
+cell orders the pair at COMPILE time — which it can only do when both bounds are
+constants of one kind, two numbers or two dates. Any other pair answers null and
+takes the `$expr` road, so no clause is emitted from a comparison the compiler
+could not actually make.
+
+The
 predicate alias tables (`typeof` spellings, the numeric group) are registry data
 in `vocabulary.ts`, read by both the query and the expression cells.
 
@@ -304,17 +313,42 @@ the server enforces it and no renderer implies it:
 
 | the row says | the target does | measured |
 |---|---|---|
-| `only: ["stageFirst"]` | refuses the stage anywhere but first | "$documents is only valid as the first stage" |
-| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, and refuses a statement after it | "$out can only be the final stage" |
+| `only: ["stageFirst"]` | refuses the stage anywhere but first, and anywhere its own body needs a hoisted stage | "$documents is only valid as the first stage"; "$geoNear was not the first stage in the pipeline after optimization" |
+| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, refuses a statement after it, and refuses a body that READS a scratch field | "$out can only be the final stage"; "Use of undefined variable: v" |
 | `forbiddenIn: […]` | refuses it inside those containers | the server refuses a write stage in a sub-pipeline |
 | `bodyPositions` | reads each body key in the position it names | `$geoNear`'s `query` as an aggregation expression: "unknown top level operator: $eq" |
 | `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
+| `statementBody` | says what a `statement` slot HOLDS: a pipeline of its own, or an update spec and the stages it runs | "$sort is not allowed to be used within an update" |
 | `literalKeys` | judges a `$`-led string against the closed set, because the server reads the key as a word | `{ $merge: { whenMatched: "$g" } }` → "Enumeration value '$g' for field 'whenMatched' is not a valid value" |
 
 A stage's own body sub-pipeline runs under its OWN chain, with the container
 recorded as a boundary. Without the chain a stage filed as LAST is filed on the
 outer one and silently leaves the body — measured: a `$out` inside a `$lookup`
 body landed at the end of the outer pipeline and the body came out empty.
+
+**A first-only row reads a hoist, not just a position.** A value in a stage's own
+body can need a stage of its own — `$$.length` a `$setWindowFields`, a `$$$.<coll>`
+read a `$lookup` — and that stage is placed directly ahead of the one that reads it
+([lookup-stage.md § Where a hoisted stage lands](lookup-stage.md)). So "is this stage
+first?" is only half the question: `place` asks it again of the chain's PENDING hoist,
+which by then holds whatever this stage's body made, and a first-only stage with one
+pending has no placement at all — the materialiser cannot follow the read and nothing
+may precede the stage, so it is refused with the later-statement rewrite named. The
+chain it asks is `env.chain` and never the root one: a `$$.length` read inside a
+sub-pipeline stamps OUTSIDE it and leaves that body's own first stage first (measured,
+the server runs it). A name the BODY holds is judged the same way, unless the row files
+its slot as a sub-pipeline — a stage there is first where IT stands and its own `place`
+call has already said so — and which slots those are is the row's `statementBody` fact,
+not the slot's `statement` kind. The two are different things: `$lookup.pipeline` and a
+`$facet` branch start a pipeline, while `$merge.whenMatched` is an UPDATE spec with no
+first position at all and a closed set of stages the server runs there. Reading the
+slot kind alone conflated them, and one line then did two wrong things at once: it
+refused `$geoNear` first-in-a-`$lookup`-body because a statement preceded the `$lookup`
+(the server runs that), and it caught a banned stage in `whenMatched` only when a
+statement happened to precede the `$merge` (the server never runs that). The row states
+which kind it is; a row that files a `statement` slot and says nothing fails the build. The `stageLast` mirror is the same fact read backwards: the
+cleanup that drops the scratch fields is the stage before the terminal, so a terminal
+body that reads one reads a field already gone.
 
 Two JavaScript meanings the query language does not share by default:
 
@@ -416,10 +450,11 @@ the pair it emits and why; the empty list is a stream of nothing.
 ### The join road
 
 `$$$.<coll>.<chain>` is a `$lookup`, in every position the chain may stand
-(`emit/join.ts`). **A body that opens with one correlated equality** — its first
-stage is a `$match` that says nothing but `<foreign field> === <outer field>`,
-where the outer side is a document field (`$.x`, or a binding the compiler
-stores as `__jsmql.var.<name>`) — is the `localField` / `foreignField` pair: the
+(`emit/join.ts`). **A body that opens with a correlated equality** — its first
+stage is a `$match` whose predicate says `<foreign field> === <outer field>`,
+alone or as one `&&` conjunct among others, where the outer side is a document
+field (`$.x`, or a binding the compiler stores as `__jsmql.var.<name>`) — is
+the `localField` / `foreignField` pair: the
 join every MongoDB developer reads and writes, and the one the planner reads
 straight off the foreign index (a multikey index when either side is an array).
 The server's own rules then apply to it: a missing field counts as null, and an
@@ -441,9 +476,14 @@ document examined per outer document), where the pair alone would materialise
 every match first — 110 matching documents of 1 MB each answer Location4568.
 The pair's read leaves `let` unless a later stage reads it.
 
-Everything else keeps `let` + `pipeline` + `$expr`: a second condition in the
-same predicate, a comparison that is not an equality, a side that is not a plain
-field path. The pipeline form compares the two fields' OWN values as JavaScript
+**The other conjuncts of that first `$match` stay in it**, as the pipeline's
+first stage over the pair's matches: a constant clause as the query document it
+already is, an expression clause under `$expr` (the `$and` is dropped when one
+clause is left). The FIRST conjunct that is a correlated equality is the pair,
+and a second one keeps its `let` var and its `$expr` beside it. Everything else
+keeps `let` + `pipeline` + `$expr`: a predicate whose comparisons are not
+equalities, an equality under `||` (the `$match` is an `$or`, not a conjunction), a side
+that is not a plain field path. The pipeline form compares the two fields' OWN values as JavaScript
 does (`undefined === null` is false), and uses the foreign index too (measured on
 mongod 8.3.7: `indexesUsed`, keys examined = rows matched). `$expr: { $eq:
 [array, array] }` compares whole arrays, which is why an array-to-array join is
@@ -466,9 +506,14 @@ const ids = $.wants; $.o = $$$.orders.filter({ productIds: ids }).take(100);
 //       pipeline: [{ $limit: 100 }], as: "o" } },
 //    { $unset: "__jsmql" }]   — two arrays: joined on a shared element, from the multikey index
 $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
-// → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//       pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-//       as: "paid" } }]
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//       pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]   — the other conjunct, beside the pair
+let cutoff = $.minTotal; $.big = $$$.orders.filter(o => o.userId === $._id && o.total > cutoff);
+// → [{ $set: { "__jsmql.var.cutoff": "$minTotal" } },
+//    { $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//       let: { jsmql_v0_cutoff: "$__jsmql.var.cutoff" },
+//       pipeline: [{ $match: { $expr: { $gt: ["$total", "$$jsmql_v0_cutoff"] } } }], as: "big" } },
+//    { $unset: "__jsmql" }]
 $.first = $$$.orders.find(o => o.userId === $._id);
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", pipeline: [{ $limit: 1 }], as: "first" } },
 //    { $set: { first: { $first: "$first" } } }]   — absent when nothing matched
@@ -499,7 +544,7 @@ shortcut declines so the value road runs.
 
 **Where it stands decides the destination.** A bare write `$.o = <chain>` and a
 `let` make the target the stage's `as` — no scratch, no cleanup. Inside a value the
-stage is hoisted ahead of the statement into `__jsmql.tmp.<n>`. `$$ = <chain>`
+stage is hoisted ahead of the stage that reads it, into `__jsmql.tmp.<n>`. `$$ = <chain>`
 switches the stream: correlated (the body read the outer document), a `$lookup`
 per document unwound into the stream; uncorrelated, `{ $match: { $expr: false } }`
 and a `$unionWith`. `$ = $$$.c.find(p)` makes each document the one it found,

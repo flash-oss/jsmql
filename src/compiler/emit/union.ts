@@ -27,6 +27,18 @@ import { bansNestedOf } from "../rows.ts";
 /** The stage a written list of documents makes — the one a container may ban at any depth. */
 const DOCUMENTS = "$documents";
 
+/**
+ * A value in a written document list that needed a STAGE of its own. `$documents`
+ * is the first stage of the `$unionWith` body, so nothing can stand ahead of it to
+ * produce the value, and the read would be a path nothing writes — measured, the
+ * server answers `{}` for such a document rather than refusing it. Both spellings
+ * of the list (`$$.push({ … })` and `$$ = [{ … }]`) call this.
+ */
+export function noStageInDocuments(chain: Chain, written: string, pos: number): void {
+  const made = chain.hoisted[0] ?? chain.emitted[0];
+  if (made !== undefined) throw E.documentsNeedNoStage(written, Object.keys(made)[0], pos);
+}
+
 type Arg = Extract<Expr, { type: "MethodCall" }>["args"][number];
 
 /**
@@ -67,6 +79,8 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
     // The documents are evaluated with NO input document: a `$unionWith` body, over nothing.
     const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
     const list = docs.map((d) => lowerValue(d, childEnv(body, node, "args")));
+    const verb = node.type === "MethodCall" ? node.name : "push";
+    noStageInDocuments(body.chain, `.${verb}(${verb === "concat" ? "[{ … }]" : "{ … }"})`, node.pos);
     out.push({ $unionWith: { pipeline: [{ $documents: list }] } });
     docs = [];
   };

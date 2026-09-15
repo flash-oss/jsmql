@@ -308,6 +308,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   group: Cell<Lists<W, "group">, Of<O>, GroupIn, OutOf["group"]>;
   /** $setWindowFields.output — a DIFFERENT slot from $group. See MongoSpec.window. */
   window: Cell<Lists<W, "window">, Of<O>, GroupIn, OutOf["window"]>;
+  /**
+   * The update DOCUMENT (`jsmql.update`) holds constants, so no row renders here;
+   * a row states the cell only to say what to write instead of it. Absent, the
+   * position's general sentence answers (`refusalFor` in src/compiler/emit/errors.ts).
+   */
+  updateDoc?: Cell<Lists<W, "updateDoc">, Of<O>, ExprIn, OutOf["updateDoc"]>;
 };
 
 type MongoSpec<
@@ -479,6 +485,22 @@ type MongoSpec<
    */
   pipelineOver?: "foreign";
   /**
+   * What a body slot this row files as `statement` HOLDS. Stated by every row that
+   * has such a slot, because the two kinds are not the same thing and no other fact
+   * tells them apart — `test/registry-agrees.test.ts` fails a row that forgets.
+   *
+   *   "pipeline"   a pipeline of its OWN. It has its own first position, so a stage
+   *                inside it is judged by its own placement and not by where the
+   *                container stands. `$lookup`, `$unionWith`, `$facet`,
+   *                `$rankFusion`, `$scoreFusion`.
+   *   a name list  an UPDATE spec, which is no pipeline at all: there is no "first"
+   *                there and only these stages run. MEASURED on mongod, every other
+   *                one answers "<name> is not allowed to be used within an update".
+   *                A stage the language gains later is refused there until this list
+   *                names it, which is the safe default and the server's own answer.
+   */
+  statementBody?: "pipeline" | readonly string[];
+  /**
    * The position this operator's OPERAND stands in, where it is not the operator's
    * own. A query document's values are read as query values, and `$expr`'s is the
    * one that is not: `{ $expr: { $multiply: [ … ] } }` is an aggregation expression
@@ -579,6 +601,12 @@ type GlobalSpec<W extends readonly Position[]> = {
   statement: Cell<Lists<W, "statement">, Family, StageIn, OutOf["statement"]>;
   group: Cell<Lists<W, "group">, Family, GroupIn, OutOf["group"]>;
   window: Cell<Lists<W, "window">, Family, GroupIn, OutOf["window"]>;
+  /**
+   * The update DOCUMENT (`jsmql.update`) holds constants, so no row renders here;
+   * a row states the cell only to say what to write instead of it. Absent, the
+   * position's general sentence answers (`refusalFor` in src/compiler/emit/errors.ts).
+   */
+  updateDoc?: Cell<Lists<W, "updateDoc">, Family, ExprIn, OutOf["updateDoc"]>;
 };
 
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
@@ -797,6 +825,22 @@ const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement
  * A literal is already an array, so it is handed through untouched.
  */
 const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
+
+/**
+ * Two constant bounds in low-to-high order, or null when the pair does not
+ * compare at compile time.
+ *
+ * `.inRange()` accepts its bounds either way round, and the expression form
+ * orders them at run time with `$min`/`$max`. A query clause has no such
+ * operator, so the ordering has to happen here — which it only can when both
+ * bounds are the same kind of value. A number against a date does not compare,
+ * and the row keeps the expression fallback for it.
+ */
+const orderedBounds = (a: unknown, b: unknown): readonly [unknown, unknown] | null => {
+  if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
+  if (a instanceof Date && b instanceof Date) return a <= b ? [a, b] : [b, a];
+  return null;
+};
 
 /**
  * `$nor([p, q])` — `logicalList` where the list is never empty. `$nor` is
@@ -5224,6 +5268,7 @@ export const NAMES = {
 
   $facet: mongo({
     doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     replacesDocument: true,
     body: { required: [], optional: [], closed: false },
@@ -5581,6 +5626,7 @@ export const NAMES = {
   $lookup: mongo({
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
     pipelineOver: "foreign",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     preservesCount: true,
     body: {
@@ -5637,6 +5683,9 @@ export const NAMES = {
 
   $merge: mongo({
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    // MEASURED on mongod 8.3.7, one stage per run with a valid body: these seven run,
+    // and 24 others answer "<name> is not allowed to be used within an update".
+    statementBody: ["$addFields", "$set", "$project", "$unset", "$replaceRoot", "$replaceWith", "$fill"],
     where: ["stream", "statement"],
     only: ["stageLast"],
     // MEASURED: { $merge: { into: "c", zzz: 1 } } → BSON field '$merge.zzz' is an unknown field
@@ -5774,6 +5823,7 @@ export const NAMES = {
 
   $rankFusion: mongo({
     doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
@@ -5917,6 +5967,7 @@ export const NAMES = {
 
   $scoreFusion: mongo({
     doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
@@ -6195,6 +6246,7 @@ export const NAMES = {
     replacesDocument: true,
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     pipelineOver: "foreign",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     body: {
       required: [],
@@ -11351,10 +11403,25 @@ export const NAMES = {
   inRange: name({
     doc: "'.inRange()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "number",
+    // a number and a date test a range the same way, so one cell serves both families
+    on: ["number", "date"],
     returns: "bool",
-    where: ["value"],
-    filter: viaFallback,
+    where: ["value", "filter"],
+    // A field against two constant bounds is a range on one field — the clause an
+    // index answers, and the document a MongoDB developer writes by hand.
+    filter: {
+      args: { sig: "[start, ]end", allowed: [1, 2] },
+      emit: ({ recv, args, pathOf, constant }) => {
+        const path = recv === null ? null : pathOf(recv);
+        if (path === null) return null;
+        const given = args.map(constant);
+        if (given.some((c) => c === null)) return null;
+        const values = given.map((c) => c!.value);
+        const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
+        if (bounds === null) return null;
+        return queryOwnValue(path, { $gte: bounds[0], $lt: bounds[1] });
+      },
+    },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
       emit: ({ recv, args, value }) => {
@@ -13673,9 +13740,12 @@ export const NAMES = {
     returns: "date",
     where: ["value"],
     filter: because("a date is a value, not a test. Compare it: '$.t > new Date(\"2024-01-01\")'."),
+    updateDoc: unsupported(
+      "'new Date(…)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new Date()' is '$currentDate'. Inside a value, pass a Date from your code ('new Date(\"2026-01-01\")', or an interpolated '${new Date()}'), or use the pipeline form ('jsmql.pipeline(\"$.a = { t: new Date() };\")'), which 'updateOne' accepts as well.",
+    ),
     expr: {
       byArgs: {
-        none: { args: { sig: "", none: true }, emit: () => ({ $toDate: "$$NOW" }) },
+        none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
         // A valid date spelling never reaches this row — the fold makes it a Date value first.
         // A constant the fold could evaluate never reaches this row; one that stays
         // is a string `Date.parse` refuses.
@@ -13707,6 +13777,9 @@ export const NAMES = {
     returns: "objectId",
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
+    updateDoc: unsupported(
+      "'ObjectId(…)' is computed on the server, and a document-form update takes constants. Pass an id from your code (a '0x507f1f77bcf86cd799439011' literal, or an interpolated '${new ObjectId()}'), or use the pipeline form ('jsmql.pipeline(\"$.id = ObjectId();\")'), which 'updateOne' accepts as well.",
+    ),
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
@@ -13848,6 +13921,9 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
+    updateDoc: unsupported(
+      "'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = new Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline(\"$.t = Date.now();\")'), which 'updateOne' accepts as well.",
+    ),
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
     stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),
     statement: unsupported(

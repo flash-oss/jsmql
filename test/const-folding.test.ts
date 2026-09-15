@@ -133,7 +133,7 @@ describe("const folding — pipeline interaction", () => {
 
   it("mixed fold + runtime binding stays a Pipeline", () => {
     expect(jsmql("const x = 5; const t = new Date(); $match($.a === x && $.b >= t)")).toEqual([
-      { $set: { "__jsmql.var.t": { $toDate: "$$NOW" } } },
+      { $set: { "__jsmql.var.t": "$$NOW" } },
       { $match: { a: 5, $expr: { $gte: ["$b", "$__jsmql.var.t"] } } },
       { $unset: "__jsmql" },
     ]);
@@ -169,7 +169,7 @@ describe("const folding — fallback to runtime binding", () => {
 
   it("new Date() (reads the clock) stays runtime", () => {
     expect(jsmql("const now = new Date(); $match($.createdAt < now)")).toEqual([
-      { $set: { "__jsmql.var.now": { $toDate: "$$NOW" } } },
+      { $set: { "__jsmql.var.now": "$$NOW" } },
       { $match: { $expr: { $lt: ["$createdAt", "$__jsmql.var.now"] } } },
       { $unset: "__jsmql" },
     ]);
@@ -187,6 +187,27 @@ describe("const folding — fallback to runtime binding", () => {
   it("a BigInt RHS stays runtime ($toLong)", () => {
     expect(jsmql("const big = 123n; $match($.n === big)")).toEqual([
       { $match: { $expr: { $eq: ["$n", { $toLong: "123" }] } } },
+    ]);
+  });
+});
+
+describe("const folding — declaration lists", () => {
+  it("folds a declarator from the one before it in the same list, and emits no stage", () => {
+    // The motivating shape: a window bounded by a constant date.
+    expect(
+      jsmql('const start = new Date("2026-08-01"), end = start.plus(1, "month"); $.t.inRange(start, end)'),
+    ).toEqual({ t: { $gte: new Date("2026-08-01T00:00:00.000Z"), $lt: new Date("2026-09-01T00:00:00.000Z") } });
+    // Folded declarations emit no stage, so the program still collapses to a Filter.
+    expect(jsmql("const ms = 1000, day = ms * 60 * 60 * 24; $.elapsedMs > day")).toEqual({
+      elapsedMs: { $gt: 86400000 },
+    });
+  });
+
+  it("folds only the declarators that are constant, and keeps the runtime $set for the rest", () => {
+    expect(jsmql("const k = 2, y = $.a * k; $match($.b === y)")).toEqual([
+      { $set: { "__jsmql.var.y": { $multiply: ["$a", 2] } } },
+      { $match: { $expr: { $eq: ["$b", "$__jsmql.var.y"] } } },
+      { $unset: "__jsmql" },
     ]);
   });
 });

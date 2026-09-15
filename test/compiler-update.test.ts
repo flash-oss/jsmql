@@ -109,6 +109,18 @@ describe("compiler/emit/update — writes become their operators", () => {
     expect(() => update("$.a")).toThrow(/An update document is made of writes/);
     expect(() => update('$.n += "x"')).toThrow(/takes a number/);
   });
+
+  it("refuses a server-computed value with what to write instead", () => {
+    // `new Date()` is `$currentDate` only as the whole write; anywhere else the row says so.
+    for (const src of ["$.a = { t: new Date() }", "$.tags.push(new Date())", "$.t = new Date($.x)"])
+      expect(() => update(src)).toThrow(/'\$\.<field> = new Date\(\)' is '\$currentDate'.*pipeline form/s);
+    expect(() => update("$.id = ObjectId()")).toThrow(/Pass an id from your code.*pipeline form/s);
+    expect(() => update("$.t = Date.now()")).toThrow(/'\$currentDate'.*for milliseconds, use the pipeline form/s);
+    // A name whose row has no update-document cell gets the position's own sentence.
+    expect(() => update("$.t = typeof $.x")).toThrow(
+      "'typeof' is computed on the server, and a document-form update takes constants. Use the pipeline form ('jsmql.pipeline(\"$.<field> = typeof…;\")'), which 'updateOne' accepts as well, or pass the value from your code.",
+    );
+  });
 });
 
 let client: MongoClient | null = null;

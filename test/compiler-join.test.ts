@@ -165,7 +165,9 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
     expect(some[0].$lookup.let).toEqual({ jsmql_f0_wants: "$wants" });
   });
 
-  it("keeps a constant clause native beside the correlation", () => {
+  it("takes the pair out of a `&&` predicate; the other conjuncts are a $match beside it", () => {
+    // The equality is one conjunct among others: it is still the pair, and the
+    // constant clause stays native in the pipeline's `$match`, over the pair's matches.
     expect(
       compiled('$.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");', [
         { _id: 1, paid: [101] },
@@ -173,13 +175,33 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
         { _id: 3, paid: [] },
         { _id: 4, paid: [] },
       ]),
+    ).toEqual([{ $lookup: { from: "orders", ...COMPACT, pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]);
+    // the equality may stand anywhere among the conjuncts
+    expect(
+      compiled('$.paid = $$$.orders.filter(o => o.status === "paid" && o.userId === $._id);', [
+        { _id: 1, paid: [101] },
+        { _id: 2, paid: [103] },
+        { _id: 3, paid: [] },
+        { _id: 4, paid: [] },
+      ]),
+    ).toEqual([{ $lookup: { from: "orders", ...COMPACT, pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]);
+  });
+
+  it("an equality under `||` is no pair — the whole predicate runs as one $match", () => {
+    expect(
+      compiled("$.any = $$$.orders.filter(o => o.userId === $._id || o.total > 15);", [
+        { _id: 1, any: [101, 102] },
+        { _id: 2, any: [102, 103] },
+        { _id: 3, any: [102] },
+        { _id: 4, any: [102] },
+      ]),
     ).toEqual([
       {
         $lookup: {
           from: "orders",
           let: LET,
-          pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "paid",
+          pipeline: [{ $match: { $or: [{ $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } }, { total: { $gt: 15 } }] } }],
+          as: "any",
         },
       },
     ]);
@@ -212,14 +234,9 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id", jsmql_v0_cutoff: "$__jsmql.var.cutoff" },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: ["$total", "$$jsmql_v0_cutoff"] }] },
-              },
-            },
-          ],
+          ...COMPACT,
+          let: { jsmql_v0_cutoff: "$__jsmql.var.cutoff" },
+          pipeline: [{ $match: { $expr: { $gt: ["$total", "$$jsmql_v0_cutoff"] } } }],
           as: "big",
         },
       },
@@ -449,14 +466,9 @@ describe("compiler/emit/join — inside the body", () => {
             {
               $lookup: {
                 from: "items",
-                let: { jsmql_f1__id: "$_id" },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: { $and: [{ $eq: ["$orderId", "$$jsmql_f1__id"] }, { $eq: ["$tag", "$$jsmql_f0_tag"] }] },
-                    },
-                  },
-                ],
+                localField: "_id",
+                foreignField: "orderId",
+                pipeline: [{ $match: { $expr: { $eq: ["$tag", "$$jsmql_f0_tag"] } } }],
                 as: "items",
               },
             },
@@ -585,6 +597,259 @@ describe("compiler/emit/join — the refusals name the way out", () => {
     ).toEqual([
       { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
       { $set: { t: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
+describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that reads it", () => {
+  // The join is written in a callback, and the callback's parameter names the
+  // document ITS stage receives — so the `$lookup` belongs directly ahead of that
+  // stage, not ahead of the statement. MEASURED with the `$lookup` at the front
+  // instead: `$size` of a slot `$sortByCount` had already dropped ("The argument
+  // to $size must be an array, but was of type: missing").
+  it("joins on the group key a reshaping stage made, not on the source document", () => {
+    expect(
+      compiled(
+        "$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length })); $$.toSorted({ n: -1, _id: 1 });",
+        [
+          { _id: "y", n: 2 },
+          { _id: null, n: 1 },
+          { _id: "x", n: 1 },
+        ],
+      ),
+    ).toEqual([
+      { $sortByCount: "$tag" },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
+      { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } },
+      { $sort: { n: -1, _id: 1 } },
+    ]);
+    // `$group` is the same reshape by another name.
+    expect(
+      compiled(
+        '$$.$group({ _id: "$tag", top: { $max: "$minTotal" } }).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length })); $$.toSorted({ _id: 1 });',
+        [
+          { _id: null, n: 1 },
+          { _id: "x", n: 1 },
+          { _id: "y", n: 2 },
+        ],
+      ),
+    ).toEqual([
+      { $group: { _id: "$tag", top: { $max: "$minTotal" } } },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
+      { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } },
+      { $sort: { _id: 1 } },
+    ]);
+  });
+
+  // `$unwind` keeps the slot, so this one answered no error at all: both rows read
+  // the `$lookup` that had matched the WHOLE `ids` array before the unwind, and
+  // came back with the same order's total. MEASURED: `t: 10` twice.
+  it("joins on the element an unwinding stage made, not on the array it came from", () => {
+    expect(
+      compiled(
+        '$$.$unwind("$ids").map(u => ({ _id: u.ids, t: $$$.orders.find(o => o._id === u.ids).total })); $$.toSorted({ _id: 1 });',
+        [
+          { _id: 101, t: 10 },
+          { _id: 103, t: 5 },
+        ],
+      ),
+    ).toEqual([
+      { $unwind: "$ids" },
+      {
+        $lookup: {
+          from: "orders",
+          localField: "ids",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $replaceWith: { _id: "$ids", t: "$__jsmql.tmp.0.total" } },
+      { $sort: { _id: 1 } },
+    ]);
+  });
+
+  // A `,`-joined run splits into two `$set`s because the second write reads what
+  // the first one wrote — and the join between them reads the NEW field.
+  it("reads the field the write before it made", () => {
+    expect(
+      compiled("$.t = $.tag, $.n = $$$.orders.filter(o => o.tag === $.t).length;", [
+        { _id: 1, t: "x", n: 1 },
+        { _id: 2, t: "y", n: 2 },
+        { _id: 3, n: 1 },
+        { _id: 4, n: 1 },
+      ]),
+    ).toEqual([
+      { $set: { t: "$tag" } },
+      { $lookup: { from: "orders", localField: "t", foreignField: "tag", as: "__jsmql.tmp.0" } },
+      { $set: { n: { $size: "$__jsmql.tmp.0" } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  // A stage that only DROPS documents leaves the join reading the same fields, so
+  // the answer is unchanged — the `$lookup` still moves behind it and runs over
+  // fewer documents.
+  it("runs after a stage that only selects documents", () => {
+    expect(
+      compiled(
+        '$$.filter(u => u.tag === "y").map(u => ({ _id: u._id, o: $$$.orders.filter(o => o.userId === u._id).length }));',
+        [{ _id: 2, o: 1 }],
+      ),
+    ).toEqual([
+      { $match: { tag: "y" } },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+      { $replaceWith: { _id: "$_id", o: { $size: "$__jsmql.tmp.0" } } },
+    ]);
+  });
+});
+
+describe("compiler/emit/join — a join inside an expression that binds its own variable", () => {
+  // A `$lookup` is a STAGE: it is hoisted out of the `$map` / `$filter` / `$reduce`
+  // that binds the element, so its body would name a variable the server never
+  // bound there. MEASURED before the refusal: "Use of undefined variable: x".
+  const REFUSAL =
+    /'x' is bound by an enclosing callback.*'\$lookup' STAGE.*'\$\$ = \$\.<array>;'.*let <name> = \$\$\$\.<coll>/s;
+
+  it("refuses the read and names the two spellings that work", () => {
+    expect(() => pipeline("$.n = $.items.map(x => $$$.orders.find({ _id: x.oid }).total);")).toThrow(REFUSAL);
+    expect(() => pipeline("$.n = $.items.filter(x => $$$.orders.find({ _id: x.oid }).paid);")).toThrow(REFUSAL);
+    expect(() => pipeline("$.n = $.items.reduce((a, x) => a + $$$.orders.find({ _id: x.oid }).total, 0);")).toThrow(
+      REFUSAL,
+    );
+    // the value-mode `.map` over a joined array binds its element the same way
+    expect(() =>
+      pipeline("$.o = $$$.items.filter(i => i.orderId === $._id).map(x => $$$.orders.find({ _id: x.orderId }).total);"),
+    ).toThrow(/'x' is bound by an enclosing callback/);
+  });
+
+  it("keeps the reads that ARE stage-level", () => {
+    // the DOCUMENT a stream callback names is a field path, which the `let` carries
+    expect(
+      compiled("$.o = $$$.orders.filter(o => o.userId === $._id).map(o => ({ id: o._id, u: o.userId }));"),
+    ).toEqual([
+      { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $replaceWith: { id: "$_id", u: "$userId" } }], as: "o" } },
+    ]);
+    // a callback that binds an element but never reads it inside the join is fine
+    expect(compiled("$.n = $.ids.map(x => $$$.orders.filter(o => o.userId === $._id).length);")).toEqual([
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
+      { $set: { n: { $map: { input: "$ids", as: "x", in: { $size: "$__jsmql.tmp.0" } } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
+describe("compiler/emit/join — a stream handle counts the body that BOUND it", () => {
+  // `coll.length` is the count of the sub-stream the callback's THIRD parameter
+  // names, and a deeper body reads an ancestor's handle through each `$lookup.let`
+  // on the way down — the same hop an outer field takes. Stamped on the reading
+  // body's chain instead, the two counts become one field and answer the same
+  // number: MEASURED, `{ $set: { a: "$__jsmql.length", b: "$__jsmql.length" } }`,
+  // which the server accepts and answers wrongly without a word.
+  it("carries an ancestor sub-stream's count down, distinct from the body's own", () => {
+    expect(
+      compiled(
+        `$$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
+  const its = $$$.items.filter({ orderId: o._id }).aggregate((t, k, itemsColl) => {
+    t = { id: t._id, items: itemsColl.length, orders: ordersColl.length };
+  });
+  o = { orderId: o._id, its };
+});`,
+        [
+          {
+            orderId: 101,
+            its: [
+              { id: "i1", items: 2, orders: 2 },
+              { id: "i2", items: 2, orders: 2 },
+            ],
+          },
+          { orderId: 102, its: [] },
+          { orderId: 103, its: [{ id: "i3", items: 1, orders: 1 }] },
+        ],
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          ...COMPACT,
+          pipeline: [
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            {
+              $lookup: {
+                from: "items",
+                localField: "_id",
+                foreignField: "orderId",
+                let: { jsmql_s1_length: "$__jsmql.length" },
+                pipeline: [
+                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+                  { $replaceWith: { id: "$_id", items: "$__jsmql.length", orders: "$$jsmql_s1_length" } },
+                ],
+                as: "__jsmql.var.its",
+              },
+            },
+            { $replaceWith: { orderId: "$_id", its: "$__jsmql.var.its" } },
+          ],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0" },
+    ]);
+  });
+});
+
+describe("compiler/emit/join — a correlated key the server holds as a constant", () => {
+  // `$lookup` evaluates its `let` against the outer document and then OPTIMISES the
+  // sub-pipeline with the result substituted in, so every branch of a type dispatch
+  // is folded against that one value. A nested `$cond` folds the branch that does
+  // not apply and the pipeline is refused before a document is read — MEASURED,
+  // "can't convert from BSON type array to String" for an array key and
+  // "$arrayElemAt's first argument must be an array" for a string one. A `$switch`
+  // drops a branch whose case folds to false without optimising it.
+  it("reads a bracket index in a join key without folding the branch that does not apply", () => {
+    expect(
+      compiled("$.found = $$$.orders.find({ _id: $.ids[0] }).status;", [
+        { _id: 1, found: "paid" },
+        { _id: 2 },
+        { _id: 3 },
+        { _id: 4 },
+      ]),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_ids: "$ids" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $eq: [
+                    "$_id",
+                    {
+                      $switch: {
+                        branches: [
+                          { case: { $isArray: "$$jsmql_f0_ids" }, then: { $arrayElemAt: ["$$jsmql_f0_ids", 0] } },
+                          {
+                            case: { $eq: [{ $type: "$$jsmql_f0_ids" }, "string"] },
+                            then: { $substrCP: ["$$jsmql_f0_ids", 0, 1] },
+                          },
+                        ],
+                        default: { $getField: { field: "0", input: "$$jsmql_f0_ids" } },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+            { $limit: 1 },
+          ],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { found: "$__jsmql.tmp.0.status" } },
       { $unset: "__jsmql" },
     ]);
   });

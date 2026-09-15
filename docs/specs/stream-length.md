@@ -20,9 +20,8 @@ a `$setWindowFields` with a full-partition `$count` stamps the count onto every
 document under the reserved system slot `__jsmql.length` (see
 [`src/namespace.ts`](../../src/namespace.ts)), after which the read is the field
 path `"$__jsmql.length"`. The `length` row's cell in [`src/registry/names.ts`](../../src/registry/names.ts)
-places the stamp through the `hoist` service — ahead of the statement that
-holds the read, on the ROOT chain — and answers with the path the Env renders
-for it.
+places the stamp through the `hoist` service — ahead of the STAGE that holds the
+read, on the ROOT chain — and answers with the path the Env renders for it.
 
 ```json
 { "$setWindowFields": { "output": { "__jsmql.length": { "$count": {} } } } }
@@ -37,8 +36,11 @@ trailing `{ $unset: "__jsmql" }`) are emitted by the pipeline lowerers in
 
 The materialiser is hoisted **lazily** and cached:
 
-- On the first statement that reads `$$.length`, a `$setWindowFields` is emitted
-  ahead of that statement's stage(s).
+- On the first read of `$$.length`, a `$setWindowFields` is emitted directly ahead
+  of the stage that reads it — the stage the read's own lowering makes, not the
+  first stage of the statement. So `$$.$match(p).map(d => $$.length)` counts the
+  MATCHED documents, exactly as the two-statement spelling `$match(p); $.n =
+  $$.length;` does ([lookup-stage.md § Where a hoisted stage lands](lookup-stage.md)).
 - Subsequent uses **reuse** the stamped field — no new stage — as long as it
   stays *fresh*.
 - After any stage that is **not** count-and-field preserving, the next use
@@ -51,12 +53,14 @@ count afterwards. A stage that states nothing invalidates. The rule is
 **conservative**: recomputing is always correct and reusing a stale count is a
 bug, so freshness is kept only where a row proves it safe.
 
-Inside a callback the count cannot be recomputed, because the stamp is hoisted
-to the FRONT of the body: the callback's third parameter is therefore refused
-altogether in a body that runs any stage without `preservesCount`. Its message
-names the stage. Reading it after a `$match` answered the collection's size
-rather than the filtered stream's, and after a `$group` the field was gone and
-every test on it fired.
+Inside a callback the third parameter is refused altogether in a body that runs
+any stage without `preservesCount`. The count is a FIELD stamped onto the body's
+documents, and such a stage drops it (`$group`) or changes how many documents
+there are (`$unwind`, `$match`, `$limit`) — so whether a read still means what it
+says depends on where in the block it sits, and a stage body reads the documents
+its own stage receives. `staleCountStage` asks the question of the SOURCE and
+answers it once for the whole body, which is the conservative answer; its message
+names the stage.
 
 Detection is a **complete** AST walk (`someExpr` / `containsStreamLength` in
 `pipeline.ts`, covering every child-bearing `Expr` node), because a missed node
@@ -102,8 +106,21 @@ A `$$$.<coll>.filter(p).map((o, _i, coll) => …)` chain runs its `.map` as a
 per-foreign-doc transform *inside* the `$lookup.pipeline`. There, `coll` (the 3rd
 callback param) names the **filtered foreign sub-stream**, and `coll.length` is
 its document count — the same `$setWindowFields` `$count` → `__jsmql.length` stamp
-(the single shape in [`src/namespace.ts`](../../src/namespace.ts)), placed one level
-down, on the body's own chain, ahead of the stage that reads it. The parameter is
+(the single shape in [`src/namespace.ts`](../../src/namespace.ts)), placed on the
+chain of the body that BOUND the handle, ahead of the stage that reads it.
+
+**The binding carries that chain**, not the read: `Ref.streamHandle` in
+[`src/compiler/emit/names.ts`](../../src/compiler/emit/names.ts) holds the `Chain` the
+body assembles, and `Binding.level` its document level. Both are read back by
+`streamHandleOf` in [`src/compiler/emit/inputs.ts`](../../src/compiler/emit/inputs.ts)
+when the `hoist` service places the stamp. A DEEPER body reading an ANCESTOR's handle
+therefore stamps the ancestor's own pipeline and reads the value back down through
+each `$lookup.let` on the way — `jsmql_s<level>_length`, the same hop an outer field
+takes. Taking the level from the READ instead collapses the two counts onto one
+`$__jsmql.length` field, so `shpmntsColl.length < ordersColl.length` compared a value
+with itself; nothing about that document is invalid MQL, so the server answers it
+without a word. A `$facet` branch is the same trap by another route: it assembles a
+chain of its own at the SAME level, so the chain and not the level is what decides. The parameter is
 a `streamHandle` binding in the body's Env, and its `.length` is that inner count.
 Placement is automatic: the chain appends each link's stages in order, so the count
 reflects the sub-stream *at that chain point* (post-filter, post-`.slice`, …), and the
@@ -126,12 +143,13 @@ read as `$$jsmql_s0_length` — one hop per lookup level, exactly as an outer fi
 read is carried ([lookup-stage.md § The join road](lookup-stage.md)). Verified on
 mongod (counts correct, no leak).
 
-Distinct paths, no collision: the root count rides a `$$`-**variable**
-(`jsmql_s0_length`), an inner sub-stream count rides the `$__jsmql.length` **field**, so a
-`.map` body can read both at once (`totalUsers: $$.length`, `totalOrders:
-coll.length`). The two are different source spellings — `$$.length` is the root
-stream's `length`, `coll.length` is the callback parameter's — so the root capture
-never fires for a handle.
+Distinct paths, no collision: a count read from a SHALLOWER level rides a
+`$$`-**variable** (`jsmql_s<level>_length`) and the count of the body doing the reading
+rides the `$__jsmql.length` **field**, so one body can read its own and every ancestor's
+at once (`totalUsers: $$.length`, `ordersForUser: ordersColl.length`, `shipmentsHere:
+shpmntsColl.length`) — each its own name, each taken from the right documents. The root
+stream is level 0 by the same rule: `$$` is the ROOT stream wherever it is written (HR4)
+and belongs to the top-most chain, which is not the chain of whatever body reads it.
 
 **Every depth.** `$$` is the root stream wherever it is written (see
 [LANG_RULES.md](../LANG_RULES.md)). A `$facet` branch and a declared function body

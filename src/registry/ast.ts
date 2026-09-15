@@ -229,7 +229,19 @@ export type Expr =
 // statements
 // ═════════════════════════════════════════════════════════════════════════════
 
-export type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" | "const"; pos: number };
+export type LetDecl = {
+  type: "LetDecl";
+  name: string;
+  value: Expr;
+  kind: "let" | "const";
+  /**
+   * The source offset of the KEYWORD that opened this declaration. Every declarator
+   * of one `let`/`const` shares it, which is what lets them share a stage — and what
+   * stops a folded-away neighbour from bridging a `;` the developer wrote.
+   */
+  group: number;
+  pos: number;
+};
 
 export type FuncDecl = {
   type: "FuncDecl";
@@ -238,6 +250,8 @@ export type FuncDecl = {
   kind: "let" | "const";
   /** Two spellings, one node. `function` is not reserved — it lexes as a name. */
   form: "arrow" | "function";
+  /** The keyword's offset, as on LetDecl. A function holds no stage of its own. */
+  group: number;
   pos: number;
 };
 

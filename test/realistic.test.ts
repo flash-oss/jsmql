@@ -32,15 +32,18 @@ declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?:
 //      ($setWindowFields), guarded by a $convert-error $match.
 //   2) that user's distinct, recently-bought product ids (correlated $lookup,
 //      then value-mode .map/.flatten/.uniq).
-//   3) products co-purchased by everyone who bought those (.flatMap("productIds")
-//      inside the join hands each id to the callbacks after it), minus what the
-//      user already owns, tallied into a { productId: count } map with .countBy()
+//   3) products co-purchased by everyone who bought those in the last year — the
+//      equality in the `&&` is the indexed localField/foreignField pair, the date
+//      bound (`new Date().minus(1, "year")` → $dateSubtract from $$NOW) a $match
+//      beside it; .flatMap("productIds") inside the join hands each id to the
+//      callbacks after it — minus what the user already owns, tallied into a
+//      { productId: count } map with .countBy()
 //      and cut to the 10 most frequent (.entries → .sortBy(([id, count]) => -count)
 //      → .take(10) → .fromEntries).
 //   4) cast the tally's keys back to ObjectIds — an object keys by string, and a
 //      string never equals an `_id` — then join the product docs (indexed
-//      `pr._id in [...]` lookup) and emit the top-10 scored recommendations as a
-//      *stream of documents* (`$ = <array>` fans the array out via $unwind +
+//      `pr._id in [...]` lookup) and emit the scored recommendations, best first,
+//      as a *stream of documents* (`$ = <array>` fans the array out via $unwind +
 //      $replaceWith).
 // Every scan of the massive `orders` / `products` collections is recency-sorted
 // (.toSorted) and capped (.take) so the work stays bounded at scale.
@@ -64,9 +67,9 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter({ productIds: myProductIds })
+  .filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, "year"))
   .toSorted({ createdAt: -1 })
-  .take(100) // a pipeline of co-purchase orders, most recent 100
+  .take(100) // a pipeline of co-purchase orders, most recent 100 of the last year
   .flatMap("productIds")
   .filter(p => !myProductIds.includes(p))
   .countBy() // { ID: count } map
@@ -87,8 +90,7 @@ $$ = candidateProductIds
     score: candidateProductIdCounts[id],
     name:  candidateProducts.find({ _id: id }).name,
   }))
-  .orderBy({ score: -1 })
-  .take(10);
+  .orderBy({ score: -1 });
       `,
       ).toEqual([
         { $match: { _id: new ObjectId("507f1f77bcf86cd799439011") } },
@@ -134,6 +136,11 @@ $$ = candidateProductIds
             foreignField: "productIds",
             let: { jsmql_v0_myProductIds: "$__jsmql.var.myProductIds" },
             pipeline: [
+              {
+                $match: {
+                  $expr: { $gt: ["$createdAt", { $dateSubtract: { startDate: "$$NOW", unit: "year", amount: 1 } }] },
+                },
+              },
               { $sort: { createdAt: -1 } },
               { $limit: 100 },
               { $unwind: "$productIds" },
@@ -221,46 +228,41 @@ $$ = candidateProductIds
         {
           $set: {
             "__jsmql.tmp.2": {
-              $slice: [
-                {
-                  $sortArray: {
-                    input: {
-                      $map: {
-                        input: "$__jsmql.var.candidateProductIds",
-                        as: "id",
-                        in: {
-                          productId: "$$id",
-                          score: {
-                            $getField: {
-                              field: { $toString: { $ifNull: ["$$id", ""] } },
-                              input: "$__jsmql.var.candidateProductIdCounts",
-                            },
-                          },
-                          name: {
-                            $getField: {
-                              field: "name",
-                              input: {
-                                $arrayElemAt: [
-                                  {
-                                    $filter: {
-                                      input: "$__jsmql.var.candidateProducts",
-                                      as: "x",
-                                      cond: { $eq: ["$$x._id", "$$id"] },
-                                    },
-                                  },
-                                  0,
-                                ],
+              $sortArray: {
+                input: {
+                  $map: {
+                    input: "$__jsmql.var.candidateProductIds",
+                    as: "id",
+                    in: {
+                      productId: "$$id",
+                      score: {
+                        $getField: {
+                          field: { $toString: { $ifNull: ["$$id", ""] } },
+                          input: "$__jsmql.var.candidateProductIdCounts",
+                        },
+                      },
+                      name: {
+                        $getField: {
+                          field: "name",
+                          input: {
+                            $arrayElemAt: [
+                              {
+                                $filter: {
+                                  input: "$__jsmql.var.candidateProducts",
+                                  as: "x",
+                                  cond: { $eq: ["$$x._id", "$$id"] },
+                                },
                               },
-                            },
+                              0,
+                            ],
                           },
                         },
                       },
                     },
-                    sortBy: { score: -1 },
                   },
                 },
-                10,
-              ],
+                sortBy: { score: -1 },
+              },
             },
           },
         },
@@ -922,7 +924,7 @@ describe("stamp login activity (multi-field update)", { features: ["Update filte
     { kind: "pipeline", usage: "db.users.updateOne({ _id: 123 }, jsmql(...))" },
     () => {
       expect(jsmql(`$.loginCount += 1, $.lastSeenAt = new Date()`)).toEqual([
-        { $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
+        { $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: "$$NOW" } },
       ]);
     },
   );
@@ -1190,12 +1192,14 @@ describe(
     it("dynamic bracket key dispatches at runtime, still without interpreting the key", { kind: "expression" }, () => {
       // `$.cart.field[$.mainSide]` — a computed key. jsmql doesn't guess the key;
       // it accesses whatever `$mainSide` names, dispatching array-index vs
-      // object-field at query time (a BSON value can be either).
+      // object-field at query time (a BSON value can be either). The dispatch is a
+      // `$switch`: the server optimises a `$cond`'s branches before it reads the
+      // test, so a receiver it holds as a constant would fold the branch that does
+      // not apply and refuse the pipeline.
       expect(jsmql.expr(`$.cart.field[$.mainSide]`)).toEqual({
-        $cond: {
-          if: { $isArray: "$cart.field" },
-          then: { $arrayElemAt: ["$cart.field", "$mainSide"] },
-          else: { $getField: { field: { $toString: { $ifNull: ["$mainSide", ""] } }, input: "$cart.field" } },
+        $switch: {
+          branches: [{ case: { $isArray: "$cart.field" }, then: { $arrayElemAt: ["$cart.field", "$mainSide"] } }],
+          default: { $getField: { field: { $toString: { $ifNull: ["$mainSide", ""] } }, input: "$cart.field" } },
         },
       });
     });
@@ -1997,9 +2001,7 @@ describe("days since last login (Math.abs + $dateDiff + ?? + new Date)", { featu
       expect(
         jsmql.expr(`Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)`),
       ).toEqual({
-        $abs: {
-          $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: { $toDate: "$$NOW" }, unit: "day" } }, -1],
-        },
+        $abs: { $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: "$$NOW", unit: "day" } }, -1] },
       });
     },
   );
@@ -2011,7 +2013,7 @@ describe("days since document was created", { features: ["Date and time"] }, () 
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { daysSinceCreated: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })`)).toEqual({
-        $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" },
+        $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" },
       });
     },
   );
@@ -2277,16 +2279,9 @@ $project({ name: 1, recentOrders: 1 });
               {
                 $lookup: {
                   from: "shipments",
-                  let: { jsmql_f1__id: "$_id" },
-                  pipeline: [
-                    {
-                      $match: {
-                        $expr: {
-                          $and: [{ $eq: ["$orderId", "$$jsmql_f1__id"] }, { $eq: ["$userId", "$$jsmql_f0__id"] }],
-                        },
-                      },
-                    },
-                  ],
+                  localField: "_id",
+                  foreignField: "orderId",
+                  pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
                   as: "shipments",
                 },
               },
@@ -3075,15 +3070,11 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id", jsmql_v0_minSpend: "$__jsmql.var.minSpend" },
+              localField: "_id",
+              foreignField: "userId",
+              let: { jsmql_v0_minSpend: "$__jsmql.var.minSpend" },
               pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: ["$total", "$$jsmql_v0_minSpend"] }],
-                    },
-                  },
-                },
+                { $match: { $expr: { $gt: ["$total", "$$jsmql_v0_minSpend"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 10 },
               ],
@@ -3284,6 +3275,40 @@ $.recentCoPurchaseOrders = $$$.orders
   });
 });
 
+describe("Best sellers: rank by order count, then name each product", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orderItems.aggregate(jsmql(...))" }, () => {
+    // The top 10 products by line-item count, each with its name from `products`.
+    // `$sortByCount` REPLACES the document with `{ _id, count }`, so `g._id` inside
+    // the `.map` is the product id it grouped on — and the `$lookup` the join
+    // materialises runs directly ahead of the `$replaceWith` that reads it, joining
+    // on that group key rather than on the line item the pipeline started from.
+    // Verified on a live mongod: each row carries its product name.
+    expect(
+      jsmql(`
+$$.$sortByCount($.productId).take(10).map(g => ({
+  productId: g._id,
+  orders: g.count,
+  name: $$$.products.find({ _id: g._id }).name,
+}));
+      `),
+    ).toEqual([
+      { $sortByCount: "$productId" },
+      { $limit: 10 },
+      {
+        $lookup: {
+          from: "products",
+          localField: "_id",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $replaceWith: { productId: "$_id", orders: "$count", name: "$__jsmql.tmp.0.name" } },
+    ]);
+  });
+});
+
 describe("Cross-level references across three nested lookup levels", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // The hardest cross-level case: an `.aggregate` sub-pipeline nested inside
@@ -3293,7 +3318,10 @@ describe("Cross-level references across three nested lookup levels", { features:
     //   • `o._id`              — the parent order doc (an enclosing foreign param)
     //   • `$._id`              — the ROOT user doc (two lookup levels up)
     // Each is captured into the correct `$lookup.let` (foreign/system vars
-    // `jsmql_f<d>_…` / `jsmql_s<d>_…`) and read deeper via `$$` propagation.
+    // `jsmql_f<d>_…` / `jsmql_s<d>_…`) and read deeper via `$$` propagation. The
+    // two counts are DIFFERENT documents — `$__jsmql.length` is stamped on the
+    // shipments sub-stream, `$$jsmql_s1_length` carries the orders one down — so
+    // the second assert compares two numbers and not one with itself.
     // Verified end-to-end on a live mongod (per-user → per-order → per-shipment
     // data correct; `userId: $._id` resolves to the root user at every order).
     expect(
@@ -3315,14 +3343,14 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
           foreignField: "userId",
           let: { jsmql_f0__id: "$_id" },
           pipeline: [
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $lookup: {
                 from: "shipments",
                 localField: "_id",
                 foreignField: "orderId",
-                let: { jsmql_f1__id: "$_id" },
+                let: { jsmql_f1__id: "$_id", jsmql_s1_length: "$__jsmql.length" },
                 pipeline: [
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   {
                     $match: {
@@ -3355,6 +3383,7 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                       },
                     },
                   },
+                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   {
                     $match: {
                       $expr: {
@@ -3362,7 +3391,7 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                           input: true,
                           to: {
                             $cond: [
-                              { $lt: ["$__jsmql.length", "$__jsmql.length"] },
+                              { $lt: ["$__jsmql.length", "$$jsmql_s1_length"] },
                               "bool",
                               "jsmql assertion failed: fewer shipments than orders",
                             ],

@@ -596,18 +596,19 @@ const VALUE_METHOD_SIGNATURES = {
     doc: "Split into an array of words — `_.words`.",
   },
   // ── Number → number / boolean ───────────────────────────────────────────────
-  // The one dual-receiver method: `.clamp` bounds a number OR a date, and its
-  // result follows the receiver (which is why the METHODS registry gives it no
-  // invariant `returns`). Hence the per-receiver `sig` map.
+  // Two dual-receiver methods: `.clamp` and `.inRange` bound a number OR a date.
+  // `.clamp`'s result follows its receiver (which is why the METHODS registry gives
+  // it no invariant `returns`), so both need a per-receiver `sig` map. A date takes
+  // both bounds: the one-argument form measures from 0, which only a number does.
   clamp: {
     recv: ["Number", "Date"],
     sig: { Number: "(lower: number, upper: number): number", Date: "(lower: Date, upper: Date): Date" },
     doc: "Clamp within `[lower, upper]` — `_.clamp`.",
   },
   inRange: {
-    recv: "Number",
-    sig: "(start: number, end?: number): boolean",
-    doc: "Whether the number is in the range — `_.inRange`.",
+    recv: ["Number", "Date"],
+    sig: { Number: "(start: number, end?: number): boolean", Date: "(start: Date, end: Date): boolean" },
+    doc: "Whether the value is in the half-open range `[start, end)` — `_.inRange`.",
   },
   round: { recv: "Number", sig: "(precision?: number): number", doc: "Round to `precision` decimals — `_.round`." },
   ceil: { recv: "Number", sig: "(precision?: number): number", doc: "Round up to `precision` decimals — `_.ceil`." },

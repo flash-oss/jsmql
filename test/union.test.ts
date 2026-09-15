@@ -105,6 +105,42 @@ describe("$$.push — inline document(s)", () => {
   });
 });
 
+describe("$$.push / $$ = [ … ] — a written document holds only what the program spells", () => {
+  // `$documents` runs inside the `$unionWith` with NO input document, and it is the
+  // FIRST stage of that body — so nothing there can read the outer document and
+  // nothing can stand ahead of it to produce a value. Both spellings of the list
+  // refuse alike; `$$ = [ … ]` used to lower its documents OUTSIDE the boundary and
+  // emit a field path the server answered `{}` for, in silence.
+  it("refuses an outer-document read, in either spelling", () => {
+    const outer = /'\$unionWith' has no 'let': its body cannot read the outer document/;
+    expect(() => jsmql("$$.push({ n: $.a });")).toThrow(outer);
+    expect(() => jsmql("$$ = [{ n: $.a }];")).toThrow(outer);
+    expect(() => jsmql("$$.push({ n: $$.length });")).toThrow(outer);
+    expect(() => jsmql("$$ = [{ n: $$.length }];")).toThrow(outer);
+  });
+
+  it("refuses a value that needs a stage of its own, in either spelling", () => {
+    const made =
+      /writes the documents out as the program spells them, and this value needs a '\$lookup' stage of its own/;
+    expect(() => jsmql('$$.push({ n: $$$.p.find({ _id: "x" }).n });')).toThrow(made);
+    expect(() => jsmql('$$.concat([{ n: $$$.p.find({ _id: "x" }).n }]);')).toThrow(made);
+    expect(() => jsmql('$$ = [{ n: $$$.p.find({ _id: "x" }).n }];')).toThrow(made);
+    // the message names the spelling the developer wrote
+    expect(() => jsmql('$$.concat([{ n: $$$.p.find({ _id: "x" }).n }]);')).toThrow(/'\.concat\(\[\{ … \}\]\)'/);
+    // and the way out it names does compile: append the collection's own documents
+    expect(jsmql('$$.push($$$.p.find({ _id: "x" }));')).toEqual([
+      { $unionWith: { coll: "p", pipeline: [{ $match: { _id: "x" } }, { $limit: 1 }] } },
+    ]);
+  });
+
+  it("keeps a written list the program does spell out", () => {
+    expect(jsmql("$$ = [{ n: 1 }, { n: 2 }];")).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { pipeline: [{ $documents: [{ n: 1 }, { n: 2 }] }] } },
+    ]);
+  });
+});
+
 describe("$$.push — cross-database via $$$$ is rejected", () => {
   // Both spread sources resolve through `lookupOf` (src/compiler/emit/join.ts), whose
   // chain base refuses a `$$$$.<db>.` root: the `.filter`/`.find` form carries a

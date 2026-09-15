@@ -919,6 +919,11 @@ var logicalList = ({ name: name2, args, query }) => {
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
 var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
+var orderedBounds = (a, b) => {
+  if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
+  if (a instanceof Date && b instanceof Date) return a <= b ? [a, b] : [b, a];
+  return null;
+};
 var norList = (input) => logicalList(input) ?? { $nor: [] };
 var lodashDifference = ({ recv, args, value, bind }) => {
   const other = value(args[0]);
@@ -5119,6 +5124,7 @@ var NAMES = {
   }),
   $facet: mongo({
     doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     replacesDocument: true,
     body: { required: [], optional: [], closed: false },
@@ -5464,6 +5470,7 @@ var NAMES = {
   $lookup: mongo({
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
     pipelineOver: "foreign",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     preservesCount: true,
     body: {
@@ -5517,6 +5524,9 @@ var NAMES = {
   }),
   $merge: mongo({
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    // MEASURED on mongod 8.3.7, one stage per run with a valid body: these seven run,
+    // and 24 others answer "<name> is not allowed to be used within an update".
+    statementBody: ["$addFields", "$set", "$project", "$unset", "$replaceRoot", "$replaceWith", "$fill"],
     where: ["stream", "statement"],
     only: ["stageLast"],
     // MEASURED: { $merge: { into: "c", zzz: 1 } } → BSON field '$merge.zzz' is an unknown field
@@ -5649,6 +5659,7 @@ var NAMES = {
   }),
   $rankFusion: mongo({
     doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
@@ -5786,6 +5797,7 @@ var NAMES = {
   }),
   $scoreFusion: mongo({
     doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
@@ -6052,6 +6064,7 @@ var NAMES = {
     replacesDocument: true,
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     pipelineOver: "foreign",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     body: {
       required: [],
@@ -10991,10 +11004,25 @@ var NAMES = {
   inRange: name({
     doc: "'.inRange()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: "number",
+    // a number and a date test a range the same way, so one cell serves both families
+    on: ["number", "date"],
     returns: "bool",
-    where: ["value"],
-    filter: viaFallback,
+    where: ["value", "filter"],
+    // A field against two constant bounds is a range on one field — the clause an
+    // index answers, and the document a MongoDB developer writes by hand.
+    filter: {
+      args: { sig: "[start, ]end", allowed: [1, 2] },
+      emit: ({ recv, args, pathOf: pathOf3, constant }) => {
+        const path = recv === null ? null : pathOf3(recv);
+        if (path === null) return null;
+        const given = args.map(constant);
+        if (given.some((c) => c === null)) return null;
+        const values = given.map((c) => c.value);
+        const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
+        if (bounds === null) return null;
+        return queryOwnValue(path, { $gte: bounds[0], $lt: bounds[1] });
+      }
+    },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
       emit: ({ recv, args, value }) => {
@@ -13195,9 +13223,12 @@ var NAMES = {
     returns: "date",
     where: ["value"],
     filter: because(`a date is a value, not a test. Compare it: '$.t > new Date("2024-01-01")'.`),
+    updateDoc: unsupported(
+      `'new Date(\u2026)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new Date()' is '$currentDate'. Inside a value, pass a Date from your code ('new Date("2026-01-01")', or an interpolated '\${new Date()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new Date() };")'), which 'updateOne' accepts as well.`
+    ),
     expr: {
       byArgs: {
-        none: { args: { sig: "", none: true }, emit: () => ({ $toDate: "$$NOW" }) },
+        none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
         // A valid date spelling never reaches this row — the fold makes it a Date value first.
         // A constant the fold could evaluate never reaches this row; one that stays
         // is a string `Date.parse` refuses.
@@ -13228,6 +13259,9 @@ var NAMES = {
     returns: "objectId",
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
+    updateDoc: unsupported(
+      `'ObjectId(\u2026)' is computed on the server, and a document-form update takes constants. Pass an id from your code (a '0x507f1f77bcf86cd799439011' literal, or an interpolated '\${new ObjectId()}'), or use the pipeline form ('jsmql.pipeline("$.id = ObjectId();")'), which 'updateOne' accepts as well.`
+    ),
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
@@ -13363,6 +13397,9 @@ var NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
+    updateDoc: unsupported(
+      `'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = new Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline("$.t = Date.now();")'), which 'updateOne' accepts as well.`
+    ),
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
     stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),
     statement: unsupported(
@@ -14472,8 +14509,8 @@ var PRODUCTIONS = {
     statement: unsupported("'{ return \u2026 }' is not a statement \u2014 see its 'where'.")
   }),
   constantBinding: production({
-    doc: "Binds a name for the statements that follow.",
-    tokens: ["const", "=", "identifier"],
+    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration.",
+    tokens: ["const", "=", "identifier", ","],
     spelling: "const x = \u2026",
     becomes: "LetDecl",
     on: "any",
@@ -14485,8 +14522,8 @@ var PRODUCTIONS = {
     stream: unsupported("'const x = \u2026' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   mutableBinding: production({
-    doc: "Binds a reassignable name.",
-    tokens: ["let", "=", "identifier"],
+    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration.",
+    tokens: ["let", "=", "identifier", ","],
     spelling: "let x = \u2026",
     becomes: "LetDecl",
     on: "any",
@@ -14897,6 +14934,9 @@ function streamBodyOf(name2) {
 }
 function pipelineOverOf(name2) {
   return row(name2)?.pipelineOver ?? null;
+}
+function statementBodyOf(name2) {
+  return row(name2)?.statementBody ?? null;
 }
 function mongoNames() {
   return Object.keys(NAMES).filter((n2) => NAMES[n2]?.kind === "mongo");
@@ -15708,11 +15748,12 @@ var Parser = class _Parser {
         const close = this.c.expect("RBrace");
         return { stmts, ret, retPos: r.pos, sawSemi, endPos: close.pos };
       }
-      const st = this.statement();
+      const run = this.statement();
+      const st = run[0];
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
-      stmts.push(st);
+      stmts.push(...run);
       const blockBodied = st.type === "FuncDecl" && st.form === "function";
       if (this.c.is("Semi")) sawSemi = true;
       if (!this.c.eat("Semi") && !this.c.is(terminator) && !blockBodied) {
@@ -15721,12 +15762,16 @@ var Parser = class _Parser {
     }
     return { stmts, ret: null, retPos: 0, sawSemi, endPos };
   }
+  /**
+   * One statement — or the RUN of them a declaration list stands for, since
+   * `const a = …, b = …;` is N declarations in JavaScript and N here too.
+   */
   statement() {
-    if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    if (this.c.is("Let") || this.c.is("Const")) return this.bindings();
     this.refuseAsync();
-    if (this.functionAhead()) return this.functionDecl();
-    if (this.writeAhead()) return this.writes();
-    return this.expression();
+    if (this.functionAhead()) return [this.functionDecl()];
+    if (this.writeAhead()) return [this.writes()];
+    return [this.expression()];
   }
   /** Is a `function` declaration next? The word comes from its row's `word`. */
   functionAhead() {
@@ -15765,7 +15810,7 @@ var Parser = class _Parser {
     const name2 = this.c.expect("Ident");
     const params = this.paramList();
     const lambda = this.lambdaOf(params, kw.pos);
-    return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", pos: kw.pos };
+    return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
   /** `(a, [b, c], { d },)` — a parenthesised parameter list, names and patterns like the arrow's, trailing comma allowed. */
   paramList() {
@@ -15793,17 +15838,46 @@ var Parser = class _Parser {
     const params = this.paramList();
     return this.lambdaOf(params, kw.pos);
   }
-  /** `let x = …` / `const x = …`. A function body makes it a FuncDecl. */
-  binding() {
+  /**
+   * `let x = …, y = …` / `const x = …, y = …` — JavaScript's declaration list,
+   * wherever `;` separates statements. Each declarator becomes its own
+   * declaration and reads the ones before it. The KEYWORD's offset marks them as
+   * ONE declaration, which is what lets the emit phase give them one stage — and
+   * what stops a folded-away neighbour from bridging a `;` the developer wrote.
+   * See docs/specs/let-bindings.md.
+   */
+  bindings() {
     const kw = this.c.next();
     const kind = kw.type === "Const" ? "const" : "let";
+    const out = [this.declarator(kind, kw.pos, kw.pos)];
+    while (this.c.eat("Comma")) out.push(this.declarator(kind, null, kw.pos));
+    return out;
+  }
+  /** `let x = …` / `const x = …`, one declarator — a bracketed pipeline's element, where `,` separates elements. */
+  binding() {
+    const kw = this.c.next();
+    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
+  }
+  /**
+   * One declarator, after the keyword. `kwPos` positions the FIRST one at the
+   * keyword and every later one at its own name, so an error underlines the
+   * declarator it is about. A function body makes it a FuncDecl.
+   */
+  declarator(kind, kwPos, group) {
     const name2 = this.c.expect("Ident");
-    this.c.expect("Eq");
+    const pos = kwPos ?? name2.pos;
+    if (!this.c.is("Eq")) {
+      throw new ParseError(
+        `'${kind} ${name2.text}' binds no value at position ${pos}. jsmql has no 'undefined' to bind \u2014 write '${kind} ${name2.text} = <expr>'.`,
+        pos
+      );
+    }
+    this.c.next();
     const value = this.expression();
     if (value.type === "Lambda") {
-      return { type: "FuncDecl", name: name2.text, lambda: value, kind, form: "arrow", pos: kw.pos };
+      return { type: "FuncDecl", name: name2.text, lambda: value, kind, form: "arrow", group, pos };
     }
-    return { type: "LetDecl", name: name2.text, value, kind, pos: kw.pos };
+    return { type: "LetDecl", name: name2.text, value, kind, group, pos };
   }
   // ── writes ────────────────────────────────────────────────────────────────
   //
@@ -19265,6 +19339,15 @@ var countWord = (args) => {
   if (args.atLeast !== void 0) return `requires at least ${args.atLeast} argument${args.atLeast === 1 ? "" : "s"}`;
   return "takes a different number of arguments";
 };
+var NO_CELL = {
+  value: (q) => `${q} has no value form here \u2014 see its 'where'.`,
+  filter: (q, b) => `${q} is a value, not a test. Compare it: '$.<field> === ${b}'.`,
+  stream: (q) => `${q} produces a value, not a stream of documents.`,
+  statement: (q, b) => `${q} computes a value, and a statement writes one. Assign it to a field: '$.<field> = ${b};'`,
+  group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
+  window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+  updateDoc: (q, b) => `${q} is computed on the server, and a document-form update takes constants. Use the pipeline form ('jsmql.pipeline("$.<field> = ${b}\u2026;")'), which 'updateOne' accepts as well, or pass the value from your code.`
+};
 function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`) {
   const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
@@ -19311,7 +19394,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
         pos
       );
     case "noCell":
-      return new CodegenError(`${spelled3} cannot stand in ${position} position.`, pos);
+      return new CodegenError(NO_CELL[position](spelled3.startsWith("'") ? spelled3 : `'${spelled3}'`, bare), pos);
     case "rule":
     case "dispatch":
       return new CodegenError(
@@ -19490,6 +19573,18 @@ var mustBeFirstStage = (name2, pos, why) => new CodegenError(
   why ?? `'${name2}' produces the pipeline's source documents, so it has to be the FIRST stage \u2014 the server refuses it anywhere else. Move it to the top of the program.`,
   pos
 );
+var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
+  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ \u2026 }).<field>" : "$$.length";
+  const later = `$match($.<field> === ${value});`;
+  return new CodegenError(
+    carrier === null ? `'${name2}' has to be the FIRST stage of the pipeline, and a value in its body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of '${name2}', so read that value in a LATER statement \u2014 '${name2}({ \u2026 }); ${later}' \u2014 or, where the value IS one of the stage's settings, give it a constant or a 'jsmql.compile' parameter: the server reads a setting before it has any documents.` : `'${name2}' only runs in the pipeline's FIRST '${carrier}', and a value in that body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of that '${carrier}', so keep the '${name2}' test on its own and make the other one a later stage: '${carrier}(${name2}(\u2026)); ${later}'.`,
+    pos
+  );
+};
+var terminalReadsScratch = (name2, pos) => new CodegenError(
+  `'${name2}' writes the pipeline's output and has to be its LAST stage, and jsmql clears its scratch fields in the stage right before it \u2014 so a value this body reads ('$$.length', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first and read that field: '$.n = $$.length; ${name2}({ \u2026 let: { v: $.n } \u2026 });'.`,
+  pos
+);
 var twoTerminalStages = (name2, already, pos) => new CodegenError(
   `'${name2}' writes the pipeline's output and has to be its last stage, and '${already}' already is. A pipeline writes to one destination \u2014 keep one of them.`,
   pos
@@ -19598,6 +19693,20 @@ var shadowsOuterBinding = (kind, name2, pos) => new CodegenError(
 );
 var noCorrelationSlot = (stage, pos) => new CodegenError(
   `'${stage}' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(\u2026)'), whose '$lookup' carries the value.`,
+  pos
+);
+var readsEnclosingVariable = (name2, stage, pos) => new CodegenError(
+  `'${name2}' is bound by an enclosing callback, and a read of another collection is a '${stage}' STAGE: the server runs it over the documents, outside that callback, where '${name2}' has no value. Make the elements documents first ('$$ = $.<array>;' \u2014 then each one is a document the join reads, '$.<field> = $$$.<coll>.find(\u2026)'), or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(\u2026);') and use that binding inside it.`,
+  pos
+);
+var documentsNeedNoStage = (written, made, pos) => new CodegenError(
+  `'${written}' writes the documents out as the program spells them, and this value needs a '${made}' stage of its own to produce it \u2014 the documents run where nothing may stand ahead of them. Append the other collection's documents themselves ('$$.push(...$$$.<coll>.filter(\u2026))' for many, '$$.push($$$.<coll>.find({ \u2026 }))' for one), or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter.`,
+  pos
+);
+var notInUpdateSpec = (name2, container, allowed, pos) => new CodegenError(
+  `'${name2}' cannot stand inside '${container}': that body is an UPDATE, not a pipeline, and the server runs only ${allowed.slice(0, -1).map((a) => `'${a}'`).join(
+    ", "
+  )} and '${allowed[allowed.length - 1]}' there. Reshape the document with one of those, or do the work in the pipeline BEFORE '${container}' \u2014 its documents are what the update receives.`,
   pos
 );
 var crossDatabaseRead = (pos) => new CodegenError(
@@ -19863,7 +19972,7 @@ var Chain = class {
   constructor(isPipeline = true) {
     /** The stages emitted so far. */
     this.emitted = [];
-    /** Stages a value placed ahead of the statement it stands in; drained by `flush`. */
+    /** Stages a value placed ahead of the stage it stands in; drained by `ahead`. */
     this.hoisted = [];
     this.slots = 0;
     /** Has anything written under `__jsmql`? Owns the trailing cleanup. */
@@ -19908,16 +20017,23 @@ var Chain = class {
    * lowers the body twice, and the first attempt's hoists are discarded — so the
    * stamps it took have to go with them, or the second attempt reuses a field the
    * discarded stage was going to write.
+   *
+   * The scratch counter goes back too. A slot the discarded attempt minted is named
+   * only by the stages that went with it, so holding the number would leave a gap —
+   * and the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
+   * spelled with a `;` would name the same slot `__jsmql.tmp.1` and `__jsmql.tmp.0`.
+   * One lowering, one output.
    */
   mark() {
-    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped) };
+    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
   }
-  /** Undo everything hoisted and stamped since `mark`. */
+  /** Undo everything hoisted, stamped and minted since `mark`. */
   rewind(m) {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
+    this.slots = m.slots;
   }
-  /** Place `stages` ahead of the current statement; answer the reference that reads `reads`. */
+  /** Place `stages` ahead of the stages of the lowering that hoisted them; answer the reference that reads `reads`. */
   hoist(stages, reads2) {
     if (!this.stamped.has(reads2)) {
       this.hoisted.push(...stages);
@@ -19939,10 +20055,27 @@ var Chain = class {
       }
     }
   }
-  /** Move the hoisted stages into the emitted list — called before the statement that triggered them. */
-  flush() {
-    this.emitted.push(...this.hoisted);
+  /**
+   * The stages hoisted so far, TAKEN OUT so they can stand directly ahead of the
+   * stages of the lowering that hoisted them.
+   *
+   * A hoisted stage reads the documents the stage it was written for reads, so it
+   * has to land beside it and not at the front of the statement: MEASURED, the
+   * `$lookup` of `$$.$sortByCount($.productIds).map(g => $$$.products.find({ _id:
+   * g._id }))` placed ahead of the whole statement joined on the SOURCE document's
+   * `_id`, and `$sortByCount` then replaced the document and dropped the slot — so
+   * every row came back without its joined field and the server said nothing. A
+   * road that makes several stages out of one statement therefore drains at each
+   * of them. See docs/specs/lookup-stage.md § Where a hoisted stage lands.
+   */
+  ahead() {
+    const out = [...this.hoisted];
     this.hoisted.length = 0;
+    return out;
+  }
+  /** Move the hoisted stages into the emitted list — the drain of a statement that is ONE stage. */
+  flush() {
+    this.emitted.push(...this.ahead());
   }
   /** The finished pipeline: the stages, the cleanup if anything was written under `__jsmql`, the terminal stage. */
   close() {
@@ -19975,7 +20108,7 @@ var Env = class _Env {
   }
   /** How many bodies over another collection enclose this node: the level of ITS documents. */
   get level() {
-    return this.site.boundaries.filter(isForeign).length;
+    return this.foreign().length;
   }
   /**
    * A located value as THIS level reads it: a variable as itself; a path on this
@@ -19983,13 +20116,25 @@ var Env = class _Env {
    * boundary that starts the level below it, as `$$<var>`.
    */
   render(loc, pos) {
-    if (loc.kind === "var") return loc.ref;
+    if (loc.kind === "var") {
+      if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
+      return loc.ref;
+    }
     if (this.site.root === "updateDoc") throw readInUpdateDocument(pos);
     const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
     if (loc.level === this.level) return value;
-    const boundary = this.site.boundaries.filter(isForeign)[loc.level];
+    const boundary = this.foreign()[loc.level];
     if (boundary.capture === null || boundary.capture === void 0) throw noCorrelationSlot(boundary.stage, pos);
     return "$$" + boundary.capture.take(loc.kind, loc.hint, value);
+  }
+  /** The bodies over another collection enclosing this node, outermost first. */
+  foreign() {
+    return this.site.boundaries.filter(isForeign);
+  }
+  /** The stage whose body this is — the innermost one over another collection. */
+  foreignStage() {
+    const boundaries = this.foreign();
+    return boundaries[boundaries.length - 1].stage;
   }
   /** The Env after a stage that replaced the document: every field-carried binding is gone. */
   dropFields(by, message) {
@@ -21006,19 +21151,27 @@ function reads(v, name2) {
 function takePair(vars, pipeline) {
   const whole = { pair: null, let: vars, pipeline };
   if (vars === null || pipeline.length === 0) return whole;
-  const match = pipeline[0].$match;
-  if (match === void 0 || Object.keys(match).length !== 1) return whole;
-  const eq = match.$expr?.$eq;
-  if (!Array.isArray(eq) || eq.length !== 2) return whole;
-  for (const [name2, read] of Object.entries(vars)) {
-    const localField = fieldPath2(read);
-    if (localField === null) continue;
-    const variable = `$$${name2}`;
-    const foreignField = fieldPath2(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
-    if (foreignField === null) continue;
-    const rest = pipeline.slice(1);
-    const kept = Object.fromEntries(Object.entries(vars).filter(([n2]) => n2 !== name2 || reads(rest, n2)));
-    return { pair: { localField, foreignField }, let: Object.keys(kept).length > 0 ? kept : null, pipeline: rest };
+  const { $expr, ...query } = pipeline[0].$match ?? {};
+  if ($expr === void 0) return whole;
+  const and2 = $expr.$and;
+  const conjuncts = Array.isArray(and2) ? and2 : [$expr];
+  for (const [i, conjunct] of conjuncts.entries()) {
+    const eq = conjunct.$eq;
+    if (!Array.isArray(eq) || eq.length !== 2) continue;
+    for (const [name2, read] of Object.entries(vars)) {
+      const localField = fieldPath2(read);
+      if (localField === null) continue;
+      const variable = `$$${name2}`;
+      const foreignField = fieldPath2(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
+      if (foreignField === null) continue;
+      const others = conjuncts.filter((_, j) => j !== i);
+      const match = { ...query };
+      if (others.length === 1) match.$expr = others[0];
+      else if (others.length > 1) match.$expr = { $and: others };
+      const rest = [...Object.keys(match).length > 0 ? [{ $match: match }] : [], ...pipeline.slice(1)];
+      const kept = Object.fromEntries(Object.entries(vars).filter(([n2]) => n2 !== name2 || reads(rest, n2)));
+      return { pair: { localField, foreignField }, let: Object.keys(kept).length > 0 ? kept : null, pipeline: rest };
+    }
   }
   return whole;
 }
@@ -21318,6 +21471,12 @@ var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
   $let: { vars: { [as]: value }, in: body }
 });
+var readsRef = (mql, ref) => {
+  if (typeof mql === "string") return mql === ref || mql.startsWith(`${ref}.`);
+  if (Array.isArray(mql)) return mql.some((m) => readsRef(m, ref));
+  if (mql !== null && typeof mql === "object") return Object.values(mql).some((m) => readsRef(m, ref));
+  return false;
+};
 
 // src/compiler/emit/mode.ts
 var mint = (doc) => doc;
@@ -22041,11 +22200,11 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     },
     hoist: (stages, reads2) => {
       const source = node.object ?? null;
-      const own = onOwnStream(source, env);
-      const chain = own ? env.chain : env.rootChain;
+      const handle = streamHandleOf(source, env);
+      const chain = handle === null ? env.rootChain : handle.chain;
+      const level = handle === null ? 0 : handle.level;
       if (!chain.isPipeline) throw needsPipeline(name2, node.pos);
       chain.hoist(stages, reads2);
-      const level = own ? env.level : 0;
       return env.render(
         { kind: "s", level, path: reads2, hint: reads2.slice(reads2.lastIndexOf(".") + 1) },
         node.pos
@@ -22062,6 +22221,11 @@ function staleCountStage(cb) {
     if (!preservesCountOf(st.name)) return st.name;
   }
   return null;
+}
+function streamHandleOf(recv, env) {
+  if (recv === null || recv.type !== "Ident" || !env.scope.has(recv.name)) return null;
+  const b = env.lookup(recv.name, recv.pos);
+  return b.ref.kind === "streamHandle" ? { chain: b.ref.chain, level: b.level } : null;
 }
 function onOwnStream(recv, env) {
   return recv !== null && recv.type === "Ident" && env.scope.has(recv.name) && env.lookup(recv.name, recv.pos).ref.kind === "streamHandle";
@@ -22153,7 +22317,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
     if (cb.params.length === 3) {
       const replaces = staleCountStage(cb);
       e = e.bind(cb.params[2], {
-        ref: replaces === null ? { kind: "streamHandle", source: cb } : {
+        ref: replaces === null ? { kind: "streamHandle", source: cb, chain: e.chain } : {
           kind: "dropped",
           message: streamHandleAfterReplace(cb.params[2], replaces, cb.pos).message,
           replaced: false
@@ -22533,7 +22697,7 @@ function locate(node, env) {
   }
   if (node.type === "Ident" && env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
-    if (b.ref.kind === "var") return { kind: "var", ref: b.ref.ref };
+    if (b.ref.kind === "var") return { kind: "var", level: b.level, ref: b.ref.ref, hint: node.name };
     if (b.ref.kind === "document") return { kind: "f", level: b.level, path: b.ref.path, hint: node.name };
     if (b.ref.kind === "field") return { kind: "v", level: b.level, path: b.ref.slot.path, hint: node.name };
     return null;
@@ -22547,7 +22711,7 @@ function locate(node, env) {
   if (node.type === "MemberAccess" && !isPropertyRow(node)) {
     const base = locate(node.object, env);
     if (base === null) return null;
-    if (base.kind === "var") return { kind: "var", ref: `${base.ref}.${node.name}` };
+    if (base.kind === "var") return { ...base, ref: `${base.ref}.${node.name}` };
     return { ...base, path: base.path === "" ? node.name : `${base.path}.${node.name}`, hint: node.name };
   }
   return null;
@@ -22604,17 +22768,21 @@ function indexAccess(node, env) {
     if (known === "string") return charAt(wrapped(""));
     if (known === "object") return fieldAt(wrapped({}));
     const o2 = wrapped([]);
-    return cond2(
-      truthOf({ $isArray: o2 }, true),
-      { $arrayElemAt: [o2, i] },
-      cond2(truthOf({ $eq: [{ $type: o2 }, "string"] }, true), charAt(o2), fieldAt(o2))
+    return switchOn(
+      [
+        { case: truthOf({ $isArray: o2 }, true), then: { $arrayElemAt: [o2, i] } },
+        { case: truthOf({ $eq: [{ $type: o2 }, "string"] }, true), then: charAt(o2) }
+      ],
+      fieldAt(o2)
     );
   }
   const key = { $toString: { $ifNull: [idx, ""] } };
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);
-  return cond2(truthOf({ $isArray: o }, true), { $arrayElemAt: [o, idx] }, { $getField: { field: key, input: o } });
+  return switchOn([{ case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, idx] } }], {
+    $getField: { field: key, input: o }
+  });
 }
 function receiverOf(recv, env) {
   const src = sourceFamily(recv);
@@ -22994,20 +23162,38 @@ function membership2(node, env) {
 }
 function exprBlock(node, env, ret) {
   const seen = /* @__PURE__ */ new Set();
-  const step = (i, e) => {
+  const step = (i, e, carried) => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
-    const d = node.decls[i];
-    if (seen.has(d.name)) throw redeclared(d.kind, d.name, d.pos);
-    seen.add(d.name);
-    const value = lowerValue(d.value, childEnv(e, node, "decls"));
-    const bound = e.param(d.name, kindOf(d.value, e), d.pos);
-    return letOne(bound.as, value, step(i + 1, bound.env));
+    const vars = {};
+    const refs = [];
+    let scope = e;
+    let j = i;
+    let carry = carried;
+    for (; ; ) {
+      const d = node.decls[j];
+      if (seen.has(d.name)) throw redeclared(d.kind, d.name, d.pos);
+      const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
+      carry = null;
+      if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
+      seen.add(d.name);
+      const bound = scope.param(d.name, kindOf(d.value, scope), d.pos);
+      vars[bound.as] = value;
+      refs.push(`$$${bound.as}`);
+      scope = bound.env;
+      j++;
+      if (j === node.decls.length || node.decls[j].group !== d.group) break;
+    }
+    return { $let: { vars, in: step(j, scope, null) } };
   };
-  return step(0, env);
+  return step(0, env, null);
 }
 
 // src/compiler/emit/union.ts
 var DOCUMENTS = "$documents";
+function noStageInDocuments(chain, written, pos) {
+  const made = chain.hoisted[0] ?? chain.emitted[0];
+  if (made !== void 0) throw documentsNeedNoStage(written, Object.keys(made)[0], pos);
+}
 function writtenDocuments(e) {
   if (e.type !== "ArrayLiteral" || e.elements.length === 0) return null;
   const out = [];
@@ -23035,6 +23221,8 @@ function unionStages(args, env, node, S) {
     }
     const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
     const list = docs.map((d) => lowerValue(d, childEnv(body, node, "args")));
+    const verb = node.type === "MethodCall" ? node.name : "push";
+    noStageInDocuments(body.chain, `.${verb}(${verb === "concat" ? "[{ \u2026 }]" : "{ \u2026 }"})`, node.pos);
     out.push({ $unionWith: { pipeline: [{ $documents: list }] } });
     docs = [];
   };
@@ -23349,7 +23537,7 @@ function subPipeline(node, env, slot = null) {
     if (el.type === "SpreadElement") throw spreadInStageList(el.pos);
     if (env.chain.terminal !== null) throw afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
     const step = statementStages(el, scope, out.length === 0);
-    out.push(...step.stages);
+    out.push(...env.chain.ahead(), ...step.stages);
     scope = step.env;
   }
   return out;
@@ -23378,7 +23566,7 @@ var READ2 = {
     const out = [];
     for (const stmt of stages.stmts) {
       const step = statementStages(stmt, scope, out.length === 0);
-      out.push(...step.stages);
+      out.push(...env.chain.ahead(), ...step.stages);
       scope = step.env;
     }
     return out;
@@ -23391,12 +23579,16 @@ function lowerProgram(program, env) {
   }
   const stmts = program.type === "Pipeline" ? program.stmts : [program];
   let scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
-  for (const stmt of stmts) {
+  for (let i = 0; i < stmts.length; i++) {
+    const stmt = stmts[i];
     if (env.chain.terminal !== null) {
       throw afterTerminalStage(Object.keys(env.chain.terminal)[0], stmt.pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
-    const step = statementStages(stmt, scope, first);
+    const run = declRun(stmts, i);
+    const taken = run === null ? null : declStages(run, scope);
+    const step = taken ?? statementStages(stmt, scope, first);
+    if (taken !== null) i += taken.consumed - 1;
     env.chain.flush();
     env.chain.emitted.push(...step.stages);
     scope = step.env;
@@ -23424,6 +23616,60 @@ function statementStages(stmt, env, first) {
   }
   const stages = stageStatement(stmt, env, first);
   return { stages, env: afterStages(stages, env) };
+}
+function declRun(stmts, i) {
+  const head = stmts[i];
+  if (head.type !== "LetDecl" && head.type !== "FuncDecl") return null;
+  const group = head.group;
+  const run = [head];
+  while (i + run.length < stmts.length) {
+    const next = stmts[i + run.length];
+    if (next.type !== "LetDecl" && next.type !== "FuncDecl") break;
+    if (next.group !== group) break;
+    run.push(next);
+  }
+  return run.length === 1 ? null : run;
+}
+function declStages(run, env) {
+  const out = [];
+  let fields = null;
+  let slots = [];
+  let scope = env;
+  let consumed = 0;
+  const flush = () => {
+    if (fields !== null) out.push({ $set: fields });
+    fields = null;
+    slots = [];
+  };
+  for (const decl of run) {
+    const mark = env.chain.mark();
+    const rootMark = env.rootChain.mark();
+    const step = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
+    const hoisted = env.chain.hoisted.length > mark.hoisted || env.rootChain.hoisted.length > rootMark.hoisted;
+    if (consumed > 0 && hoisted) {
+      env.chain.rewind(mark);
+      env.rootChain.rewind(rootMark);
+      break;
+    }
+    consumed++;
+    scope = step.env;
+    const only = step.stages.length === 1 ? step.stages[0] : null;
+    const set = only !== null && Object.keys(only).length === 1 ? only.$set : void 0;
+    if (step.stages.length === 0) continue;
+    if (set === void 0) {
+      flush();
+      out.push(...step.stages);
+      continue;
+    }
+    const slot = Object.keys(set)[0];
+    if (slots.some((sl) => readsRef(set[slot], `$${sl}`))) flush();
+    fields ??= {};
+    fields[slot] = set[slot];
+    slots.push(slot);
+  }
+  if (consumed < 2) return null;
+  flush();
+  return { stages: out, env: scope, consumed };
 }
 function letStages(decl, env) {
   if (env.scope.declaredHere(decl.name)) throw redeclared(decl.kind, decl.name, decl.pos);
@@ -23499,41 +23745,66 @@ function documentsStages(list, env, written = "$$ = [ \u2026 ]") {
   const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
   checkSlots(written, sel.rule.args, [list], false);
-  const documents = lowerValue(list, childEnv(env, list, "elements").at({ at: "value" }));
+  const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
+  const documents = lowerValue(list, childEnv(body, list, "elements").at({ at: "value" }));
+  noStageInDocuments(body.chain, written, list.pos);
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS2]: documents }] } }];
 }
-function namesWithin(body, out = /* @__PURE__ */ new Set()) {
+function namesWithin(stage, body, path = [], out = /* @__PURE__ */ new Map()) {
+  const nested = path.length > 0 && bodySlotAt(stage, path)?.at === "statement" && statementBodyOf(stage) === "pipeline";
   if (Array.isArray(body)) {
-    for (const el of body) namesWithin(el, out);
+    for (const el of body) namesWithin(stage, el, path, out);
   } else if (typeof body === "object" && body !== null) {
     for (const [k, v] of Object.entries(body)) {
-      if (k.startsWith("$") && positionsOf(k) !== void 0) out.add(k);
-      namesWithin(v, out);
+      if (k.startsWith("$") && positionsOf(k) !== void 0 && !out.has(k)) out.set(k, nested);
+      namesWithin(stage, v, [...path, k], out);
     }
   }
   return out;
 }
 function place(name2, stage, env, first, pos) {
   const only = onlyOf(name2);
-  for (const held of [name2, ...namesWithin(stage[name2])]) {
+  const hoisted = env.chain.hoisted[0];
+  const noPlacement = (held) => {
+    throw firstStageNeedsHoist(held, Object.keys(hoisted)[0], pos, held === name2 ? null : name2);
+  };
+  for (const [held, nested] of [[name2, false], ...namesWithin(name2, stage[name2])]) {
     const containers = held === name2 ? env.site.boundaries.map((b) => b.stage) : [name2, ...env.site.boundaries.map((b) => b.stage)];
     for (const container of containers) {
       if (forbiddenInOf(held).includes(container) || bansNestedOf(container).includes(held)) {
         throw forbiddenInContainer(held, container, pos, placementOf(held).container);
       }
     }
-    if (held !== name2 && onlyOf(held).includes("stageFirst") && !first) {
-      throw mustBeFirstStage(held, pos, placementOf(held).first);
+    if (held === name2) {
+      for (const b of env.site.boundaries) {
+        const allows = statementBodyOf(b.stage);
+        if (allows === null || allows === "pipeline" || allows.includes(name2)) continue;
+        if (bodySlotAt(b.stage, b.path)?.at !== "statement") continue;
+        throw notInUpdateSpec(name2, b.stage, allows, pos);
+      }
     }
+    if (held === name2 || nested || !onlyOf(held).includes("stageFirst")) continue;
+    if (!first) throw mustBeFirstStage(held, pos, placementOf(held).first);
+    if (hoisted !== void 0) noPlacement(held);
   }
-  if (only.includes("stageFirst") && !first) throw mustBeFirstStage(name2, pos, placementOf(name2).first);
+  if (only.includes("stageFirst")) {
+    if (!first) throw mustBeFirstStage(name2, pos, placementOf(name2).first);
+    if (hoisted !== void 0) noPlacement(name2);
+  }
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
     if (already !== null) throw twoTerminalStages(name2, Object.keys(already)[0], pos);
+    if (readsScratch(stage)) throw terminalReadsScratch(name2, pos);
     env.chain.terminal = stage;
     return [];
   }
   return [stage];
+}
+function readsScratch(v) {
+  if (typeof v === "string") return v.startsWith("$" + JSMQL_NS);
+  if (Array.isArray(v)) return v.some(readsScratch);
+  if (v !== null && typeof v === "object") return Object.values(v).some(readsScratch);
+  return false;
 }
 var STREAM_TARGET = "$$";
 function targetPath(op, env) {
@@ -23710,30 +23981,31 @@ function writeStages(uf, env, first) {
     sets = null;
     unsets = null;
   };
+  const emit = (made = []) => {
+    out.push(...env.chain.ahead(), ...made);
+  };
   for (const op of uf.ops) {
     const out_ = outTarget(op.target);
     if (out_ !== null) {
       if (op.type === "DeleteStmt") throw notAWriteTarget(op.pos);
       flush();
-      out.push(...outStages(op, out_, inner, first && out.length === 0));
+      emit(outStages(op, out_, inner, first && out.length === 0));
       continue;
     }
     const path = targetPath(op, inner);
     if (path === STREAM_TARGET && op.type === "AssignExpr" && op.value.type === "MethodCall" && isStreamReduce(op.value)) {
       flush();
-      out.push(...arrayReduceStages(op.value, inner, first && out.length === 0));
+      emit(arrayReduceStages(op.value, inner, first && out.length === 0));
       continue;
     }
     if (path === STREAM_TARGET) {
       if (op.type === "DeleteStmt") throw cannotDeleteRoot(op.pos);
       flush();
       if (op.value.type === "ArrayLiteral" && !holdsSpread(op.value)) {
-        out.push(...documentsStages(op.value, inner));
+        emit(documentsStages(op.value, inner));
         continue;
       }
-      out.push(
-        ...becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0)
-      );
+      emit(becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0));
       continue;
     }
     if (op.type === "DeleteStmt") {
@@ -23745,7 +24017,7 @@ function writeStages(uf, env, first) {
     if (op.op !== "=") internalError(`an assignment reached the emit phase spelled '${op.op}'`);
     if (path === "" && op.value.type === "ObjectLiteral" && isFacet(op.value)) {
       flush();
-      out.push(...facetStages(op.value, childEnv(inner, op, "value"), first && out.length === 0));
+      emit(facetStages(op.value, childEnv(inner, op, "value"), first && out.length === 0));
       continue;
     }
     if (unsets !== null) flush();
@@ -23758,13 +24030,13 @@ function writeStages(uf, env, first) {
       const valueEnv = childEnv(inner, op, "value");
       if (path === "") {
         flush();
-        out.push(...joinRoot(op.value, valueEnv, JOIN));
+        emit(joinRoot(op.value, valueEnv, JOIN));
         continue;
       }
       const w = joinWrite(op.value, path, valueEnv, JOIN);
       if (w !== null) {
         flush();
-        out.push(...w.stages);
+        emit(w.stages);
         continue;
       }
     }
@@ -23777,9 +24049,10 @@ function writeStages(uf, env, first) {
       if (kind === "array") throw rootIsArray(op.pos);
       if (kind !== "unknown" && kind !== "object") throw rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
       flush();
-      out.push({ $replaceWith: value });
+      emit([{ $replaceWith: value }]);
       continue;
     }
+    emit();
     sets ??= { paths: [], fields: {} };
     sets.paths.push(path);
     setKey(sets.fields, path, replacesWhole(value) ? { $mergeObjects: [value] } : value);
@@ -23825,7 +24098,7 @@ function streamStages(chain, env, first) {
         link.pos
       );
     }
-    out.push(...stages);
+    out.push(...env.chain.ahead(), ...stages);
   }
   return out;
 }
@@ -23973,9 +24246,14 @@ function arrayReduceStages(call, env, first) {
   const parts = arrayReduceParts(call);
   const inputs = stageInputs("reduce", call.args, [], env, call, READ2);
   const out = [];
-  if (parts.test !== null) out.push(...place("$match", { $match: inputs.predicate(parts.test) }, env, first, call.pos));
+  if (parts.test !== null) {
+    const test = inputs.predicate(parts.test);
+    const stages2 = place("$match", { $match: test }, env, first, call.pos);
+    out.push(...env.chain.ahead(), ...stages2);
+  }
   const doc = inputs.document(parts.doc);
-  out.push(...place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos));
+  const stages = place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos);
+  out.push(...env.chain.ahead(), ...stages);
   return out;
 }
 
