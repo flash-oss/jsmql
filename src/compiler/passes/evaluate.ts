@@ -387,6 +387,9 @@ function membership(needle: unknown, haystack: unknown): Evaluation {
 function unary(op: string, operand: unknown): Evaluation {
   switch (op) {
     case "-":
+      // A BigInt negates exactly, so `-5n` is as much a literal as `5n` is. The
+      // 64-bit range is checked where the value is built (src/bson.ts).
+      if (typeof operand === "bigint") return ok(-operand);
       return typeof operand === "number" ? spellable(-operand) : NOT_CONSTANT;
     case "!":
       return typeof operand === "boolean" ? ok(!operand) : NOT_CONSTANT;

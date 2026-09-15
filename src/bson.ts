@@ -179,6 +179,48 @@ export function canonicalBsonName(spelling: string): string {
   }
 }
 
+/**
+ * The `Long` a JavaScript BigInt names, or null when it does not fit in 64 bits.
+ *
+ * A BigInt literal IS an int64 in MQL, and building it here rather than emitting
+ * `{ $toLong: "<digits>" }` means the server parses no string per document — and the
+ * value lands on the query road, where a comparison matches an ELEMENT of an array
+ * field rather than the whole array.
+ */
+export function bigIntToLong(v: bigint): object | null {
+  return bsonConstant("Long", v);
+}
+
+/**
+ * `value` with every BigInt inside it replaced by a `Long`, or the first one that does
+ * not fit. A settled constant can hold BigInts at any depth — `[1n, 2n]`, `{ a: 3n }`.
+ */
+export function longsWithin(value: unknown): { ok: true; value: unknown } | { ok: false; tooBig: bigint } {
+  if (typeof value === "bigint") {
+    const long = bigIntToLong(value);
+    return long === null ? { ok: false, tooBig: value } : { ok: true, value: long };
+  }
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    for (const element of value) {
+      const converted = longsWithin(element);
+      if (!converted.ok) return converted;
+      out.push(converted.value);
+    }
+    return { ok: true, value: out };
+  }
+  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    const out: Record<string, unknown> = {};
+    for (const [key, held] of Object.entries(value as Record<string, unknown>)) {
+      const converted = longsWithin(held);
+      if (!converted.ok) return converted;
+      out[key] = converted.value;
+    }
+    return { ok: true, value: out };
+  }
+  return { ok: true, value };
+}
+
 /** The live BSON value `name()` mints with no argument, or null when the name mints none. */
 export function bsonNullary(name: string): object | null {
   if (name === "MinKey") return new MinKeyClass();

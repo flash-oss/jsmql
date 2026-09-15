@@ -125,6 +125,22 @@ Once built, a BSON value is a VALUE and nothing else:
   report.
 - **One exact read folds**: `toString()`, which cannot lose anything.
 
+## A BigInt literal is a `Long`
+
+`5n` is an int64 in MQL, so `src/compiler/emit/lower.ts` builds the value instead of
+emitting `{ $toLong: "5" }`. Three things follow. The server parses no string per
+document. The comparison stays on the query road, so `$.xs === 1n` matches an ELEMENT
+of `xs` where the `$expr` form compared the whole array. And a BigInt past 64 bits is
+refused at its source position, where it used to compile and die on the server —
+MEASURED: `$toLong: "12345678901234567890123"` is "Failed to parse number … in
+$convert".
+
+`longsWithin` converts at any depth, because a settled constant can hold BigInts
+inside an array or an object. Negation folds (`-5n`), since a BigInt negates exactly;
+no other BigInt arithmetic folds.
+
+An interpolated BigInt takes the same path and the same refusal.
+
 ## The sentinels
 
 `MinKey` / `MaxKey` compare against every type and compute with none. MEASURED:

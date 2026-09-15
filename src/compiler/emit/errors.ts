@@ -171,6 +171,12 @@ export const undefinedAsValue = (pos: number): CodegenError =>
     pos,
   );
 
+export const bigIntTooLarge = (digits: string, pos: number): CodegenError =>
+  new CodegenError(
+    `The BigInt ${digits} does not fit in a 64-bit integer (-9223372036854775808 … 9223372036854775807), which is what MQL stores. Write 'Decimal128("${digits}")' instead.`,
+    pos,
+  );
+
 export const regexAsValue = (pos: number): CodegenError =>
   new CodegenError(
     `Regex literals are only valid as arguments to .match(), .test(), .exec(), .matchAll(), and .search(). To pass a regex pattern as a string, use a string literal instead.`,

@@ -18621,6 +18621,34 @@ function canonicalBsonName(spelling) {
       return spelling;
   }
 }
+function bigIntToLong(v) {
+  return bsonConstant("Long", v);
+}
+function longsWithin(value) {
+  if (typeof value === "bigint") {
+    const long = bigIntToLong(value);
+    return long === null ? { ok: false, tooBig: value } : { ok: true, value: long };
+  }
+  if (Array.isArray(value)) {
+    const out = [];
+    for (const element2 of value) {
+      const converted = longsWithin(element2);
+      if (!converted.ok) return converted;
+      out.push(converted.value);
+    }
+    return { ok: true, value: out };
+  }
+  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    const out = {};
+    for (const [key, held] of Object.entries(value)) {
+      const converted = longsWithin(held);
+      if (!converted.ok) return converted;
+      out[key] = converted.value;
+    }
+    return { ok: true, value: out };
+  }
+  return { ok: true, value };
+}
 function bsonNullary(name2) {
   if (name2 === "MinKey") return new MinKey();
   if (name2 === "MaxKey") return new MaxKey();
@@ -21289,6 +21317,7 @@ function membership(needle, haystack) {
 function unary(op, operand) {
   switch (op) {
     case "-":
+      if (typeof operand === "bigint") return ok3(-operand);
       return typeof operand === "number" ? spellable(-operand) : NOT_CONSTANT2;
     case "!":
       return typeof operand === "boolean" ? ok3(!operand) : NOT_CONSTANT2;
@@ -22792,6 +22821,10 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
 }
 var undefinedAsValue = (pos) => new CodegenError(
   `'undefined' is only meaningful in a comparison \u2014 'x === undefined' / 'x !== undefined' test whether a field is present. As a value it has no MongoDB equivalent: use 'null' for the present-but-null case, or 'delete $.field' to remove a field.`,
+  pos
+);
+var bigIntTooLarge = (digits2, pos) => new CodegenError(
+  `The BigInt ${digits2} does not fit in a 64-bit integer (-9223372036854775808 \u2026 9223372036854775807), which is what MQL stores. Write 'Decimal128("${digits2}")' instead.`,
   pos
 );
 var regexAsValue = (pos) => new CodegenError(
@@ -25315,7 +25348,9 @@ function constantIn(e) {
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
   const v = evaluate(e, /* @__PURE__ */ new Map());
   if (!v.ok) return null;
-  const x = v.value;
+  const converted = longsWithin(v.value);
+  if (!converted.ok) return null;
+  const x = converted.value;
   return isQueryConstant(x) ? { value: x } : null;
 }
 function isQueryConstant(x) {
@@ -25826,12 +25861,10 @@ var OWN_CASE = /* @__PURE__ */ new Set([
   "ArrayLiteral"
 ]);
 var hasOwnCase = (type) => OWN_CASE.has(type);
-function holdsBigInt(v) {
-  if (typeof v === "bigint") return true;
-  if (Array.isArray(v)) return v.some(holdsBigInt);
-  if (v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype)
-    return Object.values(v).some(holdsBigInt);
-  return false;
+function settledValue(value, pos) {
+  const converted = longsWithin(value);
+  if (!converted.ok) throw bigIntTooLarge(converted.tooBig.toString(), pos);
+  return converted.value;
 }
 var joinRoad = null;
 function provideJoin(road) {
@@ -25844,13 +25877,13 @@ function lowerValue(node, env) {
   }
   if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
     const settled = evaluate(node, /* @__PURE__ */ new Map());
-    if (settled.ok && !holdsBigInt(settled.value)) {
+    if (settled.ok) {
       if (isObjectId(settled.value)) {
         const hex = objectIdHex(settled.value);
         const typo = hex === null ? null : objectIdTypo(hex);
         if (typo !== null) throw new CodegenError(typo, node.pos);
       }
-      return settled.value;
+      return settledValue(settled.value, node.pos);
     }
   }
   switch (node.type) {
@@ -25860,8 +25893,11 @@ function lowerValue(node, env) {
       return node.value;
     case "NullLiteral":
       return null;
-    case "BigIntLiteral":
-      return { $toLong: node.value };
+    case "BigIntLiteral": {
+      const long = bigIntToLong(BigInt(node.value));
+      if (long === null) throw bigIntTooLarge(node.value, node.pos);
+      return long;
+    }
     case "UndefinedLiteral":
       throw undefinedAsValue(node.pos);
     case "RegexLiteral":

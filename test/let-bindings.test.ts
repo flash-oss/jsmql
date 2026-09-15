@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { Long } from "../src/bson.ts";
 import { truthy } from "./truthy.ts";
 
 describe("let bindings — basic shape", () => {
@@ -501,8 +502,8 @@ describe("let bindings — RHS expression coverage", () => {
     expect(jsmql("let nothing = null; $project({ nothing })")).toEqual([{ $project: { nothing: null } }]);
   });
 
-  it("BigInt literal RHS — coerced through $toLong like elsewhere", () => {
-    expect(jsmql("let big = 123n; $project({ big })")).toEqual([{ $project: { big: { $toLong: "123" } } }]);
+  it("BigInt literal RHS — a live Long, like elsewhere", () => {
+    expect(jsmql("let big = 123n; $project({ big })")).toEqual([{ $project: { big: Long.fromString("123") } }]);
   });
 
   it("template-literal RHS with field interpolation", () => {

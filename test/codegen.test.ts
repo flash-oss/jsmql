@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { ObjectId } from "../src/bson.ts";
+import { Long, ObjectId } from "../src/bson.ts";
 import { acceptsAnyReceiver, streamMethodNames, valueMethodNames } from "../src/compiler/rows.ts";
 // The `jsTruthy()` mirror used in expected outputs for `&&`, `||`, `!`, `?:`,
 // `Boolean()`, and predicate bodies wherever the operand is not provably boolean.
@@ -6930,11 +6930,19 @@ describe("Array.from is not part of jsmql", () => {
 });
 
 describe("BigInt literals", () => {
+  // A BigInt IS an int64 in MQL, so the value is built at compile time rather than
+  // left as a string the server parses per document.
   it("integer with n suffix", () => {
-    expect(jsmql.expr("123n")).toEqual({ $toLong: "123" });
+    expect(jsmql.expr("123n")).toEqual(Long.fromString("123"));
   });
   it("zero", () => {
-    expect(jsmql.expr("0n")).toEqual({ $toLong: "0" });
+    expect(jsmql.expr("0n")).toEqual(Long.fromString("0"));
+  });
+  it("negates exactly", () => {
+    expect(jsmql.expr("-123n")).toEqual(Long.fromString("-123"));
+  });
+  it("refuses one that does not fit 64 bits, naming the type that does", () => {
+    expect(() => jsmql.expr("12345678901234567890123n")).toThrow(/does not fit in a 64-bit integer.*Decimal128/s);
   });
   it("rejects fraction with n", () => {
     expect(() => jsmql.expr("1.5n")).toThrow(/Invalid BigInt/);
@@ -6943,7 +6951,7 @@ describe("BigInt literals", () => {
     expect(() => jsmql.expr("1e2n")).toThrow(/Invalid BigInt/);
   });
   it("works in arithmetic", () => {
-    expect(jsmql.expr("$.timestamp - 1000n")).toEqual({ $subtract: ["$timestamp", { $toLong: "1000" }] });
+    expect(jsmql.expr("$.timestamp - 1000n")).toEqual({ $subtract: ["$timestamp", Long.fromString("1000")] });
   });
 });
 

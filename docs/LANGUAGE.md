@@ -229,16 +229,23 @@ Integer and floating-point numbers, scientific notation, and numeric separators 
 
 Underscores must sit between two digits — `1_`, `_1`, and `1__0` are errors.
 
-**BigInt literals.** Integer literals with an `n` suffix compile to MongoDB's `$toLong`:
+**BigInt literals.** Integer literals with an `n` suffix are MongoDB 64-bit integers, and jsmql builds the value rather than asking the server to parse one per document:
 
 ```js
-123n           // { $toLong: "123" }
-1_000_000n     // { $toLong: "1000000" }   (separators allowed)
+123n           // Long.fromString("123")
+-123n          // Long.fromString("-123")
+1_000_000n     // Long.fromString("1000000")   (separators allowed)
 $.timestamp - 1000n
-               // { $subtract: ["$timestamp", { $toLong: "1000" }] }
+               // { $subtract: ["$timestamp", Long.fromString("1000")] }
 ```
 
-`n` suffix is integer-only — `1.5n`, `1e2n`, etc. are syntax errors (matches JS).
+Because the value is a real `Long`, a comparison stays a query the index serves and matches an **element** of an array field, as any other query value does:
+
+```js
+$.n === 9007199254740993n   // { n: Long.fromString("9007199254740993") }
+```
+
+`n` suffix is integer-only — `1.5n`, `1e2n`, etc. are syntax errors (matches JS). A BigInt past the 64-bit range is refused at compile time, naming `Decimal128` as the type that holds it.
 
 ### Strings
 
@@ -4575,7 +4582,7 @@ Each restriction produces a clear `FunctionInputError` that names the problem an
 
 ### Param values
 
-Each value on the params object must be a JSON-safe literal: number, string, boolean, null, plain array, or plain object. The same validation that template-tag interpolation uses rejects `NaN`, `Infinity`, functions, Symbols, `undefined`, BigInts, and circular references — at call time, with a `JsmqlInterpolationError` that names the binding key.
+Each value on the params object must be a JSON-safe literal: number, string, boolean, null, plain array, or plain object. The same validation that template-tag interpolation uses rejects `NaN`, `Infinity`, functions, Symbols, `undefined`, and circular references — at call time, with a `JsmqlInterpolationError` that names the binding key. A BigInt is accepted and becomes a `Long`; one past the 64-bit range is refused.
 
 BSON instance values — `Date`, `RegExp`, `Uint8Array` (and `Buffer`), and ObjectId (duck-typed via `_bsontype`) — are passed through to the MQL output as the live JS instance, exactly the way the template-tag form preserves them. The pass-through works **anywhere** in the binding value: at the top level, nested inside an object, nested inside an array, and arbitrarily deep. The same shape that works via interpolation also works via parameter bindings — no manual unpacking required at the call site:
 

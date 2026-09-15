@@ -13,7 +13,7 @@ import type { Expr, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
-import { isObjectId, objectIdHex, ObjectId } from "../../bson.ts";
+import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import { setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
@@ -89,13 +89,15 @@ const OWN_CASE: ReadonlySet<Expr["type"]> = new Set<Expr["type"]>([
 ]);
 const hasOwnCase = (type: Expr["type"]): boolean => OWN_CASE.has(type);
 
-/** A settled value holding a JavaScript bigint anywhere — the driver has no BSON for one; `$toLong` spells it. */
-function holdsBigInt(v: unknown): boolean {
-  if (typeof v === "bigint") return true;
-  if (Array.isArray(v)) return v.some(holdsBigInt);
-  if (v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype)
-    return Object.values(v).some(holdsBigInt);
-  return false;
+/**
+ * A settled value with every BigInt inside it as a `Long`, or the refusal for the
+ * first that does not fit 64 bits. A BigInt literal IS an int64 in MQL, so the value
+ * is built here rather than left for the server to parse from a string per document.
+ */
+function settledValue(value: unknown, pos: number): unknown {
+  const converted = longsWithin(value);
+  if (!converted.ok) throw E.bigIntTooLarge(converted.tooBig.toString(), pos);
+  return converted.value;
 }
 
 /**
@@ -123,7 +125,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
   // developer's MQL and is never evaluated).
   if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
     const settled = evaluate(node, new Map());
-    if (settled.ok && !holdsBigInt(settled.value)) {
+    if (settled.ok) {
       // `ObjectId("…")` settles to a live id: the same plausibility rule the
       // literal has, because the same typo is possible.
       if (isObjectId(settled.value)) {
@@ -131,7 +133,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
         const typo = hex === null ? null : objectIdTypo(hex);
         if (typo !== null) throw new E.CodegenError(typo, node.pos);
       }
-      return settled.value;
+      return settledValue(settled.value, node.pos);
     }
   }
   switch (node.type) {
@@ -141,8 +143,11 @@ export function lowerValue(node: Expr, env: Env): unknown {
       return node.value;
     case "NullLiteral":
       return null;
-    case "BigIntLiteral":
-      return { $toLong: node.value };
+    case "BigIntLiteral": {
+      const long = bigIntToLong(BigInt(node.value));
+      if (long === null) throw E.bigIntTooLarge(node.value, node.pos);
+      return long;
+    }
     case "UndefinedLiteral":
       throw E.undefinedAsValue(node.pos);
     case "RegexLiteral":

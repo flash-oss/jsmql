@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { expr } from "../src/compiler/index.ts";
+import { Long } from "../src/bson.ts";
 
 const TRUTHY = (v: unknown) => ({
   $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
@@ -17,7 +18,7 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(expr('"x"')).toBe("x");
     expect(expr("true")).toBe(true);
     expect(expr("null")).toBe(null);
-    expect(expr("123n")).toEqual({ $toLong: "123" });
+    expect(expr("123n")).toEqual(Long.fromString("123"));
     expect(String(expr("0x507f1f77bcf86cd799439011"))).toBe("507f1f77bcf86cd799439011");
     expect(expr("`n=${$.n}`")).toEqual({ $concat: ["n=", { $toString: "$n" }] });
     // a row that states `returns: "string"` needs no $toString; an unknown one does

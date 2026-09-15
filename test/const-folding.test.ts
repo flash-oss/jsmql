@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql, ObjectId } from "../src/index.ts";
+import { Long } from "../src/bson.ts";
 
 // Compile-time constant folding of `const`/`let` (see docs/specs/let-bindings.md
 // § Constant folding, and docs/specs/desugar-pass.md for the pass that does it).
@@ -184,10 +185,10 @@ describe("const folding — fallback to runtime binding", () => {
     ]);
   });
 
-  it("a BigInt RHS stays runtime ($toLong)", () => {
-    expect(jsmql("const big = 123n; $match($.n === big)")).toEqual([
-      { $match: { $expr: { $eq: ["$n", { $toLong: "123" }] } } },
-    ]);
+  // A BigInt folds to a live Long, so the comparison stays a query the index serves
+  // — and matches an ELEMENT of an array field, which the `$expr` form did not.
+  it("a BigInt RHS folds to a Long on the query road", () => {
+    expect(jsmql("const big = 123n; $match($.n === big)")).toEqual([{ $match: { n: Long.fromString("123") } }]);
   });
 });
 

@@ -2,6 +2,7 @@
 // supplies is ever read as syntax, as an operator, or as a field reference (HR1).
 import { describe, it, expect } from "vitest";
 import { jsmql, JsmqlInterpolationError } from "../src/index.ts";
+import { Long } from "../src/bson.ts";
 
 const OWN = (v: unknown) => ({ $eq: v });
 
@@ -27,7 +28,7 @@ describe("jsmql template-tag interpolation guards", () => {
     expect(() => jsmql`$.a === ${1} && $.b === ${undefined}`).toThrow(/slot 2/);
   });
   it("takes a BigInt as a value", () => {
-    expect(jsmql`$.x === ${BigInt(1)}`).toEqual({ $expr: { $eq: ["$x", { $toLong: "1" }] } });
+    expect(jsmql`$.x === ${BigInt(1)}`).toEqual({ x: Long.fromString("1") });
   });
 });
 

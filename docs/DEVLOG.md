@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-15 — fix(bson): a BigInt literal is a `Long`, not a per-document `$toLong`
+
+`5n` compiled to `{ $toLong: "5" }` — a string the server parsed on every document,
+for a value known at compile time. Now that `bson` is a dependency the value is built
+where it is written, and three things follow.
+
+The comparison stays on the QUERY road. `$.n === 5n` was
+`{ $expr: { $eq: ["$n", { $toLong: "5" }] } }` and is now `{ n: Long.fromString("5") }`
+— which matters beyond output size, because MEASURED, `$expr` compares a whole ARRAY
+to a scalar: for `xs: [1, 2]`, `$.xs === 1n` now matches and the old form did not.
+That is a change in what an existing query RETURNS, and it is the correct answer.
+
+A BigInt past 64 bits is refused at its source position. It used to compile and die on
+the server — MEASURED, `{ $toLong: "12345678901234567890123" }` is "Failed to parse
+number '12345678901234567890123' in $convert". The refusal names `Decimal128` as the
+type that holds it. `-5n` also became one value rather than
+`{ $multiply: [{ $toLong: "5" }, -1] }`: a BigInt negates exactly, so the evaluator
+now folds unary minus on one.
+
+The conversion runs at any depth (`longsWithin`), because a settled constant can hold
+BigInts inside an array or an object, and an interpolated BigInt takes the same path.
+`docs/LANGUAGE.md` claimed interpolation REJECTED BigInts, which it never did; that
+line is corrected too. See [docs/specs/bson-types.md](docs/specs/bson-types.md).
+
+---
+
 ## 2026-09-15 — feat(bson): eight more BSON types the source can spell
 
 `ObjectId` was the only BSON type JSMQL could WRITE. Every other one could arrive

@@ -21,7 +21,7 @@ import { queryOwnValue } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
-import { bsonTagOf, ObjectId } from "../../bson.ts";
+import { bsonTagOf, longsWithin, ObjectId } from "../../bson.ts";
 import { consult, listedIn } from "./consult.ts";
 import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
@@ -463,7 +463,11 @@ export function constantIn(e: Expr): { value: unknown } | null {
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
   const v = evaluate(e, new Map());
   if (!v.ok) return null;
-  const x = v.value;
+  // A BigInt IS an int64 in MQL. Converted here, `$.n === 5n` stays a query the
+  // index serves; left alone it fell through to `$expr`.
+  const converted = longsWithin(v.value);
+  if (!converted.ok) return null;
+  const x = converted.value;
   return isQueryConstant(x) ? { value: x } : null;
 }
 
