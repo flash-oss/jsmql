@@ -26,7 +26,7 @@ import {
   soleFieldFamilyOf,
   elementKindOf as rowElementKind,
 } from "../rows.ts";
-import { ObjectId } from "../../objectid.ts";
+import { isObjectId } from "../../bson.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
 export type Known = Kind | "unknown";
@@ -203,7 +203,7 @@ export function kindOf(node: Expr, env: Env): Known {
       if (typeof v === "boolean") return "bool";
       if (v instanceof Date) return "date";
       if (Array.isArray(v)) return isMqlShaped(v) ? "unknown" : "array";
-      if (v instanceof ObjectId) return "objectId";
+      if (isObjectId(v)) return "objectId";
       if (v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) {
         return isMqlShaped(v) ? "unknown" : "object";
       }

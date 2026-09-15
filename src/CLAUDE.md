@@ -11,7 +11,8 @@ string  →  compiler/lex  →  compiler/parse  →  compiler/passes (fold, desu
 - [`compiler/`](compiler/CLAUDE.md) is the five phases over the registry. A phase asks a row; it never lists names of its own.
 - `index.ts` is the public API (the `jsmql` callable and its properties). It turns the caller's input — a string, an arrow, a template tag — into source and injected values, picks the root position (a Filter, a Pipeline, an expression, an update document — see docs/specs/position-pass.md), and maps the compiler's errors to `validate()` results. It lowers nothing itself.
 - `cli.ts` and `mongoose.ts` call `jsmql` and nothing below it.
-- `errors.ts`, `namespace.ts`, `objectid.ts`, `levenshtein.ts` are leaves the compiler shares; each imports nothing.
+- `errors.ts`, `namespace.ts`, `levenshtein.ts` are leaves the compiler shares; each imports nothing.
+- `bson.ts` is the one module that names `bson` — a PEER dependency, so the value jsmql emits is the caller's own class. It builds with the real classes and recognises with `instanceof` OR the `_bsontype` tag, so a value from a second copy still counts. See docs/specs/bson-types.md.
 - `stringify.ts` is the one MQL printer — a compiled document as the JavaScript that rebuilds it. Also a leaf, and the only text form of a document anywhere: the CLI, both site pages, the expectation rewriters and one compiler refusal all read it, and none holds a copy. See docs/specs/mql-stringify.md.
 - `globals.ts` is GENERATED from the registry rows and the vendored MQL spec (`scripts/generate-globals.mjs`) — never edit it by hand.
 

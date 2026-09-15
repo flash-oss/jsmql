@@ -27,7 +27,8 @@ import { CodegenError, UnknownIdentifierError } from "./errors.ts";
 import { stringify } from "./stringify.ts";
 
 export { CodegenError, UnknownIdentifierError, ParseError, LexError };
-export { ObjectId } from "./objectid.ts";
+export { ObjectId } from "./bson.ts";
+import { bsonTagOf } from "./bson.ts";
 
 // ── the public types ─────────────────────────────────────────────────────────
 
@@ -131,7 +132,7 @@ function checkValue(value: unknown, slot: number, key?: string): void {
     }
     if (v === null || typeof v !== "object") return;
     // A BSON class carries its own value; its internals are not the developer's data.
-    if ((v as { _bsontype?: unknown })._bsontype !== undefined) return;
+    if (bsonTagOf(v) !== undefined) return;
     if (v instanceof Date || v instanceof RegExp) return;
     if (Array.isArray(v)) {
       v.forEach((x, i) => walk(x, `${path}[${i}]`));

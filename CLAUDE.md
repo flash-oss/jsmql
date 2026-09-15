@@ -100,7 +100,7 @@ src/
   mongoose.ts     `@koresar/jsmql/mongoose` plugin. See docs/specs/mongoose-plugin.md.
   errors.ts       CodegenError / UnknownIdentifierError / internalError — a leaf, so rejecting needs no compiler.
   namespace.ts    The three compiler namespaces (`__jsmql` document fields, `jsmql_` correlation vars, `jsmqlXxx` expression vars).
-  objectid.ts     jsmql's own ObjectId (no `bson` dependency).
+  bson.ts         The one module that names `bson` (a peer dependency): the classes jsmql builds with, and the recognition every phase shares. See docs/specs/bson-types.md.
   stringify.ts    `jsmql.stringify` — a compiled document as the JavaScript that rebuilds it. The one MQL printer. See docs/specs/mql-stringify.md.
   levenshtein.ts  `didYouMean` for every closed-set refusal.
   globals.ts      GENERATED ambient `declare global` types (`@koresar/jsmql/globals`). See docs/specs/globals-generation.md.

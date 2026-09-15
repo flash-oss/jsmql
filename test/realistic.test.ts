@@ -13,7 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { ObjectId } from "../src/objectid.ts";
+import { ObjectId } from "../src/bson.ts";
 import "../src/globals.ts";
 
 // Teach TS about the playground-metadata keys (`kind`, `usage`, `features`)

@@ -13,7 +13,7 @@ import type { Expr, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
-import { ObjectId } from "../../objectid.ts";
+import { isObjectId, objectIdHex, ObjectId } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import { setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
@@ -126,8 +126,9 @@ export function lowerValue(node: Expr, env: Env): unknown {
     if (settled.ok && !holdsBigInt(settled.value)) {
       // `ObjectId("…")` settles to a live id: the same plausibility rule the
       // literal has, because the same typo is possible.
-      if (settled.value instanceof ObjectId) {
-        const typo = objectIdTypo(settled.value.toHexString());
+      if (isObjectId(settled.value)) {
+        const hex = objectIdHex(settled.value);
+        const typo = hex === null ? null : objectIdTypo(hex);
         if (typo !== null) throw new E.CodegenError(typo, node.pos);
       }
       return settled.value;

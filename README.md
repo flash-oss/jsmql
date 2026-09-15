@@ -45,10 +45,15 @@ let expr = jsmql.expr(({ $ }) => $.items.map((i) => i.price * i.qty).reduce((a, 
 ## Install
 
 ```sh
-npm install @koresar/jsmql
+npm install @koresar/jsmql bson
 ```
 
-ESM + CJS, runs in browsers, zero dependencies. Works with **Node 14+**, Deno, and Bun.
+ESM + CJS, runs in browsers. Works with **Node 16.20.1+**, Deno, and Bun.
+
+`bson` is a **peer** dependency (`^6.10.0 || ^7.0.0`), and npm installs it for you. It is the
+package the MongoDB driver and mongoose already carry, so jsmql shares their copy: every
+`ObjectId` jsmql emits is the same class your driver builds, passes `instanceof` in your own
+code, and hands to any other module unchanged.
 
 ## Tour
 

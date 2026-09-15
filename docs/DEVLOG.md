@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-15 — fix(bson): ObjectId comes from the `bson` module, a peer dependency
+
+jsmql built its own ObjectId — a duck-typed class in `src/objectid.ts` that tagged itself
+`_bsontype: "ObjectId"`, answered the `@@mdb.bson.version` symbol with a HARD-CODED major of
+7, and wrote its own twelve bytes through `serializeInto`. It served, because the driver
+duck-types what it serializes. But the value was jsmql's, not the caller's: it failed
+`instanceof` in the caller's own code, and the hard-coded major made a caller on a different
+bson throw `BSONVersionError`. Output that other modules cannot reuse is the whole defect.
+
+`bson` is now a **peer** dependency (`^6.10.0 || ^7.0.0`), which is the part that matters. A
+plain `dependencies` entry would let npm nest jsmql's own copy beside the application's, and a
+value from the wrong copy fails both checks — worse than the hand-made class, which at least
+failed only `instanceof`. A peer resolves to ONE copy, the application's, so the value jsmql
+emits is the very class the driver builds. Two build rules protect that and each undoes it if
+broken: `bson` is `external` in [scripts/build-cjs.mjs](scripts/build-cjs.mjs), or the package
+ships a second copy; and it IS bundled into the site bundle by
+[scripts/sync-playground.mjs](scripts/sync-playground.mjs), because a browser cannot resolve a
+bare specifier and the page has no driver to share with.
+
+Recognition deliberately does NOT rely on the peer guarantee. [src/bson.ts](src/bson.ts) — the
+one module that names `bson` — tests `v instanceof Cls || bsonTagOf(v) === tag`, so a value
+from a second copy still counts. MongoDB's own shell documentation warns that `instanceof`
+assigns a server response a different base class than a user-supplied value, and mongoose
+duck-types for the same reason. `UUID` is the case that forces the pair: it reports
+`_bsontype: "Binary"`, so from a foreign copy it is known only by `sub_type === 4`. Every read
+of a recognised value stays defensive, because a plain object may wear the tag — the compiler
+passes an injected `{ _bsontype: "ObjectId", id: "xyz" }` through as the value it is.
+
+No emitted document changed. `engines.node` moves `>=14` → `>=16.20.1` and the CJS target
+`node14` → `node16`, which is bson 6's own floor. See
+[docs/specs/bson-types.md](docs/specs/bson-types.md).
+
+---
+
 ## 2026-09-13 — feat(emit): the `,` in a declaration list shares a stage, as it does for writes
 
 `let a = $.p, b = $.q;` now takes ONE `$set`, and a block's `const d = …, e = …;` one `$let`.

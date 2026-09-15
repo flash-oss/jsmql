@@ -429,6 +429,10 @@ async function extractExamples() {
 async function bundleJsmql() {
   const result = await build({
     entryPoints: [ENTRY],
+    // `bson` IS bundled here, unlike in the CJS build. A browser cannot resolve a
+    // bare specifier, and the page has no driver to interoperate with — so the one
+    // copy in the bundle is the only copy, and a second CDN would only add a way for
+    // the playground to go dark. `platform: "browser"` picks bson's browser build.
     bundle: true,
     format: "esm",
     target: "es2022",

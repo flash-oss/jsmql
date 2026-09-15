@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { ObjectId } from "../src/objectid.ts";
+import { ObjectId } from "../src/bson.ts";
 import { acceptsAnyReceiver, streamMethodNames, valueMethodNames } from "../src/compiler/rows.ts";
 // The `jsTruthy()` mirror used in expected outputs for `&&`, `||`, `!`, `?:`,
 // `Boolean()`, and predicate bodies wherever the operand is not provably boolean.

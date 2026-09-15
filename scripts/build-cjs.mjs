@@ -7,7 +7,7 @@
  * in `package.json#exports`.
  *
  * Approach: esbuild bundles each entry into a single `.cjs` file targeting
- * `node14`. Bundling — rather than per-file emit — sidesteps the dual-package
+ * `node16`. Bundling — rather than per-file emit — sidesteps the dual-package
  * hazard (two copies of the parser/codegen on disk, distinct singleton state)
  * and keeps the CJS surface a self-contained drop-in.
  *
@@ -41,9 +41,14 @@ await build({
   },
   outdir: OUT_DIR,
   bundle: true,
+  // `bson` is a PEER dependency and must stay one at runtime. Inlined here, the
+  // package would ship its own copy, two would coexist with the app's, and every
+  // value jsmql emits would fail the app's `instanceof` and BSON version checks —
+  // the exact defect the peer dependency exists to prevent.
+  external: ["bson"],
   format: "cjs",
   platform: "node",
-  target: "node14",
+  target: "node16",
   outExtension: { ".js": ".cjs" },
   define: { __JSMQL_VERSION__: JSON.stringify(pkgVersion) },
   sourcemap: true,

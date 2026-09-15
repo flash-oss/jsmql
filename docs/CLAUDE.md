@@ -38,6 +38,7 @@ A new operator or syntax feature lands as a registry row, and the LANGUAGE.md ta
 | `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`) → runtime `$set` binding |
 | `specs/reusable-functions.md` | Reusable named functions (`const f = (a) => …`) → inline IIFE/`$let` per call |
 | `specs/function-form-params.md` | `jsmql.compile(fn)` parameter bindings: the two-slot `(params, { $, … })` arrow signature |
+| `specs/bson-types.md` | The `bson` peer dependency contract, construction vs recognition, and where each phase touches a live BSON value |
 | `specs/globals-generation.md` | How `src/globals.ts` (`@koresar/jsmql/globals`) is generated + its drift test |
 | `specs/strict-shape-entries.md` | `jsmql.filter` / `jsmql.pipeline` / `jsmql.update`: strict-shape dispatch + the update whitelist |
 | `specs/mongoose-plugin.md` | The `@koresar/jsmql/mongoose` plugin |

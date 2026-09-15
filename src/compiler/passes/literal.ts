@@ -18,9 +18,9 @@
 // carry its free names to every use site.
 
 import type { Expr } from "../../registry/ast.ts";
-// A leaf with no dependencies of its own — see its header for why jsmql mints
-// its own ObjectId rather than importing `bson`.
-import { ObjectId } from "../../objectid.ts";
+// The one place the `bson` module is named — see its header for why recognition
+// tests the prototype AND the tag.
+import { bsonTagOf, isObjectId, objectIdHex, ObjectId } from "../../bson.ts";
 
 /**
  * Can this value be written as a literal at all?
@@ -38,10 +38,6 @@ export function isSpellable(value: unknown): boolean {
 export type Reading = { ok: true; value: unknown } | { ok: false };
 
 const NOT_CONSTANT: Reading = { ok: false };
-
-/** A BSON instance the driver consumes as-is rather than as JSON. */
-const isBson = (v: unknown, tag: string): boolean =>
-  typeof v === "object" && v !== null && (v as { _bsontype?: unknown })._bsontype === tag;
 
 /**
  * The value a LITERAL node holds, or `{ ok: false }` for anything else.
@@ -75,7 +71,7 @@ export function readLiteral(node: Expr): Reading {
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
   if (v instanceof Date || v instanceof RegExp || v instanceof Uint8Array) return false;
-  if ((v as { _bsontype?: unknown })._bsontype !== undefined) return false;
+  if (bsonTagOf(v) !== undefined) return false;
   const proto = Object.getPrototypeOf(v) as unknown;
   return proto === Object.prototype || proto === null;
 }
@@ -113,7 +109,7 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
   if (value instanceof RegExp) {
     return { type: "RegexLiteral", pattern: value.source, flags: value.flags, pos };
   }
-  if (isBson(value, "ObjectId")) {
+  if (isObjectId(value)) {
     const hex = objectIdHex(value);
     if (hex === null) return null;
     return { type: "ObjectIdLiteral", hex, pos };
@@ -158,17 +154,4 @@ function leafOf(value: unknown, pos: number): Expr | null {
   const spelled = asLiteral(value, pos);
   if (spelled !== null) return spelled;
   return Array.isArray(value) || isPlainObject(value) ? null : { type: "Injected", value, pos };
-}
-
-/** The 24-hex spelling of an ObjectId-shaped value: its `toHexString()`, else its 12 `id` bytes, else its `toString()`. */
-function objectIdHex(value: unknown): string | null {
-  const v = value as { toHexString?: () => string; id?: unknown; toString?: () => string };
-  if (typeof v.toHexString === "function") return v.toHexString().toLowerCase();
-  if (v.id instanceof Uint8Array && v.id.length === 12)
-    return [...v.id].map((b) => b.toString(16).padStart(2, "0")).join("");
-  if (typeof v.toString === "function") {
-    const s = v.toString();
-    if (/^[0-9a-fA-F]{24}$/.test(s)) return s.toLowerCase();
-  }
-  return null;
 }

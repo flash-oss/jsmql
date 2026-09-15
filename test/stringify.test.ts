@@ -13,7 +13,6 @@
 import { describe, it, expect } from "vitest";
 import * as mongodb from "mongodb";
 import { jsmql } from "../src/index.ts";
-import { ObjectId as JsmqlObjectId } from "../src/objectid.ts";
 
 const { stringify } = jsmql;
 
@@ -54,8 +53,11 @@ describe("stringify: the BSON classes", () => {
     rebuilds(new mongodb.ObjectId("507f1f77bcf86cd799439011"), 'new ObjectId("507f1f77bcf86cd799439011")');
   });
 
-  it("writes jsmql's own ObjectId the same way as the driver's", () => {
-    rebuilds(new JsmqlObjectId("507f1f77bcf86cd799439011"), 'new ObjectId("507f1f77bcf86cd799439011")');
+  it("writes an ObjectId from a foreign bson copy the same way", () => {
+    // A second copy of `bson` in the tree shares no prototype with ours, so the
+    // printer knows the value only by its tag. It must still spell the constructor.
+    const foreign = { _bsontype: "ObjectId", toHexString: () => "507f1f77bcf86cd799439011" };
+    expect(stringify({ v: foreign })).toBe('{ v: new ObjectId("507f1f77bcf86cd799439011") }');
   });
 
   it("writes a Decimal128 as its decimal string, not its bytes", () => {

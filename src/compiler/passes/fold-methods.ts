@@ -14,7 +14,7 @@
 // call stays a runtime one.
 
 import type { Evaluation } from "./evaluate.ts";
-import { ObjectId } from "../../objectid.ts";
+import { isObjectId, objectIdHex, ObjectId } from "../../bson.ts";
 import { sameValue, truthy } from "./evaluate.ts";
 import { setKey } from "../../registry/mql.ts";
 import { foldDateMethod, foldDateUTC, foldNewDate } from "./fold-dates.ts";
@@ -312,7 +312,11 @@ export function foldInstanceCall(receiver: unknown, name: string, args: readonly
   if (typeof receiver === "number") return numberMethod(receiver, name, args);
   if (receiver instanceof Date) return foldDateMethod(receiver, name, args.map(valueOf));
   // An ObjectId's one read: its 24 hex digits, the string the driver prints.
-  if (receiver instanceof ObjectId) return name === "toString" && args.length === 0 ? ok(receiver.toHexString()) : NO;
+  if (isObjectId(receiver)) {
+    if (name !== "toString" || args.length !== 0) return NO;
+    const hex = objectIdHex(receiver);
+    return hex === null ? NO : ok(hex);
+  }
   // PLAIN objects only. A RegExp, a Date and a BSON value are all objects to
   // JavaScript, and reading one with the object rules answers about the wrong
   // thing entirely: `/ab/.size()` would be `Object.keys(regex).length`, which

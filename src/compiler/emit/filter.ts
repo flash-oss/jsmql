@@ -21,7 +21,7 @@ import { queryOwnValue } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
-import { ObjectId } from "../../objectid.ts";
+import { isObjectId, ObjectId } from "../../bson.ts";
 import { consult, listedIn } from "./consult.ts";
 import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
@@ -470,7 +470,7 @@ export function constantIn(e: Expr): { value: unknown } | null {
 /** A value the query language compares as written: a scalar, a Date, an ObjectId, a regex, or a list of such. */
 function isQueryConstant(x: unknown): boolean {
   if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return true;
-  if (x instanceof Date || x instanceof ObjectId) return true;
+  if (x instanceof Date || isObjectId(x)) return true;
   if (Array.isArray(x)) return x.every(isQueryConstant);
   return false;
 }
