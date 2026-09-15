@@ -28183,11 +28183,18 @@ var jsmql = Object.assign(jsmqlDispatch, {
 });
 export {
   CodegenError,
+  Decimal128,
+  Double,
   FunctionInputError,
+  Int32,
   JsmqlInterpolationError,
   LexError,
+  Long,
+  MaxKey,
+  MinKey,
   ObjectId,
   ParseError,
+  UUID,
   UnknownIdentifierError,
   jsmql
 };

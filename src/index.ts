@@ -27,7 +27,10 @@ import { CodegenError, UnknownIdentifierError } from "./errors.ts";
 import { stringify } from "./stringify.ts";
 
 export { CodegenError, UnknownIdentifierError, ParseError, LexError };
-export { ObjectId } from "./bson.ts";
+// The nine types the language can spell, re-exported from the peer `bson` so a caller
+// who writes `import { ObjectId } from "@koresar/jsmql"` provably gets the copy jsmql
+// resolved. See docs/specs/bson-types.md.
+export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "./bson.ts";
 import { bsonTagOf } from "./bson.ts";
 
 // ── the public types ─────────────────────────────────────────────────────────

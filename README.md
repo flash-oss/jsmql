@@ -51,9 +51,10 @@ npm install @koresar/jsmql bson
 ESM + CJS, runs in browsers. Works with **Node 16.20.1+**, Deno, and Bun.
 
 `bson` is a **peer** dependency (`^6.10.0 || ^7.0.0`), and npm installs it for you. It is the
-package the MongoDB driver and mongoose already carry, so jsmql shares their copy: every
-`ObjectId` jsmql emits is the same class your driver builds, passes `instanceof` in your own
-code, and hands to any other module unchanged.
+package the MongoDB driver and mongoose already carry, so jsmql shares their copy: every BSON
+value jsmql emits is built by your own `bson`, carries its version, and hands to any other
+module unchanged. jsmql also re-exports the nine types it can spell (`import { ObjectId } from
+"@koresar/jsmql"`), so you can reach the same copy without a second import.
 
 ## Tour
 

@@ -31,6 +31,32 @@ Two build rules follow, and breaking either reintroduces the defect:
 | `dist/cjs/*.cjs` | `external: ["bson"]` | inlined, the package ships its own copy |
 | `dist/jsmql.js` (site) | bundled | a browser cannot resolve a bare specifier, and the page has no driver to share with |
 
+### What the peer dependency does and does not buy
+
+It guarantees **one resolved copy per module condition**, which is what makes the BSON
+version symbol always agree — the thing a serializer checks before it writes a value.
+The hand-made class hard-coded that number, so an app on bson 6 hit `BSONVersionError`.
+
+It does NOT guarantee `instanceof` everywhere, and nothing can. `bson` ships a dual
+build: its exports map sends `import` to `lib/bson.node.mjs` and `require` to
+`lib/bson.cjs`, so an ESM importer and a CJS importer hold two different class objects.
+MEASURED, with jsmql absent from the test entirely:
+
+```
+ESM bson.ObjectId === CJS bson.ObjectId : false
+CJS bson.ObjectId === mongodb.ObjectId  : true      (mongodb is CJS)
+version symbol both sides               : 7 7
+mongodb serialises an ESM-built ObjectId: OK
+```
+
+So a CJS consumer — which is what `mongodb` and `mongoose` are — gets exact class
+identity with jsmql's CJS build. An ESM consumer reaching the driver's classes through
+CJS interop does not, and never did, with or without jsmql. The value still serializes,
+because the version symbol is what the serializer reads.
+
+This is the concrete reason recognition duck-types: a valid value can arrive wearing a
+prototype jsmql has never seen, through no fault of anyone's dependency graph.
+
 ## Construction vs recognition
 
 `src/bson.ts` is the one module that names `bson`. It draws the line:

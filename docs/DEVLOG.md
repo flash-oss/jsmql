@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-15 — fix(bson): the nine types are re-exported, and what the peer buys is stated exactly
+
+`src/index.ts` re-exported `ObjectId` alone, which left the other eight reachable only
+through the caller's own `bson`. All nine are re-exported now, so
+`import { Decimal128 } from "@koresar/jsmql"` provably hands back the copy jsmql
+resolved rather than a second one found through a different path.
+
+The measurement that prompted this also corrects a claim made when the peer dependency
+was chosen. A peer guarantees ONE RESOLVED COPY PER MODULE CONDITION — which is what
+makes the BSON version symbol always agree, and that symbol is what a serializer checks
+before it writes. It does NOT guarantee `instanceof` everywhere, and nothing can:
+`bson` ships a dual build whose exports map sends `import` to `lib/bson.node.mjs` and
+`require` to `lib/bson.cjs`, so an ESM importer and a CJS importer hold two different
+class objects. MEASURED with jsmql absent from the test entirely — `ESM bson.ObjectId
+=== CJS bson.ObjectId` is false, while `CJS bson.ObjectId === mongodb.ObjectId` is true.
+
+So a CJS consumer, which is what `mongodb` and `mongoose` are, gets exact class identity
+with jsmql's CJS build; an ESM consumer reaching the driver's classes through CJS
+interop does not, and never did, with or without jsmql. The value still serializes, because
+the version symbol agrees on both sides. This is the concrete reason recognition reads
+the `_bsontype` tag rather than trusting a prototype — a valid value can arrive wearing a
+prototype jsmql has never seen, through no fault of anyone's dependency graph.
+
+---
+
 ## 2026-09-15 — test(bson): the constructors run against both supported majors
 
 The peer range is `^6.10.0 || ^7.0.0`, but the dev tree resolves to 7 alone, so the

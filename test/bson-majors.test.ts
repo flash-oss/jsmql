@@ -13,7 +13,9 @@
 import { describe, expect, it } from "vitest";
 import * as bson6 from "bson6";
 import * as bson7 from "bson";
+import { createRequire } from "node:module";
 import { jsmql } from "../src/index.ts";
+import * as jsmqlExports from "../src/index.ts";
 import { bsonTagOf, isBsonType, isObjectId, isUUID, objectIdHex } from "../src/bson.ts";
 
 const HEX = "507f1f77bcf86cd799439011";
@@ -37,6 +39,32 @@ describe("bson majors — both are installed, and they are different copies", ()
   // outright, so the query never reaches the server at all.
   it("refuses to serialize a value from the other major", () => {
     expect(() => bson7.serialize({ v: new bson6.ObjectId(HEX) })).toThrow(/BSONVersionError|version/i);
+  });
+});
+
+describe("bson majors — what the peer dependency does and does not buy", () => {
+  it("re-exports the very classes the resolved `bson` holds", () => {
+    // A caller who imports from jsmql provably gets the copy jsmql resolved, rather
+    // than reaching a second one through their own dependency graph.
+    for (const name of ["Decimal128", "Double", "Int32", "Long", "MaxKey", "MinKey", "ObjectId", "UUID"] as const) {
+      expect(jsmqlExports[name], name).toBe(bson7[name]);
+    }
+  });
+
+  // `bson` ships a dual build — its exports map sends `import` to lib/bson.node.mjs
+  // and `require` to lib/bson.cjs — so those are two class objects, and `instanceof`
+  // across that line fails for ANY pair of modules, jsmql or not. MEASURED, and it is
+  // why recognition reads the `_bsontype` tag rather than trusting a prototype.
+  //
+  // What survives the split is the thing that matters: the BSON version symbol agrees,
+  // so a driver on either side serializes the value.
+  it("serializes across the ESM/CJS split, where `instanceof` cannot", () => {
+    const cjsBson = createRequire(import.meta.url)("bson") as typeof bson7;
+    expect(new bson7.ObjectId(HEX) instanceof cjsBson.ObjectId).toBe(false);
+    expect((new bson7.ObjectId(HEX) as unknown as Record<symbol, number>)[BSON_VERSION]).toBe(
+      (new cjsBson.ObjectId(HEX) as unknown as Record<symbol, number>)[BSON_VERSION],
+    );
+    expect(() => cjsBson.serialize({ _id: new bson7.ObjectId(HEX) })).not.toThrow();
   });
 });
 
