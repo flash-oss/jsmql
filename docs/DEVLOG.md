@@ -10,76 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-09-15 — fix(bson): the nine types are re-exported, and what the peer buys is stated exactly
+## 2026-09-15 — docs: numeric equality is cross-type, and exact
 
-`src/index.ts` re-exported `ObjectId` alone, which left the other eight reachable only
-through the caller's own `bson`. All nine are re-exported now, so
-`import { Decimal128 } from "@koresar/jsmql"` provably hands back the copy jsmql
-resolved rather than a second one found through a different path.
+MEASURED, and it is the trap this language surface can lead an analyst into. MongoDB
+compares numbers across BSON types, so `{ price: 1.5 }` matches an int, a long, a
+double and a decimal alike — but the comparison is EXACT, and most decimal fractions
+are not exactly representable as a double. On a collection storing money as
+`Decimal128`, `$.price === 0.1` returns zero rows and no error, because the double
+`0.1` really is `0.1000000000000000055…`. `1.5` happens to be exactly representable,
+which is what makes the failure easy to miss.
 
-The measurement that prompted this also corrects a claim made when the peer dependency
-was chosen. A peer guarantees ONE RESOLVED COPY PER MODULE CONDITION — which is what
-makes the BSON version symbol always agree, and that symbol is what a serializer checks
-before it writes. It does NOT guarantee `instanceof` everywhere, and nothing can:
-`bson` ships a dual build whose exports map sends `import` to `lib/bson.node.mjs` and
-`require` to `lib/bson.cjs`, so an ESM importer and a CJS importer hold two different
-class objects. MEASURED with jsmql absent from the test entirely — `ESM bson.ObjectId
-=== CJS bson.ObjectId` is false, while `CJS bson.ObjectId === mongodb.ObjectId` is true.
-
-So a CJS consumer, which is what `mongodb` and `mongoose` are, gets exact class identity
-with jsmql's CJS build; an ESM consumer reaching the driver's classes through CJS
-interop does not, and never did, with or without jsmql. The value still serializes, because
-the version symbol agrees on both sides. This is the concrete reason recognition reads
-the `_bsontype` tag rather than trusting a prototype — a valid value can arrive wearing a
-prototype jsmql has never seen, through no fault of anyone's dependency graph.
+jsmql cannot fix this. It does not know a field's stored type, and inferring one would
+make the same input compile to different output depending on a guess. So it is
+documented instead, in [docs/LANGUAGE.md](docs/LANGUAGE.md), together with two more
+measured surprises: `Long + Double` promotes to a double and loses the integer
+(`$add: [Long("9007199254740993"), Double(0.5)]` is 9007199254740992), and the driver
+writes a whole JavaScript number as an INT, which is what makes `Double(1)` the only
+way to store a whole-number double.
 
 ---
 
-## 2026-09-15 — test(bson): the constructors run against both supported majors
+## 2026-09-15 — docs(examples): the recommended-products assertion says what went wrong
 
-The peer range is `^6.10.0 || ^7.0.0`, but the dev tree resolves to 7 alone, so the
-`^6` half was a claim with nothing behind it. `bson6` is now an npm alias for the 6.x
-line installed beside the 7.x one, and [test/bson-majors.test.ts](test/bson-majors.test.ts)
-exercises every constructor through each.
-
-One lane rather than a full CI matrix, because the compiler is bson-agnostic: it builds
-nine values and reads a `_bsontype` string, and no parser or emitter behaviour can vary
-by bson major. What CAN vary is the two things the suite checks — the class behaviour
-jsmql's own refusals are built on (MEASURED the same in both: `new Int32(5000000000)`
-wraps to 705032704, `Decimal128.fromString("abc")` throws), and a value from the OTHER
-copy flowing through recognition, the query road and the printer.
-
-The suite also holds the proof of the peer-dependency decision. A bson 7 serializer
-REFUSES a bson 6 value outright — `BSONVersionError`, raised from the
-`@@mdb.bson.version` registry symbol, which reads 6 and 7 on the two copies. So a
-nested second copy would not merely fail an `instanceof` in the caller's code: the
-query would never reach the server at all.
-
----
-
-## 2026-09-15 — fix(bson): a BigInt literal is a `Long`, not a per-document `$toLong`
-
-`5n` compiled to `{ $toLong: "5" }` — a string the server parsed on every document,
-for a value known at compile time. Now that `bson` is a dependency the value is built
-where it is written, and three things follow.
-
-The comparison stays on the QUERY road. `$.n === 5n` was
-`{ $expr: { $eq: ["$n", { $toLong: "5" }] } }` and is now `{ n: Long.fromString("5") }`
-— which matters beyond output size, because MEASURED, `$expr` compares a whole ARRAY
-to a scalar: for `xs: [1, 2]`, `$.xs === 1n` now matches and the old form did not.
-That is a change in what an existing query RETURNS, and it is the correct answer.
-
-A BigInt past 64 bits is refused at its source position. It used to compile and die on
-the server — MEASURED, `{ $toLong: "12345678901234567890123" }` is "Failed to parse
-number '12345678901234567890123' in $convert". The refusal names `Decimal128` as the
-type that holds it. `-5n` also became one value rather than
-`{ $multiply: [{ $toLong: "5" }, -1] }`: a BigInt negates exactly, so the evaluator
-now folds unary minus on one.
-
-The conversion runs at any depth (`longsWithin`), because a settled constant can hold
-BigInts inside an array or an object, and an interpolated BigInt takes the same path.
-`docs/LANGUAGE.md` claimed interpolation REJECTED BigInts, which it never did; that
-line is corrected too. See [docs/specs/bson-types.md](docs/specs/bson-types.md).
+The "recommended products" example in [realistic.test.ts](test/realistic.test.ts) (and its
+live copy in [integration.test.ts](test/integration.test.ts)) opens with
+`assert($$.length === 1, …)`. Its message read "More than one user with such ID found",
+which names only one of the two ways the check fails; the common one — no user at all —
+is what a reader hits first. The message is now "User not found". The emitted
+`$convert.onError` text follows the source, so the expected MQL and the regenerated
+`playground.html` carry the new wording.
 
 ---
 
@@ -130,23 +89,29 @@ asserts against a live mongod.
 
 ---
 
-## 2026-09-15 — docs: numeric equality is cross-type, and exact
+## 2026-09-15 — fix(bson): a BigInt literal is a `Long`, not a per-document `$toLong`
 
-MEASURED, and it is the trap this language surface can lead an analyst into. MongoDB
-compares numbers across BSON types, so `{ price: 1.5 }` matches an int, a long, a
-double and a decimal alike — but the comparison is EXACT, and most decimal fractions
-are not exactly representable as a double. On a collection storing money as
-`Decimal128`, `$.price === 0.1` returns zero rows and no error, because the double
-`0.1` really is `0.1000000000000000055…`. `1.5` happens to be exactly representable,
-which is what makes the failure easy to miss.
+`5n` compiled to `{ $toLong: "5" }` — a string the server parsed on every document,
+for a value known at compile time. Now that `bson` is a dependency the value is built
+where it is written, and three things follow.
 
-jsmql cannot fix this. It does not know a field's stored type, and inferring one would
-make the same input compile to different output depending on a guess. So it is
-documented instead, in [docs/LANGUAGE.md](docs/LANGUAGE.md), together with two more
-measured surprises: `Long + Double` promotes to a double and loses the integer
-(`$add: [Long("9007199254740993"), Double(0.5)]` is 9007199254740992), and the driver
-writes a whole JavaScript number as an INT, which is what makes `Double(1)` the only
-way to store a whole-number double.
+The comparison stays on the QUERY road. `$.n === 5n` was
+`{ $expr: { $eq: ["$n", { $toLong: "5" }] } }` and is now `{ n: Long.fromString("5") }`
+— which matters beyond output size, because MEASURED, `$expr` compares a whole ARRAY
+to a scalar: for `xs: [1, 2]`, `$.xs === 1n` now matches and the old form did not.
+That is a change in what an existing query RETURNS, and it is the correct answer.
+
+A BigInt past 64 bits is refused at its source position. It used to compile and die on
+the server — MEASURED, `{ $toLong: "12345678901234567890123" }` is "Failed to parse
+number '12345678901234567890123' in $convert". The refusal names `Decimal128` as the
+type that holds it. `-5n` also became one value rather than
+`{ $multiply: [{ $toLong: "5" }, -1] }`: a BigInt negates exactly, so the evaluator
+now folds unary minus on one.
+
+The conversion runs at any depth (`longsWithin`), because a settled constant can hold
+BigInts inside an array or an object, and an interpolated BigInt takes the same path.
+`docs/LANGUAGE.md` claimed interpolation REJECTED BigInts, which it never did; that
+line is corrected too. See [docs/specs/bson-types.md](docs/specs/bson-types.md).
 
 ---
 
@@ -181,6 +146,53 @@ passes an injected `{ _bsontype: "ObjectId", id: "xyz" }` through as the value i
 No emitted document changed. `engines.node` moves `>=14` → `>=16.20.1` and the CJS target
 `node14` → `node16`, which is bson 6's own floor. See
 [docs/specs/bson-types.md](docs/specs/bson-types.md).
+
+---
+
+## 2026-09-15 — fix(bson): the nine types are re-exported, and what the peer buys is stated exactly
+
+`src/index.ts` re-exported `ObjectId` alone, which left the other eight reachable only
+through the caller's own `bson`. All nine are re-exported now, so
+`import { Decimal128 } from "@koresar/jsmql"` provably hands back the copy jsmql
+resolved rather than a second one found through a different path.
+
+The measurement that prompted this also corrects a claim made when the peer dependency
+was chosen. A peer guarantees ONE RESOLVED COPY PER MODULE CONDITION — which is what
+makes the BSON version symbol always agree, and that symbol is what a serializer checks
+before it writes. It does NOT guarantee `instanceof` everywhere, and nothing can:
+`bson` ships a dual build whose exports map sends `import` to `lib/bson.node.mjs` and
+`require` to `lib/bson.cjs`, so an ESM importer and a CJS importer hold two different
+class objects. MEASURED with jsmql absent from the test entirely — `ESM bson.ObjectId
+=== CJS bson.ObjectId` is false, while `CJS bson.ObjectId === mongodb.ObjectId` is true.
+
+So a CJS consumer, which is what `mongodb` and `mongoose` are, gets exact class identity
+with jsmql's CJS build; an ESM consumer reaching the driver's classes through CJS
+interop does not, and never did, with or without jsmql. The value still serializes, because
+the version symbol agrees on both sides. This is the concrete reason recognition reads
+the `_bsontype` tag rather than trusting a prototype — a valid value can arrive wearing a
+prototype jsmql has never seen, through no fault of anyone's dependency graph.
+
+---
+
+## 2026-09-15 — test(bson): the constructors run against both supported majors
+
+The peer range is `^6.10.0 || ^7.0.0`, but the dev tree resolves to 7 alone, so the
+`^6` half was a claim with nothing behind it. `bson6` is now an npm alias for the 6.x
+line installed beside the 7.x one, and [test/bson-majors.test.ts](test/bson-majors.test.ts)
+exercises every constructor through each.
+
+One lane rather than a full CI matrix, because the compiler is bson-agnostic: it builds
+nine values and reads a `_bsontype` string, and no parser or emitter behaviour can vary
+by bson major. What CAN vary is the two things the suite checks — the class behaviour
+jsmql's own refusals are built on (MEASURED the same in both: `new Int32(5000000000)`
+wraps to 705032704, `Decimal128.fromString("abc")` throws), and a value from the OTHER
+copy flowing through recognition, the query road and the printer.
+
+The suite also holds the proof of the peer-dependency decision. A bson 7 serializer
+REFUSES a bson 6 value outright — `BSONVersionError`, raised from the
+`@@mdb.bson.version` registry symbol, which reads 6 and 7 on the two copies. So a
+nested second copy would not merely fail an `instanceof` in the caller's code: the
+query would never reach the server at all.
 
 ---
 
@@ -601,6 +613,34 @@ parameter as a field value all emit what they emitted. Specs:
 
 ---
 
+## 2026-09-12 — docs: the desugar spec describes the pass that exists
+
+`docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it
+mid-sentence — in the middle of `` `$$` / `$$$` ``, the signature of a
+`String.replace` whose replacement ate each `$$` into a `$` — and concatenated a
+whole earlier copy of the file behind the cut. Seven `##` sections appeared twice,
+and the sentence that explains why the spread pack skips a stream receiver was
+split across the seam, half of it stranded 200 lines below the other.
+
+Repairing the seam exposed the larger drift it had been hiding. The pass now
+carries eleven rules, and the spec described a table of twenty-four forms and five
+order constraints, of which one rule pair and one constraint were still real: the
+destination-visible sugars (`$ = <expr>`, `$$$.<coll>.find(…)`, `$$.push(…)`,
+`$$.indexStats()`) moved to the emit phase, where the neighbours they read are in
+hand, and the prose describing them as desugar rules outlived them. The stranded
+tail was older still — it argued for a "lowering grid" whose spec was deleted with
+the compiler that had one.
+
+So the overview, the form table and the order constraints are rebuilt from `RULES`
+in [desugar.ts](src/compiler/passes/desugar.ts), one row per rule, and every
+input→output pair in them is the compiler's own answer rather than a remembered
+one. The four accurate sections — position, the statement mutators, the iteratee
+shorthands, the driver — stand as they were. Two sections went: the exclusion-list
+constraint, which described a set the registry replaced, and "why a pass and not a
+hub", whose argument the overview already makes.
+
+---
+
 ## 2026-09-12 — docs: three `// →` claims match the compiler again
 
 `scripts/check-doc-claims.mjs` found three claims the compiler had stopped
@@ -784,34 +824,6 @@ after it is still the expression it looks like (`([...$.a, 1])`).
 but handed the caller the original lambda; it now hands the body under the minus.
 Only the computed-key road was affected — a bare path (`x => -x.age`) already
 became `{ age: -1 }`.
-
----
-
-## 2026-09-12 — docs: the desugar spec describes the pass that exists
-
-`docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it
-mid-sentence — in the middle of `` `$$` / `$$$` ``, the signature of a
-`String.replace` whose replacement ate each `$$` into a `$` — and concatenated a
-whole earlier copy of the file behind the cut. Seven `##` sections appeared twice,
-and the sentence that explains why the spread pack skips a stream receiver was
-split across the seam, half of it stranded 200 lines below the other.
-
-Repairing the seam exposed the larger drift it had been hiding. The pass now
-carries eleven rules, and the spec described a table of twenty-four forms and five
-order constraints, of which one rule pair and one constraint were still real: the
-destination-visible sugars (`$ = <expr>`, `$$$.<coll>.find(…)`, `$$.push(…)`,
-`$$.indexStats()`) moved to the emit phase, where the neighbours they read are in
-hand, and the prose describing them as desugar rules outlived them. The stranded
-tail was older still — it argued for a "lowering grid" whose spec was deleted with
-the compiler that had one.
-
-So the overview, the form table and the order constraints are rebuilt from `RULES`
-in [desugar.ts](src/compiler/passes/desugar.ts), one row per rule, and every
-input→output pair in them is the compiler's own answer rather than a remembered
-one. The four accurate sections — position, the statement mutators, the iteratee
-shorthands, the driver — stand as they were. Two sections went: the exclusion-list
-constraint, which described a set the registry replaced, and "why a pass and not a
-hub", whose argument the overview already makes.
 
 ---
 
