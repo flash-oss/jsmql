@@ -970,6 +970,24 @@ const lastIndexOfArray = ({ recv, args, value, bind }: ExprIn): unknown => {
 };
 
 /**
+ * An object read as its `{ k, v }` pairs, given the `{}` neutral.
+ *
+ * A reader over a missing field answers null — MEASURED, `$objectToArray` does — and
+ * `$arrayToObject` passes that null on, so a lodash object method over a missing field
+ * answered null where `_.pick(undefined, …)`, `_.mapValues(undefined, …)` and their kin
+ * answer `{}`. The LODASH spellings therefore read their receiver through `$ifNull`.
+ *
+ * The JavaScript ones do not, and share no row with these: `Object.keys(undefined)` is
+ * a TypeError in JavaScript, MongoDB has no error to raise inside an expression, and
+ * null is the nearest thing to "no answer" it has. `.keys()` / `.values()` / `.entries()`
+ * are that row, which is why `.toPairs()` — lodash's spelling of the same reading —
+ * answers `[]` where `.entries()` answers null.
+ */
+const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
+  $objectToArray: present ? recv : { $ifNull: [recv, {}] },
+});
+
+/**
  * The field names a `.pick()` / `.omit()` key list SPELLS, or null when only the
  * server knows them — a field path (`$.keys`), a spread, or a computed element.
  *
@@ -10381,11 +10399,7 @@ export const NAMES = {
           args: { sig: "", none: true },
           emit: ({ recv, present }) => sizeOf(present ? recv : arrayOrEmpty(recv)),
         },
-        object: {
-          args: { sig: "", none: true },
-          emit: ({ recv, present }) =>
-            sizeOf(present ? { $objectToArray: recv } : { $objectToArray: { $ifNull: [recv, {}] } }),
-        },
+        object: { args: { sig: "", none: true }, emit: ({ recv, present }) => sizeOf(pairsOfObject(recv, present)) },
       },
       uncertain: () => "$$REMOVE",
     },
@@ -10996,11 +11010,11 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "iteratee", exact: 1 },
-      emit: ({ recv, args, objIteratee }) => {
+      emit: ({ recv, args, objIteratee, present }) => {
         const it = objIteratee(args[0]);
         return {
           $arrayToObject: {
-            $map: { input: { $objectToArray: recv }, as: it.as, in: { k: `${it.ref}.k`, v: it.body } },
+            $map: { input: pairsOfObject(recv, present), as: it.as, in: { k: `${it.ref}.k`, v: it.body } },
           },
         };
       },
@@ -11030,11 +11044,15 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "iteratee", exact: 1 },
-      emit: ({ recv, args, objIteratee }) => {
+      emit: ({ recv, args, objIteratee, present }) => {
         const it = objIteratee(args[0]);
         return {
           $arrayToObject: {
-            $map: { input: { $objectToArray: recv }, as: it.as, in: { k: { $toString: it.body }, v: `${it.ref}.v` } },
+            $map: {
+              input: pairsOfObject(recv, present),
+              as: it.as,
+              in: { k: { $toString: it.body }, v: `${it.ref}.v` },
+            },
           },
         };
       },
@@ -11057,7 +11075,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value }) => {
+      emit: ({ recv, args, bind, value, present }) => {
         const keys = spelledKeys(args[0]);
         // A key list only the server knows: read the object's own keys, keep the named ones.
         if (keys === null) {
@@ -11065,7 +11083,7 @@ export const NAMES = {
           return {
             $arrayToObject: {
               $filter: {
-                input: { $objectToArray: recv },
+                input: pairsOfObject(recv, present),
                 as: kv.as,
                 cond: { $in: [`${kv.ref}.k`, arrayOrEmpty(value(args[0]))] },
               },
@@ -11111,14 +11129,18 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value }) => {
+      emit: ({ recv, args, bind, value, present }) => {
         // A key list the source spells is that list; one only the server knows is its value.
         const spelled = spelledKeys(args[0]);
         const keys = spelled ?? arrayOrEmpty(value(args[0]));
         const kv = bind("kv");
         return {
           $arrayToObject: {
-            $filter: { input: { $objectToArray: recv }, as: kv.as, cond: { $not: [{ $in: [`${kv.ref}.k`, keys] }] } },
+            $filter: {
+              input: pairsOfObject(recv, present),
+              as: kv.as,
+              cond: { $not: [{ $in: [`${kv.ref}.k`, keys] }] },
+            },
           },
         };
       },
@@ -11155,9 +11177,9 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ recv, args, objIteratee }) => {
+      emit: ({ recv, args, objIteratee, present }) => {
         const it = objIteratee(args[0]);
-        return { $arrayToObject: { $filter: { input: { $objectToArray: recv }, as: it.as, cond: it.body } } };
+        return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: it.body } } };
       },
     },
     stream: unsupported("'.pickBy()' has no stream form: it produces a value, not a stream of documents."),
@@ -11183,10 +11205,10 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ recv, args, objIteratee }) => {
+      emit: ({ recv, args, objIteratee, present }) => {
         const it = objIteratee(args[0]);
         return {
-          $arrayToObject: { $filter: { input: { $objectToArray: recv }, as: it.as, cond: { $not: [it.body] } } },
+          $arrayToObject: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: { $not: [it.body] } } },
         };
       },
     },
@@ -11207,12 +11229,12 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      emit: ({ recv, bind, present }) => {
         const kv = bind("kv");
         return {
           $arrayToObject: {
             $map: {
-              input: { $objectToArray: recv },
+              input: pairsOfObject(recv, present),
               as: kv.as,
               in: { k: { $toString: `${kv.ref}.v` }, v: `${kv.ref}.k` },
             },
@@ -11239,9 +11261,9 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      emit: ({ recv, bind, present }) => {
         const kv = bind("kv");
-        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
+        return { $map: { input: pairsOfObject(recv, present), as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
       },
     },
     stream: unsupported("'.toPairs()' has no stream form: it produces a value, not a stream of documents."),

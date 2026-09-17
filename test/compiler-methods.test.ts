@@ -196,7 +196,7 @@ describe("compiler/emit — object methods", () => {
     expect(compiled("$.o.mapValues(v => v * 2)", (d) => ({ a: 2, b: 4, _c: 6 }))).toEqual({
       $arrayToObject: {
         $map: {
-          input: { $objectToArray: "$o" },
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
           as: "jsmqlKv",
           in: { k: "$$jsmqlKv.k", v: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $multiply: ["$$v", 2] } } } },
         },
@@ -238,7 +238,7 @@ describe("compiler/emit — object methods", () => {
     ).toEqual({
       $arrayToObject: {
         $filter: {
-          input: { $objectToArray: "$o" },
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
           as: "jsmqlKv",
           cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$keys", []] }] },
         },
@@ -249,7 +249,7 @@ describe("compiler/emit — object methods", () => {
     ).toEqual({
       $arrayToObject: {
         $filter: {
-          input: { $objectToArray: "$o" },
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
           as: "jsmqlKv",
           cond: { $not: [{ $in: ["$$jsmqlKv.k", { $ifNull: ["$keys", []] }] }] },
         },
@@ -261,7 +261,11 @@ describe("compiler/emit — object methods", () => {
       ),
     ).toEqual({
       $arrayToObject: {
-        $filter: { input: { $objectToArray: "$o" }, as: "jsmqlKv", cond: { $in: ["$$jsmqlKv.k", ["$kname", "b"]] } },
+        $filter: {
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
+          as: "jsmqlKv",
+          cond: { $in: ["$$jsmqlKv.k", ["$kname", "b"]] },
+        },
       },
     });
     // A missing key list picks nothing and omits nothing, as lodash does — `$in` would
@@ -764,8 +768,36 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ["$.a.lastIndexOf(1)", null, 0],
   ["$.a.dropRight(1)", null, [1]],
   ["$.a.initial()", null, [1]],
-  ["$.o.pick($.b)", null, {}],
-  ["$.o.omit($.b)", null, { x: 1 }],
+  ["$.o.pick($.b)", {}, {}],
+  ["$.o.omit($.b)", {}, { x: 1 }],
+];
+
+/**
+ * The lodash OBJECT methods, and the JavaScript readers they sit beside.
+ *
+ * `$objectToArray` answers null for a missing field and `$arrayToObject` passes that
+ * null on, so a lodash object method answered null where `_.pick(undefined, …)` and
+ * its kin answer `{}`. The lodash spellings guard with `$ifNull: [..., {}]`; the
+ * JavaScript ones keep null, because `Object.keys(undefined)` is a TypeError and null
+ * is the nearest thing MongoDB has to raising one inside an expression.
+ *
+ * Each row: the source, and what it answers when the RECEIVER is missing.
+ */
+const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
+  ["$.o.mapValues(v => v * 2)", {}],
+  ["$.o.mapKeys((v, k) => k)", {}],
+  ['$.o.pick(["a"])', {}],
+  ["$.o.pick($.keys)", {}],
+  ['$.o.omit(["a"])', {}],
+  ["$.o.pickBy(v => v != null)", {}],
+  ["$.o.omitBy(v => v == null)", {}],
+  ["$.o.invert()", {}],
+  ["$.o.toPairs()", []],
+  // the JavaScript readers, which share one row with the `Object` statics
+  ["$.o.entries()", null],
+  ["$.o.keys()", null],
+  ["$.o.values()", null],
+  ["Object.keys($.o)", null],
 ];
 
 describe("compiler/emit — a missing list is the empty list, never an aborted command", () => {
@@ -799,6 +831,23 @@ describe("compiler/emit — a missing list is the empty list, never an aborted c
       .toArray();
     expect(picked[0].__v).toBeNull();
     expect([1, 2]).toContain(picked[1].__v);
+  });
+
+  it("answers the empty object for a lodash object method, and null for a JavaScript one", async () => {
+    if (guarded === null) {
+      expect(OBJECT_EMPTY.length).toBeGreaterThan(0);
+      return;
+    }
+    const problems: string[] = [];
+    for (const [src, missing] of OBJECT_EMPTY) {
+      try {
+        const [doc] = await guarded.aggregate([{ $match: { _id: 1 } }, { $addFields: { __v: expr(src) } }]).toArray();
+        expect([src, doc.__v], src).toEqual([src, missing]);
+      } catch (e) {
+        problems.push(`${src}\n  ${JSON.stringify(expr(src))}\n  ${(e as Error).message}`);
+      }
+    }
+    expect(problems, problems.join("\n")).toEqual([]);
   });
 });
 

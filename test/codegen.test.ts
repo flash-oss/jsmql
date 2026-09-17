@@ -5375,7 +5375,7 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.o.mapValues(v => v * 2)")).toEqual({
       $arrayToObject: {
         $map: {
-          input: { $objectToArray: "$o" },
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
           as: "jsmqlKv",
           in: { k: "$$jsmqlKv.k", v: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $multiply: ["$$v", 2] } } } },
         },
@@ -5397,13 +5397,17 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
   it(".omit([keys]) → $arrayToObject over a filtered $objectToArray", () => {
     expect(jsmql.expr('$.o.omit(["a"])')).toEqual({
       $arrayToObject: {
-        $filter: { input: { $objectToArray: "$o" }, as: "jsmqlKv", cond: { $not: [{ $in: ["$$jsmqlKv.k", ["a"]] }] } },
+        $filter: {
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
+          as: "jsmqlKv",
+          cond: { $not: [{ $in: ["$$jsmqlKv.k", ["a"]] }] },
+        },
       },
     });
   });
   it(".toPairs() → [[k, v], …]; .fromPairs() inverts it", () => {
     expect(jsmql.expr("$.o.toPairs()")).toEqual({
-      $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+      $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
     });
     expect(jsmql.expr("$.p.fromPairs()")).toHaveProperty("$arrayToObject");
   });

@@ -2182,7 +2182,7 @@ $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receive
 
 $.o.keys()                            // same MQL as Object.keys($.o)
 $.o.values()                          // same MQL as Object.values($.o)
-$.o.entries()                         // same MQL as Object.entries($.o) — and as $.o.toPairs()
+$.o.entries()                         // same MQL as Object.entries($.o)
 $.o.assign($.p, $.q)                  // { $mergeObjects: ["$o", "$p", "$q"] } — a NEW object, like .pick()
 $.pairs.fromEntries()                 // same MQL as Object.fromEntries($.pairs) — and as $.pairs.fromPairs()
 $.user?.profile?.keys()               // { $map: { input: { $objectToArray: "$user.profile" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
@@ -2191,6 +2191,13 @@ $.user?.profile?.keys()               // { $map: { input: { $objectToArray: "$us
 > `.keys()` / `.values()` / `.entries()` read the object where the receiver's type is not known at compile time. On a receiver jsmql can PROVE is an array they are refused, because JavaScript's `Array.prototype.keys()` returns an iterator and MongoDB has no such value: `$.xs.map(x => x).keys()` names `$op($range, 0, $op($size, arr))` instead.
 
 > `pick` uses flat field names only (deep paths like `"a.b"` aren't supported — use `$op($getField, …)`). `mapKeys`/`invert` **stringify** the produced key (`$toString`; last wins on collision), like lodash. All verified against a live mongod.
+
+> **A lodash object method over a missing field answers the empty object, a JavaScript one answers null.** `$objectToArray` answers `null` for a missing field and `$arrayToObject` passes that null on, so the whole family answered `null` where lodash answers `{}`. Every lodash spelling in this section therefore reads its receiver through `$ifNull: [..., {}]`, so a document that lacks the field gets `{}` — or `[]` where the method answers an array — as `_.pick(undefined, …)` and `_.toPairs(undefined)` do. `.keys()` / `.values()` / `.entries()` do not: they are the JavaScript readers and share one row with `Object.keys` / `Object.values` / `Object.entries`, where `Object.keys(undefined)` is a **TypeError**. MongoDB cannot raise one inside an expression, so `null` stands for it. That is the one place `.toPairs()` and `.entries()` part company:
+>
+> ```js
+> $.o.toPairs()    // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
+> $.o.entries()    // → { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
+> ```
 
 > **A `pick` / `omit` key list the source does not spell** — a field path, or a list holding an element read at run time — is read at query time instead: jsmql walks the object's own keys and matches each against the list. A key list that is missing or null picks nothing and omits nothing, as lodash does. The `$$.pick(…)` / `$$.omit(…)` STREAM forms still need a spelled list: they lower to `$project`, and the server reads a stage's field list before it reads any document.
 

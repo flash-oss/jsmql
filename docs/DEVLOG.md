@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-17 — fix: a lodash object method over a missing field answers the empty object
+
+`$objectToArray` answers null for a missing field, and `$arrayToObject` passes that
+null on, so the whole object-method family answered null where lodash answers `{}`.
+`.pick(["a"])` was the odd one out: its `$getField` shape has no `$objectToArray` in
+it, so it already answered `{}` — and once a runtime key list took the
+`$objectToArray` road, one method answered two different things for one document.
+
+Every lodash spelling now reads its receiver through `$ifNull: [..., {}]`, through
+one `pairsOfObject` helper that [src/registry/names.ts](src/registry/names.ts) also
+uses for `.size()`, which had the same guard written inline. A missing field answers
+`{}`, or `[]` where the method answers an array.
+
+`.keys()` / `.values()` / `.entries()` are deliberately left alone. They are the
+JAVASCRIPT readers and share one row with `Object.keys` / `Object.values` /
+`Object.entries`, where `Object.keys(undefined)` is a TypeError: MongoDB cannot raise
+one inside an expression, and null is the nearest thing it has to "no answer". That
+is now the one place `.toPairs()` and `.entries()` — lodash's and JavaScript's
+spellings of the same reading — part company, and
+[docs/LANGUAGE.md](docs/LANGUAGE.md) shows both documents side by side rather than
+claiming the equivalence it used to.
+
+---
+
 ## 2026-09-17 — fix: every list operand an aborting operator reads is guarded
 
 Ten value cells handed a possibly-missing array to an operator that REFUSES one.

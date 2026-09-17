@@ -1037,6 +1037,9 @@ var lastIndexOfArray = ({ recv, args, value, bind }) => {
     }
   };
 };
+var pairsOfObject = (recv, present) => ({
+  $objectToArray: present ? recv : { $ifNull: [recv, {}] }
+});
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
 var orderedBounds = (a, b) => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
@@ -9986,10 +9989,7 @@ var NAMES = {
           args: { sig: "", none: true },
           emit: ({ recv, present }) => sizeOf(present ? recv : arrayOrEmpty(recv))
         },
-        object: {
-          args: { sig: "", none: true },
-          emit: ({ recv, present }) => sizeOf(present ? { $objectToArray: recv } : { $objectToArray: { $ifNull: [recv, {}] } })
-        }
+        object: { args: { sig: "", none: true }, emit: ({ recv, present }) => sizeOf(pairsOfObject(recv, present)) }
       },
       uncertain: () => "$$REMOVE"
     },
@@ -10582,11 +10582,11 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "iteratee", exact: 1 },
-      emit: ({ recv, args, objIteratee }) => {
+      emit: ({ recv, args, objIteratee, present }) => {
         const it = objIteratee(args[0]);
         return {
           $arrayToObject: {
-            $map: { input: { $objectToArray: recv }, as: it.as, in: { k: `${it.ref}.k`, v: it.body } }
+            $map: { input: pairsOfObject(recv, present), as: it.as, in: { k: `${it.ref}.k`, v: it.body } }
           }
         };
       }
@@ -10615,11 +10615,15 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "iteratee", exact: 1 },
-      emit: ({ recv, args, objIteratee }) => {
+      emit: ({ recv, args, objIteratee, present }) => {
         const it = objIteratee(args[0]);
         return {
           $arrayToObject: {
-            $map: { input: { $objectToArray: recv }, as: it.as, in: { k: { $toString: it.body }, v: `${it.ref}.v` } }
+            $map: {
+              input: pairsOfObject(recv, present),
+              as: it.as,
+              in: { k: { $toString: it.body }, v: `${it.ref}.v` }
+            }
           }
         };
       }
@@ -10641,14 +10645,14 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value }) => {
+      emit: ({ recv, args, bind, value, present }) => {
         const keys = spelledKeys(args[0]);
         if (keys === null) {
           const kv = bind("kv");
           return {
             $arrayToObject: {
               $filter: {
-                input: { $objectToArray: recv },
+                input: pairsOfObject(recv, present),
                 as: kv.as,
                 cond: { $in: [`${kv.ref}.k`, arrayOrEmpty(value(args[0]))] }
               }
@@ -10693,13 +10697,17 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value }) => {
+      emit: ({ recv, args, bind, value, present }) => {
         const spelled3 = spelledKeys(args[0]);
         const keys = spelled3 ?? arrayOrEmpty(value(args[0]));
         const kv = bind("kv");
         return {
           $arrayToObject: {
-            $filter: { input: { $objectToArray: recv }, as: kv.as, cond: { $not: [{ $in: [`${kv.ref}.k`, keys] }] } }
+            $filter: {
+              input: pairsOfObject(recv, present),
+              as: kv.as,
+              cond: { $not: [{ $in: [`${kv.ref}.k`, keys] }] }
+            }
           }
         };
       }
@@ -10735,9 +10743,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ recv, args, objIteratee }) => {
+      emit: ({ recv, args, objIteratee, present }) => {
         const it = objIteratee(args[0]);
-        return { $arrayToObject: { $filter: { input: { $objectToArray: recv }, as: it.as, cond: it.body } } };
+        return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: it.body } } };
       }
     },
     stream: unsupported("'.pickBy()' has no stream form: it produces a value, not a stream of documents."),
@@ -10762,10 +10770,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ recv, args, objIteratee }) => {
+      emit: ({ recv, args, objIteratee, present }) => {
         const it = objIteratee(args[0]);
         return {
-          $arrayToObject: { $filter: { input: { $objectToArray: recv }, as: it.as, cond: { $not: [it.body] } } }
+          $arrayToObject: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: { $not: [it.body] } } }
         };
       }
     },
@@ -10785,12 +10793,12 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      emit: ({ recv, bind, present }) => {
         const kv = bind("kv");
         return {
           $arrayToObject: {
             $map: {
-              input: { $objectToArray: recv },
+              input: pairsOfObject(recv, present),
               as: kv.as,
               in: { k: { $toString: `${kv.ref}.v` }, v: `${kv.ref}.k` }
             }
@@ -10816,9 +10824,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      emit: ({ recv, bind, present }) => {
         const kv = bind("kv");
-        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
+        return { $map: { input: pairsOfObject(recv, present), as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
       }
     },
     stream: unsupported("'.toPairs()' has no stream form: it produces a value, not a stream of documents."),

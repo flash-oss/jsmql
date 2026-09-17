@@ -687,7 +687,7 @@ $.redacted = $.record.omit($.viewer.allowedFields);
             visible: {
               $arrayToObject: {
                 $filter: {
-                  input: { $objectToArray: "$record" },
+                  input: { $objectToArray: { $ifNull: ["$record", {}] } },
                   as: "jsmqlKv",
                   cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$viewer.allowedFields", []] }] },
                 },
@@ -700,7 +700,7 @@ $.redacted = $.record.omit($.viewer.allowedFields);
             redacted: {
               $arrayToObject: {
                 $filter: {
-                  input: { $objectToArray: "$record" },
+                  input: { $objectToArray: { $ifNull: ["$record", {}] } },
                   as: "jsmqlKv",
                   cond: { $not: [{ $in: ["$$jsmqlKv.k", { $ifNull: ["$viewer.allowedFields", []] }] }] },
                 },
