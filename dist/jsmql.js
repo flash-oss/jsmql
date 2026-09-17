@@ -1020,6 +1020,7 @@ var logicalList = ({ name: name2, args, query }) => {
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
 var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
+var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
 var orderedBounds = (a, b) => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
   if (a instanceof Date && b instanceof Date) return a <= b ? [a, b] : [b, a];
@@ -10660,10 +10661,20 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind }) => {
-        const keys = args[0].elements.map(
-          (e) => e.value
-        );
+      emit: ({ recv, args, bind, value }) => {
+        const keys = spelledKeys(args[0]);
+        if (keys === null) {
+          const kv = bind("kv");
+          return {
+            $arrayToObject: {
+              $filter: {
+                input: { $objectToArray: recv },
+                as: kv.as,
+                cond: { $in: [`${kv.ref}.k`, arrayOrEmpty(value(args[0]))] }
+              }
+            }
+          };
+        }
         const obj = bind("obj");
         const out = {};
         for (const k of keys) setKey(out, k, { $getField: { field: k, input: obj.ref } });
@@ -10702,10 +10713,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind }) => {
-        const keys = args[0].elements.map(
-          (e) => e.value
-        );
+      emit: ({ recv, args, bind, value }) => {
+        const spelled3 = spelledKeys(args[0]);
+        const keys = spelled3 ?? arrayOrEmpty(value(args[0]));
         const kv = bind("kv");
         return {
           $arrayToObject: {

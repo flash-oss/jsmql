@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-17 — fix: a `.pick()` / `.omit()` key list the source does not spell
+
+`$.address.pick($.keys)` crashed the compiler with "Cannot read properties of
+undefined (reading 'map')". Both value cells cast the argument to an array literal
+and read its elements, so anything else — a field path, a spread, a computed element
+like `[$.k]` — reached `.elements` on a node that has none. The `arrayOf` rule holds
+every element it can SEE to a field name, so the cast looked safe; it is not, because
+a slot rule says nothing about an argument the source does not spell.
+
+The two cells now ask [`spelledKeys`](src/registry/names.ts) for the names the source
+states, and fall back to reading the object's own keys when there are none:
+`$objectToArray` + `$filter` on `$in` (negated for `.omit`), which is the shape
+`.omit` already emits for a spelled list. A spelled list keeps its old MQL, so
+nothing that compiled before changed shape. The key list reads through the existing
+`arrayOrEmpty` guard: MEASURED, `$in` aborts the whole command on a second operand
+that is not an array, and a document with no such field would take the query down
+rather than answer — where lodash picks nothing and omits nothing from a missing key
+list, which is what the `$ifNull` gives.
+
+The `$$.pick(…)` / `$$.omit(…)` STREAM cells are unchanged and still demand a
+constant: they lower to `$project`, and the server reads a stage's field list before
+it reads any document. The value form has no such limit, which is now the reason the
+two positions answer differently. See [docs/LANGUAGE.md](docs/LANGUAGE.md) and the
+cases in [test/compiler-methods.test.ts](test/compiler-methods.test.ts), which compare
+the server's answer with JavaScript's.
+
+---
+
 ## 2026-09-15 — docs: numeric equality is cross-type, and exact
 
 MEASURED, and it is the trap this language surface can lead an analyst into. MongoDB

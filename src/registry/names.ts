@@ -942,6 +942,19 @@ const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement
 const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
 
 /**
+ * The field names a `.pick()` / `.omit()` key list SPELLS, or null when only the
+ * server knows them — a field path (`$.keys`), a spread, or a computed element.
+ *
+ * The `arrayOf` rule has already held every spelled element to a field name, so a
+ * list of string literals IS a list of names; anything else is a run-time value, and
+ * the row reads the object's own keys instead of naming them.
+ */
+const spelledKeys = (e: Expr): string[] | null =>
+  e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral")
+    ? e.elements.map((el) => (el as Extract<Expr, { type: "StringLiteral" }>).value)
+    : null;
+
+/**
  * Two constant bounds in low-to-high order, or null when the pair does not
  * compare at compile time.
  *
@@ -11053,11 +11066,21 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind }) => {
-        // the keys are field names, stated by the rule
-        const keys = (args[0] as Extract<Expr, { type: "ArrayLiteral" }>).elements.map(
-          (e) => (e as { value: string }).value,
-        );
+      emit: ({ recv, args, bind, value }) => {
+        const keys = spelledKeys(args[0]);
+        // A key list only the server knows: read the object's own keys, keep the named ones.
+        if (keys === null) {
+          const kv = bind("kv");
+          return {
+            $arrayToObject: {
+              $filter: {
+                input: { $objectToArray: recv },
+                as: kv.as,
+                cond: { $in: [`${kv.ref}.k`, arrayOrEmpty(value(args[0]))] },
+              },
+            },
+          };
+        }
         const obj = bind("obj");
         const out: Record<string, unknown> = {};
         for (const k of keys) setKey(out, k, { $getField: { field: k, input: obj.ref } });
@@ -11097,10 +11120,10 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind }) => {
-        const keys = (args[0] as Extract<Expr, { type: "ArrayLiteral" }>).elements.map(
-          (e) => (e as { value: string }).value,
-        );
+      emit: ({ recv, args, bind, value }) => {
+        // A key list the source spells is that list; one only the server knows is its value.
+        const spelled = spelledKeys(args[0]);
+        const keys = spelled ?? arrayOrEmpty(value(args[0]));
         const kv = bind("kv");
         return {
           $arrayToObject: {

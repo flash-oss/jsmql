@@ -664,6 +664,56 @@ $ = { ...$, computedScore: $.points * 1.1 };
 });
 
 describe(
+  "split a record by per-viewer field permissions (`.pick` / `.omit` on a stored key list)",
+  { features: ["Pipelines"] },
+  () => {
+    it("compiles to the expected MQL", { kind: "pipeline", usage: "db.records.aggregate(jsmql(...))" }, () => {
+      // Field-level access control: each document carries the viewer's own list of
+      // readable field names, so the key list is only known at query time. jsmql walks
+      // the record's own keys and matches each against that list — `$objectToArray` +
+      // `$filter` + `$arrayToObject`. A viewer with no list sees nothing, as lodash
+      // reads a missing key list, and the `$ifNull` is what keeps `$in` from aborting
+      // the whole command on it. Verified on mongod.
+      expect(
+        jsmql`
+$match($.deletedAt == null);
+$.visible = $.record.pick($.viewer.allowedFields);
+$.redacted = $.record.omit($.viewer.allowedFields);
+      `,
+      ).toEqual([
+        { $match: { deletedAt: null } },
+        {
+          $set: {
+            visible: {
+              $arrayToObject: {
+                $filter: {
+                  input: { $objectToArray: "$record" },
+                  as: "jsmqlKv",
+                  cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$viewer.allowedFields", []] }] },
+                },
+              },
+            },
+          },
+        },
+        {
+          $set: {
+            redacted: {
+              $arrayToObject: {
+                $filter: {
+                  input: { $objectToArray: "$record" },
+                  as: "jsmqlKv",
+                  cond: { $not: [{ $in: ["$$jsmqlKv.k", { $ifNull: ["$viewer.allowedFields", []] }] }] },
+                },
+              },
+            },
+          },
+        },
+      ]);
+    });
+  },
+);
+
+describe(
   "attach each user's order-status breakdown (lookup `.filter().countBy()`)",
   { features: ["Pipelines"] },
   () => {

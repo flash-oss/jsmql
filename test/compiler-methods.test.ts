@@ -26,6 +26,8 @@ const DOC = {
   d: new Date("2026-03-15T13:45:30.250Z"),
   e: new Date("2026-03-01T00:00:00.000Z"),
   o: { a: 1, b: 2, _c: 3 },
+  keys: ["a", "_c"],
+  kname: "_c",
   h: "<a & b>",
   a: [3, 1, 2],
   b: [2, 5],
@@ -229,6 +231,44 @@ describe("compiler/emit — object methods", () => {
       },
     });
     expect(compiled('$.o.omit(["_c"])', () => ({ a: 1, b: 2 }))).toMatchObject({ $arrayToObject: { $filter: {} } });
+    // A key list the source does not SPELL — a field path, or an element read at run
+    // time — is one only the server knows, so both read the object's own keys instead.
+    expect(
+      compiled("$.o.pick($.keys)", (d) => Object.fromEntries(Object.entries(d.o).filter(([k]) => d.keys.includes(k)))),
+    ).toEqual({
+      $arrayToObject: {
+        $filter: {
+          input: { $objectToArray: "$o" },
+          as: "jsmqlKv",
+          cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$keys", []] }] },
+        },
+      },
+    });
+    expect(
+      compiled("$.o.omit($.keys)", (d) => Object.fromEntries(Object.entries(d.o).filter(([k]) => !d.keys.includes(k)))),
+    ).toEqual({
+      $arrayToObject: {
+        $filter: {
+          input: { $objectToArray: "$o" },
+          as: "jsmqlKv",
+          cond: { $not: [{ $in: ["$$jsmqlKv.k", { $ifNull: ["$keys", []] }] }] },
+        },
+      },
+    });
+    expect(
+      compiled('$.o.pick([$.kname, "b"])', (d) =>
+        Object.fromEntries(Object.entries(d.o).filter(([k]) => [d.kname, "b"].includes(k))),
+      ),
+    ).toEqual({
+      $arrayToObject: {
+        $filter: { input: { $objectToArray: "$o" }, as: "jsmqlKv", cond: { $in: ["$$jsmqlKv.k", ["$kname", "b"]] } },
+      },
+    });
+    // A missing key list picks nothing and omits nothing, as lodash does — `$in` would
+    // otherwise ABORT the command on a second operand that is not an array.
+    expect(compiled("$.o.pick($.nope)", () => ({}))).toMatchObject({
+      $arrayToObject: { $filter: { cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$nope", []] }] } } },
+    });
     expect(() => expr('$.o.pick(["$a"])')).toThrow(/starts with '\$'/);
     expect(() => expr("$.o.mapValues(5)")).toThrow(/one- or two-parameter arrow/);
   });

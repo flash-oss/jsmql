@@ -2145,6 +2145,7 @@ $.scores.mapValues(v => v * 2)        // { <k>: v*2 }
 $.o.mapKeys((v, k) => k.toUpperCase())// rename keys
 $.user.pick(["name", "age"])          // keep only those keys (missing keys drop out)
 $.user.omit(["password"])             // all keys except those
+$.user.pick($.visibleFields)          // the key list read from the document itself
 $.o.pickBy(v => v != null)            // keep entries whose value passes
 $.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
 $.o.invert()                          // swap keys/values (new keys stringified, last wins)
@@ -2162,6 +2163,8 @@ $.user?.profile?.keys()               // { $map: { input: { $objectToArray: "$us
 > `.keys()` / `.values()` / `.entries()` read the object where the receiver's type is not known at compile time. On a receiver jsmql can PROVE is an array they are refused, because JavaScript's `Array.prototype.keys()` returns an iterator and MongoDB has no such value: `$.xs.map(x => x).keys()` names `$op($range, 0, $op($size, arr))` instead.
 
 > `pick` uses flat field names only (deep paths like `"a.b"` aren't supported — use `$op($getField, …)`). `mapKeys`/`invert` **stringify** the produced key (`$toString`; last wins on collision), like lodash. All verified against a live mongod.
+
+> **A `pick` / `omit` key list the source does not spell** — a field path, or a list holding an element read at run time — is read at query time instead: jsmql walks the object's own keys and matches each against the list. A key list that is missing or null picks nothing and omits nothing, as lodash does. The `$$.pick(…)` / `$$.omit(…)` STREAM forms still need a spelled list: they lower to `$project`, and the server reads a stage's field list before it reads any document.
 
 ---
 
