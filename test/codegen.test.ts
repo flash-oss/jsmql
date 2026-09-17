@@ -7353,7 +7353,9 @@ describe("IIFE → $let", () => {
     expect(() => jsmql.expr("((x, y) => x + y)(1)")).toThrow(/expected 2 argument/);
   });
   it("rejects calling a non-lambda", () => {
-    expect(() => jsmql.expr("$.func(1, 2)")).toThrow(/Direct call/);
+    expect(() => jsmql.expr("$.fns[0](1, 2)")).toThrow(/Direct call/);
+    // `$.name(…)` is a method on the document itself, so an unknown one is an unknown METHOD
+    expect(() => jsmql.expr("$.func(1, 2)")).toThrow(/Unknown method '\.func\(\)'/);
   });
   it("rejects spread args", () => {
     expect(() => jsmql.expr("((x) => x)(...$.arr)")).toThrow(/spread/);

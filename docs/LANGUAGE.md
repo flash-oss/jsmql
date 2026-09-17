@@ -2177,6 +2177,7 @@ $.o.mapKeys((v, k) => k.toUpperCase())// rename keys
 $.user.pick(["name", "age"])          // keep only those keys (missing keys drop out)
 $.user.omit(["password"])             // all keys except those
 $.user.pick($.visibleFields)          // the key list read from the document itself
+$.pick(["name", "age"])               // the document itself is a receiver too — bare $ is $$ROOT
 $.o.pickBy(v => v != null)            // keep entries whose value passes
 $.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
 $.o.invert()                          // swap keys/values (new keys stringified, last wins)

@@ -297,6 +297,28 @@ describe("compiler/emit — object methods", () => {
       $arrayToObject: { $filter: { cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$nope", []] }] } } },
     });
     expect(() => expr('$.o.pick(["$a"])')).toThrow(/starts with '\$'/);
+  });
+
+  it("takes the document itself as the receiver — bare `$` is `$$ROOT`", () => {
+    expect(compiled('$.pick(["s", "n"])', (d) => ({ s: d.s, n: d.n }))).toEqual({
+      $let: {
+        vars: { jsmqlObj: "$$ROOT" },
+        in: {
+          s: { $getField: { field: "s", input: "$$jsmqlObj" } },
+          n: { $getField: { field: "n", input: "$$jsmqlObj" } },
+        },
+      },
+    });
+    const others = Object.keys(DOC).filter((k) => k !== "s" && k !== "w");
+    expect(compiled(`$.omit(${JSON.stringify(others)})`, (d) => ({ s: d.s, w: d.w }))).toMatchObject({
+      $arrayToObject: { $filter: { input: { $objectToArray: "$$ROOT" } } },
+    });
+    expect(compiled('$.pick(["o"]).o.mapValues(v => v * 2)', () => ({ a: 2, b: 4, _c: 6 }))).toMatchObject({
+      $arrayToObject: { $map: {} },
+    });
+    // A method of another family is refused as it is on any document.
+    expect(() => expr("$.trim()")).toThrow(/'\.trim\(\)' is not available on a 'object' — it is defined on 'string'/);
+    expect(() => expr("$.map(x => x)")).toThrow(/A document is not a list/);
     expect(() => expr("$.o.mapValues(5)")).toThrow(/one- or two-parameter arrow/);
   });
 });

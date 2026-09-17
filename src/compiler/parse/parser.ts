@@ -1068,9 +1068,22 @@ class Parser {
     );
   }
 
+  /**
+   * `$.name` is a field of the document, and `$.name(…)` a METHOD on the document
+   * itself: a field is never callable, so the parentheses can mean nothing else.
+   * The receiver is the bare `$` (an empty-path `FieldRef`), the same node the
+   * emitter already types as a document.
+   */
   private fieldRef(): Expr {
     const t = this.c.next();
     const first = this.identLike();
+    if (this.c.is("LParen")) {
+      this.c.next();
+      const args = this.args("RParen", first.text);
+      const object: Expr = { type: "FieldRef", path: "", pos: t.pos };
+      // `$.` is one token; its `.` — where every other method call points — is its second character.
+      return { type: "MethodCall", object, name: first.text, args, optional: false, pos: t.pos + 1 };
+    }
     return { type: "FieldRef", path: first.text, pos: t.pos };
   }
 

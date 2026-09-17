@@ -337,6 +337,11 @@ The parser stops a field reference after the **first** segment; subsequent dot a
 
 This enables method chaining: `$.name.trim()` parses as `MethodCall(FieldRef("name"), "trim", [])`.
 
+A name after `$.` that is followed by `(` is not a field: a field is never callable, so
+`$.pick(["a"])` parses as `MethodCall(FieldRef(""), "pick", […])` — a method on the document
+itself, the bare `$` as its receiver. The node's position is the `.` of the `$.` token, where
+every other method call points.
+
 When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items[0].name`), a method call result, or a ternary — the member read is `$getField` over the lowered receiver:
 
 - `$.items[0].name` → `MemberAccess(IndexAccess(FieldRef("items"), 0), "name")` → `{ $getField: { field: "name", input: <the bracket access: $arrayElemAt on an array, $substrCP on a string, $getField otherwise> } }`

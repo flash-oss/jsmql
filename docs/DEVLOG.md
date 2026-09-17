@@ -10,54 +10,6 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-09-18 — feat: a JavaScript method on a null or missing receiver answers null
-
-MEASURED over a document that holds none of the fields, the JavaScript spellings gave
-seven different answers: `$.a.length` 0, `$.a.some(f)` false, `$.a.every(f)` true,
-`$.s.toUpperCase()` "", `$.s.search(/a/)` -1, `$.a.includes(1)` missing, `$.a.slice(0,1)`
-the STRING branch's "" — and `$.a.findIndex(f)` aborted the whole command. JavaScript
-throws on every one of them. MongoDB has no error to raise inside an expression, so all
-of them now answer null, the nearest thing it holds. `$.user?.name` writes `x: null`
-too, where a bare path left the key out. A lodash method keeps lodash's answer:
-`_.size(undefined)` is 0 and `_.pick(undefined, …)` is `{}`.
-
-One helper does it. `nullOr` in [src/registry/names.ts](src/registry/names.ts) tests the
-receiver and runs the method only when the test passed, so the body carries no `$ifNull`
-of its own — the `arrayOrEmpty` and `""` neutrals those cells put on their receivers are
-gone, and with them the fabricated 0 / "" / false. A row that dispatches on the
-receiver's type lets null and missing fall to its `uncertain` default, which is null
-now rather than `$$REMOVE`; the `alsoTypes: ["null", "missing"]` that routed a missing
-value into `.length`'s and `.slice`'s string branch is gone. `withOptional` is deleted:
-every receiver it wrapped is now stopped above it, because a `?.` followed by anything
-COMPUTED — a call, an index, a property row such as `.length` — stops the chain, not
-only a call. The one thing kept from that mechanism is the consumer table in
-[docs/LANGUAGE.md](docs/LANGUAGE.md) § Optional Chaining, for a `?.` with nothing after it.
-
----
-
-## 2026-09-18 — feat: a `?.` with a call after it stops the chain (DEF-036 ships)
-
-JavaScript stops a chain at a `?.`. jsmql put an empty value in place of the missing
-field at the link that carries the `?.`, and every link after it read that empty value
-and carried on, so `$.o?.keys().length` answered 0 where JavaScript answers `undefined`.
-It now answers null, which is the nearest thing MongoDB holds. `$.s?.trim().length`,
-`$.a?.map(f).length` and `$.user?.name.trim()` answer null for the same reason.
-
-A `?.` with no CALL after it does not change. There is nothing to stop — a path through
-a missing field is already missing — so `` `hi ${$.user?.name}` `` still prints `"hi "`
-and `$.first + " " + $.user?.last` still gives `"An "`. The consumer table in
-[docs/LANGUAGE.md](docs/LANGUAGE.md) § Optional Chaining keeps every row that describes
-one of those, and loses the three that described a method receiver.
-
-Two pieces of machinery. `stoppedChain` walks a chain's receiver spine and answers the
-value the `?.` guards; the fold moves a `?.` on a plain read onto the PATH, so the walk
-checks the base field reference as well as each link. And `Env.proving` records a path
-a test has proven, which `isPresent` reads — without it the second branch of the `$cond`
-would put the `$ifNull` straight back on the field the test just proved. `dropFields`
-deliberately drops the set: a stage that replaced the document invalidates it.
-
----
-
 ## 2026-09-18 — decision: a `?.` stops the chain, and nothing wider
 
 DEF-036 now names the rule it targets. A `?.` makes every link AFTER it not run, and
@@ -93,6 +45,54 @@ The gap is not about objects. `$.a?.map(x => x).length` and `$.s?.trim().length`
 compiler builds a chain from the inside out, so no link knows that an earlier one
 carried a `?.`. That is the work DEF-036 holds, with the target document measured on
 the fixture. No behaviour changed with this entry.
+
+---
+
+## 2026-09-18 — feat: a `?.` with a call after it stops the chain (DEF-036 ships)
+
+JavaScript stops a chain at a `?.`. jsmql put an empty value in place of the missing
+field at the link that carries the `?.`, and every link after it read that empty value
+and carried on, so `$.o?.keys().length` answered 0 where JavaScript answers `undefined`.
+It now answers null, which is the nearest thing MongoDB holds. `$.s?.trim().length`,
+`$.a?.map(f).length` and `$.user?.name.trim()` answer null for the same reason.
+
+A `?.` with no CALL after it does not change. There is nothing to stop — a path through
+a missing field is already missing — so `` `hi ${$.user?.name}` `` still prints `"hi "`
+and `$.first + " " + $.user?.last` still gives `"An "`. The consumer table in
+[docs/LANGUAGE.md](docs/LANGUAGE.md) § Optional Chaining keeps every row that describes
+one of those, and loses the three that described a method receiver.
+
+Two pieces of machinery. `stoppedChain` walks a chain's receiver spine and answers the
+value the `?.` guards; the fold moves a `?.` on a plain read onto the PATH, so the walk
+checks the base field reference as well as each link. And `Env.proving` records a path
+a test has proven, which `isPresent` reads — without it the second branch of the `$cond`
+would put the `$ifNull` straight back on the field the test just proved. `dropFields`
+deliberately drops the set: a stage that replaced the document invalidates it.
+
+---
+
+## 2026-09-18 — feat: a JavaScript method on a null or missing receiver answers null
+
+MEASURED over a document that holds none of the fields, the JavaScript spellings gave
+seven different answers: `$.a.length` 0, `$.a.some(f)` false, `$.a.every(f)` true,
+`$.s.toUpperCase()` "", `$.s.search(/a/)` -1, `$.a.includes(1)` missing, `$.a.slice(0,1)`
+the STRING branch's "" — and `$.a.findIndex(f)` aborted the whole command. JavaScript
+throws on every one of them. MongoDB has no error to raise inside an expression, so all
+of them now answer null, the nearest thing it holds. `$.user?.name` writes `x: null`
+too, where a bare path left the key out. A lodash method keeps lodash's answer:
+`_.size(undefined)` is 0 and `_.pick(undefined, …)` is `{}`.
+
+One helper does it. `nullOr` in [src/registry/names.ts](src/registry/names.ts) tests the
+receiver and runs the method only when the test passed, so the body carries no `$ifNull`
+of its own — the `arrayOrEmpty` and `""` neutrals those cells put on their receivers are
+gone, and with them the fabricated 0 / "" / false. A row that dispatches on the
+receiver's type lets null and missing fall to its `uncertain` default, which is null
+now rather than `$$REMOVE`; the `alsoTypes: ["null", "missing"]` that routed a missing
+value into `.length`'s and `.slice`'s string branch is gone. `withOptional` is deleted:
+every receiver it wrapped is now stopped above it, because a `?.` followed by anything
+COMPUTED — a call, an index, a property row such as `.length` — stops the chain, not
+only a call. The one thing kept from that mechanism is the consumer table in
+[docs/LANGUAGE.md](docs/LANGUAGE.md) § Optional Chaining, for a `?.` with nothing after it.
 
 ---
 
@@ -157,6 +157,57 @@ cells do not read `present` at all, the same shape `lastIndexOfArray` took.
 
 ---
 
+## 2026-09-17 — feat(parse): `$.name(…)` is a method on the document itself
+
+`$.pick(["a", "b"])`, `$.omit(["secret"])`, `$.mapValues(v => v + 1)` — every method jsmql
+recognises now takes the bare `$` as its receiver, in every position a value can stand
+(`$ = $.pick([…])`, `$.x = $.omit([…])`, `{ ...$.omit(["a"]), n: 1 }`, `jsmql.expr("$.pick([…])")`).
+The lexer reads `$.` as one token, and the parser's `fieldRef()` read the name after it as
+a field unconditionally, so `$.pick(` was the field `pick` followed by `(` — a call on a
+field path, which failed with the "Direct call" refusal meant for `(…)(args)`. The emitter
+was ready the whole time: it types the bare `$` as a document and dispatches a method on it
+to the object family, which is why the optional-chain spelling `$?.pick([…])` compiled.
+
+The fix is one branch in [src/compiler/parse/parser.ts](src/compiler/parse/parser.ts): a
+name after `$.` followed by `(` is a `MethodCall` on the empty-path `FieldRef`. There is no
+ambiguity to protect — a field is never callable, so no valid program changes meaning. The
+alternative, allowing the form only on the right of `$ =`, was rejected: `$.x = $.pick([…])`
+would then fail while `$ = $.pick([…])` worked, the symmetric path a developer hits next. A
+method of another family on the root reaches the existing family refusal (`'.trim()' is not
+available on a 'object' — it is defined on 'string'`). The lowering of `$ = $.pick([…])` is
+still the generic `$replaceWith` over `$$ROOT`; the lean `$project` it can become is a
+separate change.
+
+---
+
+## 2026-09-17 — fix: a `.pick()` / `.omit()` key list the source does not spell
+
+`$.address.pick($.keys)` crashed the compiler with "Cannot read properties of
+undefined (reading 'map')". Both value cells cast the argument to an array literal
+and read its elements, so anything else — a field path, a spread, a computed element
+like `[$.k]` — reached `.elements` on a node that has none. The `arrayOf` rule holds
+every element it can SEE to a field name, so the cast looked safe; it is not, because
+a slot rule says nothing about an argument the source does not spell.
+
+The two cells now ask [`spelledKeys`](src/registry/names.ts) for the names the source
+states, and fall back to reading the object's own keys when there are none:
+`$objectToArray` + `$filter` on `$in` (negated for `.omit`), which is the shape
+`.omit` already emits for a spelled list. A spelled list keeps its old MQL, so
+nothing that compiled before changed shape. The key list reads through the existing
+`arrayOrEmpty` guard: MEASURED, `$in` aborts the whole command on a second operand
+that is not an array, and a document with no such field would take the query down
+rather than answer — where lodash picks nothing and omits nothing from a missing key
+list, which is what the `$ifNull` gives.
+
+The `$$.pick(…)` / `$$.omit(…)` STREAM cells are unchanged and still demand a
+constant: they lower to `$project`, and the server reads a stage's field list before
+it reads any document. The value form has no such limit, which is now the reason the
+two positions answer differently. See [docs/LANGUAGE.md](docs/LANGUAGE.md) and the
+cases in [test/compiler-methods.test.ts](test/compiler-methods.test.ts), which compare
+the server's answer with JavaScript's.
+
+---
+
 ## 2026-09-17 — fix: a lodash object method over a missing field answers the empty object
 
 `$objectToArray` answers null for a missing field, and `$arrayToObject` passes that
@@ -209,34 +260,6 @@ are what make the compiler emit a `$switch`. The two copies are now one
 `lastIndexOfArray` function with an unconditional guard, so the row emits no dispatch.
 The live cases in [test/compiler-methods.test.ts](test/compiler-methods.test.ts) run
 every guarded spelling over a document that holds neither operand.
-
----
-
-## 2026-09-17 — fix: a `.pick()` / `.omit()` key list the source does not spell
-
-`$.address.pick($.keys)` crashed the compiler with "Cannot read properties of
-undefined (reading 'map')". Both value cells cast the argument to an array literal
-and read its elements, so anything else — a field path, a spread, a computed element
-like `[$.k]` — reached `.elements` on a node that has none. The `arrayOf` rule holds
-every element it can SEE to a field name, so the cast looked safe; it is not, because
-a slot rule says nothing about an argument the source does not spell.
-
-The two cells now ask [`spelledKeys`](src/registry/names.ts) for the names the source
-states, and fall back to reading the object's own keys when there are none:
-`$objectToArray` + `$filter` on `$in` (negated for `.omit`), which is the shape
-`.omit` already emits for a spelled list. A spelled list keeps its old MQL, so
-nothing that compiled before changed shape. The key list reads through the existing
-`arrayOrEmpty` guard: MEASURED, `$in` aborts the whole command on a second operand
-that is not an array, and a document with no such field would take the query down
-rather than answer — where lodash picks nothing and omits nothing from a missing key
-list, which is what the `$ifNull` gives.
-
-The `$$.pick(…)` / `$$.omit(…)` STREAM cells are unchanged and still demand a
-constant: they lower to `$project`, and the server reads a stage's field list before
-it reads any document. The value form has no such limit, which is now the reason the
-two positions answer differently. See [docs/LANGUAGE.md](docs/LANGUAGE.md) and the
-cases in [test/compiler-methods.test.ts](test/compiler-methods.test.ts), which compare
-the server's answer with JavaScript's.
 
 ---
 

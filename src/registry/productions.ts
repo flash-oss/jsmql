@@ -992,7 +992,7 @@ export const PRODUCTIONS = {
   }),
 
   fieldReference: production({
-    doc: "`$.name` — a field of the current document.",
+    doc: "`$.name` — a field of the current document. `$.name(…)` is the `methodCall` production on the bare `$`: a field is never callable.",
     tokens: ["$.", "identifier"],
     spelling: "$.field",
     becomes: "FieldRef",

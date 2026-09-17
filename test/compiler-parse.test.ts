@@ -583,3 +583,17 @@ describe("compiler/parse — a write target is a place, and an optional chain is
     expect(() => parseExpression("$.a ?? $.b || $.c")).toThrow(/'\|\|'/);
   });
 });
+
+describe("compiler/parse — `$.name(…)` is a method on the document", () => {
+  it("reads the parentheses as a call on the bare `$`, and their absence as a field", () => {
+    const call = only('$.pick(["a"])') as { object: { type: string; path: string }; name: string; pos: number };
+    expect(call.type).toBe("MethodCall");
+    expect(call.name).toBe("pick");
+    expect(call.object).toEqual({ type: "FieldRef", path: "", pos: 0 });
+    // the method's own `.` — where every other method call points
+    expect(call.pos).toBe(1);
+    expect(only("$.pick")).toEqual({ type: "FieldRef", path: "pick", pos: 0 });
+    const chained = only("$.pick.x") as { object: unknown };
+    expect(chained.object).toEqual({ type: "FieldRef", path: "pick", pos: 0 });
+  });
+});
