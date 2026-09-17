@@ -1,0 +1,9 @@
+$$.$match($.status === "paid")
+  .$group({
+    _id: $.customerId,
+    revenue: $sum($.total),
+  })
+  .$match($.revenue > 1000)
+  .sort({ revenue: -1 });
+
+$.name = $$$.customers.find({ _id: $._id }).name;

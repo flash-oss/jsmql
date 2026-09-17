@@ -1,0 +1,37 @@
+const userId = 0x507f1f77bcf86cd799439011;
+$$.filter({ _id: userId }); // limit the whole pipeline down to one pass
+assert($$.length === 1, "User not found");
+
+const myProductIds = $$$.orders
+  .filter({ userId })
+  .$sort({ createdAt: -1 }) // same as _.sort()
+  .take(10)
+  .map("productIds")
+  .flatten()
+  .uniq();
+
+const candidateProductIdCounts = $$$.orders
+  .filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, "year"))
+  .toSorted({ createdAt: -1 })
+  .take(100) // a pipeline of co-purchase orders, most recent 100 of the last year
+  .flatMap("productIds")
+  .filter(p => !myProductIds.includes(p))
+  .countBy() // { ID: count } map
+  .entries()
+  .sortBy(([id, count]) => -count)
+  .take(10) // top 10
+  .fromEntries();
+const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
+
+const candidateProducts = $$$.products
+  .filter({ _id: candidateProductIds })
+  .$limit(500) // same as .take(500)
+  .pick(["_id", "name"]); // load only the fields we use
+
+$$ = candidateProductIds
+  .map(id => ({
+    productId: id,
+    score: candidateProductIdCounts[id],
+    name:  candidateProducts.find({ _id: id }).name,
+  }))
+  .orderBy({ score: -1 });
