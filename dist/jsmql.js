@@ -14328,7 +14328,7 @@ var PRODUCTIONS = {
     statement: unsupported("'String' is not a statement \u2014 see its 'where'.")
   }),
   fieldReference: production({
-    doc: "`$.name` \u2014 a field of the current document.",
+    doc: "`$.name` \u2014 a field of the current document. `$.name(\u2026)` is the `methodCall` production on the bare `$`: a field is never callable.",
     tokens: ["$.", "identifier"],
     spelling: "$.field",
     becomes: "FieldRef",
@@ -14919,6 +14919,9 @@ function receiverFamily(receiverName, onStream, name2) {
   if (receiverName !== null && fams.includes(receiverName)) return receiverName;
   const values = fams.filter((f) => FIELD_FAMILIES.includes(f));
   return values.length === 1 ? values[0] : void 0;
+}
+function receiverFamiliesOf(name2) {
+  return families(row(name2)?.on);
 }
 function elementsOf(name2) {
   return row(name2)?.elements;
@@ -19701,9 +19704,21 @@ var Parser = class _Parser {
       t.pos
     );
   }
+  /**
+   * `$.name` is a field of the document, and `$.name(…)` a METHOD on the document
+   * itself: a field is never callable, so the parentheses can mean nothing else.
+   * The receiver is the bare `$` (an empty-path `FieldRef`), the same node the
+   * emitter already types as a document.
+   */
   fieldRef() {
     const t = this.c.next();
     const first = this.identLike();
+    if (this.c.is("LParen")) {
+      this.c.next();
+      const args = this.args("RParen", first.text);
+      const object = { type: "FieldRef", path: "", pos: t.pos };
+      return { type: "MethodCall", object, name: first.text, args, optional: false, pos: t.pos + 1 };
+    }
     return { type: "FieldRef", path: first.text, pos: t.pos };
   }
   /**
@@ -27490,6 +27505,14 @@ function writeStages(uf, env, first) {
       emit(facetStages(op.value, childEnv(inner, op, "value"), first && out.length === 0));
       continue;
     }
+    if (path === "") {
+      const links = elementWiseOnDocument(op.value);
+      if (links !== null) {
+        flush();
+        emit(documentStages(links, inner, first && out.length === 0));
+        continue;
+      }
+    }
     if (unsets !== null) flush();
     const reads2 = pathsRead(op.value, /* @__PURE__ */ new Set());
     if (sets !== null && (sets.paths.some((w) => [...reads2].some((r) => touches(r, w))) || sets.paths.some((w) => touches(path, w)))) {
@@ -27547,6 +27570,28 @@ function refuseUnbuiltSugar(value) {
   const base = chainBase(value);
   if (base.type === "CollectionRef" && value.type === "MethodCall") throw streamAsValue(value.pos);
 }
+function elementWiseOnDocument(value) {
+  const links = [];
+  let cur = value;
+  while (cur.type === "MethodCall") {
+    links.unshift(cur);
+    cur = cur.object;
+  }
+  if (links.length === 0 || cur.type !== "FieldRef" || cur.path !== "") return null;
+  for (const link of links) {
+    const on = receiverFamiliesOf(namedRow(link) ?? link.name);
+    if (link.optional || on === void 0 || on === "any" || !on.includes("object") || !on.includes("stream"))
+      return null;
+  }
+  return links;
+}
+function documentStages(links, env, first) {
+  const element2 = env.chain.element;
+  env.chain.element = "";
+  const stages = linkStages(links, env, first);
+  if (!stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element2;
+  return stages;
+}
 function streamStages(chain, env, first) {
   const links = [];
   let cur = chain;
@@ -27557,6 +27602,9 @@ function streamStages(chain, env, first) {
   if (readsAnotherCollection(cur)) return joinStream(chain, env, first, JOIN);
   if (cur.type === "CollectionRef" && env.level > 0) throw rootStreamInForeign(chain.pos);
   if (cur.type !== "CollectionRef" && !onOwnStream(cur, env)) throw notAStreamChain(chain.pos);
+  return linkStages(links, env, first);
+}
+function linkStages(links, env, first) {
   const out = [];
   for (const link of links) {
     if (link.optional) throw optionalOnStream(link.pos);

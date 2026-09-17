@@ -65,12 +65,39 @@ about what the statement does to the document.
 | `$ = $` | `{ $replaceWith: "$$ROOT" }` (identity — bare `$` lowers to `"$$ROOT"`) |
 | `$ = $mergeObjects($.a, $.b)` | `{ $replaceWith: { $mergeObjects: ["$a", "$b"] } }` |
 | `$ = { ...$, x: 1 }` | `{ $replaceWith: { $mergeObjects: ["$$ROOT", { x: 1 }] } }` |
+| `$ = $.pick(["a", "b"])` / `$ = $.omit(["a"])` | `{ $project: { a: 1, b: 1, _id: 0 } }` / `{ $project: { a: 0 } }` — the stream cell's stage, see [Element-wise object methods on the root](#element-wise-object-methods-on-the-root) |
+| `$ = $.mapValues(v => v + 1)` | `{ $replaceWith: { $arrayToObject: { $map: { input: { $objectToArray: "$$ROOT" }, … } } } }` — a method on the bare `$` reads the document |
 | `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, pipeline: [ …, { $limit: 1 }], as: "__jsmql.tmp.N" } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — a document whose `.find` matched nothing leaves the stream (by design) |
 | `$ = { n: $.foo + $$$.coll.find(pred).count }` (buried lookup) | the `$lookup` hoisted ahead into a scratch slot, `{ $set: { slot: { $first: "$slot" } } }`, then `{ $replaceWith: { n: { $add: ["$foo", "$slot.count"] } } }` |
 | `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (any array) | refused — "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' …" |
 | `$$ = [{…}, {…}]` / `$$ = $.items.map(…)` (the same array, on the STREAM) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root) |
 
 The direct-lookup form unwinds the slot instead of reading `$first`: `$replaceWith: { $first: … }` fails on the server for every document whose match is empty (measured), while `$unwind` drops it — the one document it found is what the document becomes, and a document that found nothing has nothing to become ([lookup-stage.md § The join road](lookup-stage.md)). No cleanup follows a `$replaceWith`: the scratch namespace is gone with the old root.
+
+## Element-wise object methods on the root
+
+`$ = $.pick([…])`, `$ = $.omit([…])` and a chain of such links (`$ = $.pick([…]).omit([…])`)
+take the stream road. `elementWiseOnDocument` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) accepts a `MethodCall`
+chain whose base is the bare `$`, with no `?.`, and whose every link is a row spelled on BOTH
+the `object` and the `stream` family (`on` in [src/registry/names.ts](../../src/registry/names.ts));
+`documentStages` then runs the links through the same loop `$$.pick(…)` runs through
+([stream-methods.md](stream-methods.md)), with the DOCUMENT as the chain's element — a bare
+`$$.flatMap("items")` earlier leaves `items` as the element, and `$` names the document, not that
+field; the element comes back afterwards unless a link replaced the document.
+
+Why one lowering: a row on both families is element-wise by construction — what it makes of the
+document is what its stream cell makes of each document of the stream — so "the document becomes
+`pick(document)`" and "every document is picked" are the same operation, and the stream cell's
+`$project` is the smaller MQL. MEASURED: `[{ $project: { a: 1, b: 1, _id: 0 } }]` and the value
+form `$replaceWith: { $let: { vars: { jsmqlObj: "$$ROOT" }, in: { a: { $getField: … }, … } } }`
+return the same documents for a present, a null and a missing key. The stream cell's own rules
+apply — `$ = $.pick($.keys)` is refused by `pick`'s constant rule, with the message the `$$`
+spelling gives.
+
+A chain with a link on the object family only (`$ = $.pick([…]).mapValues(…)`), or with a `?.`
+(`$ = $?.pick([…])`), is the value road: one `$replaceWith` over `$$ROOT`, as for every other
+method on the bare `$`.
 
 ## Bare `$` is `$$ROOT`
 

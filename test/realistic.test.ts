@@ -675,6 +675,26 @@ $ = { ...$, computedScore: $.points * 1.1 };
   });
 });
 
+describe("shape the public user record (`$ = $.pick([...])`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
+    // An API response carries a few public fields of each active user and nothing
+    // else. `$ = $.pick([...])` reads as "the document becomes these fields of
+    // itself", and lowers to the one `$project` the stream spelling `$$.pick([...])`
+    // emits — `_id` goes too unless it is named, as lodash's pick has it.
+    expect(
+      jsmql`
+$match($.status === "active");
+$ = $.pick(["name", "email", "plan", "lastLoginAt"]);
+$.plan = $.plan.toUpperCase();
+      `,
+    ).toEqual([
+      { $match: { status: "active" } },
+      { $project: { name: 1, email: 1, plan: 1, lastLoginAt: 1, _id: 0 } },
+      { $set: { plan: { $toUpper: "$plan" } } },
+    ]);
+  });
+});
+
 describe(
   "split a record by per-viewer field permissions (`.pick` / `.omit` on a stored key list)",
   { features: ["Pipelines"] },

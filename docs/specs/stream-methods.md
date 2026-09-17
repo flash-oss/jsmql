@@ -93,6 +93,9 @@ Per-method rows below describe *lowering*; for which callback spellings a slot a
 | `.pick([fields])` | One array of field-name strings | The lodash object method, per document. Keeps ONLY the named fields — `_id` is dropped unless named (matching lodash `_.pick` + the value-mode `.pick`) | `{ $project: { <f>: 1, …, _id: 0 } }` (inclusion). Clears the let scope (the `__jsmql` scratch is dropped too) |
 | `.omit([fields])` | One array of field-name strings | Drops the named fields, keeps everything else including `_id` (matching lodash `_.omit`) | `{ $project: { <f>: 0, … } }` (exclusion). Keeps the let scope |
 
+`$ = $.pick([…])` and `$ = $.omit([…])` — the same methods on the document itself — reach these
+two cells too, and emit the same stage: see [replace-root-stage.md § Element-wise object methods on the root](replace-root-stage.md#element-wise-object-methods-on-the-root).
+
 Note: the `.map(d => <expr>)` row above also accepts the lodash property
 shorthand `.map("<field>")` (≡ `.map(d => d.<field>)`), lowering to
 `{ $replaceWith: "$<field>" }`.

@@ -97,6 +97,59 @@ describe("compiler/emit/statement — the writes", () => {
     expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
   });
 
+  it("`$ = $.pick(…)` — an element-wise object method on the root is its stream cell's stage", () => {
+    // A row spelled on both the object and the stream says of ONE document what it
+    // says of every document, so the two spellings are one lowering — the lean `$project`.
+    expect(compiled('$ = $.pick(["a", "b"]);')).toEqual([{ $project: { a: 1, b: 1, _id: 0 } }]);
+    expect(compiled('$ = $.omit(["a"]);')).toEqual([{ $project: { a: 0 } }]);
+    expect(compiled('$ = $.pick(["a", "b"]).omit(["b"]);')).toEqual([
+      { $project: { a: 1, b: 1, _id: 0 } },
+      { $project: { b: 0 } },
+    ]);
+    expect(compiled('$.n = 1; $ = $.pick(["n"]); $.m = 2;')).toEqual([
+      { $set: { n: 1 } },
+      { $project: { n: 1, _id: 0 } },
+      { $set: { m: 2 } },
+    ]);
+    // `$` is the document, not the chain's unwound element — which `.omit` leaves in place
+    expect(compiled('$$.flatMap("items"); $ = $.omit(["a"]); $$.pick(["qty"]);')).toEqual([
+      { $unwind: "$items" },
+      { $project: { a: 0 } },
+      { $project: { "items.qty": 1, _id: 0 } },
+    ]);
+    expect(compiled('$$.flatMap("items"); $ = $.pick(["a"]); $$.pick(["qty"]);')).toEqual([
+      { $unwind: "$items" },
+      { $project: { a: 1, _id: 0 } },
+      { $project: { qty: 1, _id: 0 } },
+    ]);
+    // A link on the object family only, or an optional one, is the value road over `$$ROOT`.
+    expect(compiled('$ = $.pick(["a"]).mapValues(v => v);')).toMatchObject([
+      {
+        $replaceWith: {
+          $arrayToObject: { $map: { input: { $objectToArray: { $let: { vars: { jsmqlObj: "$$ROOT" } } } } } },
+        },
+      },
+    ]);
+    expect(compiled('$ = $?.pick(["a"]);')).toEqual([
+      {
+        $replaceWith: {
+          $let: {
+            vars: { jsmqlObj: { $ifNull: ["$$ROOT", {}] } },
+            in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } },
+          },
+        },
+      },
+    ]);
+    // The stage replaces the document, and a binding it carried is gone — as after `$replaceWith`.
+    expect(() => pipeline('let x = $.a * 2; $ = $.pick(["a"]); $.y = x;')).toThrow(/after `\$project`/);
+    expect(compiled('let x = $.a * 2; $ = $.omit(["b"]); $.y = x;')).toEqual([
+      { $set: { "__jsmql.var.x": { $multiply: ["$a", 2] } } },
+      { $project: { b: 0 } },
+      { $set: { y: "$__jsmql.var.x" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
   it("places a stage a value needed ahead of the stage that needed it", () => {
     expect(compiled("$.n = $$.length;")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },

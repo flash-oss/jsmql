@@ -180,6 +180,33 @@ separate change.
 
 ---
 
+## 2026-09-17 — feat(statement): `$ = $.pick([…])` is the one `$project` its stream spelling emits
+
+`$ = $.pick(["a", "b"])` now lowers to `[{ $project: { a: 1, b: 1, _id: 0 } }]`, and
+`$ = $.omit(["a"])` to `[{ $project: { a: 0 } }]` — the stages `$$.pick(…)` / `$$.omit(…)`
+already emitted — instead of a `$replaceWith` carrying the value form (`$let` over `$$ROOT`
+with one `$getField` per key). The rule in
+[src/compiler/emit/statement.ts](src/compiler/emit/statement.ts): a chain on the bare `$`
+whose every link is a row spelled on BOTH the object and the stream family runs through the
+stream road's own link loop, with the document as the chain's element. Such a row is
+element-wise by construction, so "the document becomes `pick(document)`" and "every document
+of the stream is picked" are one operation — the dispatch keys on facts the developer wrote
+(the bare `$` receiver, the row's families), never on a guess, so the same input always
+gives the same output. MEASURED on mongod: the two forms return the same documents for a
+present, a null and a missing key.
+
+Why not the generic `$replaceWith` for every root method: it is correct, and it is three
+times the MQL for the operation a developer reaches for most — "keep these fields". The
+`$$.pick(…)` spelling had the lean stage all along, but a developer thinks "the document
+becomes these fields of itself", not "the stream is picked", so the docs now lead with
+`$ = $.pick([…])` for whole-document reshaping and keep `$$.pick([…])` as the stream
+spelling of the same stage. A chain with a link on the object family only
+(`$ = $.pick([…]).mapValues(…)`), or with a `?.`, stays on the value road. See
+[docs/specs/replace-root-stage.md](docs/specs/replace-root-stage.md) § Element-wise object
+methods on the root.
+
+---
+
 ## 2026-09-17 — fix: a `.pick()` / `.omit()` key list the source does not spell
 
 `$.address.pick($.keys)` crashed the compiler with "Cannot read properties of

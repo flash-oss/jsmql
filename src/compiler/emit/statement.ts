@@ -27,6 +27,7 @@ import {
   isStageName,
   onlyOf,
   elementOnlyOf,
+  receiverFamiliesOf,
   replacesDocumentOf,
   restoresDocumentsOf,
   stageBodyRuleOf,
@@ -959,6 +960,17 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       emit(facetStages(op.value, childEnv(inner, op, "value"), first && out.length === 0));
       continue;
     }
+    // `$ = $.pick(…)` — the document becomes what an ELEMENT-WISE method makes of it,
+    // which is what the same method's stream cell makes of every document: the
+    // stages `$$.pick(…)` emits, on the document. See docs/specs/replace-root-stage.md.
+    if (path === "") {
+      const links = elementWiseOnDocument(op.value);
+      if (links !== null) {
+        flush();
+        emit(documentStages(links, inner, first && out.length === 0));
+        continue;
+      }
+    }
     if (unsets !== null) flush();
     const reads = pathsRead(op.value, new Set());
     if (
@@ -1037,13 +1049,49 @@ function refuseUnbuiltSugar(value: Expr): void {
 // ── the stream road ──────────────────────────────────────────────────────────
 
 /**
+ * `$.pick(…).omit(…)` — a chain on the bare `$` whose every link is a row spelled on
+ * BOTH the object and the stream — as its links, base first, or null. Such a row is
+ * element-wise by construction: what it makes of the document is what its stream
+ * cell makes of each document, so the two spellings are one lowering. An optional
+ * link (`$?.pick(…)`) is not this — the value road reads its `?.`.
+ */
+function elementWiseOnDocument(value: Expr): readonly Link[] | null {
+  const links: Link[] = [];
+  let cur: Expr = value;
+  while (cur.type === "MethodCall") {
+    links.unshift(cur);
+    cur = cur.object;
+  }
+  if (links.length === 0 || cur.type !== "FieldRef" || cur.path !== "") return null;
+  for (const link of links) {
+    const on = receiverFamiliesOf(namedRow(link) ?? link.name);
+    if (link.optional || on === undefined || on === "any" || !on.includes("object") || !on.includes("stream"))
+      return null;
+  }
+  return links;
+}
+
+/**
+ * The chain's stages with the DOCUMENT as the element. A bare `$$.flatMap("items")`
+ * earlier leaves `items` as the chain's element, and `$` names the document, not that
+ * field; the element comes back afterwards unless a stage replaced the document.
+ */
+function documentStages(links: readonly Link[], env: Env, first: boolean): Stage[] {
+  const element = env.chain.element;
+  env.chain.element = "";
+  const stages = linkStages(links, env, first);
+  if (!stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element;
+  return stages;
+}
+
+/**
  * A chain on the stream, `$$.filter(…).sortBy("k").take(3)`, as the stages it
  * means — one row's `stream` cell per link, base first. A stage is a link too
  * (`$$.$match(…)`), through the same cell its statement form uses. Each link's
  * stages take the placement its row states, exactly as a statement's do.
  */
 function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
-  const links: Extract<Expr, { type: "MethodCall" }>[] = [];
+  const links: Link[] = [];
   let cur: Expr = chain;
   while (cur.type === "MethodCall") {
     links.unshift(cur);
@@ -1055,6 +1103,13 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
   // reach it, and names its own stream through the callback's third parameter.
   if (cur.type === "CollectionRef" && env.level > 0) throw E.rootStreamInForeign(chain.pos);
   if (cur.type !== "CollectionRef" && !onOwnStream(cur, env)) throw E.notAStreamChain(chain.pos);
+  return linkStages(links, env, first);
+}
+
+type Link = Extract<Expr, { type: "MethodCall" }>;
+
+/** The links of a chain, base first, as their stages. */
+function linkStages(links: readonly Link[], env: Env, first: boolean): Stage[] {
   const out: Stage[] = [];
   for (const link of links) {
     // `$$?.filter(…)` — the stream is never null; the `?.` is a misreading of `$$`.

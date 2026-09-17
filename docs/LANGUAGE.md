@@ -3283,6 +3283,14 @@ Assigning to bare `$` replaces the **whole document** with the RHS expression. T
 jsmql("$ = $.profile;")
 // → [{ $replaceWith: "$profile" }]
 
+// Keep only some fields of the document, or drop some. An object method on the
+// bare `$` says of ONE document what its `$$` spelling says of every document in
+// the stream, so both emit the same `$project`.
+jsmql('$ = $.pick(["name", "email"]);')
+// → [{ $project: { name: 1, email: 1, _id: 0 } }]
+jsmql('$ = $.omit(["passwordHash"]);')
+// → [{ $project: { passwordHash: 0 } }]
+
 // Merge fresh fields into the existing root.
 // Bare `$` inside the spread is the current document ($$ROOT in MQL).
 jsmql("$ = { ...$, computedScore: $.points * 1.1 };")
@@ -3297,6 +3305,8 @@ jsmql("$ = $$$.users.find(u => u._id === $.userId);")
 //     { $replaceWith: "$__jsmql.tmp.0" }
 //   ]
 ```
+
+Any other method on the bare `$` reads the document as its receiver and stays a `$replaceWith` — `$ = $.mapValues(v => v + 1)` lowers the lodash method over `$$ROOT`.
 
 Bare `$` is a new primary expression — the current document. It plays the same role MQL spells as `"$$ROOT"`, and you can use it anywhere a field path is valid:
 

@@ -246,6 +246,11 @@ export function receiverFamily(receiverName: string | null, onStream: boolean, n
   return values.length === 1 ? values[0] : undefined;
 }
 
+/** The receiver families a name is spelled on, in their widest form; undefined for a name with no row. */
+export function receiverFamiliesOf(name: string): readonly Family[] | "any" | undefined {
+  return families(row(name)?.on);
+}
+
 type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
 
 /**
