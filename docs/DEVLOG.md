@@ -10,6 +10,15 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-17 — chore: the deck's generated files are the generator's own output
+
+`oxfmt` was reformatting `presentation.html` and `presentation/examples.json`
+after `gather.mjs` and `build.mjs` had written them, so the committed artifact
+could not be reproduced by running the build: the next build rewrote both files
+with no change of content. They join `playground.html` in the formatter's ignore
+list, as does the hand-authored `presentation_skeleton.html`, which the formatter
+reflows in the same way it would `playground_skeleton.html`.
+
 ## 2026-09-17 — docs: the conference deck lives in the repository
 
 `presentation.html` is a self-contained 36-slide deck for a 45-minute talk, and

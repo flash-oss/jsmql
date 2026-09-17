@@ -1195,256 +1195,507 @@
 
     <script id="examples" type="application/json">
       {
-        "wow": {
-          "src": "const userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"User not found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, \"year\"))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100 of the last year\n  .flatMap(\"productIds\")\n  .filter(p => !myProductIds.includes(p))\n  .countBy() // { ID: count } map\n  .entries()\n  .sortBy(([id, count]) => -count)\n  .take(10) // top 10\n  .fromEntries();\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter({ _id: candidateProductIds })\n  .$limit(500) // same as .take(500)\n  .pick([\"_id\", \"name\"]); // load only the fields we use\n\n$$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 });",
-          "mql": "[\n  { $match: { _id: new ObjectId(\"507f1f77bcf86cd799439011\") } },\n  { $setWindowFields: { output: { \"__jsmql.length\": { $count: {} } } } },\n  {\n    $match: {\n      $expr: {\n        $convert: {\n          input: true,\n          to: {\n            $cond: [\n              { $eq: [\"$__jsmql.length\", 1] },\n              \"bool\",\n              \"jsmql assertion failed: User not found\"\n            ]\n          }\n        }\n      }\n    }\n  },\n  {\n    $lookup: {\n      from: \"orders\",\n      pipeline: [\n        { $match: { userId: new ObjectId(\"507f1f77bcf86cd799439011\") } },\n        { $sort: { createdAt: -1 } },\n        { $limit: 10 }\n      ],\n      as: \"__jsmql.tmp.0\"\n    }\n  },\n  {\n    $set: {\n      \"__jsmql.var.myProductIds\": {\n        $setUnion: {\n          $reduce: {\n            input: { $map: { input: \"$__jsmql.tmp.0\", as: \"x\", in: \"$$x.productIds\" } },\n            initialValue: [],\n            in: {\n              $concatArrays: [\n                \"$$value\",\n                { $cond: [{ $isArray: \"$$this\" }, \"$$this\", [\"$$this\"]] }\n              ]\n            }\n          }\n        }\n      }\n    }\n  },\n  {\n    $lookup: {\n      from: \"orders\",\n      localField: \"__jsmql.var.myProductIds\",\n      foreignField: \"productIds\",\n      let: { jsmql_v0_myProductIds: \"$__jsmql.var.myProductIds\" },\n      pipeline: [\n        {\n          $match: {\n            $expr: {\n              $gt: [\n                \"$createdAt\",\n                {\n                  $dateSubtract: { startDate: \"$$NOW\", unit: \"year\", amount: 1 }\n                }\n              ]\n            }\n          }\n        },\n        { $sort: { createdAt: -1 } },\n        { $limit: 100 },\n        { $unwind: \"$productIds\" },\n        {\n          $match: {\n            $expr: {\n              $not: {\n                $in: [\"$productIds\", { $ifNull: [\"$$jsmql_v0_myProductIds\", []] }]\n              }\n            }\n          }\n        },\n        { $group: { _id: \"$productIds\", __jsmqlTmp: { $sum: 1 } } },\n        {\n          $group: {\n            _id: null,\n            __jsmqlTmp: {\n              $push: {\n                k: { $ifNull: [{ $toString: \"$_id\" }, \"null\"] },\n                v: \"$__jsmqlTmp\"\n              }\n            }\n          }\n        },\n        { $replaceWith: { $arrayToObject: \"$__jsmqlTmp\" } }\n      ],\n      as: \"__jsmql.tmp.1\"\n    }\n  },\n  { $set: { \"__jsmql.tmp.1\": { $ifNull: [{ $first: \"$__jsmql.tmp.1\" }, {}] } } },\n  {\n    $set: {\n      \"__jsmql.var.candidateProductIdCounts\": {\n        $arrayToObject: {\n          $map: {\n            input: {\n              $slice: [\n                {\n                  $map: {\n                    input: {\n                      $sortArray: {\n                        input: {\n                          $map: {\n                            input: {\n                              $map: {\n                                input: { $objectToArray: \"$__jsmql.tmp.1\" },\n                                as: \"jsmqlKv\",\n                                in: [\"$$jsmqlKv.k\", \"$$jsmqlKv.v\"]\n                              }\n                            },\n                            as: \"x\",\n                            in: { k: { $arrayElemAt: [\"$$x\", 1] }, v: \"$$x\" }\n                          }\n                        },\n                        sortBy: { k: -1 }\n                      }\n                    },\n                    as: \"jsmqlP\",\n                    in: \"$$jsmqlP.v\"\n                  }\n                },\n                10\n              ]\n            },\n            as: \"jsmqlP\",\n            in: [\n              { $toString: { $arrayElemAt: [\"$$jsmqlP\", 0] } },\n              { $arrayElemAt: [\"$$jsmqlP\", 1] }\n            ]\n          }\n        }\n      }\n    }\n  },\n  {\n    $set: {\n      \"__jsmql.var.candidateProductIds\": {\n        $map: {\n          input: {\n            $map: {\n              input: { $objectToArray: \"$__jsmql.var.candidateProductIdCounts\" },\n              as: \"jsmqlKv\",\n              in: \"$$jsmqlKv.k\"\n            }\n          },\n          as: \"x\",\n          in: { $toObjectId: \"$$x\" }\n        }\n      }\n    }\n  },\n  {\n    $lookup: {\n      from: \"products\",\n      localField: \"__jsmql.var.candidateProductIds\",\n      foreignField: \"_id\",\n      pipeline: [{ $limit: 500 }, { $project: { _id: 1, name: 1 } }],\n      as: \"__jsmql.var.candidateProducts\"\n    }\n  },\n  {\n    $set: {\n      \"__jsmql.tmp.2\": {\n        $sortArray: {\n          input: {\n            $map: {\n              input: \"$__jsmql.var.candidateProductIds\",\n              as: \"id\",\n              in: {\n                productId: \"$$id\",\n                score: {\n                  $getField: {\n                    field: { $toString: { $ifNull: [\"$$id\", \"\"] } },\n                    input: \"$__jsmql.var.candidateProductIdCounts\"\n                  }\n                },\n                name: {\n                  $getField: {\n                    field: \"name\",\n                    input: {\n                      $arrayElemAt: [\n                        {\n                          $filter: {\n                            input: \"$__jsmql.var.candidateProducts\",\n                            as: \"x\",\n                            cond: { $eq: [\"$$x._id\", \"$$id\"] }\n                          }\n                        },\n                        0\n                      ]\n                    }\n                  }\n                }\n              }\n            }\n          },\n          sortBy: { score: -1 }\n        }\n      }\n    }\n  },\n  { $unwind: \"$__jsmql.tmp.2\" },\n  { $replaceWith: \"$__jsmql.tmp.2\" }\n]",
-          "srcLines": 37,
-          "srcChars": 998,
-          "sqlLines": 38,
-          "sqlChars": 725,
-          "mqlLines": 211,
-          "mqlChars": 5504,
-          "mqlCharsTyped": 2526,
-          "stages": [
-            "$match",
-            "$setWindowFields",
-            "$match",
-            "$lookup",
-            "$set",
-            "$lookup",
-            "$set",
-            "$set",
-            "$set",
-            "$lookup",
-            "$set",
-            "$unwind",
-            "$replaceWith"
-          ],
-          "sql": "WITH myProductIds AS (\n  SELECT DISTINCT opi.productId\n  FROM (\n    SELECT o._id FROM orders o\n    WHERE o.userId = '507f1f77bcf86cd799439011'\n    ORDER BY o.createdAt DESC\n    LIMIT 10\n  ) recent\n  JOIN orderProductIds opi ON opi.orderId = recent._id\n),\n\ncoPurchases AS (\n  SELECT o._id\n  FROM orders o\n  WHERE EXISTS (\n    SELECT 1 FROM orderProductIds opi\n    WHERE opi.orderId = o._id\n      AND opi.productId IN (SELECT productId FROM myProductIds)\n  )\n  ORDER BY o.createdAt DESC\n  LIMIT 100\n),\n\ncandidateProductIdCounts AS (\n  SELECT opi.productId, COUNT(*) AS score\n  FROM orderProductIds opi\n  WHERE opi.orderId IN (SELECT _id FROM coPurchases)\n    AND opi.productId NOT IN (SELECT productId FROM myProductIds)\n  GROUP BY opi.productId\n  ORDER BY score DESC\n  LIMIT 10\n)\n\nSELECT c.productId, c.score, p.name\nFROM candidateProductIdCounts c\nJOIN products p ON p._id = c.productId\nORDER BY c.score DESC\nLIMIT 10;"
-        },
-        "addr": {
-          "src": "[\n  $.building && $.building + \",\",\n  $.streetNo,\n  $.street,\n  $.suburb,\n  $.state,\n  $.country,\n  $.postcode,\n]\n  .filter(Boolean)\n  .join(\" \")",
-          "mql": "{\n  $ifNull: [\n    {\n      $reduce: {\n        input: {\n          $filter: {\n            input: [\n              {\n                $cond: {\n                  if: {\n                    $and: [\n                      { $ne: [{ $ifNull: [\"$building\", null] }, null] },\n                      { $ne: [\"$building\", false] },\n                      { $ne: [\"$building\", \"\"] },\n                      { $ne: [\"$building\", 0] }\n                    ]\n                  },\n                  then: { $concat: [\"$building\", \",\"] },\n                  else: \"$building\"\n                }\n              },\n              \"$streetNo\",\n              \"$street\",\n              \"$suburb\",\n              \"$state\",\n              \"$country\",\n              \"$postcode\"\n            ],\n            as: \"x\",\n            cond: {\n              $and: [\n                { $ne: [{ $ifNull: [\"$$x\", null] }, null] },\n                { $ne: [\"$$x\", false] },\n                { $ne: [\"$$x\", \"\"] },\n                { $ne: [\"$$x\", 0] }\n              ]\n            }\n          }\n        },\n        initialValue: null,\n        in: {\n          $cond: {\n            if: { $eq: [\"$$value\", null] },\n            then: {\n              $cond: {\n                if: { $in: [{ $type: \"$$this\" }, [\"null\", \"missing\"]] },\n                then: \"\",\n                else: { $toString: \"$$this\" }\n              }\n            },\n            else: {\n              $concat: [\n                \"$$value\",\n                \" \",\n                {\n                  $cond: {\n                    if: { $in: [{ $type: \"$$this\" }, [\"null\", \"missing\"]] },\n                    then: \"\",\n                    else: { $toString: \"$$this\" }\n                  }\n                }\n              ]\n            }\n          }\n        }\n      }\n    },\n    \"\"\n  ]\n}",
-          "srcLines": 11,
-          "srcChars": 112,
-          "sqlLines": 15,
-          "sqlChars": 253,
-          "mqlLines": 70,
-          "mqlChars": 1781,
-          "mqlCharsTyped": 685,
-          "stages": null,
-          "sql": "SELECT array_to_string(\n  array_remove(ARRAY[\n    CASE WHEN building IS NOT NULL\n         AND building <> '' THEN building || ','\n    END,\n    NULLIF(street_no, ''),\n    NULLIF(street, ''),\n    NULLIF(suburb, ''),\n    NULLIF(state, ''),\n    NULLIF(country, ''),\n    NULLIF(postcode, '')\n  ], NULL),\n  ' '\n) AS full_address\nFROM addresses;"
-        },
-        "q1": {
-          "src": "const yearStart = new Date().startOf(\"year\");\nconst PAID = \"paid\";\n\n$$.filter(\n  (order) =>\n    order.createdAt >= yearStart && order.status === PAID,\n)\n  .$group({\n    _id: $.productId,\n    revenue: $sum($.qty * $.price),\n  })\n  .sort({ revenue: -1 })\n  .take(10);\n\n$.name = $$$.products.find({ _id: $._id }).name;",
-          "mql": "[\n  {\n    $set: { \"__jsmql.var.yearStart\": { $dateTrunc: { date: \"$$NOW\", unit: \"year\" } } }\n  },\n  {\n    $match: {\n      status: \"paid\",\n      $expr: { $gte: [\"$createdAt\", \"$__jsmql.var.yearStart\"] }\n    }\n  },\n  {\n    $group: { _id: \"$productId\", revenue: { $sum: { $multiply: [\"$qty\", \"$price\"] } } }\n  },\n  { $sort: { revenue: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"products\",\n      localField: \"_id\",\n      foreignField: \"_id\",\n      pipeline: [{ $limit: 1 }],\n      as: \"__jsmql.tmp.0\"\n    }\n  },\n  { $set: { \"__jsmql.tmp.0\": { $first: \"$__jsmql.tmp.0\" } } },\n  { $set: { name: \"$__jsmql.tmp.0.name\" } },\n  { $unset: \"__jsmql\" }\n]",
-          "srcLines": 15,
-          "srcChars": 253,
-          "sqlLines": 14,
-          "sqlChars": 299,
-          "mqlLines": 28,
-          "mqlChars": 656,
-          "mqlCharsTyped": 469,
-          "stages": ["$set", "$match", "$group", "$sort", "$limit", "$lookup", "$set", "$set", "$unset"],
-          "sql": "WITH top_products AS (\n  SELECT oi.product_id,\n         SUM(oi.qty * oi.price) AS revenue\n  FROM order_items oi\n  WHERE oi.created_at >= DATE_TRUNC('year', NOW())\n    AND oi.status = 'paid'\n  GROUP BY oi.product_id\n  ORDER BY revenue DESC\n  LIMIT 10\n)\nSELECT t.product_id, t.revenue, p.name\nFROM top_products t\nJOIN products p ON p.id = t.product_id\nORDER BY t.revenue DESC;"
-        },
-        "q2": {
-          "src": "$$.$match($.status === \"paid\")\n  .$group({\n    _id: $.customerId,\n    revenue: $sum($.total),\n  })\n  .$match($.revenue > 1000)\n  .sort({ revenue: -1 });\n\n$.name = $$$.customers.find({ _id: $._id }).name;",
-          "mql": "[\n  { $match: { status: \"paid\" } },\n  { $group: { _id: \"$customerId\", revenue: { $sum: \"$total\" } } },\n  { $match: { revenue: { $gt: 1000 } } },\n  { $sort: { revenue: -1 } },\n  {\n    $lookup: {\n      from: \"customers\",\n      localField: \"_id\",\n      foreignField: \"_id\",\n      pipeline: [{ $limit: 1 }],\n      as: \"__jsmql.tmp.0\"\n    }\n  },\n  { $set: { \"__jsmql.tmp.0\": { $first: \"$__jsmql.tmp.0\" } } },\n  { $set: { name: \"$__jsmql.tmp.0.name\" } },\n  { $unset: \"__jsmql\" }\n]",
-          "srcLines": 9,
-          "srcChars": 165,
-          "sqlLines": 11,
-          "sqlChars": 241,
-          "mqlLines": 18,
-          "mqlChars": 474,
-          "mqlCharsTyped": 342,
-          "stages": ["$match", "$group", "$match", "$sort", "$lookup", "$set", "$set", "$unset"],
-          "sql": "WITH by_customer AS (\n  SELECT o.customer_id, SUM(o.total) AS revenue\n  FROM orders o\n  WHERE o.status = 'paid'\n  GROUP BY o.customer_id\n  HAVING SUM(o.total) > 1000\n)\nSELECT b.customer_id, b.revenue, c.name\nFROM by_customer b\nJOIN customers c ON c.id = b.customer_id\nORDER BY b.revenue DESC;"
-        },
-        "lodash": {
-          "src": "$$.filter({ status: \"paid\" }).flatMap(\"items\");\n$.name = $$$.products.find({ _id: $.items.productId }).name;\n$$.$group({ _id: $.name, amount: $sum($.items.qty * $.items.price) })\n  .orderBy({ amount: -1 })\n  .take(10);",
-          "mql": "[\n  { $match: { status: \"paid\" } },\n  { $unwind: \"$items\" },\n  {\n    $lookup: {\n      from: \"products\",\n      localField: \"items.productId\",\n      foreignField: \"_id\",\n      pipeline: [{ $limit: 1 }],\n      as: \"__jsmql.tmp.0\"\n    }\n  },\n  { $set: { \"__jsmql.tmp.0\": { $first: \"$__jsmql.tmp.0\" } } },\n  { $set: { name: \"$__jsmql.tmp.0.name\" } },\n  {\n    $group: {\n      _id: \"$name\",\n      amount: { $sum: { $multiply: [\"$items.qty\", \"$items.price\"] } }\n    }\n  },\n  { $sort: { amount: -1 } },\n  { $limit: 10 }\n]",
-          "srcLines": 5,
-          "srcChars": 192,
-          "sqlLines": 0,
-          "sqlChars": 0,
-          "mqlLines": 23,
-          "mqlChars": 512,
-          "mqlCharsTyped": 360,
-          "stages": ["$match", "$unwind", "$lookup", "$set", "$set", "$group", "$sort", "$limit"]
-        },
-        "alert": {
-          "src": "const start = new Date().startOf(\"month\");\nconst end = start.plus(1, \"month\");\n\n$$.filter(d =>\n  d.createdAt >= start &&\n  d.createdAt < end &&\n  d.client === 0x615d919f1ca8443d56ef9893 &&\n  d.direction === \"OUT\");\n\n$.isAlerted = $.status.history.some(h => h.value === \"REVIEWING\");\n\n$$.groupBy({\n  _id: $.createdAt.format(\"%Y-%m-%d\"),\n  alerted: $sum(Number($.isAlerted)),\n  total: $sum(1),\n}).sortBy(\"_id\");\n\n$.UTC = $._id;\ndelete $._id;\n$.total = $toLong($.total);\n$.alerted = $toLong($.alerted);\n$.unalerted = $toLong($.total - $.alerted);\n$.alertPcnt = ($.alerted / $.total * 100).round(2);",
-          "mql": "[\n  {\n    $set: { \"__jsmql.var.start\": { $dateTrunc: { date: \"$$NOW\", unit: \"month\" } } }\n  },\n  {\n    $set: {\n      \"__jsmql.var.end\": {\n        $dateAdd: { startDate: \"$__jsmql.var.start\", unit: \"month\", amount: 1 }\n      }\n    }\n  },\n  {\n    $match: {\n      client: new ObjectId(\"615d919f1ca8443d56ef9893\"),\n      direction: \"OUT\",\n      $expr: {\n        $and: [\n          { $gte: [\"$createdAt\", \"$__jsmql.var.start\"] },\n          { $lt: [\"$createdAt\", \"$__jsmql.var.end\"] }\n        ]\n      }\n    }\n  },\n  {\n    $set: {\n      isAlerted: {\n        $anyElementTrue: {\n          $map: {\n            input: { $ifNull: [\"$status.history\", []] },\n            as: \"h\",\n            in: { $eq: [\"$$h.value\", \"REVIEWING\"] }\n          }\n        }\n      }\n    }\n  },\n  {\n    $group: {\n      _id: { $dateToString: { date: \"$createdAt\", format: \"%Y-%m-%d\" } },\n      alerted: { $sum: { $toDouble: \"$isAlerted\" } },\n      total: { $sum: 1 }\n    }\n  },\n  { $sort: { _id: 1 } },\n  { $set: { UTC: \"$_id\" } },\n  { $unset: \"_id\" },\n  { $set: { total: { $toLong: \"$total\" } } },\n  { $set: { alerted: { $toLong: \"$alerted\" } } },\n  { $set: { unalerted: { $toLong: { $subtract: [\"$total\", \"$alerted\"] } } } },\n  {\n    $set: {\n      alertPcnt: { $round: [{ $multiply: [{ $divide: [\"$alerted\", \"$total\"] }, 100] }, 2] }\n    }\n  }\n]",
-          "srcLines": 23,
-          "srcChars": 513,
-          "sqlLines": 0,
-          "sqlChars": 0,
-          "mqlLines": 55,
-          "mqlChars": 1309,
-          "mqlCharsTyped": 855,
-          "stages": [
-            "$set",
-            "$set",
-            "$match",
-            "$set",
-            "$group",
-            "$sort",
-            "$set",
-            "$unset",
-            "$set",
-            "$set",
-            "$set",
-            "$set"
-          ],
-          "table": [
-            { "UTC": "2026-09-01", "total": 5685, "alerted": 339, "unalerted": 5346, "alertPcnt": 5.96 },
-            { "UTC": "2026-09-02", "total": 6958, "alerted": 315, "unalerted": 6643, "alertPcnt": 4.53 },
-            { "UTC": "2026-09-03", "total": 6410, "alerted": 288, "unalerted": 6122, "alertPcnt": 4.49 },
-            { "UTC": "2026-09-04", "total": 7888, "alerted": 350, "unalerted": 7538, "alertPcnt": 4.44 },
-            { "UTC": "2026-09-05", "total": 8164, "alerted": 415, "unalerted": 7749, "alertPcnt": 5.08 },
-            { "UTC": "2026-09-06", "total": 6088, "alerted": 227, "unalerted": 5861, "alertPcnt": 3.73 },
-            { "UTC": "2026-09-07", "total": 6778, "alerted": 314, "unalerted": 6464, "alertPcnt": 4.63 },
-            { "UTC": "2026-09-08", "total": 9257, "alerted": 297, "unalerted": 8960, "alertPcnt": 3.21 },
-            { "UTC": "2026-09-09", "total": 9938, "alerted": 276, "unalerted": 9662, "alertPcnt": 2.78 },
-            { "UTC": "2026-09-10", "total": 10698, "alerted": 310, "unalerted": 10388, "alertPcnt": 2.9 },
-            { "UTC": "2026-09-11", "total": 10787, "alerted": 244, "unalerted": 10543, "alertPcnt": 2.26 },
-            { "UTC": "2026-09-12", "total": 9859, "alerted": 182, "unalerted": 9677, "alertPcnt": 1.85 },
-            { "UTC": "2026-09-13", "total": 7784, "alerted": 112, "unalerted": 7672, "alertPcnt": 1.44 },
-            { "UTC": "2026-09-14", "total": 7025, "alerted": 195, "unalerted": 6830, "alertPcnt": 2.78 },
-            { "UTC": "2026-09-15", "total": 3278, "alerted": 87, "unalerted": 3191, "alertPcnt": 2.65 }
-          ]
-        },
-        "tables": {
-          "addr": [
-            { "fullAddress": "Level 3, 42 George St Sydney NSW AU 2000" },
-            { "fullAddress": "7 Elm Ave Perth WA AU 6000" },
-            { "fullAddress": "10 Main St QLD AU" },
-            { "fullAddress": "Unit 2, Cairns AU 4870" }
-          ],
-          "wow": [
-            { "productId": { "$oid": "600000000000000000000003" }, "score": 2, "name": "Gizmo" },
-            { "productId": { "$oid": "600000000000000000000004" }, "score": 1, "name": "Sprocket" },
-            { "productId": { "$oid": "600000000000000000000002" }, "score": 1, "name": "Doohickey" }
-          ],
-          "q1": [
-            { "_id": "p02", "revenue": 17500, "name": "Gadget" },
-            { "_id": "p08", "revenue": 5940, "name": "Cog" },
-            { "_id": "p10", "revenue": 5510, "name": "Spindle" },
-            { "_id": "p01", "revenue": 5100, "name": "Widget" },
-            { "_id": "p04", "revenue": 3750, "name": "Gizmo" },
-            { "_id": "p05", "revenue": 3440, "name": "Sprocket" },
-            { "_id": "p12", "revenue": 2860, "name": "Bearing" },
-            { "_id": "p09", "revenue": 1885, "name": "Bracket" },
-            { "_id": "p06", "revenue": 1800, "name": "Flange" },
-            { "_id": "p03", "revenue": 1240, "name": "Doohickey" }
-          ],
-          "q2": [
-            { "_id": "c10", "revenue": 8581, "name": "Jo Mbeki" },
-            { "_id": "c07", "revenue": 7114, "name": "Gus Lindqvist" },
-            { "_id": "c02", "revenue": 7017, "name": "Bob Ngo" },
-            { "_id": "c08", "revenue": 5528, "name": "Hana Sato" },
-            { "_id": "c03", "revenue": 5510, "name": "Cy Alvarez" },
-            { "_id": "c05", "revenue": 4482, "name": "Eli Okafor" },
-            { "_id": "c01", "revenue": 4453, "name": "Ann Petrova" },
-            { "_id": "c09", "revenue": 3851, "name": "Ivan Toth" },
-            { "_id": "c06", "revenue": 3045, "name": "Farah Haddad" },
-            { "_id": "c04", "revenue": 3000, "name": "Dana Fischer" }
-          ],
-          "lodashAfter": [
-            { "_id": "c05", "revenue": 2752 },
-            { "_id": "c08", "revenue": 2640 },
-            { "_id": "c02", "revenue": 2505 },
-            { "_id": "c09", "revenue": 395 },
-            { "_id": "c10", "revenue": 362 },
-            { "_id": "c07", "revenue": 305 },
-            { "_id": "c11", "revenue": 232 },
-            { "_id": "c13", "revenue": 100 },
-            { "_id": "c12", "revenue": 76 }
-          ]
-        },
-        "friday": {
-          "mql": "[\n    {\n        $set: {\n            \"address.full\": {\n                $trim: {\n                    // Remove leading/trailing spaces\n                    input: {\n                        $reduce: {\n                            input: {\n                                $filter: {\n                                    input: [\n                                        { $concat: [\"$address.building1\", \" \", \"$address.building2\"] }, // Combine buildings with a space\n                                        {\n                                            $cond: [{ $and: [\"$address.building1\", \"$address.building2\"] }, \",\", \"\"],\n                                        }, // Add comma if both buildings exist\n                                        \"$address.street\",\n                                        \"$address.city\",\n                                        \"$address.country\",\n                                    ],\n                                    as: \"field\",\n                                    cond: { $ne: [\"$$field\", \"\"] }, // Exclude null/empty fields\n                                },\n                            },\n                            initialValue: \"\",\n                            in: {\n                                $cond: [\n                                    { $eq: [\"$$value\", \"\"] },\n                                    \"$$this\", // Add field without separator for the first value\n                                    { $concat: [\"$$value\", \" \", \"$$this\"] }, // Add with a space separator\n                                ],\n                            },\n                        },\n                    },\n                },\n            },\n        },\n    },\n];",
-          "mqlLines": 38
-        },
-        "lodashBefore": "// 200 000 documents over the wire, into Node's heap.\nconst since = new Date(\"2026-07-10\");\n\nconst orders = await db.collection(\"orders\")\n  .find({ status: \"paid\", createdAt: { $gte: since } })\n  .toArray();\n\nconst top = _(orders)\n  .groupBy(\"customerId\")\n  .map((rows, id) => ({ id, revenue: _.sumBy(rows, \"total\") }))\n  .orderBy(\"revenue\", \"desc\")\n  .take(10)\n  .value();",
-        "lodashAfter": "// 10 documents over the wire. The database does the work.\nconst since = new Date(\"2026-07-10\");\n\nconst topCustomers = jsmql.compile(({ since }, { $ }) => {\n  $$.filter(o => o.status === \"paid\" && o.createdAt >= since)\n    .groupBy({ _id: $.customerId, revenue: $sum($.total) })\n    .orderBy({ revenue: -1 })\n    .take(10);\n});\n\nconst top = await db.collection(\"orders\")\n  .aggregate(topCustomers({ since }))\n  .toArray();",
-        "ops": {
-          "a": {
-            "title": "Where SQL runs out of words",
-            "rows": [
-              {
-                "idea": "Any line item tagged \"gift\"",
-                "sql": "EXISTS (SELECT 1 FROM order_items i\n          JOIN item_tags t ON t.item_id = i.id\n         WHERE i.order_id = o.id AND t.tag = 'gift')",
-                "js": "$.items.some(i => i.tags.includes(\"gift\"))",
-                "mode": "expr",
-                "mql": "{\n  $anyElementTrue: {\n    $map: {\n      input: { $ifNull: [\"$items\", []] },\n      as: \"i\",\n      in: {\n        $switch: {\n          branches: [\n            {\n              case: { $in: [{ $type: \"$$i.tags\" }, [\"array\"]] },\n              then: { $in: [\"gift\", \"$$i.tags\"] }\n            },\n            {\n              case: { $in: [{ $type: \"$$i.tags\" }, [\"string\"]] },\n              then: { $gte: [{ $indexOfCP: [\"$$i.tags\", \"gift\"] }, 0] }\n            }\n          ],\n          default: \"$$REMOVE\"\n        }\n      }\n    }\n  }\n}"
-              },
-              {
-                "idea": "Price of the first line item",
-                "sql": "(SELECT i.price FROM order_items i\n  WHERE i.order_id = o.id\n  ORDER BY i.position LIMIT 1)",
-                "js": "$.items[0].price",
-                "mode": "expr",
-                "mql": "{\n  $getField: {\n    field: \"price\",\n    input: {\n      $switch: {\n        branches: [\n          {\n            case: { $isArray: \"$items\" },\n            then: { $arrayElemAt: [\"$items\", 0] }\n          },\n          {\n            case: { $eq: [{ $type: \"$items\" }, \"string\"] },\n            then: { $substrCP: [\"$items\", 0, 1] }\n          }\n        ],\n        default: { $getField: { field: \"0\", input: \"$items\" } }\n      }\n    }\n  }\n}"
-              },
-              {
-                "idea": "Each customer's last 3 order totals",
-                "sql": "SELECT customer_id,\n       ARRAY_AGG(total ORDER BY created_at DESC) AS last3\nFROM (SELECT *, ROW_NUMBER() OVER\n        (PARTITION BY customer_id ORDER BY created_at DESC) AS rn\n      FROM orders) t\nWHERE rn <= 3\nGROUP BY customer_id",
-                "js": "$$.sort({ createdAt: -1 })\n  .groupBy({ _id: $.customerId, last3: $push($.total) });\n$.last3 = $.last3.slice(0, 3);",
-                "mode": "pipeline",
-                "mql": "[\n  { $sort: { createdAt: -1 } },\n  { $group: { _id: \"$customerId\", last3: { $push: \"$total\" } } },\n  {\n    $set: {\n      last3: {\n        $switch: {\n          branches: [\n            {\n              case: { $in: [{ $type: \"$last3\" }, [\"string\", \"null\", \"missing\"]] },\n              then: { $substrCP: [\"$last3\", 0, 3] }\n            },\n            {\n              case: { $in: [{ $type: \"$last3\" }, [\"array\"]] },\n              then: { $slice: [\"$last3\", 3] }\n            }\n          ],\n          default: \"$$REMOVE\"\n        }\n      }\n    }\n  }\n]"
-              },
-              {
-                "idea": "Distinct products per customer",
-                "sql": "SELECT o.customer_id, COUNT(DISTINCT p.product_id) AS distinct_products\nFROM orders o\nJOIN order_products p ON p.order_id = o.id\nGROUP BY o.customer_id",
-                "js": "$$.groupBy({ _id: $.customerId, products: $addToSet($.productIds) });\n$.distinctProducts = $.products.flat().uniq().length;",
-                "mode": "pipeline",
-                "mql": "[\n  { $group: { _id: \"$customerId\", products: { $addToSet: \"$productIds\" } } },\n  {\n    $set: {\n      distinctProducts: {\n        $size: {\n          $ifNull: [\n            {\n              $setUnion: {\n                $reduce: {\n                  input: \"$products\",\n                  initialValue: [],\n                  in: { $concatArrays: [\"$$value\", \"$$this\"] }\n                }\n              }\n            },\n            []\n          ]\n        }\n      }\n    }\n  }\n]"
-              }
-            ]
-          },
-          "b": {
-            "title": "Where SQL runs out of words",
-            "rows": [
-              {
-                "idea": "Join the tags into one string",
-                "sql": "COALESCE((SELECT string_agg(t.tag, ', ')\n   FROM order_tags t WHERE t.order_id = o.id), '')",
-                "js": "$.tags.join(\", \")",
-                "mode": "expr",
-                "mql": "{\n  $ifNull: [\n    {\n      $reduce: {\n        input: \"$tags\",\n        initialValue: null,\n        in: {\n          $cond: {\n            if: { $eq: [\"$$value\", null] },\n            then: {\n              $cond: {\n                if: { $in: [{ $type: \"$$this\" }, [\"null\", \"missing\"]] },\n                then: \"\",\n                else: { $toString: \"$$this\" }\n              }\n            },\n            else: {\n              $concat: [\n                \"$$value\",\n                \", \",\n                {\n                  $cond: {\n                    if: { $in: [{ $type: \"$$this\" }, [\"null\", \"missing\"]] },\n                    then: \"\",\n                    else: { $toString: \"$$this\" }\n                  }\n                }\n              ]\n            }\n          }\n        }\n      }\n    },\n    \"\"\n  ]\n}"
-              },
-              {
-                "idea": "Sum the line items",
-                "sql": "(SELECT SUM(i.qty * i.price)\n   FROM order_items i WHERE i.order_id = o.id)",
-                "js": "$.items.sumBy((i) => i.qty * i.price)",
-                "mode": "expr",
-                "mql": "{\n  $sum: {\n    $map: { input: \"$items\", as: \"i\", in: { $multiply: [\"$$i.qty\", \"$$i.price\"] } }\n  }\n}"
-              },
-              {
-                "idea": "Count per status",
-                "sql": "SELECT status, COUNT(*) FROM orders GROUP BY status",
-                "js": "$$.countBy(\"status\");",
-                "mode": "pipeline",
-                "mql": "[\n  { $group: { _id: \"$status\", __jsmqlTmp: { $sum: 1 } } },\n  {\n    $group: {\n      _id: null,\n      __jsmqlTmp: {\n        $push: { k: { $ifNull: [{ $toString: \"$_id\" }, \"null\"] }, v: \"$__jsmqlTmp\" }\n      }\n    }\n  },\n  { $replaceWith: { $arrayToObject: \"$__jsmqlTmp\" } }\n]"
-              },
-              {
-                "idea": "Filter after the group",
-                "sql": "SELECT customer_id, SUM(total) AS spent FROM orders\nGROUP BY customer_id HAVING SUM(total) > 1000",
-                "js": "$$.$group({ _id: $.customerId, spent: $sum($.total) })\n  .filter((c) => c.spent > 1000);",
-                "mode": "pipeline",
-                "mql": "[\n  { $group: { _id: \"$customerId\", spent: { $sum: \"$total\" } } },\n  { $match: { spent: { $gt: 1000 } } }\n]"
-              },
-              {
-                "idea": "Latest order per customer",
-                "sql": "SELECT * FROM (\n  SELECT *, ROW_NUMBER() OVER\n    (PARTITION BY customer_id ORDER BY created_at DESC) AS rn\n  FROM orders) t WHERE rn = 1",
-                "js": "$$.sort({ createdAt: -1 }).uniqBy(\"customerId\");",
-                "mode": "pipeline",
-                "mql": "[\n  { $sort: { createdAt: -1 } },\n  { $group: { _id: \"$customerId\", __jsmqlTmp: { $first: \"$$ROOT\" } } },\n  { $replaceWith: \"$__jsmqlTmp\" }\n]"
-              }
-            ]
-          }
-        }
-      }
+ "wow": {
+  "src": "const userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"User not found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, \"year\"))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100 of the last year\n  .flatMap(\"productIds\")\n  .filter(p => !myProductIds.includes(p))\n  .countBy() // { ID: count } map\n  .entries()\n  .sortBy(([id, count]) => -count)\n  .take(10) // top 10\n  .fromEntries();\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter({ _id: candidateProductIds })\n  .$limit(500) // same as .take(500)\n  .pick([\"_id\", \"name\"]); // load only the fields we use\n\n$$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 });",
+  "mql": "[\n  { $match: { _id: new ObjectId(\"507f1f77bcf86cd799439011\") } },\n  { $setWindowFields: { output: { \"__jsmql.length\": { $count: {} } } } },\n  {\n    $match: {\n      $expr: {\n        $convert: {\n          input: true,\n          to: {\n            $cond: [\n              { $eq: [\"$__jsmql.length\", 1] },\n              \"bool\",\n              \"jsmql assertion failed: User not found\"\n            ]\n          }\n        }\n      }\n    }\n  },\n  {\n    $lookup: {\n      from: \"orders\",\n      pipeline: [\n        { $match: { userId: new ObjectId(\"507f1f77bcf86cd799439011\") } },\n        { $sort: { createdAt: -1 } },\n        { $limit: 10 }\n      ],\n      as: \"__jsmql.tmp.0\"\n    }\n  },\n  {\n    $set: {\n      \"__jsmql.var.myProductIds\": {\n        $setUnion: {\n          $reduce: {\n            input: { $map: { input: \"$__jsmql.tmp.0\", as: \"x\", in: \"$$x.productIds\" } },\n            initialValue: [],\n            in: {\n              $concatArrays: [\n                \"$$value\",\n                { $cond: [{ $isArray: \"$$this\" }, \"$$this\", [\"$$this\"]] }\n              ]\n            }\n          }\n        }\n      }\n    }\n  },\n  {\n    $lookup: {\n      from: \"orders\",\n      localField: \"__jsmql.var.myProductIds\",\n      foreignField: \"productIds\",\n      let: { jsmql_v0_myProductIds: \"$__jsmql.var.myProductIds\" },\n      pipeline: [\n        {\n          $match: {\n            $expr: {\n              $gt: [\n                \"$createdAt\",\n                {\n                  $dateSubtract: { startDate: \"$$NOW\", unit: \"year\", amount: 1 }\n                }\n              ]\n            }\n          }\n        },\n        { $sort: { createdAt: -1 } },\n        { $limit: 100 },\n        { $unwind: \"$productIds\" },\n        {\n          $match: {\n            $expr: {\n              $not: {\n                $in: [\"$productIds\", { $ifNull: [\"$$jsmql_v0_myProductIds\", []] }]\n              }\n            }\n          }\n        },\n        { $group: { _id: \"$productIds\", __jsmqlTmp: { $sum: 1 } } },\n        {\n          $group: {\n            _id: null,\n            __jsmqlTmp: {\n              $push: {\n                k: { $ifNull: [{ $toString: \"$_id\" }, \"null\"] },\n                v: \"$__jsmqlTmp\"\n              }\n            }\n          }\n        },\n        { $replaceWith: { $arrayToObject: \"$__jsmqlTmp\" } }\n      ],\n      as: \"__jsmql.tmp.1\"\n    }\n  },\n  { $set: { \"__jsmql.tmp.1\": { $ifNull: [{ $first: \"$__jsmql.tmp.1\" }, {}] } } },\n  {\n    $set: {\n      \"__jsmql.var.candidateProductIdCounts\": {\n        $arrayToObject: {\n          $map: {\n            input: {\n              $slice: [\n                {\n                  $map: {\n                    input: {\n                      $sortArray: {\n                        input: {\n                          $map: {\n                            input: {\n                              $map: {\n                                input: { $objectToArray: \"$__jsmql.tmp.1\" },\n                                as: \"jsmqlKv\",\n                                in: [\"$$jsmqlKv.k\", \"$$jsmqlKv.v\"]\n                              }\n                            },\n                            as: \"x\",\n                            in: { k: { $arrayElemAt: [\"$$x\", 1] }, v: \"$$x\" }\n                          }\n                        },\n                        sortBy: { k: -1 }\n                      }\n                    },\n                    as: \"jsmqlP\",\n                    in: \"$$jsmqlP.v\"\n                  }\n                },\n                10\n              ]\n            },\n            as: \"jsmqlP\",\n            in: [\n              { $toString: { $arrayElemAt: [\"$$jsmqlP\", 0] } },\n              { $arrayElemAt: [\"$$jsmqlP\", 1] }\n            ]\n          }\n        }\n      }\n    }\n  },\n  {\n    $set: {\n      \"__jsmql.var.candidateProductIds\": {\n        $map: {\n          input: {\n            $map: {\n              input: { $objectToArray: \"$__jsmql.var.candidateProductIdCounts\" },\n              as: \"jsmqlKv\",\n              in: \"$$jsmqlKv.k\"\n            }\n          },\n          as: \"x\",\n          in: { $toObjectId: \"$$x\" }\n        }\n      }\n    }\n  },\n  {\n    $lookup: {\n      from: \"products\",\n      localField: \"__jsmql.var.candidateProductIds\",\n      foreignField: \"_id\",\n      pipeline: [{ $limit: 500 }, { $project: { _id: 1, name: 1 } }],\n      as: \"__jsmql.var.candidateProducts\"\n    }\n  },\n  {\n    $set: {\n      \"__jsmql.tmp.2\": {\n        $sortArray: {\n          input: {\n            $map: {\n              input: \"$__jsmql.var.candidateProductIds\",\n              as: \"id\",\n              in: {\n                productId: \"$$id\",\n                score: {\n                  $getField: {\n                    field: { $toString: { $ifNull: [\"$$id\", \"\"] } },\n                    input: \"$__jsmql.var.candidateProductIdCounts\"\n                  }\n                },\n                name: {\n                  $getField: {\n                    field: \"name\",\n                    input: {\n                      $arrayElemAt: [\n                        {\n                          $filter: {\n                            input: \"$__jsmql.var.candidateProducts\",\n                            as: \"x\",\n                            cond: { $eq: [\"$$x._id\", \"$$id\"] }\n                          }\n                        },\n                        0\n                      ]\n                    }\n                  }\n                }\n              }\n            }\n          },\n          sortBy: { score: -1 }\n        }\n      }\n    }\n  },\n  { $unwind: \"$__jsmql.tmp.2\" },\n  { $replaceWith: \"$__jsmql.tmp.2\" }\n]",
+  "srcLines": 37,
+  "srcChars": 998,
+  "sqlLines": 38,
+  "sqlChars": 725,
+  "mqlLines": 211,
+  "mqlChars": 5504,
+  "mqlCharsTyped": 2526,
+  "stages": [
+   "$match",
+   "$setWindowFields",
+   "$match",
+   "$lookup",
+   "$set",
+   "$lookup",
+   "$set",
+   "$set",
+   "$set",
+   "$lookup",
+   "$set",
+   "$unwind",
+   "$replaceWith"
+  ],
+  "sql": "WITH myProductIds AS (\n  SELECT DISTINCT opi.productId\n  FROM (\n    SELECT o._id FROM orders o\n    WHERE o.userId = '507f1f77bcf86cd799439011'\n    ORDER BY o.createdAt DESC\n    LIMIT 10\n  ) recent\n  JOIN orderProductIds opi ON opi.orderId = recent._id\n),\n\ncoPurchases AS (\n  SELECT o._id\n  FROM orders o\n  WHERE EXISTS (\n    SELECT 1 FROM orderProductIds opi\n    WHERE opi.orderId = o._id\n      AND opi.productId IN (SELECT productId FROM myProductIds)\n  )\n  ORDER BY o.createdAt DESC\n  LIMIT 100\n),\n\ncandidateProductIdCounts AS (\n  SELECT opi.productId, COUNT(*) AS score\n  FROM orderProductIds opi\n  WHERE opi.orderId IN (SELECT _id FROM coPurchases)\n    AND opi.productId NOT IN (SELECT productId FROM myProductIds)\n  GROUP BY opi.productId\n  ORDER BY score DESC\n  LIMIT 10\n)\n\nSELECT c.productId, c.score, p.name\nFROM candidateProductIdCounts c\nJOIN products p ON p._id = c.productId\nORDER BY c.score DESC\nLIMIT 10;"
+ },
+ "addr": {
+  "src": "[\n  $.building && $.building + \",\",\n  $.streetNo,\n  $.street,\n  $.suburb,\n  $.state,\n  $.country,\n  $.postcode,\n]\n  .filter(Boolean)\n  .join(\" \")",
+  "mql": "{\n  $ifNull: [\n    {\n      $reduce: {\n        input: {\n          $filter: {\n            input: [\n              {\n                $cond: {\n                  if: {\n                    $and: [\n                      { $ne: [{ $ifNull: [\"$building\", null] }, null] },\n                      { $ne: [\"$building\", false] },\n                      { $ne: [\"$building\", \"\"] },\n                      { $ne: [\"$building\", 0] }\n                    ]\n                  },\n                  then: { $concat: [\"$building\", \",\"] },\n                  else: \"$building\"\n                }\n              },\n              \"$streetNo\",\n              \"$street\",\n              \"$suburb\",\n              \"$state\",\n              \"$country\",\n              \"$postcode\"\n            ],\n            as: \"x\",\n            cond: {\n              $and: [\n                { $ne: [{ $ifNull: [\"$$x\", null] }, null] },\n                { $ne: [\"$$x\", false] },\n                { $ne: [\"$$x\", \"\"] },\n                { $ne: [\"$$x\", 0] }\n              ]\n            }\n          }\n        },\n        initialValue: null,\n        in: {\n          $cond: {\n            if: { $eq: [\"$$value\", null] },\n            then: {\n              $cond: {\n                if: { $in: [{ $type: \"$$this\" }, [\"null\", \"missing\"]] },\n                then: \"\",\n                else: { $toString: \"$$this\" }\n              }\n            },\n            else: {\n              $concat: [\n                \"$$value\",\n                \" \",\n                {\n                  $cond: {\n                    if: { $in: [{ $type: \"$$this\" }, [\"null\", \"missing\"]] },\n                    then: \"\",\n                    else: { $toString: \"$$this\" }\n                  }\n                }\n              ]\n            }\n          }\n        }\n      }\n    },\n    \"\"\n  ]\n}",
+  "srcLines": 11,
+  "srcChars": 112,
+  "sqlLines": 15,
+  "sqlChars": 253,
+  "mqlLines": 70,
+  "mqlChars": 1781,
+  "mqlCharsTyped": 685,
+  "stages": null,
+  "sql": "SELECT array_to_string(\n  array_remove(ARRAY[\n    CASE WHEN building IS NOT NULL\n         AND building <> '' THEN building || ','\n    END,\n    NULLIF(street_no, ''),\n    NULLIF(street, ''),\n    NULLIF(suburb, ''),\n    NULLIF(state, ''),\n    NULLIF(country, ''),\n    NULLIF(postcode, '')\n  ], NULL),\n  ' '\n) AS full_address\nFROM addresses;"
+ },
+ "q1": {
+  "src": "const yearStart = new Date().startOf(\"year\");\nconst PAID = \"paid\";\n\n$$.filter(\n  (order) =>\n    order.createdAt >= yearStart && order.status === PAID,\n)\n  .$group({\n    _id: $.productId,\n    revenue: $sum($.qty * $.price),\n  })\n  .sort({ revenue: -1 })\n  .take(10);\n\n$.name = $$$.products.find({ _id: $._id }).name;",
+  "mql": "[\n  {\n    $set: { \"__jsmql.var.yearStart\": { $dateTrunc: { date: \"$$NOW\", unit: \"year\" } } }\n  },\n  {\n    $match: {\n      status: \"paid\",\n      $expr: { $gte: [\"$createdAt\", \"$__jsmql.var.yearStart\"] }\n    }\n  },\n  {\n    $group: { _id: \"$productId\", revenue: { $sum: { $multiply: [\"$qty\", \"$price\"] } } }\n  },\n  { $sort: { revenue: -1 } },\n  { $limit: 10 },\n  {\n    $lookup: {\n      from: \"products\",\n      localField: \"_id\",\n      foreignField: \"_id\",\n      pipeline: [{ $limit: 1 }],\n      as: \"__jsmql.tmp.0\"\n    }\n  },\n  { $set: { \"__jsmql.tmp.0\": { $first: \"$__jsmql.tmp.0\" } } },\n  { $set: { name: \"$__jsmql.tmp.0.name\" } },\n  { $unset: \"__jsmql\" }\n]",
+  "srcLines": 15,
+  "srcChars": 253,
+  "sqlLines": 14,
+  "sqlChars": 299,
+  "mqlLines": 28,
+  "mqlChars": 656,
+  "mqlCharsTyped": 469,
+  "stages": [
+   "$set",
+   "$match",
+   "$group",
+   "$sort",
+   "$limit",
+   "$lookup",
+   "$set",
+   "$set",
+   "$unset"
+  ],
+  "sql": "WITH top_products AS (\n  SELECT oi.product_id,\n         SUM(oi.qty * oi.price) AS revenue\n  FROM order_items oi\n  WHERE oi.created_at >= DATE_TRUNC('year', NOW())\n    AND oi.status = 'paid'\n  GROUP BY oi.product_id\n  ORDER BY revenue DESC\n  LIMIT 10\n)\nSELECT t.product_id, t.revenue, p.name\nFROM top_products t\nJOIN products p ON p.id = t.product_id\nORDER BY t.revenue DESC;"
+ },
+ "q2": {
+  "src": "$$.$match($.status === \"paid\")\n  .$group({\n    _id: $.customerId,\n    revenue: $sum($.total),\n  })\n  .$match($.revenue > 1000)\n  .sort({ revenue: -1 });\n\n$.name = $$$.customers.find({ _id: $._id }).name;",
+  "mql": "[\n  { $match: { status: \"paid\" } },\n  { $group: { _id: \"$customerId\", revenue: { $sum: \"$total\" } } },\n  { $match: { revenue: { $gt: 1000 } } },\n  { $sort: { revenue: -1 } },\n  {\n    $lookup: {\n      from: \"customers\",\n      localField: \"_id\",\n      foreignField: \"_id\",\n      pipeline: [{ $limit: 1 }],\n      as: \"__jsmql.tmp.0\"\n    }\n  },\n  { $set: { \"__jsmql.tmp.0\": { $first: \"$__jsmql.tmp.0\" } } },\n  { $set: { name: \"$__jsmql.tmp.0.name\" } },\n  { $unset: \"__jsmql\" }\n]",
+  "srcLines": 9,
+  "srcChars": 165,
+  "sqlLines": 11,
+  "sqlChars": 241,
+  "mqlLines": 18,
+  "mqlChars": 474,
+  "mqlCharsTyped": 342,
+  "stages": [
+   "$match",
+   "$group",
+   "$match",
+   "$sort",
+   "$lookup",
+   "$set",
+   "$set",
+   "$unset"
+  ],
+  "sql": "WITH by_customer AS (\n  SELECT o.customer_id, SUM(o.total) AS revenue\n  FROM orders o\n  WHERE o.status = 'paid'\n  GROUP BY o.customer_id\n  HAVING SUM(o.total) > 1000\n)\nSELECT b.customer_id, b.revenue, c.name\nFROM by_customer b\nJOIN customers c ON c.id = b.customer_id\nORDER BY b.revenue DESC;"
+ },
+ "lodash": {
+  "src": "$$.filter({ status: \"paid\" }).flatMap(\"items\");\n$.name = $$$.products.find({ _id: $.items.productId }).name;\n$$.$group({ _id: $.name, amount: $sum($.items.qty * $.items.price) })\n  .orderBy({ amount: -1 })\n  .take(10);",
+  "mql": "[\n  { $match: { status: \"paid\" } },\n  { $unwind: \"$items\" },\n  {\n    $lookup: {\n      from: \"products\",\n      localField: \"items.productId\",\n      foreignField: \"_id\",\n      pipeline: [{ $limit: 1 }],\n      as: \"__jsmql.tmp.0\"\n    }\n  },\n  { $set: { \"__jsmql.tmp.0\": { $first: \"$__jsmql.tmp.0\" } } },\n  { $set: { name: \"$__jsmql.tmp.0.name\" } },\n  {\n    $group: {\n      _id: \"$name\",\n      amount: { $sum: { $multiply: [\"$items.qty\", \"$items.price\"] } }\n    }\n  },\n  { $sort: { amount: -1 } },\n  { $limit: 10 }\n]",
+  "srcLines": 5,
+  "srcChars": 192,
+  "sqlLines": 0,
+  "sqlChars": 0,
+  "mqlLines": 23,
+  "mqlChars": 512,
+  "mqlCharsTyped": 360,
+  "stages": [
+   "$match",
+   "$unwind",
+   "$lookup",
+   "$set",
+   "$set",
+   "$group",
+   "$sort",
+   "$limit"
+  ]
+ },
+ "alert": {
+  "src": "const start = new Date().startOf(\"month\");\nconst end = start.plus(1, \"month\");\n\n$$.filter(d =>\n  d.createdAt >= start &&\n  d.createdAt < end &&\n  d.client === 0x615d919f1ca8443d56ef9893 &&\n  d.direction === \"OUT\");\n\n$.isAlerted = $.status.history.some(h => h.value === \"REVIEWING\");\n\n$$.groupBy({\n  _id: $.createdAt.format(\"%Y-%m-%d\"),\n  alerted: $sum(Number($.isAlerted)),\n  total: $sum(1),\n}).sortBy(\"_id\");\n\n$.UTC = $._id;\ndelete $._id;\n$.total = $toLong($.total);\n$.alerted = $toLong($.alerted);\n$.unalerted = $toLong($.total - $.alerted);\n$.alertPcnt = ($.alerted / $.total * 100).round(2);",
+  "mql": "[\n  {\n    $set: { \"__jsmql.var.start\": { $dateTrunc: { date: \"$$NOW\", unit: \"month\" } } }\n  },\n  {\n    $set: {\n      \"__jsmql.var.end\": {\n        $dateAdd: { startDate: \"$__jsmql.var.start\", unit: \"month\", amount: 1 }\n      }\n    }\n  },\n  {\n    $match: {\n      client: new ObjectId(\"615d919f1ca8443d56ef9893\"),\n      direction: \"OUT\",\n      $expr: {\n        $and: [\n          { $gte: [\"$createdAt\", \"$__jsmql.var.start\"] },\n          { $lt: [\"$createdAt\", \"$__jsmql.var.end\"] }\n        ]\n      }\n    }\n  },\n  {\n    $set: {\n      isAlerted: {\n        $anyElementTrue: {\n          $map: {\n            input: { $ifNull: [\"$status.history\", []] },\n            as: \"h\",\n            in: { $eq: [\"$$h.value\", \"REVIEWING\"] }\n          }\n        }\n      }\n    }\n  },\n  {\n    $group: {\n      _id: { $dateToString: { date: \"$createdAt\", format: \"%Y-%m-%d\" } },\n      alerted: { $sum: { $toDouble: \"$isAlerted\" } },\n      total: { $sum: 1 }\n    }\n  },\n  { $sort: { _id: 1 } },\n  { $set: { UTC: \"$_id\" } },\n  { $unset: \"_id\" },\n  { $set: { total: { $toLong: \"$total\" } } },\n  { $set: { alerted: { $toLong: \"$alerted\" } } },\n  { $set: { unalerted: { $toLong: { $subtract: [\"$total\", \"$alerted\"] } } } },\n  {\n    $set: {\n      alertPcnt: { $round: [{ $multiply: [{ $divide: [\"$alerted\", \"$total\"] }, 100] }, 2] }\n    }\n  }\n]",
+  "srcLines": 23,
+  "srcChars": 513,
+  "sqlLines": 0,
+  "sqlChars": 0,
+  "mqlLines": 55,
+  "mqlChars": 1309,
+  "mqlCharsTyped": 855,
+  "stages": [
+   "$set",
+   "$set",
+   "$match",
+   "$set",
+   "$group",
+   "$sort",
+   "$set",
+   "$unset",
+   "$set",
+   "$set",
+   "$set",
+   "$set"
+  ],
+  "table": [
+   {
+    "UTC": "2026-09-01",
+    "total": 5685,
+    "alerted": 339,
+    "unalerted": 5346,
+    "alertPcnt": 5.96
+   },
+   {
+    "UTC": "2026-09-02",
+    "total": 6958,
+    "alerted": 315,
+    "unalerted": 6643,
+    "alertPcnt": 4.53
+   },
+   {
+    "UTC": "2026-09-03",
+    "total": 6410,
+    "alerted": 288,
+    "unalerted": 6122,
+    "alertPcnt": 4.49
+   },
+   {
+    "UTC": "2026-09-04",
+    "total": 7888,
+    "alerted": 350,
+    "unalerted": 7538,
+    "alertPcnt": 4.44
+   },
+   {
+    "UTC": "2026-09-05",
+    "total": 8164,
+    "alerted": 415,
+    "unalerted": 7749,
+    "alertPcnt": 5.08
+   },
+   {
+    "UTC": "2026-09-06",
+    "total": 6088,
+    "alerted": 227,
+    "unalerted": 5861,
+    "alertPcnt": 3.73
+   },
+   {
+    "UTC": "2026-09-07",
+    "total": 6778,
+    "alerted": 314,
+    "unalerted": 6464,
+    "alertPcnt": 4.63
+   },
+   {
+    "UTC": "2026-09-08",
+    "total": 9257,
+    "alerted": 297,
+    "unalerted": 8960,
+    "alertPcnt": 3.21
+   },
+   {
+    "UTC": "2026-09-09",
+    "total": 9938,
+    "alerted": 276,
+    "unalerted": 9662,
+    "alertPcnt": 2.78
+   },
+   {
+    "UTC": "2026-09-10",
+    "total": 10698,
+    "alerted": 310,
+    "unalerted": 10388,
+    "alertPcnt": 2.9
+   },
+   {
+    "UTC": "2026-09-11",
+    "total": 10787,
+    "alerted": 244,
+    "unalerted": 10543,
+    "alertPcnt": 2.26
+   },
+   {
+    "UTC": "2026-09-12",
+    "total": 9859,
+    "alerted": 182,
+    "unalerted": 9677,
+    "alertPcnt": 1.85
+   },
+   {
+    "UTC": "2026-09-13",
+    "total": 7784,
+    "alerted": 112,
+    "unalerted": 7672,
+    "alertPcnt": 1.44
+   },
+   {
+    "UTC": "2026-09-14",
+    "total": 7025,
+    "alerted": 195,
+    "unalerted": 6830,
+    "alertPcnt": 2.78
+   },
+   {
+    "UTC": "2026-09-15",
+    "total": 3278,
+    "alerted": 87,
+    "unalerted": 3191,
+    "alertPcnt": 2.65
+   }
+  ]
+ },
+ "tables": {
+  "addr": [
+   {
+    "fullAddress": "Level 3, 42 George St Sydney NSW AU 2000"
+   },
+   {
+    "fullAddress": "7 Elm Ave Perth WA AU 6000"
+   },
+   {
+    "fullAddress": "10 Main St QLD AU"
+   },
+   {
+    "fullAddress": "Unit 2, Cairns AU 4870"
+   }
+  ],
+  "wow": [
+   {
+    "productId": {
+     "$oid": "600000000000000000000003"
+    },
+    "score": 2,
+    "name": "Gizmo"
+   },
+   {
+    "productId": {
+     "$oid": "600000000000000000000004"
+    },
+    "score": 1,
+    "name": "Sprocket"
+   },
+   {
+    "productId": {
+     "$oid": "600000000000000000000002"
+    },
+    "score": 1,
+    "name": "Doohickey"
+   }
+  ],
+  "q1": [
+   {
+    "_id": "p02",
+    "revenue": 17500,
+    "name": "Gadget"
+   },
+   {
+    "_id": "p08",
+    "revenue": 5940,
+    "name": "Cog"
+   },
+   {
+    "_id": "p10",
+    "revenue": 5510,
+    "name": "Spindle"
+   },
+   {
+    "_id": "p01",
+    "revenue": 5100,
+    "name": "Widget"
+   },
+   {
+    "_id": "p04",
+    "revenue": 3750,
+    "name": "Gizmo"
+   },
+   {
+    "_id": "p05",
+    "revenue": 3440,
+    "name": "Sprocket"
+   },
+   {
+    "_id": "p12",
+    "revenue": 2860,
+    "name": "Bearing"
+   },
+   {
+    "_id": "p09",
+    "revenue": 1885,
+    "name": "Bracket"
+   },
+   {
+    "_id": "p06",
+    "revenue": 1800,
+    "name": "Flange"
+   },
+   {
+    "_id": "p03",
+    "revenue": 1240,
+    "name": "Doohickey"
+   }
+  ],
+  "q2": [
+   {
+    "_id": "c10",
+    "revenue": 8581,
+    "name": "Jo Mbeki"
+   },
+   {
+    "_id": "c07",
+    "revenue": 7114,
+    "name": "Gus Lindqvist"
+   },
+   {
+    "_id": "c02",
+    "revenue": 7017,
+    "name": "Bob Ngo"
+   },
+   {
+    "_id": "c08",
+    "revenue": 5528,
+    "name": "Hana Sato"
+   },
+   {
+    "_id": "c03",
+    "revenue": 5510,
+    "name": "Cy Alvarez"
+   },
+   {
+    "_id": "c05",
+    "revenue": 4482,
+    "name": "Eli Okafor"
+   },
+   {
+    "_id": "c01",
+    "revenue": 4453,
+    "name": "Ann Petrova"
+   },
+   {
+    "_id": "c09",
+    "revenue": 3851,
+    "name": "Ivan Toth"
+   },
+   {
+    "_id": "c06",
+    "revenue": 3045,
+    "name": "Farah Haddad"
+   },
+   {
+    "_id": "c04",
+    "revenue": 3000,
+    "name": "Dana Fischer"
+   }
+  ],
+  "lodashAfter": [
+   {
+    "_id": "c05",
+    "revenue": 2752
+   },
+   {
+    "_id": "c08",
+    "revenue": 2640
+   },
+   {
+    "_id": "c02",
+    "revenue": 2505
+   },
+   {
+    "_id": "c09",
+    "revenue": 395
+   },
+   {
+    "_id": "c10",
+    "revenue": 362
+   },
+   {
+    "_id": "c07",
+    "revenue": 305
+   },
+   {
+    "_id": "c11",
+    "revenue": 232
+   },
+   {
+    "_id": "c13",
+    "revenue": 100
+   },
+   {
+    "_id": "c12",
+    "revenue": 76
+   }
+  ]
+ },
+ "friday": {
+  "mql": "[\n    {\n        $set: {\n            \"address.full\": {\n                $trim: {\n                    // Remove leading/trailing spaces\n                    input: {\n                        $reduce: {\n                            input: {\n                                $filter: {\n                                    input: [\n                                        { $concat: [\"$address.building1\", \" \", \"$address.building2\"] }, // Combine buildings with a space\n                                        {\n                                            $cond: [{ $and: [\"$address.building1\", \"$address.building2\"] }, \",\", \"\"],\n                                        }, // Add comma if both buildings exist\n                                        \"$address.street\",\n                                        \"$address.city\",\n                                        \"$address.country\",\n                                    ],\n                                    as: \"field\",\n                                    cond: { $ne: [\"$$field\", \"\"] }, // Exclude null/empty fields\n                                },\n                            },\n                            initialValue: \"\",\n                            in: {\n                                $cond: [\n                                    { $eq: [\"$$value\", \"\"] },\n                                    \"$$this\", // Add field without separator for the first value\n                                    { $concat: [\"$$value\", \" \", \"$$this\"] }, // Add with a space separator\n                                ],\n                            },\n                        },\n                    },\n                },\n            },\n        },\n    },\n];",
+  "mqlLines": 38
+ },
+ "lodashBefore": "// 200 000 documents over the wire, into Node's heap.\nconst since = new Date(\"2026-07-10\");\n\nconst orders = await db.collection(\"orders\")\n  .find({ status: \"paid\", createdAt: { $gte: since } })\n  .toArray();\n\nconst top = _(orders)\n  .groupBy(\"customerId\")\n  .map((rows, id) => ({ id, revenue: _.sumBy(rows, \"total\") }))\n  .orderBy(\"revenue\", \"desc\")\n  .take(10)\n  .value();",
+ "lodashAfter": "// 10 documents over the wire. The database does the work.\nconst since = new Date(\"2026-07-10\");\n\nconst topCustomers = jsmql.compile(({ since }, { $ }) => {\n  $$.filter(o => o.status === \"paid\" && o.createdAt >= since)\n    .groupBy({ _id: $.customerId, revenue: $sum($.total) })\n    .orderBy({ revenue: -1 })\n    .take(10);\n});\n\nconst top = await db.collection(\"orders\")\n  .aggregate(topCustomers({ since }))\n  .toArray();",
+ "ops": {
+  "a": {
+   "title": "Where SQL runs out of words",
+   "rows": [
+    {
+     "idea": "Any line item tagged \"gift\"",
+     "sql": "EXISTS (SELECT 1 FROM order_items i\n          JOIN item_tags t ON t.item_id = i.id\n         WHERE i.order_id = o.id AND t.tag = 'gift')",
+     "js": "$.items.some(i => i.tags.includes(\"gift\"))",
+     "mode": "expr",
+     "mql": "{\n  $anyElementTrue: {\n    $map: {\n      input: { $ifNull: [\"$items\", []] },\n      as: \"i\",\n      in: {\n        $switch: {\n          branches: [\n            {\n              case: { $in: [{ $type: \"$$i.tags\" }, [\"array\"]] },\n              then: { $in: [\"gift\", \"$$i.tags\"] }\n            },\n            {\n              case: { $in: [{ $type: \"$$i.tags\" }, [\"string\"]] },\n              then: { $gte: [{ $indexOfCP: [\"$$i.tags\", \"gift\"] }, 0] }\n            }\n          ],\n          default: \"$$REMOVE\"\n        }\n      }\n    }\n  }\n}"
+    },
+    {
+     "idea": "Price of the first line item",
+     "sql": "(SELECT i.price FROM order_items i\n  WHERE i.order_id = o.id\n  ORDER BY i.position LIMIT 1)",
+     "js": "$.items[0].price",
+     "mode": "expr",
+     "mql": "{\n  $getField: {\n    field: \"price\",\n    input: {\n      $switch: {\n        branches: [\n          {\n            case: { $isArray: \"$items\" },\n            then: { $arrayElemAt: [\"$items\", 0] }\n          },\n          {\n            case: { $eq: [{ $type: \"$items\" }, \"string\"] },\n            then: { $substrCP: [\"$items\", 0, 1] }\n          }\n        ],\n        default: { $getField: { field: \"0\", input: \"$items\" } }\n      }\n    }\n  }\n}"
+    },
+    {
+     "idea": "Each customer's last 3 order totals",
+     "sql": "SELECT customer_id,\n       ARRAY_AGG(total ORDER BY created_at DESC) AS last3\nFROM (SELECT *, ROW_NUMBER() OVER\n        (PARTITION BY customer_id ORDER BY created_at DESC) AS rn\n      FROM orders) t\nWHERE rn <= 3\nGROUP BY customer_id",
+     "js": "$$.sort({ createdAt: -1 })\n  .groupBy({ _id: $.customerId, last3: $push($.total) });\n$.last3 = $.last3.slice(0, 3);",
+     "mode": "pipeline",
+     "mql": "[\n  { $sort: { createdAt: -1 } },\n  { $group: { _id: \"$customerId\", last3: { $push: \"$total\" } } },\n  {\n    $set: {\n      last3: {\n        $switch: {\n          branches: [\n            {\n              case: { $in: [{ $type: \"$last3\" }, [\"string\", \"null\", \"missing\"]] },\n              then: { $substrCP: [\"$last3\", 0, 3] }\n            },\n            {\n              case: { $in: [{ $type: \"$last3\" }, [\"array\"]] },\n              then: { $slice: [\"$last3\", 3] }\n            }\n          ],\n          default: \"$$REMOVE\"\n        }\n      }\n    }\n  }\n]"
+    },
+    {
+     "idea": "Distinct products per customer",
+     "sql": "SELECT o.customer_id, COUNT(DISTINCT p.product_id) AS distinct_products\nFROM orders o\nJOIN order_products p ON p.order_id = o.id\nGROUP BY o.customer_id",
+     "js": "$$.groupBy({ _id: $.customerId, products: $addToSet($.productIds) });\n$.distinctProducts = $.products.flat().uniq().length;",
+     "mode": "pipeline",
+     "mql": "[\n  { $group: { _id: \"$customerId\", products: { $addToSet: \"$productIds\" } } },\n  {\n    $set: {\n      distinctProducts: {\n        $size: {\n          $ifNull: [\n            {\n              $setUnion: {\n                $reduce: {\n                  input: \"$products\",\n                  initialValue: [],\n                  in: { $concatArrays: [\"$$value\", \"$$this\"] }\n                }\n              }\n            },\n            []\n          ]\n        }\n      }\n    }\n  }\n]"
+    }
+   ]
+  },
+  "b": {
+   "title": "Where SQL runs out of words",
+   "rows": [
+    {
+     "idea": "Join the tags into one string",
+     "sql": "COALESCE((SELECT string_agg(t.tag, ', ')\n   FROM order_tags t WHERE t.order_id = o.id), '')",
+     "js": "$.tags.join(\", \")",
+     "mode": "expr",
+     "mql": "{\n  $ifNull: [\n    {\n      $reduce: {\n        input: \"$tags\",\n        initialValue: null,\n        in: {\n          $cond: {\n            if: { $eq: [\"$$value\", null] },\n            then: {\n              $cond: {\n                if: { $in: [{ $type: \"$$this\" }, [\"null\", \"missing\"]] },\n                then: \"\",\n                else: { $toString: \"$$this\" }\n              }\n            },\n            else: {\n              $concat: [\n                \"$$value\",\n                \", \",\n                {\n                  $cond: {\n                    if: { $in: [{ $type: \"$$this\" }, [\"null\", \"missing\"]] },\n                    then: \"\",\n                    else: { $toString: \"$$this\" }\n                  }\n                }\n              ]\n            }\n          }\n        }\n      }\n    },\n    \"\"\n  ]\n}"
+    },
+    {
+     "idea": "Sum the line items",
+     "sql": "(SELECT SUM(i.qty * i.price)\n   FROM order_items i WHERE i.order_id = o.id)",
+     "js": "$.items.sumBy((i) => i.qty * i.price)",
+     "mode": "expr",
+     "mql": "{\n  $sum: {\n    $map: { input: \"$items\", as: \"i\", in: { $multiply: [\"$$i.qty\", \"$$i.price\"] } }\n  }\n}"
+    },
+    {
+     "idea": "Count per status",
+     "sql": "SELECT status, COUNT(*) FROM orders GROUP BY status",
+     "js": "$$.countBy(\"status\");",
+     "mode": "pipeline",
+     "mql": "[\n  { $group: { _id: \"$status\", __jsmqlTmp: { $sum: 1 } } },\n  {\n    $group: {\n      _id: null,\n      __jsmqlTmp: {\n        $push: { k: { $ifNull: [{ $toString: \"$_id\" }, \"null\"] }, v: \"$__jsmqlTmp\" }\n      }\n    }\n  },\n  { $replaceWith: { $arrayToObject: \"$__jsmqlTmp\" } }\n]"
+    },
+    {
+     "idea": "Filter after the group",
+     "sql": "SELECT customer_id, SUM(total) AS spent FROM orders\nGROUP BY customer_id HAVING SUM(total) > 1000",
+     "js": "$$.$group({ _id: $.customerId, spent: $sum($.total) })\n  .filter((c) => c.spent > 1000);",
+     "mode": "pipeline",
+     "mql": "[\n  { $group: { _id: \"$customerId\", spent: { $sum: \"$total\" } } },\n  { $match: { spent: { $gt: 1000 } } }\n]"
+    },
+    {
+     "idea": "Latest order per customer",
+     "sql": "SELECT * FROM (\n  SELECT *, ROW_NUMBER() OVER\n    (PARTITION BY customer_id ORDER BY created_at DESC) AS rn\n  FROM orders) t WHERE rn = 1",
+     "js": "$$.sort({ createdAt: -1 }).uniqBy(\"customerId\");",
+     "mode": "pipeline",
+     "mql": "[\n  { $sort: { createdAt: -1 } },\n  { $group: { _id: \"$customerId\", __jsmqlTmp: { $first: \"$$ROOT\" } } },\n  { $replaceWith: \"$__jsmqlTmp\" }\n]"
+    }
+   ]
+  }
+ }
+}
     </script>
     <script>
       /* ============================================================================
