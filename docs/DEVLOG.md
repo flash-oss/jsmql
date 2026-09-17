@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-17 — fix: every list operand an aborting operator reads is guarded
+
+Ten value cells handed a possibly-missing array to an operator that REFUSES one.
+MEASURED on the fixture: `$size`, `$in`'s second operand and both of `$setIsSubset`'s
+abort the whole aggregate command on a null or missing operand — where `$map`,
+`$filter`, `$slice`, `$setUnion`, `$setDifference` and `$arrayElemAt` all answer null
+and carry on. So `$.a.difference($.b)` on a document with no `b` took the query down
+with "$in requires an array as a second argument, found: missing", while its sibling
+`$.a.union($.b)` answered null on the same document.
+
+[docs/LANGUAGE.md](docs/LANGUAGE.md) already stated the rule for a receiver — guard
+with `$ifNull: [..., []]` exactly where the operator would abort. The rule now holds
+for a list ARGUMENT too, which no row can prove is there: `.difference`,
+`.differenceBy`, `.intersectionBy`, `.xorBy`, `.isSubsetOf`, `.isSupersetOf`,
+`.isDisjointFrom`, and for the receiver in `.chunk`, `.zipObject`, `.sample`,
+`.lastIndexOf`, `.dropRight` and `.initial`. A missing list reads as the empty list,
+which is what lodash reads one as, and the three set PREDICATES read a missing operand
+as the empty set. Only the aborting operand is guarded, so the rest of each expression
+still answers what it answered — `.initial()` and `.dropRight()` stay null on a missing
+receiver, matching `.tail()` and `.drop()`, whose `$slice` never aborted.
+
+`.lastIndexOf` had its body written twice, once for the array family and once for an
+unproven receiver. A guard that read `present` made the two answer DIFFERENT MQL —
+inside a family dispatch the `$type` test proves the receiver — and differing answers
+are what make the compiler emit a `$switch`. The two copies are now one
+`lastIndexOfArray` function with an unconditional guard, so the row emits no dispatch.
+The live cases in [test/compiler-methods.test.ts](test/compiler-methods.test.ts) run
+every guarded spelling over a document that holds neither operand.
+
+---
+
 ## 2026-09-17 — fix: a `.pick()` / `.omit()` key list the source does not spell
 
 `$.address.pick($.keys)` crashed the compiler with "Cannot read properties of

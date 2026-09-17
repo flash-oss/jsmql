@@ -1020,6 +1020,23 @@ var logicalList = ({ name: name2, args, query }) => {
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
 var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
+var lastIndexOfArray = ({ recv, args, value, bind }) => {
+  const needle = value(args[0]);
+  const arr = bind("arr");
+  const rev = bind("revIdx");
+  const size = sizeOf(arrayOrEmpty(arr.ref));
+  return {
+    $let: {
+      vars: { [arr.as]: recv },
+      in: {
+        $let: {
+          vars: { [rev.as]: { $indexOfArray: [reverseArrayOf(arr.ref), needle] } },
+          in: cond({ $eq: [rev.ref, -1] }, -1, { $subtract: [{ $subtract: [size, 1] }, rev.ref] })
+        }
+      }
+    }
+  };
+};
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
 var orderedBounds = (a, b) => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
@@ -1030,7 +1047,7 @@ var norList = (input) => logicalList(input) ?? { $nor: [] };
 var lodashDifference = ({ recv, args, value, bind }) => {
   const other = value(args[0]);
   const item = bind("item");
-  return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, other] }] } } };
+  return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, arrayOrEmpty(other)] }] } } };
 };
 function groupedByKey(input, it, bind) {
   const key = bind("key");
@@ -7609,27 +7626,7 @@ var NAMES = {
       // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
       // two answers — one flat cell hid the refusal, which is the useful fact.
       perFamily: {
-        array: {
-          args: { sig: "searchValue", exact: 1 },
-          emit: ({ recv, args, value, bind }) => {
-            const needle = value(args[0]);
-            const arr = bind("arr");
-            const rev = bind("revIdx");
-            return {
-              $let: {
-                vars: { [arr.as]: recv },
-                in: {
-                  $let: {
-                    vars: { [rev.as]: { $indexOfArray: [reverseArrayOf(arr.ref), needle] } },
-                    in: cond({ $eq: [rev.ref, -1] }, -1, {
-                      $subtract: [{ $subtract: [{ $size: arr.ref }, 1] }, rev.ref]
-                    })
-                  }
-                }
-              }
-            };
-          }
-        },
+        array: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
         string: unsupported(
           ".lastIndexOf() on strings isn't supported \u2014 MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing."
         )
@@ -7637,22 +7634,7 @@ var NAMES = {
       // A receiver that cannot be proven takes the array form: the string form
       // is refused on its own, so nothing is lost, and a string that reaches
       // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
-      uncertain: ({ recv, args, value, bind }) => {
-        const needle = value(args[0]);
-        const arr = bind("arr");
-        const rev = bind("revIdx");
-        return {
-          $let: {
-            vars: { [arr.as]: recv },
-            in: {
-              $let: {
-                vars: { [rev.as]: { $indexOfArray: [reverseArrayOf(arr.ref), needle] } },
-                in: cond({ $eq: [rev.ref, -1] }, -1, { $subtract: [{ $subtract: [{ $size: arr.ref }, 1] }, rev.ref] })
-              }
-            }
-          }
-        };
-      }
+      uncertain: lastIndexOfArray
     },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -9534,7 +9516,7 @@ var NAMES = {
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(value(args[0]), it) },
+            vars: { [keys.as]: iterateeKeys(arrayOrEmpty(value(args[0])), it) },
             in: { $filter: { input: recv, as: it.as, cond: { $not: [inOther] } } }
           }
         };
@@ -9583,7 +9565,7 @@ var NAMES = {
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(value(args[0]), it) },
+            vars: { [keys.as]: iterateeKeys(arrayOrEmpty(value(args[0])), it) },
             in: { $filter: { input: recv, as: it.as, cond: inOther } }
           }
         };
@@ -9641,7 +9623,7 @@ var NAMES = {
       args: { sig: "other, iteratee", exact: 2 },
       emit: ({ recv, args, value, iteratee, bind }) => {
         const it = iteratee(args[1]);
-        const other = value(args[0]);
+        const other = arrayOrEmpty(value(args[0]));
         const a = bind("a");
         const b = bind("b");
         const aKeys = bind("aKeys");
@@ -9736,10 +9718,11 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "size", exact: 1, constant: [0], slotType: { 0: "int" }, slotRange: { 0: [1, Infinity] } },
-      emit: ({ recv, args, value, bind }) => {
+      emit: ({ recv, args, value, bind, present }) => {
         const size = value(args[0]);
         const i = bind("i");
-        return { $map: { input: { $range: [0, sizeOf(recv), size] }, as: i.as, in: { $slice: [recv, i.ref, size] } } };
+        const n2 = sizeOf(present ? recv : arrayOrEmpty(recv));
+        return { $map: { input: { $range: [0, n2, size] }, as: i.as, in: { $slice: [recv, i.ref, size] } } };
       }
     },
     stream: because(
@@ -9852,10 +9835,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[n=1]", allowed: [0, 1], slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
-      emit: ({ recv, args, value, bind }) => {
+      emit: ({ recv, args, value, bind, present }) => {
         const n2 = args.length === 0 ? 1 : value(args[0]);
         const arr = bind("arr");
-        const keep = { $max: [0, { $subtract: [{ $size: arr.ref }, n2] }] };
+        const keep = { $max: [0, { $subtract: [sizeOf(present ? arr.ref : arrayOrEmpty(arr.ref)), n2] }] };
         return { $let: { vars: { [arr.as]: recv }, in: { $slice: [arr.ref, keep] } } };
       }
     },
@@ -9900,14 +9883,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      emit: ({ recv, bind, present }) => {
         const arr = bind("arr");
-        return {
-          $let: {
-            vars: { [arr.as]: recv },
-            in: { $slice: [arr.ref, { $max: [0, { $subtract: [{ $size: arr.ref }, 1] }] }] }
-          }
-        };
+        const n2 = sizeOf(present ? arr.ref : arrayOrEmpty(arr.ref));
+        return { $let: { vars: { [arr.as]: recv }, in: { $slice: [arr.ref, { $max: [0, { $subtract: [n2, 1] }] }] } } };
       }
     },
     stream: because(
@@ -10194,12 +10173,13 @@ var NAMES = {
           1: "'.sample()' takes no arguments. It returns one random element. For n elements write '.sampleSize(n)'."
         }
       },
-      emit: ({ recv, bind }) => {
+      emit: ({ recv, bind, present }) => {
         const arr = bind("arr");
+        const n2 = sizeOf(present ? arr.ref : arrayOrEmpty(arr.ref));
         return {
           $let: {
             vars: { [arr.as]: recv },
-            in: { $arrayElemAt: [arr.ref, { $floor: { $multiply: [{ $rand: {} }, { $size: arr.ref }] } }] }
+            in: { $arrayElemAt: [arr.ref, { $floor: { $multiply: [{ $rand: {} }, n2] } }] }
           }
         };
       }
@@ -10276,13 +10256,13 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "values", exact: 1 },
-      emit: ({ recv, args, value, bind }) => {
+      emit: ({ recv, args, value, bind, present }) => {
         const values = value(args[0]);
         const i = bind("i");
         return {
           $arrayToObject: {
             $map: {
-              input: { $range: [0, sizeOf(recv)] },
+              input: { $range: [0, sizeOf(present ? recv : arrayOrEmpty(recv))] },
               as: i.as,
               in: { k: { $toString: { $arrayElemAt: [recv, i.ref] } }, v: { $arrayElemAt: [values, i.ref] } }
             }
@@ -11332,7 +11312,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setIsSubset: [recv, value(args[0])] })
+      emit: ({ recv, args, value, present }) => ({
+        $setIsSubset: [present ? recv : arrayOrEmpty(recv), arrayOrEmpty(value(args[0]))]
+      })
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -11352,7 +11334,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setIsSubset: [value(args[0]), recv] })
+      emit: ({ recv, args, value, present }) => ({
+        $setIsSubset: [arrayOrEmpty(value(args[0])), present ? recv : arrayOrEmpty(recv)]
+      })
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -12685,7 +12669,9 @@ var NAMES = {
     ),
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $eq: [{ $size: { $setIntersection: [recv, value(args[0])] } }, 0] })
+      emit: ({ recv, args, value, present }) => ({
+        $eq: [sizeOf({ $setIntersection: [present ? recv : arrayOrEmpty(recv), arrayOrEmpty(value(args[0]))] }), 0]
+      })
     },
     stream: unsupported(
       "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"

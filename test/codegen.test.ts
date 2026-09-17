@@ -4645,7 +4645,7 @@ describe("array method additions", () => {
               $cond: {
                 if: { $eq: ["$$jsmqlRevIdx", -1] },
                 then: -1,
-                else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
+                else: { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }, "$$jsmqlRevIdx"] },
               },
             },
           },
@@ -5466,7 +5466,11 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
   });
   it(".chunk(size) → $range/$slice; rejects a non-positive-int size", () => {
     expect(jsmql.expr("$.a.chunk(2)")).toEqual({
-      $map: { input: { $range: [0, { $size: "$a" }, 2] }, as: "jsmqlI", in: { $slice: ["$a", "$$jsmqlI", 2] } },
+      $map: {
+        input: { $range: [0, { $size: { $ifNull: ["$a", []] } }, 2] },
+        as: "jsmqlI",
+        in: { $slice: ["$a", "$$jsmqlI", 2] },
+      },
     });
     expect(() => jsmql.expr("$.a.chunk(0)")).toThrow("'chunk' argument 1 must be a number from 1 to Infinity — got 0.");
   });
@@ -5478,7 +5482,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     // `.difference` is NOT `$setDifference`: lodash keeps the receiver's duplicates, and
     // dropping them would change the SET rather than the order.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
-      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", "$b"] }] } },
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } },
     });
   });
   it(".keyBy(iteratee) → $arrayToObject (last wins, key stringified)", () => {
@@ -6007,7 +6011,7 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     expect(jsmql.expr("$.a.dropRight(2)")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
-        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 2] }] }] },
+        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 2] }] }] },
       },
     });
   });
@@ -6060,7 +6064,7 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     expect(jsmql.expr("$.a.initial()")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
-        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] }] },
+        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }] }] },
       },
     });
   });
@@ -6100,7 +6104,7 @@ describe("lodash set-ops & By-iteratee value methods", () => {
   it(".differenceBy / .intersectionBy compare by iteratee key", () => {
     expect(jsmql.expr('$.a.differenceBy($.b, "id")')).toEqual({
       $let: {
-        vars: { jsmqlOtherKeys: { $map: { input: "$b", as: "x", in: "$$x.id" } } },
+        vars: { jsmqlOtherKeys: { $map: { input: { $ifNull: ["$b", []] }, as: "x", in: "$$x.id" } } },
         in: { $filter: { input: "$a", as: "x", cond: { $not: [{ $in: ["$$x.id", "$$jsmqlOtherKeys"] }] } } },
       },
     });
@@ -6108,7 +6112,10 @@ describe("lodash set-ops & By-iteratee value methods", () => {
   });
   it(".unionBy → concat then keep-first dedupe by key; .xorBy → symmetric difference by key", () => {
     expect(jsmql.expr('$.a.unionBy($.b, "id")')).toMatchObject({ $getField: { field: "out" } });
-    expect(jsmql.expr('$.a.xorBy($.b, "id")')).toMatchObject({ $let: { vars: { jsmqlA: "$a", jsmqlB: "$b" } } });
+    // the other list is `$ifNull`-guarded: its keys feed an `$in`, which aborts on a null operand
+    expect(jsmql.expr('$.a.xorBy($.b, "id")')).toMatchObject({
+      $let: { vars: { jsmqlA: "$a", jsmqlB: { $ifNull: ["$b", []] } } },
+    });
   });
   it(".sortedUniq / .sortedUniqBy alias .uniq / .uniqBy (no sorted-array optimisation in MQL)", () => {
     expect(jsmql.expr("$.a.sortedUniq()")).toEqual({ $setUnion: "$a" });
@@ -6296,7 +6303,12 @@ describe("lodash random value methods — sample / sampleSize ($rand)", () => {
     expect(jsmql.expr("$.a.sample()")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
-        in: { $arrayElemAt: ["$$jsmqlArr", { $floor: { $multiply: [{ $rand: {} }, { $size: "$$jsmqlArr" }] } }] },
+        in: {
+          $arrayElemAt: [
+            "$$jsmqlArr",
+            { $floor: { $multiply: [{ $rand: {} }, { $size: { $ifNull: ["$$jsmqlArr", []] } }] } },
+          ],
+        },
       },
     });
   });
@@ -6645,14 +6657,18 @@ describe("ES2025 Set methods", () => {
     expect(jsmql.expr("new Set($.a).difference(new Set($.b))")).toEqual({ $setDifference: ["$a", "$b"] });
     // lodash keeps the receiver's duplicates, so an ARRAY receiver stays a filter.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
-      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", "$b"] }] } },
+      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } },
     });
   });
   it("isSubsetOf", () => {
-    expect(jsmql.expr("new Set($.a).isSubsetOf(new Set($.b))")).toEqual({ $setIsSubset: ["$a", "$b"] });
+    expect(jsmql.expr("new Set($.a).isSubsetOf(new Set($.b))")).toEqual({
+      $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    });
   });
   it("isSupersetOf swaps args", () => {
-    expect(jsmql.expr("new Set($.a).isSupersetOf(new Set($.b))")).toEqual({ $setIsSubset: ["$b", "$a"] });
+    expect(jsmql.expr("new Set($.a).isSupersetOf(new Set($.b))")).toEqual({
+      $setIsSubset: [{ $ifNull: ["$b", []] }, { $ifNull: ["$a", []] }],
+    });
   });
   it("works with array literals", () => {
     expect(jsmql.expr("new Set([1, 2, 3]).intersection(new Set([2, 3, 4]))")).toEqual({
@@ -6875,7 +6891,9 @@ describe("internal $let bindings never capture a lambda param", () => {
                   $cond: {
                     if: { $eq: ["$$jsmqlRevIdx", -1] },
                     then: -1,
-                    else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr2" }, 1] }, "$$jsmqlRevIdx"] },
+                    else: {
+                      $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr2", []] } }, 1] }, "$$jsmqlRevIdx"],
+                    },
                   },
                 },
               },

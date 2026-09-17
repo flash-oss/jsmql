@@ -659,18 +659,22 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("lowers the Set relations on a Set or an array", () => {
+    // MEASURED: $setIsSubset and $size ABORT the command on an operand that is not an
+    // array, where every $setUnion/$setDifference sibling answers null — so these three
+    // read each operand through $ifNull and take a missing field as the empty set. A
+    // literal is already an array and is handed through untouched.
     expect(compiled("new Set($.a).isSubsetOf(new Set($.b))", () => new Set(DOC.a).isSubsetOf(new Set(DOC.b)))).toEqual({
-      $setIsSubset: ["$a", "$b"],
+      $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
     expect(compiled("new Set([2]).isSubsetOf(new Set($.b))", () => new Set([2]).isSubsetOf(new Set(DOC.b)))).toEqual({
-      $setIsSubset: [[2], "$b"],
+      $setIsSubset: [[2], { $ifNull: ["$b", []] }],
     });
     expect(
       compiled("new Set($.b).isSupersetOf(new Set([5]))", () => new Set(DOC.b).isSupersetOf(new Set([5]))),
-    ).toEqual({ $setIsSubset: [[5], "$b"] });
+    ).toEqual({ $setIsSubset: [[5], { $ifNull: ["$b", []] }] });
     expect(
       compiled("new Set($.a).isDisjointFrom(new Set($.b))", () => new Set(DOC.a).isDisjointFrom(new Set(DOC.b))),
-    ).toEqual({ $eq: [{ $size: { $setIntersection: ["$a", "$b"] } }, 0] });
+    ).toEqual({ $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0] });
     expect(
       unordered("new Set($.a).symmetricDifference(new Set($.b))", () => [
         ...new Set(DOC.a).symmetricDifference(new Set(DOC.b)),
@@ -733,6 +737,70 @@ const canonical = (v: unknown): string =>
       return Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1)));
     return x;
   });
+
+/**
+ * The list operands that ABORT the whole command when they are not an array.
+ *
+ * MEASURED, and the reason these rows guard with `$ifNull` where their siblings do
+ * not: `$in`'s second operand, both of `$setIsSubset`'s and `$size`'s one refuse a
+ * null or missing value, where `$map`, `$filter`, `$slice`, `$setUnion` and the rest
+ * answer null in turn. A document that simply lacks the field would take the query
+ * down with it, so each of these reads its list as the empty list — lodash's reading
+ * of a missing list, and the empty set for the three predicates.
+ *
+ * Each row: the source, what it answers over an EMPTY document, and what it answers
+ * when only the LIST is missing. `undefined` means the row wrote no field at all.
+ */
+const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
+  ["$.a.difference($.b)", null, [1, 2]],
+  ['$.a.differenceBy($.b, "id")', null, [1, 2]],
+  ['$.a.intersectionBy($.b, "id")', null, []],
+  ['$.a.xorBy($.b, "id")', null, [1, 2]],
+  ["$.a.isSubsetOf($.b)", true, false],
+  ["$.a.isSupersetOf($.b)", true, true],
+  ["$.a.isDisjointFrom($.b)", true, true],
+  ["$.a.chunk(2)", [], [[1, 2]]],
+  ["$.a.zipObject($.b)", {}, { 1: null, 2: null }],
+  ["$.a.lastIndexOf(1)", null, 0],
+  ["$.a.dropRight(1)", null, [1]],
+  ["$.a.initial()", null, [1]],
+  ["$.o.pick($.b)", null, {}],
+  ["$.o.omit($.b)", null, { x: 1 }],
+];
+
+describe("compiler/emit — a missing list is the empty list, never an aborted command", () => {
+  let guarded: Collection | null = null;
+  beforeAll(async () => {
+    if (client === null) return;
+    guarded = client.db("jsmql_compiler_methods").collection("guarded");
+    await guarded.deleteMany({});
+    await guarded.insertMany([{ _id: 1 }, { _id: 2, a: [1, 2], o: { x: 1 } }]);
+  });
+
+  it("answers over a document that holds neither operand", async () => {
+    if (guarded === null) {
+      expect(GUARDED.length).toBeGreaterThan(0);
+      return;
+    }
+    const problems: string[] = [];
+    for (const [src, empty, listMissing] of GUARDED) {
+      try {
+        const docs = await guarded.aggregate([{ $addFields: { __v: expr(src) } }, { $sort: { _id: 1 } }]).toArray();
+        expect([src, docs[0].__v], src).toEqual([src, empty]);
+        expect([src, docs[1].__v], src).toEqual([src, listMissing]);
+      } catch (e) {
+        problems.push(`${src}\n  ${JSON.stringify(expr(src))}\n  ${(e as Error).message}`);
+      }
+    }
+    expect(problems, problems.join("\n")).toEqual([]);
+    // `.sample()` picks at random, so it is the one row whose answer is a membership.
+    const picked = await guarded
+      .aggregate([{ $addFields: { __v: expr("$.a.sample()") } }, { $sort: { _id: 1 } }])
+      .toArray();
+    expect(picked[0].__v).toBeNull();
+    expect([1, 2]).toContain(picked[1].__v);
+  });
+});
 
 describe("compiler/emit — the server answers each method as JavaScript would", () => {
   it("ran each one, or none", async () => {

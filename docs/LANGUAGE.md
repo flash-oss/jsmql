@@ -1761,7 +1761,7 @@ $.tags.includes("active")
 //     ], default: "$$REMOVE" } }
 ```
 
-**A missing array is guarded, an array that is there is not.** MongoDB's array operators answer `null` when their input field is missing, and `$size` / `$in` / a `$map` input then abort the whole query. So `.length`, `.size()`, `.includes()`, `.some()` and `.every()` wrap a receiver that *may* be missing in `$ifNull: [..., []]` — a missing array then reads as empty (`0`, `false`), as `_.size(undefined)` does — and leave alone a receiver that is certainly there: a literal, `$range(...)`, the keys of the root document, a `$lookup` result (`$$$.<coll>…`), a field the `$type` test above already proved, an optional chain, and any `.map` / `.filter` / `.slice` / … over one of those:
+**A missing array is guarded where the operator would abort, and nowhere else.** MongoDB's array operators answer `null` when their input field is missing, and most of them pass that null on. Three refuse it and abort the whole command instead — `$size`, `$in`'s second operand, and both of `$setIsSubset`'s — so wherever a lowering reaches one of those, jsmql wraps exactly that operand in `$ifNull: [..., []]`. A missing array then reads as empty (`0`, `false`, `[]`), as `_.size(undefined)` does. An operand that is certainly there is left alone: a literal, `$range(...)`, the keys of the root document, a `$lookup` result (`$$$.<coll>…`), a field the `$type` test above already proved, an optional chain, and any method over one of those (`.map` / `.filter` / `.slice` / …):
 
 ```js
 $.a.map(x => x + 1).length        // `a` may be missing → $map answers null → guarded
@@ -1776,6 +1776,29 @@ $.a?.map(x => x + 1).length       // `?.` reads a missing `a` as [] — there
 $.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).length;   // a $lookup always writes its array
 // → …, { $set: { n: { $size: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } } }, …
 ```
+
+**The same holds for a list ARGUMENT, which is never provably there.** A method that
+compares the receiver against a second list reaches `$in` or `$setIsSubset` with that
+list, so the list takes the same guard — and a missing one then means "the empty list",
+which is what lodash reads a missing list as. A list spelled in the source is already
+an array and is handed through untouched:
+
+```js
+$.a.difference($.b)               // `b` may be missing → $in would abort
+// → { $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } } }
+
+$.a.difference([1, 2])            // spelled in the source — an array, always
+// → { $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [1, 2]] }] } } }
+
+$.a.isSubsetOf($.b)               // $setIsSubset refuses BOTH operands as null
+// → { $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
+```
+
+The three set PREDICATES — `.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()` —
+therefore read a missing operand as the **empty set** and answer a real boolean, where
+their array-returning siblings (`.union()`, `.intersection()`, `.symmetricDifference()`,
+`.xor()`) answer `null`: `$setUnion` and its kin tolerate null and pass it on, so there
+is nothing for a guard to prevent and nothing is added.
 
 If you know the type at design time and want compact output, bind the value to a `const` with a type-revealing initialiser, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` pins a string — `.slice()` does not pin an array, being an either-type method itself), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
 
@@ -2100,9 +2123,14 @@ Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper
 new Set($.a).intersection(new Set($.b))   // { $setIntersection: ["$a", "$b"] }
 new Set($.a).union(new Set($.b))          // { $setUnion: ["$a", "$b"] }
 new Set($.a).difference(new Set($.b))     // { $setDifference: ["$a", "$b"] }
-new Set($.a).isSubsetOf(new Set($.b))     // { $setIsSubset: ["$a", "$b"] }
-new Set($.a).isSupersetOf(new Set($.b))   // { $setIsSubset: ["$b", "$a"] }   (swap)
+new Set($.a).isSubsetOf(new Set($.b))     // { $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
+new Set($.a).isSupersetOf(new Set($.b))   // { $setIsSubset: [{ $ifNull: ["$b", []] }, { $ifNull: ["$a", []] }] }   (swap)
 ```
+
+The first three pass a null operand straight through and answer null. `$setIsSubset`
+refuses one and aborts the command, so its operands read through `$ifNull` — see
+[A missing array is guarded](#type-aware-dispatch) for the rule and why it applies
+here and not above.
 
 ```js
 new Set($.a).symmetricDifference(new Set($.b))
@@ -2110,7 +2138,7 @@ new Set($.a).symmetricDifference(new Set($.b))
 //       { $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] },
 //                          { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }] } } }
 new Set($.a).isDisjointFrom(new Set($.b))
-// → { $eq: [{ $size: { $setIntersection: ["$a", "$b"] } }, 0] }
+// → { $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0] }
 ```
 
 The last two have no single MongoDB operator, so jsmql composes them — each operand is bound once, so a field is read once however the composition uses it. The set-method argument must itself be a `new Set(...)` literal so that the JS reads consistently.
