@@ -62,6 +62,20 @@ Above, the array branch counts `$x` bare and the string branch still guards. The
 null only for a null input; `.find` (a missing element), `.max` (of an empty array)
 and `.match` (`$regexFind` with no match) do not state it.
 
+**A `?.` with a CALL after it STOPS the chain.** `stoppedChain` (`emit/lower.ts`) walks
+the receiver spine of a `MemberAccess` / `IndexAccess` / `MethodCall` down to its base
+and answers the value the `?.` guards, when a call runs after it. `lowerValue` then
+emits `{ $cond: [<that value is null or missing>, null, <the chain with every `?.` on
+its spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH, so the
+walk checks the base `FieldRef` too. A `?.` with no call after it answers null anyway
+— a path through a missing field is missing — so no test is emitted and the consumer's
+neutral still describes it.
+
+The second branch runs only when the test passed, so the guarded path IS there inside
+it. `Env.proving(path)` records that and `isPresent` reads it, which is what keeps the
+cell from putting its own `$ifNull` back on the same field. `Env.dropFields` does not
+carry the set: a stage that replaced the document invalidates every path a test proved.
+
 **The optional chain's neutral reaches a row that dispatches too.** `withOptional`
 wraps the receiver in the family's empty value before any cell sees it, and the family
 is the receiver's when proven, otherwise the ONE field family the row lowers

@@ -590,26 +590,32 @@ $[$.fieldName]                      // → { $getField: { field: "$fieldName", i
 
 ### Optional Chaining
 
-`?.` is accepted everywhere `.` is. It's a real safety annotation — when an
-optional chain feeds a null-unsafe MongoDB operator, jsmql wraps the chain's
-result with `$ifNull(v, neutral)` so a missing field produces an empty value
-matching the consumer instead of `null` (which would either crash the operator
-or poison every downstream caller).
+`?.` is accepted everywhere `.` is, and it does what JavaScript's `?.` does.
+
+**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field is there:
+
+```js
+$.s?.trim().length   // a call runs after the ?. — the chain stops, and answers null
+// → { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: { $ifNull: [{ $trim: { input: "$s" } }, ""] } } } }
+$.s.trim().length    // a plain read — 0 for a missing `s`, as it is today
+// → { $strLenCP: { $ifNull: [{ $trim: { input: "$s" } }, ""] } }
+```
+
+**A `?.` with no call after it changes nothing.** There is nothing to stop: the chain's value is the field, and a path through a missing field already answers missing. So the consumer supplies its own empty value, as the table below describes. That table therefore covers every `?.` EXCEPT a chain that calls something.
 
 | Consumer category | Wrapped with | Example |
 |---|---|---|
 | Bare read | nothing (sugar only) | `$.user?.name` → `"$user.name"` |
 | Array spread | `[]` | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
-| Array method receiver (`.map`, `.filter`, `.reduce`, `.reduceRight`, `.find`, `.findIndex`, `.some`, `.every`, `.flat`, `.flatMap`, `.at`, `.toReversed`, `.toSorted`, `.toSpliced`, `.with`, `.join`, `.findLast`, `.findLastIndex`, `.lastIndexOf`, `.toString`) | `[]` | `$.user?.posts.map(p => p.id)` → `{ $map: { input: { $ifNull: ["$user.posts", []] }, ... } }` |
-| Either-method receiver (`.slice`, `.indexOf`, `.includes`, `.concat` — `.slice` since type depends on receiver) | `""` (string-typed) / `[]` otherwise | `$.user?.tags.slice(0, 3)` → runtime `$cond` over `$ifNull("$user.tags", [])` |
-| String method receiver (`.trim`, `.toUpperCase`, `.toLowerCase`, `.split`, `.substr`, `.substring`, `.charAt`, `.startsWith`, `.endsWith`, `.replace`, `.replaceAll`, `.padStart`, `.padEnd`, `.repeat`, `.match`, `.matchAll`, `.search`) | `""` | `$.user?.name.trim()` → `{ $trim: { input: { $ifNull: ["$user.name", ""] } } }` |
+| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user.name", null] }, null] }, then: null, else: { $trim: { input: "$user.name" } } } }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
-| `.length` of optional | `""` (string) / `[]` (array or unknown — array branch produces 0) | `$.user?.tags.length` → runtime `$cond` over `$ifNull("$user.tags", [])` |
+| `.length` of optional (a READ, not a call) | `""` (string) / `[]` (array or unknown — array branch produces 0) | `$.user?.tags.length` → runtime `$switch` on `$type` |
 | Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
 | Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
 
-A reader of a whole object takes `{}`, and it takes it ONLY under `?.`: `$.user.profile.keys()` emits `{ $objectToArray: "$user.profile" }` and answers `null` for a missing `profile`, where `$.user?.profile?.keys()` emits `{ $objectToArray: { $ifNull: ["$user.profile", {}] } }` and answers `[]`. A namespace call has no receiver to carry the `?.`, so it reads it off the argument instead — `Object.keys($.user?.profile)` is the same document as `$.user?.profile?.keys()`. The neutral goes in at the link that carries the `?.`, and the rest of the chain reads it: `$.o?.keys().length` is `0` where JavaScript answers `undefined`, because `[]` is what `.length` counts. One rule for every reader is tracked as [DEF-036].
+A reader of a whole object follows the same rule. `$.o.keys()` is a plain read and answers `null` for a missing `o`, because `Object.keys(undefined)` is a **TypeError** in JavaScript and `null` is the nearest thing MongoDB has to raising one. `$.o?.keys()` has a call after the `?.`, so the chain stops and answers `null` as well. A lodash object method answers its own empty value either way — `_.pick(undefined, …)` is `{}`, and lodash has no other reading. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument: `Object.keys($.user?.profile)` takes `{}` exactly as `Object.keys($.user.profile)` does.
+
 These cases produce the same MQL whether you use `.` or `?.`:
 
 | Consumer | Why no wrap |

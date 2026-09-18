@@ -60,7 +60,8 @@ export function isPresent(node: Expr, env: Env): boolean {
     case "Injected":
       return node.value !== null && node.value !== undefined && !isMqlShaped(node.value);
     case "FieldRef":
-      return node.path === "";
+      // the root document, or a path a `?.` test on the way in already proved
+      return node.path === "" || env.proven.has(node.path);
     case "Ident":
       return env.scope.has(node.name) && env.lookup(node.name, node.pos).present;
     case "MethodCall": {

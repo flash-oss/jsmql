@@ -7524,43 +7524,70 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("[...$.a, 'x']")).toEqual({ $concatArrays: ["$a", ["x"]] });
   });
 
-  // Array-method receivers — `$concatArrays` / `$in` / `$size` / `$arrayElemAt`
-  // either error or null-poison on null input. Wrap the receiver with [].
-  it(".map on optional receiver wraps with []", () => {
+  // A `?.` with a CALL after it stops the chain: the call does not run and the chain
+  // answers null, as JavaScript's `?.` does. The test sits at the top of the chain, so
+  // the receiver inside the second branch is proven and takes no `$ifNull` of its own.
+  it(".map on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.map(p => p.id)")).toEqual({
-      $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" },
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        then: null,
+        else: { $map: { input: "$user.posts", as: "p", in: "$$p.id" } },
+      },
     });
     // and one link further the wrap is what keeps `$size` off a null
     expect(jsmql.expr("$.user?.posts.map(p => p.id).length")).toEqual({
-      $size: { $ifNull: [{ $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } }, []] },
-    });
-  });
-  it(".at on optional receiver wraps with [] then runtime-dispatches", () => {
-    expect(jsmql.expr("$.user?.posts.at(0)")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$user.posts" }, ["string"]] }, then: { $substrCP: ["$user.posts", 0, 1] } },
-          { case: { $in: [{ $type: "$user.posts" }, ["array"]] }, then: { $arrayElemAt: ["$user.posts", 0] } },
-        ],
-        default: "$$REMOVE",
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        then: null,
+        else: { $size: { $map: { input: "$user.posts", as: "p", in: "$$p.id" } } },
       },
     });
   });
-  it(".toReversed on optional receiver wraps with []", () => {
-    expect(jsmql.expr("$.user?.posts.toReversed()")).toEqual({ $reverseArray: { $ifNull: ["$user.posts", []] } });
+  it(".at on an optional receiver stops the chain, and dispatches inside it", () => {
+    expect(jsmql.expr("$.user?.posts.at(0)")).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        then: null,
+        else: {
+          $switch: {
+            branches: [
+              { case: { $in: [{ $type: "$user.posts" }, ["string"]] }, then: { $substrCP: ["$user.posts", 0, 1] } },
+              { case: { $in: [{ $type: "$user.posts" }, ["array"]] }, then: { $arrayElemAt: ["$user.posts", 0] } },
+            ],
+            default: "$$REMOVE",
+          },
+        },
+      },
+    });
   });
-  it(".slice on optional receiver wraps with [] then runtime-dispatches", () => {
+  it(".toReversed on an optional receiver stops the chain", () => {
+    expect(jsmql.expr("$.user?.posts.toReversed()")).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        then: null,
+        else: { $reverseArray: "$user.posts" },
+      },
+    });
+  });
+  it(".slice on an optional receiver stops the chain, and dispatches inside it", () => {
     // start 0 → the array branch is a 2-arg "first 5" $slice (JS end-exclusive).
     expect(jsmql.expr("$.user?.posts.slice(0, 5)")).toEqual({
-      $switch: {
-        branches: [
-          {
-            case: { $in: [{ $type: "$user.posts" }, ["string", "null", "missing"]] },
-            then: { $substrCP: ["$user.posts", 0, 5] },
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        then: null,
+        else: {
+          $switch: {
+            branches: [
+              {
+                case: { $in: [{ $type: "$user.posts" }, ["string", "null", "missing"]] },
+                then: { $substrCP: ["$user.posts", 0, 5] },
+              },
+              { case: { $in: [{ $type: "$user.posts" }, ["array"]] }, then: { $slice: ["$user.posts", 5] } },
+            ],
+            default: "$$REMOVE",
           },
-          { case: { $in: [{ $type: "$user.posts" }, ["array"]] }, then: { $slice: ["$user.posts", 5] } },
-        ],
-        default: "$$REMOVE",
+        },
       },
     });
   });
@@ -7571,38 +7598,66 @@ describe("optional chaining (?.)", () => {
   // `.includes` doesn't add a redundant outer wrap.
   it(".includes after .toReversed() of optional propagates the inner wrap, no outer wrap", () => {
     expect(jsmql.expr("$.user?.posts.toReversed().includes('hello')")).toEqual({
-      $in: ["hello", { $ifNull: [{ $reverseArray: { $ifNull: ["$user.posts", []] } }, []] }],
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        then: null,
+        else: { $in: ["hello", { $reverseArray: "$user.posts" }] },
+      },
     });
   });
-  it("`?.method()` (call itself is optional) wraps the receiver", () => {
-    // `$.tags?.includes(y)` — MethodCall.optional=true. Wrap with [] since
-    // includes-on-unknown dispatches via $cond; [] sends it to the array branch.
+  it("`?.method()` (the call itself is optional) stops the chain", () => {
+    // `$.tags?.includes(y)` — MethodCall.optional=true. The receiver dispatches on its
+    // own type INSIDE the second branch, which runs only when `tags` is there.
     expect(jsmql.expr("$.tags?.includes('vip')")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["vip", "$tags"] } },
-          { case: { $in: [{ $type: "$tags" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$tags", "vip"] }, 0] } },
-        ],
-        default: "$$REMOVE",
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$tags", null] }, null] },
+        then: null,
+        else: {
+          $switch: {
+            branches: [
+              { case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["vip", "$tags"] } },
+              {
+                case: { $in: [{ $type: "$tags" }, ["string"]] },
+                then: { $gte: [{ $indexOfCP: ["$tags", "vip"] }, 0] },
+              },
+            ],
+            default: "$$REMOVE",
+          },
+        },
       },
     });
   });
 
-  // String-method receivers — `$trim` / `$toUpper` / etc. return null on null
-  // (sometimes error). Wrap the receiver with "" so a missing field produces
-  // an empty string, matching JS's "would-throw on undefined.method, but ?.
-  // short-circuits gracefully" intent.
-  it('.trim on optional receiver wraps with ""', () => {
-    expect(jsmql.expr("$.name?.trim()")).toEqual({ $trim: { input: { $ifNull: ["$name", ""] } } });
+  // A string method is a call, so the same rule applies. `$.name.trim()` on a missing
+  // `name` answers "" — `$trim` reads the `$ifNull` the cell puts on its receiver — and
+  // `$.name?.trim()` answers null, because the developer said the field may be absent.
+  it(".trim on an optional receiver stops the chain", () => {
+    expect(jsmql.expr("$.name?.trim()")).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $trim: { input: "$name" } } },
+    });
   });
-  it('.trim on chained optional receiver wraps with ""', () => {
-    expect(jsmql.expr("$.user?.name?.trim()")).toEqual({ $trim: { input: { $ifNull: ["$user.name", ""] } } });
+  it(".trim on a chained optional receiver stops the chain", () => {
+    expect(jsmql.expr("$.user?.name?.trim()")).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user.name", null] }, null] },
+        then: null,
+        else: { $trim: { input: "$user.name" } },
+      },
+    });
   });
-  it('.toUpperCase on optional receiver wraps with ""', () => {
-    expect(jsmql.expr("$.user?.name.toUpperCase()")).toEqual({ $toUpper: { $ifNull: ["$user.name", ""] } });
+  it(".toUpperCase on an optional receiver stops the chain", () => {
+    expect(jsmql.expr("$.user?.name.toUpperCase()")).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$user.name", null] }, null] }, then: null, else: { $toUpper: "$user.name" } },
+    });
   });
-  it('.split on optional receiver wraps with ""', () => {
-    expect(jsmql.expr("$.user?.csv.split(',')")).toEqual({ $split: [{ $ifNull: ["$user.csv", ""] }, ","] });
+  it(".split on an optional receiver stops the chain", () => {
+    expect(jsmql.expr("$.user?.csv.split(',')")).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user.csv", null] }, null] },
+        then: null,
+        else: { $split: ["$user.csv", ","] },
+      },
+    });
   });
 
   // `.length` is a MemberAccess, not a MethodCall — handled in its own codegen branch.
@@ -7970,7 +8025,11 @@ describe("a $size / $in / callback input is guarded only where the array may be 
     expect(jsmql.expr("[$.a, $.b].length")).toEqual({ $size: [["$a", "$b"]] });
     // an optional chain reads a missing receiver as [] — which is there
     expect(jsmql.expr("$.a?.map(x => x + 1).length")).toEqual({
-      $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } },
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$a", null] }, null] },
+        then: null,
+        else: { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } },
+      },
     });
     // a `let` of a present value is present; of a field's chain it is not
     expect(jsmql("const ks = Object.keys($); $.n = ks.length;")).toEqual([

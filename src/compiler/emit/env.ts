@@ -227,11 +227,25 @@ export class Env {
   readonly scope: Scope;
   readonly site: Site;
   readonly chain: Chain;
+  /**
+   * Field paths a test on the way in has already PROVEN are there.
+   *
+   * A `?.` stops its chain with a test on the guarded field, and the rest of the chain
+   * runs only when that test passed — so inside it the field cannot be missing, and the
+   * `$ifNull` a cell would otherwise put on it is dead. `isPresent` reads this set.
+   */
+  readonly proven: ReadonlySet<string>;
 
-  private constructor(scope: Scope, site: Site, chain: Chain) {
+  private constructor(scope: Scope, site: Site, chain: Chain, proven: ReadonlySet<string> = new Set()) {
     this.scope = scope;
     this.site = site;
     this.chain = chain;
+    this.proven = proven;
+  }
+
+  /** The same Env, with one more field path proven to be there. */
+  proving(path: string): Env {
+    return new Env(this.scope, this.site, this.chain, new Set([...this.proven, path]));
   }
 
   /**
@@ -248,7 +262,7 @@ export class Env {
 
   /** A name bound to something other than a variable — the document, a slot, a function. */
   bind(js: string, binding: Declared): Env {
-    return new Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain);
+    return new Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain, this.proven);
   }
 
   /** How many bodies over another collection enclose this node: the level of ITS documents. */
@@ -290,14 +304,18 @@ export class Env {
     return boundaries[boundaries.length - 1].stage;
   }
 
-  /** The Env after a stage that replaced the document: every field-carried binding is gone. */
+  /**
+   * The Env after a stage that replaced the document: every field-carried binding is
+   * gone, and so is every path a test proved — the document those paths were read from
+   * is not the document the next stage sees.
+   */
   dropFields(by: string, message: (js: string, mutable: boolean) => string): Env {
     return new Env(this.scope.dropFields(by, message), this.site, this.chain);
   }
 
   /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
   block(): Env {
-    return new Env(this.scope.block(), this.site, this.chain);
+    return new Env(this.scope.block(), this.site, this.chain, this.proven);
   }
 
   /** The developer's own variable — a lambda parameter, a `$let` var. */
@@ -312,17 +330,17 @@ export class Env {
 
   /** Move to where phase 4 says a child stands. */
   at(where: Where): Env {
-    return new Env(this.scope, { ...this.site, where }, this.chain);
+    return new Env(this.scope, { ...this.site, where }, this.chain, this.proven);
   }
 
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name: string | null): Env {
-    return new Env(this.scope, { ...this.site, inside: name }, this.chain);
+    return new Env(this.scope, { ...this.site, inside: name }, this.chain, this.proven);
   }
 
   /** Inside `$literal(…)`. */
   literal(): Env {
-    return new Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain);
+    return new Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain, this.proven);
   }
 
   /**
@@ -334,7 +352,7 @@ export class Env {
       ...this.site,
       boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [], element: param, capture: null }],
     };
-    return new Env(this.scope, site, this.chain);
+    return new Env(this.scope, site, this.chain, this.proven);
   }
 
   /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. */
@@ -344,7 +362,7 @@ export class Env {
       where: { at: "statement" },
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }],
     };
-    return new Env(this.scope, site, chain);
+    return new Env(this.scope, site, chain, this.proven);
   }
 
   /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
@@ -359,6 +377,6 @@ export class Env {
   }
 
   private bound(b: Binder): Bound {
-    return { as: b.as, ref: b.ref, env: new Env(b.scope, this.site, this.chain) };
+    return { as: b.as, ref: b.ref, env: new Env(b.scope, this.site, this.chain, this.proven) };
   }
 }

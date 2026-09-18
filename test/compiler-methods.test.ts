@@ -781,9 +781,9 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
  *
  *   - a LODASH method answers `{}`, or `[]` where it answers an array, because
  *     `_.pick(undefined, …)` does. Nothing else is on offer: lodash has no other reading.
- *   - a JAVASCRIPT reader answers null for a plain `.`, because `Object.keys(undefined)`
- *     is a TypeError and null is the nearest thing MongoDB has to raising one — and `[]`
- *     for `?.`, which is the developer saying the field may not be there.
+ *   - a JAVASCRIPT reader answers null, because `Object.keys(undefined)` is a TypeError
+ *     and null is the nearest thing MongoDB has to raising one. A `?.` answers null too,
+ *     and for a second reason: a `?.` with a call after it STOPS the chain.
  *
  * Each row: the source, and what it answers when the receiver is missing.
  */
@@ -805,15 +805,20 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["Object.keys($.o)", null],
   ["Object.values($.o)", null],
   ["Object.entries($.o)", null],
-  // JavaScript — `[]` once the source says the field may not be there
-  ["$.o?.keys()", []],
-  ["$.o?.values()", []],
-  ["$.o?.entries()", []],
-  ["$.o?.keys().length", 0],
-  // a NAMESPACE call has no receiver to carry the `?.`, so the row reads it off the argument
+  // a `?.` with a call after it stops the chain, so the chain answers null
+  ["$.o?.keys()", null],
+  ["$.o?.values()", null],
+  ["$.o?.entries()", null],
+  ["$.o?.keys().length", null],
+  ["$.s?.trim().length", null],
+  ["$.a?.map(x => x).length", null],
+  // a NAMESPACE call has no receiver to carry the `?.`, so the row reads it off the
+  // argument — and there is no call AFTER the `?.` to stop, so `{}` still applies
   ["Object.keys($.o?.sub)", []],
+  // nothing runs after this `?.`, so the document and the answer are what they were
+  ['$.first + " " + $.user?.last', "An "],
   // the root document is there, so it takes no neutral
-  ["Object.keys($).length", 1],
+  ["Object.keys($).length", 2],
 ];
 
 describe("compiler/emit — a missing list is the empty list, never an aborted command", () => {
@@ -822,7 +827,10 @@ describe("compiler/emit — a missing list is the empty list, never an aborted c
     if (client === null) return;
     guarded = client.db("jsmql_compiler_methods").collection("guarded");
     await guarded.deleteMany({});
-    await guarded.insertMany([{ _id: 1 }, { _id: 2, a: [1, 2], o: { x: 1 } }]);
+    await guarded.insertMany([
+      { _id: 1, first: "An" },
+      { _id: 2, a: [1, 2], o: { x: 1 }, first: "An" },
+    ]);
   });
 
   it("answers over a document that holds neither operand", async () => {

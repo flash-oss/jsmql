@@ -136,6 +136,15 @@ export function lowerValue(node: Expr, env: Env): unknown {
       return settledValue(settled.value, node.pos);
     }
   }
+  const stopped = stoppedChain(node);
+  if (stopped !== null) {
+    // `?.` stops the chain: the links after it do not run, and the chain answers null.
+    const base = withoutOptional(stopped);
+    const gone = truthOf({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] }, true);
+    // the second branch runs only when the test passed, so the path IS there inside it
+    const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
+    return cond(gone, null, lowerValue(withoutOptional(node), proved));
+  }
   switch (node.type) {
     case "NumberLiteral":
     case "StringLiteral":
@@ -242,6 +251,45 @@ function templateLiteral(node: Extract<Expr, { type: "TemplateLiteral" }>, env: 
   const tail = node.quasis[node.exprs.length];
   if (tail !== "" && tail !== undefined) parts.push(tail);
   return { $concat: parts };
+}
+
+/**
+ * The value a `?.` guards, when a METHOD CALL runs after it. Null when none does.
+ *
+ * JavaScript stops a chain at a `?.`: `o?.keys().length` is `undefined` when `o` is
+ * nullish, and jsmql answers null, which is the nearest thing MongoDB holds. The test
+ * goes at the TOP of the chain, so the links below run only when the field is there,
+ * and the `$ifNull` each of them would put on that field is not needed.
+ *
+ * A plain property read after the `?.` needs no test. `$.user?.name` reads a path, and
+ * MongoDB already answers missing for a path through a missing field — so the document
+ * is the one it is today, and the consumer's own neutral still describes it. Only a
+ * call turns that missing value into something else, and only a call is stopped here.
+ * See docs/LANGUAGE.md § Optional Chaining.
+ */
+function stoppedChain(node: Expr): Expr | null {
+  let cursor: Expr = node;
+  let called = false;
+  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
+    if (cursor.type === "MethodCall") called = true;
+    if (cursor.optional) return called ? cursor.object : null;
+    cursor = cursor.object;
+  }
+  // `$.user?.name.trim()` — the fold puts the `?.` on the PATH, so the walk above never
+  // meets it. The call still runs after it, and the path is the value it guards.
+  return cursor.type === "FieldRef" && cursor.optional === true && called ? cursor : null;
+}
+
+/** The same chain with every `?.` on its spine cleared — what runs once the test passed. */
+function withoutOptional(e: Expr): Expr {
+  if (e.type === "MemberAccess" || e.type === "IndexAccess" || e.type === "MethodCall") {
+    return { ...e, optional: false, object: withoutOptional(e.object) };
+  }
+  if (e.type === "FieldRef" && e.optional === true) {
+    const { optional: _dropped, ...rest } = e;
+    return rest;
+  }
+  return e;
 }
 
 /** Every stage name the registry has, for the suggestion a mistyped stage gets. */

@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-18 — feat: a `?.` with a call after it stops the chain (DEF-036 ships)
+
+JavaScript stops a chain at a `?.`. jsmql put an empty value in place of the missing
+field at the link that carries the `?.`, and every link after it read that empty value
+and carried on, so `$.o?.keys().length` answered 0 where JavaScript answers `undefined`.
+It now answers null, which is the nearest thing MongoDB holds. `$.s?.trim().length`,
+`$.a?.map(f).length` and `$.user?.name.trim()` answer null for the same reason.
+
+A `?.` with no CALL after it does not change. There is nothing to stop — a path through
+a missing field is already missing — so `` `hi ${$.user?.name}` `` still prints `"hi "`
+and `$.first + " " + $.user?.last` still gives `"An "`. The consumer table in
+[docs/LANGUAGE.md](docs/LANGUAGE.md) § Optional Chaining keeps every row that describes
+one of those, and loses the three that described a method receiver.
+
+Two pieces of machinery. `stoppedChain` walks a chain's receiver spine and answers the
+value the `?.` guards; the fold moves a `?.` on a plain read onto the PATH, so the walk
+checks the base field reference as well as each link. And `Env.proving` records a path
+a test has proven, which `isPresent` reads — without it the second branch of the `$cond`
+would put the `$ifNull` straight back on the field the test just proved. `dropFields`
+deliberately drops the set: a stage that replaced the document invalidates it.
+
+---
+
 ## 2026-09-18 — decision: a `?.` stops the chain, and nothing wider
 
 DEF-036 now names the rule it targets. A `?.` makes every link AFTER it not run, and

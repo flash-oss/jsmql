@@ -23487,10 +23487,15 @@ var Chain = class {
   }
 };
 var Env = class _Env {
-  constructor(scope, site, chain) {
+  constructor(scope, site, chain, proven = /* @__PURE__ */ new Set()) {
     this.scope = scope;
     this.site = site;
     this.chain = chain;
+    this.proven = proven;
+  }
+  /** The same Env, with one more field path proven to be there. */
+  proving(path) {
+    return new _Env(this.scope, this.site, this.chain, /* @__PURE__ */ new Set([...this.proven, path]));
   }
   /**
    * The Env a program starts in. Every name the program introduces anywhere is
@@ -23504,7 +23509,7 @@ var Env = class _Env {
   // ── the transitions: each answers a new Env and changes ONE thing ──────────
   /** A name bound to something other than a variable — the document, a slot, a function. */
   bind(js, binding) {
-    return new _Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain);
+    return new _Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain, this.proven);
   }
   /** How many bodies over another collection enclose this node: the level of ITS documents. */
   get level() {
@@ -23536,13 +23541,17 @@ var Env = class _Env {
     const boundaries = this.foreign();
     return boundaries[boundaries.length - 1].stage;
   }
-  /** The Env after a stage that replaced the document: every field-carried binding is gone. */
+  /**
+   * The Env after a stage that replaced the document: every field-carried binding is
+   * gone, and so is every path a test proved — the document those paths were read from
+   * is not the document the next stage sees.
+   */
   dropFields(by, message) {
     return new _Env(this.scope.dropFields(by, message), this.site, this.chain);
   }
   /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
   block() {
-    return new _Env(this.scope.block(), this.site, this.chain);
+    return new _Env(this.scope.block(), this.site, this.chain, this.proven);
   }
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js, type, pos) {
@@ -23554,15 +23563,15 @@ var Env = class _Env {
   }
   /** Move to where phase 4 says a child stands. */
   at(where) {
-    return new _Env(this.scope, { ...this.site, where }, this.chain);
+    return new _Env(this.scope, { ...this.site, where }, this.chain, this.proven);
   }
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name2) {
-    return new _Env(this.scope, { ...this.site, inside: name2 }, this.chain);
+    return new _Env(this.scope, { ...this.site, inside: name2 }, this.chain, this.proven);
   }
   /** Inside `$literal(…)`. */
   literal() {
-    return new _Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain);
+    return new _Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain, this.proven);
   }
   /**
    * Into an `$elemMatch` body: the element is the root there, and the outer
@@ -23573,7 +23582,7 @@ var Env = class _Env {
       ...this.site,
       boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [], element: param, capture: null }]
     };
-    return new _Env(this.scope, site, this.chain);
+    return new _Env(this.scope, site, this.chain, this.proven);
   }
   /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. */
   enter(boundary, chain) {
@@ -23582,7 +23591,7 @@ var Env = class _Env {
       where: { at: "statement" },
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }]
     };
-    return new _Env(this.scope, site, chain);
+    return new _Env(this.scope, site, chain, this.proven);
   }
   /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
   get rootChain() {
@@ -23594,7 +23603,7 @@ var Env = class _Env {
     return this.scope.lookup(js, pos);
   }
   bound(b) {
-    return { as: b.as, ref: b.ref, env: new _Env(b.scope, this.site, this.chain) };
+    return { as: b.as, ref: b.ref, env: new _Env(b.scope, this.site, this.chain, this.proven) };
   }
 };
 
@@ -24270,7 +24279,7 @@ function isPresent(node, env) {
     case "Injected":
       return node.value !== null && node.value !== void 0 && !isMqlShaped(node.value);
     case "FieldRef":
-      return node.path === "";
+      return node.path === "" || env.proven.has(node.path);
     case "Ident":
       return env.scope.has(node.name) && env.lookup(node.name, node.pos).present;
     case "MethodCall": {
@@ -25875,6 +25884,13 @@ function lowerValue(node, env) {
       return settledValue(settled.value, node.pos);
     }
   }
+  const stopped = stoppedChain(node);
+  if (stopped !== null) {
+    const base = withoutOptional(stopped);
+    const gone = truthOf({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] }, true);
+    const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
+    return cond2(gone, null, lowerValue(withoutOptional(node), proved));
+  }
   switch (node.type) {
     case "NumberLiteral":
     case "StringLiteral":
@@ -25972,6 +25988,26 @@ function templateLiteral(node, env) {
   const tail = node.quasis[node.exprs.length];
   if (tail !== "" && tail !== void 0) parts.push(tail);
   return { $concat: parts };
+}
+function stoppedChain(node) {
+  let cursor = node;
+  let called = false;
+  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
+    if (cursor.type === "MethodCall") called = true;
+    if (cursor.optional) return called ? cursor.object : null;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true && called ? cursor : null;
+}
+function withoutOptional(e) {
+  if (e.type === "MemberAccess" || e.type === "IndexAccess" || e.type === "MethodCall") {
+    return { ...e, optional: false, object: withoutOptional(e.object) };
+  }
+  if (e.type === "FieldRef" && e.optional === true) {
+    const { optional: _dropped, ...rest } = e;
+    return rest;
+  }
+  return e;
 }
 var STAGE_NAMES = everyName().filter(isStageName);
 function refuseStageList(node, elements) {
