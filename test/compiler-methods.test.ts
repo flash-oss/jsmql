@@ -773,13 +773,13 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
 ];
 
 /**
- * The lodash OBJECT methods, and the JavaScript readers they sit beside.
+ * Every reader of an object's pairs, over a document that lacks the field.
  *
  * `$objectToArray` answers null for a missing field and `$arrayToObject` passes that
- * null on, so a lodash object method answered null where `_.pick(undefined, …)` and
- * its kin answer `{}`. The lodash spellings guard with `$ifNull: [..., {}]`; the
- * JavaScript ones keep null, because `Object.keys(undefined)` is a TypeError and null
- * is the nearest thing MongoDB has to raising one inside an expression.
+ * null on, so the whole family answered null where lodash answers `{}` — and where a
+ * developer who wrote `Object.keys(o).length` expects a count rather than a null that
+ * breaks a stage later. Each reader guards with `$ifNull: [..., {}]` and answers its
+ * own family's empty value: `{}` from the object builders, `[]` from the pair readers.
  *
  * Each row: the source, and what it answers when the RECEIVER is missing.
  */
@@ -793,11 +793,15 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o.omitBy(v => v == null)", {}],
   ["$.o.invert()", {}],
   ["$.o.toPairs()", []],
-  // the JavaScript readers, which share one row with the `Object` statics
-  ["$.o.entries()", null],
-  ["$.o.keys()", null],
-  ["$.o.values()", null],
-  ["Object.keys($.o)", null],
+  ["$.o.entries()", []],
+  ["$.o.keys()", []],
+  ["$.o.values()", []],
+  // the `Object` statics share one row with the three above, and answer the same
+  ["Object.keys($.o)", []],
+  ["Object.values($.o)", []],
+  ["Object.entries($.o)", []],
+  // the root document is there, so it takes no neutral
+  ["Object.keys($).length", 1],
 ];
 
 describe("compiler/emit — a missing list is the empty list, never an aborted command", () => {
@@ -833,7 +837,7 @@ describe("compiler/emit — a missing list is the empty list, never an aborted c
     expect([1, 2]).toContain(picked[1].__v);
   });
 
-  it("answers the empty object for a lodash object method, and null for a JavaScript one", async () => {
+  it("answers the family's empty value for every reader of an object's pairs", async () => {
     if (guarded === null) {
       expect(OBJECT_EMPTY.length).toBeGreaterThan(0);
       return;

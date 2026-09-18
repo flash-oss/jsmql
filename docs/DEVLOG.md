@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-18 — fix: a reader of a whole object answers its empty value, not null
+
+`$objectToArray` answers null for a missing field, and `$arrayToObject` passes that
+null on, so every reader of an object's pairs answered null. `.pick(["a"])` was the
+odd one out — its `$getField` shape holds no `$objectToArray` — so it already answered
+`{}`, and one method answered two different things for one document once a runtime key
+list took the `$objectToArray` road.
+
+Every reader now guards its receiver with `$ifNull: [..., {}]` and answers its own
+empty value: `{}` from the object builders, `[]` from the pair readers. This is the
+one place jsmql follows lodash rather than JavaScript. `Object.keys(undefined)` is a
+TypeError, MongoDB has no error to raise inside an expression, and `_.keys(undefined)`
+is `[]` — the more useful of the two answers left, and the one a developer who wrote
+`Object.keys(o).length` expects. `Object.keys($)` reads the root document, which is
+there, so it keeps no neutral.
+
+Two pieces of machinery came out of it. `ExprIn.presentArg` is the presence proof
+`present` gives, asked of an ARGUMENT: a namespace call's receiver is the namespace,
+so `present` says nothing about `Object.keys(o)`'s `o`, and the `Object` statics need
+it to keep `Object.keys($)` bare. And `.keys()` / `.values()` / `.entries()` each had
+one body written three times — the object family, the namespace, an unproven receiver.
+A guard that read `present` made the family cell and `uncertain` answer different MQL,
+because a dispatch branch's `$type` test proves the receiver, and the compiler emits a
+`$switch` when they differ. The three copies are now one `pairsRead` whose receiver
+cells do not read `present` at all, the same shape `lastIndexOfArray` took.
+
+---
+
 ## 2026-09-17 — fix: a lodash object method over a missing field answers the empty object
 
 `$objectToArray` answers null for a missing field, and `$arrayToObject` passes that

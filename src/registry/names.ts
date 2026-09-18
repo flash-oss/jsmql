@@ -988,6 +988,27 @@ const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
 });
 
 /**
+ * `.keys()` / `.values()` / `.entries()` and the `Object` statics they share a row
+ * with: an object's `{ k, v }` pairs, one projection per row.
+ *
+ * ONE body for all three cells of a row — the object family, the `Object` namespace and
+ * a receiver of unproven family must answer the SAME MQL, and three copies of it drift.
+ * `_.keys(undefined)` is `[]`, so a missing object reads through the `{}` neutral and
+ * the row answers `[]` rather than the null `$objectToArray` gives.
+ *
+ * `present` defaults to FALSE and the two RECEIVER cells leave it there. Their answers
+ * are compared against each other: a `$type` test proves the receiver inside the family
+ * dispatch and not outside it, so a cell that read `present` would answer two different
+ * documents, which is what makes the compiler emit a `$switch` these rows do not need.
+ * The `Object` static never joins that comparison — its receiver is the namespace,
+ * named in the source — so it asks after its ARGUMENT and keeps `Object.keys($)` bare.
+ */
+const pairsRead = (obj: unknown, bind: ExprIn["bind"], project: (ref: string) => unknown, present = false): unknown => {
+  const kv = bind("kv");
+  return { $map: { input: pairsOfObject(obj, present), as: kv.as, in: project(kv.ref) } };
+};
+
+/**
  * The field names a `.pick()` / `.omit()` key list SPELLS, or null when only the
  * server knows them — a field path (`$.keys`), a spread, or a computed element.
  *
@@ -8371,25 +8392,15 @@ export const NAMES = {
         ),
         object: {
           args: { sig: "", none: true },
-          emit: ({ recv, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
-          },
+          emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => [`${r}.k`, `${r}.v`]),
         },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind }) => {
-            const kv = bind("kv");
-            return {
-              $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] },
-            };
-          },
+          emit: ({ args, value, bind, presentArg }) =>
+            pairsRead(value(args[0]), bind, (r) => [`${r}.k`, `${r}.v`], presentArg(args[0])),
         },
       },
-      uncertain: ({ recv, bind }) => {
-        const kv = bind("kv");
-        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
-      },
+      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => [`${r}.k`, `${r}.v`]),
     },
     stream: unsupported("'Object.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8413,25 +8424,14 @@ export const NAMES = {
         array: unsupported(
           ".keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array.",
         ),
-        object: {
-          args: { sig: "", none: true },
-          emit: ({ recv, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.k` } };
-          },
-        },
+        object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`) },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.k` } };
-          },
+          emit: ({ args, value, bind, presentArg }) =>
+            pairsRead(value(args[0]), bind, (r) => `${r}.k`, presentArg(args[0])),
         },
       },
-      uncertain: ({ recv, bind }) => {
-        const kv = bind("kv");
-        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.k` } };
-      },
+      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`),
     },
     stream: unsupported("'Object.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8454,25 +8454,14 @@ export const NAMES = {
         array: unsupported(
           ".values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence — use it directly.",
         ),
-        object: {
-          args: { sig: "", none: true },
-          emit: ({ recv, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.v` } };
-          },
-        },
+        object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`) },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.v` } };
-          },
+          emit: ({ args, value, bind, presentArg }) =>
+            pairsRead(value(args[0]), bind, (r) => `${r}.v`, presentArg(args[0])),
         },
       },
-      uncertain: ({ recv, bind }) => {
-        const kv = bind("kv");
-        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.v` } };
-      },
+      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`),
     },
     stream: unsupported("'Object.values()' produces a value, not a stream of documents."),
     statement: unsupported(

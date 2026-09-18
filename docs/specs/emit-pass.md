@@ -62,6 +62,16 @@ Above, the array branch counts `$x` bare and the string branch still guards. The
 null only for a null input; `.find` (a missing element), `.max` (of an empty array)
 and `.match` (`$regexFind` with no match) do not state it.
 
+Two things a cell has to know about that proof. A value the row guards may arrive as
+an ARGUMENT rather than as the receiver — a namespace call (`Object.keys(o)`) has a
+receiver that is the namespace, so `present` says nothing about `o` — and
+`ExprIn.presentArg` is the same proof asked of an argument. And a cell that reads
+either one answers a DIFFERENT document inside a dispatch branch, whose `$type` test
+proves the receiver, from the one it answers outside it; when a row's family cell and
+its `uncertain` are meant to be one answer, that difference is what makes the compiler
+emit a `$switch` the row does not want, so those two cells share one body that does
+not read `present` at all (`lastIndexOfArray`, `pairsRead` in `src/registry/names.ts`).
+
 The branches are the field families that hold a rule, in the row's order; the
 guard is `$type` against the family's BSON types widened by the rule's
 `alsoTypes`; the default is the row's required `uncertain`. A receiver that is

@@ -1040,6 +1040,10 @@ var lastIndexOfArray = ({ recv, args, value, bind }) => {
 var pairsOfObject = (recv, present) => ({
   $objectToArray: present ? recv : { $ifNull: [recv, {}] }
 });
+var pairsRead = (obj, bind, project, present = false) => {
+  const kv = bind("kv");
+  return { $map: { input: pairsOfObject(obj, present), as: kv.as, in: project(kv.ref) } };
+};
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
 var orderedBounds = (a, b) => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
@@ -8033,25 +8037,14 @@ var NAMES = {
         ),
         object: {
           args: { sig: "", none: true },
-          emit: ({ recv, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
-          }
+          emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => [`${r}.k`, `${r}.v`])
         },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind }) => {
-            const kv = bind("kv");
-            return {
-              $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] }
-            };
-          }
+          emit: ({ args, value, bind, presentArg }) => pairsRead(value(args[0]), bind, (r) => [`${r}.k`, `${r}.v`], presentArg(args[0]))
         }
       },
-      uncertain: ({ recv, bind }) => {
-        const kv = bind("kv");
-        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
-      }
+      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => [`${r}.k`, `${r}.v`])
     },
     stream: unsupported("'Object.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8074,25 +8067,13 @@ var NAMES = {
         array: unsupported(
           ".keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array."
         ),
-        object: {
-          args: { sig: "", none: true },
-          emit: ({ recv, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.k` } };
-          }
-        },
+        object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`) },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.k` } };
-          }
+          emit: ({ args, value, bind, presentArg }) => pairsRead(value(args[0]), bind, (r) => `${r}.k`, presentArg(args[0]))
         }
       },
-      uncertain: ({ recv, bind }) => {
-        const kv = bind("kv");
-        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.k` } };
-      }
+      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`)
     },
     stream: unsupported("'Object.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8114,25 +8095,13 @@ var NAMES = {
         array: unsupported(
           ".values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence \u2014 use it directly."
         ),
-        object: {
-          args: { sig: "", none: true },
-          emit: ({ recv, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.v` } };
-          }
-        },
+        object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`) },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind }) => {
-            const kv = bind("kv");
-            return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.v` } };
-          }
+          emit: ({ args, value, bind, presentArg }) => pairsRead(value(args[0]), bind, (r) => `${r}.v`, presentArg(args[0]))
         }
       },
-      uncertain: ({ recv, bind }) => {
-        const kv = bind("kv");
-        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.v` } };
-      }
+      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`)
     },
     stream: unsupported("'Object.values()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -25592,6 +25561,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     value,
     present,
     kind: (e) => kindOf(e, argEnv),
+    presentArg: (e) => isPresent(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth),

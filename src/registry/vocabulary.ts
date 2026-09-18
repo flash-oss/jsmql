@@ -946,6 +946,16 @@ export type ExprIn = {
    * operator answers null for a missing field.
    */
   present: boolean;
+  /**
+   * The same proof `present` gives, offered for an ARGUMENT — is the value this
+   * expression reads certainly THERE?
+   *
+   * A row needs it where the value it guards arrives as an argument rather than as the
+   * receiver: `Object.keys(o)` is a NAMESPACE call, so its `present` describes the
+   * namespace and says nothing about `o`. `Object.keys($)` reads the root document and
+   * needs no neutral; `Object.keys($.o)` reads a field that may not be there and does.
+   */
+  presentArg: (e: Expr) => boolean;
   /** Lower an expression as a CONDITION, JavaScript truthiness applied. See `Truth`. */
   truth: (e: Expr) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`, the parameter bound as `$$as` (`ref`). */

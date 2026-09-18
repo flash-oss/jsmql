@@ -275,6 +275,7 @@ export function exprInputs(
     value,
     present,
     kind: (e) => kindOf(e, argEnv),
+    presentArg: (e) => isPresent(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
