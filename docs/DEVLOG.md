@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-18 — decision: a `?.` stops the chain, and nothing wider
+
+DEF-036 now names the rule it targets. A `?.` makes every link AFTER it not run, and
+the chain answers null. The enclosing expression keeps the neutral it takes today, so
+`` `hi ${$.user?.name}` `` still prints `"hi "` and does not become null. The wider
+rule — one `?.` nullifies the whole value — was weighed and dropped: a template and a
+`+` exist to produce text, and null in place of that text loses what the query is for.
+
+MEASURED, and the reason no heuristic is needed: a `?.` with NO link after it changes
+nothing. There is nothing to stop, the chain's value is the field, and null is what a
+missing field already gives. So the consumer table in `docs/LANGUAGE.md` § Optional
+Chaining survives untouched, and the `$cond` appears only where a link follows the
+`?.`. That also removes a guard rather than adding one: the `$cond` runs its second
+branch only when the field is there, so the inner `$ifNull` on that field goes away —
+`$.s?.trim().length` guards twice today and once after.
+
+No behaviour changed with this entry.
+
+---
+
 ## 2026-09-18 — docs: DEF-036 tracks one rule for a reader of a null object
 
 A reader of a whole object — `.keys()`, `.toPairs()`, `.pick()` and their kin — now has

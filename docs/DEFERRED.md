@@ -104,23 +104,32 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** M
 
-### DEF-036 — One rule for a reader of an object that is null
+### DEF-036 — `?.` stops the chain
 
-- **What's blocked.** A *reader* is a method that reads a whole object. `.keys()`, `.values()`, `.entries()`, `.toPairs()`, `.pick()`, `.omit()`, `.mapValues()` and the other lodash object methods are readers. jsmql gives a reader three different answers when the field is null or absent, and the third answer does not agree with JavaScript:
-  - A lodash method answers the empty value. `$.o.pick(["a"])` answers `{}`. `$.o.toPairs()` answers `[]`.
-  - A JavaScript reader answers null. `$.o.keys()` answers null, because `Object.keys(undefined)` is a TypeError and MongoDB cannot raise one.
-  - A JavaScript reader under `?.` answers the empty value. `$.o?.keys()` answers `[]`.
+- **What's blocked.** JavaScript stops a full chain at a `?.`. A *chain* is one sequence of reads and calls from a single base: `$.user?.name.trim().length` is one chain of four links. jsmql does not stop. It puts an empty value in place of the missing field at the link that carries the `?.`, and the links after it read that empty value and continue. MEASURED, over a document that holds none of the fields:
 
-  JavaScript stops the full chain at a `?.`, and jsmql stops one link only. MEASURED: `$.o?.keys().length` answers 0, and JavaScript answers `undefined`. The same gap applies to every family, not only to objects: `$.a?.map(x => x).length` and `$.s?.trim().length` also answer 0.
-- **Target lowering.** A `?.` makes the full chain answer null. MEASURED on the fixture, `$.o?.keys().length` gives `null` for a document without `o` and `2` for `{ o: { a: 1, b: 2 } }` with this shape:
+  | source | jsmql | JavaScript |
+  |---|---|---|
+  | `$.o?.keys()` | `[]` | `undefined` |
+  | `$.o?.keys().length` | `0` | `undefined` |
+  | `$.o?.entries().length` | `0` | `undefined` |
+  | `$.a?.map(x => x).length` | `0` | `undefined` |
+  | `$.s?.trim().length` | `0` | `undefined` |
+
+  The gap is not about objects. Every receiver family shows it.
+- **Target lowering.** A `?.` makes every link AFTER it not run, and the chain answers null. MongoDB has no `undefined` inside an expression, so null stands for it. The developer chose this rule on 2026-09-18, over a wider rule that also nullifies the enclosing expression — a template must keep the text it prints, so `` `hi ${$.user?.name}` `` stays `"hi "` and does not become null. MEASURED on the fixture, each shape gives null for a document without the field and the right value for one with it:
   ```js
-  { $cond: [{ $in: [{ $type: "$o" }, ["missing", "null"]] }, null,
-            { $size: { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } }] }
+  $.o?.keys()          → { $cond: [{ $in: [{ $type: "$o" }, ["missing", "null"]] }, null,
+                                    { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }] }
+  $.s?.trim().length   → { $cond: [{ $in: [{ $type: "$s" }, ["missing", "null"]] }, null,
+                                    { $strLenCP: { $trim: { input: "$s" } } }] }
   ```
-  The plain `.` spellings keep the answers they have today.
-- **Why blocked.** Each link of a chain lowers on its own. A link does not know that an earlier link carries a `?.`, so it cannot stop the chain. A stop needs the test around the full chain, and the compiler builds the chain from the inside out. The `?.` neutral — the empty value the compiler puts in place of a missing field — goes in at the link that carries the `?.`, which is why the rest of the chain continues.
+  The `$cond` runs its second branch only when the field is there, so **every inner `$ifNull` on that field goes away**. Today `$.s?.trim().length` guards twice; the target guards once.
+
+  A `?.` with NO link after it does not change. There is nothing to stop, the chain's value is the field itself, and null is what a missing field already gives. So `` `hi ${$.user?.name}` `` and `$.first + " " + $.user?.last` keep the documents and the answers they have today, and the consumer table in `docs/LANGUAGE.md` § Optional Chaining stays as it is.
+- **Why blocked.** Each link of a chain lowers on its own, and the compiler builds a chain from the inside out. No link knows that an earlier link carries a `?.`. `chainHasOptional` (`src/compiler/emit/types.ts`) walks `MemberAccess` and `IndexAccess` only — it STOPS at a `MethodCall`, so it answers false for `$.o?.keys().length`. The work needs a walk that goes through a method call's receiver, and a test placed at the top of the chain rather than at the link.
 - **Attempted approaches.** None.
-- **Success criteria.** `jsmql.expr("$.o?.keys().length")` emits the document above. On a document without `o` the server answers `null`. `jsmql.expr("$.o.keys().length")` stays as it is. One rule then covers every reader, and [test/compiler-methods.test.ts](../test/compiler-methods.test.ts) compares each spelling with the answer JavaScript gives.
+- **Success criteria.** Each row of the table above answers `null` on a live mongod. `$.o.keys()` and every lodash method keep the answers they have. `` `hi ${$.user?.name}` `` keeps `"hi "` and its document does not grow. No row emits a `$switch` it did not emit before. [test/compiler-methods.test.ts](../test/compiler-methods.test.ts) holds one case per spelling and compares the server's answer with JavaScript's.
 - **Rejection site(s).** None — jsmql emits valid MQL for every spelling. The one live `[DEF-036]` tag is in [docs/LANGUAGE.md](LANGUAGE.md), on the optional-chain rule for a reader of a whole object.
 - **Spec.** [docs/specs/emit-pass.md](specs/emit-pass.md) § the optional chain's neutral; `docs/LANGUAGE.md` § Optional Chaining.
 - **Status.** design-only
