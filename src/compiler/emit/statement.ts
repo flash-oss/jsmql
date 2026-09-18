@@ -17,6 +17,7 @@ import { setKey } from "../../registry/mql.ts";
 import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
+import { evaluate } from "../passes/evaluate.ts";
 import {
   bansNestedOf,
   diagnosticOf,
@@ -1063,6 +1064,10 @@ function elementWiseOnDocument(value: Expr): readonly Link[] | null {
     const on = receiverFamiliesOf(namedRow(link) ?? link.name);
     if (link.optional || on === undefined || on === "any" || !on.includes("object") || !on.includes("stream"))
       return null;
+    // A stage reads its field list before any document, so the stream cell takes a list
+    // the SOURCE spells. `$ = $.pick($.keys)` names a list only the server knows, and
+    // the value cell reads it at query time — under `$replaceWith`, as any root value.
+    if (!link.args.every((a) => a.type !== "SpreadElement" && evaluate(a, new Map()).ok)) return null;
   }
   return links;
 }

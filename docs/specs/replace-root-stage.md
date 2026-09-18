@@ -91,9 +91,11 @@ document is what its stream cell makes of each document of the stream — so "th
 `pick(document)`" and "every document is picked" are the same operation, and the stream cell's
 `$project` is the smaller MQL. MEASURED: `[{ $project: { a: 1, b: 1, _id: 0 } }]` and the value
 form `$replaceWith: { $let: { vars: { jsmqlObj: "$$ROOT" }, in: { a: { $getField: … }, … } } }`
-return the same documents for a present, a null and a missing key. The stream cell's own rules
-apply — `$ = $.pick($.keys)` is refused by `pick`'s constant rule, with the message the `$$`
-spelling gives.
+return the same documents for a present, a null and a missing key. The stream road is taken only
+when every argument is a compile-time constant, because a stage reads its field list before any
+document. `$ = $.pick($.keys)` names a list only the server knows, so it takes the value road —
+one `$replaceWith` whose `.pick` reads the document's own keys at query time — as does any chain
+with such a link. The dispatch keys on what the developer wrote, so one input has one output.
 
 A chain with a link on the object family only (`$ = $.pick([…]).mapValues(…)`), or with a `?.`
 (`$ = $?.pick([…])`), is the value road: one `$replaceWith` over `$$ROOT`, as for every other

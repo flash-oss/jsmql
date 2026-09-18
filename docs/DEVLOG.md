@@ -71,6 +71,20 @@ deliberately drops the set: a stage that replaced the document invalidates it.
 
 ---
 
+## 2026-09-18 — fix: `$ = $.pick($.keys)` reads the key list at query time
+
+`$ = $.pick(["a", "b"])` takes the `$project` road, and `$ = $.pick($.keys)` was refused
+on it: a stage reads its field list before any document, so the stream cell demands a
+list the source spells. The value cell of `.pick` reads a list the server knows — the
+first fix of this branch — and the root dispatch never asked which cell could take the
+arguments. It now does: a chain on the bare `$` takes the stream road only when every
+argument is a compile-time constant, and otherwise the value road, under `$replaceWith`
+as any root value. MEASURED on the fixture: `{ a: 1, b: 2, keys: ["a", "_id"] }` becomes
+`{ _id, a: 1 }`, a document without `keys` becomes `{}`. The dispatch keys on what the
+developer wrote, so the same input gives the same output.
+
+---
+
 ## 2026-09-18 — docs: DEF-037 asks which answer a lodash method gives on a missing array
 
 A JavaScript method on a receiver that is null or missing answers null, one rule for all

@@ -3290,6 +3290,10 @@ jsmql('$ = $.pick(["name", "email"]);')
 // → [{ $project: { name: 1, email: 1, _id: 0 } }]
 jsmql('$ = $.omit(["passwordHash"]);')
 // → [{ $project: { passwordHash: 0 } }]
+// A key list the document carries is read at query time — a stage cannot take it,
+// so the same `.pick` runs as a value under `$replaceWith`.
+jsmql("$ = $.pick($.visibleFields);")
+// → [{ $replaceWith: { $arrayToObject: { $filter: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$visibleFields", []] }] } } } } }]
 
 // Merge fresh fields into the existing root.
 // Bare `$` inside the spread is the current document ($$ROOT in MQL).

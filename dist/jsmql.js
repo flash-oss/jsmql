@@ -27585,6 +27585,7 @@ function elementWiseOnDocument(value) {
     const on = receiverFamiliesOf(namedRow(link) ?? link.name);
     if (link.optional || on === void 0 || on === "any" || !on.includes("object") || !on.includes("stream"))
       return null;
+    if (!link.args.every((a) => a.type !== "SpreadElement" && evaluate(a, /* @__PURE__ */ new Map()).ok)) return null;
   }
   return links;
 }

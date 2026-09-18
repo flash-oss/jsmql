@@ -142,6 +142,24 @@ describe("compiler/emit/statement — the writes", () => {
         },
       },
     ]);
+    // A key list only the server knows cannot be a `$project`'s field list: the value cell
+    // reads the document's own keys at query time, under `$replaceWith`. A spelled list
+    // beside it still takes the stage.
+    expect(compiled("$ = $.pick($.keys);")).toEqual([
+      {
+        $replaceWith: {
+          $arrayToObject: {
+            $filter: {
+              input: { $objectToArray: "$$ROOT" },
+              as: "jsmqlKv",
+              cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$keys", []] }] },
+            },
+          },
+        },
+      },
+    ]);
+    expect(compiled('$ = $.pick(["a", "b"]);')).toEqual([{ $project: { a: 1, b: 1, _id: 0 } }]);
+    expect(compiled('$ = $.omit($.hidden).pick(["a"]);')).toMatchObject([{ $replaceWith: {} }]);
     // The stage replaces the document, and a binding it carried is gone — as after `$replaceWith`.
     expect(() => pipeline('let x = $.a * 2; $ = $.pick(["a"]); $.y = x;')).toThrow(/after `\$project`/);
     expect(compiled('let x = $.a * 2; $ = $.omit(["b"]); $.y = x;')).toEqual([
