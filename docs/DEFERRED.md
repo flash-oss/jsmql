@@ -104,6 +104,34 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** M
 
+### DEF-037 — One answer for a lodash method on an array that is null or missing
+
+- **What's blocked.** A JavaScript method on a receiver that is null or missing answers `null`, one rule for all of them. The lodash methods have no such rule. MEASURED over a document with no `a`, `o`:
+
+  | source | jsmql today | lodash on `undefined` |
+  |---|---|---|
+  | `$.a.uniq()`, `.compact()`, `.flatten()`, `.take(1)`, `.sortBy("k")`, `.union($.b)` | `null` | `[]` |
+  | `$.a.chunk(2)` | `[]` | `[]` |
+  | `$.a.sum()`, `.sumBy("x")` | `0` | `0` |
+  | `$.a.size()`, `.nth(0)` | no value | `0`, `undefined` |
+  | `$.a.first()`, `.last()`, `.min()`, `.sample()` | `null` | `undefined` |
+  | `$.a.partition(f)` | `[null, null]` | `[[], []]` |
+  | `$.a.countBy()`, `.groupBy("k")`, `.keyBy("k")` | `null` | `{}` |
+  | `$.o.pick(["a"])`, `.mapValues(f)`, `.invert()` | `{}` | `{}` |
+  | `$.o.toPairs()` | `[]` | `[]` |
+
+  Four different answers for one condition. A developer cannot predict the next one. The object methods already give lodash's answer; the array methods give MongoDB's.
+- **Target lowering.** One of two rules, and the choice is the developer's:
+  - **Rule A — `null`, the same as a JavaScript method.** `$.a.uniq()` stays `{ $setUnion: "$a" }` and answers `null`. One rule covers the whole language. The MQL is the smallest possible. The cost: `_.uniq(undefined)` is `[]` in lodash, so a developer who knows lodash gets a different value. The object methods change back from `{}` to `null`.
+  - **Rule B — lodash's own answer.** `$.a.uniq()` becomes `{ $setUnion: { $ifNull: ["$a", []] } }`. MEASURED: it answers `[]` for a missing `a`, where the bare form answers `null`. Each row states its neutral: `[]` for a method that answers an array, `0` for `.sum()` and `.size()`, `{}` for a method that answers an object, no value for `.first()` and its kin. The cost: one `$ifNull` on every lodash method whose receiver jsmql cannot prove is there, and a neutral fact stated on every lodash row.
+- **Why blocked.** This is a product decision, not a technical one. Both rules are one afternoon of work. The wrong rule is a breaking change to every lodash spelling, so it must be made once.
+- **Attempted approaches.** None. The object methods took Rule B on 2026-09-17 before the question was seen whole.
+- **Success criteria.** `docs/LANGUAGE.md` § Type-aware dispatch states one rule for a lodash method on a missing receiver. Every lodash row gives that answer on a live mongod, and the table in [test/compiler-methods.test.ts](../test/compiler-methods.test.ts) holds one case per row.
+- **Rejection site(s).** None — jsmql emits valid MQL for every spelling. The live `[DEF-037]` tags are in [docs/LANGUAGE.md](LANGUAGE.md) § Type-aware dispatch and [docs/specs/emit-pass.md](specs/emit-pass.md), on the sentences that describe today's behaviour.
+- **Spec.** [docs/specs/emit-pass.md](specs/emit-pass.md) § A JavaScript method on a receiver that may be missing; `docs/LANGUAGE.md` § Type-aware dispatch.
+- **Status.** design-only
+- **Effort.** S (Rule A) / M (Rule B)
+
 ---
 
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)

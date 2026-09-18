@@ -71,6 +71,22 @@ deliberately drops the set: a stage that replaced the document invalidates it.
 
 ---
 
+## 2026-09-18 — docs: DEF-037 asks which answer a lodash method gives on a missing array
+
+A JavaScript method on a receiver that is null or missing answers null, one rule for all
+of them. The lodash methods have no such rule. MEASURED over a document with no `a`:
+`.uniq()` answers null, `.chunk(2)` answers `[]`, `.sum()` answers 0, `.size()` writes
+no value, `.partition(f)` answers `[null, null]`, and the object methods answer `{}`.
+Four answers for one condition.
+
+Two rules are on the table, and the choice is a product decision: `null`, the same as a
+JavaScript method, which is one rule for the whole language and the smallest MQL; or
+lodash's own answer per method — `[]`, `0`, `{}` — which is what the object methods took
+on 2026-09-17 and costs one `$ifNull` per method on a receiver jsmql cannot prove is
+there. Both shapes are measured in the row. No behaviour changed with this entry.
+
+---
+
 ## 2026-09-18 — fix: a `?.` on a receiver that is certainly there adds nothing
 
 `$ = $?.pick(["a"])` emitted a `$cond` that tested `$$ROOT` for null. The document is

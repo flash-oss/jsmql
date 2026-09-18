@@ -58,7 +58,8 @@ proven from the source by `isPresent` (`emit/types.ts` — a literal, the root d
 `$lookup`'s array or a `let` of a present value through the binding's `present`, a
 `neverNull` row over present operands, a path in `Env.proven`), or proven at runtime by
 the `$type` test of the dispatch branch the cell runs under. A LODASH cell never calls
-`nullOr`: `_.size(undefined)` is 0, `_.pick(undefined, …)` is `{}`, and it answers that.
+`nullOr`. The lodash rows do not yet share one answer for a missing receiver — `.size()` 0,
+`.pick()` `{}`, `.uniq()` null — and which one they should share is tracked as [DEF-037].
 The `neverNull` fact is stated per row: `.map`, `.filter`, `.slice`, `Object.keys` answer
 null only for a null input; `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.

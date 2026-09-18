@@ -1031,8 +1031,8 @@ const pairsRead = (
  * `present` skips the test — a literal, `$range(…)`, a `$lookup`'s array, a path a
  * `?.` test on the way in already proved.
  *
- * A LODASH method does not call this: `_.size(undefined)` is 0 and `_.pick(undefined)`
- * is `{}`, and lodash's answer is the answer.
+ * A LODASH method does not call this. The lodash rows answer a missing receiver each in
+ * their own way today; see docs/DEFERRED.md for the one answer they are to share.
  */
 const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r: unknown) => unknown): unknown => {
   if (present) return body(recv);
