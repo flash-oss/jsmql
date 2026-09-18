@@ -123,20 +123,22 @@ describe("compiler/emit/statement — the writes", () => {
       { $project: { qty: 1, _id: 0 } },
     ]);
     // A link on the object family only, or an optional one, is the value road over `$$ROOT`.
+    // `.mapValues` is lodash's and reads its receiver through the `{}` neutral, because the
+    // `pick` before it is a value the compiler does not prove present.
     expect(compiled('$ = $.pick(["a"]).mapValues(v => v);')).toMatchObject([
       {
         $replaceWith: {
-          $arrayToObject: { $map: { input: { $objectToArray: { $let: { vars: { jsmqlObj: "$$ROOT" } } } } } },
+          $arrayToObject: {
+            $map: { input: { $objectToArray: { $ifNull: [{ $let: { vars: { jsmqlObj: "$$ROOT" } } }, {}] } } },
+          },
         },
       },
     ]);
+    // `?.` on the document itself asks nothing: `$$ROOT` is always there, so the value road runs bare.
     expect(compiled('$ = $?.pick(["a"]);')).toEqual([
       {
         $replaceWith: {
-          $let: {
-            vars: { jsmqlObj: { $ifNull: ["$$ROOT", {}] } },
-            in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } },
-          },
+          $let: { vars: { jsmqlObj: "$$ROOT" }, in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } } },
         },
       },
     ]);

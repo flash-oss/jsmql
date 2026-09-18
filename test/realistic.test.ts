@@ -690,7 +690,13 @@ $.plan = $.plan.toUpperCase();
     ).toEqual([
       { $match: { status: "active" } },
       { $project: { name: 1, email: 1, plan: 1, lastLoginAt: 1, _id: 0 } },
-      { $set: { plan: { $toUpper: "$plan" } } },
+      {
+        $set: {
+          plan: {
+            $cond: { if: { $eq: [{ $ifNull: ["$plan", null] }, null] }, then: null, else: { $toUpper: "$plan" } },
+          },
+        },
+      },
     ]);
   });
 });

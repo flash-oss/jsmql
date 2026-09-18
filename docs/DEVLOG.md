@@ -71,6 +71,21 @@ deliberately drops the set: a stage that replaced the document invalidates it.
 
 ---
 
+## 2026-09-18 — fix: a `?.` on a receiver that is certainly there adds nothing
+
+`$ = $?.pick(["a"])` emitted a `$cond` that tested `$$ROOT` for null. The document is
+always there, so the test could never fire and the `?.` bought a dead branch. The chain
+stop now asks `isPresent` first: a `?.` on the root document, on a `$lookup`'s array, on
+a literal or on a path a test on the way in already proved is read as the plain `.` it
+is. The same input still gives the same output — presence is a proof from the source,
+not a guess about the data.
+
+Two expectations that arrived with the `$.name(…)` commits are brought up to the rules
+this branch already holds: `.mapValues` reads a receiver it cannot prove present through
+the `{}` neutral, and `.toUpperCase()` on a field tests it first and answers null.
+
+---
+
 ## 2026-09-18 — feat: a JavaScript method on a null or missing receiver answers null
 
 MEASURED over a document that holds none of the fields, the JavaScript spellings gave

@@ -25917,7 +25917,7 @@ function lowerValue(node, env) {
     }
   }
   const stopped = stoppedChain(node);
-  if (stopped !== null) {
+  if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     const base = withoutOptional(stopped);
     const gone = truthOf({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] }, true);
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;

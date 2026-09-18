@@ -137,7 +137,8 @@ export function lowerValue(node: Expr, env: Env): unknown {
     }
   }
   const stopped = stoppedChain(node);
-  if (stopped !== null) {
+  // a `?.` on a receiver that is certainly there — the document, a `$lookup`'s array — asks nothing
+  if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     // `?.` stops the chain: the links after it do not run, and the chain answers null.
     const base = withoutOptional(stopped);
     const gone = truthOf({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] }, true);
