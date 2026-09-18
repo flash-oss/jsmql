@@ -20,6 +20,7 @@
 // a named zone shifts with daylight saving, and the table of zones is the server's.
 
 import type { Evaluation } from "./evaluate.ts";
+import { isDate } from "../../bson.ts";
 
 const NO: Evaluation = { ok: false };
 const ok = (value: unknown): Evaluation => ({ ok: true, value });
@@ -288,12 +289,12 @@ export function foldDateMethod(d: Date, name: string, args: readonly unknown[]):
         ? dateOk(new Date(shift(truncate(d, first), first, 1).getTime() - 1))
         : NO;
     case "diff":
-      if (args.length !== 2 || !(first instanceof Date) || !isUnit(second)) return NO;
+      if (args.length !== 2 || !isDate(first) || !isUnit(second)) return NO;
       return ok(boundariesBetween(first, d, second));
     case "isSame":
     case "isBefore":
     case "isAfter": {
-      if (args.length !== 2 || !(first instanceof Date) || !isUnit(second)) return NO;
+      if (args.length !== 2 || !isDate(first) || !isUnit(second)) return NO;
       const mine = truncate(d, second).getTime();
       const theirs = truncate(first, second).getTime();
       return ok(name === "isSame" ? mine === theirs : name === "isBefore" ? mine < theirs : mine > theirs);

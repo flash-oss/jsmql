@@ -57,7 +57,7 @@ const shorthand = (test: Readonly<Record<string, unknown>>): unknown => {
   const keys = Object.keys(test);
   if (keys.length !== 1 || keys[0] !== "$eq") return test;
   const v = test.$eq;
-  if (v instanceof RegExp) return test;
+  if (isRegExp(v)) return test;
   const operatorDoc =
     typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith("$"));
   return operatorDoc ? test : v;
@@ -326,6 +326,34 @@ export function bsonTagOf(v: unknown): string | undefined {
   const tag = (v as { _bsontype?: unknown })._bsontype;
   // bson 1.x spelled ObjectId's tag with an uppercase D, and jsmql reads both.
   return typeof tag === "string" ? (tag === "ObjectID" ? "ObjectId" : tag) : undefined;
+}
+
+/**
+ * What a value IS, read from its internal slot rather than its prototype.
+ *
+ * `instanceof Date` is false for a real Date made in another realm — a `vm` context,
+ * a test runner's sandbox, a worker — because each realm has its own `Date`. A
+ * parameter value can arrive from any of them, and a Date that fails the test would
+ * take the expression road and lose the index. `Object.prototype.toString` reads the
+ * internal slot, which every realm sets the same way. The same reasoning as
+ * `bsonTagOf`: recognition must not depend on a shared prototype.
+ * See docs/specs/bson-types.md § Recognition across realms.
+ */
+const kindOf = (v: unknown): string => Object.prototype.toString.call(v);
+export const isDate = (v: unknown): v is Date => kindOf(v) === "[object Date]";
+export const isRegExp = (v: unknown): v is RegExp => kindOf(v) === "[object RegExp]";
+/** A Uint8Array — a Node Buffer is one. */
+export const isBytes = (v: unknown): v is Uint8Array => kindOf(v) === "[object Uint8Array]";
+/**
+ * A plain object — one whose own properties are all there is to it: not an array, and
+ * its prototype is null or the root `Object.prototype` of WHICHEVER realm made it (the
+ * one prototype whose own prototype is null). Whether it wears a BSON tag is a separate
+ * question, `bsonTagOf`.
+ */
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const proto: unknown = Object.getPrototypeOf(v);
+  return proto === null || Object.getPrototypeOf(proto) === null;
 }
 
 export type Kind =

@@ -21,7 +21,7 @@ import { queryOwnValue } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
-import { bsonTagOf, longsWithin, ObjectId } from "../../bson.ts";
+import { bsonTagOf, isDate, isPlainObject, isRegExp, longsWithin, ObjectId } from "../../bson.ts";
 import { consult, listedIn } from "./consult.ts";
 import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
@@ -484,7 +484,7 @@ export function constantIn(e: Expr): { value: unknown } | null {
  */
 function isQueryConstant(x: unknown): boolean {
   if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return true;
-  if (x instanceof Date || bsonTagOf(x) !== undefined) return true;
+  if (isDate(x) || bsonTagOf(x) !== undefined) return true;
   if (Array.isArray(x)) return x.every(isQueryConstant);
   return false;
 }
@@ -559,14 +559,13 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
  * `/z$/` would read as one value and a merge would drop a condition.
  */
 function spell(v: unknown): string {
-  if (v instanceof RegExp) return `re:${v.source}/${v.flags}`;
-  if (v instanceof Date) return `date:${v.getTime()}`;
+  if (isRegExp(v)) return `re:${v.source}/${v.flags}`;
+  if (isDate(v)) return `date:${v.getTime()}`;
   if (Array.isArray(v)) return `[${v.map(spell).join(",")}]`;
   if (isObj(v)) {
-    const proto = Object.getPrototypeOf(v) as unknown;
     // A BSON value (an ObjectId, a Decimal128) answers for itself; only a plain
     // object is read key by key.
-    if (proto !== Object.prototype && proto !== null) return `bson:${String(v)}`;
+    if (!isPlainObject(v)) return `bson:${String(v)}`;
     return `{${Object.keys(v)
       .sort()
       .map((k) => `${k}:${spell(v[k])}`)
@@ -578,7 +577,7 @@ function spell(v: unknown): string {
 /** Two operator documents as one, or null when either is a plain value or they name one operator two ways. */
 function mergedOperators(a: unknown, b: unknown): Record<string, unknown> | null {
   const operatorDoc = (v: unknown): Record<string, unknown> | null => {
-    if (!isObj(v) || Array.isArray(v) || v instanceof Date || v instanceof RegExp) return null;
+    if (!isPlainObject(v)) return null;
     const keys = Object.keys(v);
     return keys.length > 0 && keys.every((k) => k.startsWith("$")) ? v : null;
   };

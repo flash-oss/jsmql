@@ -8,6 +8,7 @@
 // `$literal`, and the query road compares it as written. See docs/LANG_RULES.md.
 import type { Expr, Program } from "../../registry/ast.ts";
 import { asLiteral } from "./literal.ts";
+import { isPlainObject, isRegExp } from "../../bson.ts";
 
 /** Would the server read this value as MQL — a `$`-string, or a document holding a `$`-key or such a string? */
 export function isMqlShaped(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
@@ -16,7 +17,7 @@ export function isMqlShaped(value: unknown, seen: WeakSet<object> = new WeakSet(
   if (seen.has(value)) return false;
   seen.add(value);
   if (Array.isArray(value)) return value.some((v) => isMqlShaped(v, seen));
-  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false;
+  if (!isPlainObject(value)) return false;
   for (const [k, v] of Object.entries(value)) {
     if (k.startsWith("$") || isMqlShaped(v, seen)) return true;
   }
@@ -28,8 +29,7 @@ export function spellValue(value: unknown, pos: number): Expr {
   const literal = isMqlShaped(value) ? null : asLiteral(value, pos);
   // A RegExp the CALL supplied is the developer's own MongoDB regex — a query slot takes it as written,
   // a value slot passes it through — where one typed in source is a pattern for the regex methods.
-  if (literal !== null && literal.type === "RegexLiteral" && value instanceof RegExp)
-    return { ...literal, injected: value };
+  if (literal !== null && literal.type === "RegexLiteral" && isRegExp(value)) return { ...literal, injected: value };
   return literal ?? { type: "Injected", value, pos };
 }
 

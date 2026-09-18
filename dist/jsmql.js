@@ -453,7 +453,7 @@ var shorthand = (test) => {
   const keys = Object.keys(test);
   if (keys.length !== 1 || keys[0] !== "$eq") return test;
   const v = test.$eq;
-  if (v instanceof RegExp) return test;
+  if (isRegExp(v)) return test;
   const operatorDoc = typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith("$"));
   return operatorDoc ? test : v;
 };
@@ -475,6 +475,15 @@ function bsonTagOf(v) {
   if (typeof v !== "object" || v === null) return void 0;
   const tag = v._bsontype;
   return typeof tag === "string" ? tag === "ObjectID" ? "ObjectId" : tag : void 0;
+}
+var kindOf = (v) => Object.prototype.toString.call(v);
+var isDate = (v) => kindOf(v) === "[object Date]";
+var isRegExp = (v) => kindOf(v) === "[object RegExp]";
+var isBytes = (v) => kindOf(v) === "[object Uint8Array]";
+function isPlainObject(v) {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === null || Object.getPrototypeOf(proto) === null;
 }
 var isSlotLayout = (l) => !("arrowOnly" in l) && !("sortSpec" in l);
 var BSON_TYPE_ALIASES = [
@@ -1022,7 +1031,7 @@ var isExprNode = (e) => e.type !== "SpreadElement";
 var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
 var orderedBounds = (a, b) => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
-  if (a instanceof Date && b instanceof Date) return a <= b ? [a, b] : [b, a];
+  if (isDate(a) && isDate(b)) return a <= b ? [a, b] : [b, a];
   return null;
 };
 var norList = (input) => logicalList(input) ?? { $nor: [] };
@@ -13679,7 +13688,7 @@ function strictEqualityQuery(input, negated) {
   const pc = pathAndConstant(input);
   if (pc === null) return null;
   if (Array.isArray(pc.value)) return null;
-  if (pc.value instanceof RegExp) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
+  if (isRegExp(pc.value)) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
   return negated ? queryOwnValue(pc.path, { $ne: pc.value }) : queryOwnValue(pc.path, { $eq: pc.value });
 }
 function looseEqualityQuery(input, negated) {
@@ -13693,7 +13702,7 @@ function orderedQuery(input, op) {
   const pc = pathAndConstant(input);
   if (pc === null) return null;
   const v = pc.value;
-  const ordered = typeof v === "number" || typeof v === "string" || v instanceof Date || bsonTagOf(v) !== void 0;
+  const ordered = typeof v === "number" || typeof v === "string" || isDate(v) || bsonTagOf(v) !== void 0;
   if (!ordered) return null;
   return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
@@ -15340,13 +15349,13 @@ function isUint8Array(value) {
 function isAnyArrayBuffer(value) {
   return typeof value === "object" && value != null && Symbol.toStringTag in value && (value[Symbol.toStringTag] === "ArrayBuffer" || value[Symbol.toStringTag] === "SharedArrayBuffer");
 }
-function isRegExp(regexp) {
+function isRegExp2(regexp) {
   return regexp instanceof RegExp || Object.prototype.toString.call(regexp) === "[object RegExp]";
 }
 function isMap(value) {
   return typeof value === "object" && value != null && Symbol.toStringTag in value && value[Symbol.toStringTag] === "Map";
 }
-function isDate(date) {
+function isDate2(date) {
   return date instanceof Date || Object.prototype.toString.call(date) === "[object Date]";
 }
 function defaultInspect(x, _options) {
@@ -18285,7 +18294,7 @@ function serializeValue(value, options) {
     return serializeArray(value, options);
   if (value === void 0)
     return options.ignoreUndefined ? void 0 : null;
-  if (value instanceof Date || isDate(value)) {
+  if (value instanceof Date || isDate2(value)) {
     const dateNum = value.getTime(), inRange = dateNum > -1 && dateNum < 2534023188e5;
     if (options.legacy) {
       return options.relaxed && inRange ? { $date: value.getTime() } : { $date: getISOString(value) };
@@ -18309,7 +18318,7 @@ function serializeValue(value, options) {
     }
     return Number(BigInt.asIntN(64, value));
   }
-  if (value instanceof RegExp || isRegExp(value)) {
+  if (value instanceof RegExp || isRegExp2(value)) {
     let flags = value.flags;
     if (flags === void 0) {
       const match = value.toString().match(/[gimuy]*$/);
@@ -18547,7 +18556,7 @@ function isObjectId(v) {
 function objectIdHex(value) {
   const v = value;
   if (typeof v.toHexString === "function") return v.toHexString().toLowerCase();
-  if (v.id instanceof Uint8Array && v.id.length === 12) {
+  if (isBytes(v.id) && v.id.length === 12) {
     return [...v.id].map((b) => b.toString(16).padStart(2, "0")).join("");
   }
   if (typeof v.toString === "function") {
@@ -18638,7 +18647,7 @@ function longsWithin(value) {
     }
     return { ok: true, value: out };
   }
-  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+  if (isPlainObject(value)) {
     const out = {};
     for (const [key, held] of Object.entries(value)) {
       const converted = longsWithin(held);
@@ -18679,12 +18688,8 @@ function readLiteral(node) {
       return NOT_CONSTANT;
   }
 }
-function isPlainObject(v) {
-  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
-  if (v instanceof Date || v instanceof RegExp || v instanceof Uint8Array) return false;
-  if (bsonTagOf(v) !== void 0) return false;
-  const proto = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
+function isPlainObject2(v) {
+  return isPlainObject(v) && bsonTagOf(v) === void 0;
 }
 function asLiteral(value, pos) {
   if (value === null) return { type: "NullLiteral", pos };
@@ -18699,7 +18704,7 @@ function asLiteral(value, pos) {
     case "bigint":
       return { type: "BigIntLiteral", value: value.toString(), pos };
   }
-  if (value instanceof RegExp) {
+  if (isRegExp(value)) {
     return { type: "RegexLiteral", pattern: value.source, flags: value.flags, pos };
   }
   if (isObjectId(value)) {
@@ -18716,7 +18721,7 @@ function asLiteral(value, pos) {
     }
     return { type: "ArrayLiteral", elements, pos };
   }
-  if (isPlainObject(value)) {
+  if (isPlainObject2(value)) {
     const entries = [];
     for (const [name2, held] of Object.entries(value)) {
       const spelled3 = leafOf(held, pos);
@@ -18725,15 +18730,15 @@ function asLiteral(value, pos) {
     }
     return { type: "ObjectLiteral", entries, pos };
   }
-  if (value instanceof Date) return { type: "Injected", value, pos };
+  if (isDate(value)) return { type: "Injected", value, pos };
   return null;
 }
 function leafOf(value, pos) {
   if (value === void 0) return null;
-  if (value instanceof RegExp) return { type: "Injected", value, pos };
+  if (isRegExp(value)) return { type: "Injected", value, pos };
   const spelled3 = asLiteral(value, pos);
   if (spelled3 !== null) return spelled3;
-  return Array.isArray(value) || isPlainObject(value) ? null : { type: "Injected", value, pos };
+  return Array.isArray(value) || isPlainObject2(value) ? null : { type: "Injected", value, pos };
 }
 
 // src/compiler/passes/inject.ts
@@ -18743,7 +18748,7 @@ function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
   if (seen.has(value)) return false;
   seen.add(value);
   if (Array.isArray(value)) return value.some((v) => isMqlShaped(v, seen));
-  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false;
+  if (!isPlainObject(value)) return false;
   for (const [k, v] of Object.entries(value)) {
     if (k.startsWith("$") || isMqlShaped(v, seen)) return true;
   }
@@ -18751,8 +18756,7 @@ function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
 }
 function spellValue(value, pos) {
   const literal2 = isMqlShaped(value) ? null : asLiteral(value, pos);
-  if (literal2 !== null && literal2.type === "RegexLiteral" && value instanceof RegExp)
-    return { ...literal2, injected: value };
+  if (literal2 !== null && literal2.type === "RegexLiteral" && isRegExp(value)) return { ...literal2, injected: value };
   return literal2 ?? { type: "Injected", value, pos };
 }
 function inject(root2, values) {
@@ -20244,12 +20248,12 @@ function foldDateMethod(d, name2, args) {
     case "endOf":
       return args.length === 1 && isUnit(first) ? dateOk(new Date(shift(truncate(d, first), first, 1).getTime() - 1)) : NO;
     case "diff":
-      if (args.length !== 2 || !(first instanceof Date) || !isUnit(second)) return NO;
+      if (args.length !== 2 || !isDate(first) || !isUnit(second)) return NO;
       return ok(boundariesBetween(first, d, second));
     case "isSame":
     case "isBefore":
     case "isAfter": {
-      if (args.length !== 2 || !(first instanceof Date) || !isUnit(second)) return NO;
+      if (args.length !== 2 || !isDate(first) || !isUnit(second)) return NO;
       const mine = truncate(d, second).getTime();
       const theirs = truncate(first, second).getTime();
       return ok(name2 === "isSame" ? mine === theirs : name2 === "isBefore" ? mine < theirs : mine > theirs);
@@ -20410,7 +20414,7 @@ function foldNamespaceCall(namespace, name2, args) {
   }
   if (namespace === "Object") {
     const [o, b] = values;
-    const plain = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
+    const plain = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v);
     switch (name2) {
       case "keys":
         return plain(o) ? ok2(Object.keys(o)) : NO2;
@@ -20495,7 +20499,7 @@ function foldInstanceCall(receiver, name2, args) {
   if (typeof receiver === "string") return stringMethod(receiver, name2, args);
   if (Array.isArray(receiver)) return arrayMethod(receiver, name2, args);
   if (typeof receiver === "number") return numberMethod(receiver, name2, args);
-  if (receiver instanceof Date) return foldDateMethod(receiver, name2, args.map(valueOf));
+  if (isDate(receiver)) return foldDateMethod(receiver, name2, args.map(valueOf));
   if (bsonTagOf(receiver) !== void 0) {
     if (name2 !== "toString" || args.length !== 0) return NO2;
     if (isObjectId(receiver)) {
@@ -20505,15 +20509,11 @@ function foldInstanceCall(receiver, name2, args) {
     const own = receiver.toString;
     return typeof own === "function" && own !== Object.prototype.toString ? ok2(String(own.call(receiver))) : NO2;
   }
-  if (isPlainObject2(receiver)) return objectMethod(receiver, name2, args);
+  if (isPlainObject3(receiver)) return objectMethod(receiver, name2, args);
   return NO2;
 }
-function isPlainObject2(v) {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-  if (v instanceof Date || v instanceof RegExp || v instanceof Uint8Array) return false;
-  if (v._bsontype !== void 0) return false;
-  const proto = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
+function isPlainObject3(v) {
+  return isPlainObject(v) && bsonTagOf(v) === void 0;
 }
 var WORD = /[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+/g;
 var wordsOf = (s) => s.match(WORD) ?? [];
@@ -20758,7 +20758,7 @@ function sortAsk(name2, values) {
   const direction = (v) => v === void 0 || v === 1 || v === "asc" ? 1 : v === -1 || v === "desc" ? -1 : null;
   const [first, second] = values;
   const keys = [];
-  if (name2 === "orderBy" && isPlainObject2(first)) {
+  if (name2 === "orderBy" && isPlainObject3(first)) {
     if (second !== void 0) return null;
     for (const [field, v] of Object.entries(first)) {
       const d = direction(v);
@@ -20782,7 +20782,7 @@ function sortAsk(name2, values) {
 function readField(doc, field) {
   let cursor = doc;
   for (const segment of field.split(".")) {
-    if (!isPlainObject2(cursor)) return void 0;
+    if (!isPlainObject3(cursor)) return void 0;
     cursor = cursor[segment];
   }
   return cursor;
@@ -21131,7 +21131,7 @@ function nameIfUnspellable(value) {
       const name2 = nameIfUnspellable(v);
       if (name2 !== null) return name2;
     }
-  } else if (typeof value === "object" && value !== null && !(value instanceof Date)) {
+  } else if (typeof value === "object" && value !== null && !isDate(value)) {
     for (const v of Object.values(value)) {
       const name2 = nameIfUnspellable(v);
       if (name2 !== null) return name2;
@@ -21327,7 +21327,7 @@ function unary(op, operand) {
       return NOT_CONSTANT2;
   }
 }
-var isPlain = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date) && !(v instanceof RegExp) && v._bsontype === void 0;
+var isPlain = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v) && !isRegExp(v) && v._bsontype === void 0;
 function lengthOf(receiver) {
   if (Array.isArray(receiver)) return ok3(receiver.length);
   if (typeof receiver === "string") return ok3([...receiver].length);
@@ -21391,8 +21391,8 @@ function familyOfValue(value) {
   if (typeof value === "string") return "string";
   if (Array.isArray(value)) return "array";
   if (typeof value === "number") return "number";
-  if (value instanceof Date) return "date";
-  if (value instanceof RegExp) return "regexp";
+  if (isDate(value)) return "date";
+  if (isRegExp(value)) return "regexp";
   if (typeof value === "object" && value !== null) return "object";
   return void 0;
 }
@@ -21992,7 +21992,7 @@ function nonFiniteIn(value) {
     }
     return null;
   }
-  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+  if (isPlainObject(value)) {
     for (const v of Object.values(value)) {
       const found2 = nonFiniteIn(v);
       if (found2 !== null) return found2;
@@ -23620,6 +23620,10 @@ var Env = class _Env {
 
 // src/stringify.ts
 var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
+var kindOf2 = (v) => Object.prototype.toString.call(v);
+var isDate3 = (v) => kindOf2(v) === "[object Date]";
+var isRegExp3 = (v) => kindOf2(v) === "[object RegExp]";
+var isBytes2 = (v) => kindOf2(v) === "[object Uint8Array]";
 function keySource(key) {
   if (key === "__proto__") return `[${JSON.stringify(key)}]`;
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
@@ -23699,13 +23703,13 @@ function stringify2(value, options) {
   const seen = /* @__PURE__ */ new Set();
   const leaf2 = (v) => {
     if (v === null) return "null";
-    if (v instanceof Date) {
+    if (isDate3(v)) {
       if (Number.isNaN(v.getTime()))
         throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
       return `new Date(${str(v.toISOString())})`;
     }
-    if (v instanceof RegExp) return String(v);
-    if (v instanceof Uint8Array) return `new Uint8Array([${Array.from(v).join(", ")}])`;
+    if (isRegExp3(v)) return String(v);
+    if (isBytes2(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
     const tag = tagOf(v);
     if (tag !== void 0) {
       const spelled3 = bsonSource(tag, v, (x) => render(x, 0));
@@ -24079,7 +24083,7 @@ function checkBody(name2, rule, args, keys, pos) {
     }
     for (let i = 1; i < held.length; i++) {
       const a = held[i - 1], b = held[i];
-      const ordered = typeof a === typeof b && (typeof a === "number" || typeof a === "string" || a instanceof Date) ? a < b : true;
+      const ordered = typeof a === typeof b && (typeof a === "number" || typeof a === "string" || isDate(a)) ? a < b : true;
       if (!ordered) {
         throw new CodegenError(
           `'${name2}' ${k} must be sorted ascending: ${stringify2(a)} is not less than ${stringify2(b)} \u2014 the server refuses it.`,
@@ -24338,7 +24342,7 @@ function elementKindOf2(node, env) {
     let one = null;
     for (const el of node.elements) {
       if (el.type === "SpreadElement") return "unknown";
-      const k = kindOf(el, env);
+      const k = kindOf3(el, env);
       if (k === "unknown" || one !== null && k !== one) return "unknown";
       one = k;
     }
@@ -24362,7 +24366,7 @@ function sourceFamily(node) {
     return constructedFamilyOf(node.callee.name) ?? null;
   return null;
 }
-function kindOf(node, env) {
+function kindOf3(node, env) {
   switch (node.type) {
     case "NumberLiteral":
     case "BigIntLiteral":
@@ -24380,11 +24384,11 @@ function kindOf(node, env) {
       if (typeof v === "number" || typeof v === "bigint") return "number";
       if (typeof v === "string") return isMqlShaped(v) ? "unknown" : "string";
       if (typeof v === "boolean") return "bool";
-      if (v instanceof Date) return "date";
+      if (isDate(v)) return "date";
       if (Array.isArray(v)) return isMqlShaped(v) ? "unknown" : "array";
       const tag = bsonTagOf(v);
       if (tag !== void 0) return BSON_KIND[tag] ?? "unknown";
-      if (v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) {
+      if (isPlainObject(v)) {
         return isMqlShaped(v) ? "unknown" : "object";
       }
       return "unknown";
@@ -24401,7 +24405,7 @@ function kindOf(node, env) {
       if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
         return resolveReturns(
           returnsOf(node.name),
-          kindOf(node.object, env),
+          kindOf3(node.object, env),
           receiverFamilyOf(node.object, env),
           elementsRead(node.object, env)
         );
@@ -24411,7 +24415,7 @@ function kindOf(node, env) {
     case "MethodCall": {
       const family = receiverFamilyOf(node.object, env);
       if (family !== null)
-        return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family, elementsRead(node.object, env));
+        return resolveReturns(returnsOf(node.name), kindOf3(node.object, env), family, elementsRead(node.object, env));
       const r = returnsOf(node.name);
       if (typeof r === "string" && r !== "same" && r !== "element" && r !== "unknown") return r;
       const sole = soleFieldFamilyOf(node.name);
@@ -24422,11 +24426,11 @@ function kindOf(node, env) {
     case "OperatorCall":
       return resolveReturns(returnsOf(node.name), "unknown", null);
     case "CallExpression":
-      if (node.callee.type === "Lambda" && node.callee.body !== void 0) return kindOf(node.callee.body, env);
+      if (node.callee.type === "Lambda" && node.callee.body !== void 0) return kindOf3(node.callee.body, env);
       if (node.callee.type === "Ident" && env.scope.has(node.callee.name)) {
         const b = env.lookup(node.callee.name, node.callee.pos);
         if (b.ref.kind === "function" && b.ref.lambda.type === "Lambda" && b.ref.lambda.body !== void 0)
-          return kindOf(b.ref.lambda.body, env);
+          return kindOf3(b.ref.lambda.body, env);
       }
       return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? resolveReturns(returnsOf(node.callee.name), "unknown", null) : "unknown";
     case "NewExpression":
@@ -24437,27 +24441,27 @@ function kindOf(node, env) {
     }
     case "BinaryExpr": {
       if (node.op === "+") {
-        const l = kindOf(node.left, env);
-        const r = kindOf(node.right, env);
+        const l = kindOf3(node.left, env);
+        const r = kindOf3(node.right, env);
         if (l === "string" || r === "string") return "string";
         return l === "number" && r === "number" ? "number" : "unknown";
       }
       if (node.op === "&&" || node.op === "||") {
-        return kindOf(node.left, env) === "bool" && kindOf(node.right, env) === "bool" ? "bool" : "unknown";
+        return kindOf3(node.left, env) === "bool" && kindOf3(node.right, env) === "bool" ? "bool" : "unknown";
       }
       if (node.op === "??") {
-        const l = kindOf(node.left, env);
-        return l === kindOf(node.right, env) ? l : "unknown";
+        const l = kindOf3(node.left, env);
+        return l === kindOf3(node.right, env) ? l : "unknown";
       }
       const key = productionForOperator("BinaryExpr", node.op);
       return key === void 0 ? "unknown" : resolveReturns(returnsOf(key), "unknown", null);
     }
     case "TernaryExpr": {
-      const c = kindOf(node.consequent, env);
-      return c === kindOf(node.alternate, env) ? c : "unknown";
+      const c = kindOf3(node.consequent, env);
+      return c === kindOf3(node.alternate, env) ? c : "unknown";
     }
     case "ExprBlock":
-      return kindOf(node.ret, env);
+      return kindOf3(node.ret, env);
     default:
       return "unknown";
   }
@@ -24466,7 +24470,7 @@ function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
   if (src !== null) return src;
   if (node.type === "CollectionRef") return "stream";
-  return familyOfKind(kindOf(node, env));
+  return familyOfKind(kindOf3(node, env));
 }
 
 // src/compiler/emit/join.ts
@@ -24495,7 +24499,7 @@ function foreignChain(node) {
 function documentBody(link, env) {
   const cb = link.args[0];
   if (cb === void 0 || cb.type !== "Lambda" || cb.body === void 0) return false;
-  return kindOf(cb.body, env) === "object";
+  return kindOf3(cb.body, env) === "object";
 }
 function lookupOf(node, env, S, over = "$lookup") {
   let head = node;
@@ -25355,7 +25359,7 @@ function constantIn(e) {
 }
 function isQueryConstant(x) {
   if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return true;
-  if (x instanceof Date || bsonTagOf(x) !== void 0) return true;
+  if (isDate(x) || bsonTagOf(x) !== void 0) return true;
   if (Array.isArray(x)) return x.every(isQueryConstant);
   return false;
 }
@@ -25406,19 +25410,18 @@ function mergeAnd(a, b) {
 }
 var isObj4 = (v) => typeof v === "object" && v !== null;
 function spell3(v) {
-  if (v instanceof RegExp) return `re:${v.source}/${v.flags}`;
-  if (v instanceof Date) return `date:${v.getTime()}`;
+  if (isRegExp(v)) return `re:${v.source}/${v.flags}`;
+  if (isDate(v)) return `date:${v.getTime()}`;
   if (Array.isArray(v)) return `[${v.map(spell3).join(",")}]`;
   if (isObj4(v)) {
-    const proto = Object.getPrototypeOf(v);
-    if (proto !== Object.prototype && proto !== null) return `bson:${String(v)}`;
+    if (!isPlainObject(v)) return `bson:${String(v)}`;
     return `{${Object.keys(v).sort().map((k) => `${k}:${spell3(v[k])}`).join(",")}}`;
   }
   return `${typeof v}:${String(v)}`;
 }
 function mergedOperators(a, b) {
   const operatorDoc = (v) => {
-    if (!isObj4(v) || Array.isArray(v) || v instanceof Date || v instanceof RegExp) return null;
+    if (!isPlainObject(v)) return null;
     const keys = Object.keys(v);
     return keys.length > 0 && keys.every((k) => k.startsWith("$")) ? v : null;
   };
@@ -25520,7 +25523,7 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
     throw reducerShape(name2, cb.pos);
   }
   const [acc, elem, index] = cb.params;
-  const accType = kindOf(seed, env);
+  const accType = kindOf3(seed, env);
   const direct = !callsSomething(cb.body);
   const vars = {};
   let bodyEnv = env;
@@ -25587,7 +25590,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     keys,
     value,
     present,
-    kind: (e) => kindOf(e, argEnv),
+    kind: (e) => kindOf3(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth),
@@ -25800,7 +25803,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
     },
     document: (cb) => {
       const b = body(cb, "a document");
-      const kind = b.body.type === "NullLiteral" ? "null" : kindOf(b.body, b.env);
+      const kind = b.body.type === "NullLiteral" ? "null" : kindOf3(b.body, b.env);
       if (kind !== "unknown" && kind !== "object") throw mapMustReturnDocument(name2, kind, b.body.pos);
       return read.reshape(b.body, b.env);
     },
@@ -25968,7 +25971,7 @@ function lowerTruth(node, env) {
       exprBlock(node, env, (ret, e) => lowerTruth(ret, e)),
       true
     );
-  return truthOf(lowerValue(node, env), kindOf(node, env) === "bool");
+  return truthOf(lowerValue(node, env), kindOf3(node, env) === "bool");
 }
 function templateLiteral(node, env) {
   if (node.exprs.length === 0) return node.quasis[0] ?? "";
@@ -25978,7 +25981,7 @@ function templateLiteral(node, env) {
     if (node.quasis[i] !== "") parts.push(node.quasis[i]);
     const lowered = lowerValue(e, inner);
     const safe = chainHasOptional(e) ? { $ifNull: [lowered, ""] } : lowered;
-    parts.push(kindOf(e, inner) === "string" ? safe : { $toString: safe });
+    parts.push(kindOf3(e, inner) === "string" ? safe : { $toString: safe });
   });
   const tail = node.quasis[node.exprs.length];
   if (tail !== "" && tail !== void 0) parts.push(tail);
@@ -26036,7 +26039,7 @@ function arrayLiteral(node, elements, env) {
   for (const el of elements) {
     if (el.type === "SpreadElement") {
       flush();
-      if (kindOf(el.argument, inner) === "string") throw spreadOfString(el.argument.pos);
+      if (kindOf3(el.argument, inner) === "string") throw spreadOfString(el.argument.pos);
       const v = lowerValue(el.argument, inner);
       operands.push(chainHasOptional(el.argument) ? { $ifNull: [v, []] } : v);
     } else if (isExpr2(el)) group.push(lowerValue(el, inner));
@@ -26081,7 +26084,7 @@ function objectLiteral(node, entries, env) {
   for (const e of entries) {
     if (e.type === "SpreadElement") {
       flush();
-      if (kindOf(e.argument, inner) === "string") throw spreadOfString(e.argument.pos);
+      if (kindOf3(e.argument, inner) === "string") throw spreadOfString(e.argument.pos);
       operands.push(lowerValue(e.argument, inner));
     } else group.push(e);
   }
@@ -26180,9 +26183,9 @@ function indexAccess(node, env) {
   const raw = lowerValue(node.object, objEnv);
   const idx = lowerValue(node.index, childEnv(env, node, "index"));
   const optional = node.optional || chainHasOptional(node.object);
-  const known = node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf(node.object, objEnv));
+  const known = node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf3(node.object, objEnv));
   const wrapped = (neutral) => optional ? { $ifNull: [raw, neutral] } : raw;
-  if (kindOf(node.index, env) === "string") return { $getField: { field: idx, input: wrapped({}) } };
+  if (kindOf3(node.index, env) === "string") return { $getField: { field: idx, input: wrapped({}) } };
   const literal2 = evaluate(node.index, /* @__PURE__ */ new Map());
   if (literal2.ok && typeof literal2.value === "number" && Number.isInteger(literal2.value)) {
     const i = literal2.value;
@@ -26217,7 +26220,7 @@ function receiverOf(recv, env) {
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
   if (src === "set") return { kind: "value", family: "set", lowered };
-  const kind = kindOf(recv, env);
+  const kind = kindOf3(recv, env);
   const family = familyOfKind(kind);
   if (family !== null) return { kind: "value", family, lowered };
   return kind === "unknown" ? { kind: "opaque", lowered } : { kind: "opaque", lowered, proved: kind };
@@ -26347,7 +26350,7 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
   let bodyEnv = env;
   args.forEach((a, i) => {
     if (a.type === "SpreadElement") throw spreadInCall(label, a.pos);
-    const bound = bodyEnv.param(lambda.params[i], kindOf(a, env), lambda.pos);
+    const bound = bodyEnv.param(lambda.params[i], kindOf3(a, env), lambda.pos);
     vars[bound.as] = lowerValue(a, env);
     bodyEnv = bound.env;
   });
@@ -26478,7 +26481,7 @@ function binary2(node, env) {
   switch (node.op) {
     case "+": {
       const operands = chainOf2(node, "+");
-      if (operands.some((e) => kindOf(e, inner) === "string")) {
+      if (operands.some((e) => kindOf3(e, inner) === "string")) {
         return {
           $concat: operands.map(
             (e) => chainHasOptional(e) ? { $ifNull: [lowerValue(e, inner), ""] } : lowerValue(e, inner)
@@ -26538,13 +26541,13 @@ function logicalValue(node, env) {
   const op = node.op;
   const inner = childEnv(env, node, "left");
   const chain = chainOf2(node, op);
-  if (chain.every((e) => kindOf(e, inner) === "bool")) return asValue(lowerTruth(node, env));
+  if (chain.every((e) => kindOf3(e, inner) === "bool")) return asValue(lowerTruth(node, env));
   const fold2 = (rest, e) => {
     if (rest.length === 1) return lowerValue(rest[0], e);
     const lhs = rest[0];
     const lowered = lowerValue(lhs, e);
     const rhs = fold2(rest.slice(1), e);
-    const isBool = kindOf(lhs, e) === "bool";
+    const isBool = kindOf3(lhs, e) === "bool";
     if (pathOf(lhs, e) !== null || isBool) {
       const test2 = truthOf(lowered, isBool);
       return op === "&&" ? cond2(test2, rhs, lowered) : cond2(test2, lowered, rhs);
@@ -26601,7 +26604,7 @@ function exprBlock(node, env, ret) {
       carry = null;
       if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
       seen.add(d.name);
-      const bound = scope.param(d.name, kindOf(d.value, scope), d.pos);
+      const bound = scope.param(d.name, kindOf3(d.value, scope), d.pos);
       vars[bound.as] = value;
       refs.push(`$$${bound.as}`);
       scope = bound.env;
@@ -26687,7 +26690,7 @@ function unionStages(args, env, node, S) {
       docs.push(...asList);
       continue;
     }
-    const kind = kindOf(a, env);
+    const kind = kindOf3(a, env);
     if (kind === "object" || kind === "unknown") {
       docs.push(a);
       continue;
@@ -27136,7 +27139,7 @@ function letStages(decl, env) {
   env.chain.dirty = true;
   return {
     stages: [{ $set: { [slot.path]: value } }],
-    env: bind(kindOf(decl.value, env), isPresent(decl.value, childEnv(env, decl, "value")))
+    env: bind(kindOf3(decl.value, env), isPresent(decl.value, childEnv(env, decl, "value")))
   };
 }
 function afterStages(stages, env) {
@@ -27262,7 +27265,7 @@ function becomeStream(value, env, valueEnv, first, written = "$$ = \u2026", lead
   if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written);
   const chainOn = chainBase(value);
   const streamRoad = chainOn.type === "CollectionRef" || readsAnotherCollection(value) || onOwnStream(chainOn, env);
-  const kind = streamRoad ? "stream" : kindOf(value, env);
+  const kind = streamRoad ? "stream" : kindOf3(value, env);
   if (kind !== "stream" && kind !== "array" && kind !== "unknown")
     throw notAStreamChain(value.pos, KIND_NOUN[kind] ?? `a ${kind}`, lead, how);
   if (kind === "stream") return streamStages(value, env, first);
@@ -27327,7 +27330,7 @@ function mergeStages(node, env, first) {
   return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos)];
 }
 function oneDocumentStages(value, env) {
-  const kind = kindOf(value, env);
+  const kind = kindOf3(value, env);
   if (kind !== "object" && kind !== "unknown") throw mergeNotADocument(KIND_NOUN[kind] ?? `a ${kind}`, value.pos);
   return [{ $replaceWith: lowerValue(value, env.at({ at: "value" })) }];
 }
@@ -27372,7 +27375,7 @@ function pathsRead(node, into) {
   }
   return into;
 }
-var replacesWhole = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype && Object.keys(v).every((k) => !k.startsWith("$"));
+var replacesWhole = (v) => isPlainObject(v) && Object.keys(v).every((k) => !k.startsWith("$"));
 var ELEMENT_NOUN = {
   number: "numbers",
   string: "strings",
@@ -27470,7 +27473,7 @@ function writeStages(uf, env, first) {
       if (op.value.type === "NullLiteral" || op.value.type === "UndefinedLiteral") {
         throw rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
       }
-      const kind = kindOf(op.value, inner);
+      const kind = kindOf3(op.value, inner);
       if (kind === "array") throw rootIsArray(op.pos);
       if (kind !== "unknown" && kind !== "object") throw rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
       flush();
@@ -27484,7 +27487,7 @@ function writeStages(uf, env, first) {
     if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
       const binding = {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
-        type: kindOf(op.value, inner),
+        type: kindOf3(op.value, inner),
         elements: "unknown",
         present: false,
         mutable: true,
@@ -27849,8 +27852,7 @@ function isTemplateStringsArray(x) {
 var fnSource = (fn) => Function.prototype.toString.call(fn).trim();
 function isCircular(value, seen = /* @__PURE__ */ new WeakSet()) {
   if (value === null || typeof value !== "object") return false;
-  const proto = Object.getPrototypeOf(value);
-  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return false;
+  if (!Array.isArray(value) && !isPlainObject(value)) return false;
   if (seen.has(value)) return true;
   seen.add(value);
   const children = Array.isArray(value) ? value : Object.values(value);
@@ -27886,7 +27888,7 @@ function checkValue(value, slot, key) {
     }
     if (v === null || typeof v !== "object") return;
     if (bsonTagOf(v) !== void 0) return;
-    if (v instanceof Date || v instanceof RegExp) return;
+    if (isDate(v) || isRegExp(v)) return;
     if (Array.isArray(v)) {
       v.forEach((x, i) => walk(x, `${path}[${i}]`));
       return;

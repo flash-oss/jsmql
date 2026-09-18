@@ -102,6 +102,7 @@ import {
   because,
   escapeForRegex,
   GROUP_SLOT,
+  isDate,
   LENGTH_SLOT,
   objectBody,
   queryOwnValue,
@@ -953,7 +954,7 @@ const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : {
  */
 const orderedBounds = (a: unknown, b: unknown): readonly [unknown, unknown] | null => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
-  if (a instanceof Date && b instanceof Date) return a <= b ? [a, b] : [b, a];
+  if (isDate(a) && isDate(b)) return a <= b ? [a, b] : [b, a];
   return null;
 };
 

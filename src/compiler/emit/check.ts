@@ -15,6 +15,7 @@ import { staticKey } from "../passes/naming.ts";
 import { bodyExampleOf, bodySlotAt } from "../rows.ts";
 import { computedKeyInOperatorBody, spreadInOperatorBody } from "./errors.ts";
 import { evaluate } from "../passes/evaluate.ts";
+import { isDate } from "../../bson.ts";
 
 type Lit = { kind: "number" | "string" | "bool" | "null" | "array" | "object" | "regex" | "bigint"; value: Expr };
 
@@ -421,7 +422,7 @@ export function checkBody(
       const a = held[i - 1],
         b = held[i];
       const ordered =
-        typeof a === typeof b && (typeof a === "number" || typeof a === "string" || a instanceof Date)
+        typeof a === typeof b && (typeof a === "number" || typeof a === "string" || isDate(a))
           ? (a as number) < (b as number)
           : true;
       if (!ordered) {

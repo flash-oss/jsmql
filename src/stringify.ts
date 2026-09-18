@@ -32,6 +32,15 @@ export type StringifyOptions = {
 const tagOf = (v: unknown): string | undefined =>
   typeof v === "object" && v !== null ? ((v as { _bsontype?: string })._bsontype ?? undefined) : undefined;
 
+// What a value IS, read from its internal slot: `instanceof` is false for a Date, a
+// RegExp or a Uint8Array made in another realm, and `Object.prototype.toString` is
+// not. Twins of the recognisers in src/registry/vocabulary.ts, held here so this
+// module stays a leaf. See docs/specs/bson-types.md § Recognition across realms.
+const kindOf = (v: unknown): string => Object.prototype.toString.call(v);
+const isDate = (v: unknown): v is Date => kindOf(v) === "[object Date]";
+const isRegExp = (v: unknown): v is RegExp => kindOf(v) === "[object RegExp]";
+const isBytes = (v: unknown): v is Uint8Array => kindOf(v) === "[object Uint8Array]";
+
 /**
  * A key as JavaScript source.
  *
@@ -158,14 +167,14 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
 
   const leaf = (v: unknown): string | null => {
     if (v === null) return "null";
-    if (v instanceof Date) {
+    if (isDate(v)) {
       // An Invalid Date has no BSON form: the driver stores it as epoch 0, so any
       // spelling would print a value the document does not hold.
       if (Number.isNaN(v.getTime()))
         throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
       return `new Date(${str(v.toISOString())})`;
     }
-    if (v instanceof RegExp) return String(v);
+    if (isRegExp(v)) return String(v);
     // A Uint8Array — a Node Buffer is one — carries bytes, and both runtimes store
     // it as BSON Binary subtype 0. MEASURED: mongosh and the driver each store
     // `new Uint8Array([1, 2, 3])` as Binary/0 and each match that document again with
@@ -173,7 +182,7 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     // a `Binary.createFromBase64(…)` call: what comes back is the value the document
     // holds, down to its JavaScript class. Without this the object branch below walks
     // the byte indices and prints `{ "0": 1, "1": 2 }`, which matches nothing.
-    if (v instanceof Uint8Array) return `new Uint8Array([${Array.from(v).join(", ")}])`;
+    if (isBytes(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
     const tag = tagOf(v);
     if (tag !== undefined) {
       const spelled = bsonSource(tag, v, (x) => render(x, 0));

@@ -21,6 +21,7 @@ import type { Expr } from "../../registry/ast.ts";
 // The one place the `bson` module is named — see its header for why recognition
 // tests the prototype AND the tag.
 import { bsonTagOf, isObjectId, objectIdHex, ObjectId } from "../../bson.ts";
+import { isDate, isPlainObject as isPlainByPrototype, isRegExp } from "../../bson.ts";
 
 /**
  * Can this value be written as a literal at all?
@@ -69,11 +70,7 @@ export function readLiteral(node: Expr): Reading {
 
 /** Is this value a plain object — one whose entries an ObjectLiteral can spell? */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
-  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
-  if (v instanceof Date || v instanceof RegExp || v instanceof Uint8Array) return false;
-  if (bsonTagOf(v) !== undefined) return false;
-  const proto = Object.getPrototypeOf(v) as unknown;
-  return proto === Object.prototype || proto === null;
+  return isPlainByPrototype(v) && bsonTagOf(v) === undefined;
 }
 
 /**
@@ -106,7 +103,7 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
       return { type: "BigIntLiteral", value: value.toString(), pos };
   }
 
-  if (value instanceof RegExp) {
+  if (isRegExp(value)) {
     return { type: "RegexLiteral", pattern: value.source, flags: value.flags, pos };
   }
   if (isObjectId(value)) {
@@ -135,7 +132,7 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
 
   // A Date has no spelling, and rides as the value it is — the query road compares
   // it as written and the value road passes it through, like a `${date}` slot.
-  if (value instanceof Date) return { type: "Injected", value, pos };
+  if (isDate(value)) return { type: "Injected", value, pos };
   // A Binary, a Decimal128 — no spelling, and no fold produces one.
   return null;
 }
@@ -150,7 +147,7 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
 function leafOf(value: unknown, pos: number): Expr | null {
   if (value === undefined) return null;
   // a RegExp inside a structure is data the structure carries, never a regex literal to evaluate
-  if (value instanceof RegExp) return { type: "Injected", value, pos };
+  if (isRegExp(value)) return { type: "Injected", value, pos };
   const spelled = asLiteral(value, pos);
   if (spelled !== null) return spelled;
   return Array.isArray(value) || isPlainObject(value) ? null : { type: "Injected", value, pos };

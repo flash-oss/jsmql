@@ -83,11 +83,40 @@ because a plain object may wear the tag: the compiler passes an injected
 method on it throws. The reader answers null instead, and the caller treats the value as
 what it is.
 
+## Recognition across realms
+
+The same rule holds for the JavaScript values a document carries — a Date, a RegExp, a
+Uint8Array (a Node Buffer is one), a plain object. `instanceof Date` is false for a real
+Date made in another realm: a `vm` context, a test runner's sandbox, a worker. Each realm
+has its own `Date`, `RegExp`, `Uint8Array` and `Object.prototype`, so a test against this
+realm's class fails a valid value that came from another, and the value takes a road it
+should not — a Date parameter that fails the test compares on the `$expr` road and loses
+the index; a `$`-keyed object that fails the plain-object test skips the `$literal` gate.
+
+So no module in `src/` tests a value with `instanceof` or against `Object.prototype`. The
+recognisers live in `src/registry/vocabulary.ts` beside `bsonTagOf`, where a row can read
+them, and `src/bson.ts` re-exports them so the compiler has one name for every kind of
+recognition. Each reads what a value IS:
+
+| recogniser | reads |
+|---|---|
+| `isDate`, `isRegExp`, `isBytes` | the internal slot, through `Object.prototype.toString` — `[object Date]` from every realm |
+| `isPlainObject` | a non-array object whose prototype is null or a realm's root: the one prototype whose own prototype is null |
+
+`isPlainObject` answers by prototype alone; whether the object wears a BSON tag is
+`bsonTagOf`'s question, and a reader that must tell the two apart asks both.
+`src/stringify.ts` holds twins of the three slot readers, so it stays a leaf.
+
+`test/cross-realm.test.ts` holds the rule: it builds every kind of value in a `vm` context
+beside the same value from this realm, compiles both down every road a parameter travels
+and holds the outcomes equal — and scans `src/` for the banned tests.
+
 ## Where a BSON value is touched
 
 | file | what it does |
 |---|---|
-| `src/bson.ts` | the classes, `bsonTagOf`, `isBsonType`, `isUUID`, `isObjectId`, `objectIdHex` |
+| `src/registry/vocabulary.ts` | `bsonTagOf` and the realm-independent recognisers — `isDate`, `isRegExp`, `isBytes`, `isPlainObject` |
+| `src/bson.ts` | the classes, `isBsonType`, `isUUID`, `isObjectId`, `objectIdHex`; re-exports the vocabulary's recognisers |
 | `src/compiler/passes/literal.ts` | a value ⇄ the AST literal that spells it |
 | `src/compiler/passes/fold-methods.ts` | the exact reads a fold may run on a constant |
 | `src/compiler/emit/types.ts` | the kind a value proves |

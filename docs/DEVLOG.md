@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-18 — fix: a parameter value from another realm is the value it is
+
+A `jsmql.compile` parameter holding a Date compiled to `{ $match: { $expr: { $gt: ["$updatedAt", date] } } }` instead of the indexable `{ $match: { updatedAt: { $gt: date } } }` — but only when the Date came from another realm: a `vm` context, a test runner's sandbox, a worker. Each realm has its own `Date`, so `instanceof Date` was false for a real Date, and the filter road's constant test (`isQueryConstant` in [src/compiler/emit/filter.ts](src/compiler/emit/filter.ts)) sent it down the expression road. The same test was written at some twenty sites, and the plain-object test (`Object.getPrototypeOf(v) === Object.prototype`) at ten more — that one let a `# DEVLOG
+
+A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
+
+**Conventions.**
+- Newest entry on top.
+- Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
+- If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
+- Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
+-keyed object from another realm past the `$literal` gate and reach the server as an operator, which is the worse bug of the two.
+
+Recognition now reads what a value IS, never which realm made it: `isDate` / `isRegExp` / `isBytes` read the internal slot through `Object.prototype.toString`, and `isPlainObject` accepts a prototype that is null or the root of any realm (the one whose own prototype is null). They live in [src/registry/vocabulary.ts](src/registry/vocabulary.ts) beside `bsonTagOf`, for the same reason it does — a row reads them and the registry imports nothing outside itself — and [src/bson.ts](src/bson.ts) re-exports them so the compiler has one name for every kind of recognition. [src/stringify.ts](src/stringify.ts) holds twins of the three slot readers, as it already twins `tagOf`, so it stays a leaf. Node's `util.types.isDate` would have been the textbook answer, but the source also runs in the browser playground, where `node:util` does not exist.
+
+[test/cross-realm.test.ts](test/cross-realm.test.ts) holds the rule two ways: it builds every kind of value in a `vm` context beside the same value from this realm, compiles both down every road a parameter travels and holds the outcomes equal; and it scans `src/` for `instanceof Date|RegExp|Uint8Array` and for a comparison against `Object.prototype`, because the next such line reads as the obvious thing to write. See [docs/specs/bson-types.md § Recognition across realms](docs/specs/bson-types.md).
+
+---
+
 ## 2026-09-17 — chore: the deck's generated files are the generator's own output
 
 `oxfmt` was reformatting `presentation.html` and `presentation/examples.json`

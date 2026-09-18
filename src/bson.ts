@@ -17,7 +17,7 @@
 // prototype AND the `_bsontype` tag, and either one answers yes.
 export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "bson";
 
-import { bsonTagOf } from "./registry/vocabulary.ts";
+import { bsonTagOf, isBytes, isPlainObject } from "./registry/vocabulary.ts";
 import {
   Binary,
   Decimal128 as Decimal128Class,
@@ -32,7 +32,7 @@ import {
 
 // The tag reader needs no `bson` import, so it lives in the registry's vocabulary
 // where a ROW can read it as well. Re-exported here so the compiler has one name.
-export { bsonTagOf, BSON_KIND } from "./registry/vocabulary.ts";
+export { bsonTagOf, BSON_KIND, isBytes, isDate, isPlainObject, isRegExp } from "./registry/vocabulary.ts";
 
 /**
  * Is `v` the named BSON type? `cls` is the class from THIS copy of `bson`; `tag` is
@@ -67,7 +67,7 @@ export function isObjectId(v: unknown): boolean {
 export function objectIdHex(value: unknown): string | null {
   const v = value as { toHexString?: () => string; id?: unknown; toString?: () => string };
   if (typeof v.toHexString === "function") return v.toHexString().toLowerCase();
-  if (v.id instanceof Uint8Array && v.id.length === 12) {
+  if (isBytes(v.id) && v.id.length === 12) {
     return [...v.id].map((b) => b.toString(16).padStart(2, "0")).join("");
   }
   if (typeof v.toString === "function") {
@@ -209,9 +209,9 @@ export function longsWithin(value: unknown): { ok: true; value: unknown } | { ok
     }
     return { ok: true, value: out };
   }
-  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+  if (isPlainObject(value)) {
     const out: Record<string, unknown> = {};
-    for (const [key, held] of Object.entries(value as Record<string, unknown>)) {
+    for (const [key, held] of Object.entries(value)) {
       const converted = longsWithin(held);
       if (!converted.ok) return converted;
       out[key] = converted.value;
