@@ -609,7 +609,7 @@ or poison every downstream caller).
 | Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
 | Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
 
-A reader of a whole object takes `{}`, and it takes it ONLY under `?.`: `$.user.profile.keys()` emits `{ $objectToArray: "$user.profile" }` and answers `null` for a missing `profile`, where `$.user?.profile?.keys()` emits `{ $objectToArray: { $ifNull: ["$user.profile", {}] } }` and answers `[]`. A namespace call has no receiver to carry the `?.`, so it reads it off the argument instead — `Object.keys($.user?.profile)` is the same document as `$.user?.profile?.keys()`.
+A reader of a whole object takes `{}`, and it takes it ONLY under `?.`: `$.user.profile.keys()` emits `{ $objectToArray: "$user.profile" }` and answers `null` for a missing `profile`, where `$.user?.profile?.keys()` emits `{ $objectToArray: { $ifNull: ["$user.profile", {}] } }` and answers `[]`. A namespace call has no receiver to carry the `?.`, so it reads it off the argument instead — `Object.keys($.user?.profile)` is the same document as `$.user?.profile?.keys()`. The neutral goes in at the link that carries the `?.`, and the rest of the chain reads it: `$.o?.keys().length` is `0` where JavaScript answers `undefined`, because `[]` is what `.length` counts. One rule for every reader is tracked as [DEF-036].
 These cases produce the same MQL whether you use `.` or `?.`:
 
 | Consumer | Why no wrap |

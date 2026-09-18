@@ -104,6 +104,28 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** M
 
+### DEF-036 — One rule for a reader of an object that is null
+
+- **What's blocked.** A *reader* is a method that reads a whole object. `.keys()`, `.values()`, `.entries()`, `.toPairs()`, `.pick()`, `.omit()`, `.mapValues()` and the other lodash object methods are readers. jsmql gives a reader three different answers when the field is null or absent, and the third answer does not agree with JavaScript:
+  - A lodash method answers the empty value. `$.o.pick(["a"])` answers `{}`. `$.o.toPairs()` answers `[]`.
+  - A JavaScript reader answers null. `$.o.keys()` answers null, because `Object.keys(undefined)` is a TypeError and MongoDB cannot raise one.
+  - A JavaScript reader under `?.` answers the empty value. `$.o?.keys()` answers `[]`.
+
+  JavaScript stops the full chain at a `?.`, and jsmql stops one link only. MEASURED: `$.o?.keys().length` answers 0, and JavaScript answers `undefined`. The same gap applies to every family, not only to objects: `$.a?.map(x => x).length` and `$.s?.trim().length` also answer 0.
+- **Target lowering.** A `?.` makes the full chain answer null. MEASURED on the fixture, `$.o?.keys().length` gives `null` for a document without `o` and `2` for `{ o: { a: 1, b: 2 } }` with this shape:
+  ```js
+  { $cond: [{ $in: [{ $type: "$o" }, ["missing", "null"]] }, null,
+            { $size: { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } }] }
+  ```
+  The plain `.` spellings keep the answers they have today.
+- **Why blocked.** Each link of a chain lowers on its own. A link does not know that an earlier link carries a `?.`, so it cannot stop the chain. A stop needs the test around the full chain, and the compiler builds the chain from the inside out. The `?.` neutral — the empty value the compiler puts in place of a missing field — goes in at the link that carries the `?.`, which is why the rest of the chain continues.
+- **Attempted approaches.** None.
+- **Success criteria.** `jsmql.expr("$.o?.keys().length")` emits the document above. On a document without `o` the server answers `null`. `jsmql.expr("$.o.keys().length")` stays as it is. One rule then covers every reader, and [test/compiler-methods.test.ts](../test/compiler-methods.test.ts) compares each spelling with the answer JavaScript gives.
+- **Rejection site(s).** None — jsmql emits valid MQL for every spelling. The one live `[DEF-036]` tag is in [docs/LANGUAGE.md](LANGUAGE.md), on the optional-chain rule for a reader of a whole object.
+- **Spec.** [docs/specs/emit-pass.md](specs/emit-pass.md) § the optional chain's neutral; `docs/LANGUAGE.md` § Optional Chaining.
+- **Status.** design-only
+- **Effort.** L
+
 ---
 
 ## §B. Decisions — won't implement (rejected as bad DX or unnecessary)

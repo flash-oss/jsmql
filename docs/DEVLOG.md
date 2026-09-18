@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-18 — docs: DEF-036 tracks one rule for a reader of a null object
+
+A reader of a whole object — `.keys()`, `.toPairs()`, `.pick()` and their kin — now has
+three answers for a field that is null or absent, and the third does not agree with
+JavaScript. A lodash method answers the empty value; a JavaScript reader answers null;
+a JavaScript reader under `?.` answers the empty value. The last one puts the neutral
+at the link that carries the `?.`, so the rest of the chain reads it: MEASURED,
+`$.o?.keys().length` answers 0 where JavaScript answers `undefined`, because JavaScript
+stops the whole chain at a `?.` and jsmql stops one link.
+
+The gap is not about objects. `$.a?.map(x => x).length` and `$.s?.trim().length` answer
+0 for the same reason. A fix has to put the test around the whole chain, and the
+compiler builds a chain from the inside out, so no link knows that an earlier one
+carried a `?.`. That is the work DEF-036 holds, with the target document measured on
+the fixture. No behaviour changed with this entry.
+
+---
+
 ## 2026-09-18 — fix: a JavaScript object reader takes the `{}` neutral only under `?.`
 
 The previous entry gave every reader of an object the `{}` neutral. That is right for
