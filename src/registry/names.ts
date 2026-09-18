@@ -887,7 +887,8 @@ function padded(
   // and a target already shorter than the string. A number LITERAL needs no test.
   const bounded =
     args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
-  return { $let: { vars: { [v.as]: coerceStringBinding(recv) }, in: bounded } };
+  // every caller hands over a receiver the `nullOr` test has proven, so it is bound as it is
+  return { $let: { vars: { [v.as]: recv }, in: bounded } };
 }
 
 /** The identity iteratee — `.keyBy()` with no argument keys by the element itself. */
@@ -1014,6 +1015,32 @@ const pairsRead = (
   return {
     $map: { input: { $objectToArray: optional ? { $ifNull: [obj, {}] } : obj }, as: kv.as, in: project(kv.ref) },
   };
+};
+
+/**
+ * A JAVASCRIPT method on a receiver that is null or missing answers null.
+ *
+ * JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to
+ * raise inside an expression, and null is the nearest thing it holds. Nothing else is
+ * acceptable: `$strLenCP` and `$size` ABORT the command on null, and `$toUpper`,
+ * `$substrCP`, `$regexMatch` and `$indexOfCP` answer a VALUE for it — "", false, -1 —
+ * that hides the missing field. MEASURED on every row that calls this.
+ *
+ * `body` runs on a receiver the test has proven, so it needs no guard of its own. A
+ * path is cheap to read twice; anything else is bound once. A receiver that is
+ * `present` skips the test — a literal, `$range(…)`, a `$lookup`'s array, a path a
+ * `?.` test on the way in already proved.
+ *
+ * A LODASH method does not call this: `_.size(undefined)` is 0 and `_.pick(undefined)`
+ * is `{}`, and lodash's answer is the answer.
+ */
+const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r: unknown) => unknown): unknown => {
+  if (present) return body(recv);
+  const cheap = typeof recv === "string" && recv.startsWith("$");
+  const bound = cheap ? null : bind("recv");
+  const ref = bound === null ? recv : bound.ref;
+  const doc = cond({ $eq: [{ $ifNull: [ref, null] }, null] }, null, body(ref));
+  return bound === null ? doc : { $let: { vars: { [bound.as]: recv }, in: doc } };
 };
 
 /**
@@ -6684,7 +6711,10 @@ export const NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toLower: recv }) },
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $toLower: r })),
+    },
     stream: unsupported("'.toLowerCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toLowerCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toLowerCase();'",
@@ -6703,7 +6733,10 @@ export const NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toUpper: recv }) },
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $toUpper: r })),
+    },
     stream: unsupported("'.toUpperCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toUpperCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toUpperCase();'",
@@ -6723,11 +6756,12 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "start[, count]", allowed: [1, 2] },
-      emit: ({ recv, args, value }) => {
-        const start = normaliseSliceIndex(args[0], value(args[0]), recv);
-        const count = args.length === 1 ? strLenOf(recv) : clampNonNegativeIndex(args[1], value(args[1]));
-        return { $substrCP: [recv, start, count] };
-      },
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => {
+          const start = normaliseSliceIndex(args[0], value(args[0]), r);
+          const count = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+          return { $substrCP: [r, start, count] };
+        }),
     },
     stream: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6746,11 +6780,13 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "start[, end]", allowed: [0, 1, 2] },
-      emit: ({ recv, args, value }) => {
+      emit: ({ recv, args, value, present, bind }) => {
         if (args.length === 0) return recv;
-        const start = clampNonNegativeIndex(args[0], value(args[0]));
-        const end = args.length === 1 ? strLenOf(recv) : clampNonNegativeIndex(args[1], value(args[1]));
-        return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(end, start))] };
+        return nullOr(recv, present, bind, (r) => {
+          const start = clampNonNegativeIndex(args[0], value(args[0]));
+          const end = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+          return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
+        });
       },
     },
     stream: unsupported("'.substring()' has no stream form: it produces a value, not a stream of documents."),
@@ -6772,12 +6808,15 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "index", exact: 1 },
-      emit: ({ recv, args, value }) => {
+      emit: ({ recv, args, value, present, bind }) => {
         // a literal index folds; a negative one is "" as in JavaScript
         const lit = literalIndexValue(args[0]);
-        if (lit !== null) return lit < 0 ? "" : { $substrCP: [recv, lit, 1] };
-        const index = value(args[0]);
-        return cond({ $lt: [index, 0] }, "", { $substrCP: [recv, index, 1] });
+        if (lit !== null && lit < 0) return "";
+        return nullOr(recv, present, bind, (r) => {
+          if (lit !== null) return { $substrCP: [r, lit, 1] };
+          const index = value(args[0]);
+          return cond({ $lt: [index, 0] }, "", { $substrCP: [r, index, 1] });
+        });
       },
     },
     stream: unsupported("'.charAt()' has no stream form: it produces a value, not a stream of documents."),
@@ -6841,7 +6880,8 @@ export const NAMES = {
     },
     expr: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $eq: [{ $indexOfCP: [recv, value(args[0])] }, 0] }),
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] })),
     },
     stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6875,21 +6915,24 @@ export const NAMES = {
     },
     expr: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, value, bind }) => {
+      emit: ({ recv, args, value, bind, present }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
-        const s = bind("str");
-        return {
-          $let: {
-            vars: { [s.as]: coerceStringBinding(recv) },
-            in: {
-              $eq: [
-                { $substrCP: [s.ref, clampNonNegative(foldedSubtract({ $strLenCP: s.ref }, needleLen)), needleLen] },
-                needle,
-              ],
+        // the receiver is proven inside the test, and read three times, so it is bound once
+        return nullOr(recv, present, bind, (r) => {
+          const s = bind("str");
+          return {
+            $let: {
+              vars: { [s.as]: r },
+              in: {
+                $eq: [
+                  { $substrCP: [s.ref, clampNonNegative(foldedSubtract({ $strLenCP: s.ref }, needleLen)), needleLen] },
+                  needle,
+                ],
+              },
             },
-          },
-        };
+          };
+        });
       },
     },
     stream: unsupported("'.endsWith()' has no stream form: it produces a value, not a stream of documents."),
@@ -6977,7 +7020,8 @@ export const NAMES = {
     },
     expr: {
       args: { sig: "regex", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $regexMatch: regexBody(recv, args[0], () => value(args[0])) }),
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) })),
     },
     stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6996,7 +7040,8 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "regex", exact: 1, regexFlag: { 0: "g" } },
-      emit: ({ recv, args, value }) => ({ $regexFindAll: regexBody(recv, args[0], () => value(args[0])) }),
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) })),
     },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7017,12 +7062,13 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "regex", exact: 1 },
-      emit: ({ recv, args, value }) => ({
-        $ifNull: [
-          { $getField: { field: "idx", input: { $regexFind: regexBody(recv, args[0], () => value(args[0])) } } },
-          -1,
-        ],
-      }),
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({
+          $ifNull: [
+            { $getField: { field: "idx", input: { $regexFind: regexBody(r, args[0], () => value(args[0])) } } },
+            -1,
+          ],
+        })),
     },
     stream: unsupported("'.search()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7041,7 +7087,8 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "targetLength[, padString]", allowed: [1, 2] },
-      emit: ({ recv, args, value, bind }) => padded("start", recv, args, value, bind),
+      emit: ({ recv, args, value, bind, present }) =>
+        nullOr(recv, present, bind, (r) => padded("start", r, args, value, bind)),
     },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7062,7 +7109,8 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "targetLength[, padString]", allowed: [1, 2] },
-      emit: ({ recv, args, value, bind }) => padded("end", recv, args, value, bind),
+      emit: ({ recv, args, value, bind, present }) =>
+        nullOr(recv, present, bind, (r) => padded("end", r, args, value, bind)),
     },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7123,7 +7171,7 @@ export const NAMES = {
           emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] }),
         },
       },
-      uncertain: () => "$$REMOVE",
+      uncertain: () => null,
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7186,7 +7234,8 @@ export const NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
             },
           },
-          emit: ({ recv, args, value, present }) => ({ $in: [value(args[0]), present ? recv : arrayOrEmpty(recv)] }),
+          emit: ({ recv, args, value, present, bind }) =>
+            nullOr(recv, present, bind, (r) => ({ $in: [value(args[0]), r] })),
         },
         string: {
           args: {
@@ -7196,10 +7245,11 @@ export const NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
             },
           },
-          emit: ({ recv, args, value }) => ({ $gte: [{ $indexOfCP: [recv, value(args[0])] }, 0] }),
+          emit: ({ recv, args, value, present, bind }) =>
+            nullOr(recv, present, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] })),
         },
       },
-      uncertain: () => "$$REMOVE",
+      uncertain: () => null,
     },
     stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7231,7 +7281,7 @@ export const NAMES = {
           }),
         },
       },
-      uncertain: () => "$$REMOVE",
+      uncertain: () => null,
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7256,16 +7306,17 @@ export const NAMES = {
         ),
         array: {
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value, bind }) => sliceArray(recv, args, value, bind),
+          emit: ({ recv, args, value, bind, present }) =>
+            nullOr(recv, present, bind, (r) => sliceArray(r, args, value, bind)),
         },
         string: {
           // MEASURED: `$substrCP` / `$indexOfCP` of null or a missing field answer as of ""
-          alsoTypes: ["null", "missing"],
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value }) => sliceString(recv, args, value),
+          emit: ({ recv, args, value, present, bind }) =>
+            nullOr(recv, present, bind, (r) => sliceString(r, args, value)),
         },
       },
-      uncertain: () => "$$REMOVE",
+      uncertain: () => null,
     },
     stream: {
       args: {
@@ -7353,7 +7404,7 @@ export const NAMES = {
           }),
         },
       },
-      uncertain: () => "$$REMOVE",
+      uncertain: () => null,
     },
     stream: inCode("src/compiler/emit/union.ts"),
     statement: unsupported(
@@ -7877,16 +7928,17 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "callback", exact: 1 },
-      emit: ({ recv, args, callback }) => {
+      emit: ({ recv, args, callback, present, bind }) => {
         const cb = callback(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
-        return {
+        // `indexedPairs` counts the array with `$size`, which aborts on a missing one
+        return nullOr(recv, present, bind, (r) => ({
           $reduce: {
-            input: indexedPairs(recv),
+            input: indexedPairs(r),
             initialValue: -1,
             in: { $cond: [{ $and: [{ $eq: ["$$value", -1] }, hit] }, { $arrayElemAt: ["$$this", 0] }, "$$value"] },
           },
-        };
+        }));
       },
     },
     stream: because("returns an index, and a stream has no index."),
@@ -7939,16 +7991,17 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "callback", exact: 1 },
-      emit: ({ recv, args, callback }) => {
+      emit: ({ recv, args, callback, present, bind }) => {
         const cb = callback(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
-        return {
+        // `indexedPairs` counts the array with `$size`, which aborts on a missing one
+        return nullOr(recv, present, bind, (r) => ({
           $reduce: {
-            input: indexedPairs(recv),
+            input: indexedPairs(r),
             initialValue: -1,
             in: { $cond: [hit, { $arrayElemAt: ["$$this", 0] }, "$$value"] },
           },
-        };
+        }));
       },
     },
     stream: because("returns an index, and a stream has no index."),
@@ -8016,11 +8069,12 @@ export const NAMES = {
     },
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ args, callback, present }) => {
+      emit: ({ recv, args, callback, present, bind }) => {
         const cb = callback(args[0], "truth");
-        // a missing array is no elements; the pairs already are an array, and so is a receiver that is there
-        const input = cb.paired || present ? cb.input : { $ifNull: [cb.input, []] };
-        return { $anyElementTrue: { $map: { input, as: cb.as, in: cb.in } } };
+        // the pairs already are an array; a bare receiver is read once the test proved it
+        return nullOr(recv, present, bind, (r) => ({
+          $anyElementTrue: { $map: { input: cb.paired ? cb.input : r, as: cb.as, in: cb.in } },
+        }));
       },
     },
     stream: unsupported("'.some()' has no stream form: it produces a value, not a stream of documents."),
@@ -8042,11 +8096,12 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ args, callback, present }) => {
+      emit: ({ recv, args, callback, present, bind }) => {
         const cb = callback(args[0], "truth");
-        // a missing array is no elements; the pairs already are an array, and so is a receiver that is there
-        const input = cb.paired || present ? cb.input : { $ifNull: [cb.input, []] };
-        return { $allElementsTrue: { $map: { input, as: cb.as, in: cb.in } } };
+        // the pairs already are an array; a bare receiver is read once the test proved it
+        return nullOr(recv, present, bind, (r) => ({
+          $allElementsTrue: { $map: { input: cb.paired ? cb.input : r, as: cb.as, in: cb.in } },
+        }));
       },
     },
     stream: unsupported("'.every()' has no stream form: it produces a value, not a stream of documents."),
@@ -8126,7 +8181,8 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "separator", allowed: [0, 1] },
-      emit: ({ recv, args, value }) => joinedWith(recv, args.length === 1 ? value(args[0]) : ","),
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ",")),
     },
     stream: because(
       "joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(\", \")'.",
@@ -11777,9 +11833,8 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present }) => ({
-        $setIsSubset: [present ? recv : arrayOrEmpty(recv), arrayOrEmpty(value(args[0]))],
-      }),
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $setIsSubset: [r, arrayOrEmpty(value(args[0]))] })),
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -11800,9 +11855,8 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present }) => ({
-        $setIsSubset: [arrayOrEmpty(value(args[0])), present ? recv : arrayOrEmpty(recv)],
-      }),
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $setIsSubset: [arrayOrEmpty(value(args[0])), r] })),
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -13205,9 +13259,10 @@ export const NAMES = {
     ),
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present }) => ({
-        $eq: [sizeOf({ $setIntersection: [present ? recv : arrayOrEmpty(recv), arrayOrEmpty(value(args[0]))] }), 0],
-      }),
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({
+          $eq: [sizeOf({ $setIntersection: [r, arrayOrEmpty(value(args[0]))] }), 0],
+        })),
     },
     stream: unsupported(
       "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
@@ -14094,15 +14149,14 @@ export const NAMES = {
         // → { $size: [["$a", 2]] }. A path or an expression is handed over as it is.
         array: {
           args: { sig: "", none: true },
-          // `$size` aborts on null, so a receiver that may be missing is guarded; one
-          // that is there (`present`) is counted as it is.
-          emit: ({ recv, present }) => ({ $size: Array.isArray(recv) ? [recv] : present ? recv : arrayOrEmpty(recv) }),
+          // `$size` aborts on null; a receiver that may be missing answers null, as a
+          // JavaScript method does, and one that is there is counted as it is.
+          emit: ({ recv, present, bind }) =>
+            Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present, bind, (r) => ({ $size: r })),
         },
-        // The emit answers 0 for a missing string, so the runtime test admits one too.
         string: {
           args: { sig: "", none: true },
-          alsoTypes: ["null", "missing"],
-          emit: ({ recv }) => ({ $strLenCP: { $ifNull: [recv, ""] } }),
+          emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $strLenCP: r })),
         },
         // `$$.length` has no inline size: it places a materialiser ahead of the
         // statement and reads the field it wrote.
@@ -14112,9 +14166,10 @@ export const NAMES = {
             hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT),
         },
       },
-      // Stated, not derived: a receiver that is neither array nor string yields $$REMOVE.
-      // A two-way $cond read "not an array" as "string" and aborted the whole command.
-      uncertain: () => "$$REMOVE",
+      // A receiver that is neither array nor string — null, missing, a number — answers
+      // null, as JavaScript's `undefined` does. A two-way $cond that read "not an array"
+      // as "string" aborted the whole command.
+      uncertain: () => null,
     },
     stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
     statement: unsupported(

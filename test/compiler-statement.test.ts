@@ -714,10 +714,20 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
     expect(pipeline('const ids = $.tags.uniq(); $.y = ids.includes("a")')).toEqual([
       { $set: { "__jsmql.var.ids": { $setUnion: "$tags" } } },
       // A reader over a MISSING field answers null, so a value the compiler proved is
-      // an array can still be null at run time — and `$in` is one of the two operators
-      // that refuse that rather than answer null. MEASURED: "$in requires an array as
-      // a second argument, found: null".
-      { $set: { y: { $in: ["a", { $ifNull: ["$__jsmql.var.ids", []] }] } } },
+      // an array can still be null at run time — and `$in` refuses that rather than
+      // answer null (MEASURED: "$in requires an array as a second argument, found:
+      // null"). `.includes` is a JavaScript method, so it tests first and answers null.
+      {
+        $set: {
+          y: {
+            $cond: {
+              if: { $eq: [{ $ifNull: ["$__jsmql.var.ids", null] }, null] },
+              then: null,
+              else: { $in: ["a", "$__jsmql.var.ids"] },
+            },
+          },
+        },
+      },
       { $unset: "__jsmql" },
     ]);
   });

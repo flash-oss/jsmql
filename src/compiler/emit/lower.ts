@@ -174,8 +174,12 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "Injected":
       // HR1: a value the call supplied is a VALUE — never an operator or a field reference
       return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
-    case "FieldRef":
-      return reachable(env.render(locate(node, env) as Located, node.pos));
+    case "FieldRef": {
+      const path = reachable(env.render(locate(node, env) as Located, node.pos));
+      // `$.user?.name` is JavaScript's `undefined` when `user` is not there, and a document
+      // written with it holds the key: `x: null`. A bare path would leave the key out.
+      return node.optional === true ? { $ifNull: [path, null] } : path;
+    }
     case "CollectionRef":
     case "DatabaseRef":
     case "ClusterRef":
@@ -245,7 +249,7 @@ function templateLiteral(node: Extract<Expr, { type: "TemplateLiteral" }>, env: 
   node.exprs.forEach((e, i) => {
     if (node.quasis[i] !== "") parts.push(node.quasis[i]);
     const lowered = lowerValue(e, inner);
-    const safe = chainHasOptional(e) ? { $ifNull: [lowered, ""] } : lowered;
+    const safe = chainHasOptional(e) ? ifNull(lowered, "") : lowered;
     parts.push(kindOf(e, inner) === "string" ? safe : { $toString: safe });
   });
   const tail = node.quasis[node.exprs.length];
@@ -254,7 +258,23 @@ function templateLiteral(node: Extract<Expr, { type: "TemplateLiteral" }>, env: 
 }
 
 /**
- * The value a `?.` guards, when a METHOD CALL runs after it. Null when none does.
+ * `{ $ifNull: [v, neutral] }` — and when `v` is itself the `{ $ifNull: [x, null] }` a bare
+ * `?.` read lowers to, the one wrap `{ $ifNull: [x, neutral] }`: the same value, without a
+ * layer that says nothing.
+ */
+function ifNull(v: unknown, neutral: unknown): unknown {
+  if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+    const keys = Object.keys(v);
+    const inner = (v as { $ifNull?: unknown }).$ifNull;
+    if (keys.length === 1 && Array.isArray(inner) && inner.length === 2 && inner[1] === null) {
+      return { $ifNull: [inner[0], neutral] };
+    }
+  }
+  return { $ifNull: [v, neutral] };
+}
+
+/**
+ * The value a `?.` guards, when something COMPUTED runs after it. Null when nothing does.
  *
  * JavaScript stops a chain at a `?.`: `o?.keys().length` is `undefined` when `o` is
  * nullish, and jsmql answers null, which is the nearest thing MongoDB holds. The test
@@ -271,7 +291,9 @@ function stoppedChain(node: Expr): Expr | null {
   let cursor: Expr = node;
   let called = false;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
-    if (cursor.type === "MethodCall") called = true;
+    // a plain field read passes a missing value through as missing; anything COMPUTED
+    // (a call, an index, a property row such as `.length`) does not, and is stopped
+    if (cursor.type !== "MemberAccess" || isPropertyRow(cursor)) called = true;
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
@@ -356,7 +378,7 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       // to the bare string "abc". See docs/DEFERRED.md § B.
       if (kindOf(el.argument, inner) === "string") throw E.spreadOfString(el.argument.pos);
       const v = lowerValue(el.argument, inner);
-      operands.push(chainHasOptional(el.argument) ? { $ifNull: [v, []] } : v);
+      operands.push(chainHasOptional(el.argument) ? ifNull(v, []) : v);
     } else if (isExpr(el)) group.push(lowerValue(el, inner));
   }
   flush();
@@ -522,11 +544,11 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
     throw E.unappliedReference(node.object.name, node.name, node.pos);
   }
-  if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env, node.optional);
+  if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
   const path = pathOf(node, env);
   if (path !== null) return path;
   const raw = lowerValue(node.object, childEnv(env, node, "object"));
-  const input = node.optional || chainHasOptional(node.object) ? { $ifNull: [raw, {}] } : raw;
+  const input = node.optional || chainHasOptional(node.object) ? ifNull(raw, {}) : raw;
   return { $getField: { field: node.name, input } };
 }
 
@@ -558,7 +580,7 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
   const optional = node.optional || chainHasOptional(node.object);
   const known =
     node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf(node.object, objEnv));
-  const wrapped = (neutral: unknown) => (optional ? { $ifNull: [raw, neutral] } : raw);
+  const wrapped = (neutral: unknown) => (optional ? ifNull(raw, neutral) : raw);
   if (kindOf(node.index, env) === "string") return { $getField: { field: idx, input: wrapped({}) } };
   const literal = evaluate(node.index, new Map());
   if (literal.ok && typeof literal.value === "number" && Number.isInteger(literal.value)) {
@@ -619,18 +641,11 @@ const wroteName = (node: Expr, name: string): string =>
 const JS_NAMES = everyName().filter((n) => !n.startsWith("$"));
 
 function methodCall(node: Extract<Expr, { type: "MethodCall" }>, env: Env): unknown {
-  return dispatchOn(node, node.name, node.object, node.args, env, node.optional);
+  return dispatchOn(node, node.name, node.object, node.args, env);
 }
 
 /** A name on a receiver: consult, select, run. */
-function dispatchOn(
-  node: Expr,
-  name: string,
-  recvNode: Expr,
-  args: readonly CallArg[],
-  env: Env,
-  optional: boolean,
-): unknown {
+function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly CallArg[], env: Env): unknown {
   const position = positionIn(env);
   const recvEnv = childEnv(env, node, "object");
   // A chain on the stream where a VALUE belongs — `$ = { k: $$.filter(…) }`, or the
@@ -650,10 +665,7 @@ function dispatchOn(
   const spelled = spelledMethod(wroteName(node, name), recvNode);
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
-  const recv =
-    receiver.kind === "value" || receiver.kind === "opaque"
-      ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name)
-      : null;
+  const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
   if (sel.kind === "rule") {
     if (elementsOf(name) === "scalar") {
       const holder = arraysHolder(recvNode);
@@ -662,18 +674,14 @@ function dispatchOn(
     checkSlots(name, sel.rule.args, exprArgs);
     // A receiver is there when the source says so — or when an optional chain read
     // a missing one as the family's empty value, which is there too.
-    const present =
-      isPresent(recvNode, recvEnv) ||
-      ((receiver.kind === "value" || receiver.kind === "opaque") && recv !== receiver.lowered);
+    const present = isPresent(recvNode, recvEnv);
     return sel.rule.emit(
       exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, present),
     );
   }
   if (sel.kind === "dispatch") {
     if (receiver.kind !== "opaque") internalError("a dispatch was selected for a proven receiver");
-    // The optional chain's neutral applies to a row that dispatches too: it is the
-    // RECEIVER that `?.` describes, and every branch reads the same one.
-    return runDispatch(sel, name, recv, exprArgs, env, node, spelled, container, recv !== receiver.lowered);
+    return runDispatch(sel, name, recv, exprArgs, env, node, spelled, container);
   }
   const format = receiver.kind === "namespace" ? (c: string) => `${receiver.name}.${c}` : (c: string) => `.${c}()`;
   // A namespace's suggestion draws from its own members; a value's from every JavaScript name.
@@ -692,21 +700,6 @@ function arraysHolder(recv: Expr): string | null {
   if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
   if (recv.type === "MethodCall" && recv.name === "partition") return "'.partition(...)'";
   return null;
-}
-
-/**
- * An optional chain's receiver takes the family's empty value, so a missing field
- * reads as empty. The family is the receiver's when proven; otherwise the one FIELD
- * family the row names, when it names exactly one — `.map` is spelled on an array and
- * on the stream, and only the array is a family a field can hold, so `$.a?.map(f)`
- * reads a missing `a` as `[]` exactly as `$.a?.join(",")` does.
- */
-function withOptional(lowered: unknown, receiver: Receiver, optional: boolean, name: string): unknown {
-  if (!optional || (receiver.kind !== "value" && receiver.kind !== "opaque")) return lowered;
-  const family: string | null = receiver.kind === "value" ? receiver.family : soleFieldFamilyOf(name);
-  const neutral =
-    family === "string" ? "" : family === "array" || family === "set" ? [] : family === "object" ? {} : null;
-  return neutral === null ? lowered : { $ifNull: [lowered, neutral] };
 }
 
 /**
@@ -736,8 +729,6 @@ function runDispatch(
   node: Expr,
   spelled: string,
   container: string,
-  /** Did an optional chain already read a missing receiver as the family's empty value? */
-  optionalNeutral: boolean,
 ): unknown {
   const position = positionIn(env);
   // A path or a variable is cheap to repeat; anything else is bound once.
@@ -748,7 +739,7 @@ function runDispatch(
     checkSlots(name, rule.args, args);
     // The branch's `$type` test proved the receiver's family — and that it is there,
     // unless the branch admits a null or a missing value too (`alsoTypes`).
-    const present = optionalNeutral || !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
+    const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
     return rule.emit(
       exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ, undefined, undefined, present),
     );
@@ -757,9 +748,7 @@ function runDispatch(
   const otherwise = sel.otherwise;
   let fallback: unknown;
   if (typeof otherwise === "function")
-    fallback = otherwise(
-      exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ, undefined, undefined, optionalNeutral),
-    );
+    fallback = otherwise(exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ));
   else
     throw E.refusalFor(
       { kind: "refused", name, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },
@@ -1019,9 +1008,7 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
       const operands = chainOf(node, "+");
       if (operands.some((e) => kindOf(e, inner) === "string")) {
         return {
-          $concat: operands.map((e) =>
-            chainHasOptional(e) ? { $ifNull: [lowerValue(e, inner), ""] } : lowerValue(e, inner),
-          ),
+          $concat: operands.map((e) => (chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))),
         };
       }
       return { $add: operands.map((e) => lowerValue(e, inner)) };

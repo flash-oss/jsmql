@@ -42,25 +42,26 @@ row's claim. On a row with two or more it is dispatched at runtime:
 
 ```js
 $.x.length
-// → {$switch:{branches:[
-//      {case:{$in:[{$type:"$x"},["array"]]},then:{$size:"$x"}},
-//      {case:{$in:[{$type:"$x"},["string","null","missing"]]},then:{$strLenCP:{$ifNull:["$x",""]}}}],
-//    default:"$$REMOVE"}}
+// → { $switch: { branches: [{ case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: "$x" } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $strLenCP: "$x" } }], default: null } }
 ```
 
-**A guard only where the value may be missing.** Every array operator answers null
-for a missing input and `$size`, `$in` and a `$map` input abort on null (measured),
-so a cell that feeds one of them guards its receiver with `$ifNull` — unless the
-receiver is PRESENT (`ExprIn.present`): proven from the source by `isPresent`
-(`emit/types.ts` — a literal, the root document, a `$lookup`'s array or a `let` of a
-present value through the binding's `present`, a `neverNull` row over present
-operands, an optional chain that reads a missing receiver as the family's empty
-value), or proven at runtime by the `$type` test of the dispatch branch the cell runs
-under (a branch that admits `null`/`missing` through `alsoTypes` proves nothing).
-Above, the array branch counts `$x` bare and the string branch still guards. The
-`neverNull` fact is stated per row: `.map`, `.filter`, `.slice`, `Object.keys` answer
-null only for a null input; `.find` (a missing element), `.max` (of an empty array)
-and `.match` (`$regexFind` with no match) do not state it.
+**A JavaScript method on a receiver that may be missing answers null.** `nullOr` in
+`src/registry/names.ts` is the one shape: `{ $cond: [{ $eq: [{ $ifNull: [r, null] }, null] },
+null, <body over r>] }`, the receiver bound with `$let` unless it is a path. A cell calls
+it where its operator would otherwise ABORT on null (`$size`, `$strLenCP`, `$setIsSubset`,
+`$in`'s list) or answer a VALUE for it (`$toUpper` → "", `$substrCP` → "", `$regexMatch` →
+false, `$indexOfCP` → -1) — measured per row. The body runs on a proven receiver, so it
+carries no `$ifNull` of its own. A row that dispatches on the receiver's type lets null and
+missing fall to its `uncertain` default, which answers null; no branch admits them through
+`alsoTypes` any more. The test is skipped when the receiver is PRESENT (`ExprIn.present`):
+proven from the source by `isPresent` (`emit/types.ts` — a literal, the root document, a
+`$lookup`'s array or a `let` of a present value through the binding's `present`, a
+`neverNull` row over present operands, a path in `Env.proven`), or proven at runtime by
+the `$type` test of the dispatch branch the cell runs under. A LODASH cell never calls
+`nullOr`: `_.size(undefined)` is 0, `_.pick(undefined, …)` is `{}`, and it answers that.
+The `neverNull` fact is stated per row: `.map`, `.filter`, `.slice`, `Object.keys` answer
+null only for a null input; `.find` (a missing element), `.max` (of an empty array) and
+`.match` (`$regexFind` with no match) do not state it.
 
 **A `?.` with a CALL after it STOPS the chain.** `stoppedChain` (`emit/lower.ts`) walks
 the receiver spine of a `MemberAccess` / `IndexAccess` / `MethodCall` down to its base

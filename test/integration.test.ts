@@ -101,8 +101,9 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     const byName = Object.fromEntries(rows.map((r) => [r.name, { tail: r.tail, len: r.len }]));
     expect(byName["Joan Clarke"]).toEqual({ tail: "@bletchley.uk", len: 17 }); // longer than 13
     expect(byName["Katherine Johnson"]).toEqual({ tail: "kat@nasa.gov", len: 12 }); // SHORTER → clamped, whole string
-    expect(byName["Margaret Hamilton"]).toEqual({ tail: "", len: 0 }); // email: null
-    expect(byName["Karen Spärck Jones"]).toEqual({ tail: "", len: 0 }); // email absent
+    // a JavaScript method on a null or missing receiver answers null — `"".slice` would be "", `undefined.slice` throws
+    expect(byName["Margaret Hamilton"]).toEqual({ tail: null, len: null }); // email: null
+    expect(byName["Karen Spärck Jones"]).toEqual({ tail: null, len: null }); // email absent
   });
 
   // The date vocabulary, end-to-end. Three of these compose more than one
@@ -832,7 +833,7 @@ $$ = candidateProductIds
   // and `.some()`, through any chain of array methods — `_.size(undefined)` is 0 —
   // where an unguarded `$size` / `$in` / `$map` input would abort the command. The
   // guard goes only where the array is certainly there: here, the root's keys.
-  it("expr: a missing array field counts as empty through a chain; a present one is counted bare", async () => {
+  it("expr: a JavaScript method on a missing array answers null through a chain; lodash's .size() counts it as empty", async () => {
     const rows = await aggregate(
       "users",
       `$match($._id === 0x6500000000000000000000a1);
@@ -840,7 +841,7 @@ $ = { n: $.noSuchField.map(x => x).length, s: $.noSuchField.map(x => x).size(),
       has: $.noSuchField.map(x => x).includes(1), any: $.noSuchField.filter(x => x).some(x => x),
       keys: Object.keys($).length > 3 };`,
     );
-    expect(rows).toEqual([{ n: 0, s: 0, has: false, any: false, keys: true }]);
+    expect(rows).toEqual([{ n: null, s: 0, has: null, any: null, keys: true }]);
   });
 
   // The set methods on an unwound element inside a real pipeline: `.differenceBy`

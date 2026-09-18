@@ -151,9 +151,13 @@ describe("let bindings — declaration lists", () => {
     // One lowering, one output: the `;` spelling of this program is the SAME
     // document, scratch-slot numbers included. The taken-back lowering gives its
     // slot back, so the two spellings cannot drift to `tmp.0` and `tmp.1`.
-    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual(
-      jsmql("let a = $.x; let b = $$$.probe.filter(o => o.k === a).length; $.o = b;"),
-    );
+    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
+      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
+      { $set: { o: "$__jsmql.var.b" } },
+      { $unset: "__jsmql" },
+    ]);
   });
 
   it("does not let a folded-away declarator bridge a `;` the developer wrote", () => {
@@ -167,9 +171,12 @@ describe("let bindings — declaration lists", () => {
       { $set: { o: { $add: ["$__jsmql.var.a", 5, "$__jsmql.var.c"] } } },
       { $unset: "__jsmql" },
     ]);
-    expect(jsmql("let a = $.x; let b = 5, c = $.y; $.o = a + b + c;")).toEqual(
-      jsmql("let a = $.x; let b = 5; let c = $.y; $.o = a + b + c;"),
-    );
+    expect(jsmql("let a = $.x; let b = 5, c = $.y; $.o = a + b + c;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.c": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.a", 5, "$__jsmql.var.c"] } } },
+      { $unset: "__jsmql" },
+    ]);
   });
 
   it("shares ONE $let across the declarators a `,` joined inside a block", () => {
@@ -588,7 +595,17 @@ describe("let bindings — member / method / index access", () => {
   it("method call on a let resolves the receiver to its field path", () => {
     expect(jsmql("let name = $.name; $project({ upper: name.toUpperCase() })")).toEqual([
       { $set: { "__jsmql.var.name": "$name" } },
-      { $project: { upper: { $toUpper: "$__jsmql.var.name" } } },
+      {
+        $project: {
+          upper: {
+            $cond: {
+              if: { $eq: [{ $ifNull: ["$__jsmql.var.name", null] }, null] },
+              then: null,
+              else: { $toUpper: "$__jsmql.var.name" },
+            },
+          },
+        },
+      },
       { $unset: "__jsmql" },
     ]);
   });

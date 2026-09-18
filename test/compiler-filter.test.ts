@@ -247,7 +247,15 @@ describe("compiler/emit/filter — methods and operators", () => {
       a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } },
     });
     // a field against a field has no query form: the value cell's shape under `$expr`
-    expect(filter("$.s.startsWith($.prefix)")).toEqual({ $expr: { $eq: [{ $indexOfCP: ["$s", "$prefix"] }, 0] } });
+    expect(filter("$.s.startsWith($.prefix)")).toEqual({
+      $expr: {
+        $cond: {
+          if: { $eq: [{ $ifNull: ["$s", null] }, null] },
+          then: null,
+          else: { $eq: [{ $indexOfCP: ["$s", "$prefix"] }, 0] },
+        },
+      },
+    });
   });
 
   it("lowers a query-only operator to its query form and refuses a non-constant", () => {

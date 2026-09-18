@@ -36,7 +36,9 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(expr("$.a.b")).toBe("$a.b");
     expect(expr("$")).toBe("$$ROOT");
     expect(expr('$["a.b"]')).toBe("$a.b");
-    expect(expr("$.a?.b.c")).toBe("$a.b.c");
+    // a `?.` read is JavaScript's `undefined` when the path is not there, and a document written
+    // with it holds the key — so it is null, never missing
+    expect(expr("$.a?.b.c")).toEqual({ $ifNull: ["$a.b.c", null] });
   });
 
   it("groups literal elements around a spread", () => {
@@ -141,12 +143,10 @@ describe("compiler/emit/lower — access", () => {
       $switch: {
         branches: [
           { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: "$x" } },
-          {
-            case: { $in: [{ $type: "$x" }, ["string", "null", "missing"]] },
-            then: { $strLenCP: { $ifNull: ["$x", ""] } },
-          },
+          { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $strLenCP: "$x" } },
         ],
-        default: "$$REMOVE",
+        // null, missing, and a receiver of any other type: JavaScript's `undefined`
+        default: null,
       },
     });
   });

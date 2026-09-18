@@ -999,7 +999,7 @@ function padded(side, recv, args, value, bind) {
   const filler = isSingleCodePointLiteral(pad2) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
   const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
   const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
-  return { $let: { vars: { [v.as]: coerceStringBinding(recv) }, in: bounded } };
+  return { $let: { vars: { [v.as]: recv }, in: bounded } };
 }
 function identity(bind) {
   const x = bind("x");
@@ -1045,6 +1045,14 @@ var pairsRead = (obj, bind, project, optional = false) => {
   return {
     $map: { input: { $objectToArray: optional ? { $ifNull: [obj, {}] } : obj }, as: kv.as, in: project(kv.ref) }
   };
+};
+var nullOr = (recv, present, bind, body) => {
+  if (present) return body(recv);
+  const cheap = typeof recv === "string" && recv.startsWith("$");
+  const bound = cheap ? null : bind("recv");
+  const ref = bound === null ? recv : bound.ref;
+  const doc = cond({ $eq: [{ $ifNull: [ref, null] }, null] }, null, body(ref));
+  return bound === null ? doc : { $let: { vars: { [bound.as]: recv }, in: doc } };
 };
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
 var orderedBounds = (a, b) => {
@@ -6416,7 +6424,10 @@ var NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toLower: recv }) },
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $toLower: r }))
+    },
     stream: unsupported("'.toLowerCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toLowerCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toLowerCase();'"
@@ -6434,7 +6445,10 @@ var NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toUpper: recv }) },
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $toUpper: r }))
+    },
     stream: unsupported("'.toUpperCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toUpperCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toUpperCase();'"
@@ -6453,11 +6467,11 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "start[, count]", allowed: [1, 2] },
-      emit: ({ recv, args, value }) => {
-        const start = normaliseSliceIndex(args[0], value(args[0]), recv);
-        const count = args.length === 1 ? strLenOf(recv) : clampNonNegativeIndex(args[1], value(args[1]));
-        return { $substrCP: [recv, start, count] };
-      }
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => {
+        const start = normaliseSliceIndex(args[0], value(args[0]), r);
+        const count = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+        return { $substrCP: [r, start, count] };
+      })
     },
     stream: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6475,11 +6489,13 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "start[, end]", allowed: [0, 1, 2] },
-      emit: ({ recv, args, value }) => {
+      emit: ({ recv, args, value, present, bind }) => {
         if (args.length === 0) return recv;
-        const start = clampNonNegativeIndex(args[0], value(args[0]));
-        const end = args.length === 1 ? strLenOf(recv) : clampNonNegativeIndex(args[1], value(args[1]));
-        return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(end, start))] };
+        return nullOr(recv, present, bind, (r) => {
+          const start = clampNonNegativeIndex(args[0], value(args[0]));
+          const end = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+          return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
+        });
       }
     },
     stream: unsupported("'.substring()' has no stream form: it produces a value, not a stream of documents."),
@@ -6500,11 +6516,14 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "index", exact: 1 },
-      emit: ({ recv, args, value }) => {
+      emit: ({ recv, args, value, present, bind }) => {
         const lit = literalIndexValue(args[0]);
-        if (lit !== null) return lit < 0 ? "" : { $substrCP: [recv, lit, 1] };
-        const index = value(args[0]);
-        return cond({ $lt: [index, 0] }, "", { $substrCP: [recv, index, 1] });
+        if (lit !== null && lit < 0) return "";
+        return nullOr(recv, present, bind, (r) => {
+          if (lit !== null) return { $substrCP: [r, lit, 1] };
+          const index = value(args[0]);
+          return cond({ $lt: [index, 0] }, "", { $substrCP: [r, index, 1] });
+        });
       }
     },
     stream: unsupported("'.charAt()' has no stream form: it produces a value, not a stream of documents."),
@@ -6565,7 +6584,7 @@ var NAMES = {
     },
     expr: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $eq: [{ $indexOfCP: [recv, value(args[0])] }, 0] })
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
     },
     stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6595,21 +6614,23 @@ var NAMES = {
     },
     expr: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, value, bind }) => {
+      emit: ({ recv, args, value, bind, present }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
-        const s = bind("str");
-        return {
-          $let: {
-            vars: { [s.as]: coerceStringBinding(recv) },
-            in: {
-              $eq: [
-                { $substrCP: [s.ref, clampNonNegative(foldedSubtract({ $strLenCP: s.ref }, needleLen)), needleLen] },
-                needle
-              ]
+        return nullOr(recv, present, bind, (r) => {
+          const s = bind("str");
+          return {
+            $let: {
+              vars: { [s.as]: r },
+              in: {
+                $eq: [
+                  { $substrCP: [s.ref, clampNonNegative(foldedSubtract({ $strLenCP: s.ref }, needleLen)), needleLen] },
+                  needle
+                ]
+              }
             }
-          }
-        };
+          };
+        });
       }
     },
     stream: unsupported("'.endsWith()' has no stream form: it produces a value, not a stream of documents."),
@@ -6694,7 +6715,7 @@ var NAMES = {
     },
     expr: {
       args: { sig: "regex", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $regexMatch: regexBody(recv, args[0], () => value(args[0])) })
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6712,7 +6733,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "regex", exact: 1, regexFlag: { 0: "g" } },
-      emit: ({ recv, args, value }) => ({ $regexFindAll: regexBody(recv, args[0], () => value(args[0])) })
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6732,12 +6753,12 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "regex", exact: 1 },
-      emit: ({ recv, args, value }) => ({
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({
         $ifNull: [
-          { $getField: { field: "idx", input: { $regexFind: regexBody(recv, args[0], () => value(args[0])) } } },
+          { $getField: { field: "idx", input: { $regexFind: regexBody(r, args[0], () => value(args[0])) } } },
           -1
         ]
-      })
+      }))
     },
     stream: unsupported("'.search()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6755,7 +6776,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "targetLength[, padString]", allowed: [1, 2] },
-      emit: ({ recv, args, value, bind }) => padded("start", recv, args, value, bind)
+      emit: ({ recv, args, value, bind, present }) => nullOr(recv, present, bind, (r) => padded("start", r, args, value, bind))
     },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6775,7 +6796,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "targetLength[, padString]", allowed: [1, 2] },
-      emit: ({ recv, args, value, bind }) => padded("end", recv, args, value, bind)
+      emit: ({ recv, args, value, bind, present }) => nullOr(recv, present, bind, (r) => padded("end", r, args, value, bind))
     },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6834,7 +6855,7 @@ var NAMES = {
           emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] })
         }
       },
-      uncertain: () => "$$REMOVE"
+      uncertain: () => null
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6888,7 +6909,7 @@ var NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
             }
           },
-          emit: ({ recv, args, value, present }) => ({ $in: [value(args[0]), present ? recv : arrayOrEmpty(recv)] })
+          emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $in: [value(args[0]), r] }))
         },
         string: {
           args: {
@@ -6898,10 +6919,10 @@ var NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
             }
           },
-          emit: ({ recv, args, value }) => ({ $gte: [{ $indexOfCP: [recv, value(args[0])] }, 0] })
+          emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
         }
       },
-      uncertain: () => "$$REMOVE"
+      uncertain: () => null
     },
     stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6932,7 +6953,7 @@ var NAMES = {
           })
         }
       },
-      uncertain: () => "$$REMOVE"
+      uncertain: () => null
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6956,16 +6977,15 @@ var NAMES = {
         ),
         array: {
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value, bind }) => sliceArray(recv, args, value, bind)
+          emit: ({ recv, args, value, bind, present }) => nullOr(recv, present, bind, (r) => sliceArray(r, args, value, bind))
         },
         string: {
           // MEASURED: `$substrCP` / `$indexOfCP` of null or a missing field answer as of ""
-          alsoTypes: ["null", "missing"],
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value }) => sliceString(recv, args, value)
+          emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => sliceString(r, args, value))
         }
       },
-      uncertain: () => "$$REMOVE"
+      uncertain: () => null
     },
     stream: {
       args: {
@@ -7045,7 +7065,7 @@ var NAMES = {
           })
         }
       },
-      uncertain: () => "$$REMOVE"
+      uncertain: () => null
     },
     stream: inCode("src/compiler/emit/union.ts"),
     statement: unsupported(
@@ -7543,16 +7563,16 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "callback", exact: 1 },
-      emit: ({ recv, args, callback: callback2 }) => {
+      emit: ({ recv, args, callback: callback2, present, bind }) => {
         const cb = callback2(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
-        return {
+        return nullOr(recv, present, bind, (r) => ({
           $reduce: {
-            input: indexedPairs(recv),
+            input: indexedPairs(r),
             initialValue: -1,
             in: { $cond: [{ $and: [{ $eq: ["$$value", -1] }, hit] }, { $arrayElemAt: ["$$this", 0] }, "$$value"] }
           }
-        };
+        }));
       }
     },
     stream: because("returns an index, and a stream has no index."),
@@ -7603,16 +7623,16 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "callback", exact: 1 },
-      emit: ({ recv, args, callback: callback2 }) => {
+      emit: ({ recv, args, callback: callback2, present, bind }) => {
         const cb = callback2(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
-        return {
+        return nullOr(recv, present, bind, (r) => ({
           $reduce: {
-            input: indexedPairs(recv),
+            input: indexedPairs(r),
             initialValue: -1,
             in: { $cond: [hit, { $arrayElemAt: ["$$this", 0] }, "$$value"] }
           }
-        };
+        }));
       }
     },
     stream: because("returns an index, and a stream has no index."),
@@ -7675,10 +7695,11 @@ var NAMES = {
     },
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ args, callback: callback2, present }) => {
+      emit: ({ recv, args, callback: callback2, present, bind }) => {
         const cb = callback2(args[0], "truth");
-        const input = cb.paired || present ? cb.input : { $ifNull: [cb.input, []] };
-        return { $anyElementTrue: { $map: { input, as: cb.as, in: cb.in } } };
+        return nullOr(recv, present, bind, (r) => ({
+          $anyElementTrue: { $map: { input: cb.paired ? cb.input : r, as: cb.as, in: cb.in } }
+        }));
       }
     },
     stream: unsupported("'.some()' has no stream form: it produces a value, not a stream of documents."),
@@ -7699,10 +7720,11 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ args, callback: callback2, present }) => {
+      emit: ({ recv, args, callback: callback2, present, bind }) => {
         const cb = callback2(args[0], "truth");
-        const input = cb.paired || present ? cb.input : { $ifNull: [cb.input, []] };
-        return { $allElementsTrue: { $map: { input, as: cb.as, in: cb.in } } };
+        return nullOr(recv, present, bind, (r) => ({
+          $allElementsTrue: { $map: { input: cb.paired ? cb.input : r, as: cb.as, in: cb.in } }
+        }));
       }
     },
     stream: unsupported("'.every()' has no stream form: it produces a value, not a stream of documents."),
@@ -7779,7 +7801,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "separator", allowed: [0, 1] },
-      emit: ({ recv, args, value }) => joinedWith(recv, args.length === 1 ? value(args[0]) : ",")
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ","))
     },
     stream: because(
       `joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(", ")'.`
@@ -11291,9 +11313,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present }) => ({
-        $setIsSubset: [present ? recv : arrayOrEmpty(recv), arrayOrEmpty(value(args[0]))]
-      })
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $setIsSubset: [r, arrayOrEmpty(value(args[0]))] }))
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -11313,9 +11333,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present }) => ({
-        $setIsSubset: [arrayOrEmpty(value(args[0])), present ? recv : arrayOrEmpty(recv)]
-      })
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $setIsSubset: [arrayOrEmpty(value(args[0])), r] }))
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -12648,9 +12666,9 @@ var NAMES = {
     ),
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present }) => ({
-        $eq: [sizeOf({ $setIntersection: [present ? recv : arrayOrEmpty(recv), arrayOrEmpty(value(args[0]))] }), 0]
-      })
+      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({
+        $eq: [sizeOf({ $setIntersection: [r, arrayOrEmpty(value(args[0]))] }), 0]
+      }))
     },
     stream: unsupported(
       "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
@@ -13484,15 +13502,13 @@ var NAMES = {
         // → { $size: [["$a", 2]] }. A path or an expression is handed over as it is.
         array: {
           args: { sig: "", none: true },
-          // `$size` aborts on null, so a receiver that may be missing is guarded; one
-          // that is there (`present`) is counted as it is.
-          emit: ({ recv, present }) => ({ $size: Array.isArray(recv) ? [recv] : present ? recv : arrayOrEmpty(recv) })
+          // `$size` aborts on null; a receiver that may be missing answers null, as a
+          // JavaScript method does, and one that is there is counted as it is.
+          emit: ({ recv, present, bind }) => Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present, bind, (r) => ({ $size: r }))
         },
-        // The emit answers 0 for a missing string, so the runtime test admits one too.
         string: {
           args: { sig: "", none: true },
-          alsoTypes: ["null", "missing"],
-          emit: ({ recv }) => ({ $strLenCP: { $ifNull: [recv, ""] } })
+          emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $strLenCP: r }))
         },
         // `$$.length` has no inline size: it places a materialiser ahead of the
         // statement and reads the field it wrote.
@@ -13501,9 +13517,10 @@ var NAMES = {
           emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT)
         }
       },
-      // Stated, not derived: a receiver that is neither array nor string yields $$REMOVE.
-      // A two-way $cond read "not an array" as "string" and aborted the whole command.
-      uncertain: () => "$$REMOVE"
+      // A receiver that is neither array nor string — null, missing, a number — answers
+      // null, as JavaScript's `undefined` does. A two-way $cond that read "not an array"
+      // as "string" aborted the whole command.
+      uncertain: () => null
     },
     stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
     statement: unsupported(
@@ -25918,8 +25935,10 @@ function lowerValue(node, env) {
       return objectLiteral(node, node.entries, env);
     case "Injected":
       return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
-    case "FieldRef":
-      return reachable(env.render(locate(node, env), node.pos));
+    case "FieldRef": {
+      const path = reachable(env.render(locate(node, env), node.pos));
+      return node.optional === true ? { $ifNull: [path, null] } : path;
+    }
     case "CollectionRef":
     case "DatabaseRef":
     case "ClusterRef":
@@ -25982,18 +26001,28 @@ function templateLiteral(node, env) {
   node.exprs.forEach((e, i) => {
     if (node.quasis[i] !== "") parts.push(node.quasis[i]);
     const lowered = lowerValue(e, inner);
-    const safe = chainHasOptional(e) ? { $ifNull: [lowered, ""] } : lowered;
+    const safe = chainHasOptional(e) ? ifNull(lowered, "") : lowered;
     parts.push(kindOf(e, inner) === "string" ? safe : { $toString: safe });
   });
   const tail = node.quasis[node.exprs.length];
   if (tail !== "" && tail !== void 0) parts.push(tail);
   return { $concat: parts };
 }
+function ifNull(v, neutral) {
+  if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+    const keys = Object.keys(v);
+    const inner = v.$ifNull;
+    if (keys.length === 1 && Array.isArray(inner) && inner.length === 2 && inner[1] === null) {
+      return { $ifNull: [inner[0], neutral] };
+    }
+  }
+  return { $ifNull: [v, neutral] };
+}
 function stoppedChain(node) {
   let cursor = node;
   let called = false;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
-    if (cursor.type === "MethodCall") called = true;
+    if (cursor.type !== "MemberAccess" || isPropertyRow(cursor)) called = true;
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
@@ -26055,7 +26084,7 @@ function arrayLiteral(node, elements, env) {
       flush();
       if (kindOf(el.argument, inner) === "string") throw spreadOfString(el.argument.pos);
       const v = lowerValue(el.argument, inner);
-      operands.push(chainHasOptional(el.argument) ? { $ifNull: [v, []] } : v);
+      operands.push(chainHasOptional(el.argument) ? ifNull(v, []) : v);
     } else if (isExpr2(el)) group.push(lowerValue(el, inner));
   }
   flush();
@@ -26181,11 +26210,11 @@ function memberAccess(node, env) {
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
     throw unappliedReference(node.object.name, node.name, node.pos);
   }
-  if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env, node.optional);
+  if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
   const path = pathOf(node, env);
   if (path !== null) return path;
   const raw = lowerValue(node.object, childEnv(env, node, "object"));
-  const input = node.optional || chainHasOptional(node.object) ? { $ifNull: [raw, {}] } : raw;
+  const input = node.optional || chainHasOptional(node.object) ? ifNull(raw, {}) : raw;
   return { $getField: { field: node.name, input } };
 }
 function indexAccess(node, env) {
@@ -26198,7 +26227,7 @@ function indexAccess(node, env) {
   const idx = lowerValue(node.index, childEnv(env, node, "index"));
   const optional = node.optional || chainHasOptional(node.object);
   const known = node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf(node.object, objEnv));
-  const wrapped = (neutral) => optional ? { $ifNull: [raw, neutral] } : raw;
+  const wrapped = (neutral) => optional ? ifNull(raw, neutral) : raw;
   if (kindOf(node.index, env) === "string") return { $getField: { field: idx, input: wrapped({}) } };
   const literal2 = evaluate(node.index, /* @__PURE__ */ new Map());
   if (literal2.ok && typeof literal2.value === "number" && Number.isInteger(literal2.value)) {
@@ -26243,9 +26272,9 @@ var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES3.has(re
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
 var JS_NAMES = everyName().filter((n2) => !n2.startsWith("$"));
 function methodCall2(node, env) {
-  return dispatchOn(node, node.name, node.object, node.args, env, node.optional);
+  return dispatchOn(node, node.name, node.object, node.args, env);
 }
-function dispatchOn(node, name2, recvNode, args, env, optional) {
+function dispatchOn(node, name2, recvNode, args, env) {
   const position = positionIn(env);
   const recvEnv = childEnv(env, node, "object");
   const chainOnStream = recvNode.type === "MethodCall" && chainBase(recvNode).type === "CollectionRef";
@@ -26257,21 +26286,21 @@ function dispatchOn(node, name2, recvNode, args, env, optional) {
   const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
-  const recv = receiver.kind === "value" || receiver.kind === "opaque" ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name2) : null;
+  const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
   if (sel.kind === "rule") {
     if (elementsOf(name2) === "scalar") {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
     checkSlots(name2, sel.rule.args, exprArgs);
-    const present = isPresent(recvNode, recvEnv) || (receiver.kind === "value" || receiver.kind === "opaque") && recv !== receiver.lowered;
+    const present = isPresent(recvNode, recvEnv);
     return sel.rule.emit(
       exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, present)
     );
   }
   if (sel.kind === "dispatch") {
     if (receiver.kind !== "opaque") internalError("a dispatch was selected for a proven receiver");
-    return runDispatch(sel, name2, recv, exprArgs, env, node, spelled3, container, recv !== receiver.lowered);
+    return runDispatch(sel, name2, recv, exprArgs, env, node, spelled3, container);
   }
   const format = receiver.kind === "namespace" ? (c) => `${receiver.name}.${c}` : (c) => `.${c}()`;
   const near = receiver.kind === "namespace" ? JS_NAMES.filter((n2) => {
@@ -26285,12 +26314,6 @@ function arraysHolder(recv) {
   if (recv.type === "MethodCall" && recv.name === "partition") return "'.partition(...)'";
   return null;
 }
-function withOptional(lowered, receiver, optional, name2) {
-  if (!optional || receiver.kind !== "value" && receiver.kind !== "opaque") return lowered;
-  const family = receiver.kind === "value" ? receiver.family : soleFieldFamilyOf(name2);
-  const neutral = family === "string" ? "" : family === "array" || family === "set" ? [] : family === "object" ? {} : null;
-  return neutral === null ? lowered : { $ifNull: [lowered, neutral] };
-}
 function cheapToRepeat(lowered) {
   if (typeof lowered === "string") return lowered.startsWith("$");
   if (typeof lowered !== "object" || lowered === null || Array.isArray(lowered)) return false;
@@ -26299,14 +26322,14 @@ function cheapToRepeat(lowered) {
   const operands = lowered.$ifNull;
   return Array.isArray(operands) && operands.length === 2 && cheapToRepeat(operands[0]);
 }
-function runDispatch(sel, name2, lowered, args, env, node, spelled3, container, optionalNeutral) {
+function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) {
   const position = positionIn(env);
   const bound = cheapToRepeat(lowered) ? null : env.fresh("recv");
   const ref = bound === null ? lowered : bound.ref;
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule) => {
     checkSlots(name2, rule.args, args);
-    const present = optionalNeutral || !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
+    const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
     return rule.emit(
       exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present)
     );
@@ -26315,9 +26338,7 @@ function runDispatch(sel, name2, lowered, args, env, node, spelled3, container, 
   const otherwise = sel.otherwise;
   let fallback;
   if (typeof otherwise === "function")
-    fallback = otherwise(
-      exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, optionalNeutral)
-    );
+    fallback = otherwise(exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ));
   else
     throw refusalFor(
       { kind: "refused", name: name2, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },
@@ -26506,9 +26527,7 @@ function binary2(node, env) {
       const operands = chainOf2(node, "+");
       if (operands.some((e) => kindOf(e, inner) === "string")) {
         return {
-          $concat: operands.map(
-            (e) => chainHasOptional(e) ? { $ifNull: [lowerValue(e, inner), ""] } : lowerValue(e, inner)
-          )
+          $concat: operands.map((e) => chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))
         };
       }
       return { $add: operands.map((e) => lowerValue(e, inner)) };

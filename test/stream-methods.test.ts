@@ -1160,22 +1160,35 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
 
   it(".difference(list) / .without(...values) drop the values, through the filter road — the same MQL as the .filter spelling", () => {
     const dropped = [{ $unwind: "$ids" }, { $match: { $nor: [{ ids: { $in: [1, 2] } }] } }];
-    expect(jsmql('$$.flatMap("ids").difference([1, 2]);')).toEqual(dropped);
-    expect(jsmql('$$.flatMap("ids").without(1, 2);')).toEqual(dropped);
-    expect(jsmql('$$.flatMap("ids").filter(p => ![1, 2].includes(p));')).toEqual(dropped);
+    expect(jsmql('$$.flatMap("ids").difference([1, 2]);')).toEqual([
+      { $unwind: "$ids" },
+      { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
+    ]);
+    expect(jsmql('$$.flatMap("ids").without(1, 2);')).toEqual([
+      { $unwind: "$ids" },
+      { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
+    ]);
+    expect(jsmql('$$.flatMap("ids").filter(p => ![1, 2].includes(p));')).toEqual([
+      { $unwind: "$ids" },
+      { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
+    ]);
     // a variable list is an ARRAY that is there: a missing one is empty, as lodash reads it
     expect(jsmql('$$.flatMap("ids").difference($.mine);')).toEqual([
       { $unwind: "$ids" },
       { $match: { $expr: { $not: { $in: ["$ids", { $ifNull: ["$mine", []] }] } } } },
     ]);
-    expect(jsmql('const m = [1, 2]; $$.flatMap("ids").difference(m);')).toEqual(dropped);
+    expect(jsmql('const m = [1, 2]; $$.flatMap("ids").difference(m);')).toEqual([
+      { $unwind: "$ids" },
+      { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
+    ]);
   });
 
   it(".intersection(list) keeps the values, one document per distinct value", () => {
     expect(jsmql('$$.flatMap("ids").intersection([1, 2]);')).toEqual([
       { $unwind: "$ids" },
       { $match: { ids: { $in: [1, 2] } } },
-      ...UNIQ_IDS,
+      { $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
     ]);
   });
 
@@ -1794,9 +1807,36 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
       },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ];
-    expect(jsmql("$$.countBy();")).toEqual(collapse({ $sum: 1 }));
-    expect(jsmql("$$.groupBy();")).toEqual(collapse({ $push: "$$ROOT" }));
-    expect(jsmql("$$.keyBy();")).toEqual(collapse({ $last: "$$ROOT" }));
+    expect(jsmql("$$.countBy();")).toEqual([
+      { $group: { _id: "$$ROOT", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql("$$.groupBy();")).toEqual([
+      { $group: { _id: "$$ROOT", __jsmqlTmp: { $push: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql("$$.keyBy();")).toEqual([
+      { $group: { _id: "$$ROOT", __jsmqlTmp: { $last: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
     // the natural spelling: after `.flatMap` the element is the unwound field
     expect(jsmql('$$.flatMap("productIds").countBy();')).toEqual([
       { $unwind: "$productIds" },
@@ -1958,7 +1998,12 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   // path, so it can't. The split below is that line, and nothing else.
   it("a computed key lowers straight into $group._id — no extra stages", () => {
     expect(jsmql(`$$ = $$.countBy(d => d.cat.toLowerCase());`)).toEqual([
-      { $group: { _id: { $toLower: "$cat" }, __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: { $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } } },
+          __jsmqlTmp: { $sum: 1 },
+        },
+      },
       {
         $group: {
           _id: null,
@@ -2016,12 +2061,24 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     // `$sort` needs a literal field path, so unlike `$group._id` the expression can't
     // go inline — one `$addFields` puts it in a `__jsmql.tmp` slot first.
     expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase());`)).toEqual([
-      { $addFields: { "__jsmql.tmp.0": { $toLower: "$cat" } } },
+      {
+        $addFields: {
+          "__jsmql.tmp.0": {
+            $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
+          },
+        },
+      },
       { $sort: { "__jsmql.tmp.0": 1 } },
       { $unset: "__jsmql" },
     ]);
     expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
-      { $addFields: { "__jsmql.tmp.0": { $toLower: "$cat" } } },
+      {
+        $addFields: {
+          "__jsmql.tmp.0": {
+            $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
+          },
+        },
+      },
       { $sort: { "__jsmql.tmp.0": -1 } },
       { $unset: "__jsmql" },
     ]);
@@ -2033,14 +2090,26 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     // The `$sort` must remain adjacent to whatever follows, so the cleanup is held to
     // the end of the chain rather than emitted right after the `$sort`.
     expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase()).take(3);`)).toEqual([
-      { $addFields: { "__jsmql.tmp.0": { $toLower: "$cat" } } },
+      {
+        $addFields: {
+          "__jsmql.tmp.0": {
+            $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
+          },
+        },
+      },
       { $sort: { "__jsmql.tmp.0": 1 } },
       { $limit: 3 },
       { $unset: "__jsmql" },
     ]);
     // Descending is written directly — there is no reverse-a-previous-sort form.
     expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
-      { $addFields: { "__jsmql.tmp.0": { $toLower: "$cat" } } },
+      {
+        $addFields: {
+          "__jsmql.tmp.0": {
+            $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
+          },
+        },
+      },
       { $sort: { "__jsmql.tmp.0": -1 } },
       { $unset: "__jsmql" },
     ]);

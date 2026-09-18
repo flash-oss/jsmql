@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-18 — feat: a JavaScript method on a null or missing receiver answers null
+
+MEASURED over a document that holds none of the fields, the JavaScript spellings gave
+seven different answers: `$.a.length` 0, `$.a.some(f)` false, `$.a.every(f)` true,
+`$.s.toUpperCase()` "", `$.s.search(/a/)` -1, `$.a.includes(1)` missing, `$.a.slice(0,1)`
+the STRING branch's "" — and `$.a.findIndex(f)` aborted the whole command. JavaScript
+throws on every one of them. MongoDB has no error to raise inside an expression, so all
+of them now answer null, the nearest thing it holds. `$.user?.name` writes `x: null`
+too, where a bare path left the key out. A lodash method keeps lodash's answer:
+`_.size(undefined)` is 0 and `_.pick(undefined, …)` is `{}`.
+
+One helper does it. `nullOr` in [src/registry/names.ts](src/registry/names.ts) tests the
+receiver and runs the method only when the test passed, so the body carries no `$ifNull`
+of its own — the `arrayOrEmpty` and `""` neutrals those cells put on their receivers are
+gone, and with them the fabricated 0 / "" / false. A row that dispatches on the
+receiver's type lets null and missing fall to its `uncertain` default, which is null
+now rather than `$$REMOVE`; the `alsoTypes: ["null", "missing"]` that routed a missing
+value into `.length`'s and `.slice`'s string branch is gone. `withOptional` is deleted:
+every receiver it wrapped is now stopped above it, because a `?.` followed by anything
+COMPUTED — a call, an index, a property row such as `.length` — stops the chain, not
+only a call. The one thing kept from that mechanism is the consumer table in
+[docs/LANGUAGE.md](docs/LANGUAGE.md) § Optional Chaining, for a `?.` with nothing after it.
+
+---
+
 ## 2026-09-18 — feat: a `?.` with a call after it stops the chain (DEF-036 ships)
 
 JavaScript stops a chain at a `?.`. jsmql put an empty value in place of the missing

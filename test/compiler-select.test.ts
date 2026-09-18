@@ -77,8 +77,9 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
   it("runs the branch a proven receiver names", () => {
     const r = at("length", value("array"));
     expect(r.kind).toBe("rule");
+    // a receiver that is not proven `present` is tested first, and answers null when it is not there
     expect((r as { rule: { emit: (i: unknown) => unknown } }).rule.emit({ recv: "$x" })).toEqual({
-      $size: { $ifNull: ["$x", []] },
+      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $size: "$x" } },
     });
   });
 
@@ -87,8 +88,8 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     expect(r.kind).toBe("dispatch");
     if (r.kind !== "dispatch") return;
     expect(r.branches.map((b) => b.family)).toEqual(["array", "string"]);
-    // the string branch's guard is widened by its `alsoTypes`
-    expect(r.branches[1].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["string", "null", "missing"]] });
+    // no branch admits null or missing: they fall to the row's `uncertain`, which answers null
+    expect(r.branches[1].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["string"]] });
     expect(r.branches[0].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["array"]] });
     expect(typeof r.otherwise).toBe("function");
   });

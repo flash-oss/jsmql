@@ -57,47 +57,70 @@ const unordered = (src: string, js: (d: typeof DOC) => unknown): unknown => {
   RUNS.push({ src, js, unordered: true });
   return expr(src);
 };
+/**
+ * The shape a JAVASCRIPT method takes on a receiver that may be null or missing: the
+ * test first, the method inside it, so it answers null where JavaScript would throw.
+ * A receiver that is certainly there (a literal, a `$lookup`'s array) takes no test.
+ */
+const nullOr = (recv: unknown, body: unknown): unknown => ({
+  $cond: { if: { $eq: [{ $ifNull: [recv, null] }, null] }, then: null, else: body },
+});
 
 describe("compiler/emit — string methods", () => {
   it("lowers each string method to its operator", () => {
     expect(compiled("$.s.trim()", (d) => d.s.trim())).toEqual({ $trim: { input: "$s" } });
     expect(compiled("$.s.trimStart()", (d) => d.s.trimStart())).toEqual({ $ltrim: { input: "$s" } });
     expect(compiled("$.s.trimEnd()", (d) => d.s.trimEnd())).toEqual({ $rtrim: { input: "$s" } });
-    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual({ $toLower: "$s" });
-    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual({ $toUpper: "$s" });
+    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual(nullOr("$s", { $toLower: "$s" }));
+    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual(nullOr("$s", { $toUpper: "$s" }));
     expect(compiled('$.csv.split(",")', (d) => d.csv.split(","))).toEqual({ $split: ["$csv", ","] });
-    expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual({ $substrCP: ["$csv", 0, 1] });
+    expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual(nullOr("$csv", { $substrCP: ["$csv", 0, 1] }));
     expect(compiled("$.csv.charAt(-1)", (d) => d.csv.charAt(-1))).toBe("");
-    expect(compiled('$.csv.startsWith("a")', (d) => d.csv.startsWith("a"))).toEqual({
-      $eq: [{ $indexOfCP: ["$csv", "a"] }, 0],
-    });
-    expect(compiled('$.csv.endsWith("c")', (d) => d.csv.endsWith("c"))).toEqual({
-      $let: {
-        vars: { jsmqlStr: { $ifNull: ["$csv", ""] } },
-        in: {
-          $eq: [{ $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 1] }] }, 1] }, "c"],
+    expect(compiled('$.csv.startsWith("a")', (d) => d.csv.startsWith("a"))).toEqual(
+      nullOr("$csv", { $eq: [{ $indexOfCP: ["$csv", "a"] }, 0] }),
+    );
+    expect(compiled('$.csv.endsWith("c")', (d) => d.csv.endsWith("c"))).toEqual(
+      nullOr("$csv", {
+        $let: {
+          vars: { jsmqlStr: "$csv" },
+          in: {
+            $eq: [
+              { $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 1] }] }, 1] },
+              "c",
+            ],
+          },
         },
-      },
+      }),
+    );
+    expect(compiled("$.csv.search(/b/)", (d) => d.csv.search(/b/))).toEqual(
+      nullOr("$csv", {
+        $ifNull: [{ $getField: { field: "idx", input: { $regexFind: { input: "$csv", regex: "b" } } } }, -1],
+      }),
+    );
+    expect(compiled('$.csv.padStart(7, "-")', (d) => d.csv.padStart(7, "-"))).toMatchObject({
+      $cond: { else: { $let: {} } },
     });
-    expect(compiled("$.csv.search(/b/)", (d) => d.csv.search(/b/))).toEqual({
-      $ifNull: [{ $getField: { field: "idx", input: { $regexFind: { input: "$csv", regex: "b" } } } }, -1],
+    expect(compiled('$.csv.padEnd(6, "xy")', (d) => d.csv.padEnd(6, "xy"))).toMatchObject({
+      $cond: { else: { $let: {} } },
     });
-    expect(compiled('$.csv.padStart(7, "-")', (d) => d.csv.padStart(7, "-"))).toMatchObject({ $let: {} });
-    expect(compiled('$.csv.padEnd(6, "xy")', (d) => d.csv.padEnd(6, "xy"))).toMatchObject({ $let: {} });
     expect(compiled("$.csv.repeat(2)", (d) => d.csv.repeat(2))).toEqual({
       $reduce: { input: { $range: [0, 2] }, initialValue: "", in: { $concat: ["$$value", "$csv"] } },
     });
-    expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual({ $substrCP: ["$csv", 2, 2] });
-    expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({ $substrCP: ["$csv", 1, 2] });
+    expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual(
+      nullOr("$csv", { $substrCP: ["$csv", 2, 2] }),
+    );
+    expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual(
+      nullOr("$csv", { $substrCP: ["$csv", 1, 2] }),
+    );
     expect(compiled('$.csv.replace(",", ";")', (d) => d.csv.replace(",", ";"))).toEqual({
       $replaceOne: { input: "$csv", find: ",", replacement: ";" },
     });
     expect(compiled('$.csv.replaceAll(",", ";")', (d) => d.csv.replaceAll(",", ";"))).toEqual({
       $replaceAll: { input: "$csv", find: ",", replacement: ";" },
     });
-    expect(compiled("$.csv.match(/B/i)", (d) => /B/i.test(d.csv))).toEqual({
-      $regexMatch: { input: "$csv", regex: "B", options: "i" },
-    });
+    expect(compiled("$.csv.match(/B/i)", (d) => /B/i.test(d.csv))).toEqual(
+      nullOr("$csv", { $regexMatch: { input: "$csv", regex: "B", options: "i" } }),
+    );
     expect(compiled("$.csv.truncate({ length: 3 })", () => "...")).toMatchObject({ $let: {} });
     // lodash
     expect(compiled("$.w.capitalize()", () => "Foobar baz-qux")).toMatchObject({ $concat: [{ $toUpper: {} }, {}] });
@@ -308,10 +331,12 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.findLast(x => x > 1)", (d) => d.a.findLast((x) => x > 1))).toMatchObject({
       $arrayElemAt: [{}, -1],
     });
-    expect(compiled("$.a.some(x => x > 2)", (d) => d.a.some((x) => x > 2))).toEqual({
-      $anyElementTrue: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $gt: ["$$x", 2] } } },
+    expect(compiled("$.a.some(x => x > 2)", (d) => d.a.some((x) => x > 2))).toEqual(
+      nullOr("$a", { $anyElementTrue: { $map: { input: "$a", as: "x", in: { $gt: ["$$x", 2] } } } }),
+    );
+    expect(compiled("$.a.every(x => x > 0)", (d) => d.a.every((x) => x > 0))).toMatchObject({
+      $cond: { else: { $allElementsTrue: {} } },
     });
-    expect(compiled("$.a.every(x => x > 0)", (d) => d.a.every((x) => x > 0))).toMatchObject({ $allElementsTrue: {} });
     expect(compiled("$.nested.flatMap(x => x)", (d) => d.nested.flatMap((x) => x))).toMatchObject({ $reduce: {} });
     expect(
       compiled("$.docs.map((x, i, arr) => arr.length)", (d) => d.docs.map((_x, _i, arr) => arr.length)),
@@ -430,10 +455,14 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toMatchObject({ $let: {} });
     expect(compiled("$.a.toString()", (d) => d.a.toString())).toMatchObject({ $let: {} });
     expect(compiled("$.n.toString()", (d) => d.n.toString())).toMatchObject({ $let: {} });
-    // `$ifNull` wraps the reduce so an EMPTY array answers "" rather than the reduce's
-    // own `null` seed — the seed is `null` so a leading "" element keeps its separator.
-    expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toMatchObject({ $ifNull: [{ $reduce: {} }, ""] });
-    expect(compiled('$.mixed.join(",")', (d) => d.mixed.join(","))).toMatchObject({ $ifNull: [{ $reduce: {} }, ""] });
+    // Inside the null test, `$ifNull` wraps the reduce so an EMPTY array answers "" rather
+    // than the reduce's own `null` seed — the seed is `null` so a leading "" element keeps its separator.
+    expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toMatchObject({
+      $cond: { else: { $ifNull: [{ $reduce: {} }, ""] } },
+    });
+    expect(compiled('$.mixed.join(",")', (d) => d.mixed.join(","))).toMatchObject({
+      $cond: { else: { $ifNull: [{ $reduce: {} }, ""] } },
+    });
     expect(compiled("$.n.clamp(0, 5)", () => 5)).toEqual({ $min: [{ $max: ["$n", 0] }, 5] });
     // a receiver PROVEN to be one family runs that cell alone
     expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
@@ -593,24 +622,26 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("lowers the index searches, the reducers and zipWith", () => {
-    expect(compiled("$.a.findIndex(x => x < 3)", () => DOC.a.findIndex((x) => x < 3))).toEqual({
-      $reduce: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: "$a" }] }, "$a"] } },
-        initialValue: -1,
-        in: {
-          $cond: [
-            {
-              $and: [
-                { $eq: ["$$value", -1] },
-                { $let: { vars: { x: { $arrayElemAt: ["$$this", 1] } }, in: { $lt: ["$$x", 3] } } },
-              ],
-            },
-            { $arrayElemAt: ["$$this", 0] },
-            "$$value",
-          ],
+    expect(compiled("$.a.findIndex(x => x < 3)", () => DOC.a.findIndex((x) => x < 3))).toEqual(
+      nullOr("$a", {
+        $reduce: {
+          input: { $zip: { inputs: [{ $range: [0, { $size: "$a" }] }, "$a"] } },
+          initialValue: -1,
+          in: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$$value", -1] },
+                  { $let: { vars: { x: { $arrayElemAt: ["$$this", 1] } }, in: { $lt: ["$$x", 3] } } },
+                ],
+              },
+              { $arrayElemAt: ["$$this", 0] },
+              "$$value",
+            ],
+          },
         },
-      },
-    });
+      }),
+    );
     expect(compiled("$.a.findIndex((x, i) => x + i > 3)", () => DOC.a.findIndex((x, i) => x + i > 3))).toBeDefined();
     expect(compiled("$.a.findIndex(x => x > 9)", () => DOC.a.findIndex((x) => x > 9))).toBeDefined();
     expect(compiled("$.a.findLastIndex(x => x > 1)", () => DOC.a.findLastIndex((x) => x > 1))).toBeDefined();
@@ -664,21 +695,21 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
 
   it("lowers the Set relations on a Set or an array", () => {
     // MEASURED: $setIsSubset and $size ABORT the command on an operand that is not an
-    // array, where every $setUnion/$setDifference sibling answers null — so these three
-    // read each operand through $ifNull and take a missing field as the empty set. A
-    // literal is already an array and is handed through untouched.
-    expect(compiled("new Set($.a).isSubsetOf(new Set($.b))", () => new Set(DOC.a).isSubsetOf(new Set(DOC.b)))).toEqual({
-      $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
-    });
+    // array, where every $setUnion/$setDifference sibling answers null. The RECEIVER is a
+    // JavaScript method's and answers null when it is not there; a missing ARGUMENT list
+    // reads as the empty set. A literal is already an array and takes neither.
+    expect(compiled("new Set($.a).isSubsetOf(new Set($.b))", () => new Set(DOC.a).isSubsetOf(new Set(DOC.b)))).toEqual(
+      nullOr("$a", { $setIsSubset: ["$a", { $ifNull: ["$b", []] }] }),
+    );
     expect(compiled("new Set([2]).isSubsetOf(new Set($.b))", () => new Set([2]).isSubsetOf(new Set(DOC.b)))).toEqual({
       $setIsSubset: [[2], { $ifNull: ["$b", []] }],
     });
     expect(
       compiled("new Set($.b).isSupersetOf(new Set([5]))", () => new Set(DOC.b).isSupersetOf(new Set([5]))),
-    ).toEqual({ $setIsSubset: [[5], { $ifNull: ["$b", []] }] });
+    ).toEqual(nullOr("$b", { $setIsSubset: [[5], "$b"] }));
     expect(
       compiled("new Set($.a).isDisjointFrom(new Set($.b))", () => new Set(DOC.a).isDisjointFrom(new Set(DOC.b))),
-    ).toEqual({ $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0] });
+    ).toEqual(nullOr("$a", { $eq: [{ $size: { $setIntersection: ["$a", { $ifNull: ["$b", []] }] } }, 0] }));
     expect(
       unordered("new Set($.a).symmetricDifference(new Set($.b))", () => [
         ...new Set(DOC.a).symmetricDifference(new Set(DOC.b)),
@@ -760,9 +791,10 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ['$.a.differenceBy($.b, "id")', null, [1, 2]],
   ['$.a.intersectionBy($.b, "id")', null, []],
   ['$.a.xorBy($.b, "id")', null, [1, 2]],
-  ["$.a.isSubsetOf($.b)", true, false],
-  ["$.a.isSupersetOf($.b)", true, true],
-  ["$.a.isDisjointFrom($.b)", true, true],
+  // the RECEIVER is a JavaScript method's: null when it is not there
+  ["$.a.isSubsetOf($.b)", null, false],
+  ["$.a.isSupersetOf($.b)", null, true],
+  ["$.a.isDisjointFrom($.b)", null, true],
   ["$.a.chunk(2)", [], [[1, 2]]],
   ["$.a.zipObject($.b)", {}, { 1: null, 2: null }],
   ["$.a.lastIndexOf(1)", null, 0],

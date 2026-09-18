@@ -144,7 +144,19 @@ $$ = candidateProductIds
               { $sort: { createdAt: -1 } },
               { $limit: 100 },
               { $unwind: "$productIds" },
-              { $match: { $expr: { $not: { $in: ["$productIds", { $ifNull: ["$$jsmql_v0_myProductIds", []] }] } } } },
+              {
+                $match: {
+                  $expr: {
+                    $not: {
+                      $cond: {
+                        if: { $eq: [{ $ifNull: ["$$jsmql_v0_myProductIds", null] }, null] },
+                        then: null,
+                        else: { $in: ["$productIds", "$$jsmql_v0_myProductIds"] },
+                      },
+                    },
+                  },
+                },
+              },
               { $group: { _id: "$productIds", __jsmqlTmp: { $sum: 1 } } },
               {
                 $group: {
@@ -862,7 +874,15 @@ $$ = ["sender", "recipient"].map(party => {
                   as: "party",
                   in: {
                     $let: {
-                      vars: { leg: { $getField: { field: "$$party", input: { $ifNull: ["$legs", {}] } } } },
+                      vars: {
+                        leg: {
+                          $cond: {
+                            if: { $eq: [{ $ifNull: ["$legs", null] }, null] },
+                            then: null,
+                            else: { $getField: { field: "$$party", input: "$legs" } },
+                          },
+                        },
+                      },
                       in: {
                         $let: {
                           vars: { score: "$$leg.riskScore" },
@@ -937,7 +957,15 @@ describe("uppercase a user's name via updateOne", { features: ["Update filters"]
       // aggregation expressions on the RHS) when the second `updateOne` arg
       // is an array; the bare-doc form would store the literal expression
       // object instead. See docs/specs/update-filter.md.
-      expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([{ $set: { name: { $toUpper: "$name" } } }]);
+      expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([
+        {
+          $set: {
+            name: {
+              $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toUpper: "$name" } },
+            },
+          },
+        },
+      ]);
     },
   );
 });
@@ -1201,18 +1229,31 @@ $.customer.region.trim().toLowerCase() === "us"
                 $switch: {
                   branches: [
                     { case: { $in: [{ $type: "$cart.items" }, ["array"]] }, then: { $size: "$cart.items" } },
-                    {
-                      case: { $in: [{ $type: "$cart.items" }, ["string", "null", "missing"]] },
-                      then: { $strLenCP: { $ifNull: ["$cart.items", ""] } },
-                    },
+                    { case: { $in: [{ $type: "$cart.items" }, ["string"]] }, then: { $strLenCP: "$cart.items" } },
                   ],
-                  default: "$$REMOVE",
+                  default: null,
                 },
               },
               20,
             ],
           },
-          { $eq: [{ $toLower: { $trim: { input: "$customer.region" } } }, "us"] },
+          {
+            $eq: [
+              {
+                $let: {
+                  vars: { jsmqlRecv: { $trim: { input: "$customer.region" } } },
+                  in: {
+                    $cond: {
+                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+                      then: null,
+                      else: { $toLower: "$$jsmqlRecv" },
+                    },
+                  },
+                },
+              },
+              "us",
+            ],
+          },
         ],
       },
     });
@@ -1273,9 +1314,63 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
           },
           then: {
             $cond: {
-              if: { $gte: [{ $indexOfCP: [{ $toLower: "$role" }, "admin"] }, 0] },
-              then: { $gt: [{ $strLenCP: { $ifNull: [{ $trim: { input: "$name" } }, ""] } }, 0] },
-              else: { $gte: [{ $indexOfCP: [{ $toLower: "$role" }, "admin"] }, 0] },
+              if: {
+                $let: {
+                  vars: {
+                    jsmqlRecv: {
+                      $cond: {
+                        if: { $eq: [{ $ifNull: ["$role", null] }, null] },
+                        then: null,
+                        else: { $toLower: "$role" },
+                      },
+                    },
+                  },
+                  in: {
+                    $cond: {
+                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+                      then: null,
+                      else: { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
+                    },
+                  },
+                },
+              },
+              then: {
+                $gt: [
+                  {
+                    $let: {
+                      vars: { jsmqlRecv: { $trim: { input: "$name" } } },
+                      in: {
+                        $cond: {
+                          if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+                          then: null,
+                          else: { $strLenCP: "$$jsmqlRecv" },
+                        },
+                      },
+                    },
+                  },
+                  0,
+                ],
+              },
+              else: {
+                $let: {
+                  vars: {
+                    jsmqlRecv: {
+                      $cond: {
+                        if: { $eq: [{ $ifNull: ["$role", null] }, null] },
+                        then: null,
+                        else: { $toLower: "$role" },
+                      },
+                    },
+                  },
+                  in: {
+                    $cond: {
+                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+                      then: null,
+                      else: { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
+                    },
+                  },
+                },
+              },
             },
           },
           else: "$active",
@@ -1467,7 +1562,23 @@ describe("URL slug via .toLowerCase().trim().replaceAll()", { features: ["String
         $concat: [
           { $toString: "$articleId" },
           "-",
-          { $replaceAll: { input: { $trim: { input: { $toLower: "$title" } } }, find: " ", replacement: "-" } },
+          {
+            $replaceAll: {
+              input: {
+                $trim: {
+                  input: {
+                    $cond: {
+                      if: { $eq: [{ $ifNull: ["$title", null] }, null] },
+                      then: null,
+                      else: { $toLower: "$title" },
+                    },
+                  },
+                },
+              },
+              find: " ",
+              replacement: "-",
+            },
+          },
         ],
       });
     },
@@ -1480,7 +1591,16 @@ describe("email domain via .split().at().toLowerCase()", { features: ["String me
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { domain: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.email.split("@").at(1).toLowerCase()`)).toEqual({
-        $toLower: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] },
+        $let: {
+          vars: { jsmqlRecv: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] } },
+          in: {
+            $cond: {
+              if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+              then: null,
+              else: { $toLower: "$$jsmqlRecv" },
+            },
+          },
+        },
       });
     },
   );
@@ -1491,7 +1611,18 @@ describe("CSV field word count", { features: ["String methods"] }, () => {
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { tagCount: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.tags.split(",").length`)).toEqual({ $size: { $ifNull: [{ $split: ["$tags", ","] }, []] } });
+      expect(jsmql.expr(`$.tags.split(",").length`)).toEqual({
+        $let: {
+          vars: { jsmqlRecv: { $split: ["$tags", ","] } },
+          in: {
+            $cond: {
+              if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+              then: null,
+              else: { $size: "$$jsmqlRecv" },
+            },
+          },
+        },
+      });
     },
   );
 });
@@ -1508,9 +1639,21 @@ describe("invoice line greeting with ?., ??, and .startsWith", { features: ["Tem
       ).toEqual({
         $concat: [
           "Hi ",
-          { $toString: { $ifNull: ["$customer.firstName", "there"] } },
+          { $toString: { $ifNull: [{ $ifNull: ["$customer.firstName", null] }, "there"] } },
           " — your ",
-          { $cond: { if: { $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, then: "VIP ", else: "" } },
+          {
+            $cond: {
+              if: {
+                $cond: {
+                  if: { $eq: [{ $ifNull: ["$invoice.id", null] }, null] },
+                  then: null,
+                  else: { $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] },
+                },
+              },
+              then: "VIP ",
+              else: "",
+            },
+          },
           "invoice ",
           { $toString: "$invoice.id" },
           " is ready",
@@ -1531,7 +1674,26 @@ describe("audit log line with .toISOString and .charAt(0).toUpperCase", { featur
         $concat: [
           { $dateToString: { date: "$event.ts" } },
           " [",
-          { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
+          {
+            $let: {
+              vars: {
+                jsmqlRecv: {
+                  $cond: {
+                    if: { $eq: [{ $ifNull: ["$event.level", null] }, null] },
+                    then: null,
+                    else: { $substrCP: ["$event.level", 0, 1] },
+                  },
+                },
+              },
+              in: {
+                $cond: {
+                  if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+                  then: null,
+                  else: { $toUpper: "$$jsmqlRecv" },
+                },
+              },
+            },
+          },
           "] ",
           { $toString: "$event.message" },
         ],
@@ -1732,46 +1894,59 @@ describe("tag aggregation via .map.flat.join", { features: ["Array methods"] }, 
     { kind: "expression", usage: "db.posts.aggregate([{ $addFields: { tagsCSV: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.posts.map("tags").flat().join(", ")`)).toEqual({
-        $ifNull: [
-          {
-            $reduce: {
-              input: {
-                $reduce: {
-                  input: { $map: { input: "$posts", as: "x", in: "$$x.tags" } },
-                  initialValue: [],
-                  in: { $concatArrays: ["$$value", "$$this"] },
-                },
-              },
-              initialValue: null,
-              in: {
-                $cond: {
-                  if: { $eq: ["$$value", null] },
-                  then: {
-                    $cond: {
-                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                      then: "",
-                      else: { $toString: "$$this" },
-                    },
-                  },
-                  else: {
-                    $concat: [
-                      "$$value",
-                      ", ",
-                      {
-                        $cond: {
-                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                          then: "",
-                          else: { $toString: "$$this" },
-                        },
-                      },
-                    ],
-                  },
-                },
+        $let: {
+          vars: {
+            jsmqlRecv: {
+              $reduce: {
+                input: { $map: { input: "$posts", as: "x", in: "$$x.tags" } },
+                initialValue: [],
+                in: { $concatArrays: ["$$value", "$$this"] },
               },
             },
           },
-          "",
-        ],
+          in: {
+            $cond: {
+              if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+              then: null,
+              else: {
+                $ifNull: [
+                  {
+                    $reduce: {
+                      input: "$$jsmqlRecv",
+                      initialValue: null,
+                      in: {
+                        $cond: {
+                          if: { $eq: ["$$value", null] },
+                          then: {
+                            $cond: {
+                              if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                              then: "",
+                              else: { $toString: "$$this" },
+                            },
+                          },
+                          else: {
+                            $concat: [
+                              "$$value",
+                              ", ",
+                              {
+                                $cond: {
+                                  if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                                  then: "",
+                                  else: { $toString: "$$this" },
+                                },
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                  "",
+                ],
+              },
+            },
+          },
+        },
       });
     },
   );
@@ -1843,26 +2018,45 @@ $.file.size <= 25_000_000
       "file.size": { $lte: 25000000 },
       $expr: {
         $and: [
-          { $in: [{ $toLower: "$file.ext" }, [".jpg", ".png", ".pdf", ".docx"]] },
           {
-            $let: {
-              vars: { jsmqlStr: { $ifNull: ["$file.name", ""] } },
-              in: {
-                $eq: [
-                  {
-                    $substrCP: [
-                      "$$jsmqlStr",
+            $in: [
+              {
+                $cond: {
+                  if: { $eq: [{ $ifNull: ["$file.ext", null] }, null] },
+                  then: null,
+                  else: { $toLower: "$file.ext" },
+                },
+              },
+              [".jpg", ".png", ".pdf", ".docx"],
+            ],
+          },
+          {
+            $cond: {
+              if: { $eq: [{ $ifNull: ["$file.name", null] }, null] },
+              then: null,
+              else: {
+                $let: {
+                  vars: { jsmqlStr: "$file.name" },
+                  in: {
+                    $eq: [
                       {
-                        $max: [
-                          0,
-                          { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$file.ext", ""] } }] },
+                        $substrCP: [
+                          "$$jsmqlStr",
+                          {
+                            $max: [
+                              0,
+                              {
+                                $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$file.ext", ""] } }],
+                              },
+                            ],
+                          },
+                          { $strLenCP: { $ifNull: ["$file.ext", ""] } },
                         ],
                       },
-                      { $strLenCP: { $ifNull: ["$file.ext", ""] } },
+                      "$file.ext",
                     ],
                   },
-                  "$file.ext",
-                ],
+                },
               },
             },
           },
@@ -1918,7 +2112,7 @@ describe("full name with three-step ?? fallback chain", { features: ["Nullish co
                 { case: { $in: [{ $type: "$aliases" }, ["string"]] }, then: { $substrCP: ["$aliases", 0, 1] } },
                 { case: { $in: [{ $type: "$aliases" }, ["array"]] }, then: { $arrayElemAt: ["$aliases", 0] } },
               ],
-              default: "$$REMOVE",
+              default: null,
             },
           },
           "anonymous",
@@ -3312,7 +3506,7 @@ $.recentCoPurchaseOrders = $$$.orders
                         then: { $gte: [{ $indexOfCP: ["$productIds", "$$jsmql_f0__id"] }, 0] },
                       },
                     ],
-                    default: "$$REMOVE",
+                    default: null,
                   },
                 },
               },
