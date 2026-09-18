@@ -188,6 +188,16 @@ cells do not read `present` at all, the same shape `lastIndexOfArray` took.
 
 ---
 
+## 2026-09-18 — fix: a parameter value from another realm is the value it is
+
+A `jsmql.compile` parameter holding a Date compiled to `{ $match: { $expr: { $gt: ["$updatedAt", date] } } }` instead of the indexable `{ $match: { updatedAt: { $gt: date } } }` — but only when the Date came from another realm: a `vm` context, a test runner's sandbox, a worker. Each realm has its own `Date`, so `instanceof Date` was false for a real Date, and the filter road's constant test (`isQueryConstant` in [src/compiler/emit/filter.ts](src/compiler/emit/filter.ts)) sent it down the expression road. The same test was written at some twenty sites, and the plain-object test (`Object.getPrototypeOf(v) === Object.prototype`) at ten more — that one let a `$`-keyed object from another realm past the `$literal` gate and reach the server as an operator, which is the worse bug of the two.
+
+Recognition now reads what a value IS, never which realm made it: `isDate` / `isRegExp` / `isBytes` read the internal slot through `Object.prototype.toString`, and `isPlainObject` accepts a prototype that is null or the root of any realm (the one whose own prototype is null). They live in [src/registry/vocabulary.ts](src/registry/vocabulary.ts) beside `bsonTagOf`, for the same reason it does — a row reads them and the registry imports nothing outside itself — and [src/bson.ts](src/bson.ts) re-exports them so the compiler has one name for every kind of recognition. [src/stringify.ts](src/stringify.ts) holds twins of the three slot readers, as it already twins `tagOf`, so it stays a leaf. Node's `util.types.isDate` would have been the textbook answer, but the source also runs in the browser playground, where `node:util` does not exist.
+
+[test/cross-realm.test.ts](test/cross-realm.test.ts) holds the rule two ways: it builds every kind of value in a `vm` context beside the same value from this realm, compiles both down every road a parameter travels and holds the outcomes equal; and it scans `src/` for `instanceof Date|RegExp|Uint8Array` and for a comparison against `Object.prototype`, because the next such line reads as the obvious thing to write. See [docs/specs/bson-types.md § Recognition across realms](docs/specs/bson-types.md).
+
+---
+
 ## 2026-09-17 — feat(parse): `$.name(…)` is a method on the document itself
 
 `$.pick(["a", "b"])`, `$.omit(["secret"])`, `$.mapValues(v => v + 1)` — every method jsmql
@@ -318,6 +328,41 @@ are what make the compiler emit a `$switch`. The two copies are now one
 `lastIndexOfArray` function with an unconditional guard, so the row emits no dispatch.
 The live cases in [test/compiler-methods.test.ts](test/compiler-methods.test.ts) run
 every guarded spelling over a document that holds neither operand.
+
+---
+
+## 2026-09-17 — chore: the deck's generated files are the generator's own output
+
+`oxfmt` was reformatting `presentation.html` and `presentation/examples.json`
+after `gather.mjs` and `build.mjs` had written them, so the committed artifact
+could not be reproduced by running the build: the next build rewrote both files
+with no change of content. They join `playground.html` in the formatter's ignore
+list, as does the hand-authored `presentation_skeleton.html`, which the formatter
+reflows in the same way it would `playground_skeleton.html`.
+
+---
+
+## 2026-09-17 — docs: the conference deck lives in the repository
+
+`presentation.html` is a self-contained 36-slide deck for a 45-minute talk, and
+`presentation/` is what builds it. It joins the repository because it holds the
+same property the playground does: no code on a slide is typed by hand.
+
+`gather.mjs` compiles every `examples/*.jsmql` with the real library and prints
+the MQL with `jsmql.stringify`, so a slide and the playground show the same text;
+`extract-wow.mjs` lifts the flagship example out of [realistic.test.ts](test/realistic.test.ts)
+character for character; `tables.mjs` RUNS each whole-query example on the
+project's mongod and records the documents that came back, so the result table
+under a query is its real output; and `verify-ops.mjs` runs every SQL-versus-JSMQL
+row on `:27018` beside the same data in PostgreSQL and fails unless the two agree.
+`build.mjs` injects the gathered JSON island into `presentation_skeleton.html`,
+which is the hand-authored half — the built file is an artifact and is never
+edited directly.
+
+Two examples are deliberate exceptions to "compiler output only", each marked as
+such where it lives: `examples/friday.mql`, the hand-written pipeline the talk's
+story is about, kept verbatim as a historical artifact; and the closing slide's
+hoped-for syntax, which is illustrative and is not compiled.
 
 ---
 

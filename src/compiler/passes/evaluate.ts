@@ -28,6 +28,7 @@ import {
 import type { Family } from "../../registry/vocabulary.ts";
 import { acceptsArgumentCount, isCallable, namespaceNames } from "../rows.ts";
 import { isMqlShaped } from "./inject.ts";
+import { isDate, isRegExp } from "../../bson.ts";
 
 /** What is known so far: a name bound to a constant, or to a declared function. */
 export type Constants = ReadonlyMap<string, unknown>;
@@ -82,7 +83,7 @@ function nameIfUnspellable(value: unknown): string | null {
       const name = nameIfUnspellable(v);
       if (name !== null) return name;
     }
-  } else if (typeof value === "object" && value !== null && !(value instanceof Date)) {
+  } else if (typeof value === "object" && value !== null && !isDate(value)) {
     for (const v of Object.values(value)) {
       const name = nameIfUnspellable(v);
       if (name !== null) return name;
@@ -411,8 +412,8 @@ const isPlain = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" &&
   v !== null &&
   !Array.isArray(v) &&
-  !(v instanceof Date) &&
-  !(v instanceof RegExp) &&
+  !isDate(v) &&
+  !isRegExp(v) &&
   (v as { _bsontype?: unknown })._bsontype === undefined;
 
 /**
@@ -543,8 +544,8 @@ function familyOfValue(value: unknown): Family | undefined {
   if (typeof value === "string") return "string";
   if (Array.isArray(value)) return "array";
   if (typeof value === "number") return "number";
-  if (value instanceof Date) return "date";
-  if (value instanceof RegExp) return "regexp";
+  if (isDate(value)) return "date";
+  if (isRegExp(value)) return "regexp";
   if (typeof value === "object" && value !== null) return "object";
   return undefined;
 }

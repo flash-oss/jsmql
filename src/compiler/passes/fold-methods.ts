@@ -15,6 +15,7 @@
 
 import type { Evaluation } from "./evaluate.ts";
 import { bsonConstant, bsonNullary, bsonTagOf, canonicalBsonName, isObjectId, objectIdHex } from "../../bson.ts";
+import { isDate, isPlainObject as isPlainByPrototype } from "../../bson.ts";
 import { sameValue, truthy } from "./evaluate.ts";
 import { setKey } from "../../registry/mql.ts";
 import { foldDateMethod, foldDateUTC, foldNewDate } from "./fold-dates.ts";
@@ -171,7 +172,7 @@ export function foldNamespaceCall(namespace: string, name: string, args: readonl
   if (namespace === "Object") {
     const [o, b] = values;
     const plain = (v: unknown): v is Record<string, unknown> =>
-      typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
+      typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v);
     switch (name) {
       case "keys":
         return plain(o) ? ok(Object.keys(o)) : NO;
@@ -321,7 +322,7 @@ export function foldInstanceCall(receiver: unknown, name: string, args: readonly
   if (typeof receiver === "string") return stringMethod(receiver, name, args);
   if (Array.isArray(receiver)) return arrayMethod(receiver, name, args);
   if (typeof receiver === "number") return numberMethod(receiver, name, args);
-  if (receiver instanceof Date) return foldDateMethod(receiver, name, args.map(valueOf));
+  if (isDate(receiver)) return foldDateMethod(receiver, name, args.map(valueOf));
   // A BSON value's one EXACT read: the text it prints. Nothing else folds — a
   // decimal's arithmetic belongs to the server, which is the whole reason the type
   // exists (MEASURED: `$add: ["$p", Decimal128("0.2")]` is 0.3 where a double is
@@ -348,11 +349,7 @@ export function foldInstanceCall(receiver: unknown, name: string, args: readonly
 
 /** An object whose own properties are all there is to it — not a Date, not BSON. */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
-  if (v instanceof Date || v instanceof RegExp || v instanceof Uint8Array) return false;
-  if ((v as { _bsontype?: unknown })._bsontype !== undefined) return false;
-  const proto = Object.getPrototypeOf(v) as unknown;
-  return proto === Object.prototype || proto === null;
+  return isPlainByPrototype(v) && bsonTagOf(v) === undefined;
 }
 
 // ── the lodash string family ─────────────────────────────────────────────────

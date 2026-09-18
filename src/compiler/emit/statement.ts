@@ -46,6 +46,7 @@ import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { elementKindOf, isPresent, kindOf } from "./types.ts";
+import { isPlainObject } from "../../bson.ts";
 import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
@@ -831,12 +832,7 @@ function pathsRead(node: unknown, into: Set<string>): Set<string> {
  * The raw stage form `$set({ n: { x: 1 } })` is the developer's own MQL and keeps
  * MongoDB's meaning; this is the JavaScript spelling, which does not.
  */
-const replacesWhole = (v: unknown): boolean =>
-  typeof v === "object" &&
-  v !== null &&
-  !Array.isArray(v) &&
-  Object.getPrototypeOf(v) === Object.prototype &&
-  Object.keys(v).every((k) => !k.startsWith("$"));
+const replacesWhole = (v: unknown): boolean => isPlainObject(v) && Object.keys(v).every((k) => !k.startsWith("$"));
 
 /** A provable ELEMENT kind as the plural noun a message uses for it. */
 const ELEMENT_NOUN: Readonly<Record<string, string>> = {

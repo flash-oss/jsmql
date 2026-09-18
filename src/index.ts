@@ -31,7 +31,7 @@ export { CodegenError, UnknownIdentifierError, ParseError, LexError };
 // who writes `import { ObjectId } from "@koresar/jsmql"` provably gets the copy jsmql
 // resolved. See docs/specs/bson-types.md.
 export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "./bson.ts";
-import { bsonTagOf } from "./bson.ts";
+import { bsonTagOf, isDate, isPlainObject, isRegExp } from "./bson.ts";
 
 // ── the public types ─────────────────────────────────────────────────────────
 
@@ -87,8 +87,7 @@ const fnSource = (fn: (...args: never[]) => unknown): string => Function.prototy
 /** Does the value contain itself? A plain object or array only; a Date or an ObjectId is a leaf. */
 function isCircular(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
   if (value === null || typeof value !== "object") return false;
-  const proto = Object.getPrototypeOf(value);
-  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return false;
+  if (!Array.isArray(value) && !isPlainObject(value)) return false;
   if (seen.has(value)) return true;
   seen.add(value);
   const children = Array.isArray(value) ? value : Object.values(value);
@@ -136,7 +135,7 @@ function checkValue(value: unknown, slot: number, key?: string): void {
     if (v === null || typeof v !== "object") return;
     // A BSON class carries its own value; its internals are not the developer's data.
     if (bsonTagOf(v) !== undefined) return;
-    if (v instanceof Date || v instanceof RegExp) return;
+    if (isDate(v) || isRegExp(v)) return;
     if (Array.isArray(v)) {
       v.forEach((x, i) => walk(x, `${path}[${i}]`));
       return;

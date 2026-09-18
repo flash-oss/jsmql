@@ -35,6 +35,7 @@ import { bindsFor, declaredIn, namesSomething } from "./naming.ts";
 import type { Where } from "./position.ts";
 import { edge, STATEMENT } from "./position.ts";
 import { mapTree, mapTreeIn } from "./walk.ts";
+import { isPlainObject } from "../../bson.ts";
 
 type Any = { type: string } & Record<string, unknown>;
 
@@ -506,8 +507,8 @@ function nonFiniteIn(value: unknown): string | null {
     }
     return null;
   }
-  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
-    for (const v of Object.values(value as Record<string, unknown>)) {
+  if (isPlainObject(value)) {
+    for (const v of Object.values(value)) {
       const found = nonFiniteIn(v);
       if (found !== null) return found;
     }

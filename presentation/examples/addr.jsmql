@@ -1,0 +1,11 @@
+[
+  $.building && $.building + ",",
+  $.streetNo,
+  $.street,
+  $.suburb,
+  $.state,
+  $.country,
+  $.postcode,
+]
+  .filter(Boolean)
+  .join(" ")

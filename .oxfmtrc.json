@@ -8,6 +8,9 @@
     "package.json",
     "package-lock.json",
     "playground.html",
-    "playground_skeleton.html"
+    "playground_skeleton.html",
+    "presentation.html",
+    "presentation/examples.json",
+    "presentation/presentation_skeleton.html"
   ]
 }

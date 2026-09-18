@@ -26,7 +26,7 @@ import {
   soleFieldFamilyOf,
   elementKindOf as rowElementKind,
 } from "../rows.ts";
-import { bsonTagOf, BSON_KIND } from "../../bson.ts";
+import { bsonTagOf, BSON_KIND, isDate, isPlainObject } from "../../bson.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
 export type Known = Kind | "unknown";
@@ -212,11 +212,11 @@ export function kindOf(node: Expr, env: Env): Known {
       if (typeof v === "number" || typeof v === "bigint") return "number";
       if (typeof v === "string") return isMqlShaped(v) ? "unknown" : "string";
       if (typeof v === "boolean") return "bool";
-      if (v instanceof Date) return "date";
+      if (isDate(v)) return "date";
       if (Array.isArray(v)) return isMqlShaped(v) ? "unknown" : "array";
       const tag = bsonTagOf(v);
       if (tag !== undefined) return BSON_KIND[tag] ?? "unknown";
-      if (v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) {
+      if (isPlainObject(v)) {
         return isMqlShaped(v) ? "unknown" : "object";
       }
       return "unknown";

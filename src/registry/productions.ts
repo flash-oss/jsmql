@@ -19,7 +19,7 @@
 import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
-import { bsonTagOf, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
+import { bsonTagOf, isDate, isRegExp, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -281,7 +281,7 @@ function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null
   if (Array.isArray(pc.value)) return null;
   // A RegExp the call supplied is MongoDB's regex query, as the developer passed it: the
   // query language reads `{ field: /re/ }` as a match, and `$eq` would compare a value.
-  if (pc.value instanceof RegExp) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
+  if (isRegExp(pc.value)) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
   return negated ? queryOwnValue(pc.path, { $ne: pc.value }) : queryOwnValue(pc.path, { $eq: pc.value });
 }
 
@@ -312,7 +312,7 @@ function orderedQuery(input: FilterIn, op: keyof typeof FLIPPED): QueryDoc | nul
   const pc = pathAndConstant(input);
   if (pc === null) return null;
   const v = pc.value;
-  const ordered = typeof v === "number" || typeof v === "string" || v instanceof Date || bsonTagOf(v) !== undefined;
+  const ordered = typeof v === "number" || typeof v === "string" || isDate(v) || bsonTagOf(v) !== undefined;
   if (!ordered) return null;
   return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }

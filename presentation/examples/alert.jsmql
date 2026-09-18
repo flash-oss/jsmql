@@ -1,0 +1,23 @@
+const start = new Date().startOf("month");
+const end = start.plus(1, "month");
+
+$$.filter(d =>
+  d.createdAt >= start &&
+  d.createdAt < end &&
+  d.client === 0x615d919f1ca8443d56ef9893 &&
+  d.direction === "OUT");
+
+$.isAlerted = $.status.history.some(h => h.value === "REVIEWING");
+
+$$.groupBy({
+  _id: $.createdAt.format("%Y-%m-%d"),
+  alerted: $sum(Number($.isAlerted)),
+  total: $sum(1),
+}).sortBy("_id");
+
+$.UTC = $._id;
+delete $._id;
+$.total = $toLong($.total);
+$.alerted = $toLong($.alerted);
+$.unalerted = $toLong($.total - $.alerted);
+$.alertPcnt = ($.alerted / $.total * 100).round(2);

@@ -114,7 +114,7 @@ test/
   codegen / pipeline / lookup / stream-methods / match-translation / …  The feature suites: JSMQL inputs with the MQL each emits, regenerated per shape change with scripts/regen-expectations.mjs. See test/CLAUDE.md.
   registry-*.test.ts   The registry's audits: the type contracts, and the cross-references no type can hold.
   realistic.test.ts    Full-feature compile-time examples (assert emitted MQL; referenced from README; the playground's source).
-  strict-api / security / error-pos / cli / mongoose / site   The public API's contracts.
+  strict-api / security / error-pos / cli / mongoose / site / cross-realm   The public API's contracts (cross-realm: a parameter value from another realm compiles to the same document).
   integration.test.ts  Runs jsmql's MQL against a live mongod and asserts returned data (self-skips if down). See test/fixtures/CLAUDE.md.
   smoke.test.ts        Strippable-TS and built-dist invariants (spawn-based).
   fixtures/            Deterministic dataset + dedicated read-only mongod (:27018) for integration.test.ts. See test/fixtures/CLAUDE.md.
