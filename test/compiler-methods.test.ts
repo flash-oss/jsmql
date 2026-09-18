@@ -773,17 +773,22 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
 ];
 
 /**
- * Every reader of an object's pairs, over a document that lacks the field.
+ * Every reader of an object, over a document that lacks the field.
  *
  * `$objectToArray` answers null for a missing field and `$arrayToObject` passes that
- * null on, so the whole family answered null where lodash answers `{}` — and where a
- * developer who wrote `Object.keys(o).length` expects a count rather than a null that
- * breaks a stage later. Each reader guards with `$ifNull: [..., {}]` and answers its
- * own family's empty value: `{}` from the object builders, `[]` from the pair readers.
+ * null on. Two answers come out of that, and which one a spelling gets is the source's
+ * own choice, never a guess:
  *
- * Each row: the source, and what it answers when the RECEIVER is missing.
+ *   - a LODASH method answers `{}`, or `[]` where it answers an array, because
+ *     `_.pick(undefined, …)` does. Nothing else is on offer: lodash has no other reading.
+ *   - a JAVASCRIPT reader answers null for a plain `.`, because `Object.keys(undefined)`
+ *     is a TypeError and null is the nearest thing MongoDB has to raising one — and `[]`
+ *     for `?.`, which is the developer saying the field may not be there.
+ *
+ * Each row: the source, and what it answers when the receiver is missing.
  */
 const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
+  // lodash — the empty value, whatever the source spells
   ["$.o.mapValues(v => v * 2)", {}],
   ["$.o.mapKeys((v, k) => k)", {}],
   ['$.o.pick(["a"])', {}],
@@ -793,13 +798,20 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o.omitBy(v => v == null)", {}],
   ["$.o.invert()", {}],
   ["$.o.toPairs()", []],
-  ["$.o.entries()", []],
-  ["$.o.keys()", []],
-  ["$.o.values()", []],
-  // the `Object` statics share one row with the three above, and answer the same
-  ["Object.keys($.o)", []],
-  ["Object.values($.o)", []],
-  ["Object.entries($.o)", []],
+  // JavaScript — null on a plain read
+  ["$.o.keys()", null],
+  ["$.o.values()", null],
+  ["$.o.entries()", null],
+  ["Object.keys($.o)", null],
+  ["Object.values($.o)", null],
+  ["Object.entries($.o)", null],
+  // JavaScript — `[]` once the source says the field may not be there
+  ["$.o?.keys()", []],
+  ["$.o?.values()", []],
+  ["$.o?.entries()", []],
+  ["$.o?.keys().length", 0],
+  // a NAMESPACE call has no receiver to carry the `?.`, so the row reads it off the argument
+  ["Object.keys($.o?.sub)", []],
   // the root document is there, so it takes no neutral
   ["Object.keys($).length", 1],
 ];
@@ -837,7 +849,7 @@ describe("compiler/emit — a missing list is the empty list, never an aborted c
     expect([1, 2]).toContain(picked[1].__v);
   });
 
-  it("answers the family's empty value for every reader of an object's pairs", async () => {
+  it("answers null or the empty value for a reader of an object, as the source spells it", async () => {
     if (guarded === null) {
       expect(OBJECT_EMPTY.length).toBeGreaterThan(0);
       return;

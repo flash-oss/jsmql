@@ -4207,17 +4207,17 @@ describe("bitwise infix operators", () => {
 describe("Object.*", () => {
   it("Object.keys", () => {
     expect(jsmql.expr("Object.keys($.doc)")).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$doc", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
+      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
     });
   });
   it("Object.values", () => {
     expect(jsmql.expr("Object.values($.doc)")).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$doc", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.v" },
+      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: "$$jsmqlKv.v" },
     });
   });
   it("Object.entries", () => {
     expect(jsmql.expr("Object.entries($.doc)")).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$doc", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
     });
   });
   it("Object.assign (2 args)", () => {
@@ -5289,11 +5289,7 @@ describe("toSorted / sort key function", () => {
             input: {
               $map: {
                 input: {
-                  $map: {
-                    input: { $objectToArray: { $ifNull: ["$tally", {}] } },
-                    as: "jsmqlKv",
-                    in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
-                  },
+                  $map: { input: { $objectToArray: "$tally" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
                 },
                 as: "e",
                 in: { k: { $arrayElemAt: ["$$e", 1] }, v: "$$e" },
@@ -7482,13 +7478,7 @@ describe("Object.fromEntries", () => {
     expect(jsmql.expr("Object.fromEntries(Object.entries($.doc))")).toEqual({
       $arrayToObject: {
         $map: {
-          input: {
-            $map: {
-              input: { $objectToArray: { $ifNull: ["$doc", {}] } },
-              as: "jsmqlKv",
-              in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
-            },
-          },
+          input: { $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
           as: "jsmqlP",
           in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
         },
@@ -7959,12 +7949,7 @@ describe("a $size / $in / callback input is guarded only where the array may be 
     });
     expect(jsmql.expr("$range(0, $.n).length")).toEqual({ $size: { $ifNull: [{ $range: [0, "$n"] }, []] } });
     expect(jsmql.expr("Object.keys($.o).length")).toEqual({
-      $size: {
-        $ifNull: [
-          { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
-          [],
-        ],
-      },
+      $size: { $ifNull: [{ $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }, []] },
     });
   });
 
@@ -9453,7 +9438,7 @@ describe("trailing commas (JS syntax)", () => {
 
   it("Object method args", () => {
     expect(jsmql.expr("Object.keys($.a,)")).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$a", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
+      $map: { input: { $objectToArray: "$a" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
     });
   });
 
@@ -9468,7 +9453,7 @@ describe("trailing commas (JS syntax)", () => {
 
   it("static-call args (both shapes)", () => {
     expect(jsmql.expr("Object.keys($.o,)")).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
+      $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
     });
     expect(jsmql.expr("Math.max($.a, $.b,)")).toEqual({ $max: ["$a", "$b"] });
   });

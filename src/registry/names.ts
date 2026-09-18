@@ -993,19 +993,27 @@ const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
  *
  * ONE body for all three cells of a row — the object family, the `Object` namespace and
  * a receiver of unproven family must answer the SAME MQL, and three copies of it drift.
- * `_.keys(undefined)` is `[]`, so a missing object reads through the `{}` neutral and
- * the row answers `[]` rather than the null `$objectToArray` gives.
  *
- * `present` defaults to FALSE and the two RECEIVER cells leave it there. Their answers
- * are compared against each other: a `$type` test proves the receiver inside the family
- * dispatch and not outside it, so a cell that read `present` would answer two different
- * documents, which is what makes the compiler emit a `$switch` these rows do not need.
- * The `Object` static never joins that comparison — its receiver is the namespace,
- * named in the source — so it asks after its ARGUMENT and keeps `Object.keys($)` bare.
+ * No neutral unless the source asks for one. `$.o.keys()` is a plain read and answers
+ * what MongoDB answers for a missing `o`, which is null — `Object.keys(undefined)` is a
+ * TypeError in JavaScript, and null is the nearest thing MongoDB has to raising one.
+ * `$.o?.keys()` is the developer saying the field may not be there, and answers `[]`.
+ *
+ * A RECEIVER gets that neutral from the compiler, which wraps it before this cell sees
+ * it (`withOptional` in src/compiler/emit/lower.ts). The `Object` statics have none —
+ * their receiver is the namespace — so they pass `optional` themselves, and
+ * `Object.keys($.user?.profile)` answers what `$.user?.profile?.keys()` answers.
  */
-const pairsRead = (obj: unknown, bind: ExprIn["bind"], project: (ref: string) => unknown, present = false): unknown => {
+const pairsRead = (
+  obj: unknown,
+  bind: ExprIn["bind"],
+  project: (ref: string) => unknown,
+  optional = false,
+): unknown => {
   const kv = bind("kv");
-  return { $map: { input: pairsOfObject(obj, present), as: kv.as, in: project(kv.ref) } };
+  return {
+    $map: { input: { $objectToArray: optional ? { $ifNull: [obj, {}] } : obj }, as: kv.as, in: project(kv.ref) },
+  };
 };
 
 /**
@@ -8396,8 +8404,8 @@ export const NAMES = {
         },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, presentArg }) =>
-            pairsRead(value(args[0]), bind, (r) => [`${r}.k`, `${r}.v`], presentArg(args[0])),
+          emit: ({ args, value, bind, optionalArg }) =>
+            pairsRead(value(args[0]), bind, (r) => [`${r}.k`, `${r}.v`], optionalArg(args[0])),
         },
       },
       uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => [`${r}.k`, `${r}.v`]),
@@ -8427,8 +8435,8 @@ export const NAMES = {
         object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`) },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, presentArg }) =>
-            pairsRead(value(args[0]), bind, (r) => `${r}.k`, presentArg(args[0])),
+          emit: ({ args, value, bind, optionalArg }) =>
+            pairsRead(value(args[0]), bind, (r) => `${r}.k`, optionalArg(args[0])),
         },
       },
       uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`),
@@ -8457,8 +8465,8 @@ export const NAMES = {
         object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`) },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, presentArg }) =>
-            pairsRead(value(args[0]), bind, (r) => `${r}.v`, presentArg(args[0])),
+          emit: ({ args, value, bind, optionalArg }) =>
+            pairsRead(value(args[0]), bind, (r) => `${r}.v`, optionalArg(args[0])),
         },
       },
       uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`),

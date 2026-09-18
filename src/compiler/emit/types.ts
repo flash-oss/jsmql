@@ -82,6 +82,16 @@ export function isPresent(node: Expr, env: Env): boolean {
   }
 }
 
+/** Does this access chain carry a `?.` anywhere on the way to its base — a folded path included? */
+export function chainHasOptional(e: Expr): boolean {
+  let cursor: Expr = e;
+  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess") {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
+}
+
 /** An argument as written: a callback is not a value and says nothing; a spread is its list; a value must be present. */
 function argPresent(a: CallArg, env: Env): boolean {
   if (a.type === "SpreadElement") return isPresent(a.argument, env);

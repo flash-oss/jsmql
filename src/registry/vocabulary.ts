@@ -947,15 +947,16 @@ export type ExprIn = {
    */
   present: boolean;
   /**
-   * The same proof `present` gives, offered for an ARGUMENT — is the value this
-   * expression reads certainly THERE?
+   * Does this ARGUMENT carry a `?.` on the way to its base — the developer saying the
+   * value may not be there?
    *
-   * A row needs it where the value it guards arrives as an argument rather than as the
-   * receiver: `Object.keys(o)` is a NAMESPACE call, so its `present` describes the
-   * namespace and says nothing about `o`. `Object.keys($)` reads the root document and
-   * needs no neutral; `Object.keys($.o)` reads a field that may not be there and does.
+   * The compiler answers that for a RECEIVER on its own, wrapping it in the family's
+   * empty value before a cell sees it. A NAMESPACE call has no such receiver:
+   * `Object.keys(o)` describes `Object`, and `o` is the value being read. So the row
+   * asks, and `Object.keys($.user?.profile)` takes the same neutral
+   * `$.user?.profile?.keys()` does.
    */
-  presentArg: (e: Expr) => boolean;
+  optionalArg: (e: Expr) => boolean;
   /** Lower an expression as a CONDITION, JavaScript truthiness applied. See `Truth`. */
   truth: (e: Expr) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`, the parameter bound as `$$as` (`ref`). */

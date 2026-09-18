@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-18 — fix: a JavaScript object reader takes the `{}` neutral only under `?.`
+
+The previous entry gave every reader of an object the `{}` neutral. That is right for
+the LODASH spellings, which have no other reading — `_.pick(undefined, …)` is `{}` — and
+wrong for the JavaScript ones, which the developer wrote to mean a plain read.
+`$.o.keys()` now answers what MongoDB answers for a missing `o`, which is null, and
+`$.o?.keys()` answers `[]`: `?.` IS the developer saying the field may not be there,
+so it is the one place a neutral belongs. This supersedes
+"fix: a reader of a whole object answers its empty value, not null".
+
+Making `?.` carry that took two repairs in the compiler. `withOptional` wraps a
+receiver in its family's empty value, but only on the rule road — a row that resolves
+through a runtime `$type` dispatch never saw it, so `$.o?.keys()` and
+`$.a?.lastIndexOf(x)` silently lost their neutral. The wrap now happens above the
+rule/dispatch split, and a dispatch reads such a wrapper once per guard instead of
+binding it with `$let`, because a row with one family left collapses to one branch.
+And `soleFieldFamilyOf` — which names the family that wrap uses — counted namespaces
+(`Object`, `Math`) and families the row REFUSES, so it answered null for every row that
+lists more than one. It now counts only a family a document field can hold and the row
+actually lowers, which is what its own doc comment always claimed.
+
+`ExprIn.presentArg` from that entry is gone, replaced by `ExprIn.optionalArg`. Presence
+was the wrong question: a namespace call (`Object.keys(o)`) has no receiver to carry
+the `?.`, and what the row needs to know is whether the ARGUMENT carries one, so
+`Object.keys($.user?.profile)` answers what `$.user?.profile?.keys()` answers.
+
+The unnecessary guards this removes were the ones the previous entry's cost note
+named: `{ $objectToArray: { $ifNull: ["$__jsmql.var.candidateProductIdCounts", {}] } }`
+over a scratch field the compiler wrote itself now reads the field bare, because the
+reader no longer guards on its own and the binding's presence was already threaded.
+
+---
+
 ## 2026-09-18 — fix: a reader of a whole object answers its empty value, not null
 
 `$objectToArray` answers null for a missing field, and `$arrayToObject` passes that

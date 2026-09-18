@@ -173,7 +173,7 @@ $$ = candidateProductIds
                                 $map: {
                                   input: {
                                     $map: {
-                                      input: { $objectToArray: { $ifNull: ["$__jsmql.tmp.1", {}] } },
+                                      input: { $objectToArray: "$__jsmql.tmp.1" },
                                       as: "jsmqlKv",
                                       in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
                                     },
@@ -205,7 +205,7 @@ $$ = candidateProductIds
               $map: {
                 input: {
                   $map: {
-                    input: { $objectToArray: { $ifNull: ["$__jsmql.var.candidateProductIdCounts", {}] } },
+                    input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" },
                     as: "jsmqlKv",
                     in: "$$jsmqlKv.k",
                   },

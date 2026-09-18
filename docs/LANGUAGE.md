@@ -609,7 +609,7 @@ or poison every downstream caller).
 | Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
 | Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
 
-`?.` adds nothing to a reader of a whole object, because that reader already takes the `{}` neutral on its own: `Object.keys($.user?.profile)` and `Object.keys($.user.profile)` emit the same `{ $objectToArray: { $ifNull: ["$user.profile", {}] } }` and both answer `[]`. Writing `?.` there is a note to the next reader, not a change of shape.
+A reader of a whole object takes `{}`, and it takes it ONLY under `?.`: `$.user.profile.keys()` emits `{ $objectToArray: "$user.profile" }` and answers `null` for a missing `profile`, where `$.user?.profile?.keys()` emits `{ $objectToArray: { $ifNull: ["$user.profile", {}] } }` and answers `[]`. A namespace call has no receiver to carry the `?.`, so it reads it off the argument instead — `Object.keys($.user?.profile)` is the same document as `$.user?.profile?.keys()`.
 These cases produce the same MQL whether you use `.` or `?.`:
 
 | Consumer | Why no wrap |
@@ -2182,24 +2182,25 @@ $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receive
 
 $.o.keys()                            // same MQL as Object.keys($.o)
 $.o.values()                          // same MQL as Object.values($.o)
-$.o.entries()                         // same MQL as Object.entries($.o) — and as $.o.toPairs()
+$.o.entries()                         // same MQL as Object.entries($.o)
 $.o.assign($.p, $.q)                  // { $mergeObjects: ["$o", "$p", "$q"] } — a NEW object, like .pick()
 $.pairs.fromEntries()                 // same MQL as Object.fromEntries($.pairs) — and as $.pairs.fromPairs()
-$.user?.profile?.keys()               // { $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+$.user?.profile?.keys()               // `?.` takes the {} neutral: { $objectToArray: { $ifNull: ["$user.profile", {}] } }
 ```
 
 > `.keys()` / `.values()` / `.entries()` read the object where the receiver's type is not known at compile time. On a receiver jsmql can PROVE is an array they are refused, because JavaScript's `Array.prototype.keys()` returns an iterator and MongoDB has no such value: `$.xs.map(x => x).keys()` names `$op($range, 0, $op($size, arr))` instead.
 
 > `pick` uses flat field names only (deep paths like `"a.b"` aren't supported — use `$op($getField, …)`). `mapKeys`/`invert` **stringify** the produced key (`$toString`; last wins on collision), like lodash. All verified against a live mongod.
 
-> **A reader of a whole object takes the `{}` neutral.** `$objectToArray` answers `null` for a missing field and `$arrayToObject` passes that null on, so this whole family used to answer `null` — where lodash answers `{}` and where a developer who wrote `Object.keys(o).length` expects a count rather than a null that breaks a stage later. Each reader now guards its receiver with `$ifNull: [..., {}]` and answers its own empty value: `{}` from the object builders, `[]` from the pair readers.
+> **A missing object is `{}` for a lodash method, and for a JavaScript reader only under `?.`.** `$objectToArray` answers `null` for a missing field and `$arrayToObject` passes that null on, so the empty answer has to be asked for. A LODASH method asks for it always — `_.pick(undefined, …)` is `{}` and lodash has no other reading — so every lodash spelling in this section guards its receiver and answers `{}`, or `[]` where it answers an array. A JAVASCRIPT reader does not: `Object.keys(undefined)` is a **TypeError**, MongoDB has no error to raise inside an expression, and `null` is the nearest thing it has. Write `?.` and you have said the field may not be there, which is exactly the question, so the neutral applies:
 >
 > ```js
-> $.o.keys()       // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
-> Object.keys($)   // → { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+> $.o.keys()             // → { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+> $.o?.keys()            // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+> $.o.toPairs()          // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
 > ```
 >
-> The root document is there, so it takes no neutral. This is the one place jsmql parts company with JavaScript rather than with MongoDB: `Object.keys(undefined)` is a **TypeError** in JavaScript, MongoDB has no error to raise inside an expression, and lodash's `[]` is the more useful of the two answers left.
+> That is the one place `.toPairs()` and `.entries()` part company — one is lodash's spelling of the reading and the other is JavaScript's. `Object.keys($)` reads the root document, which is there, so it takes no neutral either way.
 
 > **A `pick` / `omit` key list the source does not spell** — a field path, or a list holding an element read at run time — is read at query time instead: jsmql walks the object's own keys and matches each against the list. A key list that is missing or null picks nothing and omits nothing, as lodash does. The `$$.pick(…)` / `$$.omit(…)` STREAM forms still need a spelled list: they lower to `$project`, and the server reads a stage's field list before it reads any document.
 
@@ -2228,7 +2229,7 @@ A parameter may be an array or object pattern of plain names, as in JavaScript. 
 
 ```js
 $.tally.entries().sortBy(([id, count]) => -count)       // ≡ .sortBy(e => -e[1]) — count descending
-// → { $map: { input: { $sortArray: { input: { $map: { input: { $map: { input: { $objectToArray: { $ifNull: ["$tally", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
+// → { $map: { input: { $sortArray: { input: { $map: { input: { $map: { input: { $objectToArray: "$tally" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
 //                                                       as: "x", in: { k: { $arrayElemAt: ["$$x", 1] }, v: "$$x" } } }, sortBy: { k: -1 } } },
 //             as: "jsmqlP", in: "$$jsmqlP.v" } }
 
@@ -2953,9 +2954,9 @@ fine there.
 ### Object Operations
 
 ```js
-Object.keys($.obj)                 // { $map: { input: { $objectToArray: { $ifNull: ["$obj", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
-Object.values($.obj)               // { $map: { input: { $objectToArray: { $ifNull: ["$obj", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.v" } }
-Object.entries($.obj)              // { $map: { input: { $objectToArray: { $ifNull: ["$obj", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
+Object.keys($.obj)                 // { $map: { input: { $objectToArray: "$obj" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+Object.values($.obj)               // { $map: { input: { $objectToArray: "$obj" }, as: "jsmqlKv", in: "$$jsmqlKv.v" } }
+Object.entries($.obj)              // { $map: { input: { $objectToArray: "$obj" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
 Object.fromEntries($.pairs)        // { $arrayToObject: "$pairs" }
 Object.assign($.a, $.b)            // { $mergeObjects: ["$a", "$b"] }
 Object.assign($.a, $.b, $.c)       // { $mergeObjects: ["$a", "$b", "$c"] }

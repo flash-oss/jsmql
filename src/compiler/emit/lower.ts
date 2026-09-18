@@ -47,7 +47,7 @@ import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, readsRef, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
-import { familyOfKind, isPresent, kindOf, sourceFamily } from "./types.ts";
+import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily } from "./types.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
 import { injectedNeedsLiteral } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
@@ -242,16 +242,6 @@ function templateLiteral(node: Extract<Expr, { type: "TemplateLiteral" }>, env: 
   const tail = node.quasis[node.exprs.length];
   if (tail !== "" && tail !== undefined) parts.push(tail);
   return { $concat: parts };
-}
-
-/** Does this access chain carry a `?.` anywhere on the way to its base — a folded path included? */
-function chainHasOptional(e: Expr): boolean {
-  let cursor: Expr = e;
-  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess") {
-    if (cursor.optional) return true;
-    cursor = cursor.object;
-  }
-  return cursor.type === "FieldRef" && cursor.optional === true;
 }
 
 /** Every stage name the registry has, for the suggestion a mistyped stage gets. */
@@ -612,28 +602,30 @@ function dispatchOn(
   const spelled = spelledMethod(wroteName(node, name), recvNode);
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
+  const recv =
+    receiver.kind === "value" || receiver.kind === "opaque"
+      ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name)
+      : null;
   if (sel.kind === "rule") {
     if (elementsOf(name) === "scalar") {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
     checkSlots(name, sel.rule.args, exprArgs);
-    const recv =
-      receiver.kind === "value" || receiver.kind === "opaque"
-        ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name)
-        : null;
     // A receiver is there when the source says so — or when an optional chain read
     // a missing one as the family's empty value, which is there too.
     const present =
-      (receiver.kind === "value" || receiver.kind === "opaque") &&
-      (isPresent(recvNode, recvEnv) || recv !== receiver.lowered);
+      isPresent(recvNode, recvEnv) ||
+      ((receiver.kind === "value" || receiver.kind === "opaque") && recv !== receiver.lowered);
     return sel.rule.emit(
       exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, present),
     );
   }
   if (sel.kind === "dispatch") {
     if (receiver.kind !== "opaque") internalError("a dispatch was selected for a proven receiver");
-    return runDispatch(sel, name, receiver.lowered, exprArgs, env, node, spelled, container);
+    // The optional chain's neutral applies to a row that dispatches too: it is the
+    // RECEIVER that `?.` describes, and every branch reads the same one.
+    return runDispatch(sel, name, recv, exprArgs, env, node, spelled, container, recv !== receiver.lowered);
   }
   const format = receiver.kind === "namespace" ? (c: string) => `${receiver.name}.${c}` : (c: string) => `.${c}()`;
   // A namespace's suggestion draws from its own members; a value's from every JavaScript name.
@@ -669,6 +661,23 @@ function withOptional(lowered: unknown, receiver: Receiver, optional: boolean, n
   return neutral === null ? lowered : { $ifNull: [lowered, neutral] };
 }
 
+/**
+ * Can a dispatch read this receiver once per `$type` guard instead of binding it?
+ *
+ * A path or a variable can. So can the `$ifNull` an optional chain wraps one in: it is
+ * a read of that same path against a constant, and every row that takes the neutral
+ * has ONE family left to test, so the guards collapse and the wrapper is written once.
+ * A binding there would cost a `$let` around a document that reads its receiver once.
+ */
+function cheapToRepeat(lowered: unknown): boolean {
+  if (typeof lowered === "string") return lowered.startsWith("$");
+  if (typeof lowered !== "object" || lowered === null || Array.isArray(lowered)) return false;
+  const keys = Object.keys(lowered);
+  if (keys.length !== 1 || keys[0] !== "$ifNull") return false;
+  const operands = (lowered as { $ifNull: unknown }).$ifNull;
+  return Array.isArray(operands) && operands.length === 2 && cheapToRepeat(operands[0]);
+}
+
 /** The runtime dispatch: the receiver bound once, one `$switch`, the row's `uncertain` as default. */
 function runDispatch(
   sel: Extract<Selected, { kind: "dispatch" }>,
@@ -679,18 +688,19 @@ function runDispatch(
   node: Expr,
   spelled: string,
   container: string,
+  /** Did an optional chain already read a missing receiver as the family's empty value? */
+  optionalNeutral: boolean,
 ): unknown {
   const position = positionIn(env);
   // A path or a variable is cheap to repeat; anything else is bound once.
-  const isRef = typeof lowered === "string" && lowered.startsWith("$");
-  const bound = isRef ? null : env.fresh("recv");
+  const bound = cheapToRepeat(lowered) ? null : env.fresh("recv");
   const ref = bound === null ? lowered : bound.ref;
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule: Extract<Selected, { kind: "dispatch" }>["branches"][number]["rule"]) => {
     checkSlots(name, rule.args, args);
     // The branch's `$type` test proved the receiver's family — and that it is there,
     // unless the branch admits a null or a missing value too (`alsoTypes`).
-    const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
+    const present = optionalNeutral || !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
     return rule.emit(
       exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ, undefined, undefined, present),
     );
@@ -699,7 +709,9 @@ function runDispatch(
   const otherwise = sel.otherwise;
   let fallback: unknown;
   if (typeof otherwise === "function")
-    fallback = otherwise(exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ));
+    fallback = otherwise(
+      exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ, undefined, undefined, optionalNeutral),
+    );
   else
     throw E.refusalFor(
       { kind: "refused", name, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },

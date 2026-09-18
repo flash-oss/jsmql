@@ -451,11 +451,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
           "__jsmql.tmp.0": {
             $map: {
               input: {
-                $map: {
-                  input: { $objectToArray: { $ifNull: ["$scores", {}] } },
-                  as: "jsmqlKv",
-                  in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
-                },
+                $map: { input: { $objectToArray: "$scores" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
               },
               as: "v",
               in: { value: "$$v" },

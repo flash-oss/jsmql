@@ -355,8 +355,25 @@ const emitRow = (name: string): EmitRow | undefined =>
 export function soleFieldFamilyOf(name: string): Family | null {
   const fams = families(row(name)?.on);
   if (fams === undefined || fams === "any") return null;
-  const fields = fams.filter((f) => f !== "stream");
+  // A family a document FIELD can hold, and one the row LOWERS. A namespace
+  // (`Math`, `Object`) is reached by a bare name and never through `$.<path>`; a
+  // family the row REFUSES cannot be the family of a receiver in a program that
+  // compiles, so `.keys()` on an unproven field is a call on an object.
+  const fields = fams.filter((f) => FIELD_FAMILIES.includes(f) && !refusesFamily(name, f));
   return fields.length === 1 ? fields[0] : null;
+}
+
+/** Does the row answer this family with a refusal rather than a lowering, in a VALUE position? */
+function refusesFamily(name: string, family: Family): boolean {
+  const cell = (row(name) as { expr?: unknown } | undefined)?.expr as
+    | { perFamily?: Record<string, unknown> }
+    | undefined;
+  const branch = cell?.perFamily?.[family];
+  return (
+    typeof branch === "object" &&
+    branch !== null &&
+    typeof (branch as { unsupported?: unknown }).unsupported === "string"
+  );
 }
 
 /**

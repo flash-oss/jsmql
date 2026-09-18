@@ -35,7 +35,7 @@ import {
   streamHandleAfterReplace,
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
-import { elementKindOf, isPresent, kindOf } from "./types.ts";
+import { chainHasOptional, elementKindOf, isPresent, kindOf } from "./types.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
@@ -275,7 +275,7 @@ export function exprInputs(
     value,
     present,
     kind: (e) => kindOf(e, argEnv),
-    presentArg: (e) => isPresent(e, argEnv),
+    optionalArg: (e) => chainHasOptional(e),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },

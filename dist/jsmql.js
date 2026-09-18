@@ -1040,9 +1040,11 @@ var lastIndexOfArray = ({ recv, args, value, bind }) => {
 var pairsOfObject = (recv, present) => ({
   $objectToArray: present ? recv : { $ifNull: [recv, {}] }
 });
-var pairsRead = (obj, bind, project, present = false) => {
+var pairsRead = (obj, bind, project, optional = false) => {
   const kv = bind("kv");
-  return { $map: { input: pairsOfObject(obj, present), as: kv.as, in: project(kv.ref) } };
+  return {
+    $map: { input: { $objectToArray: optional ? { $ifNull: [obj, {}] } : obj }, as: kv.as, in: project(kv.ref) }
+  };
 };
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
 var orderedBounds = (a, b) => {
@@ -8041,7 +8043,7 @@ var NAMES = {
         },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, presentArg }) => pairsRead(value(args[0]), bind, (r) => [`${r}.k`, `${r}.v`], presentArg(args[0]))
+          emit: ({ args, value, bind, optionalArg }) => pairsRead(value(args[0]), bind, (r) => [`${r}.k`, `${r}.v`], optionalArg(args[0]))
         }
       },
       uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => [`${r}.k`, `${r}.v`])
@@ -8070,7 +8072,7 @@ var NAMES = {
         object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`) },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, presentArg }) => pairsRead(value(args[0]), bind, (r) => `${r}.k`, presentArg(args[0]))
+          emit: ({ args, value, bind, optionalArg }) => pairsRead(value(args[0]), bind, (r) => `${r}.k`, optionalArg(args[0]))
         }
       },
       uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`)
@@ -8098,7 +8100,7 @@ var NAMES = {
         object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`) },
         Object: {
           args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, presentArg }) => pairsRead(value(args[0]), bind, (r) => `${r}.v`, presentArg(args[0]))
+          emit: ({ args, value, bind, optionalArg }) => pairsRead(value(args[0]), bind, (r) => `${r}.v`, optionalArg(args[0]))
         }
       },
       uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`)
@@ -14952,8 +14954,13 @@ var emitRow = (name2) => ROWS[name2] ?? PRODUCTIONS[name2];
 function soleFieldFamilyOf(name2) {
   const fams = families(row(name2)?.on);
   if (fams === void 0 || fams === "any") return null;
-  const fields = fams.filter((f) => f !== "stream");
+  const fields = fams.filter((f) => FIELD_FAMILIES.includes(f) && !refusesFamily(name2, f));
   return fields.length === 1 ? fields[0] : null;
+}
+function refusesFamily(name2, family) {
+  const cell = row(name2)?.expr;
+  const branch = cell?.perFamily?.[family];
+  return typeof branch === "object" && branch !== null && typeof branch.unsupported === "string";
 }
 function agreedReturnOf(name2) {
   const fams = families(row(name2)?.on);
@@ -24278,6 +24285,14 @@ function isPresent(node, env) {
       return false;
   }
 }
+function chainHasOptional(e) {
+  let cursor = e;
+  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess") {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
+}
 function argPresent(a, env) {
   if (a.type === "SpreadElement") return isPresent(a.argument, env);
   if (a.type === "Lambda") return true;
@@ -25561,7 +25576,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     value,
     present,
     kind: (e) => kindOf(e, argEnv),
-    presentArg: (e) => isPresent(e, argEnv),
+    optionalArg: (e) => chainHasOptional(e),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth),
@@ -25958,14 +25973,6 @@ function templateLiteral(node, env) {
   if (tail !== "" && tail !== void 0) parts.push(tail);
   return { $concat: parts };
 }
-function chainHasOptional(e) {
-  let cursor = e;
-  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess") {
-    if (cursor.optional) return true;
-    cursor = cursor.object;
-  }
-  return cursor.type === "FieldRef" && cursor.optional === true;
-}
 var STAGE_NAMES = everyName().filter(isStageName);
 function refuseStageList(node, elements) {
   const first = elements[0];
@@ -26214,21 +26221,21 @@ function dispatchOn(node, name2, recvNode, args, env, optional) {
   const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
+  const recv = receiver.kind === "value" || receiver.kind === "opaque" ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name2) : null;
   if (sel.kind === "rule") {
     if (elementsOf(name2) === "scalar") {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
     checkSlots(name2, sel.rule.args, exprArgs);
-    const recv = receiver.kind === "value" || receiver.kind === "opaque" ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name2) : null;
-    const present = (receiver.kind === "value" || receiver.kind === "opaque") && (isPresent(recvNode, recvEnv) || recv !== receiver.lowered);
+    const present = isPresent(recvNode, recvEnv) || (receiver.kind === "value" || receiver.kind === "opaque") && recv !== receiver.lowered;
     return sel.rule.emit(
       exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, present)
     );
   }
   if (sel.kind === "dispatch") {
     if (receiver.kind !== "opaque") internalError("a dispatch was selected for a proven receiver");
-    return runDispatch(sel, name2, receiver.lowered, exprArgs, env, node, spelled3, container);
+    return runDispatch(sel, name2, recv, exprArgs, env, node, spelled3, container, recv !== receiver.lowered);
   }
   const format = receiver.kind === "namespace" ? (c) => `${receiver.name}.${c}` : (c) => `.${c}()`;
   const near = receiver.kind === "namespace" ? JS_NAMES.filter((n2) => {
@@ -26248,15 +26255,22 @@ function withOptional(lowered, receiver, optional, name2) {
   const neutral = family === "string" ? "" : family === "array" || family === "set" ? [] : family === "object" ? {} : null;
   return neutral === null ? lowered : { $ifNull: [lowered, neutral] };
 }
-function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) {
+function cheapToRepeat(lowered) {
+  if (typeof lowered === "string") return lowered.startsWith("$");
+  if (typeof lowered !== "object" || lowered === null || Array.isArray(lowered)) return false;
+  const keys = Object.keys(lowered);
+  if (keys.length !== 1 || keys[0] !== "$ifNull") return false;
+  const operands = lowered.$ifNull;
+  return Array.isArray(operands) && operands.length === 2 && cheapToRepeat(operands[0]);
+}
+function runDispatch(sel, name2, lowered, args, env, node, spelled3, container, optionalNeutral) {
   const position = positionIn(env);
-  const isRef = typeof lowered === "string" && lowered.startsWith("$");
-  const bound = isRef ? null : env.fresh("recv");
+  const bound = cheapToRepeat(lowered) ? null : env.fresh("recv");
   const ref = bound === null ? lowered : bound.ref;
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule) => {
     checkSlots(name2, rule.args, args);
-    const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
+    const present = optionalNeutral || !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
     return rule.emit(
       exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present)
     );
@@ -26265,7 +26279,9 @@ function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) 
   const otherwise = sel.otherwise;
   let fallback;
   if (typeof otherwise === "function")
-    fallback = otherwise(exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ));
+    fallback = otherwise(
+      exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, optionalNeutral)
+    );
   else
     throw refusalFor(
       { kind: "refused", name: name2, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },
