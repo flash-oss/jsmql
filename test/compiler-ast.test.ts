@@ -21,8 +21,8 @@ function claimed(): Set<string> {
 }
 
 // A compile-time list of every member of the union, so the runtime check below
-// cannot silently miss one. Adding a node to ast.ts without listing it here is a
-// type error.
+// cannot miss one without notice. Adding a node to ast.ts without listing it here
+// is a type error.
 const EVERY_NODE: Record<Node["type"], true> = {
   NumberLiteral: true,
   BigIntLiteral: true,
@@ -62,7 +62,7 @@ const EVERY_NODE: Record<Node["type"], true> = {
   Pipeline: true,
 };
 
-describe("registry/ast — the tree and the rules agree", () => {
+describe("registry/ast — the tree and the rules are consistent", () => {
   it("has one node type per shape and no more", () => {
     expect(Object.keys(EVERY_NODE)).toHaveLength(36);
   });
@@ -72,15 +72,15 @@ describe("registry/ast — the tree and the rules agree", () => {
     expect(missing).toEqual([]);
   });
 
-  it("every node in the tree is built by some production", () => {
+  it("some production builds every node in the tree", () => {
     const built = claimed();
-    // `ObjectIdLiteral` is reached two ways and both are productions; nothing here
-    // should be unreachable, or the tree carries a shape no syntax produces.
+    // `ObjectIdLiteral` is reached two ways, and both are productions. Everything
+    // else must be reachable, or the tree carries a shape that no syntax produces.
     const orphans = Object.keys(EVERY_NODE).filter((n) => !built.has(n));
     expect(orphans).toEqual([]);
   });
 
-  it("NodeName is derived, so it cannot drift from the shapes", () => {
+  it("NodeName derives from the shapes and cannot drift", () => {
     const derived: Record<NodeName, true> = EVERY_NODE;
     expect(Object.keys(derived).length).toBe(Object.keys(EVERY_NODE).length);
   });
@@ -102,7 +102,7 @@ describe("registry/ast — name-blind", () => {
   it("spells operators exactly as the source spells them", () => {
     const binary: BinaryOp[] = ["??", "||", "&&", "===", "in", "**", "%"];
     const unary: UnaryOp[] = ["!", "-", "~", "typeof"];
-    // The compound and increment forms survive parsing so desugar can reduce them.
+    // The compound and increment forms survive parsing because desugar reduces them.
     const assign: AssignOp[] = ["=", "+=", "-=", "*=", "/=", "++", "--"];
     expect([binary.length, unary.length, assign.length]).toEqual([7, 4, 7]);
   });

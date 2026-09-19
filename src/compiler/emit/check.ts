@@ -1,11 +1,12 @@
-// Phase 5 — EMIT. The literal-gated checks on a MongoDB operator's arguments.
+// Phase 5 — EMIT. These are the literal-gated checks on the arguments of a MongoDB operator.
 //
-// Every check here inspects only what is fully static — a literal string in an
-// enum slot, an object literal's own keys — and answers nothing the moment a
-// slot is a field path, a computed key, a spread or an expression. So only a
-// 100%-certain violation is refused, and a probable one still emits: the server
-// decides what it can, and jsmql refuses only what the server always refuses.
-// Every rule read here is a `BodyRule` or `Arity` field the row states.
+// Each check here inspects only what is fully static — a literal string in an
+// enum slot, or the keys of an object literal. Each check answers nothing when
+// a slot holds a field path, a computed key, a spread or an expression. So the
+// check refuses only a 100% certain violation, and a probable violation still
+// emits: the server decides what it can decide, and jsmql refuses only what the
+// server always refuses. Each rule read here is a `BodyRule` field or an
+// `Arity` field the row states.
 
 import type { Arity, ArgType, BodyRule, Expr } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
@@ -82,7 +83,7 @@ function matches(lit: Lit, expected: ArgType): boolean {
       return lit.kind === expected;
     case "fieldName":
     case "fieldPath":
-      // Handled before the literal gate — see `checkType`.
+      // checkType handles this case before the literal gate runs — see `checkType`.
       return false;
     case "date":
     case "timestamp":
@@ -115,9 +116,10 @@ const hint = (name: string, expected: ArgType): string => {
 
 /** A literal of a type the slot can never take. `slot` is the key, or "" for a positional operand. */
 export function checkType(name: string, slot: string, e: Expr, expected: ArgType): void {
-  // A field NAME is the one slot where a `$`-led string is the ERROR rather than a
-  // runtime value, so it is read from the source and not through the literal gate:
-  // `{ $count: "$n" }` is refused by the server, and so is a dotted or empty name.
+  // A field NAME is the one slot where a string that starts with `$` is the ERROR,
+  // not a runtime value. The check reads it from the source, not through the
+  // literal gate. The server refuses `{ $count: "$n" }`, and it also refuses a
+  // dotted or empty name.
   if (expected === "fieldPath") {
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
@@ -163,10 +165,10 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
 /**
  * A literal string outside a closed set, with a suggestion.
  *
- * A `$`-led string is normally a runtime field reference and no business of a
- * validator — unless the slot is CONSTANT-only, where the server reads the
- * string as itself: measured, `{ $bucketAuto: { granularity: "$g" } }` answers
- * "granularity must be one of: R5, R10, …" rather than reading a field.
+ * A string that starts with `$` is normally a runtime field reference, and a
+ * validator has no business with it — unless the slot is CONSTANT-only. There
+ * the server reads the string as itself: measured, `{ $bucketAuto: { granularity:
+ * "$g" } }` answers "granularity must be one of: R5, R10, …" instead of reading a field.
  */
 function checkEnum(
   name: string,
@@ -341,8 +343,8 @@ export function checkBody(
     // "$g" } }` answers "granularity must be one of: R5, R10, …".
     if (v !== undefined) {
       const readAsWritten = (rule.constantKeys ?? []).includes(k) || (rule.literalKeys ?? []).includes(k);
-      // A key that reads a bracketed list one way and every other shape another
-      // takes a sub-pipeline as well as a word, and the refusal names both.
+      // A key that reads a bracketed list one way, and every other shape another
+      // way, takes a sub-pipeline as well as a word. The refusal names both.
       const slot = bodySlotAt(name, [k]);
       const alsoStages = slot !== undefined && slot.at !== slot.otherwise;
       checkEnum(name, k, v, allowed, caseInsensitive.has(k), readAsWritten, alsoStages);
@@ -434,7 +436,7 @@ export function checkBody(
     }
   }
   // A key the server reads at compile time — `$bucket.boundaries`, `$lookup.pipeline` —
-  // must hold a constant; a field path or an expression there is refused as the server refuses it.
+  // must hold a constant. The server refuses a field path or an expression there.
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf(k);
     if (v !== undefined && !evaluate(v, new Map()).ok) {
@@ -473,9 +475,9 @@ export function checkSlots(
    * Does the row state an OBJECT form for this body? When it does, an object
    * literal is exempt from `slotType` — the date accessors take a date OR the
    * `{ date, timezone }` document, and the rule stated for the first must not
-   * refuse the second, which the row's own `body` rule judges instead. When it
-   * does not, an object literal is simply the wrong type: `$documents({ a: 1 })`
-   * is refused by the server.
+   * refuse the second. The row's own `body` rule judges the second instead. When
+   * the row states no object form, an object literal is simply the wrong type:
+   * the server refuses `$documents({ a: 1 })`.
    */
   hasObjectForm = true,
 ): void {
@@ -573,9 +575,9 @@ export function checkSlots(
   }
   for (const i of args.constant ?? []) {
     const e = operands[i];
-    // An object literal is exempt, as it is for `slotType`: a body that may be a
-    // name OR a document has its keys described by the row's `body` rule, and
-    // several of those keys hold expressions. `$unionWith("c")` must be constant;
+    // An object literal is exempt, as it is for `slotType`: for a body that may be
+    // a name OR a document, the row's `body` rule describes its keys, and several
+    // of those keys hold expressions. `$unionWith("c")` must be constant;
     // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
     if (e !== undefined && e.type !== "ObjectLiteral" && !evaluate(e, new Map()).ok) {
       throw new CodegenError(

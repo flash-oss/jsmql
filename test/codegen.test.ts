@@ -7,7 +7,7 @@ import { acceptsAnyReceiver, streamMethodNames, valueMethodNames } from "../src/
 import { truthy, truthyAnd, truthyOr } from "./truthy.ts";
 
 // Mirror of the unknown-receiver branch of index access: `v[i]` where
-// the receiver type can't be proven means all three JS readings are live, so the
+// the receiver type cannot be proven means all three JS readings are live, so the
 // dispatch is array position → string character → document field named `"i"`.
 const indexAt = (v: unknown, i: number) => ({
   $cond: {
@@ -103,7 +103,7 @@ describe("array-shape operators", () => {
   // aggregation operands `{ $gt: [a, b] }` (HR2 — see docs/LANG_RULES.md). In
   // aggregation-expression position the single-value form is INVALID (the server
   // needs exactly two operands), so the `$op` escape hatch rejects it there…
-  it("comparison single arg is rejected in aggregation position (needs 2 operands)", () => {
+  it("rejects a comparison single arg in aggregation position (needs 2 operands)", () => {
     expect(() => jsmql.expr("$gt($.x)")).toThrow("'$gt(expr1, expr2)' requires exactly 2 arguments, got 1");
     expect(() => jsmql.expr("$eq(5)")).toThrow("'$eq(expr1, expr2)' requires exactly 2 arguments, got 1");
     expect(() => jsmql.expr("$lte($.score)")).toThrow("'$lte(expr1, expr2)' requires exactly 2 arguments, got 1");
@@ -139,7 +139,7 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$divide([10, 2])")).toEqual({ $divide: [10, 2] });
   });
 
-  it("list-only op: a single non-array operand is rejected (HR3)", () => {
+  it("list-only op: rejects a single non-array operand (HR3)", () => {
     expect(() => jsmql.expr("$setUnion($.a)")).toThrow(/\$setUnion operates on a list of operands/);
     expect(() => jsmql.expr("$divide(10)")).toThrow(/\$divide operates on a list of operands/);
     expect(() => jsmql.expr("$and(true)")).toThrow(/\$and operates on a list of operands/);
@@ -147,7 +147,7 @@ describe("array-shape operators", () => {
 
   // HR3 governs raw MQL too: the same rejection applies to the `{ $op: value }`
   // raw-object form, not just the `$op(...)` call form.
-  it("list-only op: raw `{ $op: <non-array> }` object is rejected (HR3)", () => {
+  it("list-only op: rejects a raw `{ $op: <non-array> }` object (HR3)", () => {
     expect(() => jsmql.expr("({ $setUnion: $.x })")).toThrow(/\$setUnion operates on a list of operands/);
     expect(() => jsmql.expr("({ $add: 5 })")).toThrow(/\$add operates on a list of operands/);
     // ...but the valid array-operand form passes through verbatim (HR1).
@@ -262,7 +262,7 @@ describe("operator object-form argument validation (required / unknown keys)", (
     );
   });
 
-  it("a typo of a REQUIRED key is reported as the unknown key (not 'requires …')", () => {
+  it("reports a typo of a REQUIRED key as the unknown key (not 'requires …')", () => {
     // unknown-key runs before required-key, so a near typo names the suggestion.
     expect(() => jsmql.expr("$filter({ input: $.a, conds: $.x })")).toThrow(
       /'\$filter' has no parameter 'conds'\. Did you mean 'cond'\?/,
@@ -344,7 +344,7 @@ describe("comparison-operator arity is aggregation-only (query single-value form
     ]);
   });
 
-  it("the valid 2-operand aggregation form is unaffected", () => {
+  it("still allows the valid 2-operand aggregation form", () => {
     expect(jsmql.expr("$gt($.a, $.b)")).toEqual({ $gt: ["$a", "$b"] });
     expect(jsmql("$project({ r: $eq($.a, $.b) });")).toEqual([{ $project: { r: { $eq: ["$a", "$b"] } } }]);
   });
@@ -381,7 +381,7 @@ describe("operator enum validation (closed string sets)", () => {
     expect(jsmql.expr("$convert({ input: $.s, to: 16 })")).toEqual({ $convert: { input: "$s", to: 16 } });
   });
 
-  it("rejects a JS-only regex flag (g/y) via the charset check", () => {
+  it("rejects a JS-only regex flag (g/y) through the charset check", () => {
     expect(() => jsmql.expr('$regexMatch({ input: $.s, regex: "a", options: "gi" })')).toThrow(
       "'$regexMatch' options has an invalid flag 'g'. MongoDB allows only i, m, x, s, u — a JavaScript 'g' or 'y' flag is not supported.",
     );
@@ -406,7 +406,7 @@ describe("operator enum validation (closed string sets)", () => {
   });
 });
 
-describe("operator literal-type validation — date slots (was DEF-029)", () => {
+describe("operator literal-type validation — date slots", () => {
   it("rejects a literal non-date in a date-accessor argument", () => {
     expect(() => jsmql.expr('$year("2020-01-01")')).toThrow(
       /'\$year' expects a date, but got a string\. Use a field path or new Date\(…\)\./,
@@ -463,7 +463,7 @@ describe("operator literal-type validation — numeric / bitwise / object / arra
     expect(() => jsmql.expr('$bitNot("x")')).toThrow(/'\$bitNot' expects an integer, but got a string/);
   });
 
-  it("object / array / timestamp shape mismatches are rejected", () => {
+  it("rejects an object, array or timestamp shape mismatch", () => {
     expect(() => jsmql.expr('$mergeObjects("hello")')).toThrow(/'\$mergeObjects' expects a document, but got a string/);
     expect(() => jsmql.expr("$objectToArray(5)")).toThrow(/'\$objectToArray' expects a document, but got a number/);
     expect(() => jsmql.expr('$size("hello")')).toThrow(/'\$size' expects an array, but got a string/);
@@ -831,8 +831,8 @@ describe("jsmql template-tag form", () => {
       expect(out.since).toEqual(new Date("2026-01-01T00:00:00.000Z"));
     });
 
-    it("ordered comparison via template tag is index-friendly (no $expr fallback)", () => {
-      // The bug-report shape, expressed via the template tag form.
+    it("ordered comparison through template tag is index-friendly (no $expr fallback)", () => {
+      // The bug-report shape, expressed through the template tag form.
       const out = jsmql`$.createdAt >= ${new Date("2026-01-01")}` as Record<string, unknown>;
       expect("$expr" in out).toBe(false);
       expect((out.createdAt as { $gte: unknown }).$gte).toBeInstanceOf(Date);
@@ -932,7 +932,7 @@ describe("ObjectId literal (in-source constant)", () => {
     expect("$expr" in out).toBe(false);
   });
 
-  it('new ObjectId("hex") is accepted identically to the bare-call form', () => {
+  it('accepts new ObjectId("hex") identically to the bare-call form', () => {
     const bare = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
     const knew = jsmql(`$._id === new ObjectId("${HEX}")`) as { _id: ObjectId };
     expect(knew._id as unknown as ObjectId).toBeInstanceOf(ObjectId);
@@ -989,11 +989,11 @@ describe("ObjectId literal (in-source constant)", () => {
 
   it("a dynamic argument lowers to $toObjectId(arg) (server-side conversion)", () => {
     expect(jsmql.expr(`ObjectId($.idStr)`)).toEqual({ $toObjectId: "$idStr" });
-    // In a filter the converted value isn't a query-doc literal, so it rides in $expr.
+    // In a filter the converted value is not a query-doc literal, so it rides in $expr.
     expect(jsmql(`$._id === ObjectId($.idStr)`)).toEqual({ $expr: { $eq: ["$_id", { $toObjectId: "$idStr" }] } });
   });
 
-  it("a constant string that isn't 24 hex chars is still a compile-time error (caught typo)", () => {
+  it("a constant string that is not 24 hex chars is still a compile-time error (caught typo)", () => {
     expect(() => jsmql(`$._id === ObjectId("507f1f77bcf86cd79943901")`)).toThrow(
       "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
     );
@@ -1006,7 +1006,7 @@ describe("ObjectId literal (in-source constant)", () => {
   });
 });
 
-describe("ObjectId via 0x hex literal", () => {
+describe("ObjectId from a 0x hex literal", () => {
   const HEX = "507f1f77bcf86cd799439011";
   const HEX2 = "698a76556c10b90d8bd0497e";
 
@@ -1023,7 +1023,7 @@ describe("ObjectId via 0x hex literal", () => {
     expect((viaHex._id as unknown as ObjectId).toHexString()).toBe("507f1f77bcf86cd799439011");
   });
 
-  it("numeric separators are allowed inside the hex literal", () => {
+  it("the hex literal allows numeric separators", () => {
     const out = jsmql(`$._id === 0x507f_1f77_bcf8_6cd7_9943_9011`) as { _id: ObjectId };
     expect((out._id as unknown as ObjectId).toHexString()).toBe("507f1f77bcf86cd799439011");
   });
@@ -1050,7 +1050,7 @@ describe("ObjectId via 0x hex literal", () => {
     expect(jsmql(`{ owner: { id: 0x${HEX} } }`)).toEqual({ owner: { id: new ObjectId("507f1f77bcf86cd799439011") } });
   });
 
-  it("0X prefix and uppercase hex digits are accepted (normalised to lowercase)", () => {
+  it("the lexer accepts an 0X prefix and uppercase hex digits (normalised to lowercase)", () => {
     // Timestamp 0xabcdef78 → year 2061, comfortably after the 2009 floor.
     const out = jsmql.expr(`0XABCDEF781234567812345678`) as ObjectId;
     expect(out).toBeInstanceOf(ObjectId);
@@ -1063,7 +1063,7 @@ describe("ObjectId via 0x hex literal", () => {
     expect(jsmql.expr(`0x1FFFFFFFFFFFFF`)).toBe(9007199254740991);
   });
 
-  it("a hex literal that is neither 24 digits nor a safe integer is rejected with guidance", () => {
+  it("rejects a hex literal that is neither 24 digits nor a safe integer, with guidance", () => {
     // 16 digits, > MAX_SAFE_INTEGER, not an ObjectId width.
     expect(() => jsmql(`$.x === 0xFFFFFFFFFFFFFFFF`)).toThrow(/neither a 24-character ObjectId nor an integer/);
     // 14 digits, exactly one past MAX_SAFE_INTEGER (0x20000000000000 === 2**53).
@@ -1076,8 +1076,8 @@ describe("ObjectId via 0x hex literal", () => {
 });
 
 describe("ObjectId plausibility floor (timestamp predating MongoDB = typo)", () => {
-  // An ObjectId's first 4 bytes are a Unix timestamp; MongoDB didn't exist
-  // before 2009, so an older one can't be real. Floor: 0x4a000000 (2009-05-05).
+  // An ObjectId's first 4 bytes are a Unix timestamp; MongoDB did not exist
+  // before 2009, so an older one cannot be real. Floor: 0x4a000000 (2009-05-05).
 
   it("rejects an all-zeros / leading-zeros id (1970) — a 24-digit shape, but impossibly old", () => {
     // Recognised as an ObjectId by width, then floored — the error is about the
@@ -1139,8 +1139,8 @@ describe("jsmql.compile — opaque BSON bindings outside query-doc position", ()
 
   // Nested-BSON cases — symmetric with the template-tag nested-interp tests.
   // A bound value goes in whole, so a Date or a RegExp nested inside a plain
-  // object or array keeps its instance: the same shapes that work via
-  // interpolation also work via parameter bindings — no manual unpacking
+  // object or array keeps its instance: the same shapes that work through
+  // interpolation also work through parameter bindings — no manual unpacking
   // required at the call site.
 
   it("Date nested inside a binding object preserves the instance", () => {
@@ -1316,7 +1316,7 @@ describe("arithmetic operators", () => {
 });
 
 describe("comparison operators", () => {
-  it("== null (loose: matches null OR missing via $type check)", () => {
+  it("== null (loose: matches null OR missing through $type check)", () => {
     expect(jsmql.expr("$.status == null")).toEqual({ $in: [{ $type: "$status" }, ["null", "missing"]] });
   });
   it("=== (strict equality against any value)", () => {
@@ -1717,7 +1717,7 @@ describe("bracket access", () => {
       },
     });
   });
-  it("negative constant index is rejected — brackets never count from the end", () => {
+  it("rejects a negative constant index — brackets never count from the end", () => {
     // JS `arr[-1]` reads a property named "-1" (undefined); only `.at(-1)` counts
     // from the end. $arrayElemAt WOULD return the last element, so emitting it
     // would silently disagree with JavaScript.
@@ -1734,12 +1734,12 @@ describe("bracket access", () => {
       b: { $substrCP: ["$__jsmql.var.s", 2, 1] },
     });
   });
-  it("an unprovable computed key is coerced — $getField.field must be a String", () => {
-    // Live-verified: without the coercion, `$.doc[$.k]` aborted the whole command
-    // ("$getField requires 'field' to evaluate to type String") on every document
-    // where `$.k` held a number — and, far more commonly, where `$.k` was ABSENT
-    // (missing reaches $getField as null). Stringifying is what JS does too: a
-    // property key always coerces, so `obj[0]` is `obj["0"]`.
+  it("coerces an unprovable computed key — $getField.field must be a String", () => {
+    // A live mongod run confirms this: without the coercion, `$.doc[$.k]` aborts the
+    // whole command ("$getField requires 'field' to evaluate to type String") on every
+    // document where `$.k` holds a number, and, far more commonly, where `$.k` is
+    // ABSENT (a missing field reaches $getField as null). This mirrors JavaScript's
+    // own coercion: a property key always coerces, so `obj[0]` is `obj["0"]`.
     expect(jsmql.expr("$.doc[$.k]")).toEqual({
       $switch: {
         branches: [{ case: { $isArray: "$doc" }, then: { $arrayElemAt: ["$doc", "$k"] } }],
@@ -1810,7 +1810,7 @@ describe("bracket access", () => {
     expect(jsmql.expr('$.config["host"]')).toEqual({ $getField: { field: "host", input: "$config" } });
   });
   it("string-producing key expression on bare field → $getField directly", () => {
-    // `.toLowerCase()` is statically a string, so the key can't be an array
+    // `.toLowerCase()` is statically a string, so the key cannot be an array
     // index — same compact $getField lowering as a literal key.
     expect(jsmql.expr("$.map[$.key.toLowerCase()]")).toEqual({
       $getField: {
@@ -1830,7 +1830,7 @@ describe("bracket access", () => {
   });
   it("string-literal key on the bare root $ → plain field reference (root is never an array)", () => {
     // `$["x"]` is just `$.x`; the bracket form is the escape hatch for field
-    // names that aren't bare identifiers (dots, dashes) — and notably for
+    // names that are not bare identifiers (dots, dashes) — and notably for
     // reaching a nested `length` field without `.length` folding to the
     // string-or-array length operator.
     expect(jsmql.expr('$["field.length"]')).toBe("$field.length");
@@ -1843,7 +1843,7 @@ describe("bracket access", () => {
     // dual guard would carry the key into a dead `$arrayElemAt` branch as an
     // array index; a non-numeric index there is rejected at *pipeline-
     // optimization* time ("$arrayElemAt's second argument must be a numeric
-    // value, but is string") on engines that don't prune unreachable branches.
+    // value, but is string") on engines that do not prune unreachable branches.
     expect(jsmql.expr("$[$.fieldName]")).toEqual({
       $getField: { field: { $toString: { $ifNull: ["$fieldName", ""] } }, input: "$$ROOT" },
     });
@@ -1950,7 +1950,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
       },
     });
   });
-  it("reduce element param is typed from the input array → element key → $getField", () => {
+  it("types the reduce element param from the input array → element key → $getField", () => {
     expect(jsmql.expr('["a", "b"].reduce((acc, k) => acc + $.m[k], "")')).toEqual({
       $reduce: {
         input: ["a", "b"],
@@ -2012,7 +2012,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
       },
     });
   });
-  it("only the element param is typed — the index param is a number and keeps the guard", () => {
+  it("types only the element param — the index param is a number and keeps the guard", () => {
     // `(element, index)`: `element` is string, `index` is a number, so `$.m[i]`
     // must NOT collapse to $getField.
     // `$size: [["a","b"]]` — the literal receiver is wrapped one level so MongoDB
@@ -2343,7 +2343,7 @@ describe("string methods", () => {
   });
   it('["length"] is RAW access, NOT the length operator (only dot .length is interpreted)', () => {
     // Bracket access never folds to $size/$strLenCP — it reads a property called
-    // "length" like any other key. "length" is a string literal, so it can't be
+    // "length" like any other key. "length" is a string literal, so it cannot be
     // a numeric array index → $getField directly (no $isArray dispatch).
     expect(jsmql.expr('$.items["length"]')).toEqual({ $getField: { field: "length", input: "$items" } });
     // Even a known-array receiver takes $getField for a string key: the
@@ -2709,7 +2709,7 @@ describe("array methods (no lambda)", () => {
     expect(jsmql.expr("[1,2,3].slice(0)")).toEqual([1, 2, 3]);
   });
   it("slice(0, -n) on known array → all-but-last-n, guarding empty input", () => {
-    // start 0 + negative end resolves to "first max(size - n, 0)" via 2-arg $slice.
+    // start 0 + negative end resolves to "first max(size - n, 0)" through 2-arg $slice.
     expect(jsmql.expr("[1,2,3,4,5].slice(0, -1)")).toEqual([1, 2, 3, 4]);
   });
   it("slice(start, negative-end) → resolve both indices, guard the empty range", () => {
@@ -2767,7 +2767,7 @@ describe("array methods (with lambda)", () => {
       $reduce: { input: "$ns", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
   });
-  it("lambda accessing doc field via $.", () => {
+  it("lambda accesses a doc field through $.", () => {
     expect(jsmql.expr("$.items.map(x => x * $.taxRate)")).toEqual({
       $map: { input: "$items", as: "x", in: { $multiply: ["$$x", "$taxRate"] } },
     });
@@ -2870,7 +2870,7 @@ describe("reduce accumulator type narrowing", () => {
     });
   });
 
-  it("only the accumulator param is narrowed, not the element param", () => {
+  it("narrows only the accumulator param, not the element param", () => {
     // `x[0]` should keep the cond — `x` is the element binding and could be
     // anything; only `a` is narrowed to object.
     expect(jsmql.expr("$.xs.reduce((a, x) => ({ ...a, k: x[0] }), {})")).toEqual({
@@ -3094,7 +3094,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     });
   });
 
-  it("a chained const inherits the type it was derived from", () => {
+  it("a chained const inherits its source's type", () => {
     // `.slice` preserves the receiver type, so `b` is array-typed through `a`.
     const p = jsmql.pipeline(`const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes("b") });`);
     expect(setOf(p, 1)).toEqual({
@@ -3122,7 +3122,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     });
   });
 
-  it("jsmql's OWN materialised lookup slot is typed, so a chained method resolves at compile time", () => {
+  it("jsmql types its OWN materialised lookup slot, so a chained method resolves at compile time", () => {
     // The rewritten receiver is a plain field path (`__jsmql.tmp.N`), but jsmql
     // filled it from `$lookup.as` and binds the slot with what the join yields
     // (src/compiler/emit/join.ts) — so a method chained onto it needs no runtime
@@ -3526,8 +3526,8 @@ describe("date methods", () => {
   });
 
   // The accessors read the whole date, so an argument has nowhere to go — dropping
-  // it in silence is the one error a user can't see in the output, so it is refused.
-  // `.week("UTC")` & co. DO take a timezone; only these don't.
+  // it in silence is the one error a user cannot see in the output, so it is refused.
+  // `.week("UTC")` & co. DO take a timezone; only these do not.
   it("rejects an argument on a zero-argument accessor", () => {
     expect(() => jsmql.expr('$.ts.getFullYear("UTC")')).toThrow("'.getFullYear()' takes no arguments, got 1");
     expect(() => jsmql.expr("$.ts.getMonth(1, 2, 3)")).toThrow("'.getMonth()' takes no arguments, got 3");
@@ -3686,7 +3686,7 @@ describe("replacing date parts (.set)", () => {
       "Spread elements in objects are not supported in MQL output",
     );
   });
-  it("rejects a part that isn't an integer, as mongod does", () => {
+  it("rejects a part that is not an integer, as mongod does", () => {
     expect(() => jsmql.expr("$.t.set({ year: 2030.5 })")).toThrow("'set' year expects an integer, but got a number.");
     expect(() => jsmql.expr('$.t.set({ year: "2030" })')).toThrow("'set' year expects an integer, but got a string.");
   });
@@ -4065,7 +4065,7 @@ describe("date-method receiver type-check", () => {
 });
 
 describe("date methods (UTC variants)", () => {
-  // Same operators as the local getters, anchored to UTC via `timezone: "UTC"`.
+  // Same operators as the local getters, anchored to UTC through `timezone: "UTC"`.
   // Verified against a live mongod (t = 2023-03-15T18:45:30.123Z, a Wednesday):
   // → { y:2023, mo:3, d:15, dow:4, h:18, mi:45, s:30, ms:123 }.
   it("getUTCFullYear", () => {
@@ -4140,10 +4140,10 @@ describe("new Date()", () => {
     expect(jsmql.expr("new Date(2024, -1, 15)")).toEqual(new Date("2023-12-15T00:00:00.000Z"));
     expect(jsmql.expr("Date.UTC(2024, 0, 15)")).toEqual(1705276800000);
   });
-  it("rejects a constant date string that can't be parsed (HR3)", () => {
-    // We KNOW the value at compile time and the server rejects the equivalent
-    // `{ $toDate: "not-a-date" }` at parse time — so refuse it here rather than
-    // emit unrunnable MQL. The message names the value and the format to use.
+  it("rejects a constant date string that cannot be parsed (HR3)", () => {
+    // jsmql knows the value at compile time, and the server rejects the equivalent
+    // `{ $toDate: "not-a-date" }` at parse time. So this refuses the value here,
+    // instead of emitting MQL that cannot run. The message names the value and the format to use.
     expect(() => jsmql.expr('new Date("not-a-date")')).toThrow(
       'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
     );
@@ -4578,7 +4578,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   // ("must be an array, but was of type: int"). So every one of these emitted MQL
   // the server refused. One extra level is unwrapped exactly once, back to the
   // operand we meant. Verified against a live mongod.
-  describe("a literal-array receiver is wrapped for single-array-argument operators", () => {
+  describe("jsmql wraps a literal-array receiver for single-array-argument operators", () => {
     const wrapped: [string, string, unknown][] = [
       [".length", "[1, 2].length", 2],
       [".size()", "[1, 2].size()", 2],
@@ -4596,7 +4596,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
       });
     }
 
-    it("a non-literal receiver is left alone — the wrap is only for literals", () => {
+    it("leaves a non-literal receiver alone — the wrap is only for literals", () => {
       // A field path / $$var / operator document is already unambiguous, so adding
       // a level would change what the operator reads.
       expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
@@ -4615,11 +4615,11 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   });
 
   // JS stringifies nested arrays recursively (`[[1,2],[3]].join(",") === "1,2,3"`).
-  // MQL expressions can't recurse, so the emitted `$toString` of an inner array is
+  // MQL expressions cannot recurse, so the emitted `$toString` of an inner array is
   // an execution-time failure. Reject where the shape is provable rather than emit
   // it (HR3) or silently flatten one level (a different answer than was asked for).
-  describe("stringifying an array of arrays is rejected, not mis-emitted", () => {
-    it("a literal of literals is rejected by .join() and .toString()", () => {
+  describe("rejects stringifying an array of arrays, instead of mis-emitting it", () => {
+    it(".join() and .toString() reject a literal of literals", () => {
       expect(() => jsmql.expr('[[1, 2], [3]].join(",")')).toThrow(
         /\.join\(\) can't stringify an array of arrays — this array literal holds arrays/,
       );
@@ -4640,7 +4640,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
     it("a flat literal, an unknown receiver, and .flat() first all still compile", () => {
       expect(jsmql.expr('[1, 2].join(",")')).toBe("1,2");
-      // Unknown element type — literal-gating says don't guess.
+      // Unknown element type — literal-gating says do not guess.
       expect(() => jsmql.expr('$.items.join(",")')).not.toThrow();
       expect(() => jsmql.expr('[[1, 2], [3]].flat().join(",")')).not.toThrow();
     });
@@ -5017,7 +5017,7 @@ describe("array method additions", () => {
       "'with' argument 1 must be a number from 0 to Infinity — got -1.",
     );
   });
-  it(".with arity is enforced (exactly 2)", () => {
+  it("enforces .with arity (exactly 2)", () => {
     expect(() => jsmql.expr("$.xs.with(0)")).toThrow(/exactly 2 arguments/);
   });
   it(".toString() on a known array lowers to join-with-comma", () => {
@@ -5208,10 +5208,10 @@ describe("array callbacks support (element, index)", () => {
       },
     });
   });
-  // A paramless callback still occupies an `as` name in the emitted MQL. Before it
-  // was gensym'd, the inner one shadowed the outer element and `$$v` resolved to
-  // the inner array's element (mongod returned [[0,0,0],[0,0,0]], not [[1,1,1],[2,2,2]]).
-  it("a paramless callback's synthetic `as` doesn't shadow an enclosing one", () => {
+  // A paramless callback still occupies an `as` name in the emitted MQL. jsmql
+  // gensyms this name, so the inner one does not shadow the outer element and
+  // `$$v` resolves to the outer array's element.
+  it("a paramless callback's synthetic `as` does not shadow an enclosing one", () => {
     expect(jsmql.expr("$.a.map(v => $.b.map(() => v))")).toEqual({
       $map: { input: "$a", as: "v", in: { $map: { input: "$b", as: "jsmqlUnused", in: "$$v" } } },
     });
@@ -5373,7 +5373,7 @@ describe("array callbacks support (element, index)", () => {
   });
   it(".map with a 3rd 'array' param: arr.length → $size; index unused → no $zip", () => {
     // `i` is only present positionally to reach `arr`, so the simple `$map` is
-    // used (no $zip/$range); `arr` binds to the input via a thin $let.
+    // used (no $zip/$range); `arr` binds to the input through a thin $let.
     expect(jsmql.expr("$.xs.map((x, i, arr) => arr.length)")).toEqual({
       $map: {
         input: "$xs",
@@ -5580,12 +5580,12 @@ describe("toSorted / sort key function", () => {
       },
     });
   });
-  it(".toSorted with 2-param (comparator) lambda is rejected", () => {
+  it("rejects .toSorted with a 2-param (comparator) lambda", () => {
     expect(jsmql.expr("$.events.toSorted((a, b) => a.x - b.x)")).toEqual({
       $sortArray: { input: "$events", sortBy: { x: 1 } },
     });
   });
-  it(".toSorted with non-key-function body is rejected", () => {
+  it("rejects .toSorted with a non-key-function body", () => {
     expect(jsmql.expr("$.events.toSorted(e => e.x + e.y)")).toEqual({
       $map: {
         input: {
@@ -5599,7 +5599,7 @@ describe("toSorted / sort key function", () => {
       },
     });
   });
-  it(".toSorted with bare param (x => x) is rejected", () => {
+  it("rejects .toSorted with a bare param (x => x)", () => {
     expect(jsmql.expr("$.events.toSorted(e => e)")).toEqual({
       $map: {
         input: {
@@ -5629,7 +5629,7 @@ describe("toSorted / sort key function", () => {
       $sortArray: { input: "$events", sortBy: { a: 1, b: 1 } },
     });
   });
-  it(".toSorted with a bad direction / $-prefixed field is rejected", () => {
+  it("rejects .toSorted with a bad direction, or a $-prefixed field", () => {
     expect(() => jsmql.expr("$.events.toSorted({ a: 3 })")).toThrow(
       '.toSorted({ a: … }) takes a direction: 1, -1, "asc" or "desc".',
     );
@@ -5851,7 +5851,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.a.union($.b)")).toHaveProperty("$setUnion");
     expect(jsmql.expr("$.a.zipObject($.b)")).toHaveProperty("$arrayToObject");
   });
-  it('keyBy/groupBy/countBy keys are null-safe ($ifNull → "null", so a missing/null key doesn\'t crash $arrayToObject)', () => {
+  it('keyBy/groupBy/countBy keys are null-safe ($ifNull → "null", so a missing/null key does not crash $arrayToObject)', () => {
     // `$toString(missing)` is null and `$arrayToObject` rejects a null key; the
     // `$ifNull` wrap coerces it to "null" (matching String(null)). Verified on mongod.
     const wrap = { $ifNull: [{ $toString: "$$jsmqlItem.t" }, "null"] };
@@ -5951,7 +5951,7 @@ describe("every method declares the receiver family it needs", () => {
 });
 
 describe("chain type-check — reject a method on a provably-incompatible receiver", () => {
-  // 100%-certain mismatches throw (they'd otherwise emit MQL mongod rejects — e.g.
+  // 100%-certain mismatches throw (they would otherwise emit MQL mongod rejects, for example
   // $map over a boolean/number/string, $slice over an object). Verified on mongod.
   it("rejects a method chained on a provably boolean receiver (only .toString/.getTime survive)", () => {
     expect(() => jsmql.expr("$.items.every(x => x.ok).map(y => y)")).toThrow(
@@ -6195,7 +6195,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr("$.a.forEach(x => x)")).toThrow(/\.forEach\(\) returns undefined in JavaScript/);
   });
   it("carries a real .pos (the offending receiver) for tooling (validate)", () => {
-    // Offset the chain so the receiver isn't at column 0 — the error's .pos must
+    // Offset the chain so the receiver is not at column 0 — the error's .pos must
     // point at the boolean-producing receiver, not be a 0 placeholder. Every
     // chain link carries its own offset, so this lands on `.every` — the call
     // the message names — rather than on the `$.items` chain root.
@@ -6262,7 +6262,7 @@ describe("lodash iteratee / predicate shorthands (uniform across higher-order me
       },
     });
   });
-  it("a bad matchesProperty shape is rejected with a shape hint", () => {
+  it("rejects a bad matchesProperty shape, with a shape hint", () => {
     expect(() => jsmql.expr("$.a.filter([1, 2])")).toThrow(
       "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
     );
@@ -6282,7 +6282,7 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     expect(jsmql.expr("$.a.drop(2)")).toEqual({
       $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
     });
-    // dropRight: keep first max(0, size-n) via 2-arg $slice (n≥size → count 0 → []).
+    // dropRight: keep first max(0, size-n) through 2-arg $slice (n≥size → count 0 → []).
     expect(jsmql.expr("$.a.dropRight(2)")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
@@ -6335,7 +6335,7 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     expect(jsmql.expr("$.a.tail()")).toEqual({
       $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
     });
-    // initial = dropRight(1): keep first max(0, size-1) via 2-arg $slice (count 0 → []).
+    // initial = dropRight(1): keep first max(0, size-1) through 2-arg $slice (count 0 → []).
     expect(jsmql.expr("$.a.initial()")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
@@ -6369,7 +6369,7 @@ describe("lodash set-ops & By-iteratee value methods", () => {
       $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [2, 4]] }] } },
     });
   });
-  it(".xor(other) → symmetric difference via the set operators", () => {
+  it(".xor(other) → symmetric difference through the set operators", () => {
     // lodash documents `.xor` as returning UNIQUE values, so the composition says what
     // it means. Order is not preserved and was never asked for (SR2).
     expect(jsmql.expr("$.a.xor($.b)")).toEqual({
@@ -6424,7 +6424,7 @@ describe("lodash set-ops & By-iteratee value methods", () => {
   // The iteratee's $let must not enclose the $reduce accumulator reads: a param named
   // `value` would shadow `$$value`, so the "have I seen this key" test would read `.seen`
   // off the element and every element would survive the dedupe.
-  it("an iteratee param named 'value' doesn't shadow the $reduce accumulator", () => {
+  it("an iteratee param named 'value' does not shadow the $reduce accumulator", () => {
     expect(jsmql.expr("$.a.uniqBy(value => value.id)")).toEqual({
       $getField: {
         field: "out",
@@ -6485,7 +6485,7 @@ describe("lodash transpose value methods — zip / unzip / zipWith", () => {
       "'.zipWith()' takes an arrow with one parameter per zipped array — 2 here — and an expression body.",
     );
   });
-  it(".unzipWith is rejected with a tailored .unzip().map(group => …) hint (variadic runtime arity)", () => {
+  it("rejects .unzipWith with a tailored .unzip().map(group => …) hint (variadic runtime arity)", () => {
     expect(() => jsmql.expr("$.a.unzipWith(f)")).toThrow(/unzip\(\)\.map\(group/);
   });
   it(".unzip() transposes an array of tuples ($ifNull guards an empty receiver)", () => {
@@ -6505,7 +6505,7 @@ describe("lodash transpose value methods — zip / unzip / zipWith", () => {
 });
 
 describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightWhile", () => {
-  it(".takeWhile(pred) → slice up to the first falsy element (first-false index via $indexOfArray)", () => {
+  it(".takeWhile(pred) → slice up to the first falsy element (first-false index through $indexOfArray)", () => {
     expect(jsmql.expr("$.a.takeWhile(x => x < 3)")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
@@ -6574,7 +6574,7 @@ describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
 });
 
 describe("lodash random value methods — sample / sampleSize ($rand)", () => {
-  it(".sample() → a random element via $arrayElemAt at floor($rand * size)", () => {
+  it(".sample() → a random element through $arrayElemAt at floor($rand * size)", () => {
     expect(jsmql.expr("$.a.sample()")).toEqual({
       $let: {
         vars: { jsmqlArr: "$a" },
@@ -6698,7 +6698,7 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.n.clamp(0, 100)")).toEqual({ $min: [{ $max: ["$n", 0] }, 100] });
     expect(() => jsmql.expr("$.n.clamp(0)")).toThrow(/exactly 2 argument/);
   });
-  it(".inRange(end) → [0, end); .inRange(start, end) → [start, end) (bounds swap via $min/$max)", () => {
+  it(".inRange(end) → [0, end); .inRange(start, end) → [start, end) (bounds swap through $min/$max)", () => {
     expect(jsmql.expr("$.n.inRange(10)")).toEqual({
       $and: [{ $gte: ["$n", { $min: [0, 10] }] }, { $lt: ["$n", { $max: [0, 10] }] }],
     });
@@ -6730,7 +6730,7 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.n.round()")).toEqual({ $round: ["$n", 0] });
     expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: ["$n", 2] });
   });
-  it(".ceil()/.floor() → $ceil/$floor; with precision, scale via $pow", () => {
+  it(".ceil()/.floor() → $ceil/$floor; with precision, scale through $pow", () => {
     expect(jsmql.expr("$.n.ceil()")).toEqual({ $ceil: "$n" });
     expect(jsmql.expr("$.n.floor()")).toEqual({ $floor: "$n" });
     // Only $round takes a precision on the server, so a precision scales by 10^p,
@@ -6777,9 +6777,10 @@ describe("statement-position mutators", () => {
       { $set: { events: { $concatArrays: [["$x", "$y"], "$events"] } } },
     ]);
   });
-  it(".pop() — drops last element via the count-tolerant 2-arg $slice (valid on empty/single)", () => {
-    // 2-arg (first-n) $slice, NOT 3-arg `[arr, 0, count]`: `max(0, size-1)` is 0
-    // for an empty/single-element array, and only the 2-arg form allows a 0 count.
+  it(".pop() — drops last element through the count-tolerant 2-arg $slice (valid on empty/single)", () => {
+    // This uses the 2-arg (first-n) $slice, not the 3-arg `[arr, 0, count]` form. The
+    // reason: `max(0, size-1)` is 0 for an empty or single-element array, and only
+    // the 2-arg form allows a 0 count.
     expect(jsmql("$.events.pop();")).toEqual([
       {
         $set: {
@@ -6794,8 +6795,8 @@ describe("statement-position mutators", () => {
     ]);
   });
   it(".shift() — drops first element; count max(1, size) stays valid on empty/single", () => {
-    // count is max(1, size), never 0 — an empty receiver is `$slice: [[], 1, 1]`
-    // → [] (position past the end), not a rejected 3-arg count of 0.
+    // The count is max(1, size), never 0. An empty receiver gives `$slice: [[], 1, 1]`
+    // → [] (a position past the end), never a rejected 3-arg count of 0.
     expect(jsmql("$.events.shift();")).toEqual([
       {
         $set: {
@@ -6814,7 +6815,7 @@ describe("statement-position mutators", () => {
     const eventsValue = (out[0]?.$set as { events: unknown }).events as Record<string, unknown>;
     expect(Object.keys(eventsValue)).toEqual(["$let"]);
   });
-  it(".fill(v) — every element becomes v via $map", () => {
+  it(".fill(v) — every element becomes v through $map", () => {
     expect(jsmql("$.events.fill(0);")).toEqual([
       { $set: { events: { $map: { input: "$events", as: "jsmqlUnused", in: 0 } } } },
     ]);
@@ -6824,15 +6825,15 @@ describe("statement-position mutators", () => {
     expect(JSON.stringify(out)).toContain('"$slice":["$events",1]');
     expect(JSON.stringify(out)).not.toContain("jsmqlFillStart");
   });
-  // The fill VALUE is generated inside the synthetic `(el, idx)` map callback, so
-  // bare param names captured a pipeline binding of the same name: `let x = 5;
-  // $.arr.fill(x, 1)` filled with each ELEMENT instead of 5.
-  it("a pipeline binding named like the synthetic fill param isn't captured", () => {
+  // jsmql generates the fill VALUE inside the synthetic `(el, idx)` map callback.
+  // A pipeline binding with the same name as a bare param, for example `let x = 5;
+  // $.arr.fill(x, 1)`, must still read as 5, not as each ELEMENT.
+  it("a pipeline binding named like the synthetic fill param is not captured", () => {
     const out = JSON.stringify(jsmql("let x = 5; $.arr.fill(x, 1); $.done = true;"));
     expect(out).toContain(":5"); // the binding's value, not "$$x"
     expect(out).not.toContain('"$$x"');
   });
-  it(".reverse() with extra args is rejected (preserves the existing .toReversed arg-count check)", () => {
+  it("rejects .reverse() with extra args (keeps the existing .toReversed arg-count check)", () => {
     expect(() => jsmql("$.events.reverse(123);")).toThrow();
   });
   it("nested receiver $.user.history.push(...) emits a dotted $set key", () => {
@@ -6868,7 +6869,7 @@ describe("statement-position mutators", () => {
 });
 
 describe("statement-position Object.assign — mutating merge on a field path", () => {
-  it("merges sources into the target field via $set + $mergeObjects", () => {
+  it("merges sources into the target field through $set + $mergeObjects", () => {
     expect(jsmql("Object.assign($.profile, { verified: true });")).toEqual([
       { $set: { profile: { $mergeObjects: ["$profile", { verified: true }] } } },
     ]);
@@ -6971,7 +6972,7 @@ describe("ES2025 Set methods", () => {
       },
     });
   });
-  it("non-Set argument is rejected", () => {
+  it("rejects a non-Set argument", () => {
     expect(jsmql.expr("new Set($.a).intersection($.b)")).toEqual({ $setIntersection: ["$a", "$b"] });
   });
 });
@@ -7058,7 +7059,7 @@ describe("string padding methods", () => {
       },
     });
   });
-  it("a multi-character pad is trimmed to the remaining width, like JS", () => {
+  it("trims a multi-character pad to the remaining width, like JS", () => {
     // JS pads to exactly `targetLength` characters, cutting the pad mid-string:
     // "gold".padStart(9, "US") === "USUSUgold". Repeating the pad (target - len)
     // times over-fills, so the repeated run is trimmed back.
@@ -7234,7 +7235,7 @@ describe("Array.from is not part of jsmql", () => {
   // fewer characters than a mapped form that binds a throwaway element in a '$let'.
   const REFUSED =
     "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.";
-  it("every spelling is refused, and the refusal is the same one", () => {
+  it("refuses every spelling with the same message", () => {
     for (const src of [
       "Array.from({ length: 5 })",
       "Array.from({ length: 3 }, (_, i) => i * 2)",
@@ -7428,12 +7429,12 @@ describe("error cases", () => {
       /A function \(=>\) is only valid as the callback to an iterating array method/,
     );
   });
-  it("assigning to a method-call result is rejected with a precise message", () => {
+  it("rejects an assignment to a method-call result, with a precise message", () => {
     expect(() => jsmql.expr("$.s.trim() = 1")).toThrow(
       "Cannot apply '=' to the result of '.trim()' at position 11 — only a field, a binding, '$', '$$' or a collection can be written. Write the result to a field instead: '$.<field> = <receiver>.trim();'.",
     );
   });
-  it("assigning to a literal is rejected with a precise message", () => {
+  it("rejects an assignment to a literal, with a precise message", () => {
     expect(() => jsmql.expr("42 = 1")).toThrow(
       "Cannot apply '=' to a NumberLiteral — only a field, a binding, '$', '$$' or a collection can be written at position 3",
     );
@@ -7677,7 +7678,7 @@ describe(".substring", () => {
   it("substring() with no args is identity", () => {
     expect(jsmql.expr("$.name.substring()")).toEqual("$name");
   });
-  it("substring with non-literal start clamps to 0 via $max", () => {
+  it("substring with non-literal start clamps to 0 through $max", () => {
     expect(jsmql.expr("$.s.substring($.i, 10)")).toEqual({
       $cond: {
         if: { $eq: [{ $ifNull: ["$s", null] }, null] },
@@ -8036,7 +8037,7 @@ describe("optional chaining (?.)", () => {
   // `.includes` / `.indexOf` / `.concat` dispatch on receiver type. Chain
   // walking stops at `MethodCall` boundaries — once `.toReversed()` ran (and
   // its own wrap took effect), the result is guaranteed not-null, so
-  // `.includes` doesn't add a redundant outer wrap.
+  // `.includes` does not add a redundant outer wrap.
   it(".includes after .toReversed() of optional propagates the inner wrap, no outer wrap", () => {
     expect(jsmql.expr("$.user?.posts.toReversed().includes('hello')")).toEqual({
       $cond: {
@@ -8101,8 +8102,8 @@ describe("optional chaining (?.)", () => {
     });
   });
 
-  // `.length` is a MemberAccess, not a MethodCall — handled in its own codegen branch.
-  it(".length on an optional unknown-type receiver stops the chain — a property row is computed", () => {
+  // `.length` is a MemberAccess, not a MethodCall — its own codegen branch handles it.
+  it(".length on an optional unknown-type receiver stops the chain — a property row computes it", () => {
     // unknown receiver dispatches to runtime $cond between $size and $strLenCP;
     // wrap with [] so $isArray succeeds and $size([]) returns 0.
     expect(jsmql.expr("$.user?.tags.length")).toEqual({
@@ -8122,7 +8123,7 @@ describe("optional chaining (?.)", () => {
     });
   });
 
-  // String concatenation via `+` lowers to `$concat`, which is null-poisoning.
+  // String concatenation through `+` lowers to `$concat`, which is null-poisoning.
   it('string + with optional operand wraps with ""', () => {
     expect(jsmql.expr("$.firstName + ' ' + $.user?.lastName")).toEqual({
       $concat: ["$firstName", " ", { $ifNull: ["$user.lastName", ""] }],
@@ -8225,7 +8226,7 @@ describe(".startsWith / .endsWith", () => {
     // The receiver is bound once (and coerced), and the start floored — a
     // receiver shorter than the needle makes `strLen - needleLen` negative, and
     // $substrCP aborts the query on a negative start rather than returning
-    // false. A literal needle's length folds, so it isn't spliced in 3 times.
+    // false. A literal needle's length folds, so it is not spliced in 3 times.
     expect(jsmql.expr('$.file.endsWith(".pdf")')).toEqual({
       $cond: {
         if: { $eq: [{ $ifNull: ["$file", null] }, null] },
@@ -8303,7 +8304,7 @@ describe(".charAt", () => {
   });
   it("charAt(-1) folds to an empty string, like JS (never index -1)", () => {
     // JS `.charAt` returns "" for a negative index — flooring to 0 would wrongly
-    // return the first character, so this is the one index that isn't clamped.
+    // return the first character, so this is the one index that is not clamped.
     expect(jsmql.expr("$.name.charAt(-1)")).toEqual("");
   });
   it("charAt with a runtime index guards the negative case", () => {
@@ -8478,10 +8479,10 @@ describe(".join", () => {
   });
 });
 
-describe("a $size / $in / callback input is guarded only where the array may be missing", () => {
+describe("jsmql guards a $size / $in / callback input only where the array may be missing", () => {
   // MEASURED on mongod: every array operator answers null for a missing field, and
   // `{ $size: null }`, `{ $in: [x, null] }` and a null `$map` input abort the command.
-  it("a field that may be missing is guarded, through any chain of array methods", () => {
+  it("guards a field that may be missing, through any chain of array methods", () => {
     expect(jsmql.expr("$.a.map(x => x + 1).length")).toEqual({
       $let: {
         vars: { jsmqlRecv: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } },
@@ -8560,7 +8561,7 @@ describe("a $size / $in / callback input is guarded only where the array may be 
     });
   });
 
-  it("a value that is certainly there is counted, searched and iterated as it is", () => {
+  it("counts, searches and iterates a value that is certainly there, as it is", () => {
     expect(jsmql.expr("Object.keys($).length")).toEqual({
       $size: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
     });
@@ -8658,7 +8659,7 @@ describe(".flat / .flatMap", () => {
       $reduce: { input: "$nested", initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } },
     });
   });
-  it("flat(2) is rejected", () => {
+  it("rejects flat(2)", () => {
     expect(() => jsmql.expr("$.nested.flat(2)")).toThrow("'flat' argument 1 must be a number from 1 to 1 — got 2.");
   });
   it("flatMap with lambda", () => {
@@ -8720,10 +8721,10 @@ describe("numeric separators", () => {
   it("exponent with separator", () => {
     expect(jsmql.expr("$abs(1_2e3)")).toEqual({ $abs: 12000 });
   });
-  it("trailing _ rejected", () => {
+  it("rejects a trailing _", () => {
     expect(() => jsmql.expr("1_")).toThrow(/Numeric separator/);
   });
-  it("double __ rejected", () => {
+  it("rejects a double __", () => {
     expect(() => jsmql.expr("1__0")).toThrow(/Numeric separator/);
   });
 });
@@ -8762,10 +8763,10 @@ describe("comments", () => {
   it("comment inside template ${...} interpolation", () => {
     expect(jsmql.expr("`hi ${ $.name /* user */ }`")).toEqual({ $concat: ["hi ", { $toString: "$name" }] });
   });
-  it("// inside string literal is preserved as data", () => {
+  it("keeps // inside a string literal as data", () => {
     expect(jsmql.expr('$eq($.url, "https://example.com")')).toEqual({ $eq: ["$url", "https://example.com"] });
   });
-  it("// inside regex literal is preserved as pattern", () => {
+  it("keeps // inside a regex literal as pattern", () => {
     // Two literal slashes inside a regex character class — must not be eaten as a comment
     expect(jsmql.expr("$.path.match(/[/\\\\]/)")).toEqual({
       $cond: {
@@ -8961,7 +8962,7 @@ describe("function overload", () => {
     expect(jsmql.expr(({ $ }) => $.status === "active")).toEqual({ $eq: ["$status", "active"] });
   });
 
-  it("the document is referenced via `$` from the toolbox; a bare-identifier param is rejected", () => {
+  it("reaches the document through `$` from the toolbox; rejects a bare-identifier param", () => {
     // The document lives in the destructured toolbox — `({ $ }) => $.foo`.
     expect(jsmql.expr(({ $ }) => $.foo)).toEqual("$foo");
     // A bare-identifier `(doc) =>` shape is not a valid parameter slot.
@@ -8994,7 +8995,7 @@ describe("function overload", () => {
     ).toEqual({ $gt: ["$age", 18] });
   });
 
-  it("accepts a named `function` input — the name is discarded", () => {
+  it("accepts a named `function` input, and discards the name", () => {
     expect(
       jsmql.expr(function predicate({ $ }) {
         return $.age > 18;
@@ -9006,7 +9007,7 @@ describe("function overload", () => {
     expect(() => jsmql.expr(async ({ $ }) => $.age > 18)).toThrow(/async/);
   });
 
-  it("appends a jsmql`` hint when an outer-scope identifier is referenced", () => {
+  it("appends a jsmql`` hint when the body references an outer-scope identifier", () => {
     const minAge = 21; // referenced from the closure on purpose
     expect(() => jsmql(({ $ }) => $.age > minAge)).toThrow("Unknown identifier 'minAge'. Did you mean '$.minAge'?");
   });
@@ -9043,7 +9044,7 @@ describe("function overload", () => {
   });
 });
 
-// ─── Newly-registered operators (pulled from mongodb/mql-specifications) ────
+// ─── Operators from mongodb/mql-specifications ────
 
 describe("bitwise operators", () => {
   it.each([
@@ -9077,9 +9078,9 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
   // HR1: a `"$foo"` typed in jsmql SOURCE is the MQL field ref `$foo` and passes
   // through verbatim in every context — jsmql adds no `$literal` of its own (to
   // get the literal four-char string, write `$literal("$foo")`). The only wrap is
-  // HR1's runtime-injected exception: a `"$foo"` arriving via a template-tag
+  // HR1's runtime-injected exception: a `"$foo"` arriving through a template-tag
   // `${…}` or a `jsmql.compile` param is wrapped in expression position so
-  // untrusted input can't silently become a field reference.
+  // untrusted input cannot silently become a field reference.
 
   it("bare $-prefixed source string passes through at the top level", () => {
     expect(jsmql.expr('"$foo"')).toEqual("$foo");
@@ -9103,7 +9104,7 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
   });
 
   it("$-string as an object KEY does not wrap", () => {
-    // The user's key is the JSON key directly — MongoDB doesn't auto-evaluate
+    // The user's key is the JSON key directly — MongoDB does not auto-evaluate
     // keys, only values. Leave it alone.
     expect(jsmql.expr('({ "$foo": 1 })')).toEqual({ $foo: 1 });
   });
@@ -9112,7 +9113,7 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
     expect(jsmql.expr('$concat("$first", " ", "$last")')).toEqual({ $concat: ["$first", " ", "$last"] });
   });
 
-  it("real field refs (`$.foo`) are NOT wrapped — they aren't string literals", () => {
+  it("real field refs (`$.foo`) are NOT wrapped — they are not string literals", () => {
     expect(jsmql.expr("$concat($.first, $.last)")).toEqual({ $concat: ["$first", "$last"] });
   });
 
@@ -9133,11 +9134,11 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
     expect(jsmql.expr`$.x === ${tainted}`).toEqual({ $eq: ["$x", { $literal: "$dangerous" }] });
   });
 
-  it("compile-form binding of a $-prefixed string is inlined safely in find form", () => {
+  it("inlines a compile-form binding of a $-prefixed string safely in find form", () => {
     // The query language does not treat values as field refs (only the
     // aggregation language does), so the $literal wrap is unnecessary here.
     // The same compile + $-prefixed binding inside an aggregation context
-    // (e.g. inside `$addFields`) still gets the wrap — covered in the
+    // (for example inside `$addFields`) still gets the wrap — covered in the
     // pipeline-integration tests below.
     const q = jsmql.compile(({ name }: { name: string }, { $ }) => $.x === name);
     expect(q({ name: "$dangerous" })).toEqual({ x: "$dangerous" });
@@ -9317,7 +9318,7 @@ describe("jsmql.compile()", () => {
 
     it("plain-object binding inlines as a nested object literal value", () => {
       // Whole-object bindings appear as MQL literal objects. Field access on
-      // them (e.g. `thresholds.min`) goes through MQL's `$getField`, not a
+      // them (for example `thresholds.min`) goes through MQL's `$getField`, not a
       // compile-time fold — the user can always destructure further at the
       // call site if they want fields hoisted as separate bindings.
       const q = jsmql.compile(({ defaults }: { defaults: { name: string } }) => defaults);
@@ -9356,11 +9357,11 @@ describe("jsmql.compile()", () => {
       expect(q({ minScore: 75 })).toEqual([{ $match: { score: { $gte: 75 } } }]);
     });
 
-    it("the one-slot `({ $ }) => …` toolbox form works via jsmql.expr()", () => {
+    it("the one-slot `({ $ }) => …` toolbox form works through jsmql.expr()", () => {
       expect(jsmql.expr(({ $ }) => $.age > 18)).toEqual({ $gt: ["$age", 18] });
     });
 
-    it("the toolbox form with a destructured op (`({ $, $dateDiff }) => …`) works via jsmql.expr()", () => {
+    it("the toolbox form with a destructured op (`({ $, $dateDiff }) => …`) works through jsmql.expr()", () => {
       expect(jsmql.expr(({ $ }) => $.x === "ok")).toEqual({ $eq: ["$x", "ok"] });
     });
   });
@@ -9506,14 +9507,14 @@ describe("jsmql.compile()", () => {
     });
   });
 
-  describe("error: defaults in destructure are rejected", () => {
-    it("literal default rejected with the explanatory message", () => {
+  describe("error: rejects a default in the destructure", () => {
+    it("rejects a literal default, with the explanatory message", () => {
       expect(() => jsmql.compile(({ minAge = 18 }: { minAge?: number }, { $ }) => $.age > minAge)).toThrow(
         "A default value in the params destructure is not supported ('minAge = …'). Apply the default where the query is called, with JS's `??` at the call site — q({ minAge: input ?? <default> }) — or write the value into the template-tag form. at position 10",
       );
     });
 
-    it("expression default rejected with the explanatory message", () => {
+    it("rejects an expression default, with the explanatory message", () => {
       expect(() => jsmql.compile(({ now = Date.now() }: { now?: number }, { $ }) => $.createdAt > now)).toThrow(
         "A default value in the params destructure is not supported ('now = …'). Apply the default where the query is called, with JS's `??` at the call site — q({ now: input ?? <default> }) — or write the value into the template-tag form. at position 7",
       );
@@ -9537,7 +9538,7 @@ describe("jsmql.compile()", () => {
   });
 
   describe("error: malformed destructure patterns", () => {
-    it("nested destructure is rejected", () => {
+    it("rejects a nested destructure", () => {
       // Equivalent source: ({ a: { b } }, { $ }) => $.x > b
       const src = "({ a: { b } }, { $ }) => $.x > b";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
@@ -9545,14 +9546,14 @@ describe("jsmql.compile()", () => {
       );
     });
 
-    it("rest pattern is rejected", () => {
+    it("rejects a rest pattern", () => {
       const src = "({ ...rest }, { $ }) => $.x > rest.a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
         "Expected a name but got '...' at position 3",
       );
     });
 
-    it("array destructure is rejected", () => {
+    it("rejects an array destructure", () => {
       const src = "([a, b], { $ }) => $.x > a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
         "jsmql expects each parameter to be an object destructure pattern, e.g. '({ $ }) => …', but got '[' at position 1",
@@ -9561,19 +9562,19 @@ describe("jsmql.compile()", () => {
   });
 
   describe("error: slot ordering and counts", () => {
-    it("more than two parameters is rejected", () => {
+    it("rejects more than two parameters", () => {
       const src = "({ a }, { $ }, { $match }) => $.x > a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(/at most two parameters/);
     });
 
-    it("(toolbox, params) — the toolbox before params — is rejected", () => {
+    it("rejects (toolbox, params) — the toolbox before params", () => {
       const src = "({ $ }, { a }) => $.x > a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
         "Reorder to '(params, { $, … }) => …' — the toolbox is the SECOND slot at position 3",
       );
     });
 
-    it("mixed `$`/non-`$` keys in one destructure is rejected", () => {
+    it("rejects mixed `$` and non-`$` keys in one destructure", () => {
       const src = "({ $match, minAge }) => $.age > minAge";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
         "A destructure holds either query parameters or the '$'-prefixed toolbox, never both. Split them into two: '(params, { $, … }) => …' at position 3",
@@ -9582,29 +9583,29 @@ describe("jsmql.compile()", () => {
   });
 
   describe("error: unsafe param values at call time", () => {
-    it("NaN is rejected at bind time", () => {
+    it("rejects NaN at bind time", () => {
       const q = jsmql.compile(({ n }: { n: number }, { $ }) => $.x > n);
       expect(() => q({ n: NaN })).toThrow(/NaN/);
     });
 
-    it("Infinity is rejected at bind time", () => {
+    it("rejects Infinity at bind time", () => {
       const q = jsmql.compile(({ n }: { n: number }, { $ }) => $.x > n);
       expect(() => q({ n: Infinity })).toThrow(/Infinity/);
     });
 
-    it("function value is rejected at bind time", () => {
+    it("rejects a function value at bind time", () => {
       const q = jsmql.compile(({ x }: { x: unknown }, { $ }) => $.y === x);
       expect(() => q({ x: () => 1 })).toThrow(/has type 'function'|has no JSON representation/);
     });
 
-    it("BigInt value is rejected at bind time", () => {
+    it("accepts a BigInt value at bind time", () => {
       const q = jsmql.compile(({ x }: { x: unknown }, { $ }) => $.y === x);
       expect(() => q({ x: BigInt(1) })).not.toThrow(); // a BigInt is a long
     });
   });
 
-  describe("extra params keys are allowed silently", () => {
-    it("extra keys not referenced in the body are ignored", () => {
+  describe("jsmql allows extra params keys silently", () => {
+    it("ignores extra keys that the body does not reference", () => {
       const q = jsmql.compile(({ a }: { a: number }, { $ }) => $.x > a);
       expect(q({ a: 1, unused: 99 } as unknown as { a: number })).toEqual({ x: { $gt: 1 } });
     });
@@ -9632,18 +9633,18 @@ describe("jsmql.compile()", () => {
       expect(q({ id: 42, count: 10 })).toEqual([{ $match: { _id: 42 } }, { $limit: 10 }]);
     });
 
-    it("missing param at call time names the binding (same path as fn form)", () => {
+    it("names the binding for a missing param at call time (same path as fn form)", () => {
       const q = jsmql.compile("({ foo }, { $ }) => $.x > foo");
       expect(() => q({})).toThrow(/is a parameter of this query|Unknown identifier 'foo'/);
     });
 
-    it("non-arrow string is rejected with the same FunctionInputError message", () => {
+    it("rejects a non-arrow string with the same FunctionInputError message", () => {
       expect(() => jsmql.compile("$.age > 18")).toThrow(
         "jsmql.compile() takes the entry form '(params, { $, … }) => …' — an arrow whose first destructure names the parameters. at position 0",
       );
     });
 
-    it("wrong-type input is rejected with a TypeError naming the contract", () => {
+    it("rejects a wrong-type input with a TypeError naming the contract", () => {
       expect(() => jsmql.compile(42 as never)).toThrow(TypeError);
       expect(() => jsmql.compile(42 as never)).toThrow(/arrow function or a string containing one/);
     });
@@ -9689,7 +9690,7 @@ describe("Filter dispatch (no semicolons)", () => {
       });
     });
 
-    it("a method-call predicate isn't query-translatable and rides in `$expr`", () => {
+    it("a method-call predicate is not query-translatable and rides in `$expr`", () => {
       expect(jsmql("$.name.trim() === 'alice'")).toEqual({ $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] } });
     });
   });
@@ -9865,7 +9866,7 @@ describe("jsmql.expr()", () => {
     expect(jsmql.expr`$.region === ${region}`).toEqual({ $eq: ["$region", "AU"] });
   });
 
-  it("a stage name is rejected here — `jsmql.expr` yields an expression, not a stage", () => {
+  it("rejects a stage name here — `jsmql.expr` yields an expression, not a stage", () => {
     // `{ $match: { $eq: ["$a", 0] } }` is what an expression entry would have to emit,
     // and mongod refuses it in BOTH readings: there is no `$match` expression operator,
     // and as a stage body a bare `$eq` is "unknown top level operator". The stage document
@@ -9886,8 +9887,8 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   // Three new prefix levels. Lex + parse succeed; codegen throws a reserved-syntax
   // error (semantics deferred — see docs/specs/context-references.md). Both dot-ident
   // (`$$.foo`) and bracket-expr (`$$[x]`) postfix forms are accepted because the
-  // prefix tokens don't bake the dot in; standard MemberAccess/IndexAccess composes.
-  // Tests use the string form because `$$` / `$$$` / `$$$$` aren't yet declared
+  // prefix tokens do not bake the dot in; standard MemberAccess/IndexAccess composes.
+  // Tests use the string form because `$$` / `$$$` / `$$$$` are not yet declared
   // as ambient globals — that's part of the future-API surface.
 
   describe("$$ — current collection", () => {
@@ -9957,8 +9958,8 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
 
   describe("$$$$ — current cluster", () => {
     // A bare `$$$$.<db>.<coll>` (no .find/.filter, no `= …`) is only usable as a
-    // cross-database $out destination — cross-database reads aren't supported. The
-    // bracket/mixed-access combos reach the same error via the same path (bracket
+    // cross-database $out destination — cross-database reads are not supported. The
+    // bracket/mixed-access combos reach the same error through the same path (bracket
     // parsing itself is exercised by the $out cases in test/out.test.ts), so one
     // representative case suffices here.
     it("dot.dot: $$$$.myDb.myColl is only a cross-db $out destination", () => {
@@ -10110,7 +10111,7 @@ describe("trailing commas (JS syntax)", () => {
   });
 
   it("update-op chain — trailing comma before a block-body's closing brace", () => {
-    // Only reachable via a source string: a real arrow can't carry it (JS
+    // Only reachable through a source string: a real arrow cannot carry it (JS
     // rejects `a = 1, b = 2,` as a statement), but the parser must still accept
     // the trailing `,` before the block's closing `}`.
     expect(jsmql.compile("({ $ }) => { $.a = 1, $.b = 2, }")()).toEqual([{ $set: { a: 1, b: 2 } }]);
@@ -10170,7 +10171,7 @@ describe("internal expression-variable names never capture a user param", () => 
     });
   }
 
-  it("without a collision the base name is used — output is unchanged for normal code", () => {
+  it("uses the base name without a collision — output stays unchanged for normal code", () => {
     expect(JSON.stringify(jsmql.expr("$.r.map(d => d.l.slice(d.i))"))).not.toContain("jsmqlArr2");
     expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual({
       $cond: {
@@ -10198,7 +10199,7 @@ describe("internal expression-variable names never capture a user param", () => 
   });
 });
 
-describe("fractional counts are rejected, not passed to $slice", () => {
+describe("rejects fractional counts, and never passes them to $slice", () => {
   // $slice needs a 32-bit integer in every count/position slot, so a fraction is a
   // query-time abort. The gate is literal-only: an expression still compiles.
   const rejected: [string, string][] = [

@@ -72,8 +72,8 @@ const isExpr = (a: CallArg | ArrayElement): a is Expr => !(NOT_EXPR as ReadonlyS
 // ── the value reading ────────────────────────────────────────────────────────
 
 /**
- * The node types whose VALUE is not their document: a BigInt spells `$toLong`,
- * `undefined` and a regex have no value position, a lambda is not a value, and a
+ * The node types whose VALUE is not their document: a BigInt spells `$toLong`.
+ * `undefined` and a regex have no value position. A lambda is not a value, and a
  * string literal is itself already. Each has its own case below.
  */
 const OWN_CASE: ReadonlySet<Expr["type"]> = new Set<Expr["type"]>([
@@ -83,7 +83,7 @@ const OWN_CASE: ReadonlySet<Expr["type"]> = new Set<Expr["type"]>([
   "RegexLiteral",
   "Lambda",
   // A literal's own case lowers its parts and holds the list-operand rule for a
-  // raw `{ $op: … }`; settling the whole literal would skip both.
+  // raw `{ $op: … }`. Settling the whole literal would skip both.
   "ObjectLiteral",
   "ArrayLiteral",
 ]);
@@ -91,8 +91,8 @@ const hasOwnCase = (type: Expr["type"]): boolean => OWN_CASE.has(type);
 
 /**
  * A settled value with every BigInt inside it as a `Long`, or the refusal for the
- * first that does not fit 64 bits. A BigInt literal IS an int64 in MQL, so the value
- * is built here rather than left for the server to parse from a string per document.
+ * first that does not fit 64 bits. A BigInt literal IS an int64 in MQL. This function
+ * builds the value here, so the server never parses it from a string per document.
  */
 function settledValue(value: unknown, pos: number): unknown {
   const converted = longsWithin(value);
@@ -120,7 +120,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     return joinRoad(node, env);
   }
   // A constant is its VALUE, before any row is read. The fold writes back what has
-  // a source spelling; a Date, an ObjectId or a Set has none and stays a node, so
+  // a source spelling. A Date, an ObjectId or a Set has none and stays a node, so
   // the evaluator is asked here — with its own exclusions (an operator call is the
   // developer's MQL and is never evaluated).
   if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
@@ -161,7 +161,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "UndefinedLiteral":
       throw E.undefinedAsValue(node.pos);
     case "RegexLiteral":
-      // A RegExp the CALL supplied is a value in its own right; a source regex has no value form.
+      // A RegExp the CALL supplied is a value in its own right. A source regex has no value form.
       if (node.injected !== undefined) return node.injected;
       throw E.regexAsValue(node.pos);
     case "ObjectIdLiteral":
@@ -292,7 +292,7 @@ function stoppedChain(node: Expr): Expr | null {
   let cursor: Expr = node;
   let called = false;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
-    // a plain field read passes a missing value through as missing; anything COMPUTED
+    // a plain field read passes a missing value through as missing. Anything COMPUTED
     // (a call, an index, a property row such as `.length`) does not, and is stopped
     if (cursor.type !== "MemberAccess" || isPropertyRow(cursor)) called = true;
     if (cursor.optional) return called ? cursor.object : null;
@@ -474,8 +474,8 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
 /**
  * WHERE an access chain reads: which level of documents, which path on it — or a
  * variable — so the level that reads it can render it (Env.render). `$.x` is the
- * ROOT document at every depth (HR4); a parameter bound as a document is its own
- * level's; a `let` carried in a field lives on the level it was declared at.
+ * ROOT document at every depth (HR4). A parameter bound as a document is its own
+ * level's. A `let` carried in a field lives on the level that declares it.
  */
 export function locate(node: Expr, env: Env): Located | null {
   if (node.type === "FieldRef") {
@@ -519,7 +519,7 @@ function pathOf(node: Expr, env: Env): unknown {
  * A rendered path the server can follow. A segment that starts with `$` — the
  * field `$gt` in `{ qty: { $gt: 5 } }` read as `o.qty.$gt` — is refused in a
  * field path ("FieldPath field names may not start with '$'", measured), and is
- * read by `$getField` with the name as a literal instead; every segment after
+ * read by `$getField` with the name as a literal instead. Every segment after
  * it is a `$getField` too, because a path cannot continue from an expression.
  */
 function reachable(path: string): unknown {
@@ -536,12 +536,12 @@ function reachable(path: string): unknown {
 
 /** Is `.name` on this receiver a PROPERTY row — `.length`, `Math.PI` — rather than a field read? */
 function isPropertyRow(node: Extract<Expr, { type: "MemberAccess" }>): boolean {
-  // A namespace has members, not fields; elsewhere only a row that is READ (`length`) is a property.
+  // A namespace has members, not fields. Elsewhere only a row that is READ (`length`) is a property.
   return sourceFamily(node.object) !== null || !isCallable(node.name);
 }
 
 function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): unknown {
-  // `Math.abs` on its own names a function; only a call or a callback slot gives it a value.
+  // `Math.abs` on its own names a function. Only a call or a callback slot gives it a value.
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
     throw E.unappliedReference(node.object.name, node.name, node.pos);
   }
@@ -732,7 +732,7 @@ function runDispatch(
   container: string,
 ): unknown {
   const position = positionIn(env);
-  // A path or a variable is cheap to repeat; anything else is bound once.
+  // A path or a variable is cheap to repeat. Anything else is bound once.
   const bound = cheapToRepeat(lowered) ? null : env.fresh("recv");
   const ref = bound === null ? lowered : bound.ref;
   const bodyEnv = bound === null ? env : bound.env;
@@ -850,7 +850,7 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   // The operand LIST of a list-only operator may be written as one array literal:
   // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone scalar there is the shape the
   // server refuses, and is refused here in the same words.
-  // The operand shape is the EXPRESSION form's; in an update document the row's updateDoc cell states its own.
+  // The operand shape is the EXPRESSION form's. In an update document the row's updateDoc cell states its own.
   const shape = position === "updateDoc" ? undefined : operandShapeOf(node.name);
   const first = node.args[0];
   const lone = node.args.length === 1 && first.type === "ArrayLiteral" ? first : null;
@@ -884,7 +884,7 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
       if (count === 0 && shape === "array") {
         if (ruleArgsOf(verdict)?.emptyList === true) return { [node.name]: [] };
       }
-      // A list operator renders the elements; a single or flex one renders the array as written.
+      // A list operator renders the elements. A single or flex one renders the array as written.
       if (shape === "array") args = operands;
     }
   } else if (

@@ -1,17 +1,17 @@
-// What the lexer produces. One record per token, with the source span so every
-// later phase can point a caret at the exact characters.
+// This is what the lexer produces. It gives one record to each token. The record
+// keeps the source span, so a later phase can point to the exact characters.
 
 import type { TokenName } from "../../registry/vocabulary.ts";
 
 export type Token = {
   type: TokenName;
-  /** The source text this token covers. For a literal, the raw spelling. */
+  /** The source text of this token. For a literal, this is the raw spelling. */
   text: string;
-  /** Offset of the first character. */
+  /** The offset of the first character. */
   pos: number;
-  /** Offset just past the last character, so `src.slice(pos, end)` is the token. */
+  /** The offset just after the last character. `src.slice(pos, end)` gives the token text. */
   end: number;
-  /** A regex literal's flags, exactly as written. Absent on every other token. */
+  /** The flags of a regex literal, exactly as written. This field is absent on every other token. */
   flags?: string;
 };
 
@@ -23,7 +23,7 @@ export const token = (type: TokenName, text: string, pos: number): Token => ({
 });
 
 /**
- * A token whose text is not its source span — a string literal's `text` is the
- * decoded value, so the span has to be given.
+ * A token whose text differs from its source span. A string literal's `text`
+ * field holds the decoded value, so the caller must give the span.
  */
 export const spanned = (type: TokenName, text: string, pos: number, end: number): Token => ({ type, text, pos, end });

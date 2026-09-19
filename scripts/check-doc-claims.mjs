@@ -4,13 +4,12 @@
 //   node scripts/check-doc-claims.mjs [file …]
 //     default: README.md, docs/LANGUAGE.md, docs/LANG_RULES.md, docs/specs/*.md
 //
-// A doc example is a promise about what jsmql emits, and prose has no test to
-// keep it honest. This reads each fenced `js` block, pairs every `// →` comment
-// run with the source above it, compiles that source, and prints the pairs that
-// disagree. An AUDIT tool, not a gate: it reads markdown, so it reports false
-// positives — a template-tag source it cannot run, a claim that shows one stage of
-// a longer pipeline, host code around a jsmql call — and a human decides. Skips a
-// claim that elides anything (`…`, `/* … */`, `<…>`): that one is illustrative.
+// A documentation example is a promise about what jsmql emits. Prose has no test to keep it honest.
+// This script reads each fenced `js` block and pairs every `// →` comment with the source above it.
+// It compiles that source and prints the pairs that disagree. It is an AUDIT tool, not a gate:
+// it reads markdown, so it reports false positives (a template-tag source it cannot run, a claim
+// that shows one stage of a longer pipeline, host code around a jsmql call). A human decides what matters.
+// It skips a claim that leaves anything out (`…`, `/* … */`, `<…>`): that one is illustrative.
 import { readFileSync, readdirSync } from "node:fs";
 import { jsmql } from "../src/index.ts";
 
@@ -18,15 +17,15 @@ const FILES = process.argv.slice(2).length
   ? process.argv.slice(2)
   : ["README.md", "docs/LANGUAGE.md", "docs/LANG_RULES.md", ...readdirSync("docs/specs").map((f) => `docs/specs/${f}`)];
 
-// A claim is illustrative, not exact, when it elides anything: an ellipsis, a
-// `/* … */` note, or a `<…>` stand-in for a shape it does not spell out.
+// A claim is illustrative, not exact, when it leaves anything out: an ellipsis, a
+// `/* … */` note, or a `<…>` stand-in for a shape it does not spell out fully.
 const ELIDED = /…|\/\*|\.\.\.|— |\betc\b|<[^>]*>/;
-// A block that drives the host — a driver call, a `require`, an arrow entry form
-// — is JavaScript around jsmql, not jsmql. Only a bare source is re-derived.
+// A block that drives the host (a driver call, a `require`, an arrow entry form)
+// is JavaScript around jsmql, not jsmql itself. Only a bare source is re-derived.
 const HOST = /^(const|let|var|db\.|import |require\()|=>|^\w+\(\{/;
 // A claim is prose around a shape. Compare the shape only, ignoring quoting,
 // whitespace, a trailing sentence, and the `<Date …>` / `<ObjectId …>` stand-ins
-// the prose uses for a live BSON value.
+// that the prose uses for a live BSON value.
 const shapes = (s) => {
   const out = [];
   let depth = 0,
@@ -51,9 +50,9 @@ const norm = (s) =>
     .replace(/<(Date|ObjectId)\s+([^>]*)>/g, "$2")
     .replace(/[\s"']/g, "")
     .replace(/,([}\]])/g, "$1");
-// A claim line may end in a note of its own (`// → { … }   // the truthiness test`).
+// A claim line may end with a note of its own (`// → { … }   // the truthiness test`).
 const unnoted = (l) => l.replace(/^(\s*\/\/\s?)(.*?)(\s+\/\/.*)?$/, "$1$2");
-// A source in a quoted string carries the quote's escapes; the compiler wants the text.
+// A source in a quoted string carries the quote's escape sequences. The compiler wants the text.
 const unescape = (q, body) => (q === "`" ? body : body.split("\\" + q).join(q));
 
 let bad = 0,
@@ -90,21 +89,21 @@ for (const f of FILES) {
       src = [];
       i = j;
       // A claim that opens on a key (`let: { … }`) or a host call (`find({ … })`) shows
-      // a piece of a document, not the document: illustrative.
+      // a piece of a document, not the whole document: it is illustrative.
       if (text === "" || ELIDED.test(claim) || HOST.test(text) || !/^[[{]/.test(claim)) continue;
-      // `jsmql.stringify(<call>)` prints what the call returns — which is what this
-      // script prints anyway — so the claim is held to the inner call.
+      // `jsmql.stringify(<call>)` prints what the call returns. This script prints the same thing anyway,
+      // so the claim is held to the inner call.
       const inner = /^jsmql\.stringify\(([\s\S]*)\);?$/.exec(text);
       const call = inner ? inner[1] : text;
-      // A template tag that interpolates nothing is the string form; one that does
+      // A template tag that interpolates nothing is the string form. One that does interpolate
       // cannot run without its values and stays illustrative.
       const m =
         /^jsmql(\.\w+)?\(\s*([`"'])([\s\S]*)\2\s*\)[;,]?$/.exec(call) ?? /^jsmql(\.\w+)?(`)([\s\S]*)`;?$/.exec(call);
       if (m !== null && m[2] === "`" && m[3].includes("${")) continue;
       const source = m ? unescape(m[2], m[3]) : call;
-      // A block that NAMES its entry point is held to it: `jsmql("…")` returning what
-      // `jsmql.expr` returns is exactly the drift this catches (a Filter shown as an
-      // aggregation expression). Only an unlabelled source may answer from either.
+      // A block that NAMES its entry point is held to it. `jsmql("…")` returning what
+      // `jsmql.expr` returns is exactly the drift this script catches: a Filter shown as an
+      // aggregation expression. Only an unlabelled source may answer from both.
       const named = m?.[1];
       const entries =
         named === ".validate"
@@ -123,9 +122,9 @@ for (const f of FILES) {
       checked++;
       const answers = entries.map((e) => {
         try {
-          // The library's own printer, so a claim that spells a Date or an ObjectId
-          // the way the CLI writes it compares as written. `norm` below drops the
-          // quotes and the spacing, so a claim in either style still matches.
+          // The library's own printer. A claim that spells a Date or an ObjectId the way
+          // the CLI writes it compares as written. `norm` below drops the quotes and spacing,
+          // so a claim in either style matches.
           return jsmql.stringify(e(source), { width: Infinity });
         } catch (err) {
           return `ERROR ${err.message}`;
@@ -133,7 +132,7 @@ for (const f of FILES) {
       });
       const got = answers[0];
       // A claim may show the one stage a statement makes, not the pipeline holding it.
-      // The claim is a shape (or a run of stages) inside prose; compare shapes only.
+      // The claim is a shape (or a sequence of stages) inside prose. Compare shapes only.
       const parts = shapes(claim);
       if (parts.length === 0) continue;
       const forms = parts.flatMap((_, k) => {
@@ -150,7 +149,7 @@ for (const f of FILES) {
       continue;
     }
     if (/^\s*\/\//.test(l)) continue;
-    // A blank line separates one example from the next inside a block.
+    // A blank line separates one example from the next one inside a block.
     if (l.trim() === "") {
       src = [];
       continue;

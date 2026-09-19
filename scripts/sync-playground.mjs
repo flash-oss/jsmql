@@ -1,51 +1,50 @@
 #!/usr/bin/env node
 /**
- * Produce the two committed playground artifacts from their sources:
+ * Produce the two committed playground artefacts from their sources:
  *
- *   1. `dist/jsmql.js` — the jsmql library bundled from `src/index.ts` via
+ *   1. `dist/jsmql.js`: the jsmql library bundled from `src/index.ts` through
  *      esbuild as a single unminified **pure ES module** (`export { jsmql, … }`,
- *      no harness/UI code). Git-tracked (the only checked-in file under dist/,
+ *      no harness or UI code). Git-tracked (the only checked-in file under dist/,
  *      see .gitignore) and published by GitHub Pages (see _config.yml). The
  *      playground imports it with `<script type="module"> import { jsmql } from
- *      "./dist/jsmql.js"`. Because it's an ES module import, the playground must
- *      be served over http(s) — it does not load over `file://`.
+ *      "./dist/jsmql.js"`. Because it is an ES module import, the playground must be
+ *      served over http or https. It does not load over `file://`.
  *
- *   2. `playground.html` — generated from `playground_skeleton.html` (the
- *      hand-authored UI source: markup, CSS, behaviour) with one region
- *      injected: the realistic-examples manifest, extracted by enumerating
- *      every top-level `describe()` / first-`it()` pair in
- *      `test/realistic.test.ts` and reading the first `jsmql(...)` or
- *      `jsmql.expr(...)` call inside. Embedded as a JSON-script tag between the
- *      `<!-- jsmql-examples:start … -->` / `<!-- jsmql-examples:end -->` markers.
+ *   2. `playground.html`: generated from `playground_skeleton.html` (the
+ *      hand-authored UI source: markup, CSS, behaviour) with one region injected.
+ *      The realistic-examples manifest is extracted by enumerating every top-level
+ *      `describe()` and first-`it()` pair in `test/realistic.test.ts` and reading
+ *      the first `jsmql(...)` or `jsmql.expr(...)` call inside. It is embedded
+ *      as a JSON-script tag between the `<!-- jsmql-examples:start … -->` and
+ *      `<!-- jsmql-examples:end -->` markers.
  *
- * Because this script reads the skeleton and only ever WRITES `playground.html`
- * (never back to the skeleton), changes to `src/` or `test/realistic.test.ts`
- * can never overwrite UI work — UI development edits the skeleton, not the
- * artifact.
+ * This script reads the skeleton and only WRITES `playground.html`
+ * (never back to the skeleton). Changes to `src/` or `test/realistic.test.ts` can
+ * never overwrite UI work. UI development edits the skeleton, not the artefact.
  *
  * The example-discovery uses a Node loader hook (`sync-playground-loader.mjs`)
  * to map `import { describe, it } from "vitest"` onto a mock
  * (`sync-playground-vitest-shim.mjs`) that records every call into a tree.
- * We then dynamically `import()` the test file — `describe` bodies run (so
- * the full tree registers), but `it` bodies don't execute; their source is
- * captured via `Function.prototype.toString`. Compared to the prior pure-AST
- * approach this catches every test exactly as vitest sees it, including
- * dynamically generated `describe()` blocks if we ever add them, and stays
- * robust to new entry-point names (`jsmql.expr`, future `jsmql.update`, …).
+ * This code then dynamically `import()` the test file. `describe` bodies run (so
+ * the full tree registers), but `it` bodies do not execute. Their source is
+ * captured through `Function.prototype.toString`. Compared to the prior pure-AST
+ * approach, this catches every test exactly as vitest sees it, including
+ * dynamically generated `describe()` blocks if we ever add them. It stays robust
+ * to new entry-point names (`jsmql.expr`, future `jsmql.update`).
  *
- * Skips the `validate(): realistic error cases` block (queries don't compile)
+ * It skips the `validate(): realistic error cases` block (queries do not compile)
  * and warns on `describe`s where no query can be extracted.
  *
  * Hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script
- * whenever Claude Code edits `test/realistic.test.ts` or
- * `playground_skeleton.html`, so both artifacts stay current within a single
- * commit. Also runs as `prebuild`, so `npm run build` always refreshes them.
- * `src/` edits do NOT trigger the hook — run manually after editing src/:
+ * whenever Claude Code edits `test/realistic.test.ts` or `playground_skeleton.html`.
+ * Both artefacts stay current within a single commit. This script also runs as `prebuild`,
+ * so `npm run build` always refreshes them. `src/` edits do NOT trigger the hook.
+ * Run manually after editing src/:
  *
  *   npm run sync:playground
  *
- * Idempotent per file: each artifact is (re)written and staged only when its
- * contents actually change; if neither changed the script exits 0 silently.
+ * Idempotent per file: each artefact is (re)written and staged only when its
+ * contents actually change. If neither changed, the script exits 0 silently.
  */
 
 import ts from "typescript";
@@ -120,7 +119,7 @@ function makeSlug(title, used) {
 
 // `deriveCategory` was a string-prefix parser ("Filters: …") that the
 // metadata-driven shape replaces — categories are now declared explicitly
-// via `describe(name, { features: [...] }, fn)`.
+// through `describe(name, { features: [...] }, fn)`.
 
 // ── Query / kind / usage extraction from an `it()` body source ────────────────
 

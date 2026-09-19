@@ -88,7 +88,7 @@ describe("stage body validation — non-object body (wrong-literal-kind)", () =>
 });
 
 describe("stage body validation — $sort", () => {
-  it("rejects a direction that isn't 1 or -1", () => {
+  it("rejects a direction that is not 1 or -1", () => {
     expect(() => jsmql("[ $sort({ a: 2 }) ]")).toThrow("'$sort' takes 1 or -1 for every key, and 'a' has 2.");
   });
   it("rejects a SQL-style string direction", () => {

@@ -257,8 +257,9 @@ type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number;
  * How many arguments a name takes in value position, on a given receiver family.
  *
  * The family is not optional in practice: `max` is `.max()` on an array and
- * `Math.max(a, b)` on the namespace, one row with two counts. Reading the first
- * branch and hoping would refuse `Math.max(3, 7)` for taking two arguments.
+ * `Math.max(a, b)` on the namespace, one row with two counts. If this function
+ * read only the first branch and hoped for the best, it would refuse
+ * `Math.max(3, 7)` for taking two arguments.
  */
 /** What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an array makes the server refuse. */
 export function elementsOf(name: string): "scalar" | undefined {
@@ -594,7 +595,7 @@ export function categoryOf(name: string): string | undefined {
 
 /**
  * The row's one-sentence description. `$count` is a stage AND an accumulator and states
- * one per meaning, so the caller says which half it is describing.
+ * one per meaning, so the caller says which half it describes.
  */
 export function describes(name: string, half: "operator" | "stage"): string {
   const doc = (row(name) as { doc?: string | Record<string, string> } | undefined)?.doc;

@@ -26,7 +26,7 @@ export function levenshtein(a: string, b: string): number {
  * Find the candidate string closest to `name` by edit distance. Returns null
  * when no candidate is close enough to be a likely typo (max 2 edits, and the
  * distance must be strictly less than the input's own length so a totally
- * unrelated short name doesn't trigger).
+ * unrelated short name does not trigger).
  */
 export function closestNameTo(name: string, candidates: Iterable<string>): string | null {
   let best: { name: string; dist: number } | null = null;
@@ -34,7 +34,7 @@ export function closestNameTo(name: string, candidates: Iterable<string>): strin
     // Never echo the name the user typed. A candidate set can legitimately
     // contain it (a name valid in a *different* position), and "Did you mean
     // '.push'?" after "'.push(...)' is not a chainable stream method" is noise
-    // at best — at worst it recommends syntax that doesn't work here.
+    // at best — at worst it recommends syntax that does not work here.
     if (candidate === name) continue;
     const d = levenshtein(name, candidate);
     if (best === null || d < best.dist) best = { name: candidate, dist: d };

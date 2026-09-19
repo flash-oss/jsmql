@@ -1,20 +1,21 @@
 // Phase 5 — EMIT. A predicate to a QUERY document — the filter target.
 //
-// MongoDB's query language is a predicate language: `{ a: 1 }`, `{ a: { $gt: 1 } }`,
-// `{ $or: [...] }`. It reaches an index; the expression language behind `$expr`
-// does not. So a predicate is lowered to the query language wherever a row states
-// a native form, and to `{ $expr: <truth> }` where none does — never a mix inside
-// one leaf, and never a leaf whose meaning depends on its neighbour:
+// The MongoDB query language is a predicate language: `{ a: 1 }`, `{ a: { $gt: 1 } }`,
+// `{ $or: [...] }`. It can use an index. The expression language behind `$expr`
+// cannot. The compiler lowers a predicate to the query language wherever a row
+// states a native form, and to `{ $expr: <truth> }` where no row does. It never
+// mixes the two inside one leaf, and it never makes a leaf's meaning depend on
+// its neighbour:
 //
 //   $.a > 1 && $.b <= 2                    → { a: { $gt: 1 }, b: { $lte: 2 } }
 //   $.a >= 1 && $.a <= 9                   → { $and: [{ a: { $gte: 1 } }, { a: { $lte: 9 } }] }
 //   $.a === 1 && $.q * $.p > 100           → { a: 1, $expr: { $gt: [{ $multiply: ["$q", "$p"] }, 100] } }
 //   $.tags === "red" || $.q * $.p > 100    → { $or: [{ tags: "red" }, { $expr: { $gt: [...] } }] }
 //
-// The last line is the developer's ruling: `||` lowers PER BRANCH. Wrapping the
-// whole disjunction in `$expr` as soon as one side needs it changes the OTHER
-// side's answer: `{ $expr: { $eq: ["$tags", "red"] } }` does not match
-// `tags: ["red", "blue"]` where `{ tags: "red" }` does.
+// The last line states the rule: `||` lowers PER BRANCH. If the compiler wraps
+// the whole disjunction in `$expr` as soon as one side needs it, this changes
+// the OTHER side's answer: `{ $expr: { $eq: ["$tags", "red"] } }` does not match
+// `tags: ["red", "blue"]`, where `{ tags: "red" }` does match.
 
 import type { Expr, QueryDoc, Truth } from "../../registry/vocabulary.ts";
 import { queryOwnValue } from "../../registry/vocabulary.ts";
@@ -42,9 +43,10 @@ import {
 } from "../rows.ts";
 
 /**
- * A predicate's query document, `$expr` included where a leaf has no native form.
- * The caller of `nativeOnly` gets null instead of an `$expr` — that is how a
- * `.some` body or an `||` branch learns it cannot be indexed as a whole.
+ * A predicate's query document. It includes `$expr` where a leaf has no
+ * native form. The caller of `nativeOnly` gets null instead of an `$expr` —
+ * this is how a `.some` body or an `||` branch learns it cannot use an index
+ * as a whole.
  */
 export function lowerFilter(node: Expr, env: Env): QueryDoc {
   const q = translate(node, env, false);
@@ -73,19 +75,20 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
     return mergeAnd(left, right);
   }
   if (node.type === "UnaryExpr" && node.op === "!") {
-    // `!p` is the COMPLEMENT of p's own clause, and the query language says it
-    // exactly where an expression does not: `$expr` orders across BSON types, so
-    // `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]` and for `v: "x"`,
-    // where JavaScript answers true for both. Only a clause with no `$expr`
-    // inside is complemented; anything else keeps the truth road below, whose
-    // `$not` over one expression is already JavaScript's answer.
+    // `!p` is the COMPLEMENT of p's own clause. The query language states it
+    // exactly where an expression does not: `$expr` orders values across BSON
+    // types, so `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]` and
+    // for `v: "x"`, where JavaScript answers true for both. The compiler
+    // complements only a clause with no `$expr` inside it. Anything else keeps
+    // the truth road below, whose `$not` over one expression already gives
+    // JavaScript's answer.
     const inner = translate(node.argument, childEnv(env, node, "argument"), true);
     if (inner !== null && Object.keys(inner).length > 0 && !isAlwaysTrue(inner) && !isAlwaysFalse(inner)) {
       return { $nor: [inner] };
     }
   }
   if (node.type === "BinaryExpr" && node.op === "||") {
-    // Each branch on its own: a leaf's query form never depends on its sibling.
+    // Each branch stands on its own: a leaf's query form never depends on its sibling.
     const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly));
     if (branches.some((b) => b === null)) return null;
     // A folded constant branch: `false` adds nothing, `true` decides everything.
@@ -93,13 +96,13 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
     const docs = (branches as QueryDoc[]).filter((d) => !isAlwaysFalse(d));
     if (docs.length === 0) return matchExpr(truthOf(false, true));
     if (docs.length === 1) return docs[0];
-    // Every branch an `$expr`: one `$expr: { $or }` says the same in less. A native
-    // branch keeps the per-branch form, where its own meaning is kept.
+    // Every branch an `$expr`: one `$expr: { $or }` says the same thing in less
+    // text. A native branch keeps the per-branch form, which keeps its own meaning.
     if (docs.every((d) => Object.keys(d).length === 1 && "$expr" in d))
       return matchExpr(or(...docs.map((d) => d.$expr as Truth)));
     return { $or: docs };
   }
-  // A raw query document is the developer's own MQL: its values are lowered, its keys kept.
+  // A raw query document is the developer's own MQL. The compiler lowers its values and keeps its keys.
   if (node.type === "ObjectLiteral" && !env.scope.has("$")) return rawQuery(node, env);
   const native = leaf(node, env);
   if (native !== null) return native;
@@ -108,12 +111,13 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
 }
 
 /**
- * A raw `{ status: "a", $expr: … }` document: keys as written, values in value
- * position. A value that is a RUNTIME read — `{ userId: $.other }`, an outer
- * binding, `{ createdAt: { $gte: $.since } }` — has no query form: the query
- * language compares a field with a constant, and `"$other"` there is the string.
- * Such an entry is lifted into `$expr` (`{ $eq: ["$userId", "$other"] }`), where
- * the read means the field; the constant entries stay native beside it.
+ * A raw `{ status: "a", $expr: … }` document. It keeps the keys as written and
+ * lowers the values in value position. A value that is a RUNTIME read —
+ * `{ userId: $.other }`, an outer binding, `{ createdAt: { $gte: $.since } }` —
+ * has no query form. The query language compares a field with a constant, and
+ * `"$other"` there is just the string. The compiler lifts such an entry into
+ * `$expr` (`{ $eq: ["$userId", "$other"] }`), where the read means the field.
+ * The constant entries stay native beside it.
  */
 function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): QueryDoc {
   const valueEnv = env.at({ at: "value" });
@@ -125,9 +129,9 @@ function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): Que
       continue;
     }
     const key = staticKey(e)!;
-    // The value either APPLIES operators to the field — `{ $gte: … }`, `$gte(…)` — or
-    // IS what the field is compared with. The two take different lifts, so the shape
-    // decides first.
+    // The value either APPLIES operators to the field — `{ $gte: … }`, `$gte(…)` —
+    // or IS what the field is compared with. The two take different lifts, so
+    // the shape decides which lift applies first.
     const ops = operatorEntries(e.value);
     if (ops !== null) {
       const runtime = ops.filter((o) => readsAtRunTime(o.value));
@@ -135,8 +139,9 @@ function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): Que
         kept.push(e);
         continue;
       }
-      // `{ createdAt: { $gte: $.since } }` — an operator with a runtime operand takes its
-      // expression twin; the operators with a constant operand stay native beside it.
+      // `{ createdAt: { $gte: $.since } }` — an operator with a runtime operand
+      // takes its expression twin. The operators with a constant operand stay
+      // native beside it.
       for (const o of runtime) {
         const twin = liftsToOf(o.op);
         if (twin === undefined) throw E.runtimeInQueryOperator(o.op, o.pos);
@@ -149,9 +154,10 @@ function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): Que
       }
       continue;
     }
-    // A COMPARED VALUE. The query language takes it as written only when nothing inside
-    // it is read at run time: `{ a: [1, $.b] }` would compare the field with the
-    // four-character string "$b", so the whole comparison moves into `$expr`.
+    // A COMPARED VALUE. The query language takes it as written only when nothing
+    // inside it is read at run time. `{ a: [1, $.b] }` would compare the field
+    // with the four-character string "$b", so the compiler moves the whole
+    // comparison into `$expr`.
     if (readsAtRunTime(e.value)) {
       lifted.push({ $eq: ["$" + key, lowerValue(e.value, valueEnv)] });
       continue;
@@ -173,10 +179,11 @@ const NEAR: ReadonlySet<string> = new Set(["$near", "$nearSphere"]);
 const LOGICAL: ReadonlySet<string> = new Set(["$and", "$or", "$nor"]);
 
 /**
- * The operators a raw query value applies to its field, or null when the value is one
- * the field is COMPARED with. `{ $gte: $.since }` is the document spelling and
- * `$gte($.since)` the call; HR2 says the two are one thing, so both answer here. A
- * document whose keys are not all `$`-named is a value, not a set of operators.
+ * The operators a raw query value applies to its field, or null when the value
+ * is one the field is COMPARED with. `{ $gte: $.since }` is the document
+ * spelling and `$gte($.since)` is the call. HR2 states the two are one thing,
+ * so both answer here. A document whose keys are not all `$`-named is a value,
+ * not a set of operators.
  */
 function operatorEntries(e: Expr): ReadonlyArray<{ op: string; value: Expr; pos: number }> | null {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
@@ -193,12 +200,14 @@ function operatorEntries(e: Expr): ReadonlyArray<{ op: string; value: Expr; pos:
 }
 
 /**
- * Is anything inside this value read at RUN time — a field, a bound name, an access or
- * a call on one — rather than a constant, a regex, or the developer's own operator?
+ * Is anything inside this value read at RUN time — a field, a bound name, an
+ * access, or a call on one — rather than a constant, a regex, or the
+ * developer's own operator?
  *
- * The question DESCENDS. A read is the field's name as a plain string in a query slot,
- * so it has no query form wherever it sits, and `{ a: $.b }`, `{ a: [1, $.b] }`,
- * `{ a: [{ x: $.b }] }` and `{ a: { x: { y: $.b } } }` are one case, not four.
+ * The question DESCENDS. A read gives the field's name as a plain string in a
+ * query slot, so it has no query form wherever it sits. `{ a: $.b }`,
+ * `{ a: [1, $.b] }`, `{ a: [{ x: $.b }] }` and `{ a: { x: { y: $.b } } }` are
+ * one case, not four.
  */
 function readsAtRunTime(e: Expr): boolean {
   switch (e.type) {
@@ -225,16 +234,18 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
     if (e.type === "SpreadElement") throw E.spreadInOperatorBody(e.pos);
     const key = staticKey(e);
     if (key === null) throw E.computedKeyInOperatorBody(e.pos);
-    // `{ $setUnion: "$x" }` — a list operator with one scalar is a document the server
-    // refuses, on this spelling as on the call, at the top of the document as below it.
+    // `{ $setUnion: "$x" }` — a list operator with one scalar is a document the
+    // server refuses. It refuses this on the call spelling too, and at the top
+    // of the document as well as below it.
     if (key.startsWith("$") && operandShapeOf(key) === "array" && e.value.type !== "ArrayLiteral") {
       throw E.listOperand(key, e.value.pos);
     }
     // A key whose row states a different position for its operand takes that
     // language instead of the query one — `$expr`'s operand is an expression.
-    // `$near` / `$nearSphere` query only a `find()`: inside an aggregation `$match` the server refuses them.
+    // `$near` and `$nearSphere` query only a `find()`. Inside an aggregation
+    // `$match` the server refuses them.
     if (NEAR.has(key) && env.site.root !== "filter") throw E.nearInMatch(key, e.pos);
-    // `$and` / `$or` / `$nor` hold a LIST of query documents: each element is a filter of its own.
+    // `$and`, `$or` and `$nor` hold a LIST of query documents. Each element is a filter of its own.
     if (LOGICAL.has(key) && e.value.type === "ArrayLiteral") {
       out[key] = e.value.elements.map((el) => {
         if (el.type === "SpreadElement") throw E.spreadInOperatorBody(el.pos);
@@ -249,9 +260,9 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
 
 /**
  * A value inside a raw query document. `{ x: $gt($.y) }` — an operator with ONE
- * operand — is the QUERY operator's spelling (`{ x: { $gt: "$y" } }`), which HR2
- * passes through as written; the expression form's count rule does not apply
- * to it. Anything else is an ordinary value.
+ * operand — is the QUERY operator's spelling (`{ x: { $gt: "$y" } }`). HR2
+ * passes it through as written, so the expression form's count rule does not
+ * apply to it. Anything else is an ordinary value.
  */
 function rawValue(e: Expr, env: Env): unknown {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
@@ -260,18 +271,20 @@ function rawValue(e: Expr, env: Env): unknown {
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
   // A computed expression is neither a value nor a query operator. `{ a: $.b > 1 }`
-  // becomes `{ a: { $gt: ["$b", 1] } }`, which the server ACCEPTS and matches nothing —
-  // the silent kind of wrong. A constant that happens to be written as an expression
-  // (`-1`) has already settled, so it is a value and passes.
+  // becomes `{ a: { $gt: ["$b", 1] } }`, which the server ACCEPTS and matches
+  // nothing. This is the silent kind of wrong answer. A constant that happens
+  // to be written as an expression (`-1`) has already settled to a value, so
+  // it passes.
   if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !evaluate(e, new Map()).ok) {
     throw E.expressionInQueryValue(e.pos);
   }
   const value = lowerValue(e, env);
-  // An aggregation operator in a query document is refused by the server outright:
-  // measured, `{ a: { $trim: … } }` answers "unknown operator: $trim". Checked HERE
-  // and not on a raw document's keys: a document the developer TYPED is their own
-  // MQL and passes through (a query operator newer than this build must still
-  // round-trip), while this value is one they wrote as JavaScript.
+  // The server refuses an aggregation operator in a query document outright.
+  // Measured: `{ a: { $trim: … } }` answers "unknown operator: $trim". The
+  // compiler checks this HERE, and not on a raw document's keys, because a
+  // document the developer TYPED is their own MQL and passes through — a query
+  // operator newer than this build must still round-trip. This value is one
+  // the developer wrote as JavaScript.
   if (isObj(value) && !Array.isArray(value)) {
     for (const key of Object.keys(value)) {
       if (key.startsWith("$") && !listedIn(key, "filter")) throw E.aggregationOperatorInQuery(key, e.pos);
@@ -315,9 +328,9 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
       node.pos,
       [],
     );
-  // A query-only operator applies to the top-level document: inside an `$elemMatch`
-  // body the server refuses it ("can only be applied to the top-level document"), and
-  // it has no value form to fall back to.
+  // A query-only operator applies to the top-level document. Inside an
+  // `$elemMatch` body the server refuses it ("can only be applied to the
+  // top-level document"), and it has no value form to fall back to.
   if (!listedIn(name, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
     throw E.queryOnlyInsideElement(name, node.pos);
   }
@@ -352,10 +365,11 @@ function chainOf(node: Expr, op: string): Expr[] {
 }
 
 /**
- * `$.tags.includes("a") && $.tags.includes("b")` — every leaf an `.includes` of a
- * constant on the SAME path — is `{ tags: { $all: ["a", "b"] } }`: the same documents
- * as the `$and` of two clauses, in the shorter indexable shape the developer meant,
- * and the fold of what one `.includes` already answers (see the `includes` row).
+ * `$.tags.includes("a") && $.tags.includes("b")` — every leaf an `.includes`
+ * of a constant on the SAME path — becomes `{ tags: { $all: ["a", "b"] } }`.
+ * This matches the same documents as the `$and` of two clauses, in the shorter
+ * indexable shape the developer meant. It also folds what one `.includes`
+ * already answers (see the `includes` row).
  */
 function includesChain(path: string, values: readonly unknown[]): QueryDoc {
   return { [path]: { $all: values } };
@@ -382,20 +396,20 @@ function extractIncludesChain(node: Expr, env: Env): { path: string; values: unk
 
 /**
  * The field path an expression names, or null. A `.length` is a property row,
- * not a path segment; inside a `.some` callback the element parameter is the root,
- * so `i.q` is "q".
+ * not a path segment. Inside a `.some` callback the element parameter is the
+ * root, so `i.q` names "q".
  */
 export function pathOfIn(e: Expr, env: Env): string | null {
-  // Inside an `$elemMatch` body the outer document is out of reach: `$.min` has no
-  // query path there, so a body that reads it takes the `$expr` road.
+  // Inside an `$elemMatch` body the outer document is out of reach. `$.min` has
+  // no query path there, so a body that reads it takes the `$expr` road.
   const elements = env.site.boundaries.filter((b) => b.stage === "$elemMatch");
   const innermost = elements.length === 0 ? null : elements[elements.length - 1];
-  // Inside a sub-pipeline over ANOTHER collection, `$.x` is still the OUTER
-  // document (HR4), which the server reaches only through the stage's `let`: no
-  // query path, so the `$expr` road reads it and captures it.
+  // Inside a sub-pipeline over ANOTHER collection, `$.x` still names the OUTER
+  // document (HR4). The server reaches it only through the stage's `let`, so it
+  // has no query path. The `$expr` road reads it and captures it instead.
   if (e.type === "FieldRef") return e.path === "" || innermost !== null || env.level > 0 ? null : e.path;
-  // The element itself, when it is an unwound FIELD: `.flatMap("tags").filter(t => t === "x")` is `{ tags: "x" }`.
-  // The whole document has no query path, and a shallower level's element is captured by the `$expr` road.
+  // The element itself, when it is an unwound FIELD: `.flatMap("tags").filter(t => t === "x")` becomes `{ tags: "x" }`.
+  // The whole document has no query path. The `$expr` road captures a shallower level's element.
   if (e.type === "Ident" && env.scope.has(e.name)) {
     const b = env.lookup(e.name, e.pos);
     if (b.ref.kind !== "document" || b.ref.path === "" || b.level !== env.level) return null;
@@ -405,13 +419,14 @@ export function pathOfIn(e: Expr, env: Env): string | null {
     if (!isCallable(e.name)) return null;
     if (e.object.type === "Ident" && env.scope.has(e.object.name)) {
       const b = env.lookup(e.object.name, e.object.pos);
-      // a parameter of a SHALLOWER level has no path here either — the `$expr` road captures it
+      // a parameter of a SHALLOWER level also has no path here — the `$expr` road captures it
       if (b.ref.kind === "document" && b.level === env.level) {
         // A name bound as the ELEMENT — a stream callback's parameter, or a `.some`
-        // element — has its fields as paths, under the element's own path when it is
-        // an unwound field. Inside an `$elemMatch` only the INNERMOST element's do: an
-        // outer parameter read there has no query form (`$elemMatch` sees its own
-        // element only), so the body takes the `$expr` road.
+        // element — has its fields as paths, under the element's own path when
+        // the field is unwound. Inside an `$elemMatch` only the INNERMOST
+        // element's fields do. An outer parameter read there has no query form,
+        // because `$elemMatch` sees only its own element, so the body takes the
+        // `$expr` road.
         if (innermost !== null && innermost.element !== e.object.name) return null;
         return b.ref.path === "" ? e.name : `${b.ref.path}.${e.name}`;
       }
@@ -422,13 +437,14 @@ export function pathOfIn(e: Expr, env: Env): string | null {
   return null;
 }
 
-/** A constant the query language compares as written, boxed; null for a value it would reinterpret. */
+/** A constant the query language compares as written, boxed. Null for a value it would reinterpret. */
 /**
  * A LITERAL the raw query language takes as written — a constant, or a list or
- * document of literals (`[1, 2]`, `{ $search: "x" }`) — boxed; null otherwise. Apart
- * from `constantIn` on purpose: a JavaScript spelling reads an array or document
- * literal by reference (`$.tags === [1, 2]` is never true in JavaScript), and takes
- * the expression road, where `$eq` compares the whole value.
+ * document of literals (`[1, 2]`, `{ $search: "x" }`) — boxed; null otherwise.
+ * This differs from `constantIn` on purpose. A JavaScript spelling reads an
+ * array or document literal by reference (`$.tags === [1, 2]` is never true in
+ * JavaScript), so it takes the expression road, where `$eq` compares the whole
+ * value.
  */
 export function literalIn(e: Expr): { value: unknown } | null {
   if (e.type === "ArrayLiteral") {
@@ -457,14 +473,16 @@ export function literalIn(e: Expr): { value: unknown } | null {
 
 export function constantIn(e: Expr): { value: unknown } | null {
   if (e.type === "Injected") return { value: e.value };
-  // a RegExp the CALL supplied is the developer's own MongoDB regex, taken as written; one typed
-  // in source is a pattern for the regex methods and no constant to compare a field with
+  // a RegExp the CALL supplied is the developer's own MongoDB regex, taken as
+  // written. One typed in source is a pattern for the regex methods, and no
+  // constant to compare a field with.
   if (e.type === "RegexLiteral") return e.injected !== undefined ? { value: e.injected } : null;
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
   const v = evaluate(e, new Map());
   if (!v.ok) return null;
-  // A BigInt IS an int64 in MQL. Converted here, `$.n === 5n` stays a query the
-  // index serves; left alone it fell through to `$expr`.
+  // A BigInt IS an int64 in MQL. The compiler converts it here, so `$.n === 5n`
+  // stays a query the index serves. Left unconverted, it would fall through to
+  // `$expr`.
   const converted = longsWithin(v.value);
   if (!converted.ok) return null;
   const x = converted.value;
@@ -472,15 +490,15 @@ export function constantIn(e: Expr): { value: unknown } | null {
 }
 
 /**
- * A value the query language compares as written: a scalar, a Date, any BSON value,
- * a regex, or a list of such.
+ * A value the query language compares as written: a scalar, a Date, any BSON
+ * value, a regex, or a list of such values.
  *
- * Every BSON value belongs here, and the reason is correctness rather than output
- * size. MEASURED on mongod, for `{ tags: [Long(5), Long(7)] }`:
+ * Every BSON value belongs here for a reason of correctness, not output size.
+ * MEASURED on mongod, for `{ tags: [Long(5), Long(7)] }`:
  *   { tags: Long(5) }                      → matches      (any ELEMENT equals)
  *   { $expr: { $eq: ["$tags", Long(5)] } } → matches NOT   (the whole array, to a scalar)
- * A BSON value left off this list takes the `$expr` road and quietly answers the
- * second question on every array field.
+ * A BSON value left off this list takes the `$expr` road, and quietly answers
+ * the second question on every array field.
  */
 function isQueryConstant(x: unknown): boolean {
   if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return true;
@@ -493,14 +511,15 @@ function isQueryConstant(x: unknown): boolean {
 
 /**
  * Two query documents as one conjunction. A key that appears once stays at the
- * top level, where the planner reads it; a key that collides goes into ONE `$and`
- * placed where the first collision stood, an existing `$and` flattened into it.
- * Two `$expr` residuals become one `$expr: { $and: [...] }`.
+ * top level, where the planner reads it. A key that collides goes into ONE
+ * `$and`, placed where the first collision stood, with an existing `$and`
+ * flattened into it. Two `$expr` residuals become one `$expr: { $and: [...] }`.
  *
  * A collision on a field whose two clauses are OPERATOR documents that name
- * different operators is not a collision at all: the server reads every operator
- * in one field document as a conjunction, so `$.a >= 1 && $.a <= 9` is one
- * clause. Two clauses that name the SAME operator differently stay in the `$and`.
+ * different operators is not a collision at all. The server reads every
+ * operator in one field document as a conjunction, so `$.a >= 1 && $.a <= 9` is
+ * one clause. Two clauses that name the SAME operator differently stay in the
+ * `$and`.
  */
 export function mergeAnd(a: QueryDoc, b: QueryDoc): QueryDoc {
   // A folded constant clause: `true` adds nothing, `false` decides everything.
@@ -554,16 +573,17 @@ export function mergeAnd(a: QueryDoc, b: QueryDoc): QueryDoc {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
 /**
- * A value spelled so that two spellings are equal only when the values are.
- * `JSON.stringify` is not that: it writes every RegExp as `{}`, so `/^a/` and
- * `/z$/` would read as one value and a merge would drop a condition.
+ * A value spelled so that two spellings are equal only when the values are
+ * equal. `JSON.stringify` does not do this: it writes every RegExp as `{}`, so
+ * `/^a/` and `/z$/` would read as one value, and a merge would drop a
+ * condition.
  */
 function spell(v: unknown): string {
   if (isRegExp(v)) return `re:${v.source}/${v.flags}`;
   if (isDate(v)) return `date:${v.getTime()}`;
   if (Array.isArray(v)) return `[${v.map(spell).join(",")}]`;
   if (isObj(v)) {
-    // A BSON value (an ObjectId, a Decimal128) answers for itself; only a plain
+    // A BSON value (an ObjectId, a Decimal128) answers for itself. Only a plain
     // object is read key by key.
     if (!isPlainObject(v)) return `bson:${String(v)}`;
     return `{${Object.keys(v)

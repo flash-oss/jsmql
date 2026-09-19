@@ -1,27 +1,28 @@
 #!/usr/bin/env node
-// The `jsmql` command — a transpiler at the shell: JSMQL source in (positional
-// arg / --file / stdin), MQL out (stdout) — JSON, but for a live BSON value the
-// JavaScript that makes it (see `render`). A thin wrapper over the public
-// API in ./index.ts — every shape it can emit already exists there as an
-// entry point, so there is no compilation logic here, only argument routing,
-// output formatting, and compiler-style error rendering.
+// The `jsmql` command is a transpiler at the shell. JSMQL source goes in, from a
+// positional argument, `--file`, or stdin. MQL comes out on stdout as JSON, except
+// for a live BSON value, which prints as the JavaScript that builds it (see
+// `render`). This file is a thin wrapper over the public API in ./index.ts. Every
+// shape it can emit already exists there as an entry point, so this file has no
+// compiler logic, only argument routing, output formatting, and compiler-style
+// error rendering.
 //
 // This file stays in TypeScript's strippable subset (see src/CLAUDE.md) and
 // carries a classic Node shebang. esbuild bundles it to dist/cjs/cli.cjs
-// (Node 14 target, shebang preserved) which package.json#bin maps to `jsmql`.
-// Pull @types/node into scope for tsc only: this is the one src/ file that
-// touches Node globals (`process`) and the `node:` builtins, and the project's
-// tsconfig intentionally omits node types from the default src build. The
-// directive is a comment, so the native type-stripper, esbuild, and Node all
-// ignore it at runtime.
+// (Node 14 target, shebang kept), and package.json#bin maps that bundle to `jsmql`.
+// The reference below pulls @types/node into scope for tsc only: this is the one
+// src/ file that touches Node globals (`process`) and the `node:` builtins, and
+// the project's tsconfig leaves node types out of the default src build on
+// purpose. The directive is a comment, so the native type-stripper, esbuild, and
+// Node all ignore it at run time.
 /// <reference types="node" />
 import { jsmql } from "./index.ts";
 import { stringify } from "./stringify.ts";
 import { readFileSync } from "node:fs";
 
-// Replaced at build time by esbuild `define` (scripts/build-cjs.mjs) with the
-// package.json version. The `typeof` guard keeps the un-bundled `node
-// src/cli.ts` run (where the identifier is genuinely undefined) from throwing.
+// esbuild's `define` step (scripts/build-cjs.mjs) replaces this at build time with
+// the package.json version. The `typeof` guard stops an un-bundled `node
+// src/cli.ts` run, where the identifier is genuinely undefined, from throwing.
 declare const __JSMQL_VERSION__: string;
 const VERSION: string = typeof __JSMQL_VERSION__ === "string" ? __JSMQL_VERSION__ : "0.0.0-dev";
 
@@ -187,8 +188,8 @@ function resolveSource(opts: Options): string {
 // Route the source to the matching entry point. With params present the source
 // is a parameterised arrow, so each shape routes through its `*.compile()`
 // builder (`jsmql.compile` for the default polymorphic shape); without params
-// it goes through the one-shot entry. `--validate` is handled separately in
-// `main()` (it produces a structured result rather than throwing).
+// it goes through the one-shot entry. `main()` handles `--validate` separately
+// (it produces a structured result rather than throwing).
 function compile(mode: Mode, source: string, params: Record<string, unknown> | undefined): unknown {
   if (params) {
     if (mode === "filter") return jsmql.filter.compile(source)(params);
@@ -251,8 +252,8 @@ function main(): number {
   let source: string;
   try {
     // Trailing whitespace (notably the newline a shell `echo`/heredoc appends)
-    // is insignificant to the language; trimming it keeps an end-of-input
-    // error's caret on the source line instead of a dangling blank one.
+    // has no meaning in the language. This trim keeps an end-of-input error's
+    // caret on the source line, instead of on a dangling blank line.
     source = resolveSource(opts).trimEnd();
   } catch (err) {
     if (err instanceof UsageError) return usageExit(err.message);
@@ -263,7 +264,7 @@ function main(): number {
     if (opts.mode === "validate") {
       // `jsmql.validate` accepts a parameterised-arrow string too, so a
       // `--validate` + params combination validates the arrow's shape (the
-      // bound values don't affect validity). No separate params branch needed.
+      // bound values do not affect validity). No separate params branch is needed.
       const result = jsmql.validate(source);
       // A report, not MQL: it holds strings and numbers only, so JSON is its format
       // and a tool can read it. `--compact` puts it on one line, as it does a document.

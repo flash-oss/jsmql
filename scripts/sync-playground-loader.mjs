@@ -1,8 +1,7 @@
-// Node ESM loader hook used by `sync-playground.mjs`. Resolves the
-// `"vitest"` bare specifier to `sync-playground-vitest-shim.mjs` so loading
-// `test/realistic.test.ts` discovers every `describe()` / `it()` without
-// actually booting vitest. All other specifiers fall through to Node's
-// default resolution.
+// Node ESM loader hook used by `sync-playground.mjs`. It resolves the `"vitest"` bare
+// specifier to `sync-playground-vitest-shim.mjs`. Loading `test/realistic.test.ts` discovers
+// every `describe()` and `it()` without actually starting vitest. All other specifiers use
+// Node's default resolution.
 
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";

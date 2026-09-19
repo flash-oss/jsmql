@@ -1,5 +1,5 @@
 // test/fixtures/instance.ts — lifecycle manager for the dedicated, auth-enabled
-// fixture mongod the integration suite runs against. Run via the npm scripts:
+// fixture mongod the integration suite runs against. Run through the npm scripts:
 //
 //   npm run fixture:up      start the instance (if down), bootstrap users, seed
 //   npm run fixture:seed     (re)seed only — assumes the instance is up
@@ -168,7 +168,7 @@ async function bootstrapUsers(): Promise<void> {
     }
     return;
   }
-  // Fresh instance: create the admin user via the localhost exception.
+  // Fresh instance: create the admin user through the localhost exception.
   const boot = new MongoClient(BOOTSTRAP_URI);
   await boot.connect();
   try {
@@ -199,7 +199,7 @@ function logTail(lines: number): string {
   }
 }
 
-// Start the instance if it isn't already listening, then bootstrap users.
+// Start the instance if it is not already listening, then bootstrap users.
 async function ensureUp(): Promise<void> {
   if (!(await pingNoAuth())) {
     startMongod();

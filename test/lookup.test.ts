@@ -111,7 +111,7 @@ describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest b
 
   it("an outer field with a char illegal in a MongoDB var name yields an identifier-safe let var", () => {
     // `meta.sub-id` — the hyphen is legal in a field NAME but illegal in a `$$`
-    // VARIABLE name, so the raw segment can't become the let-var name verbatim
+    // VARIABLE name, so the raw segment cannot become the let-var name verbatim
     // (mongod: "contains an invalid character for a variable name: '-'"). The
     // last path segment is sanitized to `[A-Za-z0-9_]` for the name only; the
     // value keeps the raw field path. Verified against a live mongod (HR3).
@@ -229,7 +229,7 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
 });
 
 describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream length)", () => {
-  // The post-filter sub-stream count, via `<coll>.length`, usable inside the
+  // The post-filter sub-stream count, through `<coll>.length`, usable inside the
   // block (here in an assert). Verified end-to-end on a live mongod: alice
   // (2 orders) → orders:[…], bob (0 orders) → orders:[] (the assert no-ops on
   // an empty sub-stream — no doc flows through the lookup pipeline to reject).
@@ -248,7 +248,7 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
 
   // Deep cross-level capture: a ROOT read (`$.region`) inside a NESTED block-body
   // lookup is captured at the OUTERMOST lookup (`jsmql_f0_region`, whose let
-  // evaluates against the root doc) and read deeper via `$$` propagation — NOT
+  // evaluates against the root doc) and read deeper through `$$` propagation — NOT
   // mis-captured as a field of the immediate parent. The enclosing foreign param
   // `a._id` is captured at the level just inside its scope (`jsmql_f1__id`).
   it("a root `$.<field>` read inside a nested block-body lookup threads to the outermost let", () => {
@@ -387,7 +387,7 @@ describe("$$$.coll.find/filter — chained terminals", () => {
     );
   });
 
-  it("member access on a .find result lowers via the materialised scalar slot", () => {
+  it("member access on a .find result lowers through the materialised scalar slot", () => {
     const out = jsmql("let name = $$$.users.find(u => u._id === $.userId).name;");
     expect(out).toEqual([
       {
@@ -423,7 +423,7 @@ describe("$$$.coll.find/filter — error cases", () => {
     );
   });
 
-  it("wrong method on $$$.<coll> suggests .find / .filter / .aggregate via closestNameTo", () => {
+  it("wrong method on $$$.<coll> suggests .find / .filter / .aggregate through closestNameTo", () => {
     expect(() => jsmql("$.x = $$$.users.fnid(u => u._id === $._id);")).toThrow(
       "Unknown method '.fnid()' at position 15. Did you mean '.find()'?",
     );
@@ -577,7 +577,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   // Nested lookups materialise as prologue `$lookup` stages inside the outer's
   // `$lookup.pipeline` body. The inner lookup's `let:` clause auto-captures
   // references to the outer's foreign-doc param (`o.x`) as path-on-local-doc
-  // bindings. Outer-pipeline `let` vars stay accessible via lexical `$$<name>`
+  // bindings. Outer-pipeline `let` vars stay accessible through lexical `$$<name>`
   // scoping — no need for the inner to re-let them.
 
   it("2-level filter/filter with outer-foreign-doc cross-reference", () => {
@@ -634,7 +634,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     ]);
   });
 
-  it("outer-outer doc ref ($._id) flows through outer.let and is visible inside the inner via lexical $$ scope", () => {
+  it("outer-outer doc ref ($._id) flows through outer.let and is visible inside the inner by lexical $$ scope", () => {
     // `$._id` is captured by the OUTER lookup's `let: { jsmql_f0__id: "$_id" }` (depth 0).
     // The inner's `let: { jsmql_f1__id: "$_id" }` (depth 1) captures the POST's `_id`.
     // The depth prefix keeps them distinct — `$$jsmql_f0__id` (the outermost doc) and
@@ -1076,8 +1076,8 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     ]);
   });
 
-  it("non-registered chain methods (e.g. .toLowerCase) fall through to the existing expression-form path", () => {
-    // `.toLowerCase()` isn't a stream method, so the chain stops peeling there and
+  it("non-registered chain methods (for example .toLowerCase) fall through to the existing expression-form path", () => {
+    // `.toLowerCase()` is not a stream method, so the chain stops peeling there and
     // the rest reads the slot as a value (`joinValue` in src/compiler/emit/join.ts),
     // producing the bulkier but still correct expression form. Unrelated string /
     // array operators on lookup results are unaffected.
@@ -1314,7 +1314,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     expect(() => jsmql("$.x = $$$.orders.aggregate(o => { $sort({ x: -1 }); }).map(o => o.total);")).not.toThrow();
   });
 
-  it("the same rejection on a chained `.find` doesn't offer the `.map`-only rewrite", () => {
+  it("the same rejection on a chained `.find` does not offer the `.map`-only rewrite", () => {
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).toThrow(
       "`$match(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $match(...); … })', the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$match(…)'. at position 58",
     );
@@ -1349,7 +1349,7 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
     ]);
   });
 
-  it("correlated head: $. auto-lets into $lookup.let; foreign via o.<field>", () => {
+  it("correlated head: $. auto-lets into $lookup.let; foreign through o.<field>", () => {
     expect(
       jsmql(
         "$.monthlyTotals = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: { $month: o.createdAt }, total: $sum(o.amount) }); $sort({ _id: 1 }); });",
@@ -1729,7 +1729,7 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
 
   // Argument-shape and param errors must read the same whether `.aggregate` sits
   // at the head or after a lodash chain — the two call positions share
-  // `validateAggregateArg` / `validateAggregateParams` precisely so they can't drift.
+  // `validateAggregateArg` / `validateAggregateParams` precisely so they cannot drift.
   describe("argument errors match the head form's wording", () => {
     const pairs: [string, string, RegExp][] = [
       ["expression body", "(o) => o.total", /takes an arrow whose body is a block of stages/],
@@ -1824,7 +1824,7 @@ describe("$$$.coll.aggregate — error cases", () => {
     ]);
   });
 
-  it("a CORRELATED aggregate can't be unioned — $unionWith has no `let` slot", () => {
+  it("a CORRELATED aggregate cannot be unioned — $unionWith has no `let` slot", () => {
     expect(() => jsmql("$$.push(...$$$.c.aggregate((o) => { $match(o.uid === $._id); }));")).toThrow(
       "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value.",
     );
@@ -2013,7 +2013,7 @@ describe("$$$.coll.aggregate — error cases", () => {
     ]);
   });
 
-  it("the chained form (.filter(p).aggregate(bad)) validates via the same rules", () => {
+  it("the chained form (.filter(p).aggregate(bad)) validates through the same rules", () => {
     // The row's own callback rule answers, whether the chain heads at the collection or peels first.
     expect(() => jsmql("$.x = $$$.c.filter(o => o.v > 1).aggregate(o => o.v);")).toThrow(
       "'.aggregate()' takes an arrow whose body is a block of stages — 'o => { $match(…); $limit(1); }' — or a bracketed list of them.",
@@ -2043,7 +2043,7 @@ describe("chained stage calls on $$$.<coll>", () => {
 
   // THE EQUIVALENCE: in a foreign chain a stage link is lowered as the
   // one-statement `.aggregate((o) => { <stage>; })` block it stands for,
-  // through the same engine — so the two spellings can't drift.
+  // through the same engine — so the two spellings cannot drift.
   it("is equivalent to the one-statement .aggregate(...) block spelling", () => {
     const chained = jsmql("$.t = $$$.orders.$match({ x: 1 });");
     const block = jsmql("$.t = $$$.orders.aggregate((o) => { $match({ x: 1 }); });");
@@ -2070,7 +2070,7 @@ describe("chained stage calls on $$$.<coll>", () => {
   });
 
   // …and in a query-document `$match` body it is re-expressed as a predicate
-  // first, because MongoDB doesn't evaluate `$$` vars in the query language —
+  // first, because MongoDB does not evaluate `$$` vars in the query language —
   // a raw `{ $match: { userId: "$$jsmql_f0__id" } }` is accepted by the server
   // and silently matches nothing (verified live). Whatever `.filter(...)` emits for
   // the same predicate, `.$match` emits too — byte for byte.
@@ -2111,7 +2111,7 @@ describe("chained stage calls on $$$.<coll>", () => {
     ]);
   });
 
-  it("an operator-bearing $match body is NOT converted — it isn't a lodash matcher", () => {
+  it("an operator-bearing $match body is NOT converted — it is not a lodash matcher", () => {
     // `{ qty: { $gt: 5 } }` as a QUERY means "greater than 5"; as a lodash
     // matches-object it would mean "equals the object { $gt: 5 }". Different
     // meanings, so `.$match` keeps the query form and `.filter` keeps the equality.
@@ -2200,7 +2200,7 @@ describe("chained stage calls on $$$.<coll>", () => {
     );
   });
 
-  it("rejects a must-be-first stage that isn't first in the chain", () => {
+  it("rejects a must-be-first stage that is not first in the chain", () => {
     expect(() => jsmql("$.t = $$$.orders.$match({ a: 1 }).$documents([{ x: 1 }]);")).toThrow(
       "'$documents' cannot stand inside '$lookup' — the server refuses it in that body. Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];').",
     );

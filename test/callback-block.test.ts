@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-// Every position a stream-rooted callback reaches, so the rule can't hold in one
+// Every position a stream-rooted callback reaches, so the rule cannot hold in one
 // container and leak in another. `$$$.<coll>` receivers are pointed at `.aggregate`;
 // `$$` (current-stream) receivers at the chained-stage spelling, which is what works
 // in all of ITS containers.

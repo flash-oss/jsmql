@@ -8,11 +8,12 @@
 //   $$.push(...[{ a: 1 }, { b: 2 }])       → the same: a written list spreads into the same batch
 //   $$.concat([{ a: 1 }])                  → the same, and `.concat` takes the array itself, as JavaScript does
 //
-// JavaScript's spread rule holds: an array (a `.filter`, a whole collection) is
-// spread in, one document (`.find`, a literal) is not, and the wrong one is
-// refused with the other spelling. `$unionWith` has no `let`, so a body that reads
-// the outer document is refused where it reads it (Env.render); `$documents` runs
-// with no input document at all, so `{ a: $.a }` there is refused the same way.
+// JavaScript's spread rule holds: the compiler spreads in an array (a `.filter`,
+// a whole collection), does not spread one document (`.find`, a literal), and
+// refuses the wrong one with the other spelling. `$unionWith` has no `let`, so
+// the compiler refuses a body that reads the outer document where it reads it
+// (Env.render). `$documents` runs with no input document at all, so it refuses
+// `{ a: $.a }` there the same way.
 // See docs/specs/emit-pass.md § The union road.
 
 import type { Expr, Stage } from "../../registry/vocabulary.ts";
@@ -29,10 +30,10 @@ const DOCUMENTS = "$documents";
 
 /**
  * A value in a written document list that needed a STAGE of its own. `$documents`
- * is the first stage of the `$unionWith` body, so nothing can stand ahead of it to
- * produce the value, and the read would be a path nothing writes — measured, the
- * server answers `{}` for such a document rather than refusing it. Both spellings
- * of the list (`$$.push({ … })` and `$$ = [{ … }]`) call this.
+ * is the first stage of the `$unionWith` body, so nothing can stand ahead of it
+ * to produce the value. The read would then be a path nothing writes — measured,
+ * the server answers `{}` for such a document rather than refusing it. Both
+ * spellings of the list (`$$.push({ … })` and `$$ = [{ … }]`) call this.
  */
 export function noStageInDocuments(chain: Chain, written: string, pos: number): void {
   const made = chain.hoisted[0] ?? chain.emitted[0];
@@ -42,9 +43,10 @@ export function noStageInDocuments(chain: Chain, written: string, pos: number): 
 type Arg = Extract<Expr, { type: "MethodCall" }>["args"][number];
 
 /**
- * The documents a WRITTEN list holds, or null. `$documents` takes a list the program
- * spells out — MEASURED, the server refuses a field path there ("an array is
- * expected") — so an array is appendable exactly when its elements are written.
+ * The documents a WRITTEN list holds, or null. `$documents` takes a list the
+ * program spells out — MEASURED, the server refuses a field path there ("an
+ * array is expected") — so an array is appendable exactly when its elements
+ * are written.
  */
 function writtenDocuments(e: Expr): readonly Expr[] | null {
   if (e.type !== "ArrayLiteral" || e.elements.length === 0) return null;
@@ -63,9 +65,10 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
   let docs: Expr[] = [];
   const flushDocs = (): void => {
     if (docs.length === 0) return;
-    // A container whose row bans this stage at ANY depth bans it here too: the
-    // `$unionWith` wrapper is what makes `$documents` legal inside a `$lookup` and
-    // inside another `$unionWith`, and it does not save it inside a `$facet`.
+    // A container whose row bans this stage at ANY depth bans it here too. The
+    // `$unionWith` wrapper is what makes `$documents` legal inside a `$lookup`
+    // and inside another `$unionWith`, but it does not save it inside a
+    // `$facet`.
     for (const boundary of env.site.boundaries) {
       if (!bansNestedOf(boundary.stage).includes(DOCUMENTS)) continue;
       throw E.bannedNested(
@@ -76,7 +79,7 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
         node.pos,
       );
     }
-    // The documents are evaluated with NO input document: a `$unionWith` body, over nothing.
+    // The documents are evaluated with NO input document — a `$unionWith` body runs over nothing.
     const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
     const list = docs.map((d) => lowerValue(d, childEnv(body, node, "args")));
     const verb = node.type === "MethodCall" ? node.name : "push";

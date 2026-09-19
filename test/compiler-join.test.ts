@@ -47,7 +47,7 @@ const compiled = (src: string, expected?: unknown[]): unknown[] => {
 const E = (id: unknown) => ({ $expr: { $eq: ["$userId", id] } });
 const LET = { jsmql_f0__id: "$_id" };
 const byUser = { $match: E("$$jsmql_f0__id") };
-/** A body that opens with one correlated equality is the pair the planner reads from the index. */
+/** A body that OPENS with one correlated equality is the pair the planner reads from the index. */
 const COMPACT = { localField: "_id", foreignField: "userId" };
 
 describe("compiler/emit/join — one route, the pipeline form", () => {

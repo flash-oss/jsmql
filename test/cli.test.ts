@@ -1,6 +1,6 @@
 /**
- * CLI tests for the `jsmql` bin. These spawn `node src/cli.ts` directly —
- * exercising the real un-bundled source via Node's native type-stripping (the
+ * CLI tests for the `jsmql` bin. These spawn `node src/cli.ts` directly. This
+ * runs the real un-bundled source through Node's native type stripping (the
  * same path the strippable-TS smoke test relies on), so no build step is
  * needed. The built `dist/cjs/cli.cjs` (shebang, exec bit, version `define`)
  * is covered separately by the dist-gated cases in smoke.test.ts.

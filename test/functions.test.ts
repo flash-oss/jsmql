@@ -120,7 +120,7 @@ describe("reusable functions — call sites in various contexts", () => {
     ]);
   });
 
-  it("inside a `$match` lowers via $expr", () => {
+  it("inside a `$match` lowers through $expr", () => {
     expect(jsmql("const isBig = (a) => a > 100; $match(isBig($.amount));")).toEqual([
       { $match: { $expr: { $let: { vars: { a: "$amount" }, in: { $gt: ["$$a", 100] } } } } },
     ]);
@@ -147,7 +147,7 @@ describe("reusable functions — output stability", () => {
     ]);
   });
 
-  // A param the server can't spell as a `$$` variable has to be escaped at the call
+  // A param the server cannot spell as a `$$` variable has to be escaped at the call
   // site's $let too, not just in the array-method binding sites — MongoDB rejects
   // "'_' starts with an invalid character for a user variable name".
   it("a param name the server rejects is escaped at the call site", () => {

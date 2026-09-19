@@ -1,20 +1,21 @@
 // The one place jsmql names the `bson` module.
 //
-// jsmql emits a *live* BSON value wherever the source spells one, because that is
-// the only thing the MongoDB driver accepts in a query document. The Extended JSON
-// envelope form is a client-side serialization shape the driver does NOT parse for
-// queries — sent verbatim it reaches the server, which rejects it as an unknown
-// operator (verified against mongod).
+// jsmql emits a live BSON value wherever the source spells one. This is the only
+// value the MongoDB driver accepts in a query document. The Extended JSON envelope
+// form is a client-side serialisation shape. The driver does not parse this shape
+// for queries: sent as it is, the shape reaches the server, and the server rejects
+// it as an unknown operator (verified against mongod).
 //
-// The value comes from the caller's OWN `bson` — a peer dependency, so exactly one
-// copy exists in the tree and the value jsmql hands back is interchangeable with
-// every other module's. See docs/specs/bson-types.md.
+// The value comes from the caller's own `bson` module, a peer dependency. Exactly
+// one copy exists in the tree, and the value jsmql returns works with every other
+// module's copy. See docs/specs/bson-types.md.
 //
 // CONSTRUCTION uses these classes. RECOGNITION does not trust them alone: a value
-// can arrive from a second copy of `bson` (a monorepo pinning the other major), or
-// from a server response, which MongoDB's own shell documentation warns is assigned
-// a different base class than a user-supplied value. So `isBsonType` tests the
-// prototype AND the `_bsontype` tag, and either one answers yes.
+// can arrive from a second copy of `bson` (a monorepo that pins the other major
+// version), or from a server response. MongoDB's own shell documentation warns that
+// a server response gets a different base class than a user-supplied value does.
+// So `isBsonType` tests the prototype and the `_bsontype` tag, and either match
+// answers yes.
 export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "bson";
 
 import { bsonTagOf, isBytes, isPlainObject } from "./registry/vocabulary.ts";
@@ -30,27 +31,27 @@ import {
   UUID,
 } from "bson";
 
-// The tag reader needs no `bson` import, so it lives in the registry's vocabulary
-// where a ROW can read it as well. Re-exported here so the compiler has one name.
+// The tag reader needs no `bson` import, so it lives in the registry's vocabulary,
+// where a ROW can read it too. This file re-exports it, so the compiler has one name.
 export { bsonTagOf, BSON_KIND, isBytes, isDate, isPlainObject, isRegExp } from "./registry/vocabulary.ts";
 
 /**
- * Is `v` the named BSON type? `cls` is the class from THIS copy of `bson`; `tag` is
- * the `_bsontype` any copy sets. Either match answers yes — see the header.
+ * Is `v` the named BSON type? `cls` is the class from THIS copy of `bson`. `tag` is
+ * the `_bsontype` value any copy sets. Either match answers yes — see the header.
  */
 export function isBsonType(v: unknown, cls: abstract new (...args: never[]) => object, tag: string): boolean {
   return v instanceof cls || bsonTagOf(v) === tag;
 }
 
 /**
- * Is `v` a UUID? The one type the tag cannot answer alone: a UUID reports
+ * Is `v` a UUID? This is the one type the tag cannot answer alone: a UUID reports
  * `_bsontype: "Binary"`, so a value from another copy is known only by its subtype.
  */
 export function isUUID(v: unknown): boolean {
   return v instanceof UUID || (bsonTagOf(v) === "Binary" && (v as Binary).sub_type === 4);
 }
 
-/** Is `v` an ObjectId — this copy's class, or any copy's tag? */
+/** Is `v` an ObjectId? Match this copy's class, or any copy's tag. */
 export function isObjectId(v: unknown): boolean {
   return isBsonType(v, ObjectIdClass, "ObjectId");
 }
@@ -59,10 +60,11 @@ export function isObjectId(v: unknown): boolean {
  * The 24-hex spelling of an ObjectId-shaped value, or null when the value wears the
  * tag but carries no id behind it.
  *
- * Read DEFENSIVELY, and every caller goes through here. A plain object may wear the
- * tag — the compiler passes an injected `{ _bsontype: "ObjectId", id: "xyz" }` through
- * as the value it is — and calling the class's method on it throws. Three readings,
- * widest first: the method every copy provides, the 12 raw bytes, the printed form.
+ * Read the value DEFENSIVELY. Every caller goes through here. A plain object may
+ * wear the tag — the compiler passes an injected `{ _bsontype: "ObjectId", id: "xyz" }`
+ * through as the value it is — and a call to the class's method on it then throws.
+ * This function tries three readings, widest first: the method every copy provides,
+ * the 12 raw bytes, then the printed form.
  */
 export function objectIdHex(value: unknown): string | null {
   const v = value as { toHexString?: () => string; id?: unknown; toString?: () => string };

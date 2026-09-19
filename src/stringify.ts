@@ -5,15 +5,16 @@
 // becomes `{}`; every other BSON class becomes its internal byte fields. The document
 // still runs — and matches nothing, which is the worst failure a query can have.
 //
-// So every value is written as the expression that MAKES it. The spelling is the one
-// the Node driver requires, `new X(…)`, and MEASURED in mongosh 2.9.2 the same text
-// runs there and yields the identical value — mongosh exposes the driver's BSON
-// classes as globals on top of its own `ISODate` / `NumberDecimal` helpers. There is
-// therefore ONE spelling per type rather than one per runtime. The bare-call forms
-// (`ObjectId("…")`, `MinKey()`) run only in mongosh, and the helper names
-// (`ISODate`, `NumberLong`, `BinData`) only there too, so neither is written.
+// So this module writes every value as the expression that MAKES it. The spelling
+// is the one the Node driver requires, `new X(…)`. MEASURED in mongosh 2.9.2, this
+// same text runs there too and yields the identical value — mongosh exposes the
+// driver's BSON classes as globals on top of its own `ISODate` / `NumberDecimal`
+// helpers. There is therefore ONE spelling per type rather than one per runtime.
+// The bare-call forms (`ObjectId("…")`, `MinKey()`) run only in mongosh, and the
+// helper names (`ISODate`, `NumberLong`, `BinData`) run only there too, so this
+// module writes neither.
 //
-// Pasting into a driver script needs the classes in scope:
+// To paste the output into a driver script, bring these classes into scope:
 //   const { ObjectId, Decimal128, Long, Int32, Double, Binary, UUID, Timestamp,
 //           MinKey, MaxKey, Code, DBRef, BSONSymbol, BSONRegExp } = require("mongodb");
 // mongosh has them already.
@@ -46,8 +47,8 @@ const isBytes = (v: unknown): v is Uint8Array => kindOf(v) === "[object Uint8Arr
  *
  * `__proto__` is the one name a quoted key cannot carry: in an object literal
  * `{"__proto__": 1}` sets the prototype and creates no own property, so the field
- * would vanish the moment the printed text was pasted back — MEASURED in mongosh and
- * in Node alike. The computed form is the only spelling that survives.
+ * would vanish the moment someone pastes the printed text back — MEASURED in
+ * mongosh and in Node alike. The computed form is the only spelling that survives.
  */
 function keySource(key: string): string {
   if (key === "__proto__") return `[${JSON.stringify(key)}]`;
@@ -71,8 +72,9 @@ const num = (n: number): string => (Object.is(n, -0) ? "-0" : String(n));
  *
  * Every case reads its data defensively. A PLAIN OBJECT may wear the tag — the
  * compiler passes `{ _bsontype: "ObjectId", id: "xyz" }` through as the value it is —
- * and a printer that called the class's methods on it threw, and took the whole
- * document's output down with it. Null here prints the object as what it is.
+ * and calling the class's methods on it would throw, taking the whole document's
+ * output down with it. Returning null here lets the caller print the object as
+ * what it is.
  */
 function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): string | null {
   const o = v as Record<string, unknown>;
@@ -155,9 +157,9 @@ function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): st
 /**
  * MQL as pasteable JavaScript source.
  *
- * A document is written on ONE line while it fits inside `width`, and broken one entry
- * per line once it does not — MQL nests deeply and narrowly, so a brace per line buries
- * the shape it is meant to show.
+ * This function writes a document on ONE line while it fits inside `width`, and
+ * breaks it one entry per line once it does not — MQL nests deeply and narrowly, so
+ * a brace per line would bury the shape it is meant to show.
  */
 export function stringify(value: unknown, options?: StringifyOptions): string {
   const indent = options?.indent ?? 2;
@@ -178,10 +180,11 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     // A Uint8Array — a Node Buffer is one — carries bytes, and both runtimes store
     // it as BSON Binary subtype 0. MEASURED: mongosh and the driver each store
     // `new Uint8Array([1, 2, 3])` as Binary/0 and each match that document again with
-    // the same text, so the bytes are written as themselves rather than translated to
-    // a `Binary.createFromBase64(…)` call: what comes back is the value the document
-    // holds, down to its JavaScript class. Without this the object branch below walks
-    // the byte indices and prints `{ "0": 1, "1": 2 }`, which matches nothing.
+    // the same text. So this function writes the bytes as themselves, rather than
+    // translating them to a `Binary.createFromBase64(…)` call: what comes back is
+    // the value the document holds, down to its JavaScript class. Without this, the
+    // object branch below walks the byte indices and prints `{ "0": 1, "1": 2 }`,
+    // which matches nothing.
     if (isBytes(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
     const tag = tagOf(v);
     if (tag !== undefined) {
@@ -194,9 +197,9 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     if (t === "bigint") return `${String(v)}n`;
     if (t === "number") return num(v as number);
     if (t === "undefined") {
-      // The language declares `undefined` an existence TEST, never a value, so it is
-      // refused at every entry point and cannot reach a compiled document. Reaching
-      // here means a guard was missed, and printing nothing would hide it.
+      // The language declares `undefined` an existence TEST, never a value, so every
+      // entry point refuses it and it cannot reach a compiled document. Reaching
+      // here means the compiler missed a guard, and printing nothing would hide it.
       throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
     }
     return null;

@@ -1,18 +1,18 @@
 // What a date computes when it is a constant.
 //
-// Every rule here answers in UTC and JavaScript's own numbering, because a
-// JavaScript spelling gets JavaScript's behaviour — the runtime cells shift
+// Every rule here answers in UTC and in JavaScript's own numbering. A
+// JavaScript spelling gets JavaScript's behaviour: the runtime cells shift
 // MongoDB's 1-based `$month` and `$dayOfWeek` the same way:
 //   new Date("2020-03-05…").getMonth()   →  2   (March; `$month` would say 3)
 //   new Date("2020-03-05…").getDay()     →  4   (Thursday; `$dayOfWeek` would say 5)
 //   new Date("2020-03-05…").getHours()   →  20  the LOCAL-sounding getters read
 //                                              UTC, because `$hour` does
 // A getter that read local time would answer differently on every machine that
-// compiled the same query, which is reason enough on its own.
+// compiled the same query. That is reason enough on its own.
 //
-// The methods that answer a DATE — `.plus`, `.startOf`, `.set` — fold as well,
-// and they fold to what the SERVER computes, measured on mongod, because a
-// folded value replaces the operator the server would have run:
+// The methods that answer a DATE — `.plus`, `.startOf`, `.set` — fold as well.
+// They fold to what the SERVER computes, measured on mongod, because a folded
+// value replaces the operator the server would have run:
 //   .plus(1, "month") from 31 January   →  29 February   ($dateAdd clamps to the month's last day)
 //   .startOf("week")                    →  the Sunday    ($dateTrunc's default week start)
 //   .diff(other, "day")                 →  the midnights crossed, not the 24-hour spans
@@ -104,7 +104,7 @@ function shift(d: Date, unit: Unit, amount: number): Date {
   return new Date(d.getTime() + amount * FIXED_MS[unit as keyof typeof FIXED_MS]);
 }
 
-/** `$dateTrunc` with a bin of one and the week starting on Sunday. */
+/** `$dateTrunc` with a bin of one, and the week that starts on Sunday. */
 function truncate(d: Date, unit: Unit): Date {
   switch (unit) {
     case "year":
@@ -269,9 +269,9 @@ function setParts(d: Date, parts: Record<string, unknown>): Date | null {
 /**
  * A date method on a constant receiver.
  *
- * `{ ok: false }` means the method, or the form it is called in, is not one this
- * knows; the caller leaves the call to run on the server. Every form that names
- * a timezone or another option is such a form.
+ * `{ ok: false }` means the method, or the form it is called in, is one this
+ * function does not know. The caller leaves the call to run on the server.
+ * Every form that names a timezone or another option is such a form.
  */
 export function foldDateMethod(d: Date, name: string, args: readonly unknown[]): Evaluation {
   if (args.length === 0) return getter(d, name);

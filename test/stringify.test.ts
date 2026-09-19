@@ -254,7 +254,7 @@ describe("stringify: layout", () => {
     expect(stringify(wide, { indent: 0 })).toBe(stringify(wide, { width: Infinity }));
   });
 
-  it("takes a number of spaces, or the string to indent with", () => {
+  it("takes an indent width in spaces, or the string to indent with", () => {
     expect(stringify(wide, { indent: 4 }).split("\n")[1].startsWith("    $group")).toBe(true);
     expect(stringify(wide, { indent: "\t" }).split("\n")[1].startsWith("\t$group")).toBe(true);
   });

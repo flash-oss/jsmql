@@ -5,8 +5,8 @@
 // runtime receiver would take. If they disagree, folding would emit a value the
 // server never would. This suite proves they agree: for each foldable method ×
 // a battery of inputs it compares the compile-time fold to the MQL lowering run
-// on a real mongod (via `$documents`, so no collection write). Any method/shape
-// that can't be proven equal must be removed from fold-methods.ts (→ runtime
+// on a real mongod (through `$documents`, so no collection write). Any method/shape
+// that cannot be proven equal must be removed from fold-methods.ts (→ runtime
 // fallback), never shipped.
 //
 // It connects to the project's mongod on :27018 (see test/fixtures/config.ts) and
@@ -326,7 +326,7 @@ for (const call of [
   arrayCases.push({ lit: JSON.stringify(FALSY_PRED_ARRAY), val: FALSY_PRED_ARRAY, call });
 }
 
-// Distinguishes "folded to a value" from "wasn't folded" (stayed a runtime
+// Distinguishes "folded to a value" from "was not folded" (stayed a runtime
 // binding). A non-fold is a safe outcome — the server runs its own lowering —
 // so the test skips it; it only asserts on folds, which is where divergence
 // would be a real bug.

@@ -111,9 +111,9 @@ describe("compiler/emit/lower — access", () => {
     // a constant settles in the fold; the runtime shapes are for what the fold cannot see
     expect(expr("[1, 2][0]")).toBe(1);
     expect(expr("[$.a, 2][0]")).toEqual({ $arrayElemAt: [["$a", 2], 0] });
-    // The dispatch is a `$switch`, never a nested `$cond`: the server optimises a
-    // `$cond`'s branches before it reads the test, so a receiver it holds as a
-    // constant folds the branch that does not apply and refuses the pipeline.
+    // The dispatch is a `$switch`, never a nested `$cond`. The server optimises `$cond`
+    // branches before it reads the test. A receiver it holds as a constant causes the
+    // server to fold a branch that does not apply and refuse the pipeline.
     expect(expr("$.a[0]")).toEqual({
       $switch: {
         branches: [
@@ -133,7 +133,7 @@ describe("compiler/emit/lower — access", () => {
     expect(() => expr("$.a[-1]")).toThrow(/Negative bracket index/);
   });
 
-  it("dispatches an unprovable `.length` at runtime, and proves a literal's", () => {
+  it("dispatches an unprovable `.length` at runtime, and proves a literal's length", () => {
     expect(expr("[1, 2].length")).toBe(2);
     expect(expr('"abc".length')).toBe(3);
     // an array LITERAL receiver is the value, wrapped once — `{ $size: ["$a", 2] }` would be two operands

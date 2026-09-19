@@ -4,22 +4,23 @@
 //   const msInDay = 24 * 60 * 60 * 1000;  $.elapsedMs > msInDay
 //     →  $.elapsedMs > 86400000     →   { "elapsedMs": { "$gt": 86400000 } }
 //
-// Without it the same program is a pipeline that recomputes the number on every
-// document, in a `$set` nobody asked for, and the result cannot use an index. So
-// this is not a size optimisation: it decides which DOCUMENT the program becomes.
+// Without fold, the same program becomes a pipeline. The pipeline recomputes the
+// number on every document, in a `$set` nobody asked for. The result cannot use
+// an index. This is not a size optimisation: it decides which DOCUMENT the
+// program becomes.
 //
-// It runs INSIDE the desugar fixpoint, and the two feed each other:
+// Fold runs INSIDE the desugar fixpoint, and the two feed each other:
 //   const k = "name"; $.items.map(k)
 //     fold    → $.items.map("name")          the shorthand rule can now see it
 //     desugar → $.items.map(x => x.name)
 //
-// THE TWO WAYS A FOLD GOES WRONG, and what stops each:
+// THE TWO WAYS A FOLD CAN GO WRONG, and what stops each:
 //
 //   1. It replaces a name that means something else here. A binder of the same
-//      name — a lambda parameter, a declaration in a nested scope — makes a
-//      DIFFERENT variable, and substituting through one answers with the
-//      constant where the source meant the other. `shadowedIn` collects every
-//      binder the tree has; `substitute` refuses to cross one.
+//      name — a lambda parameter, or a declaration in a nested scope — makes a
+//      DIFFERENT variable. Substitution through that binder answers with the
+//      constant, where the source meant the other variable. `shadowedIn`
+//      collects every binder in the tree. `substitute` refuses to cross one.
 //   2. It replaces a name whose value changes. A write, a mutation, or a second
 //      declaration means the first value is not the only one. `unfoldable`
 //      collects those names, and they keep their runtime binding.
@@ -86,8 +87,8 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
 
   for (const stmt of stmts) {
     // A name READ before it is declared is a `ReferenceError` in JavaScript.
-    // Answering it with the later value would invent a meaning the language does
-    // not have, so the declaration keeps its binding and a later phase reports it.
+    // The later value would give it a meaning the language does not have. So the
+    // declaration keeps its binding, and a later phase reports it.
     if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
       if (readSoFar.has(stmt.name)) excluded.add(stmt.name);
     }
@@ -109,12 +110,13 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
       const later = new Set(order.slice(order.indexOf(stmt.name)));
       if (body?.type === "Lambda" && [...freeNamesIn(body)].some((n) => later.has(n))) excluded.add(stmt.name);
     }
-    // Walked WITH positions, because one of the tests below is about position:
-    // a call that IS a statement mutates its receiver — `a.sort();` is the whole
-    // statement and nothing reads its result — while the same call in value
-    // position answers with a new array and leaves the binding alone. Reading the
-    // node's shape instead of its position read `[xs.slice(1)]` in a value slot as
-    // a bracketed pipeline of mutations, and kept a constant it should have folded.
+    // Walked WITH positions, because one test below depends on position. A call
+    // that IS a statement mutates its receiver: `a.sort();` is the whole
+    // statement, and nothing reads its result. The same call in value position
+    // returns a new array and leaves the binding alone. The node's shape alone
+    // cannot tell this apart: it would read `[xs.slice(1)]` in a value slot as a
+    // bracketed pipeline of mutations, and would keep a constant that fold should
+    // replace.
     for (const [node, where] of everyNodeWithPosition(stmt as Any)) {
       // A write, however deep the path it writes through.
       if (node.type === "AssignExpr" || node.type === "DeleteStmt") {
@@ -127,8 +129,8 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
         if (receiver !== null) excluded.add(receiver);
       }
       // A call that writes one of its ARGUMENTS in place, wherever it stands —
-      // `Object.assign(a, …)`. Which argument is the row's fact, not a name matched
-      // here, so a second such name is a row and not a branch.
+      // for example `Object.assign(a, …)`. The row states which argument, not a
+      // name matched here. So a second such name needs a new row, not a branch.
       if (typeof node.name === "string") {
         const on = node.object as { type?: string; name?: string } | undefined;
         const index = mutatedArgumentOf(node.name, on?.type === "Ident" ? (on.name ?? null) : null);
@@ -182,10 +184,10 @@ const shadowedIn = (node: Any, key: string): readonly string[] => bindsFor(node,
  * Replace every free reference to a folded name with the value it holds.
  *
  * Two things it must never do. It must not cross a binder of the same name — see
- * `shadowedIn`. And it must not touch an identifier that NAMES something rather
- * than valuing it: `a.p = 9` names a place and `g(1)` names a function, so
- * replacing either with its value produces `1 = 9` or `3(1)`, neither of which is
- * a program.
+ * `shadowedIn`. It must also not touch an identifier that NAMES something
+ * rather than valuing it: `a.p = 9` names a place, and `g(1)` names a function.
+ * Replacing either with its value produces `1 = 9` or `3(1)`, and neither is a
+ * program.
  */
 function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Program {
   const start: Scope = { shadowed: new Set(), naming: false };
@@ -209,8 +211,8 @@ function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Pro
     if (n.type !== "Ident" || typeof n.name !== "string") return node;
     if (scope.naming || scope.shadowed.has(n.name)) return node;
     if (!folded.has(n.name)) return node;
-    // Every folded value has a literal — `fold` only records the ones that do —
-    // so there is no fallback here, and no un-substituted source to capture with.
+    // Every folded value has a literal. `fold` only records the ones that do. So
+    // there is no fallback here, and no un-substituted source to capture with.
     return asLiteral(folded.get(n.name), n.pos as number) as object;
   });
 }
@@ -226,15 +228,15 @@ function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Pro
  *     with it       → {"x": 1}
  * The second can use an index; the first cannot.
  *
- * A value with no MongoDB literal is left alone. Unlike a declaration — which
- * must produce a value or stay a binding — a subexpression is perfectly able to
- * go on being computed at run time.
+ * A value with no MongoDB literal stays as it is. Unlike a declaration, which
+ * must produce a value or stay a binding, a subexpression can still compute at
+ * run time.
  */
 function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY): T {
-  // The environment travels down and SHRINKS at every binder: a lambda parameter
-  // named the same as a declared function is a different thing entirely, and
-  // folding `f(1)` against the outer `f` inside `map(f => f(1))` would answer
-  // about the wrong one.
+  // The environment travels down and SHRINKS at every binder. A lambda
+  // parameter named the same as a declared function is a different thing
+  // entirely. Folding `f(1)` against the outer `f` inside `map(f => f(1))`
+  // would answer about the wrong one.
   const step = (n: object, key: string, here: Constants): Constants => {
     const names = shadowedIn(n as Any, key);
     if (names.length === 0) return here;
@@ -272,8 +274,8 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
 /**
  * Every statement of a list, with its constant parts folded against `known`.
  *
- * ONE STATEMENT at a time, never the list around it: a scope's own declarations
- * are exactly what its statements should see, and descending through the
+ * ONE STATEMENT at a time, never the list around it. A scope's own declarations
+ * are exactly what its statements should see. Descending through the
  * `Pipeline` node would make `shadowedIn` hide them along with the nested ones.
  */
 function foldPartsIn(stmts: readonly PipelineStmt[], known: Constants): readonly PipelineStmt[] {
@@ -303,13 +305,13 @@ const EVALUABLE_TYPES = [
   "NewExpression",
 ] as const;
 /**
- * The expression types deliberately NOT asked about, each for a stated reason: a
- * literal is already the answer (and re-spelling it would rebuild the node every
- * round, so the fixpoint would never settle); a reference, a lambda and a block
- * are not values; `OperatorCall` is the escape hatch above. Together with
- * `EVALUABLE_TYPES` this must cover every `Expr` type — the two lines below make a
- * new node type a compile error here rather than a subexpression silently never
- * folded.
+ * The expression types deliberately NOT asked about, each for a stated reason. A
+ * literal is already the answer, and re-spelling it would rebuild the node every
+ * round, so the fixpoint would never settle. A reference, a lambda and a block
+ * are not values. `OperatorCall` is the escape hatch above. Together with
+ * `EVALUABLE_TYPES` this must cover every `Expr` type. The two lines below turn a
+ * new node type into a compile error here, instead of a subexpression that fold
+ * silently never folds.
  */
 const NOT_ASKED_TYPES = [
   "NumberLiteral",
@@ -345,15 +347,16 @@ const EVALUABLE: ReadonlySet<string> = new Set(EVALUABLE_TYPES);
 /**
  * Fold every declaration that can be folded, and drop it.
  *
- * Statements are walked IN ORDER, and each one is substituted with what is known
- * at the point it stands. That is not tidiness: a name read before it is declared
- * is a `ReferenceError` in JavaScript, and answering it with the later value
- * would invent a meaning the language does not have.
+ * Statements are walked IN ORDER. Fold substitutes each one with what is known
+ * at the point it stands. That is not tidiness: a name read before it is
+ * declared is a `ReferenceError` in JavaScript, and the later value would give
+ * it a meaning the language does not have.
  */
 /**
  * A callback's parameters open its block: `o => { let o = 1; … }` is a
- * SyntaxError in JavaScript. Checked before anything folds, because a constant
- * `let` is inlined below and would otherwise vanish without a word.
+ * SyntaxError in JavaScript. The compiler checks this before anything folds,
+ * because a constant `let` is inlined below and would otherwise vanish without
+ * a word.
  */
 function refuseParameterRedeclaration(program: Program): void {
   for (const node of everyNode(program as Any)) {
@@ -391,8 +394,8 @@ export function fold(program: Program): Program {
 
   // The root is folded BELOW, by the pass that also decides whether the program
   // collapses to one expression. Walking it here as well would do that work
-  // first and leave the pass below with nothing to report, and the collapse — the
-  // whole reason `const a = 1; $.x === a` is a Filter — would never happen.
+  // first, and would leave the pass below with nothing to report. The collapse
+  // — the whole reason `const a = 1; $.x === a` is a Filter — would never happen.
   const stmts = (root.stmts as readonly PipelineStmt[]).map(
     (stmt) => mapTree(stmt as unknown as object, foldNested) as unknown as PipelineStmt,
   );
@@ -408,10 +411,11 @@ export function fold(program: Program): Program {
 
   const rewritten = { type: "Pipeline", stmts: foldPartsIn(top.stmts, top.env), pos: root.pos as number } as Any;
   const left = rewritten.stmts as readonly PipelineStmt[];
-  // One EXPRESSION left is a Filter, not a pipeline of one predicate — which is
+  // One EXPRESSION left is a Filter, not a pipeline of one predicate. This is
   // the whole reason `const a = 1; $.x === a` reads as `{ "x": 1 }`. Only an
-  // expression: a write or a declaration is a pipeline either way, so unwrapping
-  // one would throw away the `;` the source wrote and gain nothing.
+  // expression collapses this way: a write or a declaration stays a pipeline
+  // either way. Unwrapping one would throw away the `;` the source wrote, and
+  // gain nothing.
   if (left.length === 1) {
     const only = left[0] as Any;
     const isStatement = only.type === "UpdateFilter" || only.type === "LetDecl" || only.type === "FuncDecl";

@@ -202,7 +202,7 @@ for (const r of STREAM_LOOKUP_RESHAPERS) {
 }
 
 // ── optional mongod runtime check ────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the driver types aren't imported unless MONGO is set
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the driver types are not imported unless MONGO is set
 let mainColl: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let client: any = null;

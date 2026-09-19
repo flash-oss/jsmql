@@ -4,17 +4,17 @@
 // lists most of the fields and loses one, invisibly, so a `jsmql.compile`
 // parameter resolves inside `.map` and throws inside `.reduce`. Nothing here is
 // optional, nothing here is a literal a caller can write, and a lambda body
-// inherits everything because the only way to make an Env is from an Env.
+// inherits everything, because the only way to make an Env is from an Env.
 //
 // Three services, no more:
 //   scope   what each JavaScript name means, and which variable names are taken
 //   site    where this node stands — phase 4's answer, the program's root, the
 //           `$literal` envelope, the sub-pipeline boundaries crossed to get here
-//   chain   the (sub-)pipeline being assembled, held BY REFERENCE: what it has
+//   chain   the (sub-)pipeline under assembly, held BY REFERENCE: what it has
 //           emitted, what a value hoisted ahead of the stage it stands in, and the
 //           scratch-slot counter
 //
-// A lowering receives its `In` record built from an Env by emit/inputs.ts; it
+// emit/inputs.ts builds a lowering's `In` record from an Env; the lowering
 // never sees the Env itself.
 
 import type { Position, Stage } from "../../registry/vocabulary.ts";
@@ -37,9 +37,10 @@ export type Boundary = {
   readonly path: BodyPath;
   readonly element?: string;
   /**
-   * For a body over ANOTHER collection: the stage's `let`, filled by the reads
-   * inside the body. Null when the stage has no `let` (`$unionWith`), so a read
-   * of the outer document there is refused rather than silently misread.
+   * For a body over ANOTHER collection: the stage's `let`, which the reads
+   * inside the body fill. It is null when the stage has no `let` (`$unionWith`),
+   * so the compiler refuses a read of the outer document there instead of
+   * silently misreading it.
    */
   readonly capture?: Capture | null;
   /** The chain the body was entered FROM — the enclosing pipeline. */
@@ -64,13 +65,13 @@ export type Site = {
 };
 
 /**
- * HR1's one gate. A string injected at runtime — a `jsmql.compile` parameter,
- * a template `${…}` — that starts with `$` is wrapped in `$literal` exactly
- * where the server would otherwise read it as a field reference: in a VALUE
- * slot the server evaluates — an expression, a stage body, a `$set` value —
- * outside a `$literal` the developer already wrote. Two places evaluate
- * nothing and take the string as written: a query slot, and an update DOCUMENT
- * (`{ $set: { x: "$b" } }` stores the string "$b"; measured).
+ * HR1's one gate. Take a string injected at runtime — a `jsmql.compile`
+ * parameter, or a template `${…}` — that starts with `$`. The compiler wraps
+ * it in `$literal` exactly where the server would otherwise read it as a field
+ * reference: in a VALUE slot the server evaluates — an expression, a stage
+ * body, a `$set` value — outside a `$literal` the developer already wrote. Two
+ * places evaluate nothing and take the string as written: a query slot, and an
+ * update DOCUMENT (`{ $set: { x: "$b" } }` stores the string "$b"; measured).
  *
  *   jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })         → { $add: ["$a", { $literal: "$b" }] }
  *   jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" }) → [{ $set: { x: { $literal: "$b" } } }]
@@ -88,8 +89,8 @@ export class Chain {
   /**
    * Is there a pipeline to place a stage in? A bare expression (`jsmql.expr`)
    * and a filter have none, so a value that must materialise a stage — the
-   * stream count — has nowhere to go and is refused rather than written into a
-   * list nothing drains.
+   * stream count — has nowhere to go. The compiler refuses it instead of
+   * writing it into a list that nothing drains.
    */
   readonly isPipeline: boolean;
   constructor(isPipeline = true) {
@@ -97,29 +98,31 @@ export class Chain {
   }
   /** The stages emitted so far. */
   readonly emitted: Stage[] = [];
-  /** Stages a value placed ahead of the stage it stands in; drained by `ahead`. */
+  /** Stages a value placed ahead of the stage it stands in; `ahead` drains them. */
   readonly hoisted: Stage[] = [];
   private slots = 0;
   /** Has anything written under `__jsmql`? Owns the trailing cleanup. */
   dirty = false;
   /**
-   * A stage that must be LAST — `$out`, `$merge`. Filed here rather than
-   * emitted, so nothing can land after it and the cleanup always precedes it.
+   * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
+   * rather than emitting it, so nothing can land after it, and the cleanup
+   * always precedes it.
    */
   terminal: Stage | null = null;
   /**
-   * Where the stream's ELEMENT lives on its documents: `""` when the element IS the
-   * document, the unwound field's path after `.flatMap("items")` — a callback's
-   * parameter then stands for that field, and its fields for `items.<field>`. The
-   * documents themselves keep carrying their other fields (`$unwind` preserves
-   * them); a stage that replaces the document makes the document the element
-   * again. See docs/specs/stream-methods.md § The element after `.flatMap`.
+   * Where the stream's ELEMENT lives on its documents: `""` when the element IS
+   * the document, or the unwound field's path after `.flatMap("items")` — a
+   * callback's parameter then stands for that field, and its fields stand for
+   * `items.<field>`. The documents themselves still carry their other fields
+   * (`$unwind` preserves them); a stage that replaces the document makes the
+   * document the element again. See docs/specs/stream-methods.md § The element
+   * after `.flatMap`.
    */
   element = "";
 
   /**
-   * A stage has been placed: one that replaces the document leaves no unwound
-   * field to point at. `replaces` is the row's own fact, judged by the caller.
+   * A stage lands: one that replaces the document leaves no unwound field to
+   * point at. `replaces` is the row's own fact; the caller judges it.
    */
   placed(replaces: boolean): void {
     if (replaces) this.element = "";
@@ -132,24 +135,24 @@ export class Chain {
   }
 
   /**
-   * The field paths a materialiser has already stamped and that are still FRESH —
-   * see docs/specs/stream-length.md § Compute-once / reuse / recompute. A second read
-   * of a stamped path costs no stage; a stage whose row does not state
+   * The field paths a materialiser stamped, that are still FRESH — see
+   * docs/specs/stream-length.md § Compute-once / reuse / recompute. A second
+   * read of a stamped path costs no stage. A stage whose row does not state
    * `preservesCount` clears the set, so the next read stamps again.
    */
   private stamped = new Set<string>();
 
   /**
-   * A mark for a lowering that may be TAKEN BACK. A chain that goes on after a join
-   * lowers the body twice, and the first attempt's hoists are discarded — so the
-   * stamps it took have to go with them, or the second attempt reuses a field the
-   * discarded stage was going to write.
+   * A mark for a lowering that the compiler may TAKE BACK. A chain that goes on
+   * after a join lowers the body twice, and it discards the first attempt's
+   * hoists — so the stamps from that attempt must go too, or the second attempt
+   * reuses a field the discarded stage would have written.
    *
-   * The scratch counter goes back too. A slot the discarded attempt minted is named
-   * only by the stages that went with it, so holding the number would leave a gap —
-   * and the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
-   * spelled with a `;` would name the same slot `__jsmql.tmp.1` and `__jsmql.tmp.0`.
-   * One lowering, one output.
+   * The scratch counter goes back too. Only the stages that went with a slot
+   * name it, so keeping the discarded attempt's number would leave a gap — and
+   * the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
+   * spelled with a `;` would name the same slot `__jsmql.tmp.1` and
+   * `__jsmql.tmp.0`. One lowering, one output.
    */
   mark(): { hoisted: number; stamped: ReadonlySet<string>; slots: number } {
     return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
@@ -173,9 +176,9 @@ export class Chain {
   }
 
   /**
-   * A statement's stages have landed. A stage that does not state `preservesCount`
-   * changes how many documents there are, or what fields they carry, so every stamp
-   * taken before it now says something that is no longer true.
+   * A statement's stages land. A stage that does not state `preservesCount`
+   * changes how many documents there are, or what fields they carry, so every
+   * stamp taken before it now states something that is no longer true.
    */
   advance(stages: readonly Stage[]): void {
     for (const stage of stages) {
@@ -190,14 +193,15 @@ export class Chain {
    * The stages hoisted so far, TAKEN OUT so they can stand directly ahead of the
    * stages of the lowering that hoisted them.
    *
-   * A hoisted stage reads the documents the stage it was written for reads, so it
-   * has to land beside it and not at the front of the statement: MEASURED, the
-   * `$lookup` of `$$.$sortByCount($.productIds).map(g => $$$.products.find({ _id:
-   * g._id }))` placed ahead of the whole statement joined on the SOURCE document's
-   * `_id`, and `$sortByCount` then replaced the document and dropped the slot — so
-   * every row came back without its joined field and the server said nothing. A
-   * road that makes several stages out of one statement therefore drains at each
-   * of them. See docs/specs/lookup-stage.md § Where a hoisted stage lands.
+   * A hoisted stage reads the same documents as the stage it was written for, so
+   * it must land beside that stage and not at the front of the statement:
+   * MEASURED, the `$lookup` of `$$.$sortByCount($.productIds).map(g =>
+   * $$$.products.find({ _id: g._id }))` stood ahead of the whole statement,
+   * joined on the SOURCE document's `_id`, and `$sortByCount` then replaced the
+   * document and dropped the slot — so every row came back without its joined
+   * field, and the server reported nothing wrong. A road that makes several
+   * stages out of one statement therefore drains at each of them. See
+   * docs/specs/lookup-stage.md § Where a hoisted stage lands.
    */
   ahead(): Stage[] {
     const out = [...this.hoisted];
@@ -210,7 +214,7 @@ export class Chain {
     this.emitted.push(...this.ahead());
   }
 
-  /** The finished pipeline: the stages, the cleanup if anything was written under `__jsmql`, the terminal stage. */
+  /** The finished pipeline: the stages, the cleanup if anything wrote under `__jsmql`, and the terminal stage. */
   close(): Stage[] {
     this.flush();
     const out = [...this.emitted];
@@ -220,7 +224,7 @@ export class Chain {
   }
 }
 
-/** A variable bound for a body, and the Env that body is lowered under. */
+/** A variable bound for a body, and the Env under which that body lowers. */
 export type Bound = { readonly as: MongoVar; readonly ref: VarRef; readonly env: Env };
 
 export class Env {
@@ -228,11 +232,12 @@ export class Env {
   readonly site: Site;
   readonly chain: Chain;
   /**
-   * Field paths a test on the way in has already PROVEN are there.
+   * Field paths that a test on the way in PROVES are there.
    *
-   * A `?.` stops its chain with a test on the guarded field, and the rest of the chain
-   * runs only when that test passed — so inside it the field cannot be missing, and the
-   * `$ifNull` a cell would otherwise put on it is dead. `isPresent` reads this set.
+   * A `?.` stops its chain with a test on the guarded field, and the rest of the
+   * chain runs only when that test passes — so inside it the field cannot be
+   * missing, and the `$ifNull` that a cell would otherwise put on it is dead.
+   * `isPresent` reads this set.
    */
   readonly proven: ReadonlySet<string>;
 
@@ -249,9 +254,9 @@ export class Env {
   }
 
   /**
-   * The Env a program starts in. Every name the program introduces anywhere is
-   * reserved for the whole of it, so a compiler mint never shadows a parameter
-   * bound deeper in.
+   * The Env a program starts in. The compiler reserves every name the program
+   * introduces anywhere for the whole of it, so a compiler mint never shadows a
+   * parameter bound deeper in.
    */
   static root(program: object, root: Position, chain: Chain = new Chain(root === "statement")): Env {
     const site: Site = { where: { at: root }, root, envelope: "none", boundaries: [], inside: null };
@@ -277,10 +282,10 @@ export class Env {
    */
   render(loc: Located, pos: number): string {
     if (loc.kind === "var") {
-      // A MongoDB variable is bound by an EXPRESSION — `$map`, `$filter`, `$reduce`,
-      // `$let` — and a body over another collection belongs to a STAGE hoisted out of
-      // it, where the name has never been bound. MEASURED: mongod answers "Use of
-      // undefined variable: x" and the pipeline does not run at all.
+      // An EXPRESSION binds a MongoDB variable — `$map`, `$filter`, `$reduce`,
+      // `$let` — but a body over another collection belongs to a STAGE hoisted
+      // out of it, where the name is never bound. MEASURED: mongod answers "Use
+      // of undefined variable: x", and the pipeline does not run at all.
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }
@@ -305,9 +310,9 @@ export class Env {
   }
 
   /**
-   * The Env after a stage that replaced the document: every field-carried binding is
-   * gone, and so is every path a test proved — the document those paths were read from
-   * is not the document the next stage sees.
+   * The Env after a stage that replaced the document: every field-carried
+   * binding is gone, and so is every path a test proved — the document that
+   * held those paths is not the document the next stage sees.
    */
   dropFields(by: string, message: (js: string, mutable: boolean) => string): Env {
     return new Env(this.scope.dropFields(by, message), this.site, this.chain);

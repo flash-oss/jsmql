@@ -15,10 +15,10 @@ import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const up = await liveUp();
 
-/** MEASURED on mongod: a lowercase ASCII lead, then `[A-Za-z0-9_]`. See names.ts. */
+/** The server accepts a variable name that starts with a lowercase ASCII letter, then `[A-Za-z0-9_]`. This rule is measured on mongod. See names.ts. */
 const SERVER_GRAMMAR = /^[a-z][A-Za-z0-9_]*$/;
 
-/** A deterministic sample of JavaScript identifiers, legal and hostile alike. */
+/** A deterministic sample of JavaScript identifiers. This sample includes legal identifiers and ones the server refuses. */
 function identifiers(count: number): string[] {
   const alphabet = ["a", "b", "z", "A", "Z", "_", "$", "0", "9", "é", "ß", "漢", "😀", "v", "i", "d"];
   const out: string[] = [];
@@ -89,10 +89,10 @@ describe("compiler/emit/names — I4: two JavaScript names never become one vari
 });
 
 describe("compiler/emit/names — I1: a mint is never a name the program uses", () => {
-  it("steps aside from a name bound anywhere in the program, not only in scope here", () => {
-    // `jsmqlArr` is a parameter of a lambda DEEPER than the mint site: with only
-    // the in-scope names consulted, the mint would be `jsmqlArr` and the inner
-    // body would read the wrong binding.
+  it("avoids a name bound anywhere in the program, not only in the current scope", () => {
+    // `jsmqlArr` is a parameter of a lambda DEEPER than the mint site. If we consult
+    // only the in-scope names, the mint would be `jsmqlArr` and the inner body would
+    // read the wrong binding.
     const root = Scope.root(["x", "jsmqlArr", "jsmqlArr2"]);
     expect(root.bind("arr").as).toBe("jsmqlArr3");
   });

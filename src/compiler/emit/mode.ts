@@ -10,16 +10,16 @@
 //     []     true         true
 //     {}     true         true
 // So a JavaScript spelling that READS a condition — `? :`, `&&`, `||`, `!`, a
-// predicate body — checks missing, null, false, "" and 0 itself; the developer's
-// ruling. NaN is not checked: JSMQL does not support NaN. The `$op(...)` escape
-// hatch is the developer's own MQL and is not read here at all — MongoExprIn has
-// no `truth` service.
+// predicate body — checks missing, null, false, "" and 0 itself. This is the
+// developer's own ruling. NaN is not checked: JSMQL does not support NaN. The
+// `$op(...)` escape hatch is the developer's own MQL. It is not read here at
+// all — MongoExprIn has no `truth` service.
 //
-// `Truth` is a brand the vocabulary declares and this module alone mints. Every
-// slot that reads a boolean is typed to take one (see mql.ts), so a value cannot
-// land in `$cond.if` without passing through here — and a node whose row states
-// `returns: "bool"` passes through unchanged, so `$.a > 1 ? 1 : 2` carries no
-// check the comparison already made.
+// `Truth` is a brand. The vocabulary declares it, and this module alone mints
+// it. Every slot that reads a boolean is typed to take a `Truth` (see mql.ts).
+// So a value cannot land in `$cond.if` without passing through here. A node
+// whose row states `returns: "bool"` passes through unchanged, so
+// `$.a > 1 ? 1 : 2` carries no check that the comparison already made.
 
 import type { Truth } from "../../registry/vocabulary.ts";
 
@@ -41,8 +41,9 @@ export const jsTruthy = (value: unknown): Truth =>
   });
 
 /**
- * A lowered value read as a condition. `isBool` is what the producing row's
- * `returns` says: a boolean is its own truth, anything else is checked.
+ * A lowered value read as a condition. `isBool` states what the producing
+ * row's `returns` field says. A boolean is its own truth; the function
+ * checks anything else.
  */
 export const truthOf = (value: unknown, isBool: boolean): Truth => (isBool ? mint(value) : jsTruthy(value));
 
@@ -55,10 +56,10 @@ const operandsOf = (op: "$and" | "$or", t: Truth): readonly Truth[] => {
   return Array.isArray(inner) ? (inner as Truth[]) : [t];
 };
 
-/** `a && b` read for truth. Nested `$and`s are flattened into one. */
+/** `a && b` read for truth. This flattens a nested `$and` into one. */
 export const and = (...ts: readonly Truth[]): Truth => mint({ $and: ts.flatMap((t) => operandsOf("$and", t)) });
 
-/** `a || b` read for truth. Nested `$or`s are flattened into one. */
+/** `a || b` read for truth. This flattens a nested `$or` into one. */
 export const or = (...ts: readonly Truth[]): Truth => mint({ $or: ts.flatMap((t) => operandsOf("$or", t)) });
 
 /** `!a`. */

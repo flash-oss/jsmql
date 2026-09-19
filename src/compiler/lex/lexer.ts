@@ -1,11 +1,11 @@
 // Phase 1 — LEX. Driven by src/registry/tokens.ts and src/registry/keywords.ts.
 //
-// The punctuator order is DERIVED from the key lengths, and a reserved word is
-// promoted by the keywords table — so nothing here is ordered or branched by
-// hand, and adding a token is a row.
+// The punctuator order comes from the key lengths, and the keywords table
+// promotes a reserved word. So nothing here is ordered or branched by hand,
+// and adding a token means adding a row.
 //
-// Five decisions a longest-match table cannot imply are stated on the rows that
-// own them, and read below:
+// A longest-match table cannot state five decisions. The rows that own them
+// state each one, and this file reads them below:
 //   maxRun                  `$$$$$` must fail, not match `$$$$` then `$`
 //   chooseBy                `/` is division after a value, a regex otherwise
 //   introducesName          after `.`, `?.`, `$.` and `$` a reserved word is a NAME
@@ -30,13 +30,13 @@ import {
 
 // ── the tables, built once from the registry ─────────────────────────────────
 
-/** The one spelling that opens and closes a template, and its two types. */
+/** The one spelling that opens and closes a template. It has two types. */
 const TEMPLATE_DELIMITER = "`";
 const TEMPLATE_EXPR_OPEN = "${";
 
 type Punct = {
   spelling: string;
-  /** The single type, when the row names one. */
+  /** The single type, when the row names one type. */
   type: TokenName | null;
   chooseBy: { afterValue: TokenName; otherwise: TokenName } | null;
   tracksDepth: boolean;
@@ -45,11 +45,11 @@ type Punct = {
 
 /**
  * Every fixed spelling, LONGEST FIRST. The order is the key length, so `===`
- * cannot be shadowed by `==` and no row has to be placed by hand.
+ * cannot be shadowed by `==`, and no row has to be placed by hand.
  *
- * A row that names two token types must also say how to choose between them,
- * and that is checked HERE, at load, rather than on the first source that
- * happens to contain the spelling.
+ * A row that names two token types must also say how to choose between them.
+ * This code checks that HERE, at load time, and not on the first source text
+ * that happens to hold the spelling.
  */
 const PUNCTUATORS: readonly Punct[] = Object.entries(TOKENS)
   .filter(([, row]) => row.variable !== true)
@@ -62,7 +62,7 @@ const PUNCTUATORS: readonly Punct[] = Object.entries(TOKENS)
       resumesTemplateAtDepth: "resumesTemplateAtDepth" in row && row.resumesTemplateAtDepth === true,
     };
     // The backtick is the one two-typed row decided by its OWN position, not by
-    // the preceding token; it is scanned by the template branch and never here.
+    // the preceding token. The template branch scans it, and this code never does.
     if (punct.type === null && punct.chooseBy === null && spelling !== TEMPLATE_DELIMITER) {
       throw new Error(`tokens.ts: '${spelling}' names two token types and no chooseBy rule to pick one`);
     }
@@ -71,9 +71,9 @@ const PUNCTUATORS: readonly Punct[] = Object.entries(TOKENS)
   .sort((a, b) => b.spelling.length - a.spelling.length);
 
 /**
- * The scanner each `chooseBy.otherwise` type names. A table, so a third
- * position-classified spelling states its scanner here instead of being read
- * as a regex because that was the only branch.
+ * The scanner named by each `chooseBy.otherwise` type. This is a table, so a
+ * third position-classified spelling can state its own scanner here, instead
+ * of being read as a regex only because that was the one branch available.
  */
 const OTHERWISE_SCANNERS: Readonly<Partial<Record<TokenName, (src: string, i: number) => RegexScan>>> = {
   RegexLiteral: scanRegex,
@@ -87,8 +87,8 @@ const INTRODUCES_NAME: ReadonlySet<TokenName> = new Set(
 );
 
 /**
- * A cap on a repeated character, from the row that states it. The key IS the
- * longest legal run, so `$$$$` gives the character and the limit together.
+ * A cap on a repeated character, taken from the row that states it. The key IS
+ * the longest legal run, so `$$$$` gives the character and the limit together.
  */
 const MAX_RUN: ReadonlyMap<string, { limit: number; tooLong: string }> = new Map(
   Object.entries(TOKENS)
@@ -109,7 +109,7 @@ export function lex(src: string): Token[] {
   const out: Token[] = [];
   let i = 0;
   let braceDepth = 0;
-  /** One entry per open template interpolation, holding the depth it started at. */
+  /** One entry for each open template interpolation. It holds the depth it started at. */
   const templateDepths: number[] = [];
   let last: TokenName | null = null;
 
@@ -119,8 +119,8 @@ export function lex(src: string): Token[] {
   };
 
   /**
-   * Read template text up to the next boundary. Always emits the text, then
-   * either the closing delimiter or the interpolation opener.
+   * Read template text up to the next boundary. This always emits the text,
+   * then either the closing delimiter or the interpolation opener.
    */
   const templateChunk = (from: number): number => {
     let j = from;
@@ -156,8 +156,8 @@ export function lex(src: string): Token[] {
     const start = i;
     const ch = src[i];
 
-    // A name, or a reserved word promoted to its own type — unless the token
-    // before it says the word is a NAME here: `$.typeof`, `x.delete`, `$in(…)`.
+    // A name, or a reserved word promoted to its own type. The exception is
+    // when the token before it says the word is a NAME here: `$.typeof`, `x.delete`, `$in(…)`.
     if (isIdentStart(ch)) {
       const scan = scanIdent(src, i);
       const asName = last !== null && INTRODUCES_NAME.has(last);
@@ -187,8 +187,8 @@ export function lex(src: string): Token[] {
       continue;
     }
 
-    // A run longer than its row allows. Checked BEFORE the match, because
-    // longest-match alone would happily split it into two legal tokens.
+    // A run longer than its row allows. This code checks it BEFORE the match,
+    // because longest-match alone would split it into two legal tokens.
     const cap = MAX_RUN.get(ch);
     if (cap !== undefined) {
       let run = 0;
@@ -199,7 +199,7 @@ export function lex(src: string): Token[] {
     const hit = PUNCTUATORS.find((p) => src.startsWith(p.spelling, i));
     if (hit === undefined) throw new LexError(`Unexpected character '${ch}'`, start);
 
-    // One spelling, two types, decided on the PRECEDING token.
+    // One spelling, two types. The PRECEDING token decides which type applies.
     if (hit.chooseBy !== null) {
       const afterValue = last !== null && VALUE_END.has(last);
       if (!afterValue) {
@@ -217,7 +217,7 @@ export function lex(src: string): Token[] {
       continue;
     }
 
-    // The one closer that emits nothing: it ends an interpolation instead.
+    // The one closer that emits nothing. It ends an interpolation instead.
     if (
       hit.resumesTemplateAtDepth &&
       templateDepths.length > 0 &&
@@ -228,9 +228,9 @@ export function lex(src: string): Token[] {
       continue;
     }
 
-    // `type === null` is impossible here: a two-typed row either has `chooseBy`
-    // (handled above) or is the backtick (handled by the template branch), and
-    // PUNCTUATORS refused every other shape at load.
+    // `type === null` is impossible here. A two-typed row either has `chooseBy`
+    // (handled above) or is the backtick (handled by the template branch).
+    // PUNCTUATORS refused every other shape at load time.
     if (hit.type === null) throw new LexError(`'${hit.spelling}' has no single token type`, start);
     push(token(hit.type, hit.spelling, i));
     if (hit.tracksDepth) braceDepth++;

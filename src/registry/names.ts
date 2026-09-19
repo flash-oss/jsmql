@@ -1,13 +1,13 @@
 // REGISTRY 4 of 4 — every name. SEMANTIC phase.
 //
-// Keyed by the name exactly as the user types it. `sort` and `$sort` are two
-// keys because they are two names — a JavaScript name and a MongoDB one — and
-// the audit at the foot of this file makes writing either under the other's key
-// a compile error.
+// The key is the name exactly as the user types it. `sort` and `$sort` are two
+// keys because they are two names — a JavaScript name and a MongoDB one. The
+// audit at the foot of this file makes a compile error if you write either name
+// under the other's key.
 //
 // Four kinds share this file because they share one key space — a name — and one
-// question: given this name and this receiver, in which positions is it legal
-// and what MQL does each produce.
+// question. For this name and this receiver, in which positions is the name
+// legal, and what MQL does each position produce?
 //
 //   root    `$`, `$$`, `Math`      a receiver a binder can attach a name to
 //   name    `sort`, `trim`, `max`  a JavaScript name
@@ -126,10 +126,10 @@ type RootSpec<W extends readonly Position[]> = {
    */
   returns?: Returns;
   where: W;
-  // A root is gated like every other entry. Before these six cells existed, the
-  // three context refs said `where: ["stream"]` while their only stated message
-  // read "'$$' is a statement, not an aggregation expression" — one construct,
-  // two registries, two answers, and nothing to catch it.
+  // A root is gated like every other entry. The six cells below hold its messages,
+  // so one construct has one registry and one answer. Without them a context ref
+  // states `where: ["stream"]` in one place and a different message in another,
+  // and nothing catches the disagreement.
   filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
   expr: Cell<Lists<W, "value">, Family, ExprIn, OutOf["value"]>;
   stream: Cell<Lists<W, "stream">, Family, StageIn, OutOf["stream"]>;
@@ -145,10 +145,10 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /** Probed in declaration order, so precedence is visible. */
   on: O;
   /**
-   * What the method needs of its receiver's ELEMENTS. `"scalar"`: an element that
-   * is an array makes the server refuse (`$toString` of an array), so a receiver
-   * that provably holds arrays — a literal of literals, `.partition(…)` — is refused
-   * at compile time with the flatten / map-each rewrite.
+   * What the method needs of its receiver's ELEMENTS. `"scalar"`: the server refuses
+   * an element that is an array (`$toString` of an array). So the compiler refuses a
+   * receiver that provably holds arrays — a literal of literals, `.partition(…)` — at
+   * compile time, and it names the flatten / map-each rewrite.
    */
   elements?: "scalar";
   /**
@@ -180,12 +180,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /**
    * The stream cell folds the whole stream into ONE document — `countBy` and `keyBy`
    * always, `groupBy` unless its argument is a RAW `$group` body
-   * (`"unlessRawBody"`): `$$.groupBy(d => d.cat)` builds lodash's one object, while
+   * (`"unlessRawBody"`): `$$.groupBy(d => d.cat)` builds lodash's one object, but
    * `$$.groupBy({ _id: "$cat", n: $sum(1) })` is the stage itself and keeps a stream.
    * On another collection the joined array then holds that one document, which IS
    * the value — so the read unwraps it. The question is the argument's SHAPE, not its
    * spelling: the desugar pass rewrites a field-name string into an arrow long before
-   * emit, so asking for a string literal here asks something that can never be true.
+   * emit. A test for a string literal here can never be true.
    */
   collapses?: true | "unlessRawBody";
   /**
@@ -193,8 +193,8 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * null or missing — never for an input that is there. `.map`, `.filter`,
    * `.slice`, `Object.keys` state it: `$map` over an array is an array. `.find`
    * (the element may be missing), `.max` (of an empty array, null) and `.match`
-   * (`$regexFind` answers null for no match) do not. Read by `isPresent`
-   * (src/compiler/emit/types.ts) so a `$size` / `$in` over such a chain needs no
+   * (`$regexFind` answers null for no match) do not. `isPresent` reads this fact
+   * (src/compiler/emit/types.ts), so a `$size` / `$in` over such a chain needs no
    * `$ifNull` guard when the chain starts from something that is there.
    */
   neverNull?: true;
@@ -210,10 +210,10 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * The stream cell works on the ELEMENT, not on the document — `.difference(list)`
    * keeps the unwound values that are not in `list`. On a stream whose element IS
    * the document (no `.flatMap` before it) the link is not a stream link: at the
-   * top of a pipeline it is refused with `why`, and in a join it reads the joined
-   * array as a value, like any link without a stream cell. `when: "bare"` is for a
-   * row whose ZERO-argument call alone reads the element — `.sortBy()` sorts by the
-   * values, while `.sortBy("k")` is a stream link on any stream.
+   * top of a pipeline the compiler refuses it with `why`, and in a join it reads the
+   * joined array as a value, like any link without a stream cell. `when: "bare"` is
+   * for a row whose ZERO-argument call alone reads the element — `.sortBy()` sorts by
+   * the values, but `.sortBy("k")` is a stream link on any stream.
    */
   elementOnly?: { when: "always" | "bare"; why: string };
   /** On the stream this method UNIONS documents in — `push` as a statement, `concat` as a link — a `$unionWith` per source. */
@@ -236,35 +236,35 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * One row serves both, so a single layout would misplace one of them. Absent
    * means no slot on any receiver takes one.
    *
-   * ONLY these slots may have a short spelling rewritten into the arrow it
-   * means, and that is the whole reason the field exists: three other kinds of
-   * slot wear the same three spellings and mean none of them.
+   * ONLY these slots accept a short spelling that the compiler rewrites into the
+   * arrow it means. That is the whole reason the field exists: three other kinds
+   * of slot wear the same three spellings and mean none of them.
    *
    *   $.items.filter({ f: 1 })      → {"$eq": ["$$item.f", 1]}     a matcher
    *   $.items.toSorted({ f: 1 })    → {"sortBy": {"f": 1}}         a DIRECTION
    *   $.user.pick(["a", "b"])       → per-key $getField            field NAMES
    *   $$ = $$.groupBy({ _id: … })   → {"$group": {…}}              a stage body
    *
-   * A rewrite driven by the argument's SHAPE instead of by this field turns a
-   * sort into a matcher without a word of warning. `.sortBy()` already refuses
-   * the object form for exactly this reason, and its message says so.
+   * A rewrite that reads the argument's SHAPE instead of this field turns a
+   * sort into a matcher without a word of warning. `.sortBy()` refuses the object
+   * form for exactly this reason, and its message says so.
    *
-   * Not on `Arity`, where a field of this name once sat unused by every row: an
-   * `Arity` requires a `sig` and a count, so a cell could not state a spelling
-   * without also inventing an argument count it had no reason to claim.
+   * The field does not sit on `Arity`. An `Arity` requires a `sig` and a count, so
+   * a cell there could not state a spelling without also an argument count that it
+   * has no reason to claim.
    */
   iterateeSlots?: Readonly<Partial<Record<Family, IterateeSlots>>>;
   /**
-   * The name that means the SAME THING without mutating, taking the SAME
+   * The name that means the SAME THING, mutates nothing, and takes the SAME
    * arguments. Present only on a mutator, and only where such a name exists:
    *   $.a.sort(k);      immutableTwin: "toSorted"     → $.a = $.a.toSorted(k)
    *   $.a.reverse();    immutableTwin: "toReversed"   → $.a = $.a.toReversed()
    *
    * "Same arguments" is the whole of the test. `.pop()` has no entry even though
    * `.toSpliced(-1, 1)` computes the same array: those arguments are not the ones
-   * the caller wrote, so the rewrite has to invent them, and the MQL comes out
-   * 1.5x the size of lowering `.pop()` on its own (`.shift()`, 4.4x). A mutator
-   * with no entry here is lowered directly instead.
+   * the caller wrote. The rewrite must invent them, and the MQL comes out 1.5x the
+   * size of the direct lowering of `.pop()` (`.shift()`, 4.4x). The compiler lowers
+   * a mutator with no entry here directly instead.
    */
   immutableTwin?: T;
   /**
@@ -272,8 +272,8 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * an immutable spelling — a shape rather than a name, so it cannot go above:
    *   $.a.push(9);      "receiver, then arguments"   → $.a = [...$.a, 9]
    *   $.a.unshift(9);   "arguments, then receiver"   → $.a = [9, ...$.a]
-   * Spelled out in words because the two orders are the entire content of the
-   * field, and "start"/"end" would leave the reader asking start of what.
+   * The field spells the two orders out in words, because the two orders are its
+   * entire content. "start"/"end" would leave the reader to ask "start of what?".
    */
   asArrayLiteral?: "receiver, then arguments" | "arguments, then receiver";
   /**
@@ -284,17 +284,18 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   mutatorForm?: MutatorForm;
   /**
    * What a `{ … }` body on this name MEANS. Absent = "javascript", which is every
-   * name but one: a stage inside such a block is refused with a rewrite hint.
+   * name but one: the compiler refuses a stage inside such a block, and gives a
+   * rewrite hint.
    *   $$ = $$.map(d => { $sort({a:1}); });        → "takes a JavaScript callback"
    *   $$ = $$.aggregate(o => { $sort({a:1}); });  → [{ "$sort": { "a": 1 } }]
    */
   blockBody?: "javascript" | "stages";
   /**
    * The index of the argument this name writes IN PLACE, when it does. The fold
-   * pass reads it: a binding handed to `Object.assign(target, …)` is no longer
-   * the constant it was declared as, wherever the call stands. Stated on the row
-   * rather than matched by name in the pass, which is how the pass stays free of
-   * a list that would have to grow with the language.
+   * pass reads it: a binding that goes to `Object.assign(target, …)` stops being
+   * the constant its declaration made it, wherever the call stands. The row states
+   * the fact, and the pass does not match the name. This keeps the pass free of a
+   * list that must grow with the language.
    */
   mutatesArgumentAt?: number;
   returns: Returns;
@@ -323,9 +324,9 @@ type MongoSpec<
   I extends Readonly<Partial<Record<Position, readonly string[]>>> = Readonly<Record<never, never>>,
 > = {
   /**
-   * Lifted from vendor/mql-specifications; the drift test compares it. A name that is
-   * BOTH an operator and a stage ($count) has two descriptions, and one string cannot
-   * hold both — so those rows state each against its role.
+   * This text comes from vendor/mql-specifications, and the drift test compares it.
+   * A name that is BOTH an operator and a stage ($count) has two descriptions, and one
+   * string cannot hold both — so those rows state each description against its role.
    */
   doc: string | { operator: string; stage: string };
   /**
@@ -338,13 +339,13 @@ type MongoSpec<
   /** The kind of ONE element of the array this name returns — see `elementKind` on `NameSpec`. */
   elementKind?: Kind;
   /**
-   * How the operand list is written, for the expression positions. Omitted for
+   * How the row writes the operand list, for the expression positions. Omitted for
    * a name that is only ever a stage: its `body` is its shape.
    *
    *   "single"    one operand — `{ $abs: <operand> }`; a lone array literal with
-   *               one element is the operand list as written (`$size([$.a])` →
+   *               one element is the operand list as the user wrote it (`$size([$.a])` →
    *               `{ $size: ["$a"] }`, HR2), with two or more it can only be the
-   *               array VALUE and is wrapped once (`$arrayToObject([[k, v], …])` →
+   *               array VALUE and the emitter wraps it once (`$arrayToObject([[k, v], …])` →
    *               `{ $arrayToObject: [[…]] }` — the server reads a literal array in
    *               the slot as its argument list)
    *   "array"     a list of two or more, or one array literal that IS the list
@@ -358,22 +359,22 @@ type MongoSpec<
   /** Stage-position facts. Meaningful when `where` includes "stream". */
   body?: BodyRule;
   /**
-   * The smallest CORRECT call of this stage, quoted back when the body it was
-   * given is of the wrong type — `$sample(5)` answers with
-   * "…, e.g. '$sample({ size: 10 })'". Stated per stage, because the shortest
-   * right answer for `$group` is not the one for `$sample`, and written as the
-   * WHOLE call so the message quotes it as it stands. Each string COMPILES, as
+   * The smallest CORRECT call of this stage. The message quotes it back when the
+   * body has the wrong type — `$sample(5)` answers with
+   * "…, e.g. '$sample({ size: 10 })'". Each stage states its own, because the
+   * shortest right answer for `$group` is not the one for `$sample`. The row gives
+   * the WHOLE call, so the message quotes it as it stands. Each string COMPILES, as
    * a statement of its own and inside a bracketed pipeline.
    */
   bodyExample?: string;
   /**
    * Which POSITION each path inside this stage's body stands in.
    *
-   * Keys are DOTTED PATHS from the body. `""` is the body itself, a `*` segment
-   * is "every key at this level", and the longest matching key wins — so `""`
-   * states the default for the whole body and a deeper key overrides it for its
+   * Each key is a DOTTED PATH from the body. `""` is the body itself, a `*` segment
+   * means "every key at this level", and the longest key that matches wins. So `""`
+   * states the default for the whole body, and a deeper key overrides it for its
    * own subtree. A flat key list could not reach $rankFusion's pipelines, which
-   * sit two levels down and are user-named:
+   * sit two levels down and carry the user's own names:
    *   $lookup           → { "": "value", pipeline: "statement" }
    *   $merge            → { "": "value", whenMatched: { list: "statement", otherwise: "value" } }
    *   $rankFusion       → { "": "value", "input.pipelines.*": "statement" }
@@ -381,18 +382,18 @@ type MongoSpec<
    *   $setWindowFields  → { "": "value", "output.*": "window" }
    *
    * STATED, never derived, because a body can mix positions and only the row
-   * knows how. `$group`'s `_id` is an ordinary expression while every OTHER key
+   * knows how. `$group`'s `_id` is an ordinary expression, but every OTHER key
    * of the same body is an accumulator — and the two differ on mongod:
    *   { $group: { _id: { $sum: ["$x","$y"] }, s: "…" } }   accepted
    *   { $group: { _id: null, s: { $sum: ["$x","$y"] } } }
    *     → "The $sum accumulator is a unary operator"
-   * A body position left unstated emits a document mongod refuses:
+   * A body position that states nothing emits a document mongod refuses:
    * `$group` output (above), `$geoNear.query` and
    * `$graphLookup.restrictSearchWithMatch` (both → "unknown top level operator:
    * $eq", because a query slot is not an expression slot).
    *
    * A slot that holds TWO shapes states both. `$merge.whenMatched` takes one of
-   * four WORDS or an update pipeline, and the two are read differently:
+   * four WORDS or an update pipeline, and the server reads the two differently:
    *   { $merge: { into: "x", whenMatched: "replace" } }        accepted
    *   { $merge: { into: "x", whenMatched: [{ $set: … }] } }    accepted
    * `list` is what a bracketed list means there, `otherwise` what anything else
@@ -402,8 +403,8 @@ type MongoSpec<
   /** What this operator's callback parameters bind. See `CallbackParams`. */
   params?: CallbackParams;
   /**
-   * The MongoDB VARIABLES this operator brings into scope, and in which keys of
-   * its body they are visible. See `Binds`. Absent means it binds none.
+   * The MongoDB VARIABLES this operator brings into scope, and the keys of its
+   * body that can see them. See `Binds`. Absent means it binds none.
    */
   binds?: Binds;
   /**
@@ -419,12 +420,12 @@ type MongoSpec<
    * `where` includes `value`, `group` or `window`; a test holds both directions.
    *
    * MEASURED, one operator at a time, with `{ $type: <a well-typed call> }` on a
-   * running mongod. Never read off the vendored spec's `type:` field, which says
-   * `resolvesToString` for `$trunc` — the one row where all three sources
-   * disagree, and the reason the process is written down here.
+   * live mongod. Never read the value off the vendored spec's `type:` field, which
+   * says `resolvesToString` for `$trunc` — the one row where all three sources
+   * disagree, and the reason this note states the process.
    *
    * `"unknown"` is a fact, not a gap: the type FOLLOWS THE OPERANDS, so no single
-   * answer is true. Each was measured twice, with operands of two families:
+   * answer is true. A measurement of each one ran twice, with operands of two families:
    *   { $subtract: ["$d", 1000] }  → date        { $subtract: ["$d", "$d"] } → long
    *   { $max: "$n" }               → int         { $max: "$s" }              → string
    * Absence would mean the same thing to a type check, and say nothing to a
@@ -432,56 +433,56 @@ type MongoSpec<
    */
   returns?: Returns;
   /**
-   * true when this stage REPLACES the document, so nothing carried in a field
+   * true when this stage REPLACES the document, so nothing that a field carries
    * survives it. MEASURED — the six that do, and the near neighbours that do not:
    *   let t = $.a; $group({_id:$.k}); $.b = t   → "`t` … can't be read after '$group'"
    *   let t = $.a; $project({a:1});   $.b = t   → compiles
    *   let t = $.a; $sort({a:1});      $.b = t   → compiles
-   * Three separate consumers need it: the scope tracker that drops `let`
-   * bindings, the peephole that skips the trailing namespace cleanup, and the
+   * Three separate consumers need it: the scope tracker that drops a `let`
+   * binding, the peephole that skips the last namespace cleanup, and the
    * stream-chain form. One row states it, so all three read the same fact.
    */
   /**
-   * The stage drops every field the input document carried, so a binding held
-   * in a `__jsmql.var.*` field is gone after it. `"inclusion"` says the drop
+   * The stage drops every field of the input document, so a binding in a
+   * `__jsmql.var.*` field is gone after it. `"inclusion"` says that the drop
    * depends on the body: a `$project` that names fields to KEEP drops the rest,
-   * one that names fields to remove keeps them — measured, the binding survived
-   * `{ $project: { x: 0 } }` and vanished under `{ $project: { x: 1 } }`.
+   * and one that names fields to remove keeps them. MEASURED: the binding survived
+   * `{ $project: { x: 0 } }` and went away under `{ $project: { x: 1 } }`.
    */
   replacesDocument?: true | "inclusion";
   /**
    * The operator answers null ONLY for a null or missing operand — never for
    * operands that are there: `$range` of two numbers is an array. The same fact
-   * `neverNull` states on a JavaScript row; `isPresent` (src/compiler/emit/types.ts)
+   * `neverNull` states on a JavaScript row. `isPresent` (src/compiler/emit/types.ts)
    * reads both.
    */
   neverNull?: true;
   /**
    * A DIAGNOSTIC source stage — it reports on the deployment rather than on the
    * documents, so it takes no input stream and stands first. `scope` is the sigil
-   * the sugar spelling is reached through (`$$.indexStats()` on a collection,
+   * that reaches the sugar spelling (`$$.indexStats()` on a collection,
    * `$$$$.currentOp()` on the cluster), and `options` says whether it takes an
-   * options document. Read by the globals generator, which types the sugar members
+   * options document. The globals generator reads it and types the sugar members
    * per scope; see docs/specs/system-stages.md.
    */
   diagnostic?: { scope: "collection" | "database" | "cluster"; options: boolean };
   /**
-   * The stage leaves the stream's COUNT and its documents' FIELDS both untouched, so a
-   * count already stamped into a field is still the count afterwards. Stated on the few
-   * stages where it holds, because the safe answer is "no": reusing a stale count is a
-   * bug and recomputing is always correct. MEASURED against the count each stage leaves:
+   * The stage changes neither the stream's COUNT nor its documents' FIELDS, so a
+   * count already in a field is still the count afterwards. Only the few stages where
+   * this holds state it, because the safe answer is "no": a stale count is a bug, and
+   * a new count is always correct. MEASURED against the count each stage leaves:
    *   $sort   reorders, so the count and the fields both stand
    *   $unwind keeps every FIELD and emits one document per element, so the count is stale
    *   $group  drops the fields, so the stamp is gone as well as stale
-   * Read by the body's own stream handle, whose count is a stamped field: a body that
+   * The body's own stream handle reads it, because that count is a field: a body that
    * runs any stage without this fact cannot carry one.
    */
   preservesCount?: true;
   /**
    * The stage's sub-pipeline runs over ANOTHER collection's documents. Inside it
    * `$.x` still means the outer document (HR4), which the server can reach only
-   * through the stage's `let` — the join road's work — and a field-carried
-   * binding is not there at all. `$facet` and its kind run over the same
+   * through the stage's `let` — the join road's work. A binding that a field
+   * carries is not there at all. `$facet` and its kind run over the same
    * documents and state nothing.
    */
   pipelineOver?: "foreign";
@@ -490,78 +491,77 @@ type MongoSpec<
    * has such a slot, because the two kinds are not the same thing and no other fact
    * tells them apart — `test/registry-agrees.test.ts` fails a row that forgets.
    *
-   *   "pipeline"   a pipeline of its OWN. It has its own first position, so a stage
-   *                inside it is judged by its own placement and not by where the
-   *                container stands. `$lookup`, `$unionWith`, `$facet`,
+   *   "pipeline"   a pipeline of its OWN. It has its own first position, so the
+   *                compiler judges a stage inside it by its own placement, and not by
+   *                where the container stands. `$lookup`, `$unionWith`, `$facet`,
    *                `$rankFusion`, `$scoreFusion`.
    *   a name list  an UPDATE spec, which is no pipeline at all: there is no "first"
    *                there and only these stages run. MEASURED on mongod, every other
    *                one answers "<name> is not allowed to be used within an update".
-   *                A stage the language gains later is refused there until this list
-   *                names it, which is the safe default and the server's own answer.
+   *                The compiler refuses a stage the language gains later until this
+   *                list names it. That is the safe default and the server's own answer.
    */
   statementBody?: "pipeline" | readonly string[];
   /**
    * The position this operator's OPERAND stands in, where it is not the operator's
-   * own. A query document's values are read as query values, and `$expr`'s is the
-   * one that is not: `{ $expr: { $multiply: [ … ] } }` is an aggregation expression
-   * and the server accepts it, where `{ a: { $multiply: [ … ] } }` answers
+   * own. The server reads a query document's values as query values, and `$expr`'s
+   * value is the one exception: `{ $expr: { $multiply: [ … ] } }` is an aggregation
+   * expression and the server accepts it, where `{ a: { $multiply: [ … ] } }` answers
    * "unknown operator: $multiply". Stated on the operator whose operand changes
    * language, and nowhere else.
    */
   operandPosition?: Position;
   /**
-   * The EXPRESSION twin this query operator lifts to when its operand is read at
-   * run time, taking `[<field path>, <operand>]`. A query document compares a field
-   * with a CONSTANT — `{ a: { $gte: "$since" } }` matches the four-character string —
-   * so an operand the compiler cannot settle has no query form and moves into
+   * The EXPRESSION twin this query operator lifts to when the server reads its
+   * operand at run time. The twin takes `[<field path>, <operand>]`. A query document
+   * compares a field with a CONSTANT — `{ a: { $gte: "$since" } }` matches the
+   * four-character string — so an operand the compiler cannot settle moves into
    * `$expr`. Stated only where the twin means the same thing. MEASURED, over
    * `{ a: 5, since: 3 }`:
    *   { a: { $gte: "$since" } }              → []
    *   { $expr: { $gte: ["$a", "$since"] } }  → the document
-   * `$nin` states `$in` negated, because the expression language has no `$nin`.
+   * `$nin` states `$in` with a negation, because the expression language has no `$nin`.
    * An operator that states nothing keeps the refusal that names the rewrite.
    */
   liftsTo?: { op: string; negated?: true };
   /** Containers this may not appear inside — by registry KEY, dollar included. */
   forbiddenIn?: F;
   /**
-   * Stages the server refuses ANYWHERE inside this container's bodies, however
-   * deeply they are wrapped. `forbiddenIn` is the DIRECT reading — the stage
-   * written as a step of that body — and this is the transitive one, for a
-   * container whose ban reaches through a nested sub-pipeline the server would
-   * otherwise allow the stage in.
+   * Stages the server refuses ANYWHERE inside this container's bodies, at any
+   * depth. `forbiddenIn` is the DIRECT reading — the stage as a step of that body.
+   * This field is the transitive one, for a container whose ban reaches through a
+   * nested sub-pipeline that the server would otherwise let the stage stand in.
    */
   bansNested?: readonly string[];
   /**
-   * How a PLACEMENT refusal for this name is worded, where the generic sentence is
+   * The words of a PLACEMENT refusal for this name, where the generic sentence is
    * wrong for it. `first` replaces "produces the pipeline's source documents" — the
    * reason a name must stand first is not always that. `container` replaces "Run it
    * as a stage of the outer pipeline instead" — a name with no place in a
-   * collection's pipeline at all needs the spelling that does the same job, so the
+   * collection's pipeline at all needs the spelling that does the same job. So the
    * refusal never sends the reader somewhere the server also refuses.
    */
   placement?: { first?: string; container?: string };
   /**
-   * The operators whose BODY accepts this name, PER POSITION. A name listed here
+   * The operators whose BODY accepts this name, PER POSITION. A name in this field
    * is never valid on its own in that position — measured both ways:
    *   { loc: { $geoWithin: { $box: [[-1,-1],[1,1]] } } }   accepted
    *   { $addFields: { v: { $box: [[0,0],[1,1]] } } }       "Unrecognized expression '$box'"
    *
-   * Per position because the two are independent. `$slice` stands alone as an
+   * Per position, because the two are independent. `$slice` stands alone as an
    * aggregation operator AND appears inside `$push` in an update document, so a
    * flat list would constrain the standalone use as well:
    *   $slice: onlyInside: { updateDoc: ["$push"] }
-   * The nesting does not change `where` — `$box` is still reached in a filter,
-   * `$each` in an update document, `$case` in a value.
+   * This field does not change `where` — a filter still reaches `$box`, an update
+   * document still reaches `$each`, and a value still reaches `$case`.
    */
   onlyInside?: I;
   filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
   expr: Cell<Lists<W, "value">, Family, MongoExprIn, OutOf["value"]>;
   group: Cell<Lists<W, "group">, Family, GroupIn, OutOf["group"]>;
   /**
-   * $setWindowFields.output is a DIFFERENT slot from $group, proven both ways on mongod:
-   * $rank is a window function and not a group operator; $mergeObjects the reverse.
+   * $setWindowFields.output is a DIFFERENT slot from $group. Two tests on mongod prove
+   * it: $rank is a window function and not a group operator; $mergeObjects the reverse.
    */
   window: Cell<Lists<W, "window">, Family, GroupIn, OutOf["window"]>;
   /** A link in a `$$ = $$…` chain. */
@@ -569,7 +569,7 @@ type MongoSpec<
   /**
    * A top-level `;`-separated statement. SEPARATE from `stream`: `$match(…);`
    * and `$$ = $$.$match(…)` are both legal and a stage row must be able to say
-   * so, while `$$.push(...)` is a statement whose chain-link form is refused.
+   * so. But `$$.push(...)` is a statement, and the compiler refuses its chain-link form.
    */
   statement: Cell<Lists<W, "statement">, Family, StageIn, OutOf["statement"]>;
   /**
@@ -596,8 +596,8 @@ type GlobalSpec<W extends readonly Position[]> = {
   elementKind?: Kind;
   filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
   expr: Cell<Lists<W, "value">, Family, ExprIn, OutOf["value"]>;
-  // `assert(cond);` is receiver-less AND statement-only. With only the two cells
-  // above, it had nowhere to be written at all.
+  // `assert(cond);` is receiver-less AND statement-only. The two cells above give
+  // it no place, so this cell holds it.
   stream: Cell<Lists<W, "stream">, Family, StageIn, OutOf["stream"]>;
   statement: Cell<Lists<W, "statement">, Family, StageIn, OutOf["statement"]>;
   group: Cell<Lists<W, "group">, Family, GroupIn, OutOf["group"]>;
@@ -621,13 +621,13 @@ export type MongoEntry<
 > = MongoSpec<W, F, I> & { kind: "mongo" };
 export type GlobalEntry<W extends readonly Position[]> = GlobalSpec<W> & { kind: "global" };
 
-// Every generic defaults to the EMPTY type, never to its constraint — a row with
-// no `forbiddenIn` would otherwise widen `F` to `readonly string[]` and the
-// audit below would pass while checking nothing.
+// Every generic defaults to the EMPTY type, never to its constraint. A row with
+// no `forbiddenIn` would otherwise widen `F` to `readonly string[]`, and then the
+// audit below would pass and check nothing.
 const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W> => ({ ...e, kind: "root" });
 // `T` carries the `immutableTwin` LITERAL out to the audit at the foot of the
-// file. Declared on the spec alone it would widen to `string`, the audit would
-// read `string` from every row, and it could never name the offender.
+// file. On the spec alone it widens to `string`. The audit then reads `string`
+// from every row, and it can never name the row at fault.
 const name = <const W extends readonly Position[], const O extends On, const T extends string = never>(
   e: NameSpec<W, O, T>,
 ): NameEntry<W, O, T> => ({ ...e, kind: "name" });
@@ -645,9 +645,9 @@ const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalE
  *
  * `spelling` is the name the row answers to, so every message names what the user
  * actually typed. `convert` is the `$to…` operator the dynamic form lowers to.
- * `refuseConstant` is the message for a constant the type cannot hold — the fold
- * builds every constant it CAN (src/compiler/passes/fold-methods.ts), so this cell
- * is reached only by one it could not, and the message names the type that fits.
+ * `refuseConstant` is the message for a constant the type cannot hold. The fold
+ * builds every constant it CAN (src/compiler/passes/fold-methods.ts), so only a
+ * constant it could not build reaches this cell. The message names the type that fits.
  */
 const dateRow = (spelling: string) =>
   global_({
@@ -756,9 +756,9 @@ const bsonSentinel = (spelling: string, doc: string, compare: string) =>
   });
 
 /**
- * The units a DATE operator's `unit` key accepts. MEASURED: `"days"` and `"Day"`
- * are both refused ("unknown time unit value"), so the list is exact and
- * case-sensitive. One constant for every row that spells it, so a stale copy
+ * The units a DATE operator's `unit` key accepts. MEASURED: the server refuses
+ * both `"days"` and `"Day"` ("unknown time unit value"), so the list is exact and
+ * case-sensitive. One constant serves every row that spells it, so a stale copy
  * cannot refuse a unit the server takes or accept one it does not. The window
  * operators take a NARROWER set — see `WINDOW_TIME_UNIT`.
  */
@@ -776,15 +776,15 @@ export const TIME_UNIT = [
 
 /**
  * The spellings `startOfWeek` accepts: the seven days and their three-letter
- * forms, compared CASE-INSENSITIVELY — `"Monday"` and `"mon"` both run,
- * `"funday"` is refused ("cannot be recognized as a day"). A row that listed the
- * seven long names alone refused valid MQL, which is the dangerous direction.
+ * forms. The server compares them CASE-INSENSITIVELY — `"Monday"` and `"mon"` both
+ * run, and it refuses `"funday"` ("cannot be recognized as a day"). A row with the
+ * seven long names alone refuses valid MQL, which is the dangerous direction.
  */
 /**
  * The units a WINDOW operator's `unit` accepts — `$derivative` and `$integral`.
- * MEASURED: `unit: "month"` → "unit must be 'week' or smaller". A different set
- * from `TIME_UNIT`, so it has a different name; one constant for the two rows
- * that gave the nine-unit list a meaning the server refuses.
+ * MEASURED: `unit: "month"` → "unit must be 'week' or smaller". This set differs
+ * from `TIME_UNIT`, so it has a different name. One constant serves the two rows,
+ * and the wider list cannot give them a meaning the server refuses.
  */
 const WINDOW_TIME_UNIT = ["week", "day", "hour", "minute", "second", "millisecond"] as const;
 
@@ -806,9 +806,9 @@ const WEEKDAY = [
 ] as const;
 
 /**
- * A sort ask as its stages: a `$sort` by name, or — for a key COMPUTED from the
- * document, which MongoDB cannot sort by — a scratch field holding the key, a
- * `$sort` by it, and the chain's own cleanup dropping the field.
+ * A sort ask as its stages: a `$sort` by name, or — for a key the pipeline COMPUTES
+ * from the document, which MongoDB cannot sort by — a scratch field that holds the
+ * key, a `$sort` by that field, and the chain's own cleanup, which drops the field.
  */
 const sortStages = (ask: StageSortAsk, slot: () => string, reshape: (cb: Expr) => unknown): Stage[] => {
   if (ask.kind === "keys") return [{ $sort: ask.spec }];
@@ -820,10 +820,10 @@ const sortStages = (ask: StageSortAsk, slot: () => string, reshape: (cb: Expr) =
 const n = (e: Expr): number => (e.type === "NumberLiteral" ? e.value : 1);
 
 /**
- * lodash's collapse of a stream to ONE document keyed by a value: a `$group` per
- * key with `acc` as the value, a second `$group` gathering `{ k, v }` pairs into
- * the group's scratch slot, and `$arrayToObject` to build the object. A key that
- * is not a string is stringified, and a null key spells "null".
+ * lodash's collapse of a stream to ONE document under a value key: a `$group` per
+ * key with `acc` as the value, a second `$group` that gathers the `{ k, v }` pairs
+ * into the group's scratch slot, and `$arrayToObject` to build the object. A key
+ * that is not a string becomes a string, and a null key spells "null".
  */
 /** `!(<e>)`, `<recv>.<name>(…)`, a name, a one-parameter arrow — as SOURCE, for a cell that hands the filter road the predicate it means. */
 const notOf = (e: Expr): Expr => ({ type: "UnaryExpr", op: "!", argument: e, pos: e.pos });
@@ -866,7 +866,7 @@ const collapse = (key: unknown, acc: Record<string, unknown>): Stage[] => [
   { $replaceWith: { $arrayToObject: `$${GROUP_SLOT}` } },
 ];
 
-/** `.padStart` / `.padEnd`: the pad repeated to the target length, cut to fit when it is more than one character. */
+/** `.padStart` / `.padEnd`: the pad, repeated to the target length, and cut to fit when it is more than one character. */
 function padded(
   side: "start" | "end",
   recv: unknown,
@@ -888,7 +888,7 @@ function padded(
   // and a target already shorter than the string. A number LITERAL needs no test.
   const bounded =
     args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
-  // every caller hands over a receiver the `nullOr` test has proven, so it is bound as it is
+  // every caller hands over a receiver that the `nullOr` test proved, so the binding takes it as it is
   return { $let: { vars: { [v.as]: recv }, in: bounded } };
 }
 
@@ -903,7 +903,7 @@ function identity(bind: (hint: string) => Minted): { as: string; ref: string; in
  * `$gt($.a, 1)` — as the QUERY clause `{ a: { $gt: 1 } }` when the first argument is
  * a field path and the second a constant; null otherwise, so the expression form
  * takes it (`{ $expr: { $gt: ["$a", 1] } }`). The raw spelling keeps MongoDB's own
- * reading: no own-value clause is added.
+ * reading: it adds no own-value clause.
  */
 const fieldClause = ({ name, args, pathOf, literalOf }: FilterIn): QueryDoc | null => {
   const path = pathOf(args[0]);
@@ -919,9 +919,9 @@ const queryOnlyClause = ({ name, args, fieldPath, literal }: FilterIn): QueryDoc
 /**
  * `$and([p, q])` / `$and(p, q)` — each predicate as a filter of its own.
  *
- * An EMPTY list has no query form: MEASURED, `find({ $and: [] })` is refused with
- * "$and argument must be a non-empty array", where the expression `{ $expr: { $and: [] } }`
- * runs and answers true — JavaScript's answer for `[].every(…)`. Answering null hands
+ * An EMPTY list has no query form: MEASURED, the server refuses `find({ $and: [] })`
+ * with "$and argument must be a non-empty array", where the expression `{ $expr: { $and: [] } }`
+ * runs and answers true — JavaScript's answer for `[].every(…)`. A null answer hands
  * the empty list to the value road, which wraps it.
  */
 const logicalList = ({ name, args, query }: FilterIn): QueryDoc | null => {
@@ -936,10 +936,10 @@ const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement
  *
  * A reader over a missing field answers null, not `[]` — MEASURED, `$map`, `$filter`,
  * `$setUnion`, `$slice`, `$sortArray` and `$reduce` all do — so a value the compiler
- * proved is an array can still be null at run time. Most operators take that in their
- * stride and answer null in turn; `$in` and `$size` are the two that refuse ("$in
+ * proved is an array can still be null at run time. Most operators accept
+ * this and answer null in turn. `$in` and `$size` are the two that refuse ("$in
  * requires an array as a second argument, found: null"), and they take the neutral.
- * A literal is already an array, so it is handed through untouched.
+ * A literal is already an array, so the emitter passes it through unchanged.
  */
 const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
 
@@ -947,11 +947,11 @@ const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : {
  * `.lastIndexOf(x)` over an ARRAY: reverse, find, and normalise the index back.
  *
  * ONE function for the array family and for a receiver whose family is unproven,
- * because the two must answer the SAME MQL — a cell that reads `present` would
- * answer differently inside the family dispatch, whose `$type` test proves the
- * receiver, and the differing answers are what makes the compiler emit a `$switch`
- * this row does not need. So the size guard is unconditional: `$size` aborts the
- * command on a missing array, where `$indexOfArray` and `$subtract` answer null.
+ * because the two must answer the SAME MQL. A cell that reads `present` gives a
+ * different answer inside the family dispatch, whose `$type` test proves the
+ * receiver. Two different answers make the compiler emit a `$switch` that this row
+ * does not need. So the size guard is unconditional: `$size` aborts the command on
+ * a missing array, where `$indexOfArray` and `$subtract` answer null.
  */
 const lastIndexOfArray = ({ recv, args, value, bind }: ExprIn): unknown => {
   const needle = value(args[0]);
@@ -975,9 +975,9 @@ const lastIndexOfArray = ({ recv, args, value, bind }: ExprIn): unknown => {
  * An object read as its `{ k, v }` pairs, given the `{}` neutral.
  *
  * A reader over a missing field answers null — MEASURED, `$objectToArray` does — and
- * `$arrayToObject` passes that null on, so a lodash object method over a missing field
- * answered null where `_.pick(undefined, …)`, `_.mapValues(undefined, …)` and their kin
- * answer `{}`. The LODASH spellings therefore read their receiver through `$ifNull`.
+ * `$arrayToObject` passes that null on. But `_.pick(undefined, …)`,
+ * `_.mapValues(undefined, …)` and their kin answer `{}`, so the LODASH spellings read
+ * their receiver through `$ifNull`.
  *
  * The JavaScript ones do not, and share no row with these: `Object.keys(undefined)` is
  * a TypeError in JavaScript, MongoDB has no error to raise inside an expression, and
@@ -1027,10 +1027,10 @@ const pairsRead = (
  * `$substrCP`, `$regexMatch` and `$indexOfCP` answer a VALUE for it — "", false, -1 —
  * that hides the missing field. MEASURED on every row that calls this.
  *
- * `body` runs on a receiver the test has proven, so it needs no guard of its own. A
- * path is cheap to read twice; anything else is bound once. A receiver that is
- * `present` skips the test — a literal, `$range(…)`, a `$lookup`'s array, a path a
- * `?.` test on the way in already proved.
+ * `body` runs on a receiver that the test proved, so it needs no guard of its own. A
+ * path is cheap to read twice, and this function binds anything else once. A receiver
+ * that is `present` skips the test — a literal, `$range(…)`, a `$lookup`'s array, or a
+ * path that an earlier `?.` test proved.
  *
  * A LODASH method does not call this. The lodash rows answer a missing receiver each in
  * their own way today; see docs/DEFERRED.md for the one answer they are to share.
@@ -1048,9 +1048,9 @@ const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r:
  * The field names a `.pick()` / `.omit()` key list SPELLS, or null when only the
  * server knows them — a field path (`$.keys`), a spread, or a computed element.
  *
- * The `arrayOf` rule has already held every spelled element to a field name, so a
- * list of string literals IS a list of names; anything else is a run-time value, and
- * the row reads the object's own keys instead of naming them.
+ * The `arrayOf` rule holds every spelled element to a field name, so a list of string
+ * literals IS a list of names. Anything else is a run-time value, and the row then
+ * reads the object's own keys instead of a list of names.
  */
 const spelledKeys = (e: Expr): string[] | null =>
   e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral")
@@ -1061,9 +1061,9 @@ const spelledKeys = (e: Expr): string[] | null =>
  * Two constant bounds in low-to-high order, or null when the pair does not
  * compare at compile time.
  *
- * `.inRange()` accepts its bounds either way round, and the expression form
+ * `.inRange()` accepts its bounds in either order, and the expression form
  * orders them at run time with `$min`/`$max`. A query clause has no such
- * operator, so the ordering has to happen here — which it only can when both
+ * operator, so this function must order them. It can do so only when both
  * bounds are the same kind of value. A number against a date does not compare,
  * and the row keeps the expression fallback for it.
  */
@@ -1075,8 +1075,8 @@ const orderedBounds = (a: unknown, b: unknown): readonly [unknown, unknown] | nu
 
 /**
  * `$nor([p, q])` — `logicalList` where the list is never empty. `$nor` is
- * filter-only, so its cell is TOTAL: the empty case is refused by the row's
- * `nonEmpty` fact before the cell runs, and the null branch is unreachable.
+ * filter-only, so its cell is TOTAL: the row's `nonEmpty` fact refuses the empty
+ * case before the cell runs, and nothing can reach the null branch.
  */
 const norList = (input: FilterIn): QueryDoc => logicalList(input) ?? { $nor: [] };
 
@@ -3475,8 +3475,8 @@ export const NAMES = {
           millisecond: "int-or-long",
           timezone: "string",
         },
-        // Positional stays the natural order — JSMQL's public commitment. The ISO
-        // keys are reached in object style only.
+        // Positional stays the natural order — JSMQL's public commitment. Only the
+        // object style reaches the ISO keys.
         positional: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"],
       },
     },
@@ -4464,8 +4464,8 @@ export const NAMES = {
     category: "miscellaneous",
     where: ["filter"],
     shape: "single",
-    // The server requires a constant here, and a query document holds values: the slot is stated
-    // `constant`, so an expression is refused before this cell runs.
+    // The server requires a constant here, and a query document holds values. The slot states
+    // `constant`, so the compiler refuses an expression before this cell runs.
     filter: {
       args: { sig: "rate", exact: 1, constant: [0], slotType: { 0: "number" }, slotRange: { 0: [0, 1] } },
       emit: ({ name, args, constant }) => ({ [name]: constant(args[0])?.value }),
@@ -6109,9 +6109,9 @@ export const NAMES = {
       required: ["newRoot"],
       optional: [],
       closed: true,
-      // Measured: `{ newRoot: 5 }` is refused ("'replacement document' must
-      // evaluate to an object"), a path is accepted because only the run can tell
-      // what it holds, and an unknown key is refused by name.
+      // Measured: the server refuses `{ newRoot: 5 }` ("'replacement document' must
+      // evaluate to an object"). It accepts a path, because only the run can tell
+      // what the path holds, and it refuses an unknown key by name.
       keyTypes: { newRoot: "object" },
     },
     bodyPositions: { "": "value" },
@@ -6424,8 +6424,8 @@ export const NAMES = {
     body: {
       required: [],
       optional: [],
-      // The keys are the developer's own field names, so nothing is closed here;
-      // what the server fixes is every VALUE.
+      // The keys are the developer's own field names, so this row closes nothing.
+      // The server fixes every VALUE.
       closed: false,
       everyValueIn: [1, -1],
     },
@@ -6841,9 +6841,9 @@ export const NAMES = {
       args: {
         sig: "separator",
         exact: 1,
-        // MEASURED: `{ $split: ["$s", ""] }` is refused ("$split requires a non-empty
-        // separator"), and MongoDB has no split-into-characters operator to fall back on,
-        // so the empty separator is refused here rather than emitted.
+        // MEASURED: the server refuses `{ $split: ["$s", ""] }` ("$split requires a
+        // non-empty separator"), and MongoDB has no operator that splits into characters.
+        // So this row refuses the empty separator and emits nothing.
         nonEmpty: {
           0: {
             noun: "separator character",
@@ -6869,7 +6869,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
-    // non-string value. A literal needle only: a runtime one cannot be baked into a pattern.
+    // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
       emit: ({ recv, args, pathOf }) => {
@@ -6901,7 +6901,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
-    // non-string value. A literal needle only: a runtime one cannot be baked into a pattern.
+    // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
       emit: ({ recv, args, pathOf }) => {
@@ -6909,7 +6909,7 @@ export const NAMES = {
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
         // `\z` is the end of the subject. PCRE's `$` also matches before a final
-        // newline, so it accepted "report.pdf\n" where JavaScript's endsWith does not.
+        // newline, so it selects "report.pdf\n" where JavaScript's endsWith does not.
         // MEASURED: /\.pdf$/ selects both, new RegExp("\\.pdf\\z") selects only "report.pdf".
         return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) });
       },
@@ -6919,7 +6919,7 @@ export const NAMES = {
       emit: ({ recv, args, value, bind, present }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
-        // the receiver is proven inside the test, and read three times, so it is bound once
+        // the test proves the receiver, and the body reads it three times, so the emitter binds it once
         return nullOr(recv, present, bind, (r) => {
           const s = bind("str");
           return {
@@ -7188,12 +7188,12 @@ export const NAMES = {
     on: ["array", "string"],
     returns: "bool",
     where: ["value", "filter"],
-    // A query document is what an INDEX is read through, so the query form is the
-    // indexable one: `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
+    // An INDEX reads a query document, so the query form is the indexable one:
+    // `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
     // an array containing" — exactly what `.includes` means on an array, and a plain
     // equality on any other field. `["a","b"].includes($.s)` → { s: { $in: […] } }.
-    // The substring reading a STRING receiver has belongs to the expression form below,
-    // where no index is at stake; `.match(/x/)` is the query spelling that asks for it.
+    // The substring reading that a STRING receiver has belongs to the expression form
+    // below, where no index applies; `.match(/x/)` is the query spelling that asks for it.
     // Anything else keeps the expression fallback.
     filter: {
       args: { sig: "searchElement", exact: 1 },
@@ -7363,8 +7363,8 @@ export const NAMES = {
         // other one; `$concatArrays` takes arrays only. An argument PROVEN to be something
         // else becomes the one-element array it stands for — JavaScript's own answer, and
         // the only operand the operator accepts. MEASURED: the server folds a run of
-        // ADJACENT constant operands while it optimises and raises there on a wrong type,
-        // so an operand left unwrapped kills the pipeline before a branch is chosen.
+        // ADJACENT constant operands during the optimisation and raises there on a wrong
+        // type. So an operand without the wrap stops the pipeline before the branch runs.
         // An argument that proves nothing stays as written, and the server decides it.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
@@ -7379,8 +7379,8 @@ export const NAMES = {
           }),
         },
         // `String.prototype.concat` STRINGIFIES each argument; `$concat` takes strings
-        // only. An argument PROVEN to be an array is joined element by element, and any
-        // other proven non-string goes through `$toString` — JavaScript's answer in both
+        // only. The emitter joins an argument PROVEN to be an array element by element, and
+        // any other proven non-string goes through `$toString` — JavaScript's answer in both
         // cases. An argument that proves nothing stays as written.
         string: {
           args: { sig: "...items", atLeast: 1, spread: true },
@@ -7392,8 +7392,8 @@ export const NAMES = {
                 // JavaScript writes an ARRAY into a string the way `.join(",")` does —
                 // `"a".concat([3, 4])` is "a3,4" — so this is the same helper `.join()` uses.
                 // The exception is the list the desugar packed from a SPREAD call:
-                // `"a".concat(...[3, 4])` passed two arguments, and JavaScript writes each
-                // on its own, with nothing between them.
+                // `"a".concat(...[3, 4])` passes two arguments, and JavaScript writes each
+                // one on its own, with nothing between them.
                 if (k === "array") {
                   return a.type === "ArrayLiteral" && a.packed === true
                     ? joinedWith(value(a), "")
@@ -7428,7 +7428,7 @@ export const NAMES = {
     expr: unsupported(
       ".reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
-    // The twin is refused here for the same reason, so naming it would be a dead end.
+    // This row refuses the twin for the same reason, so a message that named it would be a dead end.
     stream: because(
       "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want.",
     ),
@@ -7647,7 +7647,7 @@ export const NAMES = {
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
         // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
-        // typo far more often than an intent, so the count stays closed while the start opens.
+        // typo far more often than an intent, so the count stays closed but the start opens.
         slotRange: { 1: [0, Infinity] },
       },
       emit: ({ recv, args, value, bind }) => {
@@ -7677,7 +7677,7 @@ export const NAMES = {
                         { $slice: [arr.ref, start.ref] },
                         items,
                         {
-                          // a three-argument `$slice` refuses a count of 0 (measured): the empty tail is written out
+                          // a three-argument `$slice` refuses a count of 0 (measured): the emitter writes the empty tail out
                           $cond: [{ $gt: [rest, 0] }, { $slice: [arr.ref, tail.ref, rest] }, []],
                         },
                       ],
@@ -7875,7 +7875,7 @@ export const NAMES = {
         const cb = callback(args[0], "truth");
         const kept = { $filter: { input: cb.input, as: cb.as, cond: cb.in } };
         if (!cb.paired) return kept;
-        // the pairs `[i, x]` were filtered; the elements come back out
+        // the filter ran on the pairs `[i, x]`; the elements come back out
         const p = bind("pair");
         return { $map: { input: kept, as: p.as, in: { $arrayElemAt: [p.ref, 1] } } };
       },
@@ -8024,15 +8024,15 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
-      // two answers — one flat cell hid the refusal, which is the useful fact.
+      // two answers — a single flat cell hides the refusal, which is the useful fact.
       perFamily: {
         array: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
         string: unsupported(
           ".lastIndexOf() on strings isn't supported — MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing.",
         ),
       },
-      // A receiver that cannot be proven takes the array form: the string form
-      // is refused on its own, so nothing is lost, and a string that reaches
+      // A receiver that cannot be proven takes the array form: this row refuses the
+      // string form on its own, so nothing is lost, and a string that reaches
       // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
       uncertain: lastIndexOfArray,
     },
@@ -8072,7 +8072,7 @@ export const NAMES = {
       args: { sig: "predicate", exact: 1 },
       emit: ({ recv, args, callback, present, bind }) => {
         const cb = callback(args[0], "truth");
-        // the pairs already are an array; a bare receiver is read once the test proved it
+        // the pairs already are an array; the emitter reads a bare receiver after the test proves it
         return nullOr(recv, present, bind, (r) => ({
           $anyElementTrue: { $map: { input: cb.paired ? cb.input : r, as: cb.as, in: cb.in } },
         }));
@@ -8099,7 +8099,7 @@ export const NAMES = {
       args: { sig: "predicate", exact: 1 },
       emit: ({ recv, args, callback, present, bind }) => {
         const cb = callback(args[0], "truth");
-        // the pairs already are an array; a bare receiver is read once the test proved it
+        // the pairs already are an array; the emitter reads a bare receiver after the test proves it
         return nullOr(recv, present, bind, (r) => ({
           $allElementsTrue: { $map: { input: cb.paired ? cb.input : r, as: cb.as, in: cb.in } },
         }));
@@ -9644,7 +9644,7 @@ export const NAMES = {
     ),
     group: {
       args: { sig: "iteratee", exact: 1 },
-      // the accumulator of each document's own value: '$sum' of the per-document '$sum' (an array operand alone is ignored by the accumulator, measured)
+      // the accumulator of each document's own value: '$sum' of the per-document '$sum' (the accumulator ignores an array operand alone, measured)
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
         return { $sum: { $sum: { $map: { input: recv, as: it.as, in: it.in } } } };
@@ -9675,7 +9675,7 @@ export const NAMES = {
     ),
     group: {
       args: { sig: "iteratee", exact: 1 },
-      // the accumulator of each document's own value: '$avg' of the per-document '$avg' (an array operand alone is ignored by the accumulator, measured)
+      // the accumulator of each document's own value: '$avg' of the per-document '$avg' (the accumulator ignores an array operand alone, measured)
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
         return { $avg: { $avg: { $map: { input: recv, as: it.as, in: it.in } } } };
@@ -10211,7 +10211,7 @@ export const NAMES = {
         constant: [0],
         slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
       },
-      // `$limit: 0` is refused by the server; a take of nothing is a stream of nothing.
+      // The server refuses `$limit: 0`; a take of nothing is a stream of nothing.
       emit: ({ args }) => {
         const count = args.length === 0 ? 1 : n(args[0]);
         return count === 0 ? [{ $match: { $expr: false } }] : [{ $limit: count }];
@@ -10448,7 +10448,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        // lodash's `_.size(undefined)` is 0: a receiver that may be missing is guarded, as `.length`'s is.
+        // lodash's `_.size(undefined)` is 0: this cell guards a receiver that may be missing, as `.length` does.
         array: {
           args: { sig: "", none: true },
           emit: ({ recv, present }) => sizeOf(present ? recv : arrayOrEmpty(recv)),
@@ -10919,7 +10919,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      // MEASURED: Object.groupBy($.items) is refused — the discriminator is required.
+      // MEASURED: jsmql refuses Object.groupBy($.items) — the call must give the discriminator.
       perFamily: {
         array: {
           args: { sig: "[iteratee]", allowed: [0, 1] },
@@ -10927,8 +10927,8 @@ export const NAMES = {
             groupedByKey(recv, args[0] === undefined ? identity(bind) : iteratee(args[0]), bind),
         },
         stream: unsupported("'.groupBy()' on a stream is a stage, not a value — see its 'stream' cell."),
-        // Parsed so the name gets an answer, and refused: the receiver form is the one spelling,
-        // and it emits the identical MQL.
+        // The parser accepts the name so it gets an answer, and this cell refuses it: the
+        // receiver form is the one spelling, and it emits the identical MQL.
         Object: unsupported(
           "'Object.groupBy(collection, discriminator)' is not part of jsmql — the collection's own method says the same thing, and one capability gets one spelling. Write '<collection>.groupBy(<discriminator>)': '$.items.groupBy(d => d.k)' emits the identical MQL.",
         ),
@@ -11800,8 +11800,8 @@ export const NAMES = {
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value — see its 'stream' cell."),
       },
-      // Both families test `$type: "array"`, so no runtime test tells them apart. It
-      // needs none: `new Set(…)` is proven at the source, so an unproven receiver is
+      // Both families test `$type: "array"`, so no run-time test tells them apart. This
+      // row needs none: the source proves `new Set(…)`, so an unproven receiver is
       // an array and takes lodash's reading.
       uncertain: lodashDifference,
     },
@@ -11911,8 +11911,8 @@ export const NAMES = {
     window: unsupported("'.exec()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  // ── the roots and globals: the only rows not generated, because they are not keys of
-  // METHODS / OPERATORS / STAGES. Every fact below was confirmed by a probe.
+  // ── the roots and globals: the only rows no generator writes, because they are not
+  // keys of METHODS / OPERATORS / STAGES. A probe confirms every fact below.
   // ─────────────────────────────────────────────────────────────────────────────
 
   $inc: mongo({
@@ -11942,8 +11942,8 @@ export const NAMES = {
     },
   }),
 
-  // ── names that are valid ONLY inside another operator's body. Each was proven
-  // both ways: accepted in its container, "Unrecognized expression" on its own.
+  // ── names that are valid ONLY inside another operator's body. A test proves each
+  // one both ways: the container accepts it, and on its own it is "Unrecognized expression".
   $box: mongo({
     doc: "A rectangle, by its bottom-left and top-right corners.",
     where: ["filter"],
@@ -12426,7 +12426,7 @@ export const NAMES = {
 
   // ── the query language: operators with a filter form and no expression form.
   // The seven geometry sub-constructs ($box, $center, $centerSphere, $polygon,
-  // $geometry, $maxDistance, $minDistance) have no row, on the same footing as
+  // $geometry, $maxDistance, $minDistance) have no row, for the same reason as
   // $case: they are only ever valid INSIDE another operator's body.
   $all: mongo({
     doc: "Matches arrays that contain all elements specified in the query.",
@@ -12688,9 +12688,9 @@ export const NAMES = {
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
     category: "boolean",
     where: ["filter"],
-    // MEASURED: `find({ $nor: [] })` is refused ("$nor argument must be a non-empty
-    // array"), and `$nor` has no expression form to fall back to — so the empty list
-    // is refused here rather than emitted.
+    // MEASURED: the server refuses `find({ $nor: [] })` ("$nor argument must be a
+    // non-empty array"), and `$nor` has no expression form to fall back to. So this
+    // row refuses the empty list and emits nothing.
     filter: {
       args: {
         sig: "predicates",
@@ -12742,10 +12742,10 @@ export const NAMES = {
     doc: "Performs text search.",
     category: "text",
     where: ["filter"],
-    // MEASURED: a '$match' holding '$text' anywhere in its body — at the top or under an
-    // '$and' — is refused unless it is the pipeline's FIRST stage ("$match with $text is
-    // only allowed as the first pipeline stage"), and inside a '$facet' branch it is
-    // refused outright ("query requires text score metadata, but it is not available").
+    // MEASURED: the server refuses a '$match' with '$text' anywhere in its body — at the
+    // top or under an '$and' — unless that '$match' is the pipeline's FIRST stage ("$match
+    // with $text is only allowed as the first pipeline stage"). Inside a '$facet' branch it
+    // refuses the stage outright ("query requires text score metadata, but it is not available").
     // Both facts are the stage's, so `place` reads them off the body's keys, not the
     // stage name's row.
     only: ["stageFirst"],
@@ -12779,7 +12779,7 @@ export const NAMES = {
     // MEASURED: `find({ $where: … })` runs where server-side JavaScript is enabled, and
     // an aggregation `$match` refuses it at any depth of the body — "$where is not
     // allowed in this context". A raw `{ $where: … }` filter therefore passes through
-    // (HR1) and the same document written into a `$match` is refused here.
+    // (HR1), and this row refuses the same document inside a `$match`.
     forbiddenIn: ["$match"],
     placement: {
       container:
@@ -13076,13 +13076,13 @@ export const NAMES = {
     mutatesArgumentAt: 0,
     returns: "object",
     // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
-    // before any statement cell is consulted — so the row states only the value.
+    // before the compiler reads any statement cell — so the row states only the value.
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
         // The method form answers a NEW object, as '.pick()' and '.omit()' do —
-        // the receiver is the first source and nothing is written in place.
+        // the receiver is the first source, and the call writes nothing in place.
         object: {
           args: { sig: "...sources", atLeast: 1, spread: true },
           emit: ({ recv, args, value }) => ({ $mergeObjects: [recv, ...args.map(value)] }),
@@ -13094,8 +13094,8 @@ export const NAMES = {
       },
     },
     stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
-    // 'Object.assign(t, …);' is rewritten to the write it means before this cell is
-    // reached; the method form answers a value, so a bare statement of it writes nothing.
+    // The desugar rewrites 'Object.assign(t, …);' into the write it means before this
+    // cell runs. The method form answers a value, so a bare statement of it writes nothing.
     statement: unsupported(
       "'.assign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.assign(…);'",
     ),
@@ -13184,7 +13184,7 @@ export const NAMES = {
     returns: "bool",
     where: [],
     // One refusal in every position — the name is legal nowhere. The tracking id
-    // stays in this comment and out of the message: a developer reading the error
+    // stays in this comment and out of the message: a developer who reads the error
     // has no use for it. [DEF-022]
     filter: NO_IS_FINITE,
     expr: NO_IS_FINITE,
@@ -13324,8 +13324,8 @@ export const NAMES = {
     window: unsupported("'Boolean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  // Parsed so the name gets an answer, and refused in every position: one numeric
-  // conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
+  // The parser accepts the name so it gets an answer, and every position refuses it: one
+  // numeric conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
   parseInt: global_({
     doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
     token: "Ident",
@@ -13874,8 +13874,8 @@ export const NAMES = {
     // MEASURED both ways. As a value: `$` → "$$ROOT". As a filter: `$` →
     // {"$expr":{"$and":[…truthiness…]}}, so there is NO native query form, and
     // `$ === 1` → {"": 1}, which mongod accepts and which matches nothing.
-    // `where: ["value","filter"]` claimed an indexable form that does not exist,
-    // and contradicted `rootReference` in productions.ts, which had it right.
+    // `where: ["value","filter"]` would claim an indexable form that does not exist,
+    // and would contradict `rootReference` in productions.ts, which is correct.
     returns: "object",
     where: ["value"],
     filter: viaFallback,
@@ -13892,7 +13892,7 @@ export const NAMES = {
     provides: "collection",
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
-    // value slot is refused — "'$$' (current collection) is statement-only" —
+    // value slot gets a refusal — "'$$' (current collection) is statement-only" —
     // so `expr` is a refusal even though `$$.length` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
@@ -13926,9 +13926,9 @@ export const NAMES = {
     token: "QuadDollar",
     provides: "cluster",
     // MEASURED: `$$$$.db2.c = $$;` → [{"$out":{"db":"db2","coll":"c"}}], a
-    // statement. There is no stream form — a cross-database READ is refused
-    // outright ("Cross-database reads aren't supported"), so listing "stream"
-    // claimed a source switch this scope does not have.
+    // statement. There is no stream form: the server refuses a cross-database READ
+    // outright ("Cross-database reads aren't supported"). A "stream" entry here
+    // would claim a source switch this scope does not have.
     where: ["statement"],
     filter: unsupported("'$$$$.<db>.<coll>' names a collection, not a test."),
     expr: unsupported("'$$$$.<db>.<coll>' names a collection, not a value."),
@@ -13975,9 +13975,9 @@ export const NAMES = {
   // One factory, because the nine differ in three cells and agree on every other.
   // Each has the SAME three-way meaning `ObjectId` has: no argument mints where
   // MongoDB has something to mint, a constant is a live BSON value the fold builds
-  // (so the `constant` cell below is only ever reached by a constant the type
-  // CANNOT hold), and anything else converts on the server through its `$to…`
-  // operator. `new X(…)` and `X(…)` are both accepted; jsmql.stringify writes
+  // (so only a constant the type CANNOT hold reaches the `constant` cell below),
+  // and anything else converts on the server through its `$to…`
+  // operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
   // `new X(…)`. See docs/specs/bson-types.md.
 
   Decimal128: bsonValue({
@@ -14097,9 +14097,9 @@ export const NAMES = {
     filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
     expr: {
       byArgs: {
-        // Never folded: `Number("3")` is a DOUBLE on the server, and a folded `3` would
-        // be an int. The constant converts like anything else; a string the server
-        // cannot parse is the server's own error.
+        // The fold never runs here: `Number("3")` is a DOUBLE on the server, and a folded
+        // `3` would be an int. The constant converts like anything else, and a string the
+        // server cannot parse is the server's own error.
         constant: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         otherwise: unsupported("'Number(x)' takes exactly one value."),
@@ -14134,7 +14134,7 @@ export const NAMES = {
     where: ["value"],
     // Per family, because one answer for all three states a legality the stream
     // form does not have: `$.tags.length < 5` scans, `$$.length > 1` does not
-    // compile at all. A flat `viaFallback` promised the third merely scans.
+    // compile at all. A flat `viaFallback` would promise that the third merely scans.
     filter: {
       perFamily: {
         array: viaFallback,
@@ -14147,11 +14147,11 @@ export const NAMES = {
     expr: {
       perFamily: {
         // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
-        // → { $size: [["$a", 2]] }. A path or an expression is handed over as it is.
+        // → { $size: [["$a", 2]] }. The emitter hands a path or an expression over as it is.
         array: {
           args: { sig: "", none: true },
           // `$size` aborts on null; a receiver that may be missing answers null, as a
-          // JavaScript method does, and one that is there is counted as it is.
+          // JavaScript method does, and the cell counts one that is there as it is.
           emit: ({ recv, present, bind }) =>
             Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present, bind, (r) => ({ $size: r })),
         },
@@ -14168,8 +14168,8 @@ export const NAMES = {
         },
       },
       // A receiver that is neither array nor string — null, missing, a number — answers
-      // null, as JavaScript's `undefined` does. A two-way $cond that read "not an array"
-      // as "string" aborted the whole command.
+      // null, as JavaScript's `undefined` does. A two-way $cond that reads "not an array"
+      // as "string" aborts the whole command.
       uncertain: () => null,
     },
     stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
@@ -14223,8 +14223,8 @@ export const NAMES = {
     window: unsupported("'Date.UTC()' is not a window function."),
   }),
 
-  // Parsed so the name gets an answer, and refused everywhere: the range operator
-  // says the same thing in fewer characters, and one capability gets one spelling.
+  // The parser accepts the name so it gets an answer, and every position refuses it: the
+  // range operator says the same thing in fewer characters, and one capability gets one spelling.
   from: name({
     doc: "'Array.from(…)' is not part of jsmql. See its refusal.",
     call: true,
@@ -14247,9 +14247,9 @@ export type NameKey = keyof typeof NAMES;
 //
 // 32 names exist both ways: $sort/sort, $filter/filter, $max/max, $set/set,
 // $slice/slice, $trim/trim, $map/map, $sum/sum, … Each pair is one chance to
-// write a single row serving two features, and they are NOT interchangeable —
-// `$sort` is a stage taking a key spec, `sort` is a JavaScript name taking a
-// comparator. So the key carries the distinction and the type checker holds it.
+// write a single row that serves two features, and they are NOT interchangeable —
+// `$sort` is a stage that takes a key spec, and `sort` is a JavaScript name that
+// takes a comparator. So the key carries the distinction and the type checker holds it.
 // ═════════════════════════════════════════════════════════════════════════════
 
 type DollarKey = `$${string}`;
@@ -14290,16 +14290,16 @@ const _forbiddenInResolves: [DanglingForbiddenIn] extends [never] ? true : Dangl
  *
  * The value is a per-position OBJECT, so the flat `Mentioned` helper cannot read
  * it. Extract first — a cell's declared type is a union and a union never matches
- * an object pattern on its own — and guard `never` BEFORE inferring, because
+ * an object pattern on its own — and guard `never` BEFORE the inference, because
  * `never extends readonly (infer V)[]` succeeds with `V = unknown` and one
  * `unknown` swallows the whole check.
  */
 type Inner<K extends NameKey> = FieldOf<K, "onlyInside">[keyof FieldOf<K, "onlyInside">];
 
-// BOTH `never` guards are load-bearing. A row with no `onlyInside` reaches an
+// BOTH `never` guards are necessary. A row with no `onlyInside` reaches an
 // empty object whose value type is `never`, and `never extends readonly (infer
 // V)[]` succeeds with `V = unknown` — one `unknown` in the union makes the audit
-// accept anything. Confirmed by making it fail on a bogus container name.
+// accept anything. A bogus container name makes the audit fail, which confirms this.
 type ContainersOf<K extends NameKey> = [FieldOf<K, "onlyInside">] extends [never]
   ? never
   : [Inner<K>] extends [never]
@@ -14313,8 +14313,8 @@ const _onlyInsideResolves: [DanglingOnlyInside] extends [never] ? true : Danglin
 
 // ── audit: every `immutableTwin` names a key of this same registry ───────────
 //
-// A twin is a NAME the desugar pass will rewrite to. A typo would silently make
-// the mutator un-rewritable rather than fail, so the type checker names it here.
+// A twin is a NAME the desugar pass rewrites to. A typo makes the mutator silently
+// un-rewritable instead of a failure, so the type checker names the twin here.
 
 type DanglingImmutableTwin = Exclude<Mentioned<"immutableTwin">, NameKey>;
 const _immutableTwinResolves: [DanglingImmutableTwin] extends [never] ? true : DanglingImmutableTwin = true;

@@ -3,7 +3,7 @@ import { jsmql } from "../src/index.ts";
 
 // `$match` translates expression-form predicates to MongoDB's query language
 // when the predicate is index-safe, falling back to $expr for the parts that
-// aren't. This avoids the silent index-disabling effect of `{ $expr: ... }`.
+// are not. This avoids the silent index-disabling effect of `{ $expr: ... }`.
 //
 // See `docs/specs/emit-pass.md` § The filter target for the translation rules and
 // the documented semantic divergences from the aggregation form.
@@ -116,7 +116,7 @@ describe("$match translation — boolean combinators", () => {
 });
 
 describe("$match translation — partial extraction", () => {
-  // When part of an `&&` predicate is translatable and part isn't, we keep
+  // When part of an `&&` predicate is translatable and part is not, we keep
   // the translatable half in query-language form (so indexes still apply)
   // and wrap the residual in $expr.
   it("keeps index-using clause, wraps residual in $expr", () => {
@@ -132,7 +132,7 @@ describe("$match translation — partial extraction", () => {
   });
 
   it("residual under `||` falls back to wholesale $expr (no index-safe split)", () => {
-    // We can't emit `$or: [<query>, { $expr: ... }]` and preserve the
+    // We cannot emit `$or: [<query>, { $expr: ... }]` and preserve the
     // disjunction's index-using guarantee, so if either `||` branch has a
     // residual, the entire expression becomes a residual.
     expect(jsmql('[$match($.status === "active" || $.score > $.threshold)]')).toEqual([
@@ -183,7 +183,7 @@ describe("$match translation — typeof → $type", () => {
   it("accepts the literal on either side", () => {
     expect(jsmql('[$match("int" === typeof $.count)]')).toEqual([{ $match: { count: { $type: "int" } } }]);
   });
-  it("translates `!==` via $not", () => {
+  it("translates `!==` through $not", () => {
     expect(jsmql('[$match(typeof $.x !== "null")]')).toEqual([{ $match: { x: { $not: { $type: "null" } } } }]);
   });
   it("works on nested field paths", () => {
@@ -191,7 +191,7 @@ describe("$match translation — typeof → $type", () => {
       { $match: { "user.role": { $type: "string" } } },
     ]);
   });
-  it("combines with other translated clauses via $and-merge", () => {
+  it("combines with other translated clauses through $and-merge", () => {
     expect(jsmql('[$match(typeof $.age === "int" && $.age > 18)]')).toEqual([
       { $match: { age: { $type: "int", $gt: 18 } } },
     ]);
@@ -236,7 +236,7 @@ describe("$match translation — escape hatch", () => {
 });
 
 describe("$match translation — `new Date(...)` RHS (compile-time fold)", () => {
-  // MongoDB's query language doesn't evaluate aggregation expressions in
+  // MongoDB's query language does not evaluate aggregation expressions in
   // operator value slots — `{ $gte: { $toDate: "..." } }` would be compared
   // as a literal subdoc, never matching anything. When the `new Date(...)`
   // arguments are themselves compile-time literals we fold to a real Date
@@ -308,7 +308,7 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     ]);
   });
 
-  it("rejects a constant string that can't be parsed as a date (HR3)", () => {
+  it("rejects a constant string that cannot be parsed as a date (HR3)", () => {
     // The constant is unparseable and the server would reject the equivalent
     // `{ $toDate }`, so the comparison drops to the $expr residual and codegen
     // refuses it at compile time rather than emit a bogus filter.
@@ -392,7 +392,7 @@ describe("$match translation — .match(regex) → BSON regex", () => {
   });
 
   it("falls through to $expr when the argument is non-literal", () => {
-    // A computed regex (or string arg) can't go in the query-doc slot, so the
+    // A computed regex (or string arg) cannot go in the query-doc slot, so the
     // existing $regexMatch translation handles it.
     expect(jsmql('[$match($.name.match("^a"))]')).toEqual([
       {
@@ -731,7 +731,7 @@ describe("$match translation — .length vs natural number → string-or-array $
   });
 
   it("reads `.length` as a literal field path when the RHS is NOT a natural number", () => {
-    // A length can't equal 3.5 / "x" — so the user meant a field named `length`.
+    // A length cannot equal 3.5 / "x" — so the user meant a field named `length`.
     expect(jsmql("[$match($.items.length === 3.5)]")).toEqual([
       {
         $match: {
@@ -795,7 +795,7 @@ describe("$match translation — .length vs natural number → string-or-array $
   });
 
   it('`["length"]` is RAW access — never folded to a length (only dot .length is)', () => {
-    // Bracket access reads a property called "length", so it can't be a $size
+    // Bracket access reads a property called "length", so it cannot be a $size
     // peephole; "length" is a string key (never a numeric index) → $getField.
     expect(jsmql('[$match($.items["length"] === 3)]')).toEqual([
       { $match: { $expr: { $eq: [{ $getField: { field: "length", input: "$items" } }, 3] } } },
@@ -806,7 +806,7 @@ describe("$match translation — .length vs natural number → string-or-array $
     ]);
   });
 
-  it("falls through to $expr for negative integer RHS (unary minus isn't a natural-number literal)", () => {
+  it("falls through to $expr for negative integer RHS (unary minus is not a natural-number literal)", () => {
     expect(jsmql("[$match($.items.length === -1)]")).toEqual([
       {
         $match: {
@@ -835,7 +835,7 @@ describe("$match translation — % N === M → $mod", () => {
     expect(jsmql("[$match($.x % 5 === 0)]")).toEqual([{ $match: { x: { $mod: [5, 0] } } }]);
   });
 
-  it("translates `!==` via $not", () => {
+  it("translates `!==` through $not", () => {
     expect(jsmql("[$match($.x % 7 !== 3)]")).toEqual([{ $match: { x: { $not: { $mod: [7, 3] } } } }]);
   });
 
@@ -873,7 +873,7 @@ describe("$match translation — $all folding from .includes && .includes", () =
 
   it("does NOT fold mixed chains (.includes + other predicates)", () => {
     // The user can reorder to enable the fold; the un-folded form has
-    // identical semantics on array-valued fields, so this isn't a footgun.
+    // identical semantics on array-valued fields, so this is not a pitfall.
     expect(jsmql('[$match($.tags.includes("a") && $.age > 18)]')).toEqual([
       { $match: { tags: "a", age: { $gt: 18 } } },
     ]);

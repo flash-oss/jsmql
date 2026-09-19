@@ -1,9 +1,9 @@
 // Single source of truth for the `__jsmql` document namespace — the one
-// top-level object jsmql stashes compiler-generated temporaries in, so values
-// can be threaded between stages without flooding the developer's output.
-// Everything here is removed before output by a single trailing
-// `{ $unset: "__jsmql" }`, which the Env appends when a stage has written under
-// the namespace (src/compiler/emit/env.ts). See src/CLAUDE.md § Invariants.
+// top-level object where jsmql stashes compiler-generated temporaries, so
+// values can move between stages without flooding the developer's output.
+// A single trailing `{ $unset: "__jsmql" }` removes everything here before
+// output. The Env appends this `$unset` when a stage writes under the
+// namespace (src/compiler/emit/env.ts). See src/CLAUDE.md § Invariants.
 //
 // The scheme — sub-bucketed by kind:
 //   __jsmql.var.<name>   — `let` / `const` bindings           → bindingSlot()
@@ -12,14 +12,14 @@
 //                          stream-method intermediates; the per-pipeline
 //                          counter is the Env's, in src/compiler/emit/env.ts,
 //                          and it builds its path here)
-//   __jsmql.<reserved>   — named system values                (e.g. the stream
-//                          length `__jsmql.length`)
+//   __jsmql.<reserved>   — named system values                (for example, the
+//                          stream length `__jsmql.length`)
 //
 // THE ONE EXCEPTION: `$group` / `$bucket` accumulator OUTPUT keys may not
-// contain dots, so scratch produced *inside* a group can't live under the
+// contain dots, so scratch produced *inside* a group cannot live under the
 // object. Such scratch uses the flat reserved name `GROUP_TMP` and MUST be
-// consumed by the immediately-following stage (so it never reaches output or
-// the trailing `$unset`).
+// consumed by the stage that immediately follows it (so it never reaches
+// output or the trailing `$unset`).
 
 /** The namespace object — the root field, and the trailing `$unset` target. */
 export const JSMQL_NS = "__jsmql";
@@ -35,29 +35,29 @@ export function tmpSlot(n: number): string {
 }
 
 /**
- * Reserved named system value: the current stream length (`$$.length`),
- * materialised per-document by a `$setWindowFields` `$count` and read back via
- * the field path `"$" + LENGTH_SLOT`. A reserved key, so it can't collide with
- * a user binding (`let length` → `__jsmql.var.length`). See
- * docs/specs/stream-length.md.
+ * Reserved named system value: the current stream length (`$$.length`).
+ * A `$setWindowFields` `$count` materialises this value per document, and the
+ * field path `"$" + LENGTH_SLOT` reads it back. It is a reserved key, so it
+ * cannot collide with a user binding (`let length` → `__jsmql.var.length`).
+ * See docs/specs/stream-length.md.
  */
 export const LENGTH_SLOT = `${JSMQL_NS}.length`;
 
 /**
- * Flat reserved scratch name for `$group` / `$bucket` accumulator output, where
- * MongoDB forbids dotted field names so the value can't live under the
- * `__jsmql` object. Must be consumed by the very next stage. The single
- * documented exception to "all temporaries live under `__jsmql.`".
+ * Flat reserved scratch name for `$group` / `$bucket` accumulator output.
+ * MongoDB forbids dotted field names there, so the value cannot live under the
+ * `__jsmql` object. The stage that immediately follows must consume it. This
+ * is the single documented exception to "all temporaries live under `__jsmql.`".
  */
 export const GROUP_TMP = `${JSMQL_NS}Tmp`;
 
 // ── `$lookup.let` correlation-variable names ──────────────────────────────────
 //
-// When a value from an OUTER JS scope is referenced inside a nested
-// sub-pipeline, it's threaded in through that lookup's `$lookup.let` and read
-// back as a `$$<name>` variable. These names are MongoDB **variable** names
-// (NOT document fields), so — unlike the `__jsmql.*` field namespace above —
-// they MUST start with a lowercase ASCII letter: the server rejects a `$$`
+// A nested sub-pipeline may reference a value from an OUTER JS scope. jsmql
+// threads that value in through the lookup's `$lookup.let`, and the sub-pipeline
+// reads it back as a `$$<name>` variable. These names are MongoDB **variable**
+// names (NOT document fields), so — unlike the `__jsmql.*` field namespace above
+// — they MUST start with a lowercase ASCII letter: the server rejects a `$$`
 // variable whose name begins with `_`, `$`, or an uppercase letter. Hence the
 // `jsmql_` prefix (no leading `__`).
 //
@@ -75,20 +75,21 @@ export const GROUP_TMP = `${JSMQL_NS}Tmp`;
  *
  * A MongoDB **variable** name may contain only `[A-Za-z0-9_]` (and — enforced by
  * the `jsmql_` prefix — must start with a lowercase letter). A MongoDB **field**
- * name is far more permissive: `sub-id`, `2fa`, unicode, etc. are all legal. When
- * a correlation var is named after an outer field's last path segment
+ * name is far more permissive: `sub-id`, `2fa`, and Unicode text are all legal.
+ * When a correlation var is named after an outer field's last path segment
  * (`letFieldVar`), any char outside `[A-Za-z0-9_]` — a hyphen is the common one —
  * would make the emitted var name server-invalid (`FailedToParse: '…' contains
- * an invalid character for a variable name`), an HR3 violation. So map every such
- * char to `_`.
+ * an invalid character for a variable name`), an HR3 violation. So this function
+ * maps every such char to `_`.
  *
- * This is deliberately NOT injective — `sub-id` and `sub_id` both fold to
- * `sub_id`. Collision-safety is the `LetAllocator`'s job, not ours: it interns on
- * the RAW field path and appends `_2`/`_3` when two distinct paths yield the same
- * base name, so two distinct fields still get two distinct vars and the same
- * field always gets the same var. We only sanitize the emitted NAME; the value
- * side of the `$lookup.let` entry keeps the raw field path (hyphens are legal in
- * a field-path string). See docs/specs/lookup-stage.md § Auto-`let` extraction.
+ * This mapping is deliberately NOT injective — `sub-id` and `sub_id` both fold
+ * to `sub_id`. Collision safety is the `LetAllocator`'s job, not this function's:
+ * it interns on the RAW field path and appends `_2`/`_3` when two distinct paths
+ * yield the same base name, so two distinct fields still get two distinct vars
+ * and the same field always gets the same var. This function only sanitises the
+ * emitted NAME; the value side of the `$lookup.let` entry keeps the raw field
+ * path (hyphens are legal in a field-path string). See docs/specs/lookup-stage.md
+ * § Auto-`let` extraction.
  */
 function sanitizeVarSegment(name: string): string {
   return name.replace(/[^A-Za-z0-9_]/g, "_");
@@ -104,7 +105,7 @@ export function letBindingVar(name: string, depth: number): string {
   return `${JSMQL_NS_VAR}v${depth}_${sanitizeVarSegment(name)}`;
 }
 
-/** `$lookup.let` var for a system value (e.g. a stream length) — `jsmql_s<depth>_<name>`. */
+/** `$lookup.let` var for a system value (for example, a stream length) — `jsmql_s<depth>_<name>`. */
 export function letSysVar(name: string, depth: number): string {
   return `${JSMQL_NS_VAR}s${depth}_${sanitizeVarSegment(name)}`;
 }
@@ -115,13 +116,14 @@ const JSMQL_NS_VAR = "jsmql_";
 // ── In-expression `$let` / `$map` / `$filter` variable names ──────────────────
 //
 // The third namespace. When a lowering needs to bind a value it computed itself
-// — a receiver it must not re-evaluate, a loop element, an index — it emits a
-// MongoDB variable, and that name shares one flat scope with the user's own
-// lambda params. A bare name (`s`, `v`, `kv`) is therefore a capture hazard
-// whenever the lowering also splices OUTER-scope codegen into the `$let`'s
-// `in:`: `.padStart(s.n)` inside `.map(s => …)` re-resolved `s` against the
-// receiver. Same grammar constraint as the correlation vars above (lowercase
-// lead, `[A-Za-z0-9_]`), so the shared `jsmql` prefix carries over.
+// — a receiver it must not evaluate twice, a loop element, an index — it emits a
+// MongoDB variable. That name shares one flat scope with the user's own lambda
+// parameters. A bare name (`s`, `v`, `kv`) is therefore a capture hazard whenever
+// the lowering also splices OUTER-scope codegen into the `$let`'s `in:` clause:
+// `.padStart(s.n)` inside `.map(s => …)` would re-resolve `s` against the
+// receiver instead. This namespace uses the same grammar constraint as the
+// correlation vars above (lowercase lead, `[A-Za-z0-9_]`), so the shared
+// `jsmql` prefix carries over.
 //
 // The prefix alone is only a convention, though — nothing stops a user naming a
 // param `jsmqlArr`. Uniqueness is `Scope.bind` in src/compiler/emit/names.ts,

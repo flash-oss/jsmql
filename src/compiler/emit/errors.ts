@@ -1,9 +1,9 @@
 // Phase 5 — EMIT. Every message the emit phase can produce, worded once.
 //
 // A refusal is either a row's own text (`unsupported(…)`, handed on through
-// `refusalSentence`) or one of the shapes below, each built from what the row
-// states — a signature, a receiver list, a position. No sentence here says
-// something a row could have carried.
+// `refusalSentence`), or one of the shapes below. Each shape is built from
+// what the row states — a signature, a receiver list, a position. No
+// sentence here says something a row could have carried.
 
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
@@ -19,9 +19,9 @@ export { CodegenError, UnknownIdentifierError };
 const signature = (spelled: string, args: Arity): string => `${spelled}(${args.sig})`;
 
 /**
- * Where a stage runs, as the reference that spells it. Two words name the same
- * place — the receiver family a stage accepts (`stream`) and the scope a
- * diagnostic stage states (`collection`) — so both are keys here.
+ * Where a stage runs, as the reference that spells it. Two words name the
+ * same place: the receiver family a stage accepts (`stream`) and the scope
+ * a diagnostic stage states (`collection`). So both are keys here.
  */
 const RUNS_ON: Readonly<Record<string, { sigil: string; place: string } | undefined>> = {
   stream: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
@@ -49,9 +49,10 @@ const countWord = (args: Arity): string => {
 };
 
 /**
- * The sentence for a name whose row has no cell for the position — the position's
- * own reason, in the words the rows use for it, so a name a row never mentions in
- * that position is refused like one that does. The name arrives quoted.
+ * The sentence for a name whose row has no cell for the position. It gives
+ * the position's own reason, in the words the rows use for it. So a name
+ * that a row never mentions in that position is refused like one that does.
+ * The name arrives quoted.
  */
 const NO_CELL: Readonly<Record<Position, (quoted: string, bare: string) => string>> = {
   value: (q) => `${q} has no value form here — see its 'where'.`,
@@ -65,9 +66,10 @@ const NO_CELL: Readonly<Record<Position, (quoted: string, bare: string) => strin
 };
 
 /**
- * The error for a final `Selected` answer that is not a rule. `spelled` is how
- * the SOURCE wrote the name — `'.trim()'`, `'$abs'`, `'Math.max'` — because one
- * row answers for every spelling and only the caller knows which it saw.
+ * The error for a final `Selected` answer that is not a rule. `spelled` is
+ * how the SOURCE wrote the name — `'.trim()'`, `'$abs'`, `'Math.max'`. One
+ * row answers for every spelling, and only the caller knows which spelling
+ * it saw.
  */
 export function refusalFor(
   sel: Selected,
@@ -78,8 +80,8 @@ export function refusalFor(
   near: readonly string[],
   format: (candidate: string) => string = (s) => `.${s}()`,
 ): CodegenError {
-  // Callers spell the name as the source did — `.trim`, `'.find()'`, `Math.max` —
-  // and a sentence that adds its own quotes or parentheses starts from the bare name.
+  // Callers spell the name as the source did — `.trim`, `'.find()'`, `Math.max`.
+  // A sentence that adds its own quotes or parentheses starts from the bare name.
   const bare = spelled.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
     case "refused":
@@ -197,10 +199,10 @@ export const callableAsValue = (spelled: string, pos: number): CodegenError =>
   );
 
 /**
- * A declared function read as a VALUE. MQL expressions carry no function value,
- * so the way out is the explicit lambda that calls it. The tracking id stays in
- * this comment and out of the message: a developer reading the error has no use
- * for it. [DEF-032]
+ * A declared function read as a VALUE. MQL expressions carry no function
+ * value. So the way out is the explicit lambda that calls it. The tracking
+ * id stays in this comment and out of the message: a developer reading the
+ * error has no use for it. [DEF-032]
  */
 export const functionAsValue = (name: string, pos: number): CodegenError =>
   new CodegenError(
@@ -208,7 +210,7 @@ export const functionAsValue = (name: string, pos: number): CodegenError =>
     pos,
   );
 
-/** A read of a name that has no value here; the binding says why, worded where it was dropped. */
+/** A read of a name that has no value here. The binding says why, worded where it was dropped. */
 export const droppedBinding = (ref: { readonly message: string }, pos: number): CodegenError =>
   new CodegenError(ref.message, pos);
 
@@ -378,10 +380,10 @@ export const arrayOfArrays = (method: string, holder: string, pos: number): Code
   );
 
 /**
- * The callback's third parameter, in a body whose stages make its count untrue. The
- * count is stamped into a field ahead of the body, so a stage that drops the fields
- * loses it and a stage that changes the document count makes it stale — and a test on
- * either silently answers on the wrong number.
+ * The callback's third parameter, in a body whose stages make its count untrue.
+ * The count is stamped into a field ahead of the body. A stage that drops the
+ * fields loses it. A stage that changes the document count makes it stale. A
+ * test on either then silently answers on the wrong number.
  */
 export const streamHandleAfterReplace = (name: string, stage: string, pos: number): CodegenError =>
   new CodegenError(
@@ -489,7 +491,7 @@ export const mustBeFirstStage = (name: string, pos: number, why?: string): Codeg
 /**
  * A stage that has to be FIRST whose own body reads a value that materialises a
  * stage — `$geoNear({ …, query: { n: $$.length } })`. The hoisted stage has to run
- * before the read and nothing may run before a first-only stage, so there is no
+ * before the read. Nothing may run before a first-only stage, so there is no
  * placement at all. MEASURED: mongod answered "$geoNear was not the first stage in
  * the pipeline after optimization".
  */
@@ -512,9 +514,9 @@ export const firstStageNeedsHoist = (
 };
 
 /**
- * `$merge({ into: "c", let: { v: $$.length } })` — the stage that writes the output
+ * `$merge({ into: "c", let: { v: $$.length } })` — the stage that writes the output,
  * reading a value jsmql materialised into a scratch field. The `__jsmql` cleanup is
- * the stage before it and nothing may follow it, so the field is gone by then.
+ * the stage before it, and nothing may follow it. So the field is gone by then.
  * MEASURED: "Use of undefined variable: v".
  */
 export const terminalReadsScratch = (name: string, pos: number): CodegenError =>
@@ -567,7 +569,7 @@ export const forbiddenInContainer = (name: string, container: string, pos: numbe
 
 /**
  * A sugar whose stage the container bans at any depth. `forbiddenInContainer` is the
- * DIRECT reading, for a stage the source wrote; this one is for a stage the source
+ * DIRECT reading, for a stage the source wrote. This one is for a stage the source
  * never named, so the message leads with what WAS written.
  */
 export const bannedNested = (spelled: string, stage: string, container: string, instead: string, pos: number) =>
@@ -590,7 +592,7 @@ export const notAMongoType = (spelling: string, aliases: readonly string[], pos:
 
 /**
  * A write to a callback's own STREAM parameter. `.push`/`.sort` and friends desugar
- * to `x = …` on the receiver, so every mutator spelling lands here as an assignment
+ * to `x = …` on the receiver. So every mutator spelling lands here as an assignment,
  * and the message names the chain links that do the same job.
  */
 export const writeToOwnStream = (name: string, pos: number): CodegenError =>
@@ -737,7 +739,7 @@ export const noCorrelationSlot = (stage: string, pos: number): CodegenError =>
 
 /**
  * `$.items.map(x => $$$.c.find({ _id: x.k }))` — a join inside an expression that
- * binds its own variable. The `$lookup` is a STAGE, hoisted out of the `$map`, so
+ * binds its own variable. The `$lookup` is a STAGE, hoisted out of the `$map`. So
  * its body names a variable the server never bound there ("Use of undefined
  * variable: x", measured).
  */
@@ -750,7 +752,7 @@ export const readsEnclosingVariable = (name: string, stage: string, pos: number)
 /**
  * `$$.push({ n: $$$.c.find(p).n })` — a written document whose value materialises a
  * stage. The documents run inside a `$unionWith` where `$documents` is the first
- * stage, so nothing can stand ahead of them to produce the value, and the read is
+ * stage. So nothing can stand ahead of them to produce the value, and the read is
  * left as a path nothing writes (measured: the server answers `{}` for it).
  */
 export const documentsNeedNoStage = (written: string, made: string, pos: number): CodegenError =>

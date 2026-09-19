@@ -1,16 +1,14 @@
-// THE proof that an accumulator cell renders a shape mongod accepts: take the
-// document the REGISTRY's own emitter produces and run it.
-//
-// A `toEqual` cannot establish this, and neither can reading the vendored spec.
-// Both group and window slots parse `{ acc: [ … ] }` as an operand LIST rather
-// than as an array expression, and the two report a second operand differently:
+// A `toEqual` cannot establish that an accumulator cell renders a shape mongod
+// accepts. Reading the vendored spec cannot establish it either. Both group and
+// window slots parse `{ acc: [ … ] }` as an operand list rather than as an
+// array expression, and the two report a second operand differently:
 //   {$group:{_id:null,s:{$sum:["$x","$y"]}}}              → "unary operator"
 //   {$setWindowFields:{…,output:{r:{$sum:["$x","$y"]}}}}  → 0, where "$x" → 4
 // The second is why this suite exists: nothing reports it. Every rule in
 // `accumulated` — one operand, and the `$let` shield over an operand that
-// renders as an array — was put there by a refusal measured here.
+// renders as an array — was determined by a refusal measured here.
 //
-// It skips itself when no mongod is listening, so `npm test` stays green.
+// This suite skips itself when no mongod is listening, so `npm test` stays green.
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
@@ -29,7 +27,7 @@ if (!up) {
   );
 }
 
-/** A source node the emitters can be handed, and the `value` service that renders one. */
+/** A source node the emitters can be handed, and the `value` service that renders it. */
 type Node = { type: "FieldRef"; segments: readonly string[] } | { type: "ArrayLiteral"; elements: readonly Node[] };
 const F = (p: string): Node => ({ type: "FieldRef", segments: [p] });
 const ARR = (...elements: Node[]): Node => ({ type: "ArrayLiteral", elements });
@@ -38,7 +36,7 @@ const value = (x: Node): unknown => (x.type === "FieldRef" ? "$" + x.segments.jo
 /**
  * A field whose VALUE suits this operator, and the array form of the same.
  *
- * The type has to suit, or the server's complaint is about the data rather than
+ * The TYPE has to suit, or the server's complaint is about the data rather than
  * the shape — which is a different question from the one this suite asks.
  */
 const SUITS: Readonly<Record<string, readonly [string, Node]>> = {
@@ -74,7 +72,7 @@ function argumentLists(cell: Cell, name: string): [string, Node[]][] | null {
   return null;
 }
 
-describe.skipIf(!up)("registry — every accumulator cell renders a shape mongod accepts", () => {
+describe.skipIf(!up)("emit every accumulator cell in a shape mongod accepts", () => {
   let coll: ReturnType<ReturnType<MongoClient["db"]>["collection"]>;
   let client: MongoClient;
 
@@ -91,14 +89,14 @@ describe.skipIf(!up)("registry — every accumulator cell renders a shape mongod
     };
   });
 
-  it("is refused by the server nowhere", async () => {
+  it("the server accepts every accumulator cell", async () => {
     const refused: string[] = [];
     const gated: string[] = [];
     /**
-     * Two operand TYPE errors are expected and are not shape errors — mongod
-     * gives the same complaint for the bare array, so the shield is not the
-     * cause. They are here by name rather than filtered out, so a shape error
-     * that hid behind one would still be reported.
+     * Two operand type errors are expected and are not shape errors — mongod
+     * gives the same error message for the bare array, so the shield is not the
+     * cause. They are listed by name rather than filtered out, so a shape error
+     * that hides behind one is reported.
      */
     const TYPED_OUT: Readonly<Record<string, string>> = {
       "$mergeObjects.group": "an array of objects is not one object to merge",
@@ -130,22 +128,22 @@ describe.skipIf(!up)("registry — every accumulator cell renders a shape mongod
     }
 
     expect(refused).toEqual([]);
-    // A suite that quietly stops comparing is worse than none: this floor fails
-    // if the operand-shaped accumulator cells shrink away from the harness.
+    // A suite that silently stops comparing is worse than none: this check fails
+    // if the count of operand-shaped accumulator cells decreases.
     expect(checked).toBeGreaterThanOrEqual(50);
     expect(gated.length, `FCV-gated on this server: ${[...new Set(gated)].join(", ")}`).toBeLessThan(checked / 4);
   });
 
-  it("answers the same for a shielded array as for a bare one, where the bare one runs", async () => {
-    // The shield's whole claim. A window slot accepts a bare array already, so
-    // the two forms must agree there — otherwise `accumulated` would be changing
-    // the answer to buy a shape, which is the one thing a fix may not do.
+  it("shielded and bare arrays answer the same when both run", async () => {
+    // The shield's core guarantee: A window slot accepts a bare array already, so
+    // the two forms must agree there. Otherwise `accumulated` would change the
+    // answer only to change the shape, which a fix must not do.
     const value = async (doc: unknown): Promise<unknown> => {
       const rows = await coll.aggregate([wrap.window(doc), { $project: { _id: 0, r: 1 } }]).toArray();
       return rows.map((d) => d.r);
     };
-    // `$addToSet` is a SET: its element order is unspecified (SR2), so the two
-    // forms are compared as sets. Every other accumulator here is ordered.
+    // `$addToSet` produces an unordered set. Its element order is unspecified (SR2),
+    // so the two forms are compared as sets. All other accumulators here are ordered.
     const asSet = (v: unknown): unknown =>
       Array.isArray(v) ? v.map((row) => [...(row as unknown[])].map((e) => JSON.stringify(e)).sort()) : v;
     for (const name of ["$sum", "$avg", "$min", "$max", "$first", "$last", "$push", "$addToSet"]) {

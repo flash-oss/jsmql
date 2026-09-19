@@ -1,9 +1,8 @@
-// The half that `regen-expectations.mjs` and `convert-expectations.mjs` share: a
-// suite file read as a TypeScript AST, an expression of that file evaluated in the
-// scope the file itself builds, and a value written back as the source a reviewer
-// reads in the diff.
+// The shared code for `regen-expectations.mjs` and `convert-expectations.mjs`: read a suite
+// file as a TypeScript AST, evaluate an expression in the scope that the file itself builds,
+// and write a value back as the source a reviewer reads in the difference.
 //
-// Neither script runs on a hook; both are invoked by hand. See scripts/CLAUDE.md.
+// Neither script runs on a hook. Both are invoked by hand. See scripts/CLAUDE.md.
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -25,9 +24,9 @@ export const js = (text) =>
 
 /**
  * Did the COMPILER refuse this, or did the evaluation fail for its own reasons? A
- * ReferenceError or a SyntaxError means the harness could not build the call at
- * all, and so does a TypeError raised anywhere but jsmql. None of the three is an
- * answer about the language, so the expectation they come from is left alone.
+ * ReferenceError, a SyntaxError, or a TypeError (not from jsmql) means the harness could not
+ * build the call at all. None of these three is an answer about the language, so the
+ * expectation they come from stays unchanged.
  */
 export const compilerThrew = (e) =>
   !(e instanceof ReferenceError) &&
@@ -36,9 +35,9 @@ export const compilerThrew = (e) =>
 
 /**
  * A value as the source that rebuilds it, through the library's own printer. One
- * spelling of a Date, an ObjectId or a Binary therefore reads the same in a suite,
- * in the docs and in the terminal. The layout is the formatter's business, not the
- * printer's — `write` below hands the whole file to `oxfmt`.
+ * spelling of a Date, an ObjectId, or a Binary reads the same in a suite, in the docs,
+ * and in the terminal. The layout is the formatter's business, not the printer's.
+ * The `write` function below hands the whole file to `oxfmt`.
  *
  * `undefined` is the one value the printer refuses that a suite may still assert:
  * `expect(doc.let).toEqual(undefined)` states that a key is absent.
@@ -112,7 +111,7 @@ export function openSuite(file) {
     return extra;
   };
 
-  /** Evaluate `text` where the suite evaluates it — at `node`, with `node`'s names in scope. */
+  /** Evaluate `text` where the suite evaluates it: at `node`, with `node`'s names in scope. */
   const runAt = (text, node) => {
     const all = { ...scope, ...localScope(node) };
     const names = Object.keys(all);
@@ -120,9 +119,9 @@ export function openSuite(file) {
   };
 
   /**
-   * Apply the edits — given in any order, never overlapping — write the file, and
-   * format it. The formatter owns the layout, so the diff a reviewer reads holds
-   * the answers that changed and no re-wrapped line that did not.
+   * Apply the edits (given in any order, never overlapping). Write the file and
+   * format it. The formatter owns the layout, so the difference a reviewer reads holds
+   * the answers that changed, with no re-wrapped line that did not change.
    */
   const write = (edits) => {
     let out = src;

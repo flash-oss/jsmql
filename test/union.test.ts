@@ -109,8 +109,8 @@ describe("$$.push / $$ = [ … ] — a written document holds only what the prog
   // `$documents` runs inside the `$unionWith` with NO input document, and it is the
   // FIRST stage of that body — so nothing there can read the outer document and
   // nothing can stand ahead of it to produce a value. Both spellings of the list
-  // refuse alike; `$$ = [ … ]` used to lower its documents OUTSIDE the boundary and
-  // emit a field path the server answered `{}` for, in silence.
+  // refuse alike. `$$ = [ … ]` must lower its documents INSIDE the boundary. Outside it,
+  // the emitted field path makes the server answer `{}`, in silence.
   it("refuses an outer-document read, in either spelling", () => {
     const outer = /'\$unionWith' has no 'let': its body cannot read the outer document/;
     expect(() => jsmql("$$.push({ n: $.a });")).toThrow(outer);
@@ -141,7 +141,7 @@ describe("$$.push / $$ = [ … ] — a written document holds only what the prog
   });
 });
 
-describe("$$.push — cross-database via $$$$ is rejected", () => {
+describe("$$.push — cross-database through $$$$ is rejected", () => {
   // Both spread sources resolve through `lookupOf` (src/compiler/emit/join.ts), whose
   // chain base refuses a `$$$$.<db>.` root: the `.filter`/`.find` form carries a
   // sub-pipeline, the bare collection carries none. Each gets a test so a refactor
@@ -237,7 +237,7 @@ describe("$$.push — error cases", () => {
   });
 
   it("push inside a sub-pipeline ([...] form) → reject with hoist hint", () => {
-    // Construct a sub-pipeline via $facet's `*` slot — every value is a pipeline.
+    // Construct a sub-pipeline through $facet's `*` slot — every value is a pipeline.
     expect(jsmql("[{ $facet: { archive: [$$.push(...$$$.archive)] } }]")).toEqual([
       { $facet: { archive: [{ $unionWith: "archive" }] } },
     ]);
@@ -275,14 +275,14 @@ describe("$$.push — error positions", () => {
       const err = e as { pos: number };
       expect(typeof err.pos).toBe("number");
       // The .find call's pos is at the start of the `$$$.archive.find(...)` expr
-      // (DatabaseRef position). Roughly past the `$$.push(...`. We don't pin
+      // (DatabaseRef position). Roughly past the `$$.push(...`. We do not pin
       // the exact byte; just that it points into the arg, not at index 0.
       expect(err.pos).toBeGreaterThanOrEqual(8);
     }
   });
 });
 
-// An error must never recommend syntax that doesn't work at the position the
+// An error must never recommend syntax that does not work at the position the
 // user is writing in. Two ways a `$$` chain can get that wrong.
 describe("chain errors only ever name syntax that works here", () => {
   it("never suggests the exact name the user typed", () => {
@@ -315,7 +315,7 @@ describe("chain errors only ever name syntax that works here", () => {
     expect(jsmql("$ = { k: $$.push(...$$$.archive) };")).toEqual([{ $facet: { k: [{ $unionWith: "archive" }] } }]);
   });
 
-  // A near-miss must not be answered with `.push`, which isn't a chain method either.
+  // A near-miss must not be answered with `.push`, which is not a chain method either.
   it("suggests a real chain method for a near-miss", () => {
     expect(() => jsmql("$$ = $$.dropp();")).toThrow(
       "'.dropp()' is not a method of the stream '$$'. Did you mean '.drop()'? A stage is a link too: '$$.$match(…)'.",

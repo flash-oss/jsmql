@@ -1,8 +1,8 @@
 // Phase 5 of src/compiler/ — what a row says about one name in one position.
 //
 // The value of asking the registry is that the answer covers EVERY name and
-// EVERY position at once, so the tests here are over the whole table rather than
-// over examples. An example test proves one row; a table test proves the rule.
+// EVERY position at once, so the tests here cover the whole table rather than
+// examples. An example test proves one row; a table test proves the rule.
 
 import { describe, expect, it } from "vitest";
 import { consult, everyName, listedIn, positionOf, refusalSentence } from "../src/compiler/emit/consult.ts";
@@ -36,7 +36,7 @@ describe("compiler/emit/consult — `where` and the cells cannot disagree", () =
   });
 });
 
-describe("compiler/emit/consult — every refusal is usable", () => {
+describe("compiler/emit/consult — EVERY refusal is usable", () => {
   const refusals = () =>
     pairs()
       .map(([n, p]) => [n, p, consult(n, p)] as const)
@@ -52,13 +52,13 @@ describe("compiler/emit/consult — every refusal is usable", () => {
     expect(empty).toEqual([]);
   });
 
-  it("either names the construct itself or says the caller supplies it", () => {
+  it("either names the CONSTRUCT itself or says the caller supplies it", () => {
     // The alternative to the flag is reading the first letter of the message and
     // guessing whether a subject is missing — a coupling nothing declares.
     //
-    // NAMES only. A production is keyed descriptively — `remainder`, never `"%"`
-    // — so its key is not what a user typed and naming it would be the bug, not
-    // the fix. The rule for those is the next test.
+    // Apply this to names only. A production is keyed descriptively — `remainder`,
+    // never `"%"` — so its key is not what a user typed and naming it would be
+    // the bug, not the fix. The rule for productions is the next test.
     const silent = Object.keys(NAMES)
       .flatMap((n) => POSITIONS.map((p) => [n, p, consult(n, p)] as const))
       .filter(([n, , v]) => v.kind === "refused" && !v.needsSubject && !v.message.includes(n))
@@ -66,7 +66,7 @@ describe("compiler/emit/consult — every refusal is usable", () => {
     expect(silent).toEqual([]);
   });
 
-  it("builds one sentence from the row's reason and the caller's spelling", () => {
+  it("builds one sentence from the row's reason and the caller's SPELLING", () => {
     const v = consult("toReversed", "stream");
     if (v.kind !== "refused") throw new Error("expected a refusal");
     expect(v.needsSubject).toBe(true);
@@ -95,7 +95,7 @@ describe("compiler/emit/consult — the other verdicts", () => {
 
   it("has no cell only where that kind of thing can never stand", () => {
     // A production has four cells and a name has six, and both are right. Only a
-    // MongoDB operator is ever specific to an update document, and a CONSTRUCT is
+    // MongoDB operator is ever specific to an update document, and a production is
     // never an accumulator: `$cond` inside `$group` sits in an accumulator's
     // ARGUMENT, which is value position, not the accumulator slot itself.
     const allowed: Readonly<Record<string, readonly Position[]>> = {
@@ -122,7 +122,7 @@ describe("compiler/emit/consult — the other verdicts", () => {
     expect(consult("length", "filter").kind).toBe("perFamily");
   });
 
-  it("reads a construct as well as a name", () => {
+  it("reads a CONSTRUCT as well as a name", () => {
     // `%` alone has no query form; `$.a % 2 === 0` does, and the fold belongs to
     // the equality row. Both facts come from the same lookup.
     const v = consult("remainder", "filter");
@@ -150,7 +150,7 @@ describe("compiler/emit/consult — a waypoint is not a position", () => {
   });
 });
 
-describe("registry — a production names itself by its SPELLING, never by its key", () => {
+describe("registry — a production names itself by its spelling, not its key", () => {
   type Row = { spelling: string } & Record<string, { unsupported?: string; subjectFromCaller?: true } | unknown>;
   const productions = (): [string, Row][] => Object.entries(PRODUCTIONS) as [string, Row][];
   const CELLS = ["filter", "expr", "stream", "statement"] as const;

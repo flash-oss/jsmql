@@ -4,7 +4,7 @@
 // drives through `tsc`. This file NEVER runs — every reference is type-only. Its
 // job is to lock in the completion surface: the positive lines must type-check,
 // and every `@ts-expect-error` line asserts that a member is REALLY typed (a typo
-// or wrong-type call errors), proving the surface isn't silently `any`. If a
+// or wrong-type call errors), proving the surface is not silently `any`. If a
 // future edit drops a member or widens it to `any`, an @ts-expect-error stops
 // firing and `tsc` fails the build.
 //

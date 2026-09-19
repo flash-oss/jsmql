@@ -1,6 +1,6 @@
 // The tree the parser builds. Part of the registry, and a LEAF: it imports
-// nothing, so `vocabulary.ts` can derive `NodeName` from it and every
-// production's `becomes` is checked against a real shape.
+// nothing. Thus `vocabulary.ts` can derive `NodeName` from it, and the type
+// checker tests every production's `becomes` against a real shape.
 //
 // ── NAME-BLIND ───────────────────────────────────────────────────────────────
 //
@@ -14,10 +14,10 @@
 // So there is no node type per NAME. A tree that knew particular names would need
 // one for each — MathCall, MathConst, ObjectCall, NumberStatic, NewSet, NewDate,
 // DateNow, DateUTC, TypeCast, TypeCastRef, MathCallRef, ObjectIdRef, ParamRef —
-// and the last of those would be indistinguishable from any other bare
-// name. Resolving a name is `names.ts`'s job, in a later phase.
+// and no reader could tell the last of those from any other bare
+// name. `names.ts` resolves a name, in a later phase.
 //
-// `ObjectIdLiteral` stays, because `0x` followed by exactly 24 hex digits is a
+// `ObjectIdLiteral` stays, because `0x` with exactly 24 hex digits after it is a
 // re-reading of a NUMBER token — a syntactic fact, not a name.
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -25,10 +25,11 @@
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * `as const` lists with the types derived, like the static name-sets below, so
- * the parser test can hold "every operator a row consumes is one of these" as
- * runtime data. A type-level version was vacuous — `becomes` is not threaded
- * through a const generic, so a conditional on it matched nothing.
+ * `as const` lists, with the types derived from them, like the static name-sets
+ * below. Thus the parser test can hold "every operator a row consumes is one of
+ * these" as runtime data. A type-level version is empty of meaning, because
+ * `becomes` does not pass through a const generic, so a conditional on it
+ * matches nothing.
  */
 export const BINARY_OPS = [
   "??",
@@ -60,9 +61,9 @@ export const UNARY_OPS = ["!", "-", "~", "typeof"] as const;
 export type UnaryOp = (typeof UNARY_OPS)[number];
 
 /**
- * Every spelling that writes to its target. The compound and the increment forms
- * are kept AS WRITTEN so the parser stays free of meaning; the desugar phase
- * rewrites them to `=` over a `BinaryExpr`.
+ * Every spelling that writes to its target. The parser keeps the compound and
+ * the increment forms AS WRITTEN, so that it stays free of meaning. The desugar
+ * phase rewrites them to `=` over a `BinaryExpr`.
  */
 export const ASSIGN_OPS = ["=", "+=", "-=", "*=", "/=", "++", "--"] as const;
 export type AssignOp = (typeof ASSIGN_OPS)[number];
@@ -81,11 +82,11 @@ export type ObjectKey =
 export type KeyValueEntry = { type: "KeyValueEntry"; key: ObjectKey; value: Expr; pos: number };
 export type ObjectEntry = KeyValueEntry | SpreadElement;
 /**
- * An array literal's element. A STATEMENT is allowed because the bracketed
- * pipeline form writes its stages as an array:
+ * An array literal's element. An element can be a STATEMENT, because the
+ * bracketed pipeline form writes its stages as an array:
  *   [const double = x => x * 2, $set({ y: double($.x) })]
- * Which array literals may hold one is the position phase's question, not the
- * parser's — it records what was written.
+ * The position phase answers which array literals can hold one, not the
+ * parser. The parser only records what the developer wrote.
  */
 /**
  * One element of an array literal. The write cases are what make a bracketed
@@ -96,8 +97,9 @@ export type ArrayElement = Expr | SpreadElement | LetDecl | FuncDecl | UpdateOp 
 export type CallArg = Expr | SpreadElement;
 
 /**
- * One slot of the entry form's parameter destructure. Held BESIDE the tree, not
- * in it — `destructuringParam` in productions.ts says `notANode` for this reason.
+ * One slot of the entry form's parameter destructure. It sits BESIDE the tree,
+ * not in it. For this reason `destructuringParam` in productions.ts says
+ * `notANode`.
  * A `$`-family key binds a compiler service; a bare name binds a query parameter.
  */
 export type ParamBinding = {
@@ -125,15 +127,15 @@ export type Expr =
   | { type: "ObjectIdLiteral"; hex: string; pos: number }
   /**
    * A value a CALL supplied — a `jsmql.compile` parameter, a template slot — that the
-   * source could not spell (a Date, a binary) or must not be read as MQL (a string
-   * starting with a dollar, a document with a dollar-key). Made by the injection
-   * pass, never by the parser.
+   * source cannot spell (a Date, a binary), or that MQL must not read (a string
+   * with a dollar at the start, a document with a dollar-key). The injection pass
+   * makes this node. The parser never makes it.
    */
   | { type: "Injected"; value: unknown; pos: number }
   | { type: "TemplateLiteral"; quasis: readonly string[]; exprs: readonly Expr[]; pos: number }
   /**
-   * `packed` is set by the desugar pass when it gathers a call's ARGUMENTS into this
-   * list — `"a".concat(...xs)` becomes `"a".concat([...xs])`. The distinction survives
+   * The desugar pass sets `packed` when it gathers a call's ARGUMENTS into this
+   * list — `"a".concat(...xs)` becomes `"a".concat([...xs])`. The difference stays,
    * because JavaScript keeps it: `.concat(...xs)` passes each element as its own
    * argument, and `.concat(xs)` passes one array, which a string receiver writes out
    * with commas between the elements.
@@ -144,20 +146,20 @@ export type Expr =
   // ── references ────────────────────────────────────────────────────────────
   /**
    * `$.a.b` and the bare `$`, which is the whole document and has an empty path.
-   * `optional` when any link on the way was `?.`: a consumer that null-poisons
-   * (`$concat`, `$concatArrays`, `$size`) then reads a missing path as its empty
-   * value, as JavaScript's `?.` short-circuits — the fold keeps the flag, the
-   * path spelling cannot carry it.
+   * `optional` is true when any link on the way was `?.`. A consumer that
+   * null-poisons (`$concat`, `$concatArrays`, `$size`) then reads a missing path
+   * as its empty value, as JavaScript's `?.` short-circuits. The fold keeps the
+   * flag, because the path spelling cannot carry it.
    */
   | { type: "FieldRef"; path: string; optional?: true; pos: number }
   /**
    * `$$` — the current collection, as a stream of documents.
    *
    * Three spellings, three node types, never one node with a level. They are
-   * three different things: `$$` is a stream you may filter and replace, `$$$`
+   * three different things: `$$` is a stream you can filter and replace, `$$$`
    * names another collection to read or write, and `$$$$` reaches the cluster and
-   * cannot be read from at all. A reader that had to check a number before
-   * knowing which it held would carry that check everywhere.
+   * permits no read at all. A reader that had to test a number first, to learn
+   * which of the three it held, would repeat that test everywhere.
    *
    * The postfix `.name` and `[expr]` compose on top through MemberAccess and
    * IndexAccess, so none of the three carries a path of its own.
@@ -178,10 +180,10 @@ export type Expr =
   | { type: "MemberAccess"; object: Expr; name: string; optional: boolean; pos: number }
   | { type: "IndexAccess"; object: Expr; index: Expr; optional: boolean; pos: number }
   /**
-   * `wrote` is the name in the SOURCE, present only when a pass rewrote this call to
-   * another name — `.reverse()` to its immutable twin `.toReversed()`. Every message
-   * names `wrote`, because a developer cannot find `.toReversed(` in a program that
-   * says `.reverse(`.
+   * `wrote` is the name in the SOURCE. It is present only when a pass rewrites this
+   * call to another name — `.reverse()` to its immutable twin `.toReversed()`. Every
+   * message names `wrote`, because a developer cannot find `.toReversed(` in a program
+   * that says `.reverse(`.
    */
   | {
       type: "MethodCall";
@@ -196,10 +198,10 @@ export type Expr =
   /** `new X(…)`. The callee is an `Ident`; which constructor it is comes later. */
   | { type: "NewExpression"; callee: Expr; args: readonly CallArg[]; pos: number }
   /**
-   * The `$op(…)` escape hatch. How the arguments were written is not recorded:
-   * one argument is the operator's body by the SHAPE its row states, and a
-   * parser guess (`style: "object"` for any lone object literal) was wrong for
-   * every one-operand operator whose operand happens to be a document.
+   * The `$op(…)` escape hatch. This node does not record how the developer wrote
+   * the arguments. One argument is the operator's body by the SHAPE its row
+   * states. A parser guess (`style: "object"` for any lone object literal) is
+   * wrong for every one-operand operator whose operand is a document.
    */
   | { type: "OperatorCall"; name: string; args: readonly CallArg[]; pos: number }
 
@@ -216,8 +218,8 @@ export type Expr =
       body?: Expr;
       /**
        * A body whose statements are pipeline STAGES. Only a name whose row says
-       * `blockBody: "stages"` gives its callback this meaning — every other name's
-       * block is JavaScript, and a stage inside one is refused.
+       * `blockBody: "stages"` gives its callback this meaning. Every other name's
+       * block is JavaScript, and the compiler refuses a stage inside one.
        */
       stages?: Pipeline;
       pos: number;
@@ -236,8 +238,8 @@ export type LetDecl = {
   kind: "let" | "const";
   /**
    * The source offset of the KEYWORD that opened this declaration. Every declarator
-   * of one `let`/`const` shares it, which is what lets them share a stage — and what
-   * stops a folded-away neighbour from bridging a `;` the developer wrote.
+   * of one `let`/`const` shares it. That is what lets them share a stage, and what
+   * stops a folded-away neighbour from a bridge across a `;` the developer wrote.
    */
   group: number;
   pos: number;
@@ -262,7 +264,7 @@ export type AssignExpr = {
   op: AssignOp;
   value: Expr;
   pos: number;
-  /** Set by the desugar pass on a MUTATOR's own write (`$.a.pop();`, `Object.assign(r, …);`) — JavaScript allows that on a `const` binding, and so does the emitter. */
+  /** The desugar pass sets this on a MUTATOR's own write (`$.a.pop();`, `Object.assign(r, …);`). JavaScript allows that on a `const` binding, and the emitter allows it too. */
   mutates?: true;
 };
 export type DeleteStmt = { type: "DeleteStmt"; target: Expr; pos: number };

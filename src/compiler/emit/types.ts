@@ -1,14 +1,16 @@
 // Phase 5 — EMIT. What type a node PROVABLY has, from the registry alone.
 //
-// A proof, not a guess: a literal proves its own kind, a row's measured
-// `returns` proves a call's, a binding carries the kind it was made with. A
-// field path proves nothing — `$.a` is "unknown" and stays so. The dispatch in
-// select.ts turns "unknown" into a runtime test, never into an assumption, so
-// the one thing this module must never do is answer with a kind it cannot show.
+// This is a proof, not a guess. A literal proves its own kind. A row's
+// measured `returns` proves a call's kind. A binding carries the kind it
+// was made with. A field path proves nothing: `$.a` is "unknown", and it
+// stays "unknown". The dispatch in select.ts turns "unknown" into a runtime
+// test. It never turns "unknown" into an assumption. So this module must
+// never answer with a kind it cannot show.
 //
-// `regexp` and `set` are source-level families with no result kind of their
-// own; a receiver can be one (`/x/.test(s)`, `new Set(a).union(b)`), so the
-// family question is answered here too, beside the kind.
+// `regexp` and `set` are source-level families with no result kind of
+// their own. A receiver can be one of these families (`/x/.test(s)`,
+// `new Set(a).union(b)`). So this module also answers the family question,
+// beside the kind.
 
 import type { Expr, Kind, Returns } from "../../registry/vocabulary.ts";
 import type { FieldFamily } from "../../registry/vocabulary.ts";
@@ -36,13 +38,14 @@ const NAMESPACES = namespaceNames();
 /**
  * Is the value `node` reads certainly THERE — never null, never missing?
  *
- * A literal is; the root document is (`Object.keys($)`); a binding says whether
- * it is (a `$lookup`'s array, a `let` of a present value); a call is when its row
- * states `neverNull` and its receiver and every argument that is a value are —
- * `$map` over an array that is there is an array that is there. A field path never
- * is: the document may lack it, and every array operator answers null for a
- * missing input. MEASURED: `{ $size: null }` and `{ $in: [x, null] }` abort the
- * command, so a cell guards with `$ifNull` exactly where this answers false.
+ * A literal is. The root document is (`Object.keys($)`). A binding states
+ * whether it is (a `$lookup`'s array, a `let` of a present value). A call
+ * is, when its row states `neverNull` and its receiver and every value
+ * argument are also present — `$map` over an array that is there gives an
+ * array that is there. A field path is never present: the document may
+ * lack it, and every array operator returns null for a missing input.
+ * MEASURED: `{ $size: null }` and `{ $in: [x, null] }` abort the command.
+ * So a cell guards with `$ifNull` exactly where this function returns false.
  */
 export function isPresent(node: Expr, env: Env): boolean {
   switch (node.type) {
@@ -115,9 +118,9 @@ export function familyOfKind(k: Known): FieldFamily | null {
 }
 
 /**
- * The kind a `Returns` states for a receiver of `family`. `element` is the kind of
- * ONE element of the receiver, which only the receiver can supply — "unknown" when
- * it cannot show one.
+ * The kind a `Returns` states for a receiver of `family`. `element` is the
+ * kind of ONE element of the receiver. Only the receiver can supply this
+ * kind. It is "unknown" when the receiver cannot show one.
  */
 function resolveReturns(
   r: Returns,
@@ -139,10 +142,11 @@ function resolveReturns(
 /**
  * The kind of ONE ELEMENT of the array `node` reads, or "unknown".
  *
- * A written list proves its elements when they agree; a call proves them when the
- * row's own lowering fixes them (`elementKind`); a binding carries what it was made
- * with. Everything else — a field path above all — proves nothing and stays open, so
- * a position that needs one KIND of element refuses only what the registry can show.
+ * A written list proves its elements when they agree. A call proves them
+ * when the row's own lowering fixes them (`elementKind`). A binding carries
+ * the kind it was made with. Everything else — a field path above all —
+ * proves nothing and stays open. So a position that needs one KIND of
+ * element refuses only what the registry can show.
  */
 export function elementKindOf(node: Expr, env: Env): Known {
   if (node.type === "ArrayLiteral") {
@@ -171,9 +175,9 @@ export function elementKindOf(node: Expr, env: Env): Known {
 /**
  * The kind of ONE element of what a node reads, from a binding that states it.
  *
- * A PLAIN read only. A method between the binding and the terminal replaces the
- * elements — `$$$.orders.map(o => o.total).head()` reads a total, not a document —
- * and this module never answers with a kind it cannot show.
+ * A PLAIN read only. A method between the binding and the terminal replaces
+ * the elements: `$$$.orders.map(o => o.total).head()` reads a total, not a
+ * document. This module never answers with a kind it cannot show.
  */
 function elementsRead(node: Expr, env: Env): Known {
   if (node.type !== "Ident" || !env.scope.has(node.name)) return "unknown";
@@ -246,10 +250,11 @@ export function kindOf(node: Expr, env: Env): Known {
       const family = receiverFamilyOf(node.object, env);
       if (family !== null)
         return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family, elementsRead(node.object, env));
-      // An unproven receiver: the call is on one of the families the row is spelled
-      // on, or a server error — so its result is what the row states when every
-      // such family states the same (`.size()` is a number on an array and on an
-      // object), and what the one family states when there is one (`.map`).
+      // An unproven receiver: the call is on one of the families the row
+      // names, or the server raises an error. So the result is what the
+      // row states when every such family states the same kind (`.size()`
+      // is a number on an array and on an object). It is also what the one
+      // family states, when there is only one family (`.map`).
       const r = returnsOf(node.name);
       if (typeof r === "string" && r !== "same" && r !== "element" && r !== "unknown") return r;
       const sole = soleFieldFamilyOf(node.name);
@@ -281,8 +286,9 @@ export function kindOf(node: Expr, env: Env): Known {
     }
     case "BinaryExpr": {
       if (node.op === "+") {
-        // `$concat` when any operand is a string, `$add` otherwise — and `$add`
-        // of a date is a date, so only two numbers prove a number.
+        // The result is `$concat` when either operand is a string, and `$add`
+        // otherwise. `$add` of a date returns a date. So only two numbers
+        // prove a number.
         const l = kindOf(node.left, env);
         const r = kindOf(node.right, env);
         if (l === "string" || r === "string") return "string";

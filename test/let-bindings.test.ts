@@ -14,7 +14,7 @@ describe("let bindings — basic shape", () => {
 
   it("multiple lets that build on each other emit one $set stage each", () => {
     // Canonical example from the plan + realistic test. Read-after-write splits
-    // each let into its own $set stage — that's required for the inner refs to
+    // each let into its own $set stage — that is required for the inner refs to
     // see the outer writes.
     expect(
       jsmql(`
@@ -394,8 +394,8 @@ describe("let bindings — sub-pipeline boundaries", () => {
   });
 
   it("outer lets are NOT visible inside a sub-pipeline", () => {
-    // The outer `cutoff` doesn't reach into the $lookup pipeline. (Runtime RHS
-    // `$.start`, so it's a per-document `$set` binding — those don't cross a
+    // The outer `cutoff` does not reach into the $lookup pipeline. (Runtime RHS
+    // `$.start`, so it is a per-document `$set` binding — those do not cross a
     // sub-pipeline boundary; a compile-time constant would inline everywhere.)
     expect(
       jsmql(`
@@ -474,7 +474,7 @@ describe("let bindings — parser errors", () => {
     expect(() => jsmql("let $foo = 5;")).toThrow("Expected identifier but got '$' at position 4");
   });
 
-  it("rejects bare-identifier references to a let that hasn't been declared yet", () => {
+  it("rejects bare-identifier references to a let that has not been declared yet", () => {
     expect(() => jsmql("$match(future > 0); let future = $.x;")).toThrow(/Unknown identifier 'future'/);
   });
 
@@ -482,7 +482,7 @@ describe("let bindings — parser errors", () => {
     // Smoke check that the normal "unknown identifier" path still fires for
     // unbound bare identifiers when no let machinery is in play. The trailing
     // `;` puts the input in Pipeline mode so the stage-call-without-`;` guard
-    // doesn't intercept.
+    // does not intercept.
     expect(() => jsmql("$match(zzz > 5);")).toThrow(/Unknown identifier 'zzz'/);
   });
 });
@@ -531,7 +531,7 @@ describe("let bindings — RHS expression coverage", () => {
 
   it("$op-call RHS — accumulator inside a let value is fine syntactically", () => {
     // The accumulator runs at the surrounding stage's context; the $set wrapper
-    // is what's actually emitted, and Mongo evaluates accumulators per-document
+    // is what is actually emitted, and Mongo evaluates accumulators per-document
     // in normal $set context (effectively as the first element of an array).
     expect(jsmql("let avg = $avg($.scores); $project({ avg })")).toEqual([
       { $set: { "__jsmql.var.avg": { $avg: "$scores" } } },
@@ -612,7 +612,7 @@ describe("let bindings — member / method / index access", () => {
 
   it("index access on a let resolves the receiver to its field path", () => {
     // A `let` is never statically typed (it can be reassigned), and `$.items`
-    // isn't provable anyway, so `xs[0]` emits the runtime three-way dispatch for
+    // is not provable anyway, so `xs[0]` emits the runtime three-way dispatch for
     // an integer key: array position, string character, field named "0".
     expect(jsmql("let xs = $.items; $project({ first: xs[0] })")).toEqual([
       { $set: { "__jsmql.var.xs": "$items" } },
@@ -668,7 +668,7 @@ describe("let bindings — interaction with update ops", () => {
     ]);
   });
 
-  it("`delete` on a real field doesn't affect let scope", () => {
+  it("`delete` on a real field does not affect let scope", () => {
     expect(jsmql("let keep = $.a; delete $.b; $project({ keep })")).toEqual([
       { $set: { "__jsmql.var.keep": "$a" } },
       { $unset: "b" },
@@ -917,8 +917,8 @@ describe("let bindings — all reshape-clearing stages drop the scope", () => {
 
 describe("let bindings — $project keeps the let scope (documented trade-off)", () => {
   it("a let stays visible after $project even if inclusion mode drops __jsmql at runtime", () => {
-    // The compiler does not statically prevent this — it's documented in
-    // LANGUAGE.md as a footgun parallel to today's `$.tmp = ...` + `delete`
+    // The compiler does not statically prevent this — it is documented in
+    // LANGUAGE.md as a pitfall parallel to today's `$.tmp = ...` + `delete`
     // pattern. The point of the test is to lock in the *compile-time*
     // behaviour: scope is preserved, no error is raised, codegen produces
     // a reference to `$__jsmql.var.x` even though the user's pipeline will see
@@ -933,7 +933,7 @@ describe("let bindings — $project keeps the let scope (documented trade-off)",
 // ── `let` reassignment (DEF-009) ──────────────────────────────────────────────
 
 describe("let bindings — reassignment", () => {
-  it("reassigning a `let` re-`$set`s its materialised slot", () => {
+  it("re-`$set`s a `let`'s materialised slot on reassignment", () => {
     // The second statement reads the binding's current value and writes back to
     // the same `__jsmql.var.<name>` slot — exactly how `let x = 1; x = x + 1` reads
     // in JavaScript.
@@ -975,19 +975,19 @@ describe("let bindings — reassignment", () => {
     ]);
   });
 
-  it("reassigning a `const`-bound name throws a `const` error", () => {
+  it("throws a `const` error when the code reassigns a `const`-bound name", () => {
     expect(() => jsmql("const x = $.foo; x = 5; $project({ x });")).toThrow(
       "'x' is a 'const' and cannot be assigned again. Declare it with 'let' to write it more than once.",
     );
   });
 
-  it("assigning to an undeclared bare identifier throws an actionable error", () => {
+  it("throws an actionable error when the code assigns to an undeclared bare identifier", () => {
     expect(() => jsmql("$match($.a > 0); zzz = 5; $project({ a: 1 });")).toThrow(
       "Unknown identifier 'zzz'. Did you mean '$.zzz'?",
     );
   });
 
-  it("reassigning a `let` after a reshape stage drops it (precise error)", () => {
+  it("gives a precise error when the code reassigns a `let` after a reshape stage", () => {
     expect(jsmql("let v = $.x; $group({ _id: $.cat }); v = 5; $match(v > 0)")).toEqual([
       { $set: { "__jsmql.var.v": "$x" } },
       { $group: { _id: "$cat" } },
@@ -1008,7 +1008,7 @@ describe("let bindings — reassignment", () => {
 // ── `Object.assign(binding, …)` — JS's mutating merge on a binding ─────────────
 
 describe("let bindings — Object.assign mutation", () => {
-  it("`Object.assign(result, …)` re-`$set`s the binding's slot via $mergeObjects", () => {
+  it("`Object.assign(result, …)` re-`$set`s the binding's slot through $mergeObjects", () => {
     // The JS-faithful mutating form of `result = { ...result, … }`.
     expect(jsmql("let result = {}; Object.assign(result, { a: $.foo }); $ = result;")).toEqual([
       { $set: { "__jsmql.var.result": {} } },
@@ -1017,7 +1017,7 @@ describe("let bindings — Object.assign mutation", () => {
     ]);
   });
 
-  it("allowed on a `const` binding — mutating a const-bound object is legal JS (only rebinding isn't)", () => {
+  it("allowed on a `const` binding — mutating a const-bound object is legal JS (only rebinding is not)", () => {
     // `const result = {}; Object.assign(result, …)` must NOT throw, even though
     // `result = …` on a const would.
     expect(jsmql("const result = {}; Object.assign(result, { a: $.foo });")).toEqual([
@@ -1087,7 +1087,7 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
 
   it("`const` is still usable as a field name and object key", () => {
     // Adding the keyword token must not regress `const` as a plain identifier in
-    // field paths / object keys (it's a valid JS property name).
+    // field paths / object keys (it is a valid JS property name).
     expect(jsmql.expr("$.const > 5")).toEqual({ $gt: ["$const", 5] });
     expect(jsmql.expr("$.user.const")).toEqual("$user.const");
     expect(jsmql("$project({ const: 1 }); $match($.x > 1);")).toEqual([

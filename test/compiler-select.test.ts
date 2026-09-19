@@ -1,9 +1,10 @@
 // Phase 5 of src/compiler/ — which rule of a row runs.
 //
-// Two static audits over the whole table, the argument partition, the byArgs
-// routing on the five rows that state one, and the runtime guards measured on
-// mongod: for every field family, one document per BSON type, the guard is true
-// exactly for the types the family covers.
+// This suite holds two static audits over the whole table: the argument partition,
+// and the byArgs routing on the five rows that state one. It also measures the
+// runtime guards on mongod. For every field family, the suite builds one document
+// per BSON type and asserts that the guard is true exactly for the types the family
+// covers.
 
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
@@ -83,7 +84,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     });
   });
 
-  it("dispatches an unprovable receiver over the field families, with the row's `uncertain` as default", () => {
+  it("dispatches an unprovable receiver across field families, with the row's default", () => {
     const r = at("length", OPAQUE);
     expect(r.kind).toBe("dispatch");
     if (r.kind !== "dispatch") return;

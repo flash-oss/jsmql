@@ -1,16 +1,16 @@
-// Phase 5 — EMIT. A sort argument, as written, to the `{ field: 1 | -1 }`
-// document a `$sort` stage and a `$sortArray` operand both take.
+// Phase 5 — EMIT. This module reads a sort argument, as written, into the
+// `{ field: 1 | -1 }` document that a `$sort` stage and a `$sortArray` operand both take.
 //
-// A reader, not a lowering: a sort key has to be a compile-time field name,
-// because MongoDB sorts by names and never by expressions, so every function
-// here reads a SOURCE node and answers a plain document — or refuses with the
+// A reader, not a lowering: a sort key must be a compile-time field name,
+// because MongoDB sorts by names and never by expressions. So every function
+// here reads a SOURCE node and answers a plain document, or refuses with the
 // spelling that would work. Five spellings, one meaning each:
 //
 //   "age"                      one key, ascending
 //   ["age", "name"]            several keys, all ascending
 //   { age: -1, name: "asc" }   keys with directions — 1 / -1 / "asc" / "desc"
-//   x => x.age   x => -x.age   a key function; the minus is the direction
-//   (a, b) => a.age - b.age    a comparator; `b.k - a.k` is descending, and
+//   x => x.age   x => -x.age   a key function; the minus sign gives the direction
+//   (a, b) => a.age - b.age    a comparator; `b.k - a.k` sorts descending, and
 //                              `||` joins keys in order of precedence
 //   (a, b) => a - b            no field at all: the ELEMENTS are the key, which
 //                              `$sortArray` takes as a bare 1 / -1 and a `$sort`
@@ -24,9 +24,9 @@ import { CodegenError } from "../../errors.ts";
 export type SortSpec = Record<string, 1 | -1>;
 
 /**
- * What a sort argument asks for: keys by NAME, a key COMPUTED from the document
+ * What a sort argument asks for: keys by NAME; a key COMPUTED from the document
  * — `d => d.cat.toLowerCase()` — which MongoDB cannot sort by directly, so the
- * caller writes it to a scratch field and sorts by that, or the WHOLE element,
+ * caller writes it to a scratch field and sorts by that field; or the WHOLE element,
  * which carries a direction and no name.
  */
 export type SortAsk =
@@ -34,7 +34,7 @@ export type SortAsk =
   | { readonly kind: "computed"; readonly key: Extract<Expr, { type: "Lambda" }>; readonly dir: 1 | -1 }
   | { readonly kind: "whole"; readonly dir: 1 | -1; readonly params: readonly [string, string]; readonly pos: number };
 
-/** A sort ask a `$sort` STAGE can carry: never the whole element, which has no field name. */
+/** A sort ask that a `$sort` STAGE can carry: never the whole element, which has no field name. */
 export type StageSortAsk = Exclude<SortAsk, { kind: "whole" }>;
 
 /** 1 or -1 from `1`, `-1`, `"asc"` or `"desc"`; null for anything else. */
@@ -46,7 +46,7 @@ export function sortDirection(e: Expr): 1 | -1 | null {
   return null;
 }
 
-/** The dotted path a member chain on `param` spells — `x.user.name` → "user.name" — or null. */
+/** The dotted path that a member chain on `param` spells — `x.user.name` → "user.name" — or null. */
 function paramPath(e: Expr, param: string): string | null {
   if (e.type === "MemberAccess") {
     if (e.object.type === "Ident" && e.object.name === param) return e.name;
@@ -66,7 +66,7 @@ const fieldName = (e: Expr, method: string): string => {
   return e.value;
 };
 
-/** `"k"`, `["k", "j"]` or `{ k: dir }` as a spec. `objects` says whether the third is welcome. */
+/** `"k"`, `["k", "j"]` or `{ k: dir }` as a spec. `objects` says whether the third form is welcome. */
 export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec {
   if (arg.type === "StringLiteral") return { [fieldName(arg, method)]: 1 };
   if (arg.type === "ArrayLiteral") {
@@ -111,7 +111,7 @@ export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec
   );
 }
 
-/** `x => x.k` / `x => -x.k` as a spec; any other body is a computed key. */
+/** `x => x.k` / `x => -x.k` as a spec. Any other body is a computed key. */
 function keyFunctionSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string): SortAsk {
   if (arg.body === undefined) {
     throw new CodegenError(
@@ -126,15 +126,15 @@ function keyFunctionSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string)
     body = body.argument;
   }
   const path = paramPath(body, arg.params[0]);
-  // The minus is the DIRECTION and nothing else: the key the caller lowers is the
-  // body under it, or `x => -x.k` would negate the key AND sort it descending.
+  // The minus sign is the DIRECTION and nothing else. The key that the caller lowers is the
+  // body under it, or else `x => -x.k` would negate the key AND sort it descending.
   if (path === null) return { kind: "computed", key: { ...arg, body }, dir };
   return { kind: "keys", spec: { [path]: dir } };
 }
 
 /**
  * `a - b` / `b - a` on the BARE parameters — the whole element is the key, which
- * `$sortArray` takes as a direction on its own. Only a bare body qualifies: under a
+ * `$sortArray` takes as a direction on its own. Only a bare body qualifies. Under a
  * `||` the term falls through to the same-field check, because an element that IS
  * the key admits no tiebreaker.
  */
@@ -149,8 +149,8 @@ const wholeElementDir = (body: Expr, a: string, b: string): 1 | -1 | null => {
 
 /**
  * `(a, b) => a.k - b.k` as a spec: the parameter that stands FIRST in the
- * subtraction is the ascending one. `||` joins several keys, most significant first.
- * `(a, b) => a - b` names no field, so the elements themselves are the key.
+ * subtraction gives the ascending one. `||` joins several keys, most significant first.
+ * `(a, b) => a - b` names no field, so the elements themselves become the key.
  */
 function comparatorSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string): SortAsk {
   const [a, b] = arg.params;
@@ -171,8 +171,8 @@ function comparatorSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string):
     } else terms.push(e);
   };
   split(arg.body);
-  // One term is the WHOLE body, so the elements-as-key form is open to it and the
-  // refusal names it. Under a `||` it is not: an element that IS the key has no tiebreaker.
+  // One term IS the WHOLE body, so the elements-as-key form is open to it, and the
+  // refusal names it. Under a `||` it is not open, because an element that IS the key has no tiebreaker.
   const single = terms.length === 1;
   const orWhole = single ? ` To order the elements themselves, drop the field: '${a} - ${b}'.` : "";
   for (const t of terms) {
@@ -198,7 +198,7 @@ function comparatorSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string):
   return { kind: "keys", spec };
 }
 
-/** Any of the four spellings, by the argument's shape. */
+/** Any of the four spellings, chosen by the shape of the argument. */
 export function sortSpecOf(arg: Expr, method: string, objects = true): SortAsk {
   if (arg.type === "Lambda") {
     if (arg.params.length === 1) return keyFunctionSpec(arg, method);
@@ -212,8 +212,8 @@ export function sortSpecOf(arg: Expr, method: string, objects = true): SortAsk {
 }
 
 /**
- * lodash's `orderBy(keys, orders)`: `keys` is a name or a list of names,
- * `orders` a direction or a list of them, parallel to the keys — fewer orders
+ * lodash's `orderBy(keys, orders)`: `keys` is a name or a list of names, and
+ * `orders` is a direction or a list of them, parallel to the keys. Fewer orders
  * than keys leaves the rest ascending. The one-argument object form is the
  * `{ field: dir }` spec.
  */
@@ -265,11 +265,11 @@ export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string
 /**
  * A sort ask narrowed to what a `$sort` STAGE can carry, on a stream whose element
  * lives at `element` (`""` when the element IS the document). MongoDB sorts a stream
- * by field NAME — measured, `{ $sort: 1 }` is "the $sort key specification must be
- * an object" and `{ $sort: { $literal: 1 } }` is "FieldPath field names may not
- * start with '$'" — so an element that IS the document has nowhere to go as a key.
+ * by field NAME. MEASURED, `{ $sort: 1 }` gives "the $sort key specification must be
+ * an object", and `{ $sort: { $literal: 1 } }` gives "FieldPath field names may not
+ * start with '$'". So an element that IS the document has nowhere to go as a key.
  * An unwound element has a name — `.flatMap("tags").sort((a, b) => a - b)` sorts
- * by `tags` — and its fields sit under it: `.flatMap("items").sortBy("qty")` sorts
+ * by `tags` — and its fields sit under that name: `.flatMap("items").sortBy("qty")` sorts
  * by `items.qty`.
  */
 export function streamSortAsk(ask: SortAsk, method: string, element = ""): StageSortAsk {

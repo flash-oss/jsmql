@@ -1,9 +1,10 @@
 // Phase 5 — EMIT, the UPDATE-DOCUMENT target: the object form of an update,
 // `db.coll.updateOne(filter, { $set: { … }, $inc: { … } })`. A document-form
-// update takes CONSTANTS — the server reads `"$b"` there as the string — so
-// every value is a compile-time constant, and a read of the document is refused
-// with the pipeline form as the way out. See docs/specs/emit-pass.md § The
-// update-document target.
+// update takes CONSTANTS. The server reads `"$b"` there as the string. So
+// every value must be a constant the compiler knows at compile time. The
+// compiler refuses a read of the document. The message names the pipeline
+// form as the way out. See docs/specs/emit-pass.md § The update-document
+// target.
 import type { Expr, QueryDoc } from "../../registry/vocabulary.ts";
 import type { PipelineStmt, Program, UpdateFilter } from "../../registry/ast.ts";
 import { UPDATE_DOC } from "../passes/position.ts";

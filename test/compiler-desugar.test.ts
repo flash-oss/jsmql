@@ -3,7 +3,7 @@
 // The test for a rewrite is not "what tree did it build" but "is that the SAME
 // tree the explicit form builds". Written that way a rule cannot pass by
 // producing something merely plausible, and the table doubles as the
-// documentation of what each sugar means.
+// documentation of what each sugar MEANS.
 
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/compiler/parse/parser.ts";
@@ -18,7 +18,7 @@ import { mapTreeIn } from "../src/compiler/passes/walk.ts";
 const shape = (src: string): string =>
   JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : k === "mutates" || k === "wrote" ? undefined : v));
 
-/** Each pair: the sugar, and the source it MEANS. */
+/** Each pair: the sugar, and the source it means. */
 const EQUIVALENT: [string, string][] = [
   // a bare callable global is the arrow that applies it
   ["$.items.map(String)", "$.items.map(x => String(x))"],

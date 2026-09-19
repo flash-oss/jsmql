@@ -15,7 +15,7 @@ export async function connectReadOnly(): Promise<{ client: MongoClient; db: Db }
 
 // True only if the fixture instance is reachable read-only AND seeded with the
 // CURRENT dataset version. The integration suite skips itself when this is false,
-// so `npm test` stays green for contributors who haven't run `npm run fixture:up`.
+// so `npm test` stays green for contributors who have not run `npm run fixture:up`.
 export async function fixtureReady(): Promise<boolean> {
   let client: MongoClient | undefined;
   try {
@@ -34,8 +34,8 @@ export async function fixtureReady(): Promise<boolean> {
 }
 
 // Defense-in-depth: even though the read-only user cannot write, fail loudly if
-// the on-disk dataset doesn't match what the tests expect (e.g. a different
-// version was seeded out-of-band). Run once in beforeAll.
+// the on-disk dataset does not match what the tests expect (for example a
+// different version was seeded out of band). Run once in beforeAll.
 export async function assertIntegrity(db: Db): Promise<void> {
   const meta = await db.collection(META_COLLECTION).findOne({ _id: "version" as never });
   const hash = (meta as { hash?: string } | null)?.hash;

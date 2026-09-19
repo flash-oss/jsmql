@@ -1,12 +1,12 @@
-// Phase 5 — EMIT. The reducer wrap: `$$ = [{ k: $$.reduce((acc, d) => …, init), … }]`
+// Phase 5 — EMIT. The reducer wrap. This module reads `$$ = [{ k: $$.reduce((acc, d) => …, init), … }]`
 // and `$$ = [$$.reduce((acc, d) => ({ ...acc, k: … }), { k: init })]` as the ONE
 // `$group` they mean, followed by the `$replaceWith` that drops `_id`.
 //
 // `.reduce` folds the stream to one value, and a stream must stay documents, so
 // the fold is written INSIDE a document — one key per accumulator. Each key's
-// body is read as the MongoDB accumulator it spells; a body that spells none is
-// refused naming the shapes that do. The init is JavaScript's, required and
-// unread: MongoDB's accumulators have their own neutral elements.
+// body is read as the MongoDB accumulator it spells. A body that spells none is
+// refused, and the message names the shapes that do. The init is JavaScript's own value. It is
+// required and unread, because MongoDB's accumulators have their own neutral elements.
 //
 //   acc + d.total          → { $sum: "$total" }      acc + 1            → { $sum: 1 }
 //   Math.max(acc, d.x)     → { $max: "$x" }          Math.min(acc, d.x) → { $min: "$x" }
@@ -24,10 +24,10 @@ type Call = Extract<Expr, { type: "MethodCall" }>;
 type Accumulator = { op: "$sum" | "$max" | "$min" | "$first" | "$last" | "$push"; value: unknown };
 
 /**
- * The seed folded in, as JavaScript would: `acc + d.x` from 10 is the sum plus 10,
+ * The seed folded in, as JavaScript would fold it: `acc + d.x` from 10 is the sum plus 10,
  * `Math.max` from 5 is the max with 5, `[...acc, d.x]` from `[0]` is `[0, …]`,
- * `acc ?? d.x` from a non-null seed IS the seed. `$last` reads no seed. A seed
- * that is not a constant cannot start a MongoDB accumulator and is refused.
+ * and `acc ?? d.x` from a non-null seed IS the seed. `$last` reads no seed. The
+ * compiler refuses a seed that is not a constant, because it cannot start a MongoDB accumulator.
  */
 function seeded(acc: Accumulator, init: Expr, read: string): unknown {
   const c = constantOf(init);
@@ -48,7 +48,7 @@ function seeded(acc: Accumulator, init: Expr, read: string): unknown {
 }
 
 const NOT_CONSTANT: unique symbol = Symbol("not constant");
-/** The value a literal spells — a number, a string, a boolean, null, a list or document of those — or NOT_CONSTANT. */
+/** The value a literal spells: a number, a string, a boolean, null, or a list or document of those. Or NOT_CONSTANT. */
 function constantOf(e: Expr): unknown {
   switch (e.type) {
     case "NumberLiteral":
@@ -83,11 +83,11 @@ function constantOf(e: Expr): unknown {
   }
 }
 
-/** Is this `$$.reduce(…)` — a fold of the ROOT stream? */
+/** Is this `$$.reduce(…)` a fold of the ROOT stream? */
 export const isStreamReduce = (e: Expr): e is Call =>
   e.type === "MethodCall" && e.name === "reduce" && e.object.type === "CollectionRef";
 
-/** Does a `$$ = [ … ]` list hold a reducer wrap — and is it the whole list? */
+/** Does a `$$ = [ … ]` list hold a reducer wrap, and is it the whole list? */
 export function isReduceWrap(list: Extract<Expr, { type: "ArrayLiteral" }>): boolean {
   if (list.elements.length !== 1) return false;
   const el = list.elements[0];
@@ -105,7 +105,7 @@ function fieldOf(e: Expr, param: string): string | null {
   return null;
 }
 
-/** The accumulator a reducer body spells, `isAcc` saying which node is the accumulator. */
+/** The accumulator a reducer body spells. `isAcc` says which node is the accumulator. */
 function accumulatorOf(body: Expr, isAcc: (e: Expr) => boolean, param: string): Accumulator | null {
   if (body.type === "BinaryExpr" && body.op === "+") {
     const other = isAcc(body.left) ? body.right : isAcc(body.right) ? body.left : null;
@@ -159,7 +159,7 @@ export function reducerOf(call: Call): { lambda: Lambda; acc: string; param: str
 }
 
 /**
- * `$$ = [ … ]` holding a reducer wrap → `[{ $group: { _id: null, … } }, { $replaceWith: { … } }]`.
+ * `$$ = [ … ]` that holds a reducer wrap → `[{ $group: { _id: null, … } }, { $replaceWith: { … } }]`.
  */
 export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>): Stage[] {
   const el = list.elements[0] as Expr;
@@ -170,7 +170,7 @@ export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>):
     replace[key] = seeded(acc, init, "$" + key);
   };
   if (el.type === "ObjectLiteral") {
-    // `[{ k: $$.reduce(…), … }]` — one fold per key, `acc` the bare parameter.
+    // `[{ k: $$.reduce(…), … }]` — one fold per key, with `acc` as the bare parameter.
     for (const e of el.entries) {
       if (e.type !== "KeyValueEntry" || e.key.kind !== "static") throw E.reduceWrapEntry(e.pos);
       if (!isStreamReduce(e.value)) throw E.reduceWrapEntry(e.value.pos);
@@ -185,10 +185,10 @@ export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>):
   const r = reducerOf(el as Call);
   if (r.body.type !== "ObjectLiteral") throw E.reduceWrapObjectBody(r.acc, r.body.pos);
   const init = (el as Call).args[1];
-  // `({ ...acc, [d.k]: d.v })` from `{}` — one document keyed by a field: every
-  // pair pushed, then `$arrayToObject`. The key is a field of the document.
+  // `({ ...acc, [d.k]: d.v })` from `{}` — one document keyed by a field. The compiler
+  // pushes every pair, then applies `$arrayToObject`. The key is a field of the document.
   const keyed = keyedEntry(r.body, r.acc, r.param);
-  // `({ [d.k]: d.v })` without `...acc` replaces the accumulator every step: JavaScript keeps the LAST document only.
+  // `({ [d.k]: d.v })` without `...acc` replaces the accumulator at every step. JavaScript keeps only the LAST document.
   if (
     keyed === null &&
     r.body.entries.length === 1 &&
@@ -235,8 +235,8 @@ export function reduceWrapStages(list: Extract<Expr, { type: "ArrayLiteral" }>):
 
 /**
  * `({ ...acc, [d.k]: d.v })` — a body of exactly the accumulator spread and one
- * computed entry keyed by a field of the document, its value a field or the
- * whole document. Null for any other body.
+ * computed entry keyed by a field of the document, with a field or the
+ * whole document as its value. Null for any other body.
  */
 function keyedEntry(
   body: Extract<Expr, { type: "ObjectLiteral" }>,
@@ -254,7 +254,7 @@ function keyedEntry(
   return { k: "$" + k, v: v === "$$ROOT" ? v : "$" + v };
 }
 
-/** Is there a `$$.reduce(…)` anywhere in this tree — the wrap misplaced? */
+/** Is there a `$$.reduce(…)` anywhere in this tree — a wrap placed in the wrong spot? */
 export function holdsStreamReduce(node: unknown): boolean {
   if (node === null || typeof node !== "object") return false;
   if (Array.isArray(node)) return node.some(holdsStreamReduce);
@@ -266,10 +266,10 @@ export function holdsStreamReduce(node: unknown): boolean {
 }
 
 /**
- * The ARRAY reducer as a stream: `$$.reduce((acc, d) => acc.concat(<doc>), [])`
+ * The ARRAY reducer as a stream. `$$.reduce((acc, d) => acc.concat(<doc>), [])`
  * keeps every document reshaped, and `(acc, d) => cond ? acc.concat(<doc>) : acc`
- * filters first — a `$match` and a `$replaceWith`, with `d` the document. Any
- * other body is a total, which the wrap form computes; the refusal names it.
+ * filters first: a `$match` and a `$replaceWith`, with `d` as the document. Any
+ * other body is a total, which the wrap form computes instead; the refusal names it.
  */
 export function arrayReduceParts(call: Call): { test: Lambda | null; doc: Lambda } {
   const { lambda, acc, param, body } = reducerOf(call);

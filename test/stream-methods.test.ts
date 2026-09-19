@@ -242,7 +242,7 @@ describe(".shuffle() → $rand sort", () => {
   });
 
   it("inside a $lookup.pipeline the whole __jsmql namespace is unset, not the leaf slot", () => {
-    // The outer sweep can't reach documents nested in the `as` array, so the
+    // The outer sweep cannot reach documents nested in the `as` array, so the
     // sub-pipeline cleans up itself — and it must drop the NAMESPACE ROOT.
     // `$unset` of a dotted path removes only the leaf, so unsetting
     // `__jsmql.tmp.1` left every foreign doc carrying `__jsmql: { tmp: {} }`.
@@ -625,7 +625,7 @@ describe(".countBy(field) → object collapse", () => {
 describe(".keyBy(field) → object collapse", () => {
   // lodash `_.keyBy(coll, "email")` → the OBJECT `{ <email>: <last doc> }`; the stream
   // form collapses to that single object (mirroring value-mode `$.arr.keyBy(...)`),
-  // last-wins via `$last`. Works over the whole `$$` stream, not only in value
+  // last-wins through `$last`. Works over the whole `$$` stream, not only in value
   // position. Verified on mongod.
   it("collapses to the lodash object { <key>: <last doc> } (last wins)", () => {
     expect(jsmql('$$ = $$.keyBy("email");')).toEqual([
@@ -654,13 +654,13 @@ describe("lodash iteratee shorthands on stream methods", () => {
   it('.map("field") promotes a subdocument field to the root → $replaceWith', () => {
     // `.map("field")` ≡ `.map(d => d.field)` — the field becomes the new root, so it
     // must be a DOCUMENT ($replaceWith needs an object root). Using a subdocument
-    // field here; a scalar field (e.g. an ObjectId `userId`) is accepted at compile
+    // field here; a scalar field (for example an ObjectId `userId`) is accepted at compile
     // time (its type is unknown) but errors at runtime — verified against mongod.
     expect(jsmql('$$ = $$.map("address");')).toEqual([{ $replaceWith: "$address" }]);
     expect(jsmql('$$ = $$.map("address");')).toEqual([{ $replaceWith: "$address" }]);
   });
 
-  it("rejects a .map body that provably isn't a document ($replaceWith needs an object root)", () => {
+  it("rejects a .map body that provably is not a document ($replaceWith needs an object root)", () => {
     // Universally-invalid MQL — mongod rejects a scalar/array `$replaceWith` root on
     // every deployment, so jsmql rejects it at compile time (parity with `$ = 5`).
     expect(() => jsmql("$$ = $$.map(d => 5);")).toThrow(
@@ -1394,7 +1394,7 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
   });
 });
 
-describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary via $group + $replaceWith", () => {
+describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary through $group + $replaceWith", () => {
   it("single $sum accumulator → $group + $replaceWith dropping _id", () => {
     expect(jsmql("$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }];")).toEqual([
       { $group: { _id: null, total: { $sum: "$amount" } } },
@@ -1594,7 +1594,7 @@ describe("reducer body shapes — $first / $last / $push", () => {
     ]);
   });
 
-  it("$push via .concat spelling — acc.<key>.concat(d.<path>)", () => {
+  it("$push through .concat spelling — acc.<key>.concat(d.<path>)", () => {
     expect(
       jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, items: acc.items.concat(d.label) }), { items: [] })];"),
     ).toEqual([{ $group: { _id: null, items: { $push: "$label" } } }, { $replaceWith: { items: "$items" } }]);
@@ -1654,7 +1654,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
 
   it("falls through to the static-key object-reducer when keys mix computed + static", () => {
     // `({ ...acc, [d.id]: d.name, count: acc.count + 1 })` is not a pure dict-build,
-    // so the object-reducer path picks it up and reports "computed keys aren't
+    // so the object-reducer path picks it up and reports "computed keys are not
     // supported" with the precise error.
     expect(() =>
       jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name, count: acc.count + 1 }), { count: 0 })];"),
@@ -1663,7 +1663,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
     );
   });
 
-  it("rejects non-empty init via the object-reducer's missing-keys check", () => {
+  it("rejects non-empty init through the object-reducer's missing-keys check", () => {
     // Non-empty init falls through to the object-reducer detector, which
     // expects body and init to declare the same keys.
     expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), { fallback: null })];")).toThrow(
@@ -1716,7 +1716,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
     ]);
   });
 
-  it("filter-only via bare `d` projection (identity): just $match, no $replaceWith", () => {
+  it("filter-only through bare `d` projection (identity): just $match, no $replaceWith", () => {
     expect(jsmql("$$ = $$.reduce((acc, d) => (d.active === true ? acc.concat(d) : acc), []);")).toEqual([
       { $match: { active: true } },
       { $replaceWith: "$$ROOT" },
@@ -1727,7 +1727,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
     expect(jsmql("$$ = $$.reduce((acc, d) => acc.concat(d), []);")).toEqual([{ $replaceWith: "$$ROOT" }]);
   });
 
-  it("the bracketed form is rejected — a stream needn't be wrapped in `[ ]`", () => {
+  it("the bracketed form is rejected — a stream need not be wrapped in `[ ]`", () => {
     expect(() => jsmql("$$ = [$$.reduce((acc, d) => acc.concat(d.contactDetails), [])];")).toThrow(
       "'$$ = [$$.reduce(…)]' folds to one document, so the reducer returns a document: '(acc, d) => ({ ...acc, total: acc.total + d.amount })'. For one value write '$$ = [{ total: $$.reduce(…) }]'.",
     );
@@ -1869,7 +1869,7 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
 });
 
 describe("unknown chain method on $$ → registry error with hint", () => {
-  it("typo like .slise is corrected via 'did you mean .slice?'", () => {
+  it("typo like .slise is corrected through 'did you mean .slice?'", () => {
     expect(() => jsmql("$$ = $$.slise(0, 5);")).toThrow(
       "'.slise()' is not a method of the stream '$$'. Did you mean '.slice()'? A stage is a link too: '$$.$match(…)'.",
     );
@@ -1995,7 +1995,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   // Whether a computed key works is decided by the SLOT it lands in, not by the
   // method's spelling rules: `$group._id` is an expression the server evaluates per
   // document, so it takes one; a `$sort` key / `$unwind` path must be a literal field
-  // path, so it can't. The split below is that line, and nothing else.
+  // path, so it cannot. The split below is that line, and nothing else.
   it("a computed key lowers straight into $group._id — no extra stages", () => {
     expect(jsmql(`$$ = $$.countBy(d => d.cat.toLowerCase());`)).toEqual([
       {
@@ -2058,7 +2058,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   });
 
   it("a computed sort key materialises into a scratch field ahead of the $sort", () => {
-    // `$sort` needs a literal field path, so unlike `$group._id` the expression can't
+    // `$sort` needs a literal field path, so unlike `$group._id` the expression cannot
     // go inline — one `$addFields` puts it in a `__jsmql.tmp` slot first.
     expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase());`)).toEqual([
       {
@@ -2115,7 +2115,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     ]);
   });
 
-  it("`.flatMap` is the one key slot that still can't take a computed value", () => {
+  it("`.flatMap` is the one key slot that still cannot take a computed value", () => {
     // `$unwind` returns each element to a NAMED field, so the name is part of what the
     // user means — auto-materialising into a scratch slot would discard the elements.
     expect(() => jsmql(`$.o = $$$.orders.flatMap({ cat: 1 });`)).toThrow(

@@ -3,7 +3,7 @@
  * that vitest's own test runtime cannot catch:
  *
  *   1. The `src/` tree stays in TypeScript's strippable subset, so the source
- *      runs as-is on Node 22.18+ / 24.3+ via native type-stripping (no flag,
+ *      runs as-is on Node 22.18+ / 24.3+ through native type stripping (no flag,
  *      no transpiler — type stripping was unflagged in Node 22.18.0 LTS and
  *      in 24.3.0, and marked stable in 25.2.0) — required for Deno/Bun
  *      parity. Vitest transforms TS through Vite's loader, which happily
@@ -17,7 +17,7 @@
  *      green `npm test`. Skipped when `dist/` is absent (the default during
  *      local development); active in CI / `npm run smoke:dist` after a build.
  *
- *   3. The built `dist/cjs/index.cjs` loads via `require()` and produces the
+ *   3. The built `dist/cjs/index.cjs` loads through `require()` and produces the
  *      same MQL across all three call shapes. This is the `require` half of
  *      the dual ESM/CJS package — Node 14+ CJS consumers depend on it, and
  *      the bundling step in `scripts/build-cjs.mjs` is easy to break without
@@ -62,7 +62,7 @@ describe("smoke: built dist", () => {
   const distPath = resolve(ROOT, "dist/index.js");
   const distUrl = "file://" + distPath;
 
-  it.skipIf(!existsSync(distPath))("dist/index.js loads via ESM import and produces correct MQL", () => {
+  it.skipIf(!existsSync(distPath))("dist/index.js loads through an ESM import and produces correct MQL", () => {
     const script = `
         import { jsmql } from ${JSON.stringify(distUrl)};
         const out = jsmql("$.age > 18");
@@ -85,13 +85,13 @@ describe("smoke: built dist", () => {
 
   const cjsPath = resolve(ROOT, "dist/cjs/index.cjs");
 
-  it.skipIf(!existsSync(cjsPath))("dist/cjs/index.cjs loads via require() and produces correct MQL", () => {
+  it.skipIf(!existsSync(cjsPath))("dist/cjs/index.cjs loads through require() and produces correct MQL", () => {
     // Mirrors the ESM case above but exercises the CommonJS bundle that
     // ships under the `require` condition of `package.json#exports`.
-    // Run on `node14` target — keeping the script syntax-conservative
-    // (no template literals besides the wrapping one, no optional
-    // chaining) so the same script could be executed on the lowest
-    // engine we support if needed.
+    // This targets `node14`. The script stays syntax-conservative (no
+    // template literals besides the wrapping one, no optional chaining),
+    // so the same script can also run on the lowest engine this project
+    // supports.
     const script = `
         const { jsmql } = require(${JSON.stringify(cjsPath)});
         const out = jsmql("$.age > 18");
@@ -149,7 +149,7 @@ describe("smoke: built dist", () => {
       // `npm install` pulls the latest published mongoose and this case
       // catches augmentation drift against new mongoose generics before
       // users hit it. The skip guard stays for degraded environments where
-      // node_modules/mongoose isn't there for some reason.
+      // node_modules/mongoose is not there for some reason.
       const result = spawnSync(
         resolve(ROOT, "node_modules/.bin/tsc"),
         ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.json")],
@@ -166,10 +166,11 @@ describe("smoke: built dist", () => {
     () => {
       // Type-only validation of the ambient-globals completion surface: the
       // Array<T> / String / Number prototype augmentations complete and chain on
-      // concretely-typed receivers, value-method typos error (proving the surface
-      // isn't silently `any`), and a bare `any` receiver stays permissive. Its
-      // own tsconfig (no mongoose), so it runs whenever tsc is present regardless
-      // of whether mongoose is installed. See docs/specs/globals-generation.md.
+      // concretely-typed receivers, value-method typos error (this proves the
+      // surface is not silently `any`), and a bare `any` receiver stays
+      // permissive. It has its own tsconfig (no mongoose), so it runs whenever
+      // tsc is present, whether or not mongoose is installed. See
+      // docs/specs/globals-generation.md.
       const result = spawnSync(tscBin, ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.globals.json")], {
         cwd: ROOT,
         encoding: "utf8",
@@ -180,7 +181,7 @@ describe("smoke: built dist", () => {
 
   const mongooseEsm = resolve(ROOT, "dist/mongoose.js");
 
-  it.skipIf(!existsSync(mongooseEsm))("dist/mongoose.js loads via ESM import and patches Model.find", () => {
+  it.skipIf(!existsSync(mongooseEsm))("dist/mongoose.js loads through an ESM import and patches Model.find", () => {
     const script = `
         import jsmqlMongoose from ${JSON.stringify("file://" + mongooseEsm)};
         let captured;
@@ -240,7 +241,7 @@ describe("smoke: built dist", () => {
     const dts = readFileSync(opsDts, "utf8");
     // Spot-check that the declaration block is intact and includes both a
     // canonical stage and a canonical expression operator. If the generator
-    // silently emitted an empty file (e.g. specs not vendored), this fails.
+    // silently emitted an empty file (for example specs not vendored), this fails.
     expect(dts).toMatch(/declare global/);
     expect(dts).toMatch(/function \$match\(/);
     expect(dts).toMatch(/function \$dateAdd\(/);

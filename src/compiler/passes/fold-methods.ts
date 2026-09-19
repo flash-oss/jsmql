@@ -1,12 +1,12 @@
 // What a method call computes when its receiver and arguments are constants.
 //
 // Two tables, because the language has two shapes of call. A NAMESPACE call
-// reads nothing — `Math.max(3, 7)` — while an INSTANCE call has a receiver whose
-// value decides which rule applies: `.slice()` cuts a string or an array, and
-// the value tells us which.
+// reads nothing — for example `Math.max(3, 7)`. An INSTANCE call has a receiver
+// whose value decides which rule applies: `.slice()` cuts a string or an
+// array, and the value decides which.
 //
 // Every rule here answers the LANGUAGE's question, not JavaScript's, wherever
-// the two differ — and they do differ, in ways worth naming:
+// the two differ. They differ in these ways:
 //   'Ä'.toUpperCase()     JSMQL: 'Ä'      JavaScript: 'Ä'   ($toUpper is ASCII)
 //   new Date(2020, 1, 1)  February, in both — a JavaScript spelling gets JavaScript's behaviour
 //   (2.5).round()         JSMQL: 2        JavaScript: 3     (banker's rounding)
@@ -42,12 +42,13 @@ const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCa
 const points = (s: string): string[] => [...s];
 
 /**
- * An index or a count MongoDB can actually take.
+ * An index or a count MongoDB can take.
  *
- * `$substrCP`, `$arrayElemAt`, `$slice` and `$range` all demand a value
- * representable as a 32-bit integer and refuse anything else — `"abc".charAt(1.5)`
+ * `$substrCP`, `$arrayElemAt`, `$slice` and `$range` all demand a value that a
+ * 32-bit integer can represent, and refuse anything else: `"abc".charAt(1.5)`
  * is an error there and `""` in JavaScript. Folding it would answer where the
- * program does not run, which makes this pass a second, more permissive grammar.
+ * program does not run. That would make this pass a second, more permissive
+ * grammar.
  */
 const isInt32 = (n: unknown): n is number =>
   typeof n === "number" && Number.isInteger(n) && n >= -0x80000000 && n <= 0x7fffffff;
@@ -58,12 +59,12 @@ const isInt32 = (n: unknown): n is number =>
  * `Math.<name>(…)` — the ones whose result is EXACTLY specified.
  *
  * Measured against mongod: eleven of the twenty-nine differ, most by one unit in
- * the last place, and `Math.round(0.5)` by a whole unit. That is not a defect in
- * either implementation — IEEE-754 pins down `sqrt` and the algebraic operations
- * and leaves every transcendental free — so `cbrt log2 cos tan asin acos atan
- * sinh cosh atanh` and friends are left to run on the server, where the answer
- * is whatever the server says it is. Agreement at the points one happens to test
- * is not a guarantee, so the line is drawn by the standard rather than by luck.
+ * the last place, and `Math.round(0.5)` differs by a whole unit. That is not a
+ * defect in either implementation. IEEE-754 pins down `sqrt` and the algebraic
+ * operations, and leaves every transcendental free. So `cbrt log2 cos tan asin
+ * acos atan sinh cosh atanh` and similar functions run on the server, where the
+ * answer is whatever the server gives. Agreement at the points one test happens
+ * to check is not a guarantee. So the line follows the standard, not luck.
  */
 const MATH: Readonly<Record<string, (a: readonly number[]) => number>> = {
   abs: ([x]) => Math.abs(x),
@@ -83,14 +84,14 @@ const MATH: Readonly<Record<string, (a: readonly number[]) => number>> = {
  * MongoDB's rounding: a half goes to the EVEN neighbour, in DECIMAL.
  *
  * Decimal is the whole difficulty. Scaling by `10 ** places` makes the rounding
- * decision on a perturbed number — `(2.675).round(2)` is 2.68 that way and 2.67
- * on the server, because 2.675 is really 2.67499999999999982 — so the decision is
- * made on the number's EXACT value instead, which is integer arithmetic and cannot
+ * decision on a perturbed number: `(2.675).round(2)` is 2.68 that way, and 2.67
+ * on the server, because 2.675 is really 2.67499999999999982. So the decision
+ * uses the number's EXACT value instead, which is integer arithmetic and cannot
  * drift. Measured against `$round` over 2,184 value/place pairs.
  *
- * A negative number that rounds to zero answers `-0`, which is what the server
- * answers and what the pass then refuses to spell, so the call stays a runtime one
- * rather than folding to a `0` of the wrong sign.
+ * A negative number that rounds to zero answers `-0`. This is what the server
+ * answers, and what the pass then refuses to spell. So the call stays a runtime
+ * one, rather than fold to a `0` of the wrong sign.
  */
 function roundToPlaces(n: number, places: number): number {
   if (!Number.isFinite(n) || n === 0) return n;
@@ -204,8 +205,8 @@ const isKey = (v: unknown): boolean => typeof v === "string" || typeof v === "nu
 /**
  * A constant READ on a namespace: `Math.PI`, `Math.E`.
  *
- * The registry says these two are read rather than called; what they are worth
- * is arithmetic, and lives here.
+ * The registry states that these two are read, not called. Their value is
+ * arithmetic, and that arithmetic lives here.
  */
 export function foldNamespaceConstant(namespace: string, name: string): Evaluation {
   if (namespace !== "Math") return NO;
@@ -240,9 +241,9 @@ export function foldConstructor(name: string, args: readonly Arg[]): Evaluation 
 /**
  * A named call: `String(42)`, `Number("42")`, `ObjectId("<24 hex>")`.
  *
- * Each is a conversion, and each refuses exactly where the SERVER refuses:
- * `$convert` with no `onError` fails on a string it cannot parse, so
- * `Number("nope")` is an error there and a quiet NaN in JavaScript. Folding it
+ * Each is a conversion, and each refuses exactly where the SERVER refuses.
+ * `$convert` with no `onError` fails on a string it cannot parse. So
+ * `Number("nope")` is an error there, and a quiet NaN in JavaScript. Folding it
  * would answer where the program does not run.
  */
 
@@ -282,9 +283,10 @@ export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
  * `MinKey()`, `ObjectId("<24 hex>")`. `new X(…)` and `X(…)` fold alike — the row
  * decides which spellings the name accepts, not this.
  *
- * NO for anything the type cannot hold, so the call stands and the row refuses it
- * at its source position. jsmql never builds a value `bson` would silently wrap:
- * `new Int32(5000000000)` is 705032704 there. See docs/specs/bson-types.md.
+ * NO for anything the type cannot hold. The call then stands, and the row
+ * refuses it at its source position. jsmql never builds a value that `bson`
+ * would silently wrap: `new Int32(5000000000)` is 705032704 there. See
+ * docs/specs/bson-types.md.
  */
 function bsonValue(name: string, count: number, values: readonly unknown[]): Evaluation {
   if (count === 0) {
@@ -298,9 +300,9 @@ function bsonValue(name: string, count: number, values: readonly unknown[]): Eva
 
 /**
  * The string `$toString` writes for a number, or null where it and JavaScript
- * part company. An integer below 10^16 in magnitude is written digit for digit
- * by both; from there the server switches to an exponent ("1e+16") where
- * JavaScript holds out to 10^21, a fraction's threshold differs too ("1e-07"
+ * part company. Both write an integer below 10^16 in magnitude digit for
+ * digit. From there the server switches to an exponent ("1e+16"), where
+ * JavaScript holds out to 10^21. A fraction's threshold also differs ("1e-07"
  * against "1e-7"), and `-0` keeps its sign there and loses it here. Those stay
  * runtime; the integers a query compares fold.
  */
@@ -314,23 +316,24 @@ export function numberSpelling(n: number): string | null {
 /**
  * `<constant>.<name>(…)`.
  *
- * The receiver's runtime type picks the rule, which is why one table serves
- * `.slice()` on a string and on an array: by the time we are here the value is
- * in hand, so there is nothing to infer.
+ * The receiver's runtime type picks the rule. This is why one table serves
+ * `.slice()` on a string and on an array: by this point the value is in hand,
+ * so there is nothing to infer.
  */
 export function foldInstanceCall(receiver: unknown, name: string, args: readonly Arg[]): Evaluation {
   if (typeof receiver === "string") return stringMethod(receiver, name, args);
   if (Array.isArray(receiver)) return arrayMethod(receiver, name, args);
   if (typeof receiver === "number") return numberMethod(receiver, name, args);
   if (isDate(receiver)) return foldDateMethod(receiver, name, args.map(valueOf));
-  // A BSON value's one EXACT read: the text it prints. Nothing else folds — a
-  // decimal's arithmetic belongs to the server, which is the whole reason the type
-  // exists (MEASURED: `$add: ["$p", Decimal128("0.2")]` is 0.3 where a double is
-  // 0.30000000000000004), and a long's would need MongoDB's promotion rules.
+  // A BSON value's one EXACT read: the text it prints. Nothing else folds. A
+  // decimal's arithmetic belongs to the server, which is the whole reason the
+  // type exists (MEASURED: `$add: ["$p", Decimal128("0.2")]` is 0.3 where a
+  // double is 0.30000000000000004). A long's arithmetic would need MongoDB's
+  // promotion rules.
   if (bsonTagOf(receiver) !== undefined) {
     if (name !== "toString" || args.length !== 0) return NO;
-    // An ObjectId prints its 24 hex digits, and the defensive reader is the one
-    // that survives a plain object wearing the tag.
+    // An ObjectId prints its 24 hex digits. The defensive reader is the one
+    // that survives a plain object that carries the tag.
     if (isObjectId(receiver)) {
       const hex = objectIdHex(receiver);
       return hex === null ? NO : ok(hex);
@@ -339,10 +342,10 @@ export function foldInstanceCall(receiver: unknown, name: string, args: readonly
     return typeof own === "function" && own !== Object.prototype.toString ? ok(String(own.call(receiver))) : NO;
   }
   // PLAIN objects only. A RegExp, a Date and a BSON value are all objects to
-  // JavaScript, and reading one with the object rules answers about the wrong
-  // thing entirely: `/ab/.size()` would be `Object.keys(regex).length`, which
-  // is 0 and means nothing. The language refuses those receivers, and so does
-  // this — a fold may never answer a question the language does not ask.
+  // JavaScript. Reading one with the object rules answers about the wrong
+  // thing entirely: `/ab/.size()` would become `Object.keys(regex).length`,
+  // which is 0 and means nothing. The language refuses those receivers, and so
+  // does this. A fold must never answer a question the language does not ask.
   if (isPlainObject(receiver)) return objectMethod(receiver as Record<string, unknown>, name, args);
   return NO;
 }
@@ -354,9 +357,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 // ── the lodash string family ─────────────────────────────────────────────────
 //
-// These have no JavaScript counterpart, so there is nothing to inherit and the
-// rules are written out. Each mirrors the `$regexFindAll` split the runtime
-// lowering uses, which is ASCII-only — the same reason `$toUpper` is.
+// These have no JavaScript counterpart. So there is nothing to inherit, and the
+// rules are written out. Each mirrors the `$regexFindAll` split that the
+// runtime lowering uses, which is ASCII-only — the same reason `$toUpper` is.
 
 /** The runtime splits on this exact pattern, so the fold splits on it too. */
 const WORD = /[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+/g;
@@ -473,7 +476,7 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       return sliceOf(points(s), a, b, (parts) => parts.join(""));
     case "substring": {
       // `$substrCP(s, start, length)` with the length clamped at zero. It does
-      // NOT swap its arguments the way JavaScript's `substring` does, so
+      // NOT swap its arguments the way JavaScript's `substring` does. So
       // `"abcd".substring(3, 1)` is `""` on the server and `"bc"` in JavaScript.
       if (!isInt32(a) || a < 0) return NO;
       if (b !== undefined && (!isInt32(b) || b < 0)) return NO;
@@ -487,10 +490,10 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       return isInt32(a) && a >= 0 ? ok(s.repeat(a)) : NO;
     case "padStart":
     case "padEnd": {
-      // In CODE POINTS. JavaScript pads to a UTF-16 length and truncates the pad
-      // string by units, which for an astral character both pads to the wrong
-      // width and can cut one in half — producing a lone surrogate, a string with
-      // no UTF-8 encoding at all, on its way to the driver.
+      // In CODE POINTS. JavaScript pads to a UTF-16 length, and truncates the pad
+      // string by units. For an astral character this both pads to the wrong
+      // width and can cut one in half. The result is a lone surrogate, a string
+      // with no UTF-8 encoding at all, on its way to the driver.
       if (!isInt32(a)) return NO;
       const fill = b === undefined ? " " : b;
       if (typeof fill !== "string" || fill === "") return ok(s);
@@ -502,8 +505,8 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       return ok(name === "padStart" ? built.join("") + s : s + built.join(""));
     }
     case "split":
-      // `$split` rejects an empty separator, and so does the row — declining the fold is
-      // what lets the registry's refusal reach the developer instead of a folded answer.
+      // `$split` rejects an empty separator, and so does the row. The fold declines
+      // here so that the registry's refusal reaches the developer, instead of a folded answer.
       if (typeof a !== "string" || a === "") return NO;
       if (b !== undefined && !isInt32(b)) return NO;
       return ok(s.split(a, typeof b === "number" ? b : undefined));
@@ -602,8 +605,8 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
       for (const [k, v] of Object.entries(o)) {
         const verdict = fn(v, k, o);
         // A predicate that answers with something other than a boolean is where
-        // JavaScript's truthiness and MongoDB's part company — `""` and `0` are
-        // false there and true here — so it does not fold.
+        // JavaScript's truthiness and MongoDB's part company: `""` and `0` are
+        // false there and true here. So it does not fold.
         if (typeof verdict !== "boolean") return NO;
         if (verdict === (name === "pickBy")) setKey(out, k, v);
       }
@@ -619,10 +622,10 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
 /**
  * Deep equality, the way MongoDB's set operators compare.
  *
- * `$setUnion` and friends compare VALUES, so `[{a:1}]` and `[{a:1}]` are one
- * element to them and two to JavaScript's `includes`. The lodash set family here
- * follows MongoDB; `.includes()` and `.indexOf()` keep JavaScript's identity,
- * which is what the runtime lowering of those two does.
+ * `$setUnion` and friends compare VALUES. So `[{a:1}]` and `[{a:1}]` are one
+ * element to them, and two to JavaScript's `includes`. The lodash set family
+ * here follows MongoDB. `.includes()` and `.indexOf()` keep JavaScript's
+ * identity, which is what the runtime lowering of those two does.
  */
 const deepIncludes = (haystack: readonly unknown[], needle: unknown): boolean =>
   haystack.some((h) => sameValue(h, needle));
@@ -645,9 +648,9 @@ const numbersIn = (xs: readonly unknown[]): number[] => xs.filter((v): v is numb
 /**
  * Strings JavaScript orders the way MongoDB does.
  *
- * `$min`, `$max` and `$sortArray` compare a string by CODE POINT; JavaScript's `<`
- * compares UTF-16 units, and a surrogate pair sorts BELOW U+E000 there and above it
- * on the server. No surrogate, no disagreement.
+ * `$min`, `$max` and `$sortArray` compare a string by CODE POINT. JavaScript's
+ * `<` compares UTF-16 units, and a surrogate pair sorts BELOW U+E000 there and
+ * above it on the server. No surrogate, no disagreement.
  */
 const comparableStrings = (keys: readonly unknown[]): boolean =>
   keys.every((k) => typeof k === "string" && !/[\uD800-\uDFFF]/.test(k));
@@ -677,10 +680,10 @@ type SortKey = { readonly field: string; readonly direction: 1 | -1 };
  *   .sortBy(["dept", "age"])    .orderBy(["dept", "age"], ["asc", "desc"])
  *                               .orderBy({ dept: 1, age: -1 })
  *
- * `.sortBy` takes no direction — lodash reads an object there as a matcher — an
- * unnamed direction is ascending, and every spelling the emitter refuses (a leading
- * `$`, an unknown direction, no key at all) is refused here too, so the fold never
- * answers where the program raises.
+ * `.sortBy` takes no direction: lodash reads an object there as a matcher. An
+ * unnamed direction is ascending. Every spelling the emitter refuses (a leading
+ * `$`, an unknown direction, no key at all) is refused here too. So the fold
+ * never answers where the program raises.
  */
 function sortAsk(name: string, values: readonly unknown[]): SortKey[] | null {
   const direction = (v: unknown): 1 | -1 | null =>
@@ -722,12 +725,12 @@ function readField(doc: unknown, field: string): unknown {
 }
 
 /**
- * `$sortArray` with a `{ field: 1 | -1 }` spec: a STABLE sort by each key in turn —
- * measured, ten tied elements keep their input order both ways.
+ * `$sortArray` with a `{ field: 1 | -1 }` spec: a STABLE sort by each key in
+ * turn. Measured: ten tied elements keep their input order both ways.
  *
- * The server reads a field that is not there as one sorting below every value, and
- * compares across BSON types by its own order, so a column that is not one
- * comparable type throughout is left to run there.
+ * The server reads a field that is not there as one that sorts below every
+ * value. It also compares across BSON types by its own order. So a column
+ * that is not one comparable type throughout runs on the server.
  */
 function sortByFields(xs: readonly unknown[], keys: readonly SortKey[]): Evaluation {
   const columns = keys.map((k) => xs.map((x) => readField(x, k.field)));
@@ -751,12 +754,12 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
   const fn = fnOf(args[0]);
 
   /**
-   * A predicate answers with a VALUE, and this is the reading of it — the same four
-   * the lowering spells out in the emitted condition: not missing, not null, not
-   * `false`, not `""`, not `0`. `.filter("ok")` over `{ ok: "" }` drops the element
-   * on the server for exactly that reason, so it does here. The OBJECT family is not
-   * this: `.pickBy` lowers to a raw condition, which is MongoDB's truthiness, and
-   * keeps `""`.
+   * A predicate answers with a VALUE. This is the reading of it, the same four
+   * checks the lowering spells out in the emitted condition: not missing, not
+   * null, not `false`, not `""`, not `0`. `.filter("ok")` over `{ ok: "" }` drops
+   * the element on the server for exactly that reason, so it does here. The
+   * OBJECT family is not this: `.pickBy` lowers to a raw condition, which is
+   * MongoDB's truthiness, and keeps `""`.
    */
   const predicate =
     (f: Callable) =>
@@ -833,9 +836,9 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     case "join": {
       if (a !== undefined && typeof a !== "string") return NO;
       // The `$reduce` lowering uses an empty accumulator as its "first element"
-      // sentinel and `$toString` per element, so an EMPTY-STRING element yields a
-      // leading separator and a NULL element collapses the whole result to null.
-      // Neither matches JavaScript, so neither folds.
+      // sentinel, and `$toString` per element. So an EMPTY-STRING element yields
+      // a leading separator, and a NULL element collapses the whole result to
+      // null. Neither matches JavaScript, so neither folds.
       if (!xs.every((v) => (typeof v === "string" && v !== "") || typeof v === "number")) return NO;
       return ok(xs.join(a as string | undefined));
     }
@@ -878,8 +881,8 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       if (fn === undefined || xs.length === 0) return NO;
       const keys = xs.map((v, i) => fn(v, i, xs));
       if (!keys.every((k) => typeof k === "number") && !comparableStrings(keys)) return NO;
-      // The lowering sorts by the key and takes the first, and that sort is stable, so
-      // a tie answers with the EARLIEST element — which is what a strict `<` / `>` keeps.
+      // The lowering sorts by the key and takes the first, and that sort is stable.
+      // So a tie answers with the EARLIEST element, which is what a strict `<` / `>` keeps.
       const ordered = keys as (number | string)[];
       const best = ordered.reduce<number>(
         (bi, k, i) => ((name === "minBy" ? k < ordered[bi] : k > ordered[bi]) ? i : bi),
@@ -998,7 +1001,7 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       // ONE level, which is what the runtime lowering does.
       return ok(xs.flat());
     case "flat":
-      // `$concatArrays`, which takes ARRAYS only — where `.flatten()` wraps a scalar
+      // `$concatArrays`, which takes ARRAYS only. `.flatten()` wraps a scalar
       // first. `[1, 2].flat()` is an error on the server and `[1, 2]` in JavaScript,
       // and one null element makes the whole answer null there. The row allows a depth
       // of exactly 1, which is the level this concatenates.
@@ -1026,9 +1029,9 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       const lists = [xs, ...args.slice(0, -1).map(valueOf)];
       const with_ = fnOf(args[args.length - 1]);
       if (with_ === undefined || !lists.every((l) => Array.isArray(l))) return NO;
-      // The lowering zips to the LONGEST list and hands the body a null where a
-      // list ran out; JavaScript would hand it undefined, and the two answers part
-      // (`a + b` is null on the server, a number here) — so only equal lengths fold.
+      // The lowering zips to the LONGEST list, and hands the body a null where a
+      // list ran out. JavaScript would hand it undefined, and the two answers part
+      // (`a + b` is null on the server, a number here). So only equal lengths fold.
       const widths = new Set((lists as unknown[][]).map((l) => l.length));
       if (widths.size !== 1) return NO;
       const width = [...widths][0];
@@ -1066,8 +1069,8 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     case "countBy": {
       if (fn === undefined) return NO;
       // A MAP, not an object: the accumulator is keyed by a value the DEVELOPER
-      // computed, and reading `out["constructor"]` off a plain object answers a
-      // function that was never stored, while writing `out["__proto__"]` stores
+      // computed. Reading `out["constructor"]` off a plain object answers a
+      // function that was never stored. Writing `out["__proto__"]` stores
       // nothing at all. `Object.fromEntries` then builds the answer safely.
       const out = new Map<string, unknown>();
       for (const [i, v] of xs.entries()) {
@@ -1100,10 +1103,10 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
         return sorted === null ? NO : ok(sorted);
       }
       // Otherwise the argument NAMES fields, and `$sortArray` reads each one out of
-      // the element — so a receiver of anything but documents carrying that field is a
-      // sort this cannot answer. Reading the argument as a direction and sorting the
-      // ELEMENTS answered `[1, 2, 3]` for `[3, 1, 2].sortBy("x")`, where the server
-      // leaves the list alone.
+      // the element. So a receiver of anything but documents that carry that field
+      // is a sort this cannot answer. Reading the argument as a direction, and
+      // sorting the ELEMENTS, would answer `[1, 2, 3]` for `[3, 1, 2].sortBy("x")`,
+      // where the server leaves the list alone.
       const ask = sortAsk(name, args.map(valueOf));
       return ask === null ? NO : sortByFields(xs, ask);
     }

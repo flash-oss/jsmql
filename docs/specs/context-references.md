@@ -13,6 +13,8 @@ JSMQL has four levels of context prefix. Each prefix names one fixed scope:
 
 The four levels give JSMQL one vocabulary for a document, a collection, a database, or a cluster. This is the syntax behind `$lookup`, `$unionWith`, `$out`, and the diagnostic source stages, and it uses forms users already know.
 
+The table gives the plain name of each scope. The precise name for `$$` is the **root stream**: the documents that the current collection sends into the pipeline. HR4 in [docs/LANG_RULES.md](../LANG_RULES.md) uses that term, and so does the rest of this specification.
+
 This spec covers the **syntax**: the tokens, the AST nodes, and the parse. The road that lowers a prefix defines what the prefix MEANS, and each road has its own spec — see [What each reference carries](#what-each-reference-carries). A prefix can reach a position where no row gives it a meaning; the compiler refuses it there, in that row's own words. A cross-database **read** (`$$$$.db.coll.find/filter(...)`) parses, but the compiler **rejects it at compile time** — see the `$$$$` entry below.
 
 ## Lexer

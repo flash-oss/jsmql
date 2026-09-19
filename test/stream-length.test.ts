@@ -80,7 +80,7 @@ describe("$$.length — compute-once / reuse / recompute", () => {
 });
 
 describe("$$.length — call forms", () => {
-  it("single-statement arrow block (no trailing ;)", () => {
+  it("accepts a single-statement arrow block with no trailing `;`", () => {
     expect(
       jsmql(({ $ }) => {
         $.n = $$.length;
@@ -242,7 +242,7 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
     ]);
   });
 
-  it("block-body `.map` with `return` is accepted; an unused index/3rd param on a predicate filter doesn't throw", () => {
+  it("block-body `.map` with `return` is accepted; an unused index/3rd param on a predicate filter does not throw", () => {
     // `(s, i, shipmntsColl) => …` — extra params present but unused: valid JS, compiles.
     expect(jsmql("$$ = $$.map((d, _i, _coll) => { return ({ id: d._id }); });")).toEqual([
       { $replaceWith: { id: "$_id" } },

@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import jsmqlMongoose from "../src/mongoose.ts";
 
-// Mock-based tests: real mongoose isn't installed as a devDep; instead each
-// test constructs the minimal shape the plugin reads — `mongoose.Model` with
-// the static methods the plugin patches. Calls are recorded so we can verify
-// the arguments the *original* method received after the plugin's transform.
+// Mock-based tests: real mongoose is not installed as a devDependency; instead
+// each test builds the minimal shape the plugin reads — `mongoose.Model` with
+// the static methods the plugin patches. Each call is recorded, so a test can
+// check the arguments the *original* method got after the plugin's transform.
 
 type Recorded = { method: string; args: unknown[]; thisArg: unknown };
 
@@ -253,8 +253,8 @@ describe("@koresar/jsmql/mongoose — subclass propagation", () => {
     class User extends Model {}
     User.find("$.age > 18");
     expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
-    // The patched function is reached via prototype-chain lookup, so it
-    // executes with the subclass as `this` — matching real mongoose behaviour.
+    // The patched function is reached through prototype-chain lookup, so it
+    // runs with the subclass as `this`. This matches real mongoose behaviour.
     expect(recorded[0].thisArg).toBe(User);
   });
 });

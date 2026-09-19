@@ -99,8 +99,8 @@ const AGREE: readonly string[] = [
   "$.s.length === 5",
   "$.s.length > 2",
   // Quantify — `$elemMatch` as a query, `$anyElementTrue`/`$allElementsTrue` as an
-  // expression. The doc set has no `items` field at all, which is the case that used to
-  // abort the expression form while the query form answered correctly.
+  // expression. The doc set has no `items` field at all. In that case the expression form
+  // must not abort, and the query form must answer correctly.
   "$.items.some(i => i.q > 3)",
   "$.items.every(i => i.q > 3)",
   // Logical

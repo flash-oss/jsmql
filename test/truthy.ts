@@ -7,7 +7,7 @@
 // that code emitted. Kept in one module so a change to the rule is one edit here plus
 // the emitter, not a sweep of every suite that asserts a predicate shape.
 
-/** `jsTruthy(v)` — the wrap every boolean position gets when the value isn't provably bool. */
+/** `jsTruthy(v)` — the wrap every boolean position gets when the value is not provably bool. */
 export const truthy = (v: unknown) => ({
   $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
 });

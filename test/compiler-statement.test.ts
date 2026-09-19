@@ -1,12 +1,12 @@
 // Phase 5 of src/compiler/ — the statement target, end to end.
 //
-// A JSMQL program and the pipeline the compiler emits. Two statements never merge:
-// the `;` the developer wrote is the stage boundary and the `,` is the merge, so one
-// source keeps one output.
+// A JSMQL program and the pipeline the compiler emits. Two statements never merge.
+// The `;` the developer wrote is the stage boundary. The `,` is the merge operator.
+// One source stays one output.
 //
-// The second describe runs every pipeline this file asserts against a live
-// mongod, because a green `toEqual` proves what the compiler EMITS and never
-// that the server accepts it (HR3). It self-skips (green) when no mongod is
+// The second suite runs every pipeline this file asserts against a live mongod.
+// A green `toEqual` proves only what the compiler emits, not that the server
+// accepts it (HR3). This suite self-skips (reports green) when no mongod is
 // reachable, with an all-or-nothing guard.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -97,7 +97,7 @@ describe("compiler/emit/statement — the writes", () => {
     expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
   });
 
-  it("`$ = $.pick(…)` — an element-wise object method on the root is its stream cell's stage", () => {
+  it("`$ = $.method(…)` is the stage that root-replacing object methods emit", () => {
     // A row spelled on both the object and the stream says of ONE document what it
     // says of every document, so the two spellings are one lowering — the lean `$project`.
     expect(compiled('$ = $.pick(["a", "b"]);')).toEqual([{ $project: { a: 1, b: 1, _id: 0 } }]);
@@ -170,7 +170,7 @@ describe("compiler/emit/statement — the writes", () => {
     ]);
   });
 
-  it("places a stage a value needed ahead of the stage that needed it", () => {
+  it("places a stage that computes a needed value ahead of the stage that uses it", () => {
     expect(compiled("$.n = $$.length;")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { n: "$__jsmql.length" } },
@@ -278,7 +278,7 @@ describe("compiler/emit/statement — a stage body is checked from the facts its
     expect(() => pipeline("$unionWith($.c);")).toThrow(/compile-time constant/);
   });
 
-  it("refuses a body the server reads before any document, where the source made it a value", () => {
+  it("refuses a body that the server reads before any document is available", () => {
     // Measured, one stage at a time: the server refuses a field path as the body of
     // each of these ("the $sort key specification must be an object", …), and takes
     // one for `$unwind` and `$sortByCount`, whose bodies ARE expressions.

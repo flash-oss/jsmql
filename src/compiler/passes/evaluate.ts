@@ -1,11 +1,11 @@
-// The constant evaluator. Given an expression and the constants already known,
-// it answers with a VALUE or with "not a constant".
+// The constant evaluator. It takes an expression and the constants already
+// known, and answers with a VALUE or with "not a constant".
 //
 // THE ONE INVARIANT: a fold must not change the answer. Whatever this computes
-// has to equal what the same expression computes on the server when it is left
-// alone, or folding stops being an optimisation and becomes a second semantics.
-// So the rule for every operator is not "what does JavaScript do" but "where do
-// JavaScript and MongoDB agree" — and where they do not, this refuses:
+// must equal what the same expression computes on the server when left alone,
+// or folding stops being an optimisation and becomes a second semantics. So the
+// rule for every operator is not "what does JavaScript do" but "where do
+// JavaScript and MongoDB agree" — and where they do not agree, the evaluator refuses:
 //
 //   "a" + 1     JavaScript: "a1"       MongoDB: $concat rejects a non-string
 //   1 / 0       JavaScript: Infinity   MongoDB: an error, and no literal exists
@@ -36,10 +36,10 @@ export type Constants = ReadonlyMap<string, unknown>;
 /**
  * A declared function, held so a CALL to it can be evaluated.
  *
- * Wrapped rather than stored bare, because it must never be mistaken for a
- * value: a function has no MongoDB literal, and substituting one into the tree
- * would put a lambda where an expression belongs. `fold` keeps these in the
- * environment and out of the substitution map for exactly that reason.
+ * The wrapper exists so this is never mistaken for a value: a function has no
+ * MongoDB literal, and substituting one into the tree would put a lambda where
+ * an expression belongs. For this reason, `fold` keeps these in the
+ * environment and out of the substitution map.
  */
 export type DeclaredFunction = { readonly lambda: object };
 
@@ -51,11 +51,11 @@ const isDeclaredFunction = (v: unknown): v is DeclaredFunction =>
 /**
  * A value, or the reason there is none.
  *
- * `unspellable` is the third state, and it exists because "this is not a
- * constant" and "this IS a constant that MongoDB cannot write down" want
- * different outcomes. It PROPAGATES: an `Infinity` that reaches an operator
- * poisons everything built from it, so `1 / 0 > 0` does not quietly become
- * `true` while the server refuses the division outright.
+ * `unspellable` is the third state. It exists because "this is not a constant"
+ * and "this IS a constant that MongoDB cannot write down" need different
+ * outcomes. It PROPAGATES: an `Infinity` that reaches an operator poisons
+ * everything built from it, so `1 / 0 > 0` does not quietly become `true`
+ * while the server refuses the division outright.
  */
 export type Evaluation = { ok: true; value: unknown } | { ok: false; unspellable?: string };
 
@@ -73,7 +73,7 @@ function nameIfUnspellable(value: unknown): string | null {
   if (typeof value === "number") {
     if (Number.isNaN(value)) return "NaN";
     if (!Number.isFinite(value)) return String(value);
-    // `-0` is a DOUBLE to the driver where the same arithmetic gives MongoDB an
+    // `-0` is a DOUBLE to the driver, where the same arithmetic gives MongoDB an
     // int `0`: `0 * -7` is `-0` here and `0` there, and the two differ in
     // `$type`, in `$toString` and in sort order.
     if (Object.is(value, -0)) return "-0";
@@ -96,20 +96,20 @@ function nameIfUnspellable(value: unknown): string | null {
 function spellable(value: unknown): Evaluation {
   const name = nameIfUnspellable(value);
   if (name === null) return ok(value);
-  // `-0` is a legal value the server computes (`$ceil: -0.5` → -0) but not one
+  // `-0` is a legal value the server computes (`$ceil: -0.5` → -0), but not one
   // a fold may WRITE: the driver sends a double where the same arithmetic gives
-  // MongoDB an int 0. So it stays a runtime binding — not an error, unlike NaN
+  // MongoDB an int 0. So it stays a runtime binding, not an error, unlike NaN
   // and Infinity, which no MongoDB expression yields.
   return name === "-0" ? NOT_CONSTANT : unspellable(name);
 }
 
 /**
- * How deep an expression may nest before we stop.
+ * How deep an expression may nest before the evaluator stops.
  *
  * `1 + 1 + … + 1` is left-nested one `BinaryExpr` per term, and a recursive
  * evaluator runs out of stack somewhere above 2,500 of them — as a `RangeError`
  * with no position, which is exactly what every rule here takes care not to
- * produce. Depth is cheap to count, so it is counted.
+ * produce. Depth is cheap to count, so the evaluator counts it.
  */
 const MAX_DEPTH = 400;
 
@@ -143,9 +143,9 @@ function all(nodes: readonly Expr[], env: Constants, depth: number): unknown[] |
 // ── operators ────────────────────────────────────────────────────────────────
 
 /**
- * `+` is two operators wearing one symbol, and MongoDB spells them apart:
+ * `+` is two operators that wear one symbol, and MongoDB spells them apart:
  * `$add` for numbers and `$concat` for strings. So a MIXED pair folds to
- * nothing — JavaScript would say `"a1"` where the server rejects the `$concat`.
+ * nothing. JavaScript would say `"a1"` where the server rejects the `$concat`.
  */
 function plus(left: unknown, right: unknown): Evaluation {
   if (typeof left === "number" && typeof right === "number") {
@@ -163,15 +163,15 @@ function plus(left: unknown, right: unknown): Evaluation {
  * digit — while JavaScript computes in doubles and starts rounding above 2^53:
  *   123456789 * 987654321   JavaScript 121932631112635260
  *                           MongoDB    121932631112635269
- * Folding there would answer with the rounded one, so it does not fold.
+ * A fold there would answer with the rounded value, so the evaluator refuses to fold it.
  */
 function losesIntegerPrecision(op: string, left: number, right: number, result: number): boolean {
-  // Only the operations that KEEP integers integral. `7 / 2` is 3.5 on both
-  // sides — `$divide` answers with a double — so there is no long to be exact
-  // about and nothing to check.
+  // Only the operations that KEEP integers integral matter here. `7 / 2` is 3.5
+  // on both sides — `$divide` answers with a double — so there is no long to be
+  // exact about, and nothing to check.
   if (!KEEPS_INTEGERS.has(op)) return false;
   // A non-finite result is a different matter entirely, and the caller reports
-  // it by name — checking it here would turn "this overflows" into silence.
+  // it by name. Checking it here would turn "this overflows" into silence.
   if (!Number.isFinite(result)) return false;
   return Number.isInteger(left) && Number.isInteger(right) && !Number.isSafeInteger(result);
 }
@@ -196,8 +196,8 @@ function arithmetic(op: string, left: unknown, right: unknown): Evaluation {
       value = left % right;
       break;
     case "**":
-      // Only an integer power. A fractional exponent is a transcendental, and
-      // no two implementations of one are required to agree to the last bit.
+      // Only an integer power folds. A fractional exponent is a transcendental
+      // function, and no two implementations of one need agree to the last bit.
       if (!Number.isInteger(left) || !Number.isInteger(right) || right < 0) return NOT_CONSTANT;
       value = left ** right;
       break;
@@ -211,9 +211,9 @@ function arithmetic(op: string, left: unknown, right: unknown): Evaluation {
 /**
  * `===` and `!==`, compared the way MongoDB compares.
  *
- * `$eq` looks at VALUES, so `[1,2] === [1,2]` is true on the server; JavaScript's
+ * `$eq` looks at VALUES, so `[1,2] === [1,2]` is true on the server. JavaScript's
  * `===` looks at identity, and every literal this evaluator builds is a fresh
- * object, so it would answer false for every structural comparison there is.
+ * object, so it would answer false for every structural comparison.
  */
 function strictEquality(op: string, left: unknown, right: unknown): Evaluation {
   const same = sameValue(left, right);
@@ -230,7 +230,7 @@ export function sameValue(a: unknown, b: unknown): boolean {
     if (Array.isArray(a) || Array.isArray(b)) return false;
     const ka = Object.keys(a as object);
     const kb = Object.keys(b as object);
-    // Key ORDER is part of a BSON document's identity, so it is part of this.
+    // Key ORDER is part of a BSON document's identity, so this check keeps it.
     return (
       ka.length === kb.length &&
       ka.every((k, i) => k === kb[i] && sameValue((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
@@ -242,16 +242,16 @@ export function sameValue(a: unknown, b: unknown): boolean {
 /**
  * `<` `>` `<=` `>=` — numbers or strings, and both sides the same kind.
  *
- * MongoDB compares ACROSS types by a total order of its own (a number sorts
- * before a string, always), which JavaScript does not have. Same-kind operands
- * are the region where the two agree — and for strings, only once the comparison
- * is done in code points. See `compareCodePoints`.
+ * MongoDB compares ACROSS types by a total order of its own (a number always
+ * sorts before a string), which JavaScript does not have. Same-kind operands
+ * are the region where the two agree, and for strings, only once the
+ * comparison runs in code points. See `compareCodePoints`.
  */
 function ordering(op: string, left: unknown, right: unknown): Evaluation {
   if (typeof left === "string" && typeof right === "string") {
     // MongoDB compares the UTF-8 bytes, which is CODE POINT order. JavaScript
     // compares UTF-16 units, and the two disagree for every character above
-    // U+D7FF: the ﬁ ligature sorts above 😀 there and below it here.
+    // U+D7FF: the ﬁ ligature sorts above 😀 there, and below it here.
     return orderingOf(op, compareCodePoints(left, right));
   }
   if (typeof left !== "number" || typeof right !== "number") return NOT_CONSTANT;
@@ -285,13 +285,13 @@ function orderingOf(op: string, sign: number): Evaluation {
   }
 }
 
-/** Integer bitwise operators. MongoDB's are 64-bit; JavaScript's coerce to 32. */
+/** Integer bitwise operators. MongoDB's are 64-bit; JavaScript's coerce to 32-bit. */
 function bitwise(op: string, left: unknown, right: unknown): Evaluation {
   if (!Number.isSafeInteger(left) || !Number.isSafeInteger(right)) return NOT_CONSTANT;
   const l = left as number;
   const r = right as number;
-  // Outside the 32-bit range JavaScript wraps and MongoDB does not, so the two
-  // only agree while both operands fit.
+  // Outside the 32-bit range, JavaScript wraps and MongoDB does not, so the two
+  // agree only while both operands fit.
   const fits = (n: number): boolean => n >= -0x80000000 && n <= 0x7fffffff;
   if (!fits(l) || !fits(r)) return NOT_CONSTANT;
   switch (op) {
@@ -332,25 +332,25 @@ function binary(op: string, left: unknown, right: unknown): Evaluation {
     case "||":
       return logical(op, left, right);
     case "??":
-      // The left was null, so the answer is the right one, whatever it is.
+      // The left operand was null, so the answer is the right one, whatever it is.
       return ok(right);
     case "in":
       return membership(left, right);
     default:
-      // `==` and `!=` coerce by rules MongoDB does not share, so they never fold.
+      // `==` and `!=` coerce by rules MongoDB does not share, so the evaluator never folds them.
       return NOT_CONSTANT;
   }
 }
 
 /**
  * The answer a short-circuiting operator gives from its LEFT operand alone, or
- * null when it needs the right one too.
+ * null when it also needs the right one.
  *
  * Each of the three agrees with its MongoDB counterpart exactly here:
  *   false && x   the left operand, whatever `x` is
  *   true  || x   the left operand
  *   v ?? x       `$ifNull` returns the first non-null, and so does JavaScript
- * The remaining halves need the right operand, and are handled by `binary`.
+ * `binary` handles the remaining halves, which need the right operand.
  */
 function decidedByLeft(op: string, left: unknown): Evaluation | null {
   if (op === "&&" && !truthy(left)) return ok(left);
@@ -360,12 +360,12 @@ function decidedByLeft(op: string, left: unknown): Evaluation | null {
 }
 
 /**
- * `&&` and `||` once the left operand did not decide it.
+ * `&&` and `||` once the left operand did not decide the result.
  *
- * Both yield an OPERAND, not a boolean — jsmql lowers them to JavaScript's own
- * truthiness, verified on the server: `0 || 5` is 5 and `1 && 2` is 2 there as
- * well as here. So `const timeout = envValue || 30000` folds, which is the shape
- * a developer actually writes.
+ * Both yield an OPERAND, not a boolean. JSMQL lowers them to JavaScript's own
+ * truthiness, verified on the server: `0 || 5` is 5, and `1 && 2` is 2, both
+ * there and here. So `const timeout = envValue || 30000` folds, which is the
+ * shape a developer actually writes.
  */
 function logical(op: string, left: unknown, right: unknown): Evaluation {
   if (op === "&&") return truthy(left) ? ok(right) : ok(left);
@@ -377,8 +377,8 @@ function logical(op: string, left: unknown, right: unknown): Evaluation {
 export const truthy = (v: unknown): boolean => Boolean(v);
 
 /**
- * `x in [ … ]` is MEMBERSHIP in JSMQL — `$in` — and not JavaScript's key test.
- * The language settled that, so the fold answers the language's question.
+ * `x in [ … ]` is MEMBERSHIP in JSMQL — `$in` — not JavaScript's key test. The
+ * language settled that, so the fold answers the language's question.
  */
 function membership(needle: unknown, haystack: unknown): Evaluation {
   if (!Array.isArray(haystack)) return NOT_CONSTANT;
@@ -389,7 +389,7 @@ function unary(op: string, operand: unknown): Evaluation {
   switch (op) {
     case "-":
       // A BigInt negates exactly, so `-5n` is as much a literal as `5n` is. The
-      // 64-bit range is checked where the value is built (src/bson.ts).
+      // check for the 64-bit range runs where the value is built (src/bson.ts).
       if (typeof operand === "bigint") return ok(-operand);
       return typeof operand === "number" ? spellable(-operand) : NOT_CONSTANT;
     case "!":
@@ -400,7 +400,7 @@ function unary(op: string, operand: unknown): Evaluation {
         : NOT_CONSTANT;
     default:
       // `typeof` reports JavaScript's names, and MongoDB's `$type` reports its
-      // own. Folding it would answer a different question from the runtime.
+      // own. A fold here would answer a different question from the runtime.
       return NOT_CONSTANT;
   }
 }
@@ -417,12 +417,12 @@ const isPlain = (v: unknown): v is Record<string, unknown> =>
   (v as { _bsontype?: unknown })._bsontype === undefined;
 
 /**
- * `.length` — and on a STRING it is the code-point count, not JavaScript's.
+ * `.length` — on a STRING, this is the code-point count, not JavaScript's.
  *
  * JSMQL lowers a string's `.length` to `$strLenCP`, so the language means code
  * points. JavaScript's `.length` counts UTF-16 units, and the two differ the
- * moment a character sits outside the basic plane: `"😀".length` is 2 there and
- * 1 here. The fold answers the LANGUAGE's question.
+ * moment a character sits outside the basic plane: `"😀".length` is 2 there,
+ * and 1 here. The fold answers the LANGUAGE's question.
  */
 function lengthOf(receiver: unknown): Evaluation {
   if (Array.isArray(receiver)) return ok(receiver.length);
@@ -433,9 +433,9 @@ function lengthOf(receiver: unknown): Evaluation {
 /**
  * `o.name` on a constant object.
  *
- * An ABSENT property does not fold. JavaScript answers `undefined` and MongoDB
- * answers missing, and those are not the same thing downstream — a missing field
- * disappears from a document while an explicit `undefined` does not.
+ * An ABSENT property does not fold. JavaScript answers `undefined`, and
+ * MongoDB answers missing, and downstream those are not the same thing — a
+ * missing field disappears from a document, while an explicit `undefined` does not.
  */
 function property(receiver: unknown, name: string): Evaluation {
   if (name === "length") return lengthOf(receiver);
@@ -447,9 +447,9 @@ function property(receiver: unknown, name: string): Evaluation {
 /**
  * `xs[i]`, `s[i]`, `o[k]` on a constant receiver.
  *
- * Out of range does not fold, for the same reason an absent property does not.
- * A NEGATIVE index never arrives: the language refuses it outright, because
- * JavaScript reads nothing there while `$arrayElemAt` counts from the end.
+ * An out-of-range index does not fold, for the same reason an absent property
+ * does not. A NEGATIVE index never arrives: the language refuses it outright,
+ * because JavaScript reads nothing there, while `$arrayElemAt` counts from the end.
  */
 function element(receiver: unknown, index: unknown): Evaluation {
   if (typeof index === "string") return property(receiver, index);
@@ -467,12 +467,13 @@ function element(receiver: unknown, index: unknown): Evaluation {
 /**
  * Call a constant lambda on constant arguments.
  *
- * `[1, 2, 3, 4].filter(n => n % 2 === 0)` cannot fold without this: the callback
- * has to run. It runs the same way everything else here does — by evaluating its
- * body with the parameters bound — so a callback that reads the document, or
- * uses an operator this does not know, simply makes the whole call non-constant.
+ * `[1, 2, 3, 4].filter(n => n % 2 === 0)` cannot fold without this function: the
+ * callback must run. It runs the same way everything else here does — by
+ * evaluating its body with the parameters bound — so a callback that reads the
+ * document, or uses an operator this evaluator does not know, simply makes the
+ * whole call non-constant.
  *
- * A block body with declarations is honoured too, since `x => { const y = x * 2;
+ * A block body with declarations also works, because `x => { const y = x * 2;
  * return y }` is an ordinary constant expression once `x` is known.
  */
 export function applyLambda(lambda: Any, args: readonly unknown[], env: Constants, depth = 0): Evaluation {
@@ -503,17 +504,17 @@ type Any = { type: string } & Record<string, unknown>;
 
 /**
  * The static namespaces a call can be made on — `Math`, `Object`, `Date` — read
- * off the rows that say `provides`. A bare name, never a value; and never a list
- * here, so a new namespace is a row and folds on the day it lands.
+ * off the rows that say `provides`. This holds a bare name, never a value, and
+ * never a list here, so a new namespace becomes a row and folds on the day it lands.
  */
 const NAMESPACES: ReadonlySet<string> = namespaceNames();
 
 /**
  * One argument, ready for a fold rule: a value, or a callable made from a lambda.
  *
- * A callback that turns out not to be constant throws rather than returning, so
- * that `[1, 2].map(x => $.a)` fails the whole call from inside `Array.prototype.map`
- * — there is no way to answer "not constant" from within a JavaScript callback.
+ * A callback that turns out not to be constant throws rather than returns, so
+ * that `[1, 2].map(x => $.a)` fails the whole call from inside `Array.prototype.map`.
+ * There is no other way to answer "not constant" from inside a JavaScript callback.
  */
 function asArg(node: Expr, env: Constants, depth: number): Arg | null {
   if ((node as Any).type === "Lambda") {
@@ -531,7 +532,7 @@ function asArg(node: Expr, env: Constants, depth: number): Arg | null {
 
 const NOT_CONSTANT_CALLBACK = Symbol("callback is not constant");
 
-/** A callback whose body evaluated to a constant MongoDB cannot write down — `n => 10 / n` over a 0. */
+/** A callback whose body evaluates to a constant MongoDB cannot write down — `n => 10 / n` over a 0. */
 class UnspellableInCallback {
   readonly what: string;
   constructor(what: string) {
@@ -553,9 +554,9 @@ function familyOfValue(value: unknown): Family | undefined {
 /**
  * A method call on constants.
  *
- * Three gates before any rule runs, each closing a hole a fold can fall through.
- * The ARITY is checked from the row, so `'abc'.toUpperCase(1)` does not fold
- * away the error it should raise. Every rule runs inside a try/catch, so a
+ * Three gates run before any rule, each closing a hole a fold can fall through.
+ * The check reads the ARITY from the row, so `'abc'.toUpperCase(1)` does not
+ * fold away the error it should raise. Every rule runs inside a try/catch, so a
  * `RangeError` from a JavaScript built-in never reaches the user as a compile
  * error with no position. And the RESULT must be spellable, so `Infinity` and
  * `undefined` stay runtime instead of reaching the driver.
@@ -565,8 +566,8 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
   const argNodes = node.args as readonly Expr[];
   if (argNodes.some((a) => (a as Any).type === "SpreadElement")) return NOT_CONSTANT;
 
-  // The receiver decides which of the row's counts applies, so it is resolved
-  // before the arity is checked.
+  // The receiver decides which of the row's counts applies, so the code
+  // resolves it before the arity check.
   const receiverNode = node.object as Any;
   const onNamespace = receiverNode.type === "Ident" && NAMESPACES.has(receiverNode.name as string);
   let receiverValue: unknown;
@@ -577,7 +578,7 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
   }
   const family = onNamespace ? (receiverNode.name as Family) : familyOfValue(receiverValue);
   // `"abc".length()` is a CALL of a name the row says is READ, and no fold may
-  // answer it — the row's `call: false` is the one fact that separates the two.
+  // answer it. The row's `call: false` is the one fact that tells the two apart.
   if (!isCallable(name)) return NOT_CONSTANT;
   if (!acceptsArgumentCount(name, argNodes.length, family)) return NOT_CONSTANT;
 
@@ -595,8 +596,8 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
       : foldInstanceCall(receiverValue, name, args);
   } catch (e) {
     // A non-constant callback, a value with no key spelling, or a built-in that
-    // threw. None of them fold; none of them are errors here —
-    // except a callback whose answer has no literal, which is worth saying.
+    // threw: none of these fold, and none of these are errors here, except a
+    // callback whose answer has no literal, which is worth saying.
     if (e instanceof UnspellableInCallback) return unspellable(e.what);
     return NOT_CONSTANT;
   }
@@ -621,9 +622,9 @@ function applyHere(lambda: Any, argNodes: readonly Expr[], env: Constants, depth
 }
 
 /**
- * Evaluate a call's arguments and hand them to a rule, with the same three gates
- * a method call gets: no spread, every rule inside a try/catch, and a result that
- * has to be spellable and of a sane size.
+ * Evaluate a call's arguments, then hand them to a rule, with the same three
+ * gates a method call gets: no spread, every rule inside a try/catch, and a
+ * result that must be spellable and of a sane size.
  */
 function applyCall(
   argNodes: readonly Expr[],
@@ -657,13 +658,14 @@ export function evaluate(node: Expr, env: Constants): Evaluation {
 
 function at(node: Expr, env: Constants, depth: number): Evaluation {
   if (depth > MAX_DEPTH) return NOT_CONSTANT;
-  // `"$s"` typed in source IS the field `s` (HR1): as an OPERAND it is a value read
-  // at run time, and `"$s".trim()` or `"$s" + "x"` must not settle to a string.
+  // `"$s"` typed in source IS the field `s` (HR1). As an OPERAND it is a value
+  // read at run time, so `"$s".trim()` or `"$s" + "x"` must not settle to a string.
   if (depth > 0 && node.type === "StringLiteral" && node.value.startsWith("$")) return NOT_CONSTANT;
   const literal = readLiteral(node);
   if (literal.ok) return literal;
 
-  // a value a call supplied is a constant — unless it reads as MQL, which must never fold into a spelling the emit would read as an operator
+  // A value a call supplied is a constant, unless it reads as MQL. Such a value
+  // must never fold into a spelling the emit phase would read as an operator.
   if (node.type === "Injected") return isMqlShaped(node.value) ? NOT_CONSTANT : ok(node.value);
   switch (node.type) {
     case "Ident":
@@ -680,7 +682,7 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
           continue;
         }
         // A declaration or a write inside a literal makes it a pipeline, not a
-        // value — and `UpdateFilter` is how a `,`-joined run of writes arrives.
+        // value. `UpdateFilter` is how a `,`-joined run of writes arrives.
         if (element.type === "LetDecl" || element.type === "FuncDecl") return NOT_CONSTANT;
         if (element.type === "AssignExpr" || element.type === "DeleteStmt") return NOT_CONSTANT;
         if (element.type === "UpdateFilter") return NOT_CONSTANT;
@@ -721,8 +723,8 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
     case "TemplateLiteral": {
       const parts = all(node.exprs, env, depth);
       if (!Array.isArray(parts)) return parts;
-      // Strings, and the numbers `$toString` writes as JavaScript does — see
-      // `numberSpelling`. Any other interpolation stays runtime.
+      // Strings fold, and so do the numbers `$toString` writes the way
+      // JavaScript does — see `numberSpelling`. Any other interpolation stays runtime.
       const spelled = parts.map((p) => (typeof p === "string" ? p : typeof p === "number" ? numberSpelling(p) : null));
       if (spelled.some((p) => p === null)) return NOT_CONSTANT;
       let out = node.quasis[0] ?? "";
@@ -738,8 +740,8 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
     case "BinaryExpr": {
       const left = at(node.left, env, depth + 1);
       if (!left.ok) return propagate(left);
-      // Three operators decide on the left alone, and the right may be anything
-      // at all — including something this cannot evaluate.
+      // Three operators decide on the left operand alone, and the right side
+      // may be anything at all, including something this evaluator cannot read.
       const shortCircuit = decidedByLeft(node.op, left.value);
       if (shortCircuit !== null) return shortCircuit;
       const right = at(node.right, env, depth + 1);
@@ -755,12 +757,12 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
     }
 
     case "MemberAccess": {
-      // `Math.PI` reads a namespace, which is a name and not a value.
+      // `Math.PI` reads a namespace, which is a name, not a value.
       const on = node.object as unknown as Any;
       if (on.type === "Ident" && NAMESPACES.has(on.name as string) && !env.has(on.name as string)) {
         return foldNamespaceConstant(on.name as string, node.name);
       }
-      // `?.` reads the same on a value that is present, and a constant is.
+      // `?.` reads the same way on a value that is present, and a constant is present.
       const receiver = at(node.object, env, depth + 1);
       return receiver.ok ? property(receiver.value, node.name) : propagate(receiver);
     }
@@ -786,11 +788,11 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
       if (isDeclaredFunction(bound)) {
         return applyHere(bound.lambda as Any, node.args as readonly Expr[], env, depth);
       }
-      // A binding that holds a VALUE is not callable, and shadows the global name.
+      // A binding that holds a VALUE is not callable, and it shadows the global name.
       if (env.has(callee.name as string)) return NOT_CONSTANT;
       // `String(42)`, `Number("42")`, `ObjectId("<24 hex>")` — a named conversion.
-      // Gated by the row's count like a method call: `String("a", "b")` must reach
-      // the error it deserves rather than fold to "a".
+      // The check gates this by the row's count, like a method call: `String("a", "b")`
+      // must reach the error it deserves, rather than fold to "a".
       if (!acceptsArgumentCount(callee.name as string, node.args.length)) return NOT_CONSTANT;
       return applyCall(node.args as readonly Expr[], env, depth, (args) => foldNamedCall(callee.name as string, args));
     }

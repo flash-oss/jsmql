@@ -1,14 +1,13 @@
 // The two targets must select the same documents — where the language says they do.
 //
 // A predicate reaches MQL by two roads: the QUERY language (`filter`) and the
-// aggregation EXPRESSION language (`expr`, under `$expr`). Two lowerings of one
-// source, in two files. This suite runs both over the same documents on a real
-// mongod and compares the ids that come back. The divergences the language
-// documents (docs/specs/emit-pass.md § The filter target) live in a
-// table with a reason each, and are asserted to STILL differ — a repair cannot
-// land silently; it moves the row.
+// aggregation EXPRESSION language (`expr`, under `$expr`). This suite runs both
+// roads on the same documents on a real mongod and compares the document ids that
+// come back. The language documents some divergences (docs/specs/emit-pass.md §
+// The filter target). These live in a table with a reason. A repair to a divergence
+// must move the row, not land silently.
 //
-// Self-skips (green) when no mongod is reachable, with an all-or-nothing guard.
+// This suite self-skips (reports green) when no mongod is reachable, with an all-or-nothing guard.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";

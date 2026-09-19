@@ -1,14 +1,14 @@
 // Phase 5 — EMIT. What a row says about one name in one position.
 //
-// Every phase that touches a name asks this first, and it answers from the row
-// alone. That is the whole of the arrangement described in ../CLAUDE.md: the
-// registry says what the language HAS, so an ANSWER lives in a row and a
-// DOCUMENT is built by code. Nothing here builds a document.
+// Every phase that touches a name asks this first, and the row alone answers.
+// That is the whole arrangement described in ../CLAUDE.md: the registry says
+// what the language HAS, an ANSWER lives in a row, and code builds a DOCUMENT.
+// Nothing here builds a document.
 //
 // The answer is one of six things, and five of them are already final — a
-// refusal, a fallback, a compose-only, an unknown name, a position a row has no
-// cell for. Only the sixth needs a lowering to run, which is why the refusal
-// surface of the whole language works before any lowering is written.
+// refusal, a fallback, a compose-only, an unknown name, or a position with no
+// cell in the row. Only the sixth needs a lowering to run. This is why the
+// refusal surface of the whole language works before anyone writes a lowering.
 
 import type { Family, Position } from "../../registry/vocabulary.ts";
 import { NAMES } from "../../registry/names.ts";
@@ -16,13 +16,13 @@ import { PRODUCTIONS } from "../../registry/productions.ts";
 import type { Where } from "../passes/position.ts";
 
 // Two registries answer this question, because the language has two kinds of
-// thing that need answering for. A NAME is an identifier the source writes —
-// `sort`, `Math`, `$inc`. A PRODUCTION is a construct — `%`, `===`, `?:`. Both
-// carry the same cells, so both are read here and a caller never has to know
+// thing to answer for. A NAME is an identifier the source writes — `sort`,
+// `Math`, `$inc`. A PRODUCTION is a construct — `%`, `===`, `?:`. Both carry the
+// same cells, so this module reads both, and a caller never needs to know
 // which registry its name came from.
 //
-// The keys cannot collide: a production is named descriptively (`remainder`,
-// never `"%"`) and no row of names.ts uses one of those names.
+// The keys cannot collide: a production carries a descriptive name (`remainder`,
+// never `"%"`), and no row of names.ts uses one of those names.
 const ROWS: Readonly<Record<string, Row | undefined>> = Object.assign(Object.create(null), NAMES, PRODUCTIONS);
 
 /** The one cell shape this module reads. Deliberately structural — see below. */
@@ -59,10 +59,11 @@ const CELL_OF: Readonly<Record<Position, string>> = {
  * The position a `Where` names, or null when it names none.
  *
  * `target`, `stageBody` and `stageEntry` are waypoints, not positions: nothing
- * is evaluated on the left of `=`, and the inside of a stage body is on the way
- * to a position rather than one itself. Answered from `CELL_OF`, so every
- * position the registry has is a position here — a hand-written switch answers
- * for the positions it lists and silently drops every one added after it.
+ * evaluates on the left of `=`, and the inside of a stage body leads to a
+ * position rather than being one itself. `CELL_OF` answers this, so every
+ * position the registry has is a position here. A hand-written switch would
+ * answer only for the positions it lists, and it would silently drop every one
+ * added after it.
  */
 export function positionOf(where: Where): Position | null {
   return where.at in CELL_OF ? (where.at as Position) : null;
@@ -84,13 +85,14 @@ export type Verdict =
   | { kind: "fallback"; name: string; position: Position }
   /** Legal only folded into another construct, which is named. */
   | { kind: "composedOnly"; name: string; position: Position; owners: readonly string[] }
-  /** A lowering must run. `cell` is handed on untouched; only emit/ reads it. */
+  /** A lowering must run. The code hands `cell` on untouched; only emit/ reads it. */
   | { kind: "lower"; name: string; position: Position; cell: unknown }
   /**
-   * The row answers PER FAMILY and the receiver's family was not supplied, or was
-   * not one the row lists. Not an error on its own: a caller that cannot prove
-   * the family builds a runtime dispatch from the branches, with the row's own
-   * `uncertain` as its default — handed on untouched, as `cell` is for `lower`.
+   * The row answers PER FAMILY, and the caller did not supply the receiver's
+   * family, or supplied one the row does not list. This is not an error on its
+   * own: a caller that cannot prove the family builds a runtime dispatch from
+   * the branches, with the row's own `uncertain` as its default. The code hands
+   * this on untouched, as it does `cell` for `lower`.
    */
   | {
       kind: "perFamily";

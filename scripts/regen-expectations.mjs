@@ -1,14 +1,14 @@
 // Regenerate a test file's expectations from the compiler, through the TypeScript AST.
 //
-// The inputs are the contract; the emitted MQL is the compiler's answer. When a
+// The inputs are the contract. The emitted MQL is the compiler's answer. When a
 // lowering changes shape on purpose, every `toEqual` in a suite would need the same
-// hand edit — this script makes them, and only them:
+// hand edit. This script makes them, and only them:
 //   expect(<call>).toEqual|toStrictEqual|toBe(<literal>)   → the literal becomes the compiler's answer
 //   expect(() => <call>).toThrow(<matcher>)                → the matcher becomes the message the compiler raises
-// A call that throws where a value was expected, or returns where a throw was
-// expected, is left as it is and listed: a polarity change is a behaviour change,
-// which a human judges (see convert-expectations.mjs for the mechanical half).
-// The regenerated file must be reviewed as a diff: a wrong answer regenerates just as well as a right one.
+// A call that throws where a value was expected, or returns where a throw was expected,
+// stays as it is and gets listed. A polarity change is a behaviour change, and a human
+// must judge it (see convert-expectations.mjs for the mechanical half). The regenerated
+// file must be reviewed as a difference: a wrong answer regenerates just as well as a right one.
 //
 // Run by hand:  node scripts/regen-expectations.mjs test/<suite>.test.ts
 import ts from "typescript";
@@ -17,7 +17,7 @@ import { compilerThrew, expectCall, literalSubject, openSuite, spell } from "./e
 const file = process.argv[2];
 const { sf, runAt, write } = openSuite(file);
 
-/** Does the compiler decide this value — directly, or through a constant that does? */
+/** Does the compiler decide this value: directly, or through a constant that does? */
 const fromCompiler = (text, node) => {
   if (/\bjsmql\b/.test(text)) return true;
   const chain = [];
@@ -40,7 +40,7 @@ const fromCompiler = (text, node) => {
   return mentions(text);
 };
 
-/** Does the matcher already accept this message? Anything unreadable counts as a match, and stays. */
+/** Does the matcher already accept this message? Anything unreadable counts as a match and stays. */
 const matcherAccepts = (source, message) => {
   try {
     const m = new Function("return (" + source + ");")();
@@ -64,7 +64,7 @@ const visit = (node) => {
       if (!literalSubject(subject)) {
         try {
           const value = runAt(argSrc, node);
-          // `toBe` is identity, which only a primitive can hold across a rebuild.
+          // `toBe` is identity, which only a primitive can carry across a rebuild.
           const primitive = value === null || (typeof value !== "object" && typeof value !== "function");
           if (method === "toBe" && !primitive) {
             edits.push({ start: methodName.getStart(sf), end: methodName.getEnd(), text: "toEqual" });
@@ -109,7 +109,7 @@ const visit = (node) => {
         else if (threw === undefined) {
           /* cannot evaluate here */
         } else if (args.length === 1) {
-          // keep a matcher that still matches; replace one that no longer does
+          // Keep a matcher that still matches. Replace one that no longer does.
           const lit = args[0];
           if (!matcherAccepts(lit.getText(sf), threw.message)) {
             edits.push({ start: lit.getStart(sf), end: lit.getEnd(), text: JSON.stringify(threw.message) });

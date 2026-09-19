@@ -9,9 +9,9 @@ var TOKENS = {
     doc: "The `{` token.",
     token: "LBrace",
     role: "open",
-    // Counts depth so a template interpolation can tell its OWN closing brace
-    // from a nested object's: `${ {a: 1} }` has two, and only the outer one ends
-    // the interpolation.
+    // It counts depth, so a template interpolation can tell its OWN closing brace
+    // from the brace of a nested object. `${ {a: 1} }` has two braces, and only
+    // the outer one ends the interpolation.
     tracksDepth: true
   }),
   "}": token({
@@ -19,9 +19,9 @@ var TOKENS = {
     token: "RBrace",
     role: "close",
     closes: "{",
-    // When its depth matches an open interpolation this brace emits NO token at
-    // all — it ends the interpolation and template text resumes. The one closer
-    // whose row produces nothing.
+    // When its depth agrees with an open interpolation, this brace emits NO token
+    // at all. It ends the interpolation, and template text continues. It is the
+    // one closer whose row makes nothing.
     resumesTemplateAtDepth: true
   }),
   ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
@@ -3330,8 +3330,8 @@ var NAMES = {
           millisecond: "int-or-long",
           timezone: "string"
         },
-        // Positional stays the natural order — JSMQL's public commitment. The ISO
-        // keys are reached in object style only.
+        // Positional stays the natural order — JSMQL's public commitment. Only the
+        // object style reaches the ISO keys.
         positional: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"]
       }
     },
@@ -4273,8 +4273,8 @@ var NAMES = {
     category: "miscellaneous",
     where: ["filter"],
     shape: "single",
-    // The server requires a constant here, and a query document holds values: the slot is stated
-    // `constant`, so an expression is refused before this cell runs.
+    // The server requires a constant here, and a query document holds values. The slot states
+    // `constant`, so the compiler refuses an expression before this cell runs.
     filter: {
       args: { sig: "rate", exact: 1, constant: [0], slotType: { 0: "number" }, slotRange: { 0: [0, 1] } },
       emit: ({ name: name2, args, constant }) => ({ [name2]: constant(args[0])?.value })
@@ -5856,9 +5856,9 @@ var NAMES = {
       required: ["newRoot"],
       optional: [],
       closed: true,
-      // Measured: `{ newRoot: 5 }` is refused ("'replacement document' must
-      // evaluate to an object"), a path is accepted because only the run can tell
-      // what it holds, and an unknown key is refused by name.
+      // Measured: the server refuses `{ newRoot: 5 }` ("'replacement document' must
+      // evaluate to an object"). It accepts a path, because only the run can tell
+      // what the path holds, and it refuses an unknown key by name.
       keyTypes: { newRoot: "object" }
     },
     bodyPositions: { "": "value" },
@@ -6159,8 +6159,8 @@ var NAMES = {
     body: {
       required: [],
       optional: [],
-      // The keys are the developer's own field names, so nothing is closed here;
-      // what the server fixes is every VALUE.
+      // The keys are the developer's own field names, so this row closes nothing.
+      // The server fixes every VALUE.
       closed: false,
       everyValueIn: [1, -1]
     },
@@ -6555,9 +6555,9 @@ var NAMES = {
       args: {
         sig: "separator",
         exact: 1,
-        // MEASURED: `{ $split: ["$s", ""] }` is refused ("$split requires a non-empty
-        // separator"), and MongoDB has no split-into-characters operator to fall back on,
-        // so the empty separator is refused here rather than emitted.
+        // MEASURED: the server refuses `{ $split: ["$s", ""] }` ("$split requires a
+        // non-empty separator"), and MongoDB has no operator that splits into characters.
+        // So this row refuses the empty separator and emits nothing.
         nonEmpty: {
           0: {
             noun: "separator character",
@@ -6581,7 +6581,7 @@ var NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
-    // non-string value. A literal needle only: a runtime one cannot be baked into a pattern.
+    // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
@@ -6611,7 +6611,7 @@ var NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
-    // non-string value. A literal needle only: a runtime one cannot be baked into a pattern.
+    // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
       args: { sig: "searchString", exact: 1 },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
@@ -6879,12 +6879,12 @@ var NAMES = {
     on: ["array", "string"],
     returns: "bool",
     where: ["value", "filter"],
-    // A query document is what an INDEX is read through, so the query form is the
-    // indexable one: `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
+    // An INDEX reads a query document, so the query form is the indexable one:
+    // `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
     // an array containing" — exactly what `.includes` means on an array, and a plain
     // equality on any other field. `["a","b"].includes($.s)` → { s: { $in: […] } }.
-    // The substring reading a STRING receiver has belongs to the expression form below,
-    // where no index is at stake; `.match(/x/)` is the query spelling that asks for it.
+    // The substring reading that a STRING receiver has belongs to the expression form
+    // below, where no index applies; `.match(/x/)` is the query spelling that asks for it.
     // Anything else keeps the expression fallback.
     filter: {
       args: { sig: "searchElement", exact: 1 },
@@ -7039,8 +7039,8 @@ var NAMES = {
         // other one; `$concatArrays` takes arrays only. An argument PROVEN to be something
         // else becomes the one-element array it stands for — JavaScript's own answer, and
         // the only operand the operator accepts. MEASURED: the server folds a run of
-        // ADJACENT constant operands while it optimises and raises there on a wrong type,
-        // so an operand left unwrapped kills the pipeline before a branch is chosen.
+        // ADJACENT constant operands during the optimisation and raises there on a wrong
+        // type. So an operand without the wrap stops the pipeline before the branch runs.
         // An argument that proves nothing stays as written, and the server decides it.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
@@ -7055,8 +7055,8 @@ var NAMES = {
           })
         },
         // `String.prototype.concat` STRINGIFIES each argument; `$concat` takes strings
-        // only. An argument PROVEN to be an array is joined element by element, and any
-        // other proven non-string goes through `$toString` — JavaScript's answer in both
+        // only. The emitter joins an argument PROVEN to be an array element by element, and
+        // any other proven non-string goes through `$toString` — JavaScript's answer in both
         // cases. An argument that proves nothing stays as written.
         string: {
           args: { sig: "...items", atLeast: 1, spread: true },
@@ -7096,7 +7096,7 @@ var NAMES = {
     expr: unsupported(
       ".reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field."
     ),
-    // The twin is refused here for the same reason, so naming it would be a dead end.
+    // This row refuses the twin for the same reason, so a message that named it would be a dead end.
     stream: because(
       "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want."
     ),
@@ -7300,7 +7300,7 @@ var NAMES = {
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
         // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
-        // typo far more often than an intent, so the count stays closed while the start opens.
+        // typo far more often than an intent, so the count stays closed but the start opens.
         slotRange: { 1: [0, Infinity] }
       },
       emit: ({ recv, args, value, bind }) => {
@@ -7328,7 +7328,7 @@ var NAMES = {
                         { $slice: [arr.ref, start.ref] },
                         items,
                         {
-                          // a three-argument `$slice` refuses a count of 0 (measured): the empty tail is written out
+                          // a three-argument `$slice` refuses a count of 0 (measured): the emitter writes the empty tail out
                           $cond: [{ $gt: [rest, 0] }, { $slice: [arr.ref, tail.ref, rest] }, []]
                         }
                       ]
@@ -7662,15 +7662,15 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
-      // two answers — one flat cell hid the refusal, which is the useful fact.
+      // two answers — a single flat cell hides the refusal, which is the useful fact.
       perFamily: {
         array: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
         string: unsupported(
           ".lastIndexOf() on strings isn't supported \u2014 MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing."
         )
       },
-      // A receiver that cannot be proven takes the array form: the string form
-      // is refused on its own, so nothing is lost, and a string that reaches
+      // A receiver that cannot be proven takes the array form: this row refuses the
+      // string form on its own, so nothing is lost, and a string that reaches
       // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
       uncertain: lastIndexOfArray
     },
@@ -9210,7 +9210,7 @@ var NAMES = {
     ),
     group: {
       args: { sig: "iteratee", exact: 1 },
-      // the accumulator of each document's own value: '$sum' of the per-document '$sum' (an array operand alone is ignored by the accumulator, measured)
+      // the accumulator of each document's own value: '$sum' of the per-document '$sum' (the accumulator ignores an array operand alone, measured)
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
         return { $sum: { $sum: { $map: { input: recv, as: it.as, in: it.in } } } };
@@ -9240,7 +9240,7 @@ var NAMES = {
     ),
     group: {
       args: { sig: "iteratee", exact: 1 },
-      // the accumulator of each document's own value: '$avg' of the per-document '$avg' (an array operand alone is ignored by the accumulator, measured)
+      // the accumulator of each document's own value: '$avg' of the per-document '$avg' (the accumulator ignores an array operand alone, measured)
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
         return { $avg: { $avg: { $map: { input: recv, as: it.as, in: it.in } } } };
@@ -9759,7 +9759,7 @@ var NAMES = {
         constant: [0],
         slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] }
       },
-      // `$limit: 0` is refused by the server; a take of nothing is a stream of nothing.
+      // The server refuses `$limit: 0`; a take of nothing is a stream of nothing.
       emit: ({ args }) => {
         const count = args.length === 0 ? 1 : n(args[0]);
         return count === 0 ? [{ $match: { $expr: false } }] : [{ $limit: count }];
@@ -9986,7 +9986,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        // lodash's `_.size(undefined)` is 0: a receiver that may be missing is guarded, as `.length`'s is.
+        // lodash's `_.size(undefined)` is 0: this cell guards a receiver that may be missing, as `.length` does.
         array: {
           args: { sig: "", none: true },
           emit: ({ recv, present }) => sizeOf(present ? recv : arrayOrEmpty(recv))
@@ -10444,15 +10444,15 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      // MEASURED: Object.groupBy($.items) is refused — the discriminator is required.
+      // MEASURED: jsmql refuses Object.groupBy($.items) — the call must give the discriminator.
       perFamily: {
         array: {
           args: { sig: "[iteratee]", allowed: [0, 1] },
           emit: ({ recv, args, iteratee, bind }) => groupedByKey(recv, args[0] === void 0 ? identity(bind) : iteratee(args[0]), bind)
         },
         stream: unsupported("'.groupBy()' on a stream is a stage, not a value \u2014 see its 'stream' cell."),
-        // Parsed so the name gets an answer, and refused: the receiver form is the one spelling,
-        // and it emits the identical MQL.
+        // The parser accepts the name so it gets an answer, and this cell refuses it: the
+        // receiver form is the one spelling, and it emits the identical MQL.
         Object: unsupported(
           "'Object.groupBy(collection, discriminator)' is not part of jsmql \u2014 the collection's own method says the same thing, and one capability gets one spelling. Write '<collection>.groupBy(<discriminator>)': '$.items.groupBy(d => d.k)' emits the identical MQL."
         )
@@ -11289,8 +11289,8 @@ var NAMES = {
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
       },
-      // Both families test `$type: "array"`, so no runtime test tells them apart. It
-      // needs none: `new Set(…)` is proven at the source, so an unproven receiver is
+      // Both families test `$type: "array"`, so no run-time test tells them apart. This
+      // row needs none: the source proves `new Set(…)`, so an unproven receiver is
       // an array and takes lodash's reading.
       uncertain: lodashDifference
     },
@@ -11393,8 +11393,8 @@ var NAMES = {
     group: unsupported("'.exec()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.exec()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
-  // ── the roots and globals: the only rows not generated, because they are not keys of
-  // METHODS / OPERATORS / STAGES. Every fact below was confirmed by a probe.
+  // ── the roots and globals: the only rows no generator writes, because they are not
+  // keys of METHODS / OPERATORS / STAGES. A probe confirms every fact below.
   // ─────────────────────────────────────────────────────────────────────────────
   $inc: mongo({
     doc: "Increments a field by a number. JSMQL also writes it as JavaScript: '$.views++', '++$.views', '$.views += 2'.",
@@ -11422,8 +11422,8 @@ var NAMES = {
       emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
     }
   }),
-  // ── names that are valid ONLY inside another operator's body. Each was proven
-  // both ways: accepted in its container, "Unrecognized expression" on its own.
+  // ── names that are valid ONLY inside another operator's body. A test proves each
+  // one both ways: the container accepts it, and on its own it is "Unrecognized expression".
   $box: mongo({
     doc: "A rectangle, by its bottom-left and top-right corners.",
     where: ["filter"],
@@ -11888,7 +11888,7 @@ var NAMES = {
   }),
   // ── the query language: operators with a filter form and no expression form.
   // The seven geometry sub-constructs ($box, $center, $centerSphere, $polygon,
-  // $geometry, $maxDistance, $minDistance) have no row, on the same footing as
+  // $geometry, $maxDistance, $minDistance) have no row, for the same reason as
   // $case: they are only ever valid INSIDE another operator's body.
   $all: mongo({
     doc: "Matches arrays that contain all elements specified in the query.",
@@ -12135,9 +12135,9 @@ var NAMES = {
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
     category: "boolean",
     where: ["filter"],
-    // MEASURED: `find({ $nor: [] })` is refused ("$nor argument must be a non-empty
-    // array"), and `$nor` has no expression form to fall back to — so the empty list
-    // is refused here rather than emitted.
+    // MEASURED: the server refuses `find({ $nor: [] })` ("$nor argument must be a
+    // non-empty array"), and `$nor` has no expression form to fall back to. So this
+    // row refuses the empty list and emits nothing.
     filter: {
       args: {
         sig: "predicates",
@@ -12187,10 +12187,10 @@ var NAMES = {
     doc: "Performs text search.",
     category: "text",
     where: ["filter"],
-    // MEASURED: a '$match' holding '$text' anywhere in its body — at the top or under an
-    // '$and' — is refused unless it is the pipeline's FIRST stage ("$match with $text is
-    // only allowed as the first pipeline stage"), and inside a '$facet' branch it is
-    // refused outright ("query requires text score metadata, but it is not available").
+    // MEASURED: the server refuses a '$match' with '$text' anywhere in its body — at the
+    // top or under an '$and' — unless that '$match' is the pipeline's FIRST stage ("$match
+    // with $text is only allowed as the first pipeline stage"). Inside a '$facet' branch it
+    // refuses the stage outright ("query requires text score metadata, but it is not available").
     // Both facts are the stage's, so `place` reads them off the body's keys, not the
     // stage name's row.
     only: ["stageFirst"],
@@ -12221,7 +12221,7 @@ var NAMES = {
     // MEASURED: `find({ $where: … })` runs where server-side JavaScript is enabled, and
     // an aggregation `$match` refuses it at any depth of the body — "$where is not
     // allowed in this context". A raw `{ $where: … }` filter therefore passes through
-    // (HR1) and the same document written into a `$match` is refused here.
+    // (HR1), and this row refuses the same document inside a `$match`.
     forbiddenIn: ["$match"],
     placement: {
       container: `Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.includes("a")' \u2014 and it runs as a query, in a '$match' or a 'find' filter alike.`
@@ -12498,13 +12498,13 @@ var NAMES = {
     mutatesArgumentAt: 0,
     returns: "object",
     // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
-    // before any statement cell is consulted — so the row states only the value.
+    // before the compiler reads any statement cell — so the row states only the value.
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
         // The method form answers a NEW object, as '.pick()' and '.omit()' do —
-        // the receiver is the first source and nothing is written in place.
+        // the receiver is the first source, and the call writes nothing in place.
         object: {
           args: { sig: "...sources", atLeast: 1, spread: true },
           emit: ({ recv, args, value }) => ({ $mergeObjects: [recv, ...args.map(value)] })
@@ -12516,8 +12516,8 @@ var NAMES = {
       }
     },
     stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
-    // 'Object.assign(t, …);' is rewritten to the write it means before this cell is
-    // reached; the method form answers a value, so a bare statement of it writes nothing.
+    // The desugar rewrites 'Object.assign(t, …);' into the write it means before this
+    // cell runs. The method form answers a value, so a bare statement of it writes nothing.
     statement: unsupported(
       "'.assign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.assign(\u2026);'"
     ),
@@ -12602,7 +12602,7 @@ var NAMES = {
     returns: "bool",
     where: [],
     // One refusal in every position — the name is legal nowhere. The tracking id
-    // stays in this comment and out of the message: a developer reading the error
+    // stays in this comment and out of the message: a developer who reads the error
     // has no use for it. [DEF-022]
     filter: NO_IS_FINITE,
     expr: NO_IS_FINITE,
@@ -12734,8 +12734,8 @@ var NAMES = {
     group: unsupported("'Boolean()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'Boolean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
-  // Parsed so the name gets an answer, and refused in every position: one numeric
-  // conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
+  // The parser accepts the name so it gets an answer, and every position refuses it: one
+  // numeric conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
   parseInt: global_({
     doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
     token: "Ident",
@@ -13254,8 +13254,8 @@ var NAMES = {
     // MEASURED both ways. As a value: `$` → "$$ROOT". As a filter: `$` →
     // {"$expr":{"$and":[…truthiness…]}}, so there is NO native query form, and
     // `$ === 1` → {"": 1}, which mongod accepts and which matches nothing.
-    // `where: ["value","filter"]` claimed an indexable form that does not exist,
-    // and contradicted `rootReference` in productions.ts, which had it right.
+    // `where: ["value","filter"]` would claim an indexable form that does not exist,
+    // and would contradict `rootReference` in productions.ts, which is correct.
     returns: "object",
     where: ["value"],
     filter: viaFallback,
@@ -13271,7 +13271,7 @@ var NAMES = {
     provides: "collection",
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
-    // value slot is refused — "'$$' (current collection) is statement-only" —
+    // value slot gets a refusal — "'$$' (current collection) is statement-only" —
     // so `expr` is a refusal even though `$$.length` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
@@ -13303,9 +13303,9 @@ var NAMES = {
     token: "QuadDollar",
     provides: "cluster",
     // MEASURED: `$$$$.db2.c = $$;` → [{"$out":{"db":"db2","coll":"c"}}], a
-    // statement. There is no stream form — a cross-database READ is refused
-    // outright ("Cross-database reads aren't supported"), so listing "stream"
-    // claimed a source switch this scope does not have.
+    // statement. There is no stream form: the server refuses a cross-database READ
+    // outright ("Cross-database reads aren't supported"). A "stream" entry here
+    // would claim a source switch this scope does not have.
     where: ["statement"],
     filter: unsupported("'$$$$.<db>.<coll>' names a collection, not a test."),
     expr: unsupported("'$$$$.<db>.<coll>' names a collection, not a value."),
@@ -13349,9 +13349,9 @@ var NAMES = {
   // One factory, because the nine differ in three cells and agree on every other.
   // Each has the SAME three-way meaning `ObjectId` has: no argument mints where
   // MongoDB has something to mint, a constant is a live BSON value the fold builds
-  // (so the `constant` cell below is only ever reached by a constant the type
-  // CANNOT hold), and anything else converts on the server through its `$to…`
-  // operator. `new X(…)` and `X(…)` are both accepted; jsmql.stringify writes
+  // (so only a constant the type CANNOT hold reaches the `constant` cell below),
+  // and anything else converts on the server through its `$to…`
+  // operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
   // `new X(…)`. See docs/specs/bson-types.md.
   Decimal128: bsonValue({
     spelling: "Decimal128",
@@ -13460,9 +13460,9 @@ var NAMES = {
     filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
     expr: {
       byArgs: {
-        // Never folded: `Number("3")` is a DOUBLE on the server, and a folded `3` would
-        // be an int. The constant converts like anything else; a string the server
-        // cannot parse is the server's own error.
+        // The fold never runs here: `Number("3")` is a DOUBLE on the server, and a folded
+        // `3` would be an int. The constant converts like anything else, and a string the
+        // server cannot parse is the server's own error.
         constant: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         otherwise: unsupported("'Number(x)' takes exactly one value.")
@@ -13495,7 +13495,7 @@ var NAMES = {
     where: ["value"],
     // Per family, because one answer for all three states a legality the stream
     // form does not have: `$.tags.length < 5` scans, `$$.length > 1` does not
-    // compile at all. A flat `viaFallback` promised the third merely scans.
+    // compile at all. A flat `viaFallback` would promise that the third merely scans.
     filter: {
       perFamily: {
         array: viaFallback,
@@ -13508,11 +13508,11 @@ var NAMES = {
     expr: {
       perFamily: {
         // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
-        // → { $size: [["$a", 2]] }. A path or an expression is handed over as it is.
+        // → { $size: [["$a", 2]] }. The emitter hands a path or an expression over as it is.
         array: {
           args: { sig: "", none: true },
           // `$size` aborts on null; a receiver that may be missing answers null, as a
-          // JavaScript method does, and one that is there is counted as it is.
+          // JavaScript method does, and the cell counts one that is there as it is.
           emit: ({ recv, present, bind }) => Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present, bind, (r) => ({ $size: r }))
         },
         string: {
@@ -13527,8 +13527,8 @@ var NAMES = {
         }
       },
       // A receiver that is neither array nor string — null, missing, a number — answers
-      // null, as JavaScript's `undefined` does. A two-way $cond that read "not an array"
-      // as "string" aborted the whole command.
+      // null, as JavaScript's `undefined` does. A two-way $cond that reads "not an array"
+      // as "string" aborts the whole command.
       uncertain: () => null
     },
     stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
@@ -13579,8 +13579,8 @@ var NAMES = {
     group: unsupported("'Date.UTC()' is not an accumulator."),
     window: unsupported("'Date.UTC()' is not a window function.")
   }),
-  // Parsed so the name gets an answer, and refused everywhere: the range operator
-  // says the same thing in fewer characters, and one capability gets one spelling.
+  // The parser accepts the name so it gets an answer, and every position refuses it: the
+  // range operator says the same thing in fewer characters, and one capability gets one spelling.
   from: name({
     doc: "'Array.from(\u2026)' is not part of jsmql. See its refusal.",
     call: true,
@@ -13976,7 +13976,7 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the index-friendly query form; a list that is not a constant falls back to `$expr`
+    // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
     filter: { args: { sig: "value, list", exact: 2 }, emit: (input) => membershipQuery(input) },
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'x in [ \u2026 ]' produces a value, not a stage."),
@@ -14273,9 +14273,9 @@ var PRODUCTIONS = {
     doc: "`Math.abs(x)`, `Object.keys(o)`, `Number.isInteger(n)`, `Date.now()`.",
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
-    // `Math.max(a, b)` is a MethodCall whose object is the name `Math`; `Math.PI` is a
-    // MemberAccess. Every namespace shares these two node types: the parser does not
-    // know which namespace it is looking at, and does not need to.
+    // `Math.max(a, b)` is a MethodCall whose object is the name `Math`. `Math.PI` is a
+    // MemberAccess. Every namespace shares these two node types. The parser does not
+    // know which namespace it reads, and it does not need to know.
     becomes: ["MethodCall", "MemberAccess"],
     on: "any",
     returns: "unknown",
@@ -14289,7 +14289,7 @@ var PRODUCTIONS = {
     doc: "`new Date(\u2026)`, `new Set(\u2026)`, `new ObjectId(\u2026)`. What each constructor means is in names.ts.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
-    // One node for every `new X(…)`. Which constructor it is comes from names.ts.
+    // One node for every `new X(…)`. names.ts says which constructor it is.
     becomes: "NewExpression",
     on: "any",
     returns: "unknown",
@@ -14325,8 +14325,8 @@ var PRODUCTIONS = {
     doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Math.abs)`.",
     tokens: ["identifier"],
     spelling: "String",
-    // A bare name handed over unapplied is still just a name. Whether it MAY be is
-    // the `asReference` field on its row.
+    // A bare name that the developer does not apply is still only a name. The
+    // `asReference` field on its row says if the developer MAY do that.
     becomes: "Ident",
     on: "any",
     returns: "unknown",
@@ -14375,7 +14375,7 @@ var PRODUCTIONS = {
     doc: "`$$` \u2014 the current collection as a stream.",
     tokens: ["$$"],
     spelling: "$$",
-    // `$$` — the current collection as a stream.
+    // `$$` — the current collection, as a stream.
     becomes: "CollectionRef",
     on: "any",
     returns: "unknown",
@@ -14389,7 +14389,7 @@ var PRODUCTIONS = {
     doc: "`$$$.<coll>` \u2014 another collection.",
     tokens: ["$$$"],
     spelling: "$$$.<coll>",
-    // `$$$` — database scope; `$$$.<coll>` names a collection.
+    // `$$$` — database scope. `$$$.<coll>` names a collection.
     becomes: "DatabaseRef",
     on: "any",
     returns: "unknown",
@@ -14417,8 +14417,8 @@ var PRODUCTIONS = {
     doc: "A name bound by the parameter destructure. At the call it becomes its value: a literal when the source could have spelled it, an `Injected` node otherwise.",
     tokens: ["identifier"],
     spelling: "<param>",
-    // Indistinguishable from any other bare name at parse time — scope decides; the
-    // injection pass then replaces it by the value the call supplied.
+    // At parse time no reader can tell this from any other bare name. Scope decides.
+    // The injection pass then puts the value that the call supplied in its place.
     becomes: ["Ident", "Injected"],
     on: "any",
     returns: "unknown",
@@ -14766,7 +14766,7 @@ var PRODUCTIONS = {
     statement: inCode("src/compiler/emit/statement.ts"),
     stream: unsupported("';' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
-  // ── sugar: overlapping triggers, so precedence is declared ─────────────────
+  // ── sugar: the triggers overlap, so each row declares its precedence ───────
   letReassignment: production({
     doc: "`name = <expr>` rebinds a `let`. Tried before every other assignment form.",
     tokens: ["identifier", "=", "+=", "-=", "*=", "/=", "++", "--"],
@@ -15188,16 +15188,16 @@ var Cursor = class {
   peek(ahead = 0) {
     return this.toks[Math.min(this.at + ahead, this.toks.length - 1)];
   }
-  /** For a table lookup. Do not compare it — see `is`. */
+  /** Use this only for a table lookup. Do not compare it. See `is`. */
   get type() {
     return this.peek().type;
   }
   /**
-   * Is the next token this type?
+   * Does the next token match this type?
    *
-   * A method rather than a comparison against `type`, because TypeScript narrows
-   * a getter and keeps the narrowing across a `next()` — after one
-   * `this.c.type !== "LBrace"` every later comparison became "no overlap".
+   * This is a method, not a comparison against `type`, because TypeScript narrows
+   * a getter and keeps the narrowing across a `next()` call. After one
+   * `this.c.type !== "LBrace"` check, every later comparison became "no overlap".
    */
   is(type) {
     return this.peek().type === type;
@@ -15207,19 +15207,19 @@ var Cursor = class {
     if (t.type !== "EOF") this.at++;
     return t;
   }
-  /** True and consumed, or false and untouched. */
+  /** Returns true and consumes the token, or returns false and leaves it. */
   eat(type) {
     if (this.type !== type) return false;
     this.at++;
     return true;
   }
   /**
-   * Is the next token a reserved word standing where a NAME is expected?
+   * Is the next token a reserved word in a place where a NAME can stand?
    *
-   * Every keyword qualifies: JavaScript lets any IdentifierName follow `.` or
+   * Every keyword qualifies. JavaScript lets any IdentifierName follow `.` or
    * precede `:` in an object literal, so `{ null: 1 }` and `$let({ in: … })` are
-   * names here. The lexer has already made the ones after an introducer plain
-   * `Ident`s; this catches the rest — an object key, chiefly.
+   * names here. The lexer already turns the ones after an introducer into plain
+   * `Ident` tokens. This method catches the rest, mostly an object key.
    */
   isNameLike() {
     const row2 = KEYWORDS[this.peek().text];
@@ -15231,7 +15231,7 @@ var Cursor = class {
     }
     return this.next();
   }
-  /** Rewind, for the one place that needs it: telling an arrow from a group. */
+  /** Rewinds the cursor. Only one place needs this: to tell an arrow from a group. */
   mark() {
     return this.at;
   }
@@ -18962,12 +18962,12 @@ function notAPlainPattern(pos, wrote) {
 var Parser = class _Parser {
   constructor(toks) {
     /**
-     * Every lambda whose `{ … }` body had no `return` and so was read as pipeline
-     * STAGES, minus the ones a stages-taking callee has claimed. Whatever is left
-     * when the parse ends is a JavaScript block that forgot its `return`, and is
-     * refused with the callee-independent wording. Kept as a set rather than a
-     * flag threaded through every expression method, because the body is built
-     * many calls below the callee that decides what it means.
+     * Every lambda whose `{ … }` body had no `return`, and so the parser read it as
+     * pipeline STAGES, minus the ones a stages-taking callee has claimed. Whatever
+     * is left when the parse ends is a JavaScript block that forgot its `return`,
+     * and the parser refuses it with the callee-independent wording. This is a set,
+     * not a flag threaded through every expression method, because the parser
+     * builds the body many calls below the callee that decides what it means.
      */
     this.unclaimedStages = /* @__PURE__ */ new Map();
     this.depth = 0;
@@ -18978,7 +18978,7 @@ var Parser = class _Parser {
       throw new ParseError(`${unexpected(this.c.peek())}`, this.c.peek().pos);
     }
   }
-  /** The checks that need the WHOLE tree: run once, after the entry method returns. */
+  /** The checks that need the WHOLE tree. This runs once, after the entry method returns. */
   finish() {
     const first = this.unclaimedStages.entries().next();
     if (first.done) return;
@@ -19060,9 +19060,9 @@ var Parser = class _Parser {
     return out;
   }
   /**
-   * A destructure key: a bare name, or one of the `$` family. `$name` is an
-   * operator handle, and the bare `$`, `$$`, `$$$`, `$$$$` are the context refs —
-   * each a distinct token, so each is matched on its own rather than by spelling.
+   * A destructure key: a bare name, or one member of the `$` family. `$name` is an
+   * operator handle, and the bare `$`, `$$`, `$$$`, `$$$$` are the context refs.
+   * Each is its own token, so the parser matches each on its own, not by spelling.
    */
   destructureKey() {
     const t = this.c.peek();
@@ -19077,13 +19077,14 @@ var Parser = class _Parser {
     return this.identLike();
   }
   /**
-   * `$` followed by a name, joined into one `$name` token. Asked in four places —
-   * a destructure key, the operator escape hatch, a chained stage link and a raw
-   * MQL key — so it is one method: four copies of "read the name after `$`" had
-   * two different rules about which names count.
+   * `$` followed by a name, joined into one `$name` token. Four places ask for
+   * this: a destructure key, the operator escape hatch, a chained stage link and a
+   * raw MQL key. This is one method, because four copies of "read the name after
+   * `$`" once used two different rules about which names count.
    *
-   * The `$` has already been consumed. The lexer reads the word after a `$` as a
-   * plain `Ident` whatever it spells (`$in`, `$let`), so no keyword case exists here.
+   * The `$` is already consumed at this point. The lexer reads the word after a
+   * `$` as a plain `Ident` whatever it spells (`$in`, `$let`), so no keyword case
+   * exists here.
    */
   dollarName(dollar) {
     const name2 = this.c.expect("Ident");
@@ -19111,15 +19112,15 @@ var Parser = class _Parser {
   }
   /**
    * A lone statement stands on its own, so the shape phase can read it as a
-   * Filter. A lone declaration cannot — nothing would read it — and neither can
-   * a statement the source ENDED with a `;`, because that `;` is the token that
-   * says pipeline. Collapsing it threw the distinction away:
+   * Filter. A lone declaration cannot, because nothing would read it. Nor can a
+   * statement that the source ENDED with a `;`, because that `;` is the token
+   * that says pipeline. Collapsing it away lost the distinction:
    *   Object.assign($.a, $.b)    a value, and a Filter
    *   Object.assign($.a, $.b);   a write, and a Pipeline
-   * parsed to the same tree, and nothing downstream could tell them apart.
+   * both parsed to the same tree, and nothing downstream could tell them apart.
    *
-   * ONE rule for the top level and the entry block, so `({ $ }) => { X }` means
-   * exactly what `X` means, `;` included.
+   * This is ONE rule for the top level and the entry block. So `({ $ }) => { X }`
+   * means exactly what `X` means, `;` included.
    */
   collapse(stmts, sawSemi) {
     if (stmts.length === 1 && !sawSemi) {
@@ -19129,12 +19130,12 @@ var Parser = class _Parser {
     return { type: "Pipeline", stmts, pos: stmts[0]?.pos ?? 0 };
   }
   /**
-   * THE statement loop, up to `terminator`. One loop for the three places that
-   * hold statements — the top level, an entry block and a callback block — so a
-   * separator rule cannot be added to one and forgotten in the others.
+   * THE statement loop, up to `terminator`. This is one loop for the three places
+   * that hold statements: the top level, an entry block and a callback block. So
+   * a new separator rule cannot land on one and stay forgotten in the others.
    *
-   * A `return` may only appear where a `}` closes the block; at the top level it
-   * reaches `statement()` and is refused as an unexpected token.
+   * A `return` may appear only where a `}` closes the block. At the top level it
+   * reaches `statement()`, and the parser refuses it as an unexpected token.
    */
   block(terminator) {
     const stmts = [];
@@ -19170,8 +19171,9 @@ var Parser = class _Parser {
     return { stmts, ret: null, retPos: 0, sawSemi, endPos };
   }
   /**
-   * One statement — or the RUN of them a declaration list stands for, since
-   * `const a = …, b = …;` is N declarations in JavaScript and N here too.
+   * One statement, or the RUN of statements that a declaration list stands for.
+   * `const a = …, b = …;` is N declarations in JavaScript, and N declarations here
+   * too.
    */
   statement() {
     if (this.c.is("Let") || this.c.is("Const")) return this.bindings();
@@ -19185,9 +19187,9 @@ var Parser = class _Parser {
     return this.c.is("Ident") && WORDS.get(this.c.peek().text) === "functionBinding" && this.c.peek(1).type === "Ident";
   }
   /**
-   * `function*` — a generator. MQL evaluates an expression; it has no way to suspend
-   * one, so the star has no meaning here and the plain forms do. Refused where the
-   * star sits, rather than as a stray token the parser trips over.
+   * `function*` marks a generator. MQL evaluates an expression, and has no way to
+   * suspend one, so the star has no meaning here, though the plain forms do. The
+   * parser refuses it where the star sits, not as a stray token that trips it up.
    */
   refuseGenerator() {
     if (!this.c.is("Star")) return;
@@ -19197,9 +19199,9 @@ var Parser = class _Parser {
     );
   }
   /**
-   * `async function` — a promise. MQL evaluates an expression and has nothing to
-   * await, so the word has no meaning here. Refused where it sits, beside the
-   * generator refusal, rather than as a stray token further along.
+   * `async function` marks a promise. MQL evaluates an expression and has nothing
+   * to await, so the word has no meaning here. The parser refuses it where it
+   * sits, beside the generator refusal, not as a stray token further along.
    */
   refuseAsync() {
     const t = this.c.peek();
@@ -19210,7 +19212,7 @@ var Parser = class _Parser {
       t.pos
     );
   }
-  /** `function name(params) { … }` — the same node the arrow spelling builds. */
+  /** `function name(params) { … }` builds the same node that the arrow spelling builds. */
   functionDecl() {
     const kw = this.c.next();
     this.refuseGenerator();
@@ -19219,7 +19221,7 @@ var Parser = class _Parser {
     const lambda = this.lambdaOf(params, kw.pos);
     return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
-  /** `(a, [b, c], { d },)` — a parenthesised parameter list, names and patterns like the arrow's, trailing comma allowed. */
+  /** `(a, [b, c], { d },)`: a parenthesised parameter list. Names and patterns match the arrow's, and a trailing comma is allowed. */
   paramList() {
     this.c.expect("LParen");
     const out = [];
@@ -19235,8 +19237,9 @@ var Parser = class _Parser {
     return out;
   }
   /**
-   * `function (x) { … }` or `function name(x) { … }` in a VALUE slot. Both are
-   * the same Lambda the arrow spelling builds; the name, if written, is not used.
+   * `function (x) { … }` or `function name(x) { … }` in a VALUE slot. Both build
+   * the same Lambda that the arrow spelling builds. The parser ignores the name,
+   * if the developer wrote one.
    */
   functionExpr() {
     const kw = this.c.next();
@@ -19246,11 +19249,11 @@ var Parser = class _Parser {
     return this.lambdaOf(params, kw.pos);
   }
   /**
-   * `let x = …, y = …` / `const x = …, y = …` — JavaScript's declaration list,
+   * `let x = …, y = …` / `const x = …, y = …`: JavaScript's declaration list,
    * wherever `;` separates statements. Each declarator becomes its own
-   * declaration and reads the ones before it. The KEYWORD's offset marks them as
-   * ONE declaration, which is what lets the emit phase give them one stage — and
-   * what stops a folded-away neighbour from bridging a `;` the developer wrote.
+   * declaration, and reads the ones before it. The KEYWORD's offset marks them as
+   * ONE declaration. This lets the emit phase give them one stage, and stops a
+   * folded-away neighbour from bridging a `;` that the developer wrote.
    * See docs/specs/let-bindings.md.
    */
   bindings() {
@@ -19260,15 +19263,15 @@ var Parser = class _Parser {
     while (this.c.eat("Comma")) out.push(this.declarator(kind, null, kw.pos));
     return out;
   }
-  /** `let x = …` / `const x = …`, one declarator — a bracketed pipeline's element, where `,` separates elements. */
+  /** `let x = …` / `const x = …`, one declarator: a bracketed pipeline's element, where `,` separates elements. */
   binding() {
     const kw = this.c.next();
     return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
   }
   /**
-   * One declarator, after the keyword. `kwPos` positions the FIRST one at the
-   * keyword and every later one at its own name, so an error underlines the
-   * declarator it is about. A function body makes it a FuncDecl.
+   * One declarator, after the keyword. `kwPos` places the FIRST declarator at the
+   * keyword, and every later declarator at its own name. So an error underlines
+   * the declarator it is about. A function body makes this a FuncDecl.
    */
   declarator(kind, kwPos, group) {
     const name2 = this.c.expect("Ident");
@@ -19289,10 +19292,10 @@ var Parser = class _Parser {
   // ── writes ────────────────────────────────────────────────────────────────
   //
   // Whether the source is a write is a question about the LEXEMES ahead, not
-  // about meaning, so it is answered by lookahead over the triggers the rows
-  // state: `STATEMENT_PREFIX` opens one (`delete`, `++`, `--`) and
+  // about meaning. So the parser answers it by lookahead over the triggers that
+  // the rows state: `STATEMENT_PREFIX` opens one (`delete`, `++`, `--`), and
   // `ASSIGN_TRIGGERS` follows an expression to make one (`=`, `+=`, …).
-  /** `($.a = 1)` — a write inside parentheses, which `writeGroup()` handles. */
+  /** `($.a = 1)`: a write inside parentheses, which `writeGroup()` handles. */
   parenWriteAhead() {
     const save = this.c.mark();
     try {
@@ -19303,10 +19306,10 @@ var Parser = class _Parser {
     }
   }
   /**
-   * A write starts here. Asked in three places — a `;` statement, an array
-   * element, and after a `,` inside brackets — so it is one predicate: three
-   * copies of the condition is how the array form came to miss the `(`-wrapped
-   * spelling the other two accepted.
+   * A write starts here. Three places ask this: a `;` statement, an array
+   * element, and after a `,` inside brackets. So this is one predicate. Three
+   * copies of the condition once let the array form miss the `(`-wrapped
+   * spelling that the other two accepted.
    */
   writeAhead() {
     if (STATEMENT_PREFIX.has(this.c.type)) return true;
@@ -19314,11 +19317,12 @@ var Parser = class _Parser {
     return this.startsAWrite();
   }
   /**
-   * Does the expression that starts here end in an assignment? A SCAN of the tokens
-   * to the end of the expression — the first `,` / `;` / closing bracket at depth
-   * zero — for an assignment operator at depth zero. A scan, not a speculative
-   * parse: parsing here doubled the work at every nesting level (exponential on
-   * `[[[…]]]`) and swallowed every error the speculation raised.
+   * Does the expression that starts here end in an assignment? This is a SCAN of
+   * the tokens to the end of the expression, the first `,` / `;` / closing
+   * bracket at depth zero, that looks for an assignment operator at depth zero.
+   * It is a scan, not a speculative parse. A speculative parse here doubled the
+   * work at every nesting level, exponential on `[[[…]]]`, and swallowed every
+   * error that the speculation raised.
    */
   startsAWrite() {
     const save = this.c.mark();
@@ -19342,11 +19346,11 @@ var Parser = class _Parser {
     }
   }
   /**
-   * ONE write, or a parenthesised group of them.
+   * ONE write, or a parenthesised group of writes.
    *
-   * A formatter writes `($.a = 1, $.b = 2)`, and inside the parentheses a `,`
-   * always continues the group because the `)` is what ends it. Outside them the
-   * `,` means different things in the two callers below, which is the whole
+   * A formatter writes `($.a = 1, $.b = 2)`. Inside the parentheses, a `,`
+   * always continues the group, because the `)` is what ends it. Outside them,
+   * the `,` means different things to the two callers below. That is the whole
    * reason this is a separate method.
    */
   writeGroup() {
@@ -19423,8 +19427,8 @@ var Parser = class _Parser {
   }
   /**
    * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
-   * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not — JavaScript
-   * refuses them, and so does JSMQL.
+   * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not places.
+   * JavaScript refuses them, and so does JSMQL.
    */
   requirePlace(target, pos, op) {
     const t = target.expr.type;
@@ -19445,10 +19449,10 @@ var Parser = class _Parser {
   }
   /**
    * A write target must be a place, and the rule that built it must allow a
-   * write. `a?.b = 1` is a JavaScript SyntaxError — wherever the `?.` sits in the
-   * chain — and the `optionalMemberAccess` row states it with `neverAWriteTarget`;
-   * this reads the row rather than testing `.optional`, so the next rule to say
-   * so needs no branch here.
+   * write. `a?.b = 1` is a JavaScript SyntaxError, wherever the `?.` sits in the
+   * chain, and the `optionalMemberAccess` row states this with `neverAWriteTarget`.
+   * This method reads the row rather than testing `.optional`. So the next rule
+   * that says so needs no branch here.
    */
   requireWriteTarget(target, pos, op) {
     this.requirePlace(target, pos, op);
@@ -19459,7 +19463,7 @@ var Parser = class _Parser {
   }
   static {
     // ── expressions: one Pratt loop ───────────────────────────────────────────
-    /** Nesting deeper than this is refused before the call stack is — a hostile input, not a query. */
+    /** The parser refuses nesting deeper than this, before the call stack does. This marks a hostile input, not a query. */
     this.MAX_DEPTH = 200;
   }
   expression() {
@@ -19525,7 +19529,7 @@ var Parser = class _Parser {
       left = { expr: bin(op, left.expr, right.expr), rule: rule.rules[0] };
     }
   }
-  /** Prefix operators, then an atom, then its postfix chain. */
+  /** Reads prefix operators, then an atom, then its postfix chain. */
   unary() {
     const rule = PREFIX.get(this.c.type);
     if (rule !== void 0 && rule.prec > 0) {
@@ -19545,7 +19549,7 @@ var Parser = class _Parser {
     }
     return this.postfix(this.atom());
   }
-  /** Every `.`, `?.`, `[`, `(` that follows an atom, at the tightest level. */
+  /** Reads every `.`, `?.`, `[`, `(` that follows an atom, at the tightest level. */
   postfix(target) {
     let out = { expr: target, rule: null };
     for (; ; ) {
@@ -19556,9 +19560,9 @@ var Parser = class _Parser {
     }
   }
   /**
-   * One postfix step. Which node it builds is lookahead, never a name — and the
+   * One postfix step. Lookahead decides which node it builds, never a name. The
    * rule it reports is the one that DISTINGUISHES the step (`optionalMemberAccess`
-   * for `?.`), so a write can ask whether its target may be one.
+   * for `?.`). So a write can ask whether its target may be one.
    */
   tail(object, op) {
     if (op.type === "LParen") {
@@ -19588,9 +19592,9 @@ var Parser = class _Parser {
     return { expr: { type: "MemberAccess", object, name: name2.text, optional, pos: op.pos }, rule };
   }
   /**
-   * A name, or a reserved word used as one. Every keyword qualifies where a
-   * name is expected — `{ null: 1 }`, `$let({ in: … })` — because JavaScript
-   * allows any IdentifierName there and a field may be named anything.
+   * A name, or a reserved word used as one. Every keyword qualifies in a place
+   * that expects a name, such as `{ null: 1 }` or `$let({ in: … })`, because
+   * JavaScript allows any IdentifierName there, and a field can be named anything.
    */
   identLike() {
     const t = this.c.peek();
@@ -19598,11 +19602,11 @@ var Parser = class _Parser {
     throw new ParseError(`Expected a name but got ${found(t)}`, t.pos);
   }
   /**
-   * A call's arguments. `owner` is the name being called, or null for a callee
-   * that is not a name (`f(…)`, `new X(…)`, `$op(…)`). A `{ … }` callback body
-   * without a `return` is pipeline STAGES only under an owner whose row says
-   * `blockBody: "stages"`; every other owner's block is JavaScript and needs its
-   * `return`. The claim is recorded here, and `finish()` refuses what nobody claimed.
+   * A call's arguments. `owner` is the name that the source calls, or null for a
+   * callee that is not a name (`f(…)`, `new X(…)`, `$op(…)`). A `{ … }` callback
+   * body with no `return` is pipeline STAGES only under an owner whose row says
+   * `blockBody: "stages"`. Every other owner's block is JavaScript, and needs its
+   * `return`. This method records the claim, and `finish()` refuses what nobody claimed.
    */
   args(close, owner) {
     const out = [];
@@ -19688,10 +19692,11 @@ var Parser = class _Parser {
     }
   }
   /**
-   * `0x` with exactly 24 hex digits is an ObjectId; any other hex run is an
-   * integer, accepted only while it fits a double exactly — a longer one would
-   * lose precision silently, and is neither an id nor a number JavaScript can
-   * hold, so it is refused with the two spellings that work.
+   * `0x` with exactly 24 hex digits is an ObjectId. Any other hex run is an
+   * integer, and the parser accepts it only while it fits a double exactly. A
+   * longer run would lose precision silently, and is neither an id nor a number
+   * that JavaScript can hold. The parser refuses it, and names the two spellings
+   * that work.
    */
   number() {
     const t = this.c.next();
@@ -19709,10 +19714,10 @@ var Parser = class _Parser {
     );
   }
   /**
-   * `$.name` is a field of the document, and `$.name(…)` a METHOD on the document
-   * itself: a field is never callable, so the parentheses can mean nothing else.
-   * The receiver is the bare `$` (an empty-path `FieldRef`), the same node the
-   * emitter already types as a document.
+   * `$.name` is a field of the document. `$.name(…)` is a METHOD on the document
+   * itself, because a field is never callable, so the parentheses can mean
+   * nothing else. The receiver is the bare `$`, an empty-path `FieldRef`, the same
+   * node that the emitter already types as a document.
    */
   fieldRef() {
     const t = this.c.next();
@@ -19726,9 +19731,10 @@ var Parser = class _Parser {
     return { type: "FieldRef", path: first.text, pos: t.pos };
   }
   /**
-   * A bare `$` is the whole document; `$name(` is the operator escape hatch. How
-   * the arguments were written is not recorded: the operator's row states its
-   * shape, and one object argument is a body by that shape, never by a guess here.
+   * A bare `$` is the whole document. `$name(` is the operator escape hatch. The
+   * parser does not record how the arguments were written. The operator's row
+   * states its shape, and one object argument is a body only by that shape, never
+   * by a guess here.
    */
   dollar() {
     const t = this.c.next();
@@ -19744,7 +19750,7 @@ var Parser = class _Parser {
     const n2 = this.identLike();
     return { type: "Ident", name: n2.text, pos: n2.pos };
   }
-  /** `x => …` or a plain name. One token of lookahead separates them. */
+  /** `x => …` or a plain name. One token of lookahead tells them apart. */
   identifierOrLambda() {
     const t = this.c.next();
     if (this.c.is("Arrow")) {
@@ -19753,7 +19759,7 @@ var Parser = class _Parser {
     }
     return { type: "Ident", name: t.text, pos: t.pos };
   }
-  /** `(a, b) => …`, or a parenthesised expression. Rewound if it is not an arrow. */
+  /** `(a, b) => …`, or a parenthesised expression. The parser rewinds when it is not an arrow. */
   parenthesised() {
     const save = this.c.mark();
     this.c.next();
@@ -19785,11 +19791,12 @@ var Parser = class _Parser {
   }
   /**
    * One parameter as written: a plain name, or a destructuring pattern of plain
-   * names — `[id, count]`, `{ sku, qty: n }`. Null when the tokens are not a
-   * parameter at all (a number, a call), so the caller can rewind and read a
-   * parenthesised expression. A pattern with a default, a rest element, a nested
-   * pattern or a computed key is `refused`: the caller throws it once it knows an
-   * arrow follows, and rewinds otherwise — `([...a, b])` is a legal expression.
+   * names, such as `[id, count]` or `{ sku, qty: n }`. This returns null when the
+   * tokens are not a parameter at all (a number, a call), so the caller can
+   * rewind and read a parenthesised expression. A pattern with a default, a rest
+   * element, a nested pattern or a computed key comes back `refused`. The caller
+   * throws it once it knows that an arrow follows, and rewinds otherwise, because
+   * `([...a, b])` is a legal expression.
    */
   param() {
     if (this.c.is("Ident")) return { kind: "name", name: this.c.next().text };
@@ -19865,9 +19872,9 @@ var Parser = class _Parser {
     return null;
   }
   /**
-   * Skip to the end of one refused pattern part — past a default's expression, a
-   * rest element, a nested pattern — so the reader can tell whether an arrow
-   * follows the whole list. False when the tokens run out first.
+   * Skips to the end of one refused pattern part, past a default's expression, a
+   * rest element, or a nested pattern, so the reader can tell whether an arrow
+   * follows the whole list. This returns false when the tokens run out first.
    */
   skipPatternPart() {
     let depth = 0;
@@ -19881,11 +19888,12 @@ var Parser = class _Parser {
     }
   }
   /**
-   * The lambda a parameter list and its body make. A destructured parameter is
-   * one parameter under a fresh name, and each name it binds is that parameter's
-   * part wherever the body reads it — `([id, count]) => -count` IS `x => -x[1]`.
-   * The parts are substituted, never declared, so the body keeps its shape for
-   * every reader (a sort key sees the minus, a filter sees the comparison).
+   * The lambda that a parameter list and its body make. A destructured parameter
+   * is one parameter under a fresh name, and each name it binds is that
+   * parameter's part wherever the body reads it. So `([id, count]) => -count` IS
+   * `x => -x[1]`. The parts are substituted, never declared. So the body keeps
+   * its shape for every reader (a sort key sees the minus, a filter sees the
+   * comparison).
    */
   lambdaOf(params, pos) {
     for (const p of params) if (p !== null && p.kind === "refused") throw p.error;
@@ -19930,10 +19938,10 @@ var Parser = class _Parser {
     return lambda;
   }
   /**
-   * A lambda's body. A `{ … }` body is JavaScript — declarations then a `return`.
+   * A lambda's body. A `{ … }` body is JavaScript: declarations, then a `return`.
    * A body of pipeline stages belongs only to a name whose row says
-   * `blockBody: "stages"`; the callee claims it in `args()`, and `finish()`
-   * refuses a stages body nobody claimed.
+   * `blockBody: "stages"`. The callee claims it in `args()`, and `finish()`
+   * refuses a stages body that nobody claimed.
    */
   lambdaBody(params, pos) {
     if (!this.c.is("LBrace")) {
@@ -20008,7 +20016,7 @@ var Parser = class _Parser {
   }
   /**
    * One element of an array literal. A declaration or a write makes the literal a
-   * bracketed pipeline; anything else is a value.
+   * bracketed pipeline. Anything else is a value.
    */
   arrayElement() {
     if (this.c.is("Let") || this.c.is("Const")) return this.binding();
@@ -22069,8 +22077,8 @@ var compoundAssign = {
       target: { ...n2.target },
       op: "=",
       // The target appears twice: once as the destination, once as the left
-      // operand. A FRESH copy of each, so no node object sits in two slots —
-      // the walk in walk.ts compares by identity to know what changed.
+      // operand. Each copy is FRESH, so no node object sits in two slots — the
+      // walk in walk.ts compares nodes by identity to know what changed.
       value: { type: "BinaryExpr", op: binop, left: n2.target, right: n2.value, pos: n2.pos },
       pos: n2.pos
     };
@@ -22135,9 +22143,9 @@ var isNode4 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) &&
 function writeBack(target, value, pos) {
   return {
     type: "UpdateFilter",
-    // A FRESH copy of the target for the destination: it appears twice now, and a
-    // later phase compares nodes by identity.
-    // `mutates`: a mutator's own write, which JavaScript allows on a `const` binding too
+    // The destination gets a FRESH copy of the target: the target now appears
+    // twice, and a later phase compares nodes by identity.
+    // `mutates` marks a mutator's own write, which JavaScript also allows on a `const` binding.
     ops: [{ type: "AssignExpr", target: { ...target }, op: "=", value, pos, mutates: true }],
     pos: target.pos
   };
@@ -22154,7 +22162,7 @@ var mutatorTwin = {
     if (target === null) return node;
     return writeBack(
       target,
-      // `wrote` keeps the source spelling, so a refusal names `.reverse()` and not the twin.
+      // `wrote` keeps the source spelling, so a refusal names `.reverse()`, not the twin.
       { type: "MethodCall", object: target, name: twin, wrote: n2.name, args: n2.args, optional: false, pos: n2.pos },
       n2.pos
     );
@@ -22397,19 +22405,19 @@ var RULES = [
   // Folding a path is independent of every rule above and below it: no rule
   // matches on a MemberAccess, and none builds one.
   fieldPath,
-  // AFTER fieldPath, which is what makes `$.a.b.sort()` reach a FieldRef target.
-  // Between them the two cover a name at most once: a row carries `immutableTwin`
-  // or `asArrayLiteral`, never both.
+  // This runs AFTER fieldPath, which is what makes `$.a.b.sort()` reach a
+  // FieldRef target. Between them the two cover a name at most once: a row
+  // carries `immutableTwin` or `asArrayLiteral`, never both.
   mutatorTwin,
   mutatorSpread,
   // Independent of the two above: a row carries a twin, an array-literal order or a write form, never two.
   mutatorForm,
   mutatedArgument,
-  // AFTER mutatorSpread: a statement mutator spreads its receiver, and this rule reads none.
+  // This runs AFTER mutatorSpread: a statement mutator spreads its receiver, and this rule reads none.
   packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of
   // them matches, and the arrow it builds is not a shape any of them looks for.
-  // BEFORE iterateeShorthand: the `$group` body must not be read as a matcher.
+  // This runs BEFORE iterateeShorthand: the `$group` body must not be read as a matcher.
   groupBodyLink,
   iterateeShorthand
 ];
@@ -22537,7 +22545,7 @@ var Capture = class {
     this.byValue = /* @__PURE__ */ new Map();
     this.level = level;
   }
-  /** The variable that carries `value` (a `"$path"`), minted on first read. */
+  /** The variable that carries `value` (a `"$path"`). This method mints it on first read. */
   take(kind, hint2, value) {
     const have = this.byValue.get(value);
     if (have !== void 0) return have;
@@ -22548,7 +22556,7 @@ var Capture = class {
     this.vars[name2] = value;
     return name2;
   }
-  /** Has anything been captured? An empty `let` is noise the server does not need. */
+  /** Did the compiler capture anything? An empty `let` is noise the server does not need. */
   get any() {
     return this.byValue.size > 0;
   }
@@ -22562,14 +22570,14 @@ var Scope = class _Scope {
   /**
    * The root scope. `introduced` is every name the program binds anywhere — the
    * parameters and declarations `namesIn` collects — so a mint made before a
-   * deeper lambda binds its parameter still steps aside from it.
+   * deeper lambda binds its parameter still steps aside from that parameter.
    */
   static root(introduced) {
     const taken = new Set(SYSTEM_VARS);
     for (const js of introduced) taken.add(mongoVarName(js));
     return new _Scope(/* @__PURE__ */ new Map(), taken, /* @__PURE__ */ new Set());
   }
-  /** A nested block: every outer name still visible, none of them declared HERE. */
+  /** A nested block: every outer name is still visible, and none of them are declared HERE. */
   block() {
     return new _Scope(this.bound, this.taken, /* @__PURE__ */ new Set());
   }
@@ -22616,7 +22624,7 @@ var Scope = class _Scope {
   }
   /**
    * The developer's own variable binder — a lambda parameter, a `$let` var.
-   * Encoded, never renamed. `type` is what the row says the parameter holds.
+   * The compiler encodes it and never renames it. `type` is what the row says the parameter holds.
    */
   param(js, type, pos, level) {
     const as = mongoVarName(js);
@@ -22631,8 +22639,8 @@ var Scope = class _Scope {
   }
   /**
    * A compiler mint — `bind("arr")` is `jsmqlArr`, or `jsmqlArr2`, `jsmqlArr3`
-   * … when a name the program uses stands in the way. The developer's names are
-   * never the ones that move.
+   * … when a name the program uses stands in the way. The compiler never moves
+   * the developer's own names.
    */
   bind(hint2) {
     const base = exprVar(hint2);
@@ -23404,37 +23412,39 @@ var Chain = class {
   constructor(isPipeline = true) {
     /** The stages emitted so far. */
     this.emitted = [];
-    /** Stages a value placed ahead of the stage it stands in; drained by `ahead`. */
+    /** Stages a value placed ahead of the stage it stands in; `ahead` drains them. */
     this.hoisted = [];
     this.slots = 0;
     /** Has anything written under `__jsmql`? Owns the trailing cleanup. */
     this.dirty = false;
     /**
-     * A stage that must be LAST — `$out`, `$merge`. Filed here rather than
-     * emitted, so nothing can land after it and the cleanup always precedes it.
+     * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
+     * rather than emitting it, so nothing can land after it, and the cleanup
+     * always precedes it.
      */
     this.terminal = null;
     /**
-     * Where the stream's ELEMENT lives on its documents: `""` when the element IS the
-     * document, the unwound field's path after `.flatMap("items")` — a callback's
-     * parameter then stands for that field, and its fields for `items.<field>`. The
-     * documents themselves keep carrying their other fields (`$unwind` preserves
-     * them); a stage that replaces the document makes the document the element
-     * again. See docs/specs/stream-methods.md § The element after `.flatMap`.
+     * Where the stream's ELEMENT lives on its documents: `""` when the element IS
+     * the document, or the unwound field's path after `.flatMap("items")` — a
+     * callback's parameter then stands for that field, and its fields stand for
+     * `items.<field>`. The documents themselves still carry their other fields
+     * (`$unwind` preserves them); a stage that replaces the document makes the
+     * document the element again. See docs/specs/stream-methods.md § The element
+     * after `.flatMap`.
      */
     this.element = "";
     /**
-     * The field paths a materialiser has already stamped and that are still FRESH —
-     * see docs/specs/stream-length.md § Compute-once / reuse / recompute. A second read
-     * of a stamped path costs no stage; a stage whose row does not state
+     * The field paths a materialiser stamped, that are still FRESH — see
+     * docs/specs/stream-length.md § Compute-once / reuse / recompute. A second
+     * read of a stamped path costs no stage. A stage whose row does not state
      * `preservesCount` clears the set, so the next read stamps again.
      */
     this.stamped = /* @__PURE__ */ new Set();
     this.isPipeline = isPipeline;
   }
   /**
-   * A stage has been placed: one that replaces the document leaves no unwound
-   * field to point at. `replaces` is the row's own fact, judged by the caller.
+   * A stage lands: one that replaces the document leaves no unwound field to
+   * point at. `replaces` is the row's own fact; the caller judges it.
    */
   placed(replaces) {
     if (replaces) this.element = "";
@@ -23445,16 +23455,16 @@ var Chain = class {
     return scratchSlot(this.slots++);
   }
   /**
-   * A mark for a lowering that may be TAKEN BACK. A chain that goes on after a join
-   * lowers the body twice, and the first attempt's hoists are discarded — so the
-   * stamps it took have to go with them, or the second attempt reuses a field the
-   * discarded stage was going to write.
+   * A mark for a lowering that the compiler may TAKE BACK. A chain that goes on
+   * after a join lowers the body twice, and it discards the first attempt's
+   * hoists — so the stamps from that attempt must go too, or the second attempt
+   * reuses a field the discarded stage would have written.
    *
-   * The scratch counter goes back too. A slot the discarded attempt minted is named
-   * only by the stages that went with it, so holding the number would leave a gap —
-   * and the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
-   * spelled with a `;` would name the same slot `__jsmql.tmp.1` and `__jsmql.tmp.0`.
-   * One lowering, one output.
+   * The scratch counter goes back too. Only the stages that went with a slot
+   * name it, so keeping the discarded attempt's number would leave a gap — and
+   * the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
+   * spelled with a `;` would name the same slot `__jsmql.tmp.1` and
+   * `__jsmql.tmp.0`. One lowering, one output.
    */
   mark() {
     return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
@@ -23475,9 +23485,9 @@ var Chain = class {
     return "$" + reads2;
   }
   /**
-   * A statement's stages have landed. A stage that does not state `preservesCount`
-   * changes how many documents there are, or what fields they carry, so every stamp
-   * taken before it now says something that is no longer true.
+   * A statement's stages land. A stage that does not state `preservesCount`
+   * changes how many documents there are, or what fields they carry, so every
+   * stamp taken before it now states something that is no longer true.
    */
   advance(stages) {
     for (const stage of stages) {
@@ -23491,14 +23501,15 @@ var Chain = class {
    * The stages hoisted so far, TAKEN OUT so they can stand directly ahead of the
    * stages of the lowering that hoisted them.
    *
-   * A hoisted stage reads the documents the stage it was written for reads, so it
-   * has to land beside it and not at the front of the statement: MEASURED, the
-   * `$lookup` of `$$.$sortByCount($.productIds).map(g => $$$.products.find({ _id:
-   * g._id }))` placed ahead of the whole statement joined on the SOURCE document's
-   * `_id`, and `$sortByCount` then replaced the document and dropped the slot — so
-   * every row came back without its joined field and the server said nothing. A
-   * road that makes several stages out of one statement therefore drains at each
-   * of them. See docs/specs/lookup-stage.md § Where a hoisted stage lands.
+   * A hoisted stage reads the same documents as the stage it was written for, so
+   * it must land beside that stage and not at the front of the statement:
+   * MEASURED, the `$lookup` of `$$.$sortByCount($.productIds).map(g =>
+   * $$$.products.find({ _id: g._id }))` stood ahead of the whole statement,
+   * joined on the SOURCE document's `_id`, and `$sortByCount` then replaced the
+   * document and dropped the slot — so every row came back without its joined
+   * field, and the server reported nothing wrong. A road that makes several
+   * stages out of one statement therefore drains at each of them. See
+   * docs/specs/lookup-stage.md § Where a hoisted stage lands.
    */
   ahead() {
     const out = [...this.hoisted];
@@ -23509,7 +23520,7 @@ var Chain = class {
   flush() {
     this.emitted.push(...this.ahead());
   }
-  /** The finished pipeline: the stages, the cleanup if anything was written under `__jsmql`, the terminal stage. */
+  /** The finished pipeline: the stages, the cleanup if anything wrote under `__jsmql`, and the terminal stage. */
   close() {
     this.flush();
     const out = [...this.emitted];
@@ -23530,9 +23541,9 @@ var Env = class _Env {
     return new _Env(this.scope, this.site, this.chain, /* @__PURE__ */ new Set([...this.proven, path]));
   }
   /**
-   * The Env a program starts in. Every name the program introduces anywhere is
-   * reserved for the whole of it, so a compiler mint never shadows a parameter
-   * bound deeper in.
+   * The Env a program starts in. The compiler reserves every name the program
+   * introduces anywhere for the whole of it, so a compiler mint never shadows a
+   * parameter bound deeper in.
    */
   static root(program, root2, chain = new Chain(root2 === "statement")) {
     const site = { where: { at: root2 }, root: root2, envelope: "none", boundaries: [], inside: null };
@@ -23574,9 +23585,9 @@ var Env = class _Env {
     return boundaries[boundaries.length - 1].stage;
   }
   /**
-   * The Env after a stage that replaced the document: every field-carried binding is
-   * gone, and so is every path a test proved — the document those paths were read from
-   * is not the document the next stage sees.
+   * The Env after a stage that replaced the document: every field-carried
+   * binding is gone, and so is every path a test proved — the document that
+   * held those paths is not the document the next stage sees.
    */
   dropFields(by, message) {
     return new _Env(this.scope.dropFields(by, message), this.site, this.chain);
@@ -24662,7 +24673,7 @@ function joinValue(node, env, S) {
     ref: { kind: "field", slot },
     type: l.yields,
     elements: l.yields === "array" && l.element === "" ? "object" : "unknown",
-    // The server always writes the `as` array; a `.find` may find nothing.
+    // The server always writes the `as` array. A `.find` may find nothing.
     present: l.one !== "find",
     mutable: false,
     pos: l.pos
@@ -25889,7 +25900,7 @@ var OWN_CASE = /* @__PURE__ */ new Set([
   "RegexLiteral",
   "Lambda",
   // A literal's own case lowers its parts and holds the list-operand rule for a
-  // raw `{ $op: … }`; settling the whole literal would skip both.
+  // raw `{ $op: … }`. Settling the whole literal would skip both.
   "ObjectLiteral",
   "ArrayLiteral"
 ]);

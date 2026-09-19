@@ -1,19 +1,18 @@
 #!/usr/bin/env node
-// Clone the official MongoDB MQL specifications repo into vendor/mql-specifications/
-// at a pinned commit. The upstream repo has no package.json, so it cannot be
-// installed as a normal npm devDependency — vendoring is the cleaner alternative.
+// Clone the official MongoDB MQL specifications repository to vendor/mql-specifications/
+// at a pinned commit. The upstream repository has no package.json, so you cannot install it
+// as a normal npm devDependency. Vendoring is the cleaner choice.
 //
-// Spec is used by:
+// The spec is used by:
 //   - test/operator-spec-coverage.test.ts (drift detection)
-//   - manual reference when adding an operator row to src/registry/names.ts
+//   - manual reference when you add an operator row to src/registry/names.ts
 //
-// Idempotent: if the target directory exists at the pinned SHA, exits quickly.
-// The vendored directory is gitignored; this script repopulates it on demand.
+// This script is idempotent: if the target directory exists at the pinned SHA, it exits quickly.
+// The vendored directory is gitignored. This script repopulates it on demand.
 //
-// Uses partial-clone (`--filter=blob:none`) + sparse-checkout to fetch only
-// the three definition folders we actually consume — `expression`,
-// `accumulator`, `stage`. Cuts the on-disk + clone-time footprint by ~80%
-// vs. a full clone.
+// It uses partial-clone (`--filter=blob:none`) and sparse-checkout to fetch only the three
+// definition folders you use: `expression`, `accumulator`, and `stage`. This cuts the on-disk
+// and clone-time footprint by about 80 percent compared to a full clone.
 
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -22,10 +21,10 @@ import { fileURLToPath } from "node:url";
 
 const PINNED_SHA = "671c69579f9852c12ff89834ac73239f27005f81";
 const REPO_URL = "https://github.com/mongodb/mql-specifications.git";
-// `types` carries the enum members named by `arguments[].type` (e.g. every valid
-// `timeUnit`), which the registry otherwise holds as hand-written lists (`TIME_UNIT` in
+// `types` carries the enum members named by `arguments[].type` (for example, every valid
+// `timeUnit`). The registry otherwise holds these as hand-written lists (`TIME_UNIT` in
 // src/registry/names.ts) with nothing to check them against. `query` describes the MQL
-// query language — the surface Filter mode and `$match` emit into, and the only part of
+// query language: the surface Filter mode and `$match` lower into it. It is the only part of
 // MQL jsmql produces that has no spec to reconcile against. See docs/specs/filter-mode.md.
 const SPARSE_PATHS = [
   "definitions/expression",

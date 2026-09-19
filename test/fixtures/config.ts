@@ -79,12 +79,12 @@ export const ADMIN_URI = uri(ADMIN_USER, ADMIN_PASS); // read-write everywhere: 
 export const READONLY_URI = uri(READONLY_USER, READONLY_PASS); // read-only: integration tests
 export const SCRATCH_URI = uri(SCRATCH_USER, SCRATCH_PASS); // read-write on SCRATCH_DBS: every other live suite
 
-// No-credentials connection. Only usable via MongoDB's "localhost exception",
-// which is active until the first user exists — that's how the seeder bootstraps
+// No-credentials connection. Only usable through MongoDB's "localhost exception",
+// which is active until the first user exists. This is how the seeder bootstraps
 // the admin user on a fresh instance.
 export const BOOTSTRAP_URI = `mongodb://${FIXTURE_HOST}:${FIXTURE_PORT}/?serverSelectionTimeoutMS=1500`;
 
 // Collections seeded into FIXTURE_DB, plus the metadata collection that records
-// which dataset version is currently injected (drives idempotent re-seeding).
+// which dataset version is now injected (drives idempotent re-seeding).
 export const COLLECTIONS = ["users", "products", "orders", "shipments", "reviews"] as const;
 export const META_COLLECTION = "__fixture_meta";

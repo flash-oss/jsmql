@@ -99,11 +99,11 @@ function isCircular(value: unknown, seen: WeakSet<object> = new WeakSet()): bool
 /**
  * A value a slot or a parameter may carry: anything the driver can send.
  *
- * The check RECURSES, because a value with no MQL representation is no more
- * representable one level down. `undefined` in particular is the language's existence
- * TEST and never a value (docs/LANGUAGE.md § `undefined`), so a nested one used to
- * reach the compiled document and then disagree with itself — the printer dropped the
- * key and the driver sent `null` for it.
+ * The check RECURSES, because a value with no MQL representation has no MQL
+ * representation one level down either. `undefined` is the language's existence
+ * TEST and never a value (docs/LANGUAGE.md § `undefined`). A nested `undefined`
+ * must never reach the compiled document: if it did, it would disagree with
+ * itself, because the printer drops the key while the driver sends `null` for it.
  */
 function checkValue(value: unknown, slot: number, key?: string): void {
   const where = key !== undefined ? `parameter '${key}'` : `interpolation slot ${slot}`;
@@ -229,8 +229,8 @@ const DRIVER: Record<Exclude<Mode, "auto">, string> = {
 /** What a program IS, for a strict entry that wanted another shape. */
 function received(program: Program): { what: string; hint: string } {
   // A `;` alone does not make a Pipeline. A binding in front of one expression is
-  // still the Filter that expression is, and calling it a Pipeline answered the
-  // pipeline entry with the entry the developer had already called.
+  // still the Filter that expression is. Calling it a Pipeline would send the
+  // developer back to the pipeline entry the developer already called.
   if (program.type === "Pipeline" && shapeOf(program) === "pipeline") {
     return { what: "a `;`-separated Pipeline", hint: "jsmql.pipeline() (or jsmql(), which decides from the shape)" };
   }
@@ -273,13 +273,15 @@ function received(program: Program): { what: string; hint: string } {
 /**
  * The defect inside a program that is a FILTER, found by lowering it as one.
  *
- * A program is judged for its shape only once it is correct. `new Date("nope")`
- * is wrong under every entry, and told only to call another one the developer
- * meets it on the next run. Null when the only thing wrong is the shape.
+ * A program is judged for its shape only once it is correct. A value such as
+ * `new Date("nope")` is wrong under every entry. Telling the developer only to
+ * call a different entry would just send the developer to meet the same error
+ * on the next run. This function returns null when the only thing wrong is the
+ * shape.
  *
- * Only the filter reading is searched, because that is the shape a program the
- * pipeline entry refuses actually has — lowering it as anything else would
- * answer with a position the developer never asked for.
+ * The function searches only the filter reading, because that is the shape a
+ * program the pipeline entry refuses actually has. Lowering the program as
+ * anything else would answer with a position the developer never asked for.
  */
 function defectAsFilter(injected: Program): CodegenError | null {
   try {
@@ -309,8 +311,8 @@ function expressionOf(program: Program): Expr {
   const rest: Expr[] = [];
   for (const s of program.stmts) {
     if (s.type === "LetDecl") {
-      // `const` binds a value or an expression. A constant is already inlined by the
-      // fold; what reaches here reads the document, and goes in as the expression.
+      // `const` binds a value or an expression. The fold already inlines a constant;
+      // what reaches here reads the document, so it goes in as the expression.
       if (s.kind !== "const") {
         throw new CodegenError(
           "A Filter or an expression takes a 'const' prelude; a 'let' needs the pipeline form, where it becomes a field.",
@@ -341,7 +343,8 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
   switch (resolved) {
     case "expr":
     case "filter": {
-      // `Object.assign($.a, $.b)` standing alone is a write — and, asked for an expression, the `$mergeObjects` it means.
+      // `Object.assign($.a, $.b)` standing alone is a write. Asked for an expression,
+      // it means the `$mergeObjects` call it lowers to.
       if (shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected))) {
         throw wrongShape(api, resolved, injected);
       }
@@ -351,12 +354,13 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
         : lowerFilter(program, Env.root(program, "filter"));
     }
     case "pipeline": {
-      // A BRACKETED program is a pipeline the developer wrote as one, whatever is in it.
+      // A BRACKETED program is a pipeline the developer wrote as one, whatever it holds.
       // Handing it to the shape refusal would answer a typo inside it with "use
-      // jsmql.pipeline()" — the entry they already called; the lowering names the stage.
+      // jsmql.pipeline()" — the entry the developer already called. The lowering
+      // names the stage instead.
       if (shapeOf(injected) !== "pipeline" && injected.type !== "ArrayLiteral") {
-        // A program is judged for its SHAPE only once it is correct: a defect the
-        // developer must fix under every entry speaks before the entry mismatch.
+        // A program is judged for its SHAPE only once it is correct: this reports a
+        // defect the developer must fix under every entry before the entry mismatch.
         throw defectAsFilter(injected) ?? wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);
@@ -482,8 +486,8 @@ function validateInput(
     } else {
       const src = typeof input === "function" ? fnSource(input as (...args: never[]) => unknown) : (input as string);
       const parsed = parseInput(src);
-      // The entry form is checked with every parameter bound to null: the shape of
-      // the program does not depend on the values, only the document does.
+      // This checks the entry form with every parameter bound to null: the shape of
+      // the program does not depend on the values; only the document does.
       const nulls = new Map(parsed.params.map((b) => [b.name, null] as const));
       lowerMode("auto", "jsmql", parsed.program, nulls);
     }

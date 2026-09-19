@@ -226,7 +226,7 @@ describe("assert — rejections", () => {
 
   it("yields to a user-declared `const assert` (no shadowing surprise)", () => {
     // A reusable function named `assert` takes precedence; calling it as a bare
-    // statement isn't a stage, so the generic not-a-stage error fires.
+    // statement is not a stage, so the generic not-a-stage error fires.
     expect(() => jsmql("const assert = (x) => x; assert($.y)")).toThrow();
   });
 });

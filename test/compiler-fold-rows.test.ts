@@ -1,6 +1,6 @@
 // Every constant fold implements a row, and every row it implements is a call.
 //
-// fold-methods.ts and fold-dates.ts are switches over method NAMES, one table per
+// fold-methods.ts and fold-dates.ts are switches over method names, one table per
 // receiver family. A `case "foo":` for a name the registry does not list on that
 // family would ADD a method to the language — `const n = "abc".foo(); $.x === n`
 // would fold where the compiler must refuse — and a `case` for a name whose row
@@ -52,7 +52,7 @@ describe("compiler/passes/fold — every case label is a callable row on that fa
           wrong.push(`${name}: no row`);
           continue;
         }
-        if (row.call === false) wrong.push(`${name}: the row says it is READ, not called`);
+        if (row.call === false) wrong.push(`${name}: the row says it is READ, not CALLED`);
         const fams = familiesOf(row);
         if (!fams.includes("any") && !fams.includes(family))
           wrong.push(`${name}: not on ${family} (${fams.join("/")})`);

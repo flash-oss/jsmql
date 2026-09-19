@@ -96,7 +96,7 @@ describe("$out — last-stage enforcement", () => {
     );
   });
 
-  it("two $out statements in one pipeline throw via the same guard", () => {
+  it("two $out statements in one pipeline throw through the same guard", () => {
     expect(() => jsmql("$$$.a = $$; $$$.b = $$;")).toThrow(
       "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
@@ -245,7 +245,7 @@ describe("$out — .reject is .filter negated", () => {
 });
 
 describe("$out — ParamRef in bracket-LHS (jsmql.compile binding)", () => {
-  it("$$$[boundColl] resolves the bracket via the compile-time binding", () => {
+  it("$$$[boundColl] resolves the bracket through the compile-time binding", () => {
     const fn = jsmql.compile(({ destColl }) => ($$$[destColl] = $$));
     expect(fn({ destColl: "archive" })).toEqual([{ $out: "archive" }]);
   });
@@ -274,7 +274,7 @@ describe("$out — mode gates", () => {
     );
   });
 
-  it("jsmql.update() rejects $out via the existing whitelist error", () => {
+  it("jsmql.update() rejects $out through the existing whitelist error", () => {
     expect(() => jsmql.update("$$$.x = $$")).toThrow(
       "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.",
     );
@@ -327,7 +327,7 @@ describe("$out RHS accepts chained stage calls", () => {
     ]);
   });
 
-  // Same stages, whichever way they're written.
+  // Same stages, whichever way they are written.
   it("is identical to writing the stages as statements before the write", () => {
     expect(jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });')).toEqual([
       { $match: { s: "x" } },
@@ -350,7 +350,7 @@ describe("$out RHS accepts chained stage calls", () => {
         "'$out' writes the pipeline's output and has to be its last stage, and '$out' already is. A pipeline writes to one destination — keep one of them.",
       );
     });
-    it("rejects a source stage that isn't first", () => {
+    it("rejects a source stage that is not first", () => {
       expect(() => jsmql('$$$.archive = $$.$match({ s: "x" }).$documents([{ x: 1 }]);')).toThrow(
         "'$documents' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
       );

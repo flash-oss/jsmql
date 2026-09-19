@@ -1,8 +1,8 @@
 // Phase 4 of src/compiler/ — which document a program becomes.
 //
-// The rule asks the ROW rather than stacking auto-wrap special cases, and the
-// second suite below is what holds it to the emitted document: every input the
-// test suite feeds the compiler, compared against the document it returned.
+// This pass asks the ROW rather than stacking auto-wrap special cases. The second
+// suite below holds it to the emitted document. It compares every input the test
+// suite feeds the compiler with the document it returns.
 
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -44,10 +44,10 @@ describe("compiler/passes/shape — a statement makes a pipeline", () => {
     expect(shape("x.sort()")).toBe("pipeline");
   });
 
-  it("reads a mutator with NOTHING to write as a value, so the value road answers it", () => {
-    // A call in the middle makes a fresh array, and a fresh array is a value however
-    // the row reads. Calling these a Pipeline sent `jsmql.expr` to `jsmql.pipeline()`,
-    // which refuses them just as hard.
+  it("reads a mutator on a value as a filter, not a pipeline", () => {
+    // A call in the middle makes a fresh array. A fresh array is a value however the
+    // row reads. A mutator on a value is a filter, not a pipeline. If a test called
+    // these a Pipeline, `jsmql.expr` would reach `jsmql.pipeline()`, which refuses them.
     expect(shape("$.items.filter(d => d.x).sort()")).toBe("filter");
     expect(shape("$.items.filter(d => d.x).map(d => d.sku).uniq().sort()")).toBe("filter");
     expect(shape("[3, 1, 2].sort()")).toBe("filter");

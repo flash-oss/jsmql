@@ -117,7 +117,7 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
   // output is safe to pass directly to `db.coll.updateOne(filter, update)`.
   // Bare-document form would silently treat RHS expressions as literals; the
   // pipeline form evaluates them as aggregation expressions. Callers who want
-  // the bare-doc shape (e.g. for embedding in a hand-written stage body) use
+  // the bare-doc shape (for example to embed it in a hand-written stage body) use
   // `jsmql.expr()` — see test/update-filter.test.ts's `lex regression checks`.
   it("bare assignment without `;` wraps as a one-stage pipeline", () => {
     expect(jsmql("$.a = 1")).toEqual([{ $set: { a: 1 } }]);
@@ -130,14 +130,13 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
   it("bare stage call without `;` auto-wraps as a Pipeline", () => {
     // A top-level `$match(...)` is Pipeline intent. Rather than throwing or
     // silently producing `{ $expr: { $match: ... } }` (a useless Filter),
-    // jsmql() auto-wraps the stage as a one-element Pipeline — no `;`
-    // discipline required at the call site.
+    // `jsmql()` wraps the stage as a one-element Pipeline. The call site needs no `;`.
     expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("bare stage-object literal without `;` auto-wraps the same way", () => {
-    // The Compass copy-paste form (`{ $match: ... }`) is the other shape we
-    // detect as Pipeline intent.
+    // The Compass copy-paste form (`{ $match: ... }`) is the other shape that
+    // JSMQL reads as Pipeline intent.
     expect(jsmql("{ $match: $.a === 0 }")).toEqual([{ $match: { a: 0 } }]);
   });
 
@@ -210,7 +209,7 @@ describe("implicit pipeline — block-body arrow input", () => {
   it("block body `{ return <expr> }` is the value form (≡ the expression body)", () => {
     // A brace body opening directly with `return` is the value form, identical
     // to `({ $ }) => $.a > 18`. (A `;`-separated body of stage statements stays a
-    // pipeline; a stray statement-position `return` mixed into one is rejected.)
+    // pipeline, and JSMQL rejects a stray `return` in a statement position there.)
     expect(
       jsmql(({ $ }) => {
         return $.a > 18;
@@ -227,10 +226,10 @@ describe("implicit pipeline — block-body arrow input", () => {
     ).toThrow(/return/);
   });
 
-  it("expression-body arrow with trailing `;` stripped (back-compat)", () => {
-    // The arrow source as toString'd ends with `;` — formatter quirk that the
-    // adapter strips so a single-statement expression arrow lowers as an
-    // UpdateFilter, which `jsmql()` wraps as a one-stage pipeline.
+  it("strips the trailing `;` that a formatter adds to an expression-body arrow", () => {
+    // `toString()` on the arrow source ends it with `;`, because a formatter adds one.
+    // The adapter strips that `;`. A single-statement expression arrow then lowers as an
+    // UpdateFilter, and `jsmql()` wraps it as a one-stage pipeline.
     const fn = ({ $ }: any) => ($.a = 1);
     expect(jsmql(fn)).toEqual([{ $set: { a: 1 } }]);
   });

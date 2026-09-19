@@ -48,8 +48,8 @@ export type Reader = { value: (node: Expr, env: Env) => unknown; truth: (node: E
 export const childEnv = (env: Env, node: object, key: string): Env => {
   const at = env.at(edge(node, key, env.site.where));
   const n = node as { type?: string; name?: string };
-  // An operator's arguments are INSIDE it — what a fragment like `$case` or `$box` is valid only within;
-  // any other call boundary is inside nothing.
+  // An operator's arguments are INSIDE it. A fragment like `$case` or `$box` is valid only inside it.
+  // Any other call boundary is inside nothing.
   if (n.type === "OperatorCall" && key === "args") return at.inside(n.name ?? null);
   if (n.type === "MethodCall" || n.type === "CallExpression" || n.type === "NewExpression" || n.type === "Lambda") {
     return at.inside(null);
@@ -59,8 +59,8 @@ export const childEnv = (env: Env, node: object, key: string): Env => {
 
 /**
  * A callback bound for a body: the one element parameter is a variable, and the
- * body is lowered under it. Rows with a real renderer bind one parameter here;
- * an index or collection parameter is a different lowering, and no row that
+ * body is lowered under it. Rows with a real renderer bind one parameter here.
+ * An index or collection parameter is a different lowering. No row that
  * reaches this constructor states one.
  */
 function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { as: string; ref: string; in: unknown } {
@@ -85,7 +85,7 @@ function readsParam(node: unknown, name: string): boolean {
 
 /**
  * An ARRAY callback — `(x[, i[, arr]]) => …` — as what a `$map`/`$filter` takes.
- * The element is the parameter; an index READ makes the input the `[i, x]` pairs
+ * The element is the parameter. An index READ makes the input the `[i, x]` pairs
  * of a `$zip`, and the array parameter is the receiver bound by name.
  */
 function arrayCallback(
@@ -162,7 +162,7 @@ function callsSomething(node: unknown): boolean {
 
 /**
  * A REDUCER — `(acc, x[, i]) => …` — as what a `$reduce` takes. The accumulator IS
- * `$$value` and the element IS `$$this` when the body is plain arithmetic; a body
+ * `$$value` and the element IS `$$this` when the body is plain arithmetic. A body
  * that calls anything reads them through a `$let`, because the call may lower to
  * a `$reduce` of its own and shadow both. An index read makes the input the
  * `[i, x]` pairs, bound the same way.
@@ -311,11 +311,11 @@ export function exprInputs(
       return { as: b.as, ref: b.ref };
     },
     hoist: (stages: readonly Stage[], reads: string) => {
-      // WHICH stream is being counted decides where the stamp goes. `$$` is the
+      // The stream that the count NAMES decides where the stamp goes. `$$` is the
       // TOP-MOST stream at every depth (HR4), so it is level 0. A callback's third
       // parameter is the stream of the body that BOUND it — this body's, or an
-      // ancestor's when the read crosses back out. Either way the stamp is
-      // materialised on that level's own pipeline, ahead of the stage that holds the
+      // ancestor's when the read crosses back out. Either way the stamp lands
+      // on that level's own pipeline, ahead of the stage that holds the
       // read, and the read comes back down through each `$lookup.let` on the way —
       // the same hop an outer field takes. Stamping an ancestor's count on THIS
       // chain would write this body's count under the same field and answer it
@@ -340,7 +340,7 @@ export function exprInputs(
  * null. The count is a FIELD on the body's documents, so a stage that drops the fields
  * loses it (`$group`) and a stage that changes how many documents there are makes it
  * stale (`$unwind`, `$match`, `$limit`). Only the stages whose rows state
- * `preservesCount` leave it meaning what it said.
+ * `preservesCount` keep its original meaning.
  *
  * A syntactic question, asked of the source, and answered once for the whole body: a
  * per-read answer would turn on where in the block the read sits — and a stage BODY
@@ -568,8 +568,8 @@ export function stageInputs(
       const entries = (cb as { entries?: readonly unknown[] }).entries;
       if (entries !== undefined && entries.length === 0) return emptyMatcherObject(written, cb.pos);
     }
-    // A well-formed pair was rewritten to an arrow long before here, so one that
-    // arrives is malformed: not two elements, or a first that is not a name.
+    // An earlier pass rewrites a well-formed pair to an arrow. So one that
+    // arrives here is malformed: not two elements, or a first that is not a name.
     if (cb.type === "ArrayLiteral" && forms.includes("matchesPropertyPair")) {
       return badMatchesPropertyPair(written, cb.pos);
     }
@@ -578,8 +578,8 @@ export function stageInputs(
   /**
    * A callback's body and the env it is lowered under — the parameter IS the
    * document. Not an arrow at all — `.countBy(String)` — is the developer's
-   * mistake, worded; the shorthands a row accepts have been rewritten to arrows
-   * by then, so what arrives here is the arrow or the error.
+   * mistake, worded. An earlier pass rewrites the shorthands a row accepts to
+   * arrows, so what arrives here is the arrow or the error.
    */
   const body = (cb: Expr, what: string): { body: Expr; env: Env } => {
     const e = bound(cb);

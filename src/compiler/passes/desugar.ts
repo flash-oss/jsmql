@@ -1,17 +1,19 @@
-// Phase 3 — DESUGAR. Source to source: AST in, AST out.
+// Phase 3 — DESUGAR. Source to source: the pass takes an AST and returns an AST.
 //
 // A sugar is a construct that MEANS another construct the language already has.
-// Rewriting it here means phases 4 and 5 see fewer shapes, and a shape they never
-// see is a shape they cannot mishandle. That is the whole argument for the pass:
-// sugar recognised DURING lowering has to be recognised by every loop that
-// lowers, and a loop that does not know a form mis-lowers it silently.
+// The pass rewrites the sugar here, so phases 4 and 5 see fewer shapes. A phase
+// cannot mishandle a shape it never sees. That is the whole argument for the
+// pass: a lowering phase that recognises sugar itself must recognise it in
+// every loop that lowers, and a loop that does not know a form mis-lowers it
+// silently.
 //
 // TWO PROPERTIES OF THE PASS.
 //
-// 1. The rules run in a FIXED ORDER. The write normalisations come first, because
-//    every rule after them assumes `op` is `=`; the field-path fold comes before
-//    the mutators, because a mutator's target is a path. Where two rules cannot
-//    match one input, the order is declaration order and nothing more.
+// 1. The rules run in a FIXED ORDER. The write normalisations come first,
+//    because every rule after them assumes `op` is `=`. The field-path fold
+//    comes before the mutators, because a mutator's target is a path. Where two
+//    rules cannot match one input, the order is declaration order and nothing
+//    more.
 //
 // 2. The pass REPEATS until nothing changes, because a rewrite can produce more
 //    sugar, and folding runs between the rounds:
@@ -49,13 +51,13 @@ import { fold } from "./fold.ts";
 import { mapTreeIn } from "./walk.ts";
 
 /**
- * One rewrite. Returns the node unchanged to decline, or a replacement.
+ * One rewrite. It returns the node unchanged to decline, or it returns a replacement.
  *
  * A rule never recurses: `mapTree` has already rewritten the children, so the
- * node a rule sees is as reduced as it is going to get.
+ * node a rule sees is as reduced as it will get.
  */
 export type Rule = {
-  /** Named after the production it removes, so a failure is traceable to a row. */
+  /** The name matches the production it removes, so a failure traces to a row. */
   name: string;
   /** `where` is the position the node stands in. Most rules do not read it. */
   apply: (node: object, where: Where) => object;
@@ -63,15 +65,15 @@ export type Rule = {
 
 /**
  * A backstop on rounds, far above anything a program reaches. It is NOT how the
- * pass tells a fixpoint from a cycle — that is the tree hash below: a round that
- * produces a tree already seen is a cycle, whatever its number. A fixed round
- * limit was the wrong test, because a chain of declarations where each needs the
- * previous one folded AND a rule run advances one link per round, and a developer
- * may write as many links as they like.
+ * pass tells a fixpoint from a cycle — the tree hash below does that: a round
+ * that produces a tree already seen is a cycle, whatever its number. A fixed
+ * round limit is the wrong test, because a chain of declarations, where each one
+ * needs the previous one folded and a rule run, advances one link per round, and
+ * a developer may write as many links as they like.
  */
 const MAX_ROUNDS = 100_000;
 
-/** The tree as text with positions erased, so two rounds that differ only in `pos` compare equal. */
+/** The tree as text with positions erased. This way, two rounds that differ only in `pos` compare equal. */
 const fingerprint = (program: Program): string => JSON.stringify(program, (k, v) => (k === "pos" ? 0 : v));
 
 // ── the rules, in the order they are tried ───────────────────────────────────
@@ -79,21 +81,22 @@ const fingerprint = (program: Program): string => JSON.stringify(program, (k, v)
 /**
  * `+=` `-=` `*=` `/=` → `=` over the matching binary operator.
  *
- * DERIVED from the AST's own list of assignment spellings: every compound
- * operator is a binary operator followed by `=`, so the table is the list minus
- * `=` itself and the two increments. A hand-written copy here was the third table
- * of assignment spellings, and adding `%=` would have needed all three.
+ * The pass DERIVES this from the AST's own list of assignment spellings: every
+ * compound operator is a binary operator followed by `=`, so the table is the
+ * list minus `=` itself and the two increments. A hand-written copy here would
+ * make a third table of assignment spellings, and adding `%=` would then need
+ * all three.
  */
 const COMPOUND: ReadonlyMap<string, BinaryOp> = new Map(
   ASSIGN_OPS.filter((op) => op.length > 1 && op.endsWith("=")).map((op) => [op, op.slice(0, -1) as BinaryOp]),
 );
 
 /**
- * A write whose target cannot take one. Checked BEFORE the rewrite, or a tailored
- * error becomes valid-looking MQL:
+ * A write whose target cannot take one. The pass checks this BEFORE the
+ * rewrite. Otherwise a tailored error turns into valid-looking MQL:
  *   $ += 1     today → "Cannot use compound assignment … on bare '$'"
  *   $ = $ + 1  today → [{"$replaceWith":{"$add":["$$ROOT",1]}}]
- * Rewriting first would turn the first into the second and lose the message.
+ * A rewrite done first would turn the first line into the second and lose the message.
  */
 /** Is the write target a collection — `$$$.<coll>`, `$$$$.<db>.<coll>` — rather than a field? */
 function writesACollection(target: Expr): boolean {
@@ -114,15 +117,15 @@ function refuseNonScalarTarget(target: object, op: AssignOp): void {
 const compoundAssign: Rule = {
   name: "fieldAssignment",
   apply: (node, where) => {
-    // a write in an update document is a field of the document, spelled as it stands
+    // A write in an update document is a field of the document, spelled as it stands.
     if (where.at === "updateDoc") return node;
     const n = node as { type: string; op?: AssignOp; target?: object; value?: Expr; pos?: number };
     if (n.type !== "AssignExpr" || n.op === undefined) return node;
     const binop = COMPOUND.get(n.op);
     if (binop === undefined) return node;
-    // A COLLECTION is not a scalar and `+=` on one is not arithmetic: it names the
-    // stage that ADDS to what the collection holds, where `=` replaces it. The emit
-    // phase reads the spelling, so the rewrite has to leave it alone.
+    // A COLLECTION is not a scalar, so `+=` on one is not arithmetic. It names
+    // the stage that ADDS to what the collection holds, where `=` replaces it.
+    // The emit phase reads the spelling, so the rewrite must leave it alone.
     if (writesACollection(n.target as Expr)) return node;
     refuseNonScalarTarget(n.target as object, n.op);
     return {
@@ -130,8 +133,8 @@ const compoundAssign: Rule = {
       target: { ...(n.target as object) },
       op: "=",
       // The target appears twice: once as the destination, once as the left
-      // operand. A FRESH copy of each, so no node object sits in two slots —
-      // the walk in walk.ts compares by identity to know what changed.
+      // operand. Each copy is FRESH, so no node object sits in two slots — the
+      // walk in walk.ts compares nodes by identity to know what changed.
       value: { type: "BinaryExpr", op: binop, left: n.target, right: n.value, pos: n.pos },
       pos: n.pos,
     } as object;
@@ -141,15 +144,15 @@ const compoundAssign: Rule = {
 /**
  * `++` and `--`, prefix or postfix, on a field or a binding.
  *
- * All four spellings produce the same MQL today, because a write at statement
- * position has no value in MQL and so prefix-versus-postfix cannot be observed.
- * The parser records `value` as a placeholder copy of the target; this overwrites
- * it rather than reading it.
+ * All four spellings produce the same MQL, because a write at statement
+ * position has no value in MQL, so the pass cannot observe prefix versus
+ * postfix. The parser records `value` as a placeholder copy of the target.
+ * This rule overwrites it instead of reading it.
  */
 const incDec: Rule = {
   name: "increment",
   apply: (node, where) => {
-    // a write in an update document is a field of the document, spelled as it stands
+    // A write in an update document is a field of the document, spelled as it stands.
     if (where.at === "updateDoc") return node;
     const n = node as { type: string; op?: AssignOp; target?: object; pos?: number };
     if (n.type !== "AssignExpr") return node;
@@ -174,8 +177,9 @@ const incDec: Rule = {
 /**
  * `x => { return E }` → `x => E`.
  *
- * REQUIRED, not tidiness: the parser builds a zero-declaration `ExprBlock` for
- * this and an empty `$let: { vars: {} }` would otherwise reach the emitter.
+ * This rule is REQUIRED, not tidiness. The parser builds a zero-declaration
+ * `ExprBlock` for this form, and without the rewrite an empty `$let: { vars: {} }`
+ * would reach the emitter.
  */
 const bareReturnBlock: Rule = {
   name: "blockReturn",
@@ -191,17 +195,17 @@ const bareReturnBlock: Rule = {
  * `MemberAccess` over a `FieldRef` → one dotted `FieldRef`.
  *
  * MQL spells a nested field one way — `"$a.b"` — so the tree should hold it one
- * way too. Every reader downstream then asks ONE question ("is this a FieldRef?")
- * where it would otherwise have to walk a chain to find out.
+ * way too. Every reader downstream then asks ONE question ("is this a
+ * FieldRef?"), instead of walking a chain to find out.
  *
- * `.length` is the exception, and it is the registry that says so: its row is the
- * only one that is READ rather than called on something a field can hold. So the
+ * `.length` is the exception, and the registry states so: its row is the only
+ * one that is READ rather than called on something a field can hold. So the
  * name decides, and the rule stays blind to the spelling:
  *   $.a.b         → FieldRef("a.b")
  *   $.a.length    → the size of `a`, left alone
  *   $.a.length.b  → FieldRef("a.length.b")   ← a field really called `length`
  *
- * The third case is why the rule collects the WHOLE chain from where it stands
+ * The third case is why the rule collects the WHOLE chain from where it stands,
  * instead of folding one link: `.length` declines while it is the last segment,
  * and the `.b` above it then folds straight past it.
  */
@@ -210,8 +214,8 @@ const fieldPath: Rule = {
   apply: (node) => {
     const n = node as { type: string; object?: object; name?: string };
     if (n.type !== "MemberAccess" || n.name === undefined) return node;
-    // A `$`-led segment is not a path segment: MQL paths cannot hold one, and the
-    // spelling belongs to the chained stage call (`.$match(…)`).
+    // A `$`-led segment is not a path segment: MQL paths cannot hold one, and
+    // the spelling belongs to the chained stage call (`.$match(…)`).
     if (n.name.startsWith("$") || isFieldProperty(n.name)) return node;
     const segments: string[] = [n.name];
     let optional = (n as { optional?: boolean }).optional === true;
@@ -244,8 +248,8 @@ const fieldPath: Rule = {
 // A mutator is the one JavaScript shape whose whole meaning is "write this back":
 //   $.items.sort();   is   $.items = $.items.toSorted();
 // So the rewrite is a WRITE, and the position matters. In any other position the
-// same tree is refused by the row's own message, which is why both rules below
-// check `where` before anything else — see position.ts.
+// row's own message refuses the same tree. This is why both rules below check
+// `where` before anything else — see position.ts.
 
 type Node = { type: string; pos: number } & Record<string, unknown>;
 
@@ -256,9 +260,9 @@ const isNode = (v: unknown): v is Node =>
 function writeBack(target: Node, value: object, pos: number): object {
   return {
     type: "UpdateFilter",
-    // A FRESH copy of the target for the destination: it appears twice now, and a
-    // later phase compares nodes by identity.
-    // `mutates`: a mutator's own write, which JavaScript allows on a `const` binding too
+    // The destination gets a FRESH copy of the target: the target now appears
+    // twice, and a later phase compares nodes by identity.
+    // `mutates` marks a mutator's own write, which JavaScript also allows on a `const` binding.
     ops: [{ type: "AssignExpr", target: { ...target }, op: "=", value, pos, mutates: true }],
     pos: target.pos,
   };
@@ -267,8 +271,8 @@ function writeBack(target: Node, value: object, pos: number): object {
 /**
  * `$.a.sort(k);` → `$.a = $.a.toSorted(k);`
  *
- * The twin name comes from the row, never from here — and only a same-argument
- * twin has one, so the arguments are forwarded untouched.
+ * The twin name comes from the row, never from here. Only a same-argument twin
+ * has one, so the rule forwards the arguments untouched.
  */
 const mutatorTwin: Rule = {
   name: "methodCall",
@@ -282,7 +286,7 @@ const mutatorTwin: Rule = {
     if (target === null) return node;
     return writeBack(
       target,
-      // `wrote` keeps the source spelling, so a refusal names `.reverse()` and not the twin.
+      // `wrote` keeps the source spelling, so a refusal names `.reverse()`, not the twin.
       { type: "MethodCall", object: target, name: twin, wrote: n.name, args: n.args, optional: false, pos: n.pos },
       n.pos,
     );
@@ -290,9 +294,9 @@ const mutatorTwin: Rule = {
 };
 
 /**
- * The row's write form, instantiated: `_r` is the receiver, `_0`… the arguments
- * as written. Every node the form contributes stands at the statement's position;
- * the substituted subtrees keep their own.
+ * The row's write form, instantiated: `_r` is the receiver, `_0`… are the
+ * arguments as written. Every node the form contributes stands at the
+ * statement's position; the substituted subtrees keep their own position.
  */
 function instantiate(form: string, recv: Node, args: readonly unknown[], pos: number): object {
   const sub = (v: unknown): unknown => {
@@ -314,8 +318,8 @@ function instantiate(form: string, recv: Node, args: readonly unknown[], pos: nu
  * `$.a.pop();` → `$.a = $.a.slice(0, -1);`
  *
  * A mutator with no same-argument twin states its WRITE FORM on the row, by
- * argument count; the form is JSMQL, so it reaches the value cells a developer's
- * own spelling would. A count the row does not state is the arity error.
+ * argument count. The form is JSMQL, so it reaches the same value cells a
+ * developer's own spelling would. A count the row does not state is an arity error.
  */
 const mutatorForm: Rule = {
   name: "mutatorForm",
@@ -346,7 +350,7 @@ const mutatorForm: Rule = {
  * `Object.assign($.o, x);` → `$.o = Object.assign($.o, x);`
  *
  * A name that writes one of its ARGUMENTS in place (`mutatesArgumentAt` on the
- * row) is, as a statement, a write of that argument; the call itself is the value.
+ * row) is, as a statement, a write of that argument. The call itself is the value.
  */
 const mutatedArgument: Rule = {
   name: "mutatedArgument",
@@ -368,9 +372,9 @@ const mutatedArgument: Rule = {
 /**
  * `$.a.push(9);` → `$.a = [...$.a, 9];`   and the mirror for `.unshift()`.
  *
- * Spread rather than `.concat()`, because they are not the same function:
- * `[1].push([2])` is `[1, [2]]` and `[1].concat([2])` is `[1, 2]`. Spread keeps
- * push's meaning for an array argument; concat would flatten it.
+ * The rule uses spread rather than `.concat()`, because they are not the same
+ * function: `[1].push([2])` is `[1, [2]]`, and `[1].concat([2])` is `[1, 2]`.
+ * Spread keeps push's meaning for an array argument; concat would flatten it.
  */
 const mutatorSpread: Rule = {
   name: "spreadElement",
@@ -390,11 +394,11 @@ const mutatorSpread: Rule = {
 };
 
 /**
- * `Math.max(...$.a, 1)` → `Math.max([...$.a, 1])`: a call whose rule reads its
+ * `Math.max(...$.a, 1)` → `Math.max([...$.a, 1])`. A call whose rule reads its
  * arguments as ONE list (`args.spread` on the row) takes them packed into one
- * array literal, so the cell sees a single operand and the array literal's own
- * lowering splices the spread. A rule that reads arguments one by one keeps the
- * spread, and select.ts refuses it with the alternative the row names.
+ * array literal. This way the cell sees a single operand, and the array
+ * literal's own lowering splices the spread. A rule that reads arguments one by
+ * one keeps the spread, and select.ts refuses it with the alternative the row names.
  */
 const packSpread: Rule = {
   name: "packSpread",
@@ -403,7 +407,7 @@ const packSpread: Rule = {
     const n = node as Node & { args?: readonly Node[]; name?: string; callee?: Node };
     if ((n.type !== "MethodCall" && n.type !== "CallExpression") || !Array.isArray(n.args)) return node;
     if (!n.args.some((a) => a.type === "SpreadElement")) return node;
-    // `$$.push(...$$$.coll)` spreads a COLLECTION into the stream: the union road reads that spread itself.
+    // `$$.push(...$$$.coll)` spreads a COLLECTION into the stream. The union road reads that spread itself.
     if (n.type === "MethodCall" && readsAContextRef(n.object as object)) return node;
     const name =
       n.type === "MethodCall"
@@ -419,16 +423,17 @@ const packSpread: Rule = {
 // ── the iteratee shorthands ──────────────────────────────────────────────────
 //
 // A shorthand is a shorter spelling of an arrow, so this is the plainest kind of
-// sugar there is. Doing it here rather than inside each lowering is what makes
-// the spellings agree, and today they do not:
+// sugar there is. Doing the rewrite here, rather than inside each lowering,
+// makes the spellings agree, which they otherwise do not:
 //
 //   $.items.some(x => x.active === true)  → {"items":{"$elemMatch":{"active":true}}}
 //   $.items.some({ active: true })        → {"$expr":{"$anyElementTrue":{"$map":…}}}
 //
-// Same meaning, and on a document whose `items` is a string the second FAILS the
-// query while the first answers it. Rewriting first leaves one shape to lower.
+// Both lines mean the same thing, but on a document whose `items` is a string
+// the second FAILS the query while the first answers it. The rewrite runs first
+// and leaves one shape to lower.
 //
-// WHICH slots may be rewritten is stated by the row and never read off the
+// The row states WHICH slots may be rewritten; the rule never reads this off the
 // argument: `{f:1}` is a matcher to `.filter()` and a DIRECTION to `.toSorted()`.
 // See `iterateeSlots` in names.ts.
 
@@ -457,14 +462,14 @@ function writtenKey(entry: object): string | null {
 }
 
 /**
- * The arrow a short spelling means, or undefined when this argument is not one of
- * the spellings this slot accepts.
+ * The arrow a short spelling means, or undefined when this argument is not one
+ * of the spellings this slot accepts.
  *
  * `bareCallable` is a callable GLOBAL passed unapplied — `.map(String)`,
  * `.filter(Boolean)`, `.map(Math.abs)`, `.map(ObjectId)` — and means the arrow
  * that applies it to the element. Which slots accept it is the row's decision
- * (its `iterateeSlots`), never this rewrite's: the rewrite only knows a global
- * from a binding, and a name that needs `new` is not callable bare.
+ * (its `iterateeSlots`), never this rewrite's. The rewrite only tells a global
+ * apart from a binding, and a name that needs `new` is not callable bare.
  */
 function asArrow(arg: object | undefined, forms: readonly string[], pos: number): object | undefined {
   const accepts = (form: string): boolean => forms.includes(form);
@@ -487,10 +492,10 @@ function asArrow(arg: object | undefined, forms: readonly string[], pos: number)
     if (a.entries.length === 0) return undefined;
     const tests = matchTests(param, "", a.entries, pos);
     if (tests === undefined) return undefined;
-    // `{ a: {} }` matches every value, as lodash's does: nothing to test.
+    // `{ a: {} }` matches every value, the way lodash's does: there is nothing to test.
     if (tests.length === 0)
       return { type: "Lambda", params: [param], body: { type: "BooleanLiteral", value: true, pos }, pos };
-    // Left-associated, which is how `a === 1 && b === 2 && c === 3` parses.
+    // The chain is left-associated, the way `a === 1 && b === 2 && c === 3` parses.
     const body = tests.reduce((left, right) => ({ type: "BinaryExpr", op: "&&", left, right, pos }));
     return { type: "Lambda", params: [param], body, pos };
   }
@@ -511,13 +516,14 @@ function asArrow(arg: object | undefined, forms: readonly string[], pos: number)
 }
 
 /**
- * The tests a matcher object states, as lodash's `_.matches` reads it — a PARTIAL
- * deep match, not an equality: `{ a: { b: { c: 3 } } }` is `x.a.b.c === 3` and says
- * nothing about `x.a.b.d`; `{ qty: { $gt: 5 } }` is the field `qty.$gt` equal to 5,
- * because a matcher's keys are field names; an array is a subset — `{ tags: ["a", "b"] }`
- * is `x.tags.includes("a") && x.tags.includes("b")` — when its elements are constants,
- * and an equality otherwise; an empty object or array matches anything. Undefined
- * when a key is not written out (a spread, a computed key).
+ * The tests a matcher object states, read the way lodash's `_.matches` reads it.
+ * It is a PARTIAL deep match, not an equality: `{ a: { b: { c: 3 } } }` is
+ * `x.a.b.c === 3` and says nothing about `x.a.b.d`. `{ qty: { $gt: 5 } }` is the
+ * field `qty.$gt` equal to 5, because a matcher's keys are field names. An array
+ * is a subset — `{ tags: ["a", "b"] }` is `x.tags.includes("a") && x.tags.includes("b")`
+ * — when its elements are constants, and an equality otherwise. An empty object
+ * or array matches anything. The function returns undefined when a key is not
+ * written out (a spread, a computed key).
  */
 function matchTests(param: string, prefix: string, entries: readonly object[], pos: number): object[] | undefined {
   const tests: object[] = [];
@@ -553,7 +559,7 @@ function matchTests(param: string, prefix: string, entries: readonly object[], p
 
 const CONSTANT_LITERALS = new Set(["NumberLiteral", "StringLiteral", "BooleanLiteral", "NullLiteral", "BigIntLiteral"]);
 
-/** `String` → `String(x)`; `Math.abs` → `Math.abs(x)`; anything that is not a callable global → undefined. */
+/** `String` → `String(x)`; `Math.abs` → `Math.abs(x)`. Anything that is not a callable global maps to undefined. */
 function bareCall(callee: Node, param: string, pos: number): object | undefined {
   const arg = { type: "Ident", name: param, pos };
   if (callee.type === "Ident" && typeof callee.name === "string") {
@@ -572,7 +578,7 @@ function bareCall(callee: Node, param: string, pos: number): object | undefined 
 /**
  * `$$.groupBy({ _id: "$k", n: $sum(1) })` → `$$.$group({ _id: "$k", n: $sum(1) })`
  *
- * On a STREAM, an object with an `_id` key is the `$group` body — lodash's
+ * On a STREAM, an object with an `_id` key is the `$group` body. Lodash's
  * `groupBy` has no object form, so the spelling is free, and the stage is what
  * a developer who writes `_id` means. An array keeps its `groupBy(key)` reading.
  */
@@ -587,8 +593,9 @@ const groupBodyLink: Rule = {
     const args = n.args as readonly Node[];
     if (args.length !== 1 || args[0].type !== "ObjectLiteral" || !Array.isArray(args[0].entries)) return node;
     const hasId = (args[0].entries as readonly object[]).some((e) => writtenKey(e) === "_id");
-    // No `_id`: the object cannot be a matcher here (the stream slot takes none) and
-    // cannot be the stage either. Say so where the rule is known, not four phases on.
+    // No `_id`: the object cannot be a matcher here (the stream slot takes none),
+    // and it cannot be the stage either. The error names this here, where the
+    // rule is known, not four phases later.
     if (!hasId) {
       throw new CodegenError(
         `'$$.groupBy({ … })' on the stream is the '$group' stage, and its body needs an '_id' — the group key: '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field alone, write '$$.groupBy("status")'.`,
@@ -610,20 +617,21 @@ const iterateeShorthand: Rule = {
     // A receiver supplies a FAMILY, and a chain rooted in a context reference is
     // the stream family wherever the call stands — as a `$facet` branch, as the
     // argument of `$$.push(…)`, as the right of `$.o = …`. Reading the call's own
-    // position instead resolved every one of those to the array family.
+    // position instead resolves every one of those to the array family.
     const family = receiverFamily(named, recv !== undefined && readsAContextRef(recv), n.name);
     if (family === undefined) return node;
 
     // A method that runs as another row on a stream (`.find` as `filter`) takes that row's shorthands.
     const runsAs = picksOneOf(n.name);
-    // A value terminal on a stream chain (`$$$.c.filter(p).maxBy("total")`) has no stream
-    // layout: it reads the joined documents as an ARRAY, so the array family's shorthands apply.
+    // A value terminal on a stream chain (`$$$.c.filter(p).maxBy("total")`) has no
+    // stream layout: it reads the joined documents as an ARRAY, so the array
+    // family's shorthands apply.
     const layout =
       iterateeSlotsOf(n.name, family) ??
       (runsAs === null ? undefined : iterateeSlotsOf(runsAs, family)) ??
       (family === "stream" ? iterateeSlotsOf(n.name, "array") : undefined);
-    // Only a LAYOUT names slots to rewrite. `arrowOnly` has none, and a sort
-    // specification is read as an order rather than rewritten to a callback.
+    // Only a LAYOUT names slots to rewrite. `arrowOnly` has none, and the pass
+    // reads a sort specification as an order rather than rewriting it to a callback.
     if (layout === undefined || !isSlotLayout(layout)) return node;
 
     const args = n.args as readonly object[];
@@ -631,7 +639,7 @@ const iterateeShorthand: Rule = {
     let changed = false;
     for (const [key, forms] of Object.entries(layout)) {
       const slot = Number(key);
-      // An absent slot is the `omitted` case, and only when it is the next one.
+      // An absent slot is the `omitted` case, and only when it is the next slot.
       if (slot > args.length) continue;
       const arrow = asArrow(args[slot], forms as readonly string[], n.pos);
       if (arrow === undefined) continue;
@@ -643,9 +651,9 @@ const iterateeShorthand: Rule = {
 };
 
 /**
- * Every rule, in the order the audits established. Order is load-bearing where
- * two rules match one input; where they cannot collide it is declaration order
- * and nothing more.
+ * Every rule, in the order the audits established. The order is load-bearing
+ * where two rules match one input. Where the rules cannot collide, it is
+ * declaration order and nothing more.
  */
 export const RULES: readonly Rule[] = [
   // The write normalisations come first: everything downstream assumes `op` is
@@ -656,19 +664,19 @@ export const RULES: readonly Rule[] = [
   // Folding a path is independent of every rule above and below it: no rule
   // matches on a MemberAccess, and none builds one.
   fieldPath,
-  // AFTER fieldPath, which is what makes `$.a.b.sort()` reach a FieldRef target.
-  // Between them the two cover a name at most once: a row carries `immutableTwin`
-  // or `asArrayLiteral`, never both.
+  // This runs AFTER fieldPath, which is what makes `$.a.b.sort()` reach a
+  // FieldRef target. Between them the two cover a name at most once: a row
+  // carries `immutableTwin` or `asArrayLiteral`, never both.
   mutatorTwin,
   mutatorSpread,
   // Independent of the two above: a row carries a twin, an array-literal order or a write form, never two.
   mutatorForm,
   mutatedArgument,
-  // AFTER mutatorSpread: a statement mutator spreads its receiver, and this rule reads none.
+  // This runs AFTER mutatorSpread: a statement mutator spreads its receiver, and this rule reads none.
   packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of
   // them matches, and the arrow it builds is not a shape any of them looks for.
-  // BEFORE iterateeShorthand: the `$group` body must not be read as a matcher.
+  // This runs BEFORE iterateeShorthand: the `$group` body must not be read as a matcher.
   groupBodyLink,
   iterateeShorthand,
 ];
@@ -679,8 +687,8 @@ export const RULES: readonly Rule[] = [
 export type DesugarResult = { program: Program; rounds: number };
 
 /**
- * Where the ROOT of a program stands. Four entry points, four answers, and no
- * program can tell them apart on its own:
+ * Where the ROOT of a program stands. There are four entry points and four
+ * answers, and no program can tell them apart on its own:
  *
  *   jsmql(<pipeline>)  a `;`-separated program        → STATEMENT
  *   jsmql(<filter>)    one predicate, no `;`          → FILTER
@@ -688,15 +696,16 @@ export type DesugarResult = { program: Program; rounds: number };
  *   jsmql.update(...)  the object form of an update   → UPDATE_DOC
  *
  * `shapeOf` decides between the first two; the other two are the caller's own
- * fact. Every step below the root is `edge`'s to answer.
+ * fact. `edge` answers every step below the root.
  */
 export type RootWhere = Where;
 
 /**
- * Apply every rule, repeatedly, until a whole round changes nothing.
+ * The function applies every rule, repeatedly, until a whole round changes
+ * nothing.
  *
- * Identity is the test: `mapTree` returns the same object when no rule fired, so
- * a round that produces the same reference is the fixpoint.
+ * Identity is the test: `mapTree` returns the same object when no rule fires,
+ * so a round that produces the same reference is the fixpoint.
  */
 export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): DesugarResult {
   let current: Program = program;
@@ -705,14 +714,14 @@ export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): D
     let next = current;
     for (const rule of RULES) next = mapTreeIn(next, root, edge, rule.apply);
     // Folding runs AFTER the rules in each round, and the two feed each other.
-    // A mutator statement has become a plain assignment by now, so "was this name
-    // written to" is one question rather than a list of method names — and a
+    // A mutator statement has by now become a plain assignment, so "was this
+    // name written to" is one question rather than a list of method names. A
     // constant the fold inlines becomes a literal the rules can match next round:
     //   const k = "name"; $.items.map(k)   →   map("name")   →   map(x => x.name)
     next = fold(next);
     if (next === current) return { program: current, rounds: round };
-    // A tree seen in an earlier round means two rules are undoing each other's
-    // work — a bug in the table, never a fact about the source.
+    // A tree seen in an earlier round means two rules undo each other's work —
+    // a bug in the table, never a fact about the source.
     const print = fingerprint(next);
     if (seen.has(print)) {
       throw new Error(

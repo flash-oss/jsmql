@@ -9,7 +9,7 @@
 // guessed (see HR3 in docs/LANG_RULES.md and test/fixtures/CLAUDE.md).
 //
 // The suite skips itself unless the fixture instance is up and seeded with the
-// current dataset, so `npm test` stays green for contributors who haven't run
+// current dataset, so `npm test` stays green for contributors who have not run
 // `npm run fixture:up`. To run it: `npm run fixture:up && npm test`.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -75,7 +75,7 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
   // returns NO rows — it kills the whole command.
   // The dataset hits every hazard at once: u4's "kat@nasa.gov" (12) is SHORTER
   // than the 13-char needle (→ negative index), u5's email is null, and u9 has
-  // no email field at all. A `toEqual` on emitted MQL can't catch this class;
+  // no email field at all. A `toEqual` on emitted MQL cannot catch this class;
   // only a real run can.
   it("filter: .endsWith() survives receivers shorter than the needle, plus null/missing", async () => {
     const rows = await find("users", `$.email.endsWith("@bletchley.uk")`);
@@ -107,7 +107,7 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
   });
 
   // The date vocabulary, end-to-end. Three of these compose more than one
-  // operator, which is exactly the class a `toEqual` on emitted MQL can't
+  // operator, which is exactly the class a `toEqual` on emitted MQL cannot
   // validate: `.endOf` is trunc + add + −1 ms, `.set` reads the parts back
   // through a `$let`, and `.quarter` needs `$toInt` or it returns a double.
   // Ada Lovelace: createdAt 2025-01-15, lastSeen 2026-06-10, expiresAt 2026-12-01.
@@ -309,7 +309,7 @@ $limit(3);`,
   // unioned into the stream. The shipment counts per carrier are appended after the
   // one summary row the outer pipeline produces, proving `$unionWith.pipeline` really
   // ran the grouped aggregate (not merely that jsmql emitted it).
-  it("pipeline: an aggregate sub-pipeline unioned into the stream via $$.push", async () => {
+  it("pipeline: an aggregate sub-pipeline unioned into the stream through $$.push", async () => {
     const rows = await aggregate(
       "shipments",
       `$group({ _id: null, total: $sum(1) });
@@ -324,7 +324,7 @@ $$.push(...$$$.shipments.aggregate(s => { $group({ _id: s.carrier, n: $sum(1) })
     ]);
   });
 
-  // Group by a COMPUTED key: the email domain via `.split("@").at(1).toLowerCase()`
+  // Group by a COMPUTED key: the email domain through `.split("@").at(1).toLowerCase()`
   // (the string-method chain from realistic.test.ts "email domain"), run as a
   // real $group _id expression.
   it("pipeline: user count by email domain (group by computed string expr)", async () => {
@@ -360,7 +360,7 @@ $sort({ _id: 1 });`,
   // `.events.map(e => e.at.getTime()).reduce(Math.max)` — the most-recent-event
   // reduction (realistic.test.ts "most-recent event timestamp") on real dated
   // sub-documents. Shipment #1's last event is its delivery on 2026-01-15.
-  it("expr: latest shipment event via map(getTime).reduce(max)", async () => {
+  it("expr: latest shipment event through map(getTime).reduce(max)", async () => {
     const latestExpr = jsmql.expr(`$.events.map(e => e.at.getTime()).reduce((max, t) => Math.max(max, t), 0)`);
     const rows = await db
       .collection("shipments")
@@ -375,7 +375,7 @@ $sort({ _id: 1 });`,
   // each order's shipments. The inner predicate correlates on TWO levels —
   // `s.orderId === o._id` (the order) and `s.userId === $._id` (the outer
   // user) — which only works because jsmql depth-stamps the `$lookup.let`
-  // names ($$v1_id vs $$v0_id) so they don't collide. (realistic.test.ts
+  // names ($$v1_id vs $$v0_id) so they do not collide. (realistic.test.ts
   // "user → recent orders → each order's shipments".) This is the deepest
   // pipeline jsmql emits; running it proves the two-level correlation resolves
   // to the right documents on a real server.
@@ -391,7 +391,7 @@ $.recentOrders = $$$.orders.aggregate(o => {
 });
 $project({ name: 1, recentOrders: 1 });`,
     );
-    // 6 active users (u4/u7 are inactive). Order of the outer stream isn't
+    // 6 active users (u4/u7 are inactive). Order of the outer stream is not
     // sorted, so compare names as a set.
     expect(rows.map((r) => (r as { name: string }).name).sort()).toEqual([
       "Ada Lovelace",
@@ -479,7 +479,7 @@ $project({ name: 1, recentOrders: 1 });`,
   });
 
   // $$.length — the current stream's document count as a value — materialised
-  // once via $setWindowFields and reused across two $set fields AND an assert,
+  // once through $setWindowFields and reused across two $set fields AND an assert,
   // with the scratch field $unset at the end. (realistic.test.ts "tag each
   // in-stock product with the category total + size guard".)
   it("pipeline: $$.length reused across fields + assert guard", async () => {
@@ -542,7 +542,7 @@ $ = { byRegion };`,
   });
 
   // A correlated query-document `$match` — `{ userId: $._id }` reads the OUTER
-  // document. MongoDB doesn't evaluate `$$` vars in the query language, so the
+  // document. MongoDB does not evaluate `$$` vars in the query language, so the
   // raw form would silently return nothing; jsmql re-expresses it as a
   // predicate. This asserts real matched counts, which is the only way to catch
   // that class of bug (the emitted MQL looked fine).
@@ -591,7 +591,7 @@ $ = { byRegion };`,
     ]);
   });
 
-  // The correlated form: `.filter` pins the foreign set to the outer user (via
+  // The correlated form: `.filter` pins the foreign set to the outer user (through
   // `$lookup.let`), `.sort().take(2)` keeps only their two newest orders, and the
   // `.aggregate` block groups those. Per-user counts are what prove the `let`
   // correlation survives the lodash links — a broken one returns every order.
@@ -674,7 +674,7 @@ $ = { n: [10, 20, 30].length, rev: [10, 20, 30].toReversed(), h: [10, 20, 30].he
     expect(rows).toEqual([{ n: 3, rev: [30, 20, 10], h: 10, l: 30, one: 1, nested: [2, 1] }]);
   });
 
-  // A `toEqual` can't tell an index dispatch that *runs* from one the server
+  // A `toEqual` cannot tell an index dispatch that *runs* from one the server
   // refuses, and this family has three receiver types and two spellings. So run
   // each one and compare against what JavaScript returns for the same expression.
   // `tags` is `["vip", "beta"]`, `name` is the string "Ada Lovelace", `profile` is
@@ -706,7 +706,7 @@ $ = { arrFirst: $.tags[0], arrLast: $.tags.at(-1),
   // `$getField.field` must evaluate to a String or mongod aborts the WHOLE command
   // — and a missing key field reaches it as null, which is ordinary data, not an
   // exotic case. So a computed key is coerced. `subscription` is a document with a
-  // `tier` field; `keyField` doesn't exist on any user, and `numKey` is a number.
+  // `tier` field; `keyField` does not exist on any user, and `numKey` is a number.
   it("pipeline: a computed bracket key survives a missing key field and a numeric one", async () => {
     const rows = await aggregate(
       "users",

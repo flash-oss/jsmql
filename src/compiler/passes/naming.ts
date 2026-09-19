@@ -1,11 +1,12 @@
-// What a node NAMES, and what it BINDS — answered once, for every pass.
+// What a node NAMES, and what it BINDS. Each pass answers these once, from here.
 //
-// "Which row does this node name?" and "which node types bind a name?" are each
-// answered in ONE place. Spread across the passes that ask them, each answer would
-// be a node-type list of its own — right on the day it was written and
-// wrong the day a node type was added, silently — the walk in walk.ts is
-// reflective precisely so that no pass has to enumerate node types, and these
-// lists reintroduced the enumeration. So each fact is stated here once.
+// "Which row does this node name?" and "which node types bind a name?" each get
+// ONE answer, in ONE place. Spread across the passes that ask them, each answer
+// would become a node-type list of its own: right on the day it was written,
+// and silently wrong the day a node type is added. The walk in walk.ts is
+// reflective for exactly this reason, so that no pass enumerates node types.
+// A scattered list would reintroduce that enumeration. So this file states
+// each fact once.
 
 type Any = { type: string } & Record<string, unknown>;
 
@@ -18,10 +19,10 @@ export function staticKey(entry: object): string | null {
 /**
  * The row a node names, or null when it names none.
  *
- * `$.items.sort()` names `sort`, `$match(…)` names `$match`, `$$.$match(…)`
- * names `$match` through its method, `assert(…)` names `assert`, and
- * `{ $match: … }` names `$match` through its single key — that last one is raw
- * MQL pasted in, which the language accepts as itself (HR2).
+ * `$.items.sort()` names `sort`. `$match(…)` names `$match`. `$$.$match(…)`
+ * names `$match` through its method. `assert(…)` names `assert`. And
+ * `{ $match: … }` names `$match` through its single key. That last form is raw
+ * MQL pasted in, and the language accepts it as itself (HR2).
  */
 export function namedRow(node: object): string | null {
   const n = node as Any;
@@ -44,10 +45,10 @@ export function namedRow(node: object): string | null {
 /**
  * The node a chain of accesses bottoms out in: `$$.a.b(…)[0]` → the `$$`.
  *
- * Every node whose `object` property is its receiver is walked through — a
- * member access, an index, a call — so `$$$["archive"].find(…)` reaches the
- * same base as `$$$.archive.find(…)`. A reader that walked two of the three
- * gave two different documents for one collection.
+ * This walks through every node whose `object` property is its receiver: a
+ * member access, an index, a call. So `$$$["archive"].find(…)` reaches the
+ * same base as `$$$.archive.find(…)`. A reader that walked only two of the
+ * three gave two different documents for one collection.
  */
 export function chainBase(node: object): object {
   let cursor = node as Any;
@@ -70,8 +71,8 @@ export function isContextRef(node: object): boolean {
 /**
  * Does this chain read from a context reference?
  *
- * `$$.take(10)` and `$$.$sort({ a: -1 }).take(3)` are streams however they end,
- * because what they read is the stream.
+ * `$$.take(10)` and `$$.$sort({ a: -1 }).take(3)` are streams however they end.
+ * This is because what they read is the stream.
  */
 export function readsAContextRef(node: object): boolean {
   return isContextRef(chainBase(node));
@@ -80,18 +81,18 @@ export function readsAContextRef(node: object): boolean {
 /**
  * Every name `node` binds for the subtree under its property `key`.
  *
- * All of them, not the obvious two. A `Pipeline` binds every name declared
- * anywhere in it — `$$.aggregate(() => { const a = 2; … })` is a scope of its
- * own — and a block binds its declarations for the later declarations as well as
- * for the result. Missing either one lets an outer constant be pushed through an
- * inner declaration of the same name, which answers with the wrong value and
- * leaves the inner declaration standing, unread, one line above.
+ * This lists all of them, not the obvious two. A `Pipeline` binds every name
+ * declared anywhere in it: `$$.aggregate(() => { const a = 2; … })` is a scope
+ * of its own. A block binds its declarations for the later declarations, as
+ * well as for the result. Missing either case lets an outer constant push
+ * through an inner declaration of the same name. That answers with the wrong
+ * value, and leaves the inner declaration standing, unread, one line above.
  */
 export function bindsFor(node: object, key: string): readonly string[] {
   const n = node as Any;
   if (n.type === "Lambda") return (n.params as readonly string[] | undefined) ?? [];
   if (n.type === "ExprBlock") return ((n.decls as readonly Any[] | undefined) ?? []).map((d) => d.name as string);
-  // A nested statement list is a scope: a `;`-run, or a bracketed sub-pipeline.
+  // A nested statement list is a scope: either a `;`-run, or a bracketed sub-pipeline.
   if (n.type === "Pipeline" && key === "stmts") return declaredIn(n.stmts);
   if (n.type === "ArrayLiteral" && key === "elements") return declaredIn(n.elements);
   return [];
@@ -104,9 +105,9 @@ export const declaredIn = (list: unknown): readonly string[] =>
     .map((s) => s.name as string);
 
 /**
- * The names a node INTRODUCES on its own — a lambda's parameters, a
- * declaration's name — as opposed to the names it binds for a subtree.
- * `namesIn` (fresh.ts) reads this so a minted parameter never shadows one.
+ * The names a node INTRODUCES on its own: a lambda's parameters, or a
+ * declaration's name. This differs from the names it binds for a subtree.
+ * `namesIn` (fresh.ts) reads this, so a minted parameter never shadows one.
  */
 export function introducedNames(node: object): readonly string[] {
   const n = node as Any;
@@ -116,10 +117,10 @@ export function introducedNames(node: object): readonly string[] {
 }
 
 /**
- * Two places an identifier NAMES something instead of valuing it: the left of a
- * write, and the callee of a call. Replacing either with a value produces
- * something that is not a program — `1 = 9`, or `3(1)` — and neither is a
- * position a row can be legal in.
+ * Two places where an identifier NAMES something instead of holding a value:
+ * the left of a write, and the callee of a call. Replacing either with a value
+ * produces something that is not a program — `1 = 9`, or `3(1)` — and neither
+ * is a position a row can be legal in.
  */
 export function namesSomething(node: object, key: string): boolean {
   const n = node as Any;
@@ -129,25 +130,25 @@ export function namesSomething(node: object, key: string): boolean {
   );
 }
 
-/** Any AST node, seen as the two properties every node carries. */
+/** Any AST node, seen through the two properties every node carries. */
 export type AstNode = { type: string; pos: number } & Record<string, unknown>;
 
 /**
  * The field a mutator on `node` writes back to, or null when it has none.
  *
- * A field PATH and nothing else: MQL writes a path, so `$.items[0].push(1)` and
- * `$.items.filter(p).sort()` have no destination. `$$` lands here too, and
- * declining it is what keeps `$$.push(…)` ($unionWith) and `$$.sort(…)` ($sort)
- * out of a rule meant for fields.
+ * This is a field PATH and nothing else. MQL writes a path, so
+ * `$.items[0].push(1)` and `$.items.filter(p).sort()` have no destination.
+ * `$$` lands here too, and declining it keeps `$$.push(…)` ($unionWith) and
+ * `$$.sort(…)` ($sort) out of a rule meant for fields.
  *
- * Read AFTER the field-path fold, which is what makes `$.a.b.sort()` arrive here
- * with a single `FieldRef("a.b")` receiver. Before the fold the question is
- * `couldWriteItsReceiver`, below.
+ * Read this AFTER the field-path fold. That fold is what makes `$.a.b.sort()`
+ * arrive here with a single `FieldRef("a.b")` receiver. Before the fold, the
+ * question is `couldWriteItsReceiver`, below.
  */
 export function writtenField(node: object): AstNode | null {
   const recv = (node as Any).object;
   if (!isNode(recv)) return null;
-  if (recv.type === "Ident") return recv; // a binding or a callback parameter: the emitter judges the write
+  if (recv.type === "Ident") return recv; // A binding or a callback parameter: the emitter judges the write.
   if (recv.type !== "FieldRef" || recv.path === "") return null;
   return recv;
 }
@@ -155,16 +156,16 @@ export function writtenField(node: object): AstNode | null {
 /**
  * Could a mutator on `node` write its receiver — is that receiver a PLACE?
  *
- * The same question as `writtenField`, asked one phase earlier, where `$.a.b` is
- * still a chain of accesses and not yet the path it folds to. So the chain is
- * walked to its base, and only an access link is walked through: a call in the
- * middle (`$.items.filter(p).sort()`) makes a fresh array, and a fresh array is
- * a VALUE, whatever the row says the name does.
+ * This asks the same question as `writtenField`, one phase earlier, where
+ * `$.a.b` is still a chain of accesses and not yet the path it folds to. So
+ * this walks the chain to its base, and walks through only an access link. A
+ * call in the middle (`$.items.filter(p).sort()`) makes a fresh array, and a
+ * fresh array is a VALUE, whatever the row says the name does.
  *
- * It answers yes wherever the fold MIGHT reach a path, which is wider than the
- * set the fold really reaches. That direction is the safe one: a receiver
- * admitted here and declined there is refused by name on the statement road,
- * while the reverse would read a whole program as the wrong document.
+ * This answers yes wherever the fold MIGHT reach a path, which is wider than
+ * the set the fold really reaches. That direction is the safe one: the
+ * statement road refuses by name a receiver that is admitted here and
+ * declined there, while the reverse would read a whole program as the wrong document.
  */
 export function couldWriteItsReceiver(node: object): boolean {
   const start = (node as Any).object;

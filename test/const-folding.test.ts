@@ -279,7 +279,7 @@ describe("const folding — native method calls", () => {
 
   it("array .slice with a runtime index does NOT fold — falls through to the $slice lowering", () => {
     const out = jsmql("const arr = [1, 2, 3]; $.out = arr.slice($.start)");
-    // `arr` inlines (it's constant), but the runtime `$.start` index keeps the
+    // `arr` inlines (it is constant), but the runtime `$.start` index keeps the
     // `.slice` itself un-folded → the general $slice lowering, not a literal.
     expect(JSON.stringify(out)).toContain("$slice");
   });

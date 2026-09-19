@@ -20,8 +20,8 @@ import { truthy } from "./truthy.ts";
 //   jsmql adds no `$literal` of its own. This makes pasted raw MQL round-trip.
 //
 //   The only `$literal` auto-wrap is HR1's runtime-injected exception: a `"$x"`
-//   arriving via `jsmql.compile` params or a template-tag `${…}` gets wrapped in
-//   expression position so untrusted input can't silently become a field ref —
+//   arriving through `jsmql.compile` params or a template-tag `${…}` gets wrapped in
+//   expression position so untrusted input cannot silently become a field ref —
 //   covered in codegen.test.ts, not here (this file uses source-typed sentinels).
 //   The explicit `$literal("$y")` escape hatch forces a literal anywhere.
 //
@@ -87,7 +87,7 @@ function callSource(name: string): string {
 
 // Place the call in a stage whose context the operator is legal in. NOTE: these
 // are deliberately minimal synthetic calls (a single `$f` sentinel per slot,
-// arity-padded via `arrayArgCount`) — they exercise `$literal` pass-through, NOT
+// arity-padded through `arrayArgCount`) — they exercise `$literal` pass-through, NOT
 // operator type validity, so an individual call here is not necessarily
 // *runnable* MQL (the sentinel is the wrong BSON type for most slots). We do
 // supply a `sortBy` for the window branch so the common ranking
@@ -207,7 +207,7 @@ const STAGE_CASES: Record<string, string> = {
 };
 
 // Stages with no `$`-string body to pass through, or that require server/source
-// infrastructure jsmql surfaces only via dedicated sugar (`$$`/`$$$$`). Each is
+// infrastructure jsmql surfaces only through dedicated sugar (`$$`/`$$$$`). Each is
 // excluded from the pass-through loop with its reason, but still counted by the
 // coverage meta-assertion below so no stage is silently uncovered.
 const STAGE_SKIP: Record<string, string> = {

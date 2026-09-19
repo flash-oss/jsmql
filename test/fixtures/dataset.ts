@@ -22,11 +22,11 @@ import { createHash } from "node:crypto";
 // ── Deterministic ObjectIds ────────────────────────────────────────────────
 // 24-hex id with a fixed, PLAUSIBLE timestamp prefix (0x65000000 = 2023-09-12)
 // followed by a collection tag (a=users b=products c=orders d=shipments
-// e=reviews) and the index, e.g. id("a", 1) -> 650000000000000000000a1. The
-// plausible prefix matters: jsmql's `0x…` ObjectId literal rejects ids whose
-// embedded timestamp predates 2009 (MongoDB's first release), so an all-zero
-// prefix would make "find by _id via the 0x literal" un-queryable. Readable in
-// output and stable forever.
+// e=reviews) and the index, for example id("a", 1) -> 650000000000000000000a1.
+// The plausible prefix matters: jsmql's `0x…` ObjectId literal rejects ids
+// whose embedded timestamp predates 2009 (MongoDB's first release), so an
+// all-zero prefix would make "find by _id through the 0x literal" impossible
+// to query. Readable in output and stable forever.
 const TS_PREFIX = "65000000";
 const id = (tag: string, n: number) => new ObjectId(TS_PREFIX + (tag + n).padStart(16, "0"));
 export const ID = {

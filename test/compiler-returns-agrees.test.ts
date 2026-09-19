@@ -1,16 +1,17 @@
-// THE proof behind every `returns` in the registry: ask mongod.
+// The proof behind every `returns` in the registry: ask mongod.
 //
-// `returns` is MEASURED data, so only a re-measurement can catch it rotting. A
-// `toEqual` cannot, and neither can the vendored spec — its `type:` field says
-// `resolvesToString` for `$trunc`, the one operator where the three sources
-// disagree, and the reason the process is written down in `MongoSpec.returns`.
+// The `returns` field holds measured data. Only a re-measurement catches it from
+// becoming stale. A `toEqual` cannot, and neither can the vendored spec. For example,
+// the spec's `type:` field for `$trunc` says `resolvesToString`, but three sources
+// disagree. This divergence is the reason the process is written down in
+// `MongoSpec.returns`.
 //
-// The call is built from two things already in the repo: the vendored spec's
+// The suite builds each call from two existing things in the repo: the vendored spec's
 // `arguments[].type` (what each operand must resolve to) and the registry's own
-// `shape` (how the operands are written). So a new operator is covered the day
-// its row lands, and only the calls a generator cannot express are listed here.
+// `shape` (how the operands are written). A new operator gains coverage the day its
+// row lands. Only the calls a generator cannot express are listed here.
 //
-// It skips itself when no mongod is listening, so `npm test` stays green.
+// This suite skips itself when no mongod is listening, so `npm test` stays green.
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";

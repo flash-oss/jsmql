@@ -1,10 +1,10 @@
 // Phase 3 of src/compiler/ — constant folding.
 //
-// THE INVARIANT: a fold must not change the answer. Whatever it computes has to
+// THE INVARIANT: a fold must not change the answer. Whatever it computes must
 // equal what the same expression computes on the server when it is left alone,
 // or folding stops being an optimisation and becomes a second semantics. The
-// live-mongod suite at the foot of this file is what actually holds that; the
-// tests above it say what the pass is FOR.
+// live-mongod suite at the foot of this file holds that guarantee; the tests
+// above it say what the pass is FOR.
 
 import { describe, expect, it } from "vitest";
 import { parse, parseExpression } from "../src/compiler/parse/parser.ts";

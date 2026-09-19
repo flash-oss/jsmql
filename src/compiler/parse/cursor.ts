@@ -1,9 +1,8 @@
-// A cursor over the token list, and the one place a parse error is worded.
+// A cursor over the token list. This file is the only place that words a parse error.
 //
-// The friendly name of a token comes from its registry key: tokens.ts is keyed by
-// SPELLING, so `'('` reads as `'('` and a class-named row reads as `number`. No
-// TokenName ever reaches a message — "Expected LParen" is not something a user
-// should have to translate.
+// The friendly name of a token comes from its registry key. tokens.ts uses the SPELLING
+// as the key, so `'('` reads as `'('` and a class-named row reads as `number`. No
+// TokenName reaches a message. A user should never see "Expected LParen".
 
 import { KEYWORDS } from "../../registry/keywords.ts";
 import { TOKENS } from "../../registry/tokens.ts";
@@ -13,15 +12,15 @@ import type { Token } from "../lex/token.ts";
 export class ParseError extends Error {
   pos: number;
   constructor(message: string, pos: number) {
-    // Every message says where; a message that already places the position
-    // mid-sentence is not told twice.
+    // Every message states the position. The code does not add it twice when the
+    // message already places the position in the middle of the sentence.
     super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
     this.name = "ParseError";
     this.pos = pos;
   }
 }
 
-/** token type → how a message should spell it, derived from the registry keys. */
+/** Token type to its spelling in a message. The registry keys give this spelling. */
 const DISPLAY: ReadonlyMap<TokenName, string> = (() => {
   const out = new Map<TokenName, string>();
   for (const [key, row] of Object.entries(TOKENS)) {
@@ -35,7 +34,7 @@ const DISPLAY: ReadonlyMap<TokenName, string> = (() => {
 
 export const spell = (t: TokenName): string => DISPLAY.get(t) ?? `'${t}'`;
 
-/** How a message should refer to the token actually found. */
+/** How a message names the token that the parser found. */
 export function found(t: Token): string {
   if (t.type === "EOF") return "end of input";
   return t.text.length > 0 ? `'${t.text}'` : spell(t.type);
@@ -53,17 +52,17 @@ export class Cursor {
     return this.toks[Math.min(this.at + ahead, this.toks.length - 1)];
   }
 
-  /** For a table lookup. Do not compare it — see `is`. */
+  /** Use this only for a table lookup. Do not compare it. See `is`. */
   get type(): TokenName {
     return this.peek().type;
   }
 
   /**
-   * Is the next token this type?
+   * Does the next token match this type?
    *
-   * A method rather than a comparison against `type`, because TypeScript narrows
-   * a getter and keeps the narrowing across a `next()` — after one
-   * `this.c.type !== "LBrace"` every later comparison became "no overlap".
+   * This is a method, not a comparison against `type`, because TypeScript narrows
+   * a getter and keeps the narrowing across a `next()` call. After one
+   * `this.c.type !== "LBrace"` check, every later comparison became "no overlap".
    */
   is(type: TokenName): boolean {
     return this.peek().type === type;
@@ -75,7 +74,7 @@ export class Cursor {
     return t;
   }
 
-  /** True and consumed, or false and untouched. */
+  /** Returns true and consumes the token, or returns false and leaves it. */
   eat(type: TokenName): boolean {
     if (this.type !== type) return false;
     this.at++;
@@ -83,12 +82,12 @@ export class Cursor {
   }
 
   /**
-   * Is the next token a reserved word standing where a NAME is expected?
+   * Is the next token a reserved word in a place where a NAME can stand?
    *
-   * Every keyword qualifies: JavaScript lets any IdentifierName follow `.` or
+   * Every keyword qualifies. JavaScript lets any IdentifierName follow `.` or
    * precede `:` in an object literal, so `{ null: 1 }` and `$let({ in: … })` are
-   * names here. The lexer has already made the ones after an introducer plain
-   * `Ident`s; this catches the rest — an object key, chiefly.
+   * names here. The lexer already turns the ones after an introducer into plain
+   * `Ident` tokens. This method catches the rest, mostly an object key.
    */
   isNameLike(): boolean {
     const row = (KEYWORDS as Record<string, { token: TokenName } | undefined>)[this.peek().text];
@@ -102,7 +101,7 @@ export class Cursor {
     return this.next();
   }
 
-  /** Rewind, for the one place that needs it: telling an arrow from a group. */
+  /** Rewinds the cursor. Only one place needs this: to tell an arrow from a group. */
   mark(): number {
     return this.at;
   }

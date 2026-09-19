@@ -1,9 +1,9 @@
 // The update-document target: the object form of an update,
-// `updateOne(filter, { $set: … })`. Each document is asserted as MQL and, when a
-// mongod is reachable, applied to a fixture with `updateMany` and the result
-// compared with what JavaScript would leave behind. Self-skips (green) without a
-// server, with the all-or-nothing guard. See docs/specs/emit-pass.md § The
-// update-document target.
+// `updateOne(filter, { $set: … })`. Each document is asserted as MQL. When a mongod
+// is reachable, the suite applies the update to a fixture with `updateMany` and
+// compares the result with what JavaScript would leave behind. This suite self-skips
+// (reports green) without a server, with the all-or-nothing guard. See
+// docs/specs/emit-pass.md § The update-document target.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { update } from "../src/compiler/index.ts";

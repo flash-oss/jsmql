@@ -28,9 +28,9 @@ function harvestInputs(): string[] {
 }
 
 /**
- * The one statement of a program. A trailing `;` keeps the `Pipeline` wrapper —
- * that `;` is the token that says pipeline — so a test about the statement
- * itself unwraps it first.
+ * Extract the one statement of a program. A trailing `;` keeps the `Pipeline` wrapper.
+ * That `;` is the token that says "pipeline". A test about the statement itself must
+ * unwrap it first.
  */
 const only = (src: string): { type: string } & Record<string, unknown> => {
   const n = parse(src) as { type: string; stmts?: unknown[] } & Record<string, unknown>;
@@ -191,7 +191,7 @@ describe("compiler/parse — the parser decides nothing about meaning", () => {
 });
 
 describe("compiler/parse — the entry form", () => {
-  it("separates the params destructure from the toolbox by its KEYS, not its position", () => {
+  it("separates params from the toolbox by key names, not by position", () => {
     const r = parseEntry("({ minAge }, { $ }) => $.age >= minAge");
     expect(r.params.map((p) => p.key)).toEqual(["minAge"]);
     expect(r.toolbox.map((p) => p.key)).toEqual(["$"]);

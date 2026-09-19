@@ -1,8 +1,8 @@
 // Phase 5 of src/compiler/ — value versus truth.
 //
-// The truthiness check is one fixed four-way shape; the truth table it
-// implements is measured on mongod against JavaScript's own `Boolean(v)` for
-// every value class the language can produce (NaN excepted: not supported).
+// The truthiness check is one fixed four-way shape. This suite measures the truth
+// table it implements on mongod, comparing it to JavaScript's own `Boolean(v)` for
+// every value class the language can produce (NaN is not supported).
 
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";

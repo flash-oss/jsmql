@@ -115,7 +115,7 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     expect(positionOfNode("$$.aggregate([$match($.x > 1)]);", "$match(…)")).toBe("statement");
   });
 
-  it("lays out a chained stage link wherever its context-rooted chain stands", () => {
+  it("lays out a chained stage link based on where the context chain stands", () => {
     // The chain's top link is a value to its parent, but `$group` on a stream is a
     // stage: its body must reach the group slot, or `$sum($.x, $.y)` inside it
     // is checked as a two-operand expression and emitted as one.
@@ -132,7 +132,7 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     expect(positionOfNode("$group({_id: null, n: $count()});", "$count(…)")).toBe("group");
   });
 
-  it("positions a body that is not an object, under a layout that names keys", () => {
+  it("positions a non-object body using the default position, not the layout", () => {
     // `$merge`'s layout names `whenMatched`, so its body is `deeper` — but a string
     // has nothing to descend into, and takes the body's own position.
     expect(positionOfNode('$merge("out");', "StringLiteral")).toBe("value");

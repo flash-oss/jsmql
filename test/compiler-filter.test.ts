@@ -33,8 +33,8 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a === null")).toEqual({ a: { $type: "null" } });
     expect(filter("$.a !== null")).toEqual({ a: { $not: { $type: "null" } } });
     expect(filter("$.a === undefined")).toEqual({ a: { $exists: false } });
-    // `typeof` speaks MongoDB's type names: "undefined" IS one, the deprecated BSON
-    // type. Absence has its own spelling, `x === undefined`.
+    // `typeof` uses MongoDB's type names: "undefined" is a MongoDB type, now deprecated
+    // in BSON. Absence has its own spelling, `x === undefined`.
     expect(filter('typeof $.a === "undefined"')).toEqual({ a: { $type: "undefined" } });
     expect(filter("$.a !== undefined")).toEqual({ a: { $exists: true } });
     expect(filter('typeof $.a === "string"')).toEqual({ a: { $type: "string" } });
@@ -44,7 +44,7 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(() => filter('typeof $.a === "boolean"')).toThrow(/not one\. Did you mean 'bool'\?/);
     expect(() => filter('typeof $.a === "function"')).toThrow(/MongoDB's type names/);
     expect(filter('typeof $.a !== "number"')).toEqual({ a: { $not: { $type: "number" } } });
-    // The `array` spelling asks whether the value IS an array, so it excludes none.
+    // The `array` spelling asks whether the value is an array, so it excludes none.
     expect(filter('typeof $.a === "array"')).toEqual({ a: { $type: "array" } });
     expect(filter('typeof $.a !== "array"')).toEqual({ a: { $not: { $type: "array" } } });
     expect(filter("$.a % 2 === 0")).toEqual({ a: { $mod: [2, 0] } });

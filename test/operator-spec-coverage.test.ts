@@ -22,10 +22,10 @@ import { generateGlobalsSource } from "../scripts/generate-globals.mjs";
 // Drift-protection test: keep the registry in sync with mongodb/mql-specifications.
 //
 // Reads YAML definitions from vendor/mql-specifications and asserts the registry
-// states a row for every operator the official spec defines. Failure messages
-// name the specific drift so a contributor can act without spelunking.
+// states a row for every operator the official spec defines. Each failure message
+// names the specific drift, so a contributor can act without a manual search.
 //
-// The spec is vendored on `npm install` via vendor/fetch-mql-specs.mjs at a
+// The spec is vendored on `npm install` through vendor/fetch-mql-specs.mjs at a
 // pinned commit. The vendor directory is gitignored — re-fetch with
 // `node vendor/fetch-mql-specs.mjs` if missing.
 // ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     // property writes (`$$$.coll = …` → `$out`), which `const` permits.
     expect(src).toContain("var $$: JsmqlCollectionRef;");
     expect(src).not.toContain("const $$: JsmqlCollectionRef;");
-    // `$$$` indexes to the foreign ref — that's what gives a foreign chain
+    // `$$$` indexes to the foreign ref — that is what gives a foreign chain
     // completion. `$$$$`'s second level is a database, so it keeps a plain tail.
     expect(src).toContain("const $$$: { [collection: string]: JsmqlForeignRef };");
     expect(src).toContain("const $$$$: {");

@@ -1,18 +1,18 @@
-// Phase 5 — EMIT. Which rule of a row runs, and how, once the receiver and the
-// arguments are known.
+// Phase 5 — EMIT. This module picks which rule of a row runs, and how, once the
+// receiver and the arguments are known.
 //
 // consult.ts reads a row and answers for a NAME in a POSITION. Two axes remain,
 // and both need facts a row cannot see: the receiver's FAMILY (a proof the
 // lowering of the receiver produced) and the arguments' SHAPE (a partition over
 // the call's argument list). This module resolves both and hands back one closed
-// answer. Nothing here builds a document; a `dispatch` answer carries the guards
+// answer. Nothing here builds a document. A `dispatch` answer carries the guards
 // as functions of the bound receiver, and the caller assembles the `$switch`.
 //
-// The receiver's family is PROVEN or it is not. A literal proves it; a producing
-// row's measured `returns` proves it; a field path proves nothing. An unprovable
+// The receiver's family is PROVEN or it is not. A literal proves it. A producing
+// row's measured `returns` proves it. A field path proves nothing. An unprovable
 // receiver on a row with one field family IS that family — `$.price.ceil()` is a
-// number because `.ceil()` is — and on a row with two or more it takes the runtime
-// dispatch, with the row's own `uncertain` as the default. A name never decides.
+// number because `.ceil()` is. On a row with two or more families it takes the runtime
+// dispatch, with the row's own `uncertain` as the default. A name never decides this.
 
 import type { Arity, BsonType, Emit, Family, FieldFamily, Refusal, Rule } from "../../registry/vocabulary.ts";
 import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
@@ -24,11 +24,11 @@ import { evaluate, type Constants } from "../passes/evaluate.ts";
 import { staticKey } from "../passes/naming.ts";
 import { internalError } from "../../errors.ts";
 
-/** A rule as this module reads it — its `In`/`Out` are the caller's business. */
+/** A rule as this module reads it. Its `In`/`Out` are the caller's business. */
 export type AnyRule = Rule<unknown, unknown>;
 export type AnyEmit = Emit<unknown, unknown>;
 
-/** What is known about the receiver. A closed union; the caller proves, this module reads. */
+/** What is known about the receiver. A closed union. The caller proves it, and this module reads it. */
 export type Receiver =
   /** A bare call — `Number(x)`, `$abs(x)`, `assert(…)`. */
   | { readonly kind: "none" }
@@ -40,12 +40,12 @@ export type Receiver =
   | { readonly kind: "value"; readonly family: FieldFamily; readonly lowered: unknown }
   /**
    * A value whose family is not provable — a field path, an unknown-typed binding —
-   * or one PROVEN to be of a kind no method family has (`proved`: a boolean, an
-   * ObjectId), which every field-family row refuses.
+   * or one PROVEN to hold a kind no method family has (`proved`: a boolean, an
+   * ObjectId). Every field-family row refuses this receiver.
    */
   | { readonly kind: "opaque"; readonly lowered: unknown; readonly proved?: string };
 
-/** The argument list's class. A PARTITION — see `shapeOf` for the order. */
+/** The class of the argument list. A PARTITION — see `shapeOf` for the order. */
 export type Shaped =
   | { readonly kind: "spread" }
   | { readonly kind: "none" }
@@ -60,7 +60,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
  * The class a call's arguments fall in, decided in one order so no two classes
  * can claim one call: a spread anywhere → none → more than one → one object
  * literal → one constant → one dynamic. `constants` is what the fold left bound
- * (a `jsmql.compile` parameter is a runtime value and lands in `dynamic`).
+ * (a `jsmql.compile` parameter is a runtime value, so it lands in `dynamic`).
  */
 export function shapeOf(args: readonly Expr[], constants: Constants = new Map()): Shaped {
   if (args.some((a) => (a as { type: string }).type === "SpreadElement")) return { kind: "spread" };
@@ -75,17 +75,17 @@ export function shapeOf(args: readonly Expr[], constants: Constants = new Map())
   return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
 }
 
-/** One runtime branch of a dispatch: the family, its test on the bound receiver, its rule. */
+/** One runtime branch of a dispatch: the family, its test on the bound receiver, and its rule. */
 export type Branch = {
   readonly family: FieldFamily;
   readonly guard: (recv: unknown) => unknown;
   readonly rule: AnyRule;
 };
 
-/** The one answer. Every variant is final except `rule` and `dispatch`, which name what to run. */
+/** The one answer. Every variant is final, except `rule` and `dispatch`, which name what to run. */
 export type Selected =
   | { readonly kind: "rule"; readonly name: string; readonly rule: AnyRule }
-  /** Two or more field families could hold the receiver: one `$switch`, the row's `uncertain` as default. */
+  /** Two or more field families could hold the receiver: one `$switch`, with the row's `uncertain` as the default. */
   | {
       readonly kind: "dispatch";
       readonly name: string;
@@ -97,7 +97,7 @@ export type Selected =
   | { readonly kind: "composedOnly"; readonly name: string; readonly owners: readonly string[] }
   | { readonly kind: "noCell"; readonly name: string }
   | { readonly kind: "unknown"; readonly name: string }
-  /** The row lists receivers and this is not one of them — `$.n.trim()` with `n` proven a number. */
+  /** The row lists receivers, and this is not one of them — `$.n.trim()` with `n` proven a number. */
   | {
       readonly kind: "wrongReceiver";
       readonly name: string;
@@ -106,21 +106,21 @@ export type Selected =
     }
   /** A spread reached a rule that reads its arguments one by one. */
   | { readonly kind: "spreadRefused"; readonly name: string; readonly sig: string }
-  /** The count is not one the rule takes; `args` carries the signature to quote. */
+  /** The count is not one the rule takes. `args` carries the signature to quote. */
   | { readonly kind: "wrongCount"; readonly name: string; readonly got: number; readonly args: Arity }
-  /** The count parses but the row has a reason to refuse it — `args.reject[n]`. */
+  /** The count parses, but the row has a reason to refuse it — `args.reject[n]`. */
   | { readonly kind: "rejectedCount"; readonly name: string; readonly message: string };
 
 // ── the runtime guards: one per field family, held complete by the type ──────
 
-/** The `$type` names each field family covers — the vocabulary's one table. */
+/** The `$type` names each field family covers — the one table of the vocabulary. */
 const TYPES: Readonly<Record<FieldFamily, readonly BsonType[]>> = FIELD_FAMILY_TYPES;
 
 /**
- * The runtime test that the bound receiver holds `family` — widened by the
- * rule's own `alsoTypes`. One shape for every family, `$type` against a list,
- * because `$type` answers "missing" for an absent field and the widening reads
- * as a list membership rather than a second construct per family.
+ * The runtime test that the bound receiver holds `family`, widened by the
+ * rule's own `alsoTypes`. One shape serves every family: `$type` against a list.
+ * `$type` answers "missing" for an absent field, so the widening reads
+ * as list membership rather than as a second construct per family.
  */
 export function guardFor(family: FieldFamily, also: readonly BsonType[] = []): (recv: unknown) => unknown {
   const types = [...TYPES[family], ...also];
@@ -135,7 +135,7 @@ const isFieldFamily = (f: string): f is FieldFamily => (FIELD_FAMILIES as readon
 const isRefusal = (v: unknown): v is Refusal => isObj(v) && typeof v.unsupported === "string";
 const isRule = (v: unknown): v is AnyRule => isObj(v) && typeof v.emit === "function" && isObj(v.args);
 
-/** Does `n` satisfy the rule's count? The `reject` map is read first: it is the more specific answer. */
+/** Does `n` satisfy the rule's count? The compiler reads the `reject` map first, because it gives the more specific answer. */
 function countOf(name: string, args: Arity, n: number): Selected | null {
   const rejected = args.reject?.[n];
   if (rejected !== undefined) return { kind: "rejectedCount", name, message: rejected };
@@ -167,7 +167,7 @@ function settle(name: string, branch: unknown, shaped: Shaped, count: number): S
   return countOf(name, branch.args, count) ?? { kind: "rule", name, rule: branch };
 }
 
-/** The family a receiver names for a per-family cell, or null for a bare call. */
+/** The family a receiver names for a per-family cell. Null for a bare call. */
 function familyOf(receiver: Receiver): Family | null {
   switch (receiver.kind) {
     case "none":
@@ -227,15 +227,15 @@ function fromPerFamily(
     if (branch === undefined) return { kind: "wrongReceiver", name, got: family, accepts: on ?? "any" };
     return settle(name, branch, shaped, count);
   }
-  // An unprovable receiver. One field family in `on`: it IS that family. Two or
-  // more: the runtime dispatch, in the row's own order, over the families that
-  // hold a rule, with the row's `uncertain` as the default.
+  // An unprovable receiver. With one field family in `on`, the receiver IS that
+  // family. With two or more, the compiler runs the runtime dispatch, in the row's
+  // own order, over the families that hold a rule, with the row's `uncertain` as the default.
   const listed = (
     on === undefined || on === "any" ? FIELD_FAMILIES : on.filter(isFieldFamily)
   ) as readonly FieldFamily[];
   // A `$switch` separates only what `$type` tells apart: `set` and `array` share the
-  // one test, so no branch can choose between them. The row's declaration order is its
-  // precedence, so the first family with a given test answers — and the one that loses
+  // one test, so no branch can choose between them. The row's declaration order gives its
+  // precedence, so the first family with a given test answers. The family that loses
   // is reached through its PROVEN receiver above (`new Set(…)` is proven at the source).
   const tests = new Set<string>();
   const fieldFamilies = listed.filter((family) => {
@@ -267,8 +267,8 @@ function fromPerFamily(
 
 /**
  * The one answer for a verdict, a receiver and an argument list. `count` is the
- * number of arguments as written — the shape says which class, the count says
- * whether the rule takes that many.
+ * number of arguments as written. The shape says which class applies, and the count says
+ * whether the rule takes that many arguments.
  */
 export function select(verdict: Verdict, receiver: Receiver, shaped: Shaped, count: number): Selected {
   const name = verdict.name;
@@ -276,10 +276,10 @@ export function select(verdict: Verdict, receiver: Receiver, shaped: Shaped, cou
     case "unknown":
       return { kind: "unknown", name };
     case "refused": {
-      // A row's own refusal is the better answer and wins — EXCEPT for a mutator,
+      // A row's own refusal is the better answer, and it wins — EXCEPT for a mutator,
       // whose refusal is advice about arrays: `.sort()` says to write `.toSorted()`,
       // which is sound for an array and wrong for `$.s.trim()`, a string that has
-      // neither. There the receiver answers first, as it does for `inCode` below.
+      // neither. There the receiver answers first, the same as it does for `inCode` below.
       const gate = isMutator(name) ? receiverGate(name, receiver) : null;
       return gate ?? { kind: "refused", name, message: verdict.message, needsSubject: verdict.needsSubject };
     }
@@ -291,8 +291,8 @@ export function select(verdict: Verdict, receiver: Receiver, shaped: Shaped, cou
       return { kind: "noCell", name };
     case "inCode": {
       // A pass owns this cell, so there is no rule to read. The RECEIVER still
-      // answers: '$$.pop()' is a stream where the row states an array, and that is
-      // what the reader has to hear — not that a pass declined the node.
+      // answers: '$$.pop()' is a stream where the row states an array, and the
+      // reader must hear that fact, not that a pass declined the node.
       const gate = receiverGate(name, receiver);
       return gate ?? { kind: "noCell", name };
     }

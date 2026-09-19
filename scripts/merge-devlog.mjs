@@ -3,21 +3,20 @@
  * Auto-resolve a `docs/DEVLOG.md` merge conflict.
  *
  * DEVLOG entries are append-only and separated by `\n\n---\n\n`. When two
- * branches each prepend a new entry, git can't pick a "right" answer and asks
- * for a manual conflict resolution. This script does the structural merge
- * instead: split each side into entries, take the union (deduped by
- * `## YYYY-MM-DD — Title` heading), sort newest-first.
+ * branches each add a new entry at the top, git cannot pick a correct answer and asks
+ * for a manual conflict resolution. This script does the structural merge instead:
+ * split each side into entries, take the union (deduplicated by the `## YYYY-MM-DD — Title`
+ * heading), and sort newest-first.
  *
- * Run it after a merge has stopped on `docs/DEVLOG.md`:
+ * Run it after a merge stops on `docs/DEVLOG.md`:
  *
  *     ./scripts/merge-devlog.mjs
  *
- * The script reads the three index stages (base/ours/theirs) that git
- * preserves during an unresolved conflict, writes the merged file, and
- * `git add`s it. Continue the merge with `git merge --continue` (or
- * `git commit`) afterwards. If the merge isn't auto-resolvable (header
- * diverged, base entry edited differently on both sides, …) the script
- * exits non-zero and leaves the conflicted file alone.
+ * The script reads the three index stages (base, ours, theirs) that git preserves during
+ * an unresolved conflict, writes the merged file, and runs `git add` on it. Continue
+ * the merge with `git merge --continue` or `git commit` afterwards. If the merge is not
+ * auto-resolvable (header diverged, a past entry edited differently on both sides),
+ * the script exits non-zero and leaves the conflicted file unchanged.
  */
 
 import { spawnSync } from "node:child_process";
@@ -48,7 +47,7 @@ export function mergeDevlog(baseText, oursText, theirsText) {
   const ours = parse(oursText);
   const theirs = parse(theirsText);
 
-  // Header: accept any one-sided edit; reject diverging edits.
+  // Header: accept any one-sided edit. Reject diverging edits.
   let header;
   if (ours.header === theirs.header) header = ours.header;
   else if (ours.header === base.header) header = theirs.header;
@@ -60,8 +59,8 @@ export function mergeDevlog(baseText, oursText, theirsText) {
   const theirsMap = new Map(theirs.entries.map((e) => [headingOf(e), e]));
   const merged = new Map();
 
-  // Step 1: entries that existed in base. Append-only convention says past
-  // entries shouldn't change, but a one-sided edit (e.g. typo fix) is fine.
+  // Step 1: entries that existed in the base. The append-only convention says past
+  // entries should not change, but a one-sided edit (for example, a typo fix) is acceptable.
   for (const [k, baseEntry] of baseMap) {
     const o = oursMap.get(k);
     const t = theirsMap.get(k);
@@ -92,7 +91,7 @@ export function mergeDevlog(baseText, oursText, theirsText) {
     merged.set(k, e);
   }
 
-  // Newest first; alphabetical tiebreak when two entries share a date.
+  // Newest first. When two entries share a date, use alphabetical order to break the tie.
   const sorted = [...merged.values()].sort((a, b) => {
     const da = dateOf(a);
     const db = dateOf(b);
@@ -104,9 +103,9 @@ export function mergeDevlog(baseText, oursText, theirsText) {
 }
 
 function readStage(stage) {
-  // The DEVLOG is append-only and already past a megabyte, which is `spawnSync`'s own
-  // default ceiling: without a bigger one the read fails with ENOBUFS and reports
-  // itself as "not conflicted", which is the opposite of what happened.
+  // The DEVLOG is append-only and already more than one megabyte. `spawnSync` has its own
+  // default maximum buffer size. Without a bigger one, the read fails with ENOBUFS and reports
+  // itself as "not conflicted", which is the opposite of what actually happened.
   const r = spawnSync("git", ["show", `:${stage}:${TARGET}`], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
   if (r.error !== undefined) {
     process.stderr.write(`merge-devlog: could not run git to read stage ${stage} of ${TARGET}: ${r.error.message}\n`);

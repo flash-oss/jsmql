@@ -2,8 +2,8 @@
 // `Double`, `UUID`, `MinKey`, `MaxKey` and `Date`, in both spellings each.
 //
 // Every document here is asserted as MQL and, when a mongod is reachable, RUN —
-// because a `toEqual` proves what jsmql emits and never that the server takes it
-// (HR3). Self-skips (green) without a server. See docs/specs/bson-types.md.
+// because a `toEqual` proves what jsmql emits and never that the server accepts it
+// (HR3). This suite self-skips (green) without a server. See docs/specs/bson-types.md.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID, type Collection } from "mongodb";
 import { jsmql } from "../src/index.ts";
@@ -13,9 +13,8 @@ const HEX = "507f1f77bcf86cd799439011";
 const UUID_TEXT = "6ac24965-7917-4323-8d44-920ad1d69b94";
 
 // Built fresh per insert, never cloned: `structuredClone` drops `_bsontype`, and a
-// Decimal128 that arrives as a plain object makes the server answer
-// "$multiply only supports numeric types, not object" — MEASURED, while the suite
-// was being written.
+// Decimal128 as a plain object makes the server answer
+// "$multiply only supports numeric types, not object" — MEASURED.
 const doc = () => ({
   _id: 1,
   price: Decimal128.fromString("9.99"),
@@ -149,7 +148,7 @@ describe("compiler — jsmql refuses what bson would silently corrupt", () => {
   });
 });
 
-describe("compiler — the server takes every document above", () => {
+describe("compiler — the server accepts every document above", () => {
   it("ran each one, or none", async () => {
     if (coll === null) {
       expect(FILTERS.length + PIPELINES.length).toBeGreaterThan(0);

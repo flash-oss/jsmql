@@ -6,10 +6,10 @@
 //   $$.indexStats() / $$$$.currentOp(…)             the source stages, scoped by sigil
 //   function f(x) { return … }                      a name for a body, inlined at each call
 //
-// The server half runs every read-only pipeline this file asserts on a live
-// mongod and compares the documents that come back; the `$out` pipelines are run
-// and the target collection read. Self-skips (green) when no mongod is reachable,
-// with the all-or-nothing guard.
+// The server suite runs every read-only pipeline this file asserts on a live mongod.
+// It compares the documents that come back. The `$out` pipelines are run and the
+// target collection is read. This suite self-skips (reports green) when no mongod
+// is reachable, with the all-or-nothing guard.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";

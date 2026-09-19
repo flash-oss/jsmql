@@ -12,31 +12,31 @@
  *
  * ## Detection rule
  *
- * An argument is treated as jsmql input when it is a **string** or a
+ * This plugin treats an argument as jsmql input when it is a **string** or a
  * **function**. Plain objects and arrays pass through to the original
  * mongoose method unchanged, so existing MQL-JSON call sites (`Model.find({
  * age: { $gt: 18 } })`, `Model.aggregate([{ $match: ... }])`) keep working
- * exactly as before. Users who want the template-tag form call `jsmql\`…\``
- * themselves — the resulting object/array then takes the pass-through path.
+ * exactly as before. A user who wants the template-tag form calls `jsmql\`…\``
+ * directly — the resulting object/array then takes the pass-through path.
  *
  * Modern mongoose (7+) returns Promises and no longer accepts callback
- * arguments, so the heuristic doesn't collide with `(err, result) => …` in
+ * arguments, so the heuristic does not collide with `(err, result) => …` in
  * practice.
  *
  * ## One wrapper per method
  *
- * Each patched method is wrapped explicitly with its own named function.
- * The method signatures are stable across mongoose versions and small
- * enough that a per-method wrapper is easier to read and to debug than a
- * lookup table — a stack trace points straight at the method that did the
- * wrong thing, and the signature is right there next to the call.
+ * This plugin wraps each patched method explicitly, with its own named
+ * function. The method signatures are stable across mongoose versions, and
+ * each one is small. A per-method wrapper is therefore easier to read and to
+ * debug than a lookup table: a stack trace points straight at the method
+ * that did the wrong thing, and the signature sits right next to the call.
  *
  * `findOneAndReplace` / `replaceOne` take a full *replacement document* at
- * argument 1, not an update spec — so we patch their filter slot only.
- * `findById` and `findByIdAndDelete` are id-only and aren't patched at all.
+ * argument 1, not an update spec — so this plugin patches their filter slot only.
+ * `findById` and `findByIdAndDelete` are id-only, so this plugin patches neither.
  * `Query.prototype.*` builder methods (`.where()`, `.gt()`, `.sort()`, …) are
  * intentionally NOT patched: jsmql keeps the mongoose surface to the `Model`
- * statics so developers don't have to learn a new API (DX-first). See
+ * statics, so developers do not have to learn a new API (DX-first). See
  * docs/specs/mongoose-plugin.md.
  */
 
@@ -57,9 +57,9 @@ function isJsmql(value: unknown): value is JsmqlInput {
  *     import jsmqlMongoose from "@koresar/jsmql/mongoose";
  *     jsmqlMongoose(mongoose);
  *
- * The `mongoose` parameter is typed `any` deliberately. We don't depend on
- * mongoose at compile time (no peer/dev dep, no `import "mongoose"`), so the
- * real `Mongoose` type isn't in scope here; the plugin treats the argument as
+ * The `mongoose` parameter is typed `any` deliberately. This module does not
+ * depend on mongoose at compile time (no peer/dev dep, no `import "mongoose"`),
+ * so the real `Mongoose` type is not in scope here; the plugin treats the argument as
  * a duck-typed `{ Model: { find, …pre-patched statics… } }` and the per-
  * method wrappers below pass the rest through. Annotating each captured
  * original and wrapper parameter individually would add noise without
@@ -83,8 +83,9 @@ export default function jsmqlMongoose(mongoose: any): void {
   }
   // Idempotence: a second registration on the same Model would double-wrap
   // every static, and the second wrap would then try to `jsmql.filter()` an
-  // already-lowered Filter document and throw. Cheap to guard against, so we
-  // do — `__jsmqlPatched` is the marker; one property check, no Symbol indirection.
+  // already-lowered Filter document and throw. This guard is cheap, so this
+  // plugin adds it — `__jsmqlPatched` is the marker; one property check, no
+  // Symbol indirection.
   if (Model.__jsmqlPatched === true) return;
   Model.__jsmqlPatched = true;
 
@@ -206,8 +207,8 @@ export default function jsmqlMongoose(mongoose: any): void {
 //
 // Each overload is positioned AFTER the methods' existing mongoose
 // signatures in resolution order, with `string | function` parameter types
-// that don't overlap any normal mongoose call shape — so the augmentation
-// can't accidentally win for a call the user meant to type-check against
+// that do not overlap any normal mongoose call shape — so the augmentation
+// cannot accidentally win for a call the user meant to type-check against
 // mongoose's own overloads. Return types use `any` because re-declaring
 // mongoose's schema-aware query/aggregate return-type machinery here would
 // be brittle and would drift on every mongoose minor release; users who want
@@ -216,14 +217,14 @@ export default function jsmqlMongoose(mongoose: any): void {
 //
 // The augmentation merges into mongoose's `Model<TRawDocType, …>` interface,
 // so it activates only when the user actually has mongoose installed. If
-// mongoose isn't on the resolution path, this block has no effect on
+// mongoose is not on the resolution path, this block has no effect on
 // downstream type-checking — no spurious "mongoose is missing" errors from
 // projects that import this file purely for the runtime plugin.
 
 // Type-only side-effect import: brings mongoose into the program so the
 // `declare module "mongoose"` block below has the target interface to merge
-// with. The import is `import type` and references no values, so it's erased
-// at emit time — no runtime mongoose dependency is introduced. tsc's
+// with. The import is `import type` and references no values, so it is erased
+// at emit time — this import adds no runtime mongoose dependency. tsc's
 // `--isolatedDeclarations` / `--verbatimModuleSyntax` are happy with this
 // shape; bundlers tree-shake it to nothing.
 import type {} from "mongoose";

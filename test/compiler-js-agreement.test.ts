@@ -2,7 +2,7 @@
 //
 // A query document is the one a MongoDB developer writes by hand, so MongoDB's own
 // rules apply to it: a field comparison is satisfied by any ELEMENT of an array
-// value, and a path traverses an array in the middle. JavaScript does neither.
+// value, and a path TRAVERSES an array in the middle. JavaScript does neither.
 // This suite is the oracle for the whole boundary. Each source is EVALUATED as
 // JavaScript over the fixture — the source with `$.` read as the document — and the
 // ids that come back are compared with the ids the emitted query selects on a live
@@ -14,7 +14,7 @@
 // reads one value. JavaScript COERCES under a relational operator (`[2] > 1` is
 // true). And JavaScript THROWS when a path walks through a missing intermediate.
 //
-// Self-skips (green) when no mongod is reachable, with an all-or-nothing guard.
+// This suite self-skips (green) when no mongod is reachable, with an all-or-nothing guard.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
@@ -48,8 +48,8 @@ const AGREE: readonly string[] = [
   'typeof $.a === "string"',
   "$.n.v > 1",
   "$.n.v === null",
-  // a path INSIDE an element body takes the rule again, prefix and all
-  // a `.some` receiver is a path too: an array at its PREFIX is absent, where `.some` throws
+  // a path INSIDE an element body takes the rule again, PREFIX and all
+  // a `.some` receiver is a path too: an array at its prefix is absent, where `.some` throws
   // `!p` is the COMPLEMENT of p's clause, so a tautology stays one
   "$.a > 1 || !($.a > 1)",
 ];
@@ -101,11 +101,11 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "!($.a === null)", why: ARRAY_RULE },
   {
     src: 'typeof $.a === "undefined"',
-    why: 'By ruling, `typeof` speaks MongoDB\'s type names: "undefined" is the deprecated BSON type, and selects nothing here, where JavaScript\'s `typeof` says "undefined" for an absent field. Absence is spelled `$.a === undefined`.',
+    why: 'By ruling, `typeof` uses MongoDB\'s type names: "undefined" is a MongoDB type, now deprecated in BSON, and selects nothing here, where JavaScript\'s `typeof` says "undefined" for an absent field. Absence is spelled `$.a === undefined`.',
   },
   {
     src: "!($.g.some(i => i.r.s === 1))",
-    why: "The THROW family, at its widest. JavaScript throws both ways here — `.some` on a document that has no `g`, and `i.r.s` on an element that has no `r` — so it selects nothing at all. This language reads a path as a path: no element has `r.s` equal to 1, so the negation holds. The positive spelling agrees with JavaScript, because neither answer selects those documents.",
+    why: "The THROW family, at its widest. JavaScript THROWS both ways here — `.some` on a document that has no `g`, and `i.r.s` on an element that has no `r` — so it selects nothing at all. This language reads a path as a path: no element has `r.s` equal to 1, so the negation holds. The positive spelling agrees with JavaScript, because neither answer selects those documents.",
   },
   {
     src: '!($.tags.includes("vip"))',
@@ -113,7 +113,7 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   },
   {
     src: "$.a >= 1",
-    why: 'JavaScript COERCES under a relational operator: `[1] >= 1` is true, `"1" >= 1` is true, `true >= 1` is true. The query language brackets by type instead, and this language does not model the coercion — the same decision that leaves NaN unsupported.',
+    why: 'JavaScript coerces under a relational operator: `[1] >= 1` is true, `"1" >= 1` is true, `true >= 1` is true. The query language brackets by type instead, and this language does not model the coercion — the same decision that leaves NaN unsupported.',
   },
   {
     src: "$.a < 2",
@@ -137,13 +137,13 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   },
   {
     src: "$.n.v !== 1",
-    why: "JavaScript THROWS reading `n.v` where `n` is absent, so the document is not selected; a path in this language is a path, and an absent path is absent, which `!==` satisfies.",
+    why: "JavaScript THROWS when reading `n.v` where `n` is absent, so the document is not selected; a path in this language is a path, and an absent path is absent, which `!==` satisfies.",
   },
   {
     src: "$.n.v === undefined",
-    why: "The same throw: JavaScript cannot read `n.v` where `n` is absent, where this language answers that the field is absent.",
+    why: "The same THROW: JavaScript cannot read `n.v` where `n` is absent, where this language answers that the field is absent.",
   },
-  { src: "$.n.v == null", why: "The same throw, through the loose spelling." },
+  { src: "$.n.v == null", why: "The same THROW, through the loose spelling." },
 ];
 
 let client: MongoClient | null = null;

@@ -1,16 +1,17 @@
 // INJECTION — the values a call supplies: the parameters of `jsmql.compile` and
 // the `${…}` slots of the template tag. Each bound name in the tree becomes the
-// value itself: spelled as a literal node when the source could have spelled it
-// (so it folds and compares like anything written), and otherwise held as an
-// `Injected` node — a Date, a binary, or anything that READS AS MQL (a string
-// starting with `$`, a document with a `$`-key). HR1: an injected value is never
-// an operator or a field reference; the value road wraps such a value in
-// `$literal`, and the query road compares it as written. See docs/LANG_RULES.md.
+// value itself. It is spelled as a literal node when the source could have
+// spelled it, so it folds and compares like anything written. Otherwise it is
+// held as an `Injected` node — a Date, a binary, or anything that READS AS MQL
+// (a string that starts with `$`, or a document with a `$`-key). HR1: an
+// injected value is never an operator or a field reference. The value road
+// wraps such a value in `$literal`, and the query road compares it as written.
+// See docs/LANG_RULES.md.
 import type { Expr, Program } from "../../registry/ast.ts";
 import { asLiteral } from "./literal.ts";
 import { isPlainObject, isRegExp } from "../../bson.ts";
 
-/** Would the server read this value as MQL — a `$`-string, or a document holding a `$`-key or such a string? */
+/** Would the server read this value as MQL: a `$`-string, or a document that holds a `$`-key or such a string? */
 export function isMqlShaped(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
   if (typeof value === "string") return value.length > 0 && value.charCodeAt(0) === 36;
   if (value === null || typeof value !== "object") return false;
@@ -24,16 +25,16 @@ export function isMqlShaped(value: unknown, seen: WeakSet<object> = new WeakSet(
   return false;
 }
 
-/** A value as the node that spells it: a literal when the source could have, an `Injected` node otherwise. */
+/** A value as the node that spells it: a literal when the source could have spelled it, an `Injected` node otherwise. */
 export function spellValue(value: unknown, pos: number): Expr {
   const literal = isMqlShaped(value) ? null : asLiteral(value, pos);
-  // A RegExp the CALL supplied is the developer's own MongoDB regex — a query slot takes it as written,
-  // a value slot passes it through — where one typed in source is a pattern for the regex methods.
+  // A RegExp the CALL supplies is the developer's own MongoDB regex. A query slot takes it as written,
+  // and a value slot passes it through, where one typed in the source is a pattern for the regex methods.
   if (literal !== null && literal.type === "RegexLiteral" && isRegExp(value)) return { ...literal, injected: value };
   return literal ?? { type: "Injected", value, pos };
 }
 
-/** The tree with every reference to a bound name replaced by its value. A lambda parameter of the same name shadows it. */
+/** The tree with every reference to a bound name replaced by its value. A lambda parameter with the same name shadows it. */
 export function inject<T extends Program | Expr>(root: T, values: ReadonlyMap<string, unknown>): T {
   if (values.size === 0) return root;
   const nodes = new Map<string, Expr>();
@@ -41,7 +42,7 @@ export function inject<T extends Program | Expr>(root: T, values: ReadonlyMap<st
   return replaceIdents(root, nodes);
 }
 
-/** The tree with every reference to a name replaced by the node given for it — at the reference's own position. */
+/** The tree with every reference to a name replaced by the node given for it, at the reference's own position. */
 export function replaceIdents<T extends object>(root: T, nodes: ReadonlyMap<string, Expr>): T {
   if (nodes.size === 0) return root;
   const spell = (name: string, pos: number): Expr => {

@@ -1,14 +1,14 @@
 // Phase 5 of src/compiler/ — the METHOD cells of the value target, family by family.
 //
-// A method's row carries its value cell (`expr: { args, emit }`); this suite holds
+// A method's row carries its value cell (`expr: { args, emit }`). This suite holds
 // one spelling per cell, asserts the MQL, and runs every spelling on a live mongod
-// over a fixture, comparing the value the server answers with what JavaScript
-// answers for the same input — the JavaScript-behaviour ruling made measurable.
-// Where JavaScript and MongoDB cannot agree (a local-time accessor on a server that
-// knows no client timezone), the case says so and asserts the MongoDB answer.
+// over a fixture. It compares the value the server returns with the value JavaScript
+// returns for the same input. Where JavaScript and MongoDB cannot agree (a local-time
+// accessor on a server that knows no client timezone), the case says so and asserts
+// the MongoDB answer.
 //
-// Self-skips (green) when no mongod is reachable, with the all-or-nothing guard: a
-// suite that quietly degrades to compile-only looks exactly like one that passed.
+// This suite self-skips (reports green) when no mongod is reachable, with the all-or-nothing
+// guard: a suite that quietly degrades to compile-only looks exactly like one that passed.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
@@ -49,18 +49,19 @@ const compiled = (src: string, js: (d: typeof DOC) => unknown, note?: string): u
   return expr(src);
 };
 /**
- * The same, for a SET operation: MongoDB's `$setUnion` and its kin answer in no
- * promised order, and an ordering the developer never wrote gives way to
- * MongoDB's (SR2) — so the elements are compared, not their sequence.
+ * For a SET operation: MongoDB's `$setUnion` and its kin return elements in no promised
+ * order. A developer never writes an order, so we compare the elements, not their
+ * sequence. This reflects MongoDB behaviour (SR2).
  */
 const unordered = (src: string, js: (d: typeof DOC) => unknown): unknown => {
   RUNS.push({ src, js, unordered: true });
   return expr(src);
 };
 /**
- * The shape a JAVASCRIPT method takes on a receiver that may be null or missing: the
- * test first, the method inside it, so it answers null where JavaScript would throw.
- * A receiver that is certainly there (a literal, a `$lookup`'s array) takes no test.
+ * The shape a JavaScript method takes on a receiver that may be null or missing. This
+ * shape tests the receiver first, then runs the method inside. It answers null where
+ * JavaScript would throw. A receiver that is certainly there (a literal, a `$lookup`'s
+ * array) does not need a test.
  */
 const nullOr = (recv: unknown, body: unknown): unknown => ({
   $cond: { if: { $eq: [{ $ifNull: [recv, null] }, null] }, then: null, else: body },

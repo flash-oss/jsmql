@@ -225,7 +225,7 @@ describe("update filters: sequencing", () => {
     expect(jsmql("$.a = 1, $.b = $.a, $.c = 3")).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a", c: 3 } }]);
   });
 
-  it("trailing comma allowed", () => {
+  it("allows a trailing comma", () => {
     expect(jsmql("$.a = 1,")).toEqual([{ $set: { a: 1 } }]);
   });
 });
@@ -514,10 +514,10 @@ describe("update filters: validation errors", () => {
 });
 
 describe("update filters: lex regression checks", () => {
-  // Make sure adding `=`, `+=`, etc. didn't break existing operators. The
+  // Make sure adding `=`, `+=`, etc. did not break existing operators. The
   // expectations are the aggregation-expression shape that the lexer +
-  // expression codegen produce, surfaced via `jsmql.expr()` so the top-level
-  // Filter dispatch doesn't add a wrapping layer the lex test doesn't care
+  // expression codegen produce, surfaced through `jsmql.expr()` so the top-level
+  // Filter dispatch does not add a wrapping layer the lex test does not care
   // about.
   it("== null still parses (loose null check)", () => {
     expect(jsmql.expr("$.a == null")).toEqual({ $in: [{ $type: "$a" }, ["null", "missing"]] });

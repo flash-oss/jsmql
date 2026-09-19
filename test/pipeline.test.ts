@@ -21,7 +21,7 @@ describe("pipeline detection", () => {
   });
 
   it("array of mixed scalars and unrelated objects stays expression-mode", () => {
-    // First element isn't a stage shape, so the whole array is treated as a
+    // First element is not a stage shape, so the whole array is treated as a
     // value array. We get whatever the codegen would normally produce.
     expect(jsmql.expr("[1, { $limit: 10 }]")).toEqual([1, { $limit: 10 }]);
   });
@@ -215,7 +215,7 @@ describe("raw MQL stage bodies pass through UNGUARDED (escape hatch — see src/
   // "replace stream"): jsmql rejects `$$$$.<db>.<coll>` reads because it minted
   // that surface (HR3), but it must NEVER guard the RAW operator/stage form — the
   // developer owns hand-written MQL, and a `{ db, coll }` namespace IS valid on
-  // Atlas Data Federation. A guard creeping onto these (e.g. extending the
+  // Atlas Data Federation. A guard creeping onto these (for example extending the
   // cross-database refusal to raw stages) must fail here.
   it("a raw cross-database $lookup `{ db, coll }` from is emitted verbatim", () => {
     expect(
@@ -640,7 +640,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     ]);
   });
 
-  it("rejects mixed-shape RHS where some values aren't `$$.filter(...)`", () => {
+  it("rejects mixed-shape RHS where some values are not `$$.filter(...)`", () => {
     expect(() => jsmql(`$ = { a: $$.filter(o => o.x > 0), b: 1 };`)).toThrow(
       "'$ = { … }' with a '$$' chain is a '$facet', and every entry must be one: 'b' is not a chain on '$$'. Make it one ('b: $$.filter(…)'), or move it out of the object.",
     );
@@ -664,7 +664,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     expect(jsmql(`$$.filter(o => o.x > 0);`)).toEqual([{ $match: { x: { $gt: 0 } } }]);
   });
 
-  it("$facet is reshape-clearing: prior lets can't be read after", () => {
+  it("$facet is reshape-clearing: prior lets cannot be read after", () => {
     expect(() => jsmql(`let n = $.threshold; $ = { hot: $$.filter(o => o.score > 0) }; $.copy = n;`)).toThrow(
       /can't be read after.*\$facet/,
     );
@@ -770,7 +770,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   // Outer context referenced INSIDE a source-switch's chain body (vs the prior
   // test, which references it in a later top-level stage). A bare
   // `$$ = $$$.<coll>.map(…)` is a `$unionWith` that REPLACES the stream, so the
-  // outer document / root `$$.length` / outer `let`s aren't carried in — the
+  // outer document / root `$$.length` / outer `let`s are not carried in — the
   // error must say so and point at the correlated `.filter` form (which DOES
   // thread them; see stream-length.test.ts "four kinds of length").
   it("outer `let` read inside a source-switch `.map` body → 'correlate with a .filter' error", () => {
@@ -842,7 +842,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     );
   });
 
-  it("`$$ = $$.map(d => <expr>)` lowers to `$replaceWith` via the stream-method registry", () => {
+  it("`$$ = $$.map(d => <expr>)` lowers to `$replaceWith` through the stream-method registry", () => {
     expect(jsmql(`$$ = $$.map(t => ({ x: t.x }));`)).toEqual([{ $replaceWith: { x: "$x" } }]);
   });
 
@@ -851,7 +851,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   });
 
   it("rejects bare `$$$.<coll>` on the RHS (no stream method)", () => {
-    // The user named a collection but didn't call a stream method — the catch-all
+    // The user named a collection but did not call a stream method — the catch-all
     // path names both supported forms and notes any stream method may head the chain.
     expect(jsmql(`$$ = $$$.transactions;`)).toEqual([{ $match: { $expr: false } }, { $unionWith: "transactions" }]);
   });
@@ -1003,8 +1003,8 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 
-  it("a value-collapsing .map (scalar field / non-object arrow) is rejected — a stream can't hold scalars", () => {
-    // A document stream can't be made of scalars; without a value-mode target to peel
+  it("a value-collapsing .map (scalar field / non-object arrow) is rejected — a stream cannot hold scalars", () => {
+    // A document stream cannot be made of scalars; without a value-mode target to peel
     // to (unlike the `$.field = …` assignment form) this must be rejected, not emit the
     // runtime-invalid scalar `$replaceWith` (mongod Location40228).
     expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map("productId");`)).toThrow(
@@ -1032,7 +1032,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
   it("a value-collapsing terminal (.head/.size/…) is value-position-only — pivot & bare-statement throw, assignment is OK", () => {
     // `.head()` collapses the stream to a single value — like `.map(o => o.x)`, it
     // pivots to value-mode. Valid only where a value is expected.
-    // 1. `$$ = …head()` — a value isn't a stream.
+    // 1. `$$ = …head()` — a value is not a stream.
     expect(() => jsmql("$$ = $$$.orders.head();")).toThrow(
       "'.head()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….head()'.",
     );
@@ -1041,7 +1041,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       { $match: { $expr: false } },
       { $unionWith: { coll: "orders", pipeline: [{ $limit: 1 }] } },
     ]);
-    // 3. Bare statement — a value isn't a pipeline stage.
+    // 3. Bare statement — a value is not a pipeline stage.
     expect(() => jsmql("$$$.orders.head();")).toThrow(
       "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = $$$.<coll>.…'), bind it ('let x = $$$.<coll>.…'), or make it the stream ('$$ = $$$.<coll>.…').",
     );
@@ -1244,17 +1244,17 @@ describe("$$ = $$$.<coll>.<streamMethod>… — any lodash method may start the 
     ]);
   });
 
-  it("a non-filter stream head still throws for a value-terminal (single value isn't a stream) in a pivot", () => {
-    // Correlating filter routes to the pivot; a trailing value-terminal can't lower
+  it("a non-filter stream head still throws for a value-terminal (single value is not a stream) in a pivot", () => {
+    // Correlating filter routes to the pivot; a trailing value-terminal cannot lower
     // into a stream — rejected (not silently dropped).
     expect(() => jsmql("$$ = $$$.orders.toSorted({ createdAt: -1 }).filter(o => o.userId === $._id).size();")).toThrow(
       "'.size()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….size()'.",
     );
   });
 
-  it("correlation via a non-filter method only (no correlating .filter) stays a footgun-guarded rejection", () => {
-    // A `.map` reading the outer doc with no filter to bound the foreign set is a
-    // cross-join footgun — kept rejected with the 'correlate with a .filter' guidance.
+  it("keeps correlation through a non-filter method as a pitfall-guarded rejection", () => {
+    // A `.map` that reads the outer document with no filter to bound the foreign set is a
+    // cross-join pitfall. jsmql keeps it rejected, with the 'correlate with a .filter' guidance.
     expect(jsmql("$$ = $$$.orders.map(o => ({ v: $.length }));")).toEqual([
       {
         $lookup: {
@@ -1271,7 +1271,7 @@ describe("$$ = $$$.<coll>.<streamMethod>… — any lodash method may start the 
 
   it("a CORRELATED matches-object filter routes to the pivot (not a query-literal $unionWith)", () => {
     // `.filter({ userId: $._id })` — the shorthand's `$.` correlation must be detected
-    // and correlated via `let`, never emitted as `$match: { userId: "$_id" }` (which in a
+    // and correlated through `let`, never emitted as `$match: { userId: "$_id" }` (which in a
     // query document matches the literal string "$_id"). Verified on a live mongod.
     expect(jsmql("$$ = $$$.orders.filter({ userId: $._id });")).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
@@ -1289,17 +1289,17 @@ describe("$$ = $$$.<coll>.<streamMethod>… — any lodash method may start the 
 
 describe("pipeline — structural stage placement (pre-flight validation)", () => {
   // Must-be-first (literal forms; the sugar forms are covered in system-stages.test.ts).
-  it("rejects a diagnostic source stage that isn't first", () => {
+  it("rejects a diagnostic source stage that is not first", () => {
     expect(() => jsmql("[ $match($.x > 1), { $collStats: {} } ]")).toThrow(
       "'$collStats' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
     );
   });
-  it("rejects $geoNear that isn't first", () => {
+  it("rejects $geoNear that is not first", () => {
     expect(() => jsmql("[ $sort({ x: 1 }), { $geoNear: { near: [0, 0], distanceField: 'd' } } ]")).toThrow(
       "'$geoNear' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
     );
   });
-  it("rejects $changeStream that isn't first (;-form)", () => {
+  it("rejects $changeStream that is not first (;-form)", () => {
     expect(() => jsmql("$match($.x > 1); { $changeStream: {} }")).toThrow(
       "'$changeStream' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
     );
@@ -1313,17 +1313,17 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   });
 
   // Must-be-last (literal forms; the $out sugar form is covered in out.test.ts).
-  it("rejects $merge that isn't last (the headline case)", () => {
+  it("rejects $merge that is not last (the headline case)", () => {
     expect(() => jsmql("[ { $merge: 'archive' }, $sort({ x: 1 }) ]")).toThrow(
       "Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
   });
-  it("rejects $out (literal) that isn't last", () => {
+  it("rejects $out (literal) that is not last", () => {
     expect(() => jsmql("[ { $out: 'c' }, $count('n') ]")).toThrow(
       "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
   });
-  it("rejects $changeStreamSplitLargeEvent that isn't last", () => {
+  it("rejects $changeStreamSplitLargeEvent that is not last", () => {
     expect(() => jsmql("[ { $changeStreamSplitLargeEvent: {} }, $sort({ x: 1 }) ]")).toThrow(
       "Nothing can follow '$changeStreamSplitLargeEvent': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
@@ -1350,12 +1350,12 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   });
 
   // Uniqueness falls out of must-first / must-last.
-  it("rejects two terminal stages (the first isn't last)", () => {
+  it("rejects two terminal stages (the first is not last)", () => {
     expect(() => jsmql("[ { $out: 'a' }, { $merge: 'b' } ]")).toThrow(
       "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
   });
-  it("rejects two source stages (the second isn't first)", () => {
+  it("rejects two source stages (the second is not first)", () => {
     expect(() => jsmql("[ { $collStats: {} }, { $indexStats: {} } ]")).toThrow(
       "'$indexStats' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
     );
@@ -1394,7 +1394,7 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
       ),
     ).toEqual([{ $lookup: { from: "c", as: "r", pipeline: [{ $geoNear: { near: [0, 0], distanceField: "d" } }] } }]);
   });
-  it("rejects $geoNear that isn't first WITHIN a $lookup sub-pipeline", () => {
+  it("rejects $geoNear that is not first WITHIN a $lookup sub-pipeline", () => {
     expect(() =>
       jsmql(
         "[ { $lookup: { from: 'c', as: 'r', pipeline: [ $match($.a > 0), { $geoNear: { near: [0, 0], distanceField: 'd' } } ] } } ]",
@@ -1774,7 +1774,7 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
   }
 
   // The bug that made the spellings observably different rather than merely
-  // unevenly supported: a matches-object value that isn't a constant. The raw-query
+  // unevenly supported: a matches-object value that is not a constant. The raw-query
   // path emitted the aggregation operator into query position, where it is invalid.
   it("a non-constant matcher value lowers to $expr, not an invalid query operator", () => {
     for (const [container, source, expected] of CONTAINERS) {
@@ -1897,9 +1897,9 @@ describe("a lookup inside a literal sub-pipeline array", () => {
 
 describe("jsmql() and jsmql.pipeline() agree on the lookup form", () => {
   // A strict-shape entry rejects input that would lower to the OTHER shape. This input
-  // lowers to a Pipeline, which is the shape `jsmql.pipeline` asks for — but the lookup form
-  // was missing from its reroute list, so the same source compiled through `jsmql()` and
-  // threw through `jsmql.pipeline()`.
+  // lowers to a Pipeline, which is the shape `jsmql.pipeline` asks for, so the lookup form
+  // must stay on its reroute list. The same source then compiles through `jsmql()` and
+  // through `jsmql.pipeline()` alike.
   const SRC = "$.o = $$$.orders.find(o => o.uid === 1)";
   const EXPECTED = [
     { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "o" } },

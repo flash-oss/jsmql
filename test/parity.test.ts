@@ -10,7 +10,7 @@
 // What is NOT contracted: their ORDER. Where a JavaScript or lodash runtime carries an
 // ordering guarantee the developer never wrote, jsmql takes MongoDB's behaviour and the
 // smaller MQL — see SR2 in docs/LANG_RULES.md. `.uniqBy` is the worked example: the value
-// form preserves input order via `$reduce`, the stream form uses `$group` and does not.
+// form preserves input order through `$reduce`, the stream form uses `$group` and does not.
 //
 // Connects to a local mongod and SKIPS ITSELF (green) when none is reachable, matching
 // fold-consistency.test.ts. A coverage floor below keeps a self-skip from hollowing the

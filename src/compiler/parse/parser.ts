@@ -1,19 +1,19 @@
-// Phase 2 — PARSE. Driven by src/registry/productions.ts.
+// Phase 2 — PARSE. This phase reads src/registry/productions.ts.
 //
-// One Pratt loop reads `precedence`, `associativity` and `fixity` off the rows, so
-// adding an operator is a row and never a method.
+// One Pratt loop reads `precedence`, `associativity` and `fixity` off the rows. So
+// adding an operator adds a row, and never adds a method.
 //
-// Three rules a precedence number alone cannot express are enforced here, each
-// stated on the row that owns it:
+// This file enforces three rules that a precedence number alone cannot express.
+// Each rule is stated on the row that owns it:
 //   noMixWith          `a ?? b || c` is a JavaScript SyntaxError on either side
 //   leftOperandNot     `-a ** 2` is one on the LEFT only; `2 ** -1` is not
 //   associativity none `a < b < c` does not chain
 //
-// The parser is NAME-BLIND. It never compares an identifier to a set: `Math`,
-// `String` and a lambda parameter are all `Ident`, and which one it is comes from
-// names.ts in a later phase. See src/registry/ast.ts. The one registry read it
-// makes about a NAME is `blockBodyOf`, because whether a `{ … }` callback body is
-// JavaScript or pipeline stages is decided by the callee, and only the parser
+// The parser is NAME-BLIND. It never compares an identifier to a set. `Math`,
+// `String` and a lambda parameter are all `Ident`, and a later phase decides which
+// one it is, in names.ts. See src/registry/ast.ts. The one registry fact the
+// parser reads about a NAME is `blockBodyOf`, because the callee decides whether a
+// `{ … }` callback body is JavaScript or pipeline stages, and only the parser
 // holds both the callee and the body at the same time.
 
 import type {
@@ -56,15 +56,18 @@ import {
   WORDS,
 } from "./tables.ts";
 
-/** How a message names a production: its spelling, never its key. */
+/** How a message names a production: by its spelling, never by its key. */
 const spelled = (rule: ProductionKey | null): string => (rule === null ? "" : (SPELLING.get(rule) ?? rule));
 
 /** A `0x` lexeme of exactly this many digits is an ObjectId, not an integer. */
 const OBJECT_ID_DIGITS = 24;
 
-type Parsed = { expr: Expr; /** The rule that produced it, for the mixing rules. */ rule: ProductionKey | null };
+type Parsed = {
+  expr: Expr;
+  /** The rule that produced this node. The mixing rules need it. */ rule: ProductionKey | null;
+};
 
-/** "Unexpected token 'x'", or "Unexpected end of input" when the token is the end. */
+/** "Unexpected token 'x'", or "Unexpected end of input" when the token is the end token. */
 const unexpected = (t: { type: string }): string =>
   t.type === "EOF" ? "Unexpected end of input" : `Unexpected token ${found(t as never)}`;
 
@@ -83,13 +86,14 @@ export function parse(source: string): Program {
 /**
  * The ENTRY form: `(params, { $, … }) => <body>`.
  *
- * Two destructures at most. The one whose keys are `$`-prefixed is the toolbox —
- * it binds compiler services and is discarded once the body is parsed; the one
- * with bare keys binds query parameters. Which is which comes from the KEYS, not
- * from the position, so the "toolbox before params" mistake is caught by name.
+ * This form allows at most two destructures. The one with `$`-prefixed keys is
+ * the toolbox. It binds compiler services, and the parser discards it once the
+ * body is parsed. The one with bare keys binds query parameters. The KEYS decide
+ * which is which, not the position, so the parser catches a "toolbox before
+ * params" mistake by name.
  *
  * `destructuringParam` in productions.ts says `notANode` for a reason: the
- * bindings are held BESIDE the tree, never in it.
+ * bindings sit BESIDE the tree, never inside it.
  */
 export type EntryForm = { params: readonly ParamBinding[]; toolbox: readonly ParamBinding[]; program: Program };
 
@@ -100,7 +104,7 @@ export function parseEntry(source: string): EntryForm {
   return entry;
 }
 
-/** Exposed for the tests and for phases that already hold tokens. */
+/** This is exposed for the tests, and for phases that already hold tokens. */
 export function parseExpression(source: string): Expr {
   const p = new Parser(lex(source));
   const e = p.expression();
@@ -110,15 +114,16 @@ export function parseExpression(source: string): Expr {
 }
 
 /**
- * The wording a block body with no `return` gets when its callee does not take
- * pipeline stages — every method but the one whose row says `blockBody: "stages"`.
+ * The wording for a block body with no `return`, when its callee does not take
+ * pipeline stages. This covers every method except the one whose row says
+ * `blockBody: "stages"`.
  */
 const needsReturn = (pos: number, got: string): string =>
   `A block body must end with a \`return <expr>\` statement at position ${pos}, got ${got}. Write \`x => { const a = …; return <expr>; }\` / ` +
   "`function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly";
 
 /** How a message spells a statement that stands where a callback's declarations go. */
-/** A statement that IS a pipeline statement — a stage call, a bare call such as `assert(…)`, a write, a function declaration — as opposed to a stray expression (`d.v;`). */
+/** A statement that IS a pipeline statement: a stage call, a bare call such as `assert(…)`, a write, or a function declaration. This excludes a stray expression (`d.v;`). */
 function isStageStmt(stmt: PipelineStmt): boolean {
   const s = stmt as { type: string };
   return s.type === "OperatorCall" || s.type === "UpdateFilter" || s.type === "CallExpression" || s.type === "FuncDecl";
@@ -137,7 +142,7 @@ function statementSpelling(stmt: PipelineStmt): string {
     case "OperatorCall":
       return `${s.name}(...)`;
     case "FuncDecl":
-      // Two spellings, one node: a developer cannot find `function g(` in a program that says `const g = `.
+      // One node has two spellings. A developer cannot find `function g(` in a program that says `const g = `.
       return s.form === "function" ? `function ${s.name}(…) { … }` : `${s.kind} ${s.name} = (…) => …`;
     case "UpdateFilter": {
       const op = s.ops?.[0];
@@ -152,9 +157,9 @@ function statementSpelling(stmt: PipelineStmt): string {
 }
 
 /**
- * A pipeline statement found inside a callback's `{ … }`. `retPos` is where the
- * block's `return` sits, or null when the block has none: the two cases have
- * different ways out, and a declaration has a third.
+ * A pipeline statement found inside a callback's `{ … }`. `retPos` gives the
+ * position of the block's `return`, or is null when the block has none. The two
+ * cases have different ways out, and a declaration has a third way out.
  */
 function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   const wrote = statementSpelling(stmt);
@@ -162,8 +167,8 @@ function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
     return `\`${wrote}\` declares a reusable function, and a reusable function is declared at the top level of a pipeline, not inside a callback. Write \`${wrote};\` as its own statement before this one, then call '${stmt.name}(…)' inside the callback.`;
   }
   // '.aggregate' is the one method whose block IS a list of stages, so every way
-  // out names it. Deleting the 'return' alone leaves the same block on the same
-  // method, which is refused again — the stages have to MOVE.
+  // out names it. Deleting only the 'return' leaves the same block on the same
+  // method, and the parser refuses it again. The stages must MOVE.
   const stages = `'.aggregate((o) => { ${wrote}; … })'`;
   const link = stmt.type === "OperatorCall" ? `'$$.$${(stmt as { name: string }).name.replace(/^\$/, "")}(…)'` : null;
   const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
@@ -173,7 +178,7 @@ function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   return `\`${wrote}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to ${stages}, the one method whose block is a list of stages.${chain}`;
 }
 
-/** `$.a.b` for a field target; the bare name otherwise. */
+/** `$.a.b` for a field target, or the bare name otherwise. */
 function targetSpelling(target: Expr): string {
   if (target.type === "FieldRef") return target.path === "" ? "$" : `$.${target.path}`;
   if (target.type === "Ident") return target.name;
@@ -181,16 +186,17 @@ function targetSpelling(target: Expr): string {
   return "…";
 }
 
-/** What one `{ … }` block held: statements, an optional `return`, and whether a `;` ended a statement. */
+/** What one `{ … }` block held: its statements, an optional `return`, and whether a `;` ended a statement. */
 type Block = { stmts: PipelineStmt[]; ret: Expr | null; retPos: number; sawSemi: boolean; endPos: number };
 
-/** One name a destructuring pattern binds: the element's part it reads (`key` — an index or a field), and where it was written. */
+/** One name that a destructuring pattern binds: the element part it reads (`key`, an index or a field), and where the developer wrote it. */
 type PatternPart = { readonly key: string; readonly name: string; readonly pos: number };
 
 /**
- * A parameter as written. A plain name, or a pattern of plain names — an array
- * pattern's elisions are null. `refused` is a pattern jsmql does not take,
- * with the error to throw once an arrow follows; null is not a parameter at all.
+ * A parameter as written: a plain name, or a pattern of plain names. An array
+ * pattern's elisions are null. `refused` is a pattern that JSMQL does not accept,
+ * paired with the error to throw once an arrow follows. `null` means this is not
+ * a parameter at all.
  */
 type ParamRead =
   | { readonly kind: "name"; readonly name: string }
@@ -199,7 +205,7 @@ type ParamRead =
   | { readonly kind: "refused"; readonly error: ParseError }
   | null;
 
-/** A destructured parameter that is not a pattern of plain names — a default, a rest element, a nested pattern, a computed key. */
+/** A destructured parameter that is not a pattern of plain names: a default, a rest element, a nested pattern, or a computed key. */
 function notAPlainPattern(pos: number, wrote?: string): ParseError {
   const got = wrote === undefined ? "" : ` ('${wrote}')`;
   return new ParseError(
@@ -211,12 +217,12 @@ function notAPlainPattern(pos: number, wrote?: string): ParseError {
 class Parser {
   private readonly c: Cursor;
   /**
-   * Every lambda whose `{ … }` body had no `return` and so was read as pipeline
-   * STAGES, minus the ones a stages-taking callee has claimed. Whatever is left
-   * when the parse ends is a JavaScript block that forgot its `return`, and is
-   * refused with the callee-independent wording. Kept as a set rather than a
-   * flag threaded through every expression method, because the body is built
-   * many calls below the callee that decides what it means.
+   * Every lambda whose `{ … }` body had no `return`, and so the parser read it as
+   * pipeline STAGES, minus the ones a stages-taking callee has claimed. Whatever
+   * is left when the parse ends is a JavaScript block that forgot its `return`,
+   * and the parser refuses it with the callee-independent wording. This is a set,
+   * not a flag threaded through every expression method, because the parser
+   * builds the body many calls below the callee that decides what it means.
    */
   private readonly unclaimedStages = new Map<Lambda, number>();
 
@@ -230,13 +236,13 @@ class Parser {
     }
   }
 
-  /** The checks that need the WHOLE tree: run once, after the entry method returns. */
+  /** The checks that need the WHOLE tree. This runs once, after the entry method returns. */
   finish(): void {
     const first = this.unclaimedStages.entries().next();
     if (first.done) return;
     const [lambda, endPos] = first.value;
-    // A block whose statement is a STAGE is not a block that forgot its `return`:
-    // the developer wrote a pipeline where a callback goes, and the message says
+    // A block whose statement is a STAGE is not a block that forgot its `return`.
+    // The developer wrote a pipeline where a callback goes, and the message says
     // where the pipeline belongs.
     const stmt = lambda.stages?.stmts.find((st) => st.type !== "LetDecl");
     if (stmt !== undefined && isStageStmt(stmt)) {
@@ -248,7 +254,7 @@ class Parser {
   // ── the entry form ────────────────────────────────────────────────────────
 
   entry(): EntryForm {
-    // `function [name](…) { … }` is the second spelling of the entry arrow; the name is unreachable inside and dropped.
+    // `function [name](…) { … }` is the second spelling of the entry arrow. The parser cannot reach the name inside, and drops it.
     const isFunction = this.c.is("Ident") && this.c.peek().text === "function";
     if (isFunction) {
       this.c.next();
@@ -285,8 +291,8 @@ class Parser {
     const toolbox = slots.find(isToolbox) ?? [];
     const params = slots.find((sl) => sl !== toolbox && isParams(sl)) ?? [];
     if (!isFunction) this.c.expect("Arrow");
-    // The body is a whole program: an expression, or `{ … }` holding statements.
-    // A `function` body is always the block.
+    // The body is a whole program: an expression, or `{ … }` that holds statements.
+    // A `function` body is always the block form.
     const program = this.c.is("LBrace") ? this.entryBlock() : this.program();
     return { params, toolbox, program };
   }
@@ -307,7 +313,7 @@ class Parser {
         if (this.c.is("RBrace")) break;
         const key = this.destructureKey();
         const name = this.c.eat("Colon") ? this.identLike().text : key.text;
-        // `{ a = 1 }`: the only way a value reaches a compiled query is the params object at call time.
+        // `{ a = 1 }`: a value reaches a compiled query only through the params object, at call time.
         if (this.c.is("Eq")) {
           throw new ParseError(
             `A default value in the params destructure is not supported ('${key.text} = …'). Apply the default where the query is called, with JS's \`??\` at the call site — q({ ${key.text}: input ?? <default> }) — or write the value into the template-tag form.`,
@@ -323,15 +329,15 @@ class Parser {
   }
 
   /**
-   * A destructure key: a bare name, or one of the `$` family. `$name` is an
-   * operator handle, and the bare `$`, `$$`, `$$$`, `$$$$` are the context refs —
-   * each a distinct token, so each is matched on its own rather than by spelling.
+   * A destructure key: a bare name, or one member of the `$` family. `$name` is an
+   * operator handle, and the bare `$`, `$$`, `$$$`, `$$$$` are the context refs.
+   * Each is its own token, so the parser matches each on its own, not by spelling.
    */
   private destructureKey(): Token {
     const t = this.c.peek();
     if (t.type === "Dollar") {
       this.c.next();
-      // `$abs` is one key; a lone `$` is the document handle.
+      // `$abs` is one key. A lone `$` is the document handle.
       return this.c.is("Ident") ? this.dollarName(t) : t;
     }
     if (t.type === "DoubleDollar" || t.type === "TripleDollar" || t.type === "QuadDollar") {
@@ -342,17 +348,18 @@ class Parser {
   }
 
   /**
-   * `$` followed by a name, joined into one `$name` token. Asked in four places —
-   * a destructure key, the operator escape hatch, a chained stage link and a raw
-   * MQL key — so it is one method: four copies of "read the name after `$`" had
-   * two different rules about which names count.
+   * `$` followed by a name, joined into one `$name` token. Four places ask for
+   * this: a destructure key, the operator escape hatch, a chained stage link and a
+   * raw MQL key. This is one method, because four copies of "read the name after
+   * `$`" once used two different rules about which names count.
    *
-   * The `$` has already been consumed. The lexer reads the word after a `$` as a
-   * plain `Ident` whatever it spells (`$in`, `$let`), so no keyword case exists here.
+   * The `$` is already consumed at this point. The lexer reads the word after a
+   * `$` as a plain `Ident` whatever it spells (`$in`, `$let`), so no keyword case
+   * exists here.
    */
   private dollarName(dollar: Token): Token {
     const name = this.c.expect("Ident");
-    // `$ abs(1)` is not JavaScript: the sigil and its name are one identifier.
+    // `$ abs(1)` is not JavaScript. The sigil and its name form one identifier.
     if (name.pos !== dollar.end) {
       throw new ParseError(`Expected a name directly after '$', with no space — write '$${name.text}'`, name.pos);
     }
@@ -364,8 +371,8 @@ class Parser {
     this.c.expect("LBrace");
     const { stmts, ret, retPos, sawSemi } = this.block("RBrace");
     if (ret !== null) {
-      // A `return` in an entry block yields the expression itself, so a bare
-      // predicate stays a predicate and the position phase reads it as a Filter.
+      // A `return` in an entry block yields the expression itself. So a bare
+      // predicate stays a predicate, and the position phase reads it as a Filter.
       if (stmts.length > 0) {
         throw new ParseError("A 'return' here isn't a jsmql statement — put the whole predicate in the return", retPos);
       }
@@ -383,15 +390,15 @@ class Parser {
 
   /**
    * A lone statement stands on its own, so the shape phase can read it as a
-   * Filter. A lone declaration cannot — nothing would read it — and neither can
-   * a statement the source ENDED with a `;`, because that `;` is the token that
-   * says pipeline. Collapsing it threw the distinction away:
+   * Filter. A lone declaration cannot, because nothing would read it. Nor can a
+   * statement that the source ENDED with a `;`, because that `;` is the token
+   * that says pipeline. Collapsing it away lost the distinction:
    *   Object.assign($.a, $.b)    a value, and a Filter
    *   Object.assign($.a, $.b);   a write, and a Pipeline
-   * parsed to the same tree, and nothing downstream could tell them apart.
+   * both parsed to the same tree, and nothing downstream could tell them apart.
    *
-   * ONE rule for the top level and the entry block, so `({ $ }) => { X }` means
-   * exactly what `X` means, `;` included.
+   * This is ONE rule for the top level and the entry block. So `({ $ }) => { X }`
+   * means exactly what `X` means, `;` included.
    */
   private collapse(stmts: PipelineStmt[], sawSemi: boolean): Program {
     if (stmts.length === 1 && !sawSemi) {
@@ -402,19 +409,19 @@ class Parser {
   }
 
   /**
-   * THE statement loop, up to `terminator`. One loop for the three places that
-   * hold statements — the top level, an entry block and a callback block — so a
-   * separator rule cannot be added to one and forgotten in the others.
+   * THE statement loop, up to `terminator`. This is one loop for the three places
+   * that hold statements: the top level, an entry block and a callback block. So
+   * a new separator rule cannot land on one and stay forgotten in the others.
    *
-   * A `return` may only appear where a `}` closes the block; at the top level it
-   * reaches `statement()` and is refused as an unexpected token.
+   * A `return` may appear only where a `}` closes the block. At the top level it
+   * reaches `statement()`, and the parser refuses it as an unexpected token.
    */
   private block(terminator: "RBrace" | "EOF"): Block {
     const stmts: PipelineStmt[] = [];
     let sawSemi = false;
     let endPos = this.c.peek().pos;
     for (;;) {
-      // An empty statement is not an error, and a `;` anywhere — leading included —
+      // An empty statement is not an error. A `;` anywhere, a leading one included,
       // is the token that says pipeline.
       while (this.c.eat("Semi")) sawSemi = true;
       if (this.c.is(terminator)) {
@@ -434,14 +441,14 @@ class Parser {
       // A declaration list is one statement per declarator, so a run comes back.
       const run = this.statement();
       const st = run[0];
-      // `x => { k: x }` — JavaScript reads `k:` as a label; the developer meant an
-      // object. Say so, with the spelling that returns one.
+      // `x => { k: x }`: JavaScript reads `k:` as a label, but the developer meant
+      // an object. The message says so, with the spelling that returns one.
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
       stmts.push(...run);
-      // `function f(x) { … }` ends with its closing brace, so the separator is
-      // optional after it — the same rule JavaScript uses.
+      // `function f(x) { … }` ends with its closing brace, so the separator after
+      // it is optional. This is the same rule that JavaScript uses.
       const blockBodied = st.type === "FuncDecl" && st.form === "function";
       if (this.c.is("Semi")) sawSemi = true;
       if (!this.c.eat("Semi") && !this.c.is(terminator) && !blockBodied) {
@@ -452,8 +459,9 @@ class Parser {
   }
 
   /**
-   * One statement — or the RUN of them a declaration list stands for, since
-   * `const a = …, b = …;` is N declarations in JavaScript and N here too.
+   * One statement, or the RUN of statements that a declaration list stands for.
+   * `const a = …, b = …;` is N declarations in JavaScript, and N declarations here
+   * too.
    */
   private statement(): PipelineStmt[] {
     if (this.c.is("Let") || this.c.is("Const")) return this.bindings();
@@ -469,9 +477,9 @@ class Parser {
   }
 
   /**
-   * `function*` — a generator. MQL evaluates an expression; it has no way to suspend
-   * one, so the star has no meaning here and the plain forms do. Refused where the
-   * star sits, rather than as a stray token the parser trips over.
+   * `function*` marks a generator. MQL evaluates an expression, and has no way to
+   * suspend one, so the star has no meaning here, though the plain forms do. The
+   * parser refuses it where the star sits, not as a stray token that trips it up.
    */
   private refuseGenerator(): void {
     if (!this.c.is("Star")) return;
@@ -482,9 +490,9 @@ class Parser {
   }
 
   /**
-   * `async function` — a promise. MQL evaluates an expression and has nothing to
-   * await, so the word has no meaning here. Refused where it sits, beside the
-   * generator refusal, rather than as a stray token further along.
+   * `async function` marks a promise. MQL evaluates an expression and has nothing
+   * to await, so the word has no meaning here. The parser refuses it where it
+   * sits, beside the generator refusal, not as a stray token further along.
    */
   private refuseAsync(): void {
     const t = this.c.peek();
@@ -496,7 +504,7 @@ class Parser {
     );
   }
 
-  /** `function name(params) { … }` — the same node the arrow spelling builds. */
+  /** `function name(params) { … }` builds the same node that the arrow spelling builds. */
   private functionDecl(): FuncDecl {
     const kw = this.c.next();
     this.refuseGenerator();
@@ -506,7 +514,7 @@ class Parser {
     return { type: "FuncDecl", name: name.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
 
-  /** `(a, [b, c], { d },)` — a parenthesised parameter list, names and patterns like the arrow's, trailing comma allowed. */
+  /** `(a, [b, c], { d },)`: a parenthesised parameter list. Names and patterns match the arrow's, and a trailing comma is allowed. */
   private paramList(): ParamRead[] {
     this.c.expect("LParen");
     const out: ParamRead[] = [];
@@ -523,8 +531,9 @@ class Parser {
   }
 
   /**
-   * `function (x) { … }` or `function name(x) { … }` in a VALUE slot. Both are
-   * the same Lambda the arrow spelling builds; the name, if written, is not used.
+   * `function (x) { … }` or `function name(x) { … }` in a VALUE slot. Both build
+   * the same Lambda that the arrow spelling builds. The parser ignores the name,
+   * if the developer wrote one.
    */
   private functionExpr(): Lambda {
     const kw = this.c.next();
@@ -535,11 +544,11 @@ class Parser {
   }
 
   /**
-   * `let x = …, y = …` / `const x = …, y = …` — JavaScript's declaration list,
+   * `let x = …, y = …` / `const x = …, y = …`: JavaScript's declaration list,
    * wherever `;` separates statements. Each declarator becomes its own
-   * declaration and reads the ones before it. The KEYWORD's offset marks them as
-   * ONE declaration, which is what lets the emit phase give them one stage — and
-   * what stops a folded-away neighbour from bridging a `;` the developer wrote.
+   * declaration, and reads the ones before it. The KEYWORD's offset marks them as
+   * ONE declaration. This lets the emit phase give them one stage, and stops a
+   * folded-away neighbour from bridging a `;` that the developer wrote.
    * See docs/specs/let-bindings.md.
    */
   private bindings(): (LetDecl | FuncDecl)[] {
@@ -550,22 +559,22 @@ class Parser {
     return out;
   }
 
-  /** `let x = …` / `const x = …`, one declarator — a bracketed pipeline's element, where `,` separates elements. */
+  /** `let x = …` / `const x = …`, one declarator: a bracketed pipeline's element, where `,` separates elements. */
   private binding(): LetDecl | FuncDecl {
     const kw = this.c.next();
     return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
   }
 
   /**
-   * One declarator, after the keyword. `kwPos` positions the FIRST one at the
-   * keyword and every later one at its own name, so an error underlines the
-   * declarator it is about. A function body makes it a FuncDecl.
+   * One declarator, after the keyword. `kwPos` places the FIRST declarator at the
+   * keyword, and every later declarator at its own name. So an error underlines
+   * the declarator it is about. A function body makes this a FuncDecl.
    */
   private declarator(kind: "let" | "const", kwPos: number | null, group: number): LetDecl | FuncDecl {
     const name = this.c.expect("Ident");
     const pos = kwPos ?? name.pos;
-    // `let a;` / `let a, b;` — a binding is a value, and MQL has no undefined to
-    // hold the place of one. Refused where the initialiser belongs.
+    // `let a;` / `let a, b;`: a binding is a value, and MQL has no undefined to
+    // hold the place of one. The parser refuses this where the initialiser belongs.
     if (!this.c.is("Eq")) {
       throw new ParseError(
         `'${kind} ${name.text}' binds no value at position ${pos}. jsmql has no 'undefined' to bind — write '${kind} ${name.text} = <expr>'.`,
@@ -583,15 +592,15 @@ class Parser {
   // ── writes ────────────────────────────────────────────────────────────────
   //
   // Whether the source is a write is a question about the LEXEMES ahead, not
-  // about meaning, so it is answered by lookahead over the triggers the rows
-  // state: `STATEMENT_PREFIX` opens one (`delete`, `++`, `--`) and
+  // about meaning. So the parser answers it by lookahead over the triggers that
+  // the rows state: `STATEMENT_PREFIX` opens one (`delete`, `++`, `--`), and
   // `ASSIGN_TRIGGERS` follows an expression to make one (`=`, `+=`, …).
 
-  /** `($.a = 1)` — a write inside parentheses, which `writeGroup()` handles. */
+  /** `($.a = 1)`: a write inside parentheses, which `writeGroup()` handles. */
   private parenWriteAhead(): boolean {
     const save = this.c.mark();
     try {
-      // `(($.a = 1), ($.b = 2))` — every opening parenthesis is skipped before the look.
+      // `(($.a = 1), ($.b = 2))`: the parser skips every opening parenthesis before the look.
       while (this.c.is("LParen")) this.c.next();
       return STATEMENT_PREFIX.has(this.c.type) || this.startsAWrite();
     } finally {
@@ -600,25 +609,26 @@ class Parser {
   }
 
   /**
-   * A write starts here. Asked in three places — a `;` statement, an array
-   * element, and after a `,` inside brackets — so it is one predicate: three
-   * copies of the condition is how the array form came to miss the `(`-wrapped
-   * spelling the other two accepted.
+   * A write starts here. Three places ask this: a `;` statement, an array
+   * element, and after a `,` inside brackets. So this is one predicate. Three
+   * copies of the condition once let the array form miss the `(`-wrapped
+   * spelling that the other two accepted.
    */
   private writeAhead(): boolean {
     if (STATEMENT_PREFIX.has(this.c.type)) return true;
-    // `($.a = 1)` is a write inside the parentheses; `($.a) = 1` is a write whose
-    // TARGET is parenthesised — legal JavaScript, and a different lookahead.
+    // `($.a = 1)` is a write inside the parentheses. `($.a) = 1` is a write whose
+    // TARGET is parenthesised: legal JavaScript, and a different lookahead.
     if (this.c.is("LParen")) return this.parenWriteAhead() || this.startsAWrite();
     return this.startsAWrite();
   }
 
   /**
-   * Does the expression that starts here end in an assignment? A SCAN of the tokens
-   * to the end of the expression — the first `,` / `;` / closing bracket at depth
-   * zero — for an assignment operator at depth zero. A scan, not a speculative
-   * parse: parsing here doubled the work at every nesting level (exponential on
-   * `[[[…]]]`) and swallowed every error the speculation raised.
+   * Does the expression that starts here end in an assignment? This is a SCAN of
+   * the tokens to the end of the expression, the first `,` / `;` / closing
+   * bracket at depth zero, that looks for an assignment operator at depth zero.
+   * It is a scan, not a speculative parse. A speculative parse here doubled the
+   * work at every nesting level, exponential on `[[[…]]]`, and swallowed every
+   * error that the speculation raised.
    */
   private startsAWrite(): boolean {
     const save = this.c.mark();
@@ -643,11 +653,11 @@ class Parser {
   }
 
   /**
-   * ONE write, or a parenthesised group of them.
+   * ONE write, or a parenthesised group of writes.
    *
-   * A formatter writes `($.a = 1, $.b = 2)`, and inside the parentheses a `,`
-   * always continues the group because the `)` is what ends it. Outside them the
-   * `,` means different things in the two callers below, which is the whole
+   * A formatter writes `($.a = 1, $.b = 2)`. Inside the parentheses, a `,`
+   * always continues the group, because the `)` is what ends it. Outside them,
+   * the `,` means different things to the two callers below. That is the whole
    * reason this is a separate method.
    */
   private writeGroup(): UpdateOp[] {
@@ -663,24 +673,24 @@ class Parser {
     if (this.c.is("Delete")) {
       const kw = this.c.next();
       const target = this.pratt(1);
-      // `delete a?.b` is legal JavaScript, unlike `a?.b = 1` — so only the
+      // `delete a?.b` is legal JavaScript, unlike `a?.b = 1`. So only the
       // "is it a place at all" half of the check applies here.
       this.requirePlace(target, kw.pos, "delete");
       return [{ type: "DeleteStmt", target: target.expr, pos: kw.pos }];
     }
-    // `++$.a` and `$.a++` mean the same write; the row says `prefixOrPostfix`.
+    // `++$.a` and `$.a++` mean the same write. The row says `prefixOrPostfix`.
     const prefix = this.c.is("PlusPlus") || this.c.is("MinusMinus") ? this.c.next() : null;
     const target = this.pratt(1);
     const op = prefix ?? this.c.next();
     if (!ASSIGN_TRIGGERS.has(op.type)) {
       throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
     }
-    // The token's own text IS the spelling — `=`, `+=`, `++` — so no table maps
+    // The token's own text IS the spelling: `=`, `+=`, `++`. So no table maps
     // a token type back to the operator it was lexed from.
     const spelling = op.text as AssignOp;
     this.requireWriteTarget(target, op.pos, spelling);
-    // `$.a = $.b = 1` — every target in the chain takes the SAME value, so the
-    // chain is one write per target and not a nested assignment expression.
+    // `$.a = $.b = 1`: every target in the chain takes the SAME value. So the
+    // chain is one write per target, not a nested assignment expression.
     if (spelling === "=") {
       const targets = [target.expr];
       let value = this.pratt(1);
@@ -702,7 +712,7 @@ class Parser {
     const ops: UpdateOp[] = [];
     do {
       ops.push(...this.writeGroup());
-      // `}` ends the run as surely as `;` does: a callback block is a statement
+      // `}` ends the run as surely as `;` does. A callback block is a statement
       // list too, and a formatter puts a trailing comma before its brace.
     } while (this.c.eat("Comma") && !this.c.is("EOF") && !this.c.is("Semi") && !this.c.is("RBrace"));
     return { type: "UpdateFilter", ops, pos };
@@ -737,8 +747,8 @@ class Parser {
 
   /**
    * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
-   * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not — JavaScript
-   * refuses them, and so does JSMQL.
+   * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not places.
+   * JavaScript refuses them, and so does JSMQL.
    */
   private requirePlace(target: Parsed, pos: number, op: string): void {
     const t = target.expr.type;
@@ -751,9 +761,9 @@ class Parser {
       t === "DatabaseRef" ||
       t === "ClusterRef";
     if (isPlace) return;
-    // A method call is spelled by the CALL the source wrote, not by the rule that built its receiver:
+    // A method call is spelled by the CALL that the source wrote, not by the rule that built its receiver.
     // `$.s.trim()` is a `MethodCall` node whose rule is `.field`, and "a '.field' expression" is a form
-    // the reader never typed.
+    // that the reader never typed.
     if (target.expr.type === "MethodCall") {
       const call = `.${target.expr.wrote ?? target.expr.name}()`;
       throw new ParseError(
@@ -770,10 +780,10 @@ class Parser {
 
   /**
    * A write target must be a place, and the rule that built it must allow a
-   * write. `a?.b = 1` is a JavaScript SyntaxError — wherever the `?.` sits in the
-   * chain — and the `optionalMemberAccess` row states it with `neverAWriteTarget`;
-   * this reads the row rather than testing `.optional`, so the next rule to say
-   * so needs no branch here.
+   * write. `a?.b = 1` is a JavaScript SyntaxError, wherever the `?.` sits in the
+   * chain, and the `optionalMemberAccess` row states this with `neverAWriteTarget`.
+   * This method reads the row rather than testing `.optional`. So the next rule
+   * that says so needs no branch here.
    */
   private requireWriteTarget(target: Parsed, pos: number, op: string): void {
     this.requirePlace(target, pos, op);
@@ -785,7 +795,7 @@ class Parser {
 
   // ── expressions: one Pratt loop ───────────────────────────────────────────
 
-  /** Nesting deeper than this is refused before the call stack is — a hostile input, not a query. */
+  /** The parser refuses nesting deeper than this, before the call stack does. This marks a hostile input, not a query. */
   private static readonly MAX_DEPTH = 200;
   private depth = 0;
 
@@ -809,11 +819,11 @@ class Parser {
     for (;;) {
       const rule = INFIX.get(this.c.type);
       // A level of 0 means the row declares no precedence, so it never binds
-      // inside an expression — `$.b++` in a value slot is a parse error, not a
+      // inside an expression. `$.b++` in a value slot is a parse error, not a
       // silently-accepted increment.
       if (rule === undefined || rule.prec === 0 || rule.prec < minPrec) return left;
 
-      // JavaScript forbids the pair outright, at any precedence.
+      // JavaScript forbids the pair outright, at any precedence level.
       if (mixingRefused(rule, left.rule, "left")) {
         throw new ParseError(
           `'${this.c.peek().text}' cannot be combined with '${spelled(left.rule)}' without parentheses — JavaScript rejects it`,
@@ -839,7 +849,7 @@ class Parser {
         continue;
       }
 
-      // `none` means NOT chainable: `a < b < c` is refused rather than grouped.
+      // `none` means NOT chainable. The parser refuses `a < b < c` rather than grouping it.
       if (rule.assoc === "none") {
         const right = this.pratt(rule.prec + 1);
         const next = INFIX.get(this.c.type);
@@ -865,13 +875,13 @@ class Parser {
     }
   }
 
-  /** Prefix operators, then an atom, then its postfix chain. */
+  /** Reads prefix operators, then an atom, then its postfix chain. */
   private unary(): Parsed {
     const rule = PREFIX.get(this.c.type);
     if (rule !== undefined && rule.prec > 0) {
       const op = this.c.next();
       const argument = this.pratt(rule.prec);
-      // A prefix operator's operand stands to its RIGHT.
+      // A prefix operator's operand stands on its RIGHT side.
       if (mixingRefused(rule, argument.rule, "right")) {
         throw new ParseError(
           `'${op.text}' cannot be combined with '${spelled(argument.rule)}' without parentheses — JavaScript rejects it`,
@@ -887,14 +897,14 @@ class Parser {
     return this.postfix(this.atom());
   }
 
-  /** Every `.`, `?.`, `[`, `(` that follows an atom, at the tightest level. */
+  /** Reads every `.`, `?.`, `[`, `(` that follows an atom, at the tightest level. */
   private postfix(target: Expr): Parsed {
     let out: Parsed = { expr: target, rule: null };
     for (;;) {
       const rule = INFIX.get(this.c.type);
       if (rule === undefined || rule.prec !== MAX_PRECEDENCE || rule.fixity !== "postfix") return out;
-      // Once a `?.` appears the whole chain is an OPTIONAL CHAIN in JavaScript, so
-      // the rule it reports stays through every later link: `a?.b.c = 1` is as
+      // Once a `?.` appears, the whole chain is an OPTIONAL CHAIN in JavaScript. So
+      // the reported rule stays through every later link: `a?.b.c = 1` is as
       // much a SyntaxError as `a?.b = 1`.
       const next = this.tail(out.expr, this.c.next());
       out = out.rule === "optionalMemberAccess" ? { expr: next.expr, rule: out.rule } : next;
@@ -902,9 +912,9 @@ class Parser {
   }
 
   /**
-   * One postfix step. Which node it builds is lookahead, never a name — and the
+   * One postfix step. Lookahead decides which node it builds, never a name. The
    * rule it reports is the one that DISTINGUISHES the step (`optionalMemberAccess`
-   * for `?.`), so a write can ask whether its target may be one.
+   * for `?.`). So a write can ask whether its target may be one.
    */
   private tail(object: Expr, op: Token): Parsed {
     if (op.type === "LParen") {
@@ -918,14 +928,14 @@ class Parser {
     }
     const optional = op.type === "QuestDot";
     const rule = optional ? "optionalMemberAccess" : "memberAccess";
-    // `?.[` is an optional index, `?.(` an optional call.
+    // `?.[` marks an optional index. `?.(` marks an optional call.
     if (optional && this.c.is("LBracket")) {
       this.c.next();
       const index = this.expression();
       this.c.expect("RBracket");
       return { expr: { type: "IndexAccess", object, index, optional: true, pos: op.pos }, rule };
     }
-    // A stage link spells its name with a leading `$`: `$$.$match(…)`.
+    // A stage link's name has a leading `$`: `$$.$match(…)`.
     const dollar = this.c.is("Dollar") ? this.c.next() : null;
     const name = dollar === null ? this.identLike() : this.dollarName(dollar);
     if (this.c.is("LParen")) {
@@ -937,9 +947,9 @@ class Parser {
   }
 
   /**
-   * A name, or a reserved word used as one. Every keyword qualifies where a
-   * name is expected — `{ null: 1 }`, `$let({ in: … })` — because JavaScript
-   * allows any IdentifierName there and a field may be named anything.
+   * A name, or a reserved word used as one. Every keyword qualifies in a place
+   * that expects a name, such as `{ null: 1 }` or `$let({ in: … })`, because
+   * JavaScript allows any IdentifierName there, and a field can be named anything.
    */
   private identLike(): Token {
     const t = this.c.peek();
@@ -948,11 +958,11 @@ class Parser {
   }
 
   /**
-   * A call's arguments. `owner` is the name being called, or null for a callee
-   * that is not a name (`f(…)`, `new X(…)`, `$op(…)`). A `{ … }` callback body
-   * without a `return` is pipeline STAGES only under an owner whose row says
-   * `blockBody: "stages"`; every other owner's block is JavaScript and needs its
-   * `return`. The claim is recorded here, and `finish()` refuses what nobody claimed.
+   * A call's arguments. `owner` is the name that the source calls, or null for a
+   * callee that is not a name (`f(…)`, `new X(…)`, `$op(…)`). A `{ … }` callback
+   * body with no `return` is pipeline STAGES only under an owner whose row says
+   * `blockBody: "stages"`. Every other owner's block is JavaScript, and needs its
+   * `return`. This method records the claim, and `finish()` refuses what nobody claimed.
    */
   private args(close: "RParen" | "RBracket", owner: string | null): CallArg[] {
     const out: CallArg[] = [];
@@ -970,7 +980,7 @@ class Parser {
       }
       const arg = this.expression();
       // A callee that takes stages claims the block. An UNKNOWN callee (a typo) leaves it
-      // unclaimed but unrefused: the emit phase names the nearest method, which is the mistake.
+      // unclaimed but unrefused. The emit phase then names the nearest method, which is the mistake.
       if (
         arg.type === "Lambda" &&
         arg.stages !== undefined &&
@@ -1047,10 +1057,11 @@ class Parser {
   }
 
   /**
-   * `0x` with exactly 24 hex digits is an ObjectId; any other hex run is an
-   * integer, accepted only while it fits a double exactly — a longer one would
-   * lose precision silently, and is neither an id nor a number JavaScript can
-   * hold, so it is refused with the two spellings that work.
+   * `0x` with exactly 24 hex digits is an ObjectId. Any other hex run is an
+   * integer, and the parser accepts it only while it fits a double exactly. A
+   * longer run would lose precision silently, and is neither an id nor a number
+   * that JavaScript can hold. The parser refuses it, and names the two spellings
+   * that work.
    */
   private number(): Expr {
     const t = this.c.next();
@@ -1069,10 +1080,10 @@ class Parser {
   }
 
   /**
-   * `$.name` is a field of the document, and `$.name(…)` a METHOD on the document
-   * itself: a field is never callable, so the parentheses can mean nothing else.
-   * The receiver is the bare `$` (an empty-path `FieldRef`), the same node the
-   * emitter already types as a document.
+   * `$.name` is a field of the document. `$.name(…)` is a METHOD on the document
+   * itself, because a field is never callable, so the parentheses can mean
+   * nothing else. The receiver is the bare `$`, an empty-path `FieldRef`, the same
+   * node that the emitter already types as a document.
    */
   private fieldRef(): Expr {
     const t = this.c.next();
@@ -1081,16 +1092,17 @@ class Parser {
       this.c.next();
       const args = this.args("RParen", first.text);
       const object: Expr = { type: "FieldRef", path: "", pos: t.pos };
-      // `$.` is one token; its `.` — where every other method call points — is its second character.
+      // `$.` is one token. Its `.`, where every other method call points, is its second character.
       return { type: "MethodCall", object, name: first.text, args, optional: false, pos: t.pos + 1 };
     }
     return { type: "FieldRef", path: first.text, pos: t.pos };
   }
 
   /**
-   * A bare `$` is the whole document; `$name(` is the operator escape hatch. How
-   * the arguments were written is not recorded: the operator's row states its
-   * shape, and one object argument is a body by that shape, never by a guess here.
+   * A bare `$` is the whole document. `$name(` is the operator escape hatch. The
+   * parser does not record how the arguments were written. The operator's row
+   * states its shape, and one object argument is a body only by that shape, never
+   * by a guess here.
    */
   private dollar(): Expr {
     const t = this.c.next();
@@ -1108,7 +1120,7 @@ class Parser {
     return { type: "Ident", name: n.text, pos: n.pos };
   }
 
-  /** `x => …` or a plain name. One token of lookahead separates them. */
+  /** `x => …` or a plain name. One token of lookahead tells them apart. */
   private identifierOrLambda(): Expr {
     const t = this.c.next();
     if (this.c.is("Arrow")) {
@@ -1118,7 +1130,7 @@ class Parser {
     return { type: "Ident", name: t.text, pos: t.pos };
   }
 
-  /** `(a, b) => …`, or a parenthesised expression. Rewound if it is not an arrow. */
+  /** `(a, b) => …`, or a parenthesised expression. The parser rewinds when it is not an arrow. */
   private parenthesised(): Expr {
     const save = this.c.mark();
     this.c.next();
@@ -1143,7 +1155,7 @@ class Parser {
     this.c.expect("LParen");
     const inner = this.expression();
     this.c.expect("RParen");
-    // Parenthesising is what makes an otherwise-refused combination legal, so the
+    // Parentheses are what makes an otherwise-refused combination legal. So the
     // group deliberately forgets which rule produced it.
     // `([1, a]) => …`: a pattern that is not one of plain names, read as an expression.
     if (this.c.is("Arrow") && (inner.type === "ObjectLiteral" || inner.type === "ArrayLiteral")) {
@@ -1154,11 +1166,12 @@ class Parser {
 
   /**
    * One parameter as written: a plain name, or a destructuring pattern of plain
-   * names — `[id, count]`, `{ sku, qty: n }`. Null when the tokens are not a
-   * parameter at all (a number, a call), so the caller can rewind and read a
-   * parenthesised expression. A pattern with a default, a rest element, a nested
-   * pattern or a computed key is `refused`: the caller throws it once it knows an
-   * arrow follows, and rewinds otherwise — `([...a, b])` is a legal expression.
+   * names, such as `[id, count]` or `{ sku, qty: n }`. This returns null when the
+   * tokens are not a parameter at all (a number, a call), so the caller can
+   * rewind and read a parenthesised expression. A pattern with a default, a rest
+   * element, a nested pattern or a computed key comes back `refused`. The caller
+   * throws it once it knows that an arrow follows, and rewinds otherwise, because
+   * `([...a, b])` is a legal expression.
    */
   private param(): ParamRead {
     if (this.c.is("Ident")) return { kind: "name", name: this.c.next().text };
@@ -1169,7 +1182,7 @@ class Parser {
       if (!this.c.eat("RBracket")) {
         do {
           if (this.c.is("RBracket")) break;
-          // `[, b]` — an elision skips an element.
+          // `[, b]`: an elision skips an element.
           if (this.c.is("Comma")) {
             parts.push(null);
             continue;
@@ -1236,9 +1249,9 @@ class Parser {
   }
 
   /**
-   * Skip to the end of one refused pattern part — past a default's expression, a
-   * rest element, a nested pattern — so the reader can tell whether an arrow
-   * follows the whole list. False when the tokens run out first.
+   * Skips to the end of one refused pattern part, past a default's expression, a
+   * rest element, or a nested pattern, so the reader can tell whether an arrow
+   * follows the whole list. This returns false when the tokens run out first.
    */
   private skipPatternPart(): boolean {
     let depth = 0;
@@ -1253,11 +1266,12 @@ class Parser {
   }
 
   /**
-   * The lambda a parameter list and its body make. A destructured parameter is
-   * one parameter under a fresh name, and each name it binds is that parameter's
-   * part wherever the body reads it — `([id, count]) => -count` IS `x => -x[1]`.
-   * The parts are substituted, never declared, so the body keeps its shape for
-   * every reader (a sort key sees the minus, a filter sees the comparison).
+   * The lambda that a parameter list and its body make. A destructured parameter
+   * is one parameter under a fresh name, and each name it binds is that
+   * parameter's part wherever the body reads it. So `([id, count]) => -count` IS
+   * `x => -x[1]`. The parts are substituted, never declared. So the body keeps
+   * its shape for every reader (a sort key sees the minus, a filter sees the
+   * comparison).
    */
   private lambdaOf(params: readonly ParamRead[], pos: number): Lambda {
     for (const p of params) if (p !== null && p.kind === "refused") throw p.error;
@@ -1270,8 +1284,8 @@ class Parser {
     }
     const plain = named.map((p) => (p.kind === "name" ? p.name : ""));
     const parsed = this.lambdaBody(plain, pos);
-    // The fresh names step aside from every name the body mentions AND every
-    // other parameter, so no part can capture a name the developer wrote.
+    // The fresh names step aside from every name that the body mentions, and from
+    // every other parameter. So no part can capture a name that the developer wrote.
     const taken: object[] = [parsed, ...plain.filter((n) => n !== "").map((n) => ({ type: "Ident", name: n }))];
     const names = [...plain];
     const parts = new Map<string, Expr>();
@@ -1301,7 +1315,7 @@ class Parser {
       parsed.body !== undefined
         ? { type: "Lambda", params: names, body: replaceIdents(parsed.body, parts), pos }
         : { type: "Lambda", params: names, stages: replaceIdents(parsed.stages as Pipeline, parts), pos };
-    // A stages body is claimed by its callee under the node's identity.
+    // The callee claims a stages body under the node's identity.
     const end = this.unclaimedStages.get(parsed);
     if (end !== undefined) {
       this.unclaimedStages.delete(parsed);
@@ -1311,10 +1325,10 @@ class Parser {
   }
 
   /**
-   * A lambda's body. A `{ … }` body is JavaScript — declarations then a `return`.
+   * A lambda's body. A `{ … }` body is JavaScript: declarations, then a `return`.
    * A body of pipeline stages belongs only to a name whose row says
-   * `blockBody: "stages"`; the callee claims it in `args()`, and `finish()`
-   * refuses a stages body nobody claimed.
+   * `blockBody: "stages"`. The callee claims it in `args()`, and `finish()`
+   * refuses a stages body that nobody claimed.
    */
   private lambdaBody(params: readonly string[], pos: number): Lambda {
     if (!this.c.is("LBrace")) {
@@ -1326,7 +1340,7 @@ class Parser {
     if (ret !== null) {
       const decls = stmts.filter((st): st is LetDecl => st.type === "LetDecl");
       if (decls.length !== stmts.length) {
-        // A statement where a declaration goes: a stage gets the message a block without a `return` gets.
+        // A statement where a declaration goes: a stage gets the same message that a block without a `return` gets.
         const stmt = stmts.find((st) => st.type !== "LetDecl") as PipelineStmt;
         if (!isStageStmt(stmt)) {
           throw new ParseError(
@@ -1338,9 +1352,9 @@ class Parser {
       }
       return { type: "Lambda", params, body: { type: "ExprBlock", decls, ret, pos: retPos }, pos };
     }
-    // No `return`: the statements are pipeline stages, if the callee takes them.
+    // With no `return`, the statements are pipeline stages, if the callee takes them.
     const lambda: Lambda = { type: "Lambda", params, stages: { type: "Pipeline", stmts, pos: open.pos }, pos };
-    // The message points at the closing brace: the place a `return` belongs.
+    // The message points at the closing brace, the place where a `return` belongs.
     this.unclaimedStages.set(lambda, endPos);
     return lambda;
   }
@@ -1355,7 +1369,7 @@ class Parser {
       if (this.c.eat("TemplateEnd")) break;
       this.c.expect("TemplateExprStart");
       exprs.push(this.expression());
-      // The brace that closes an interpolation emits no token — see tokens.ts.
+      // The brace that closes an interpolation emits no token. See tokens.ts.
     }
     return { type: "TemplateLiteral", quasis, exprs, pos: start.pos };
   }
@@ -1398,13 +1412,13 @@ class Parser {
 
   /**
    * One element of an array literal. A declaration or a write makes the literal a
-   * bracketed pipeline; anything else is a value.
+   * bracketed pipeline. Anything else is a value.
    */
   private arrayElement(): ArrayElement {
     if (this.c.is("Let") || this.c.is("Const")) return this.binding();
-    // `[ function double(x) { … }, $set(…) ]` — a declaration, not a function
-    // VALUE. Without this it parsed as a lambda, and the lambda made the literal
-    // look like an array of values rather than a pipeline.
+    // `[ function double(x) { … }, $set(…) ]`: a declaration, not a function
+    // VALUE. Without this check it parsed as a lambda, and the lambda made the
+    // literal look like an array of values rather than a pipeline.
     if (this.functionAhead()) return this.functionDecl();
     if (this.writeAhead()) return this.writeRun();
     return this.expression();
@@ -1421,9 +1435,10 @@ class Parser {
       this.c.next();
       key = { kind: "static", name: t.text };
     } else if (t.type === "Number") {
-      // A field name is a string, so a numeric key is its own spelling. A 24-hex
-      // `0x…` is an ObjectId, and an ObjectId is not a field name: JavaScript would
-      // read it as a precision-losing number, so neither reading is useful.
+      // A field name is a string, so a numeric key uses its own spelling. A
+      // 24-hex `0x…` is an ObjectId, and an ObjectId is not a field name.
+      // JavaScript would read it as a precision-losing number, so neither reading
+      // is useful.
       const literal = this.number();
       if (literal.type === "ObjectIdLiteral") {
         throw new ParseError(
@@ -1433,19 +1448,19 @@ class Parser {
       }
       key = { kind: "static", name: String(Number(t.text)) };
     } else if (t.type === "Dollar") {
-      // `{ $match: … }` — a raw MQL document, which HR2 requires to round-trip.
+      // `{ $match: … }`: a raw MQL document. HR2 requires it to round-trip.
       this.c.next();
       key = { kind: "static", name: this.dollarName(t).text };
     } else {
       key = { kind: "static", name: this.identLike().text };
     }
-    // `{ x }` is JavaScript shorthand for `{ x: x }` — for an IDENTIFIER. A
+    // `{ x }` is JavaScript shorthand for `{ x: x }`, for an IDENTIFIER. A
     // reserved word is a legal key but not a legal shorthand: `({ in })` and
     // `({ null })` are SyntaxErrors, and only `undefined` is an identifier there.
     if (key.kind === "static" && !this.c.is("Colon")) {
       if (t.type === "Dollar") {
         // `{ $abs }` is legal JavaScript shorthand for an identifier `$abs`, but
-        // `$abs` names an operator here and has no value to stand for.
+        // here `$abs` names an operator and has no value to stand for.
         throw new ParseError(`Expected ':' after '${key.name}' — write '${key.name}: <value>'`, this.c.peek().pos);
       }
       if (t.type !== "Ident" && t.type !== "Undefined") {
@@ -1462,10 +1477,10 @@ class Parser {
 }
 
 /**
- * A binary node from the operator token. The token's own text IS the operator —
- * `+`, `===`, `in` — so no table maps a token type back to a spelling; the audit
- * in productions.ts holds that every operator a BinaryExpr row consumes is a
- * `BinaryOp`.
+ * A binary node from the operator token. The token's own text IS the operator,
+ * such as `+`, `===`, or `in`. So no table maps a token type back to a spelling.
+ * The audit in productions.ts confirms that every operator a BinaryExpr row
+ * consumes is a `BinaryOp`.
  */
 function bin(op: Token, left: Expr, right: Expr): Expr {
   return { type: "BinaryExpr", op: op.text as BinaryOp, left, right, pos: op.pos };

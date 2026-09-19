@@ -131,7 +131,7 @@ describe("a developer-authored field name survives to the output", () => {
   });
 
   // `key in branches` answers true for every name on `Object.prototype`, so the
-  // duplicate guard used to refuse a program that had no duplicate at all.
+  // duplicate guard must not refuse a program that has no duplicate at all.
   it("a $facet branch may be named after a prototype member, and a real duplicate is still refused", () => {
     expect(jsmql.pipeline("$ = { toString: $$ };")).toEqual([{ $facet: { toString: [] } }]);
     expect(jsmql.pipeline("$ = { valueOf: $$, hasOwnProperty: $$ };")).toEqual([

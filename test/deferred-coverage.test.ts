@@ -44,9 +44,9 @@ const STATUS_RE = /^- \*\*Status\.\*\* (.+)$/m;
 const TAG_CONTEXT = 2;
 
 // Phrases that signal a deferral. Case-insensitive substring match against
-// each line. Tuned to match what's already in the codebase. Tightening
-// these (e.g. dropping "follow-up") would require manual review of every
-// false-positive.
+// each line. Tuned to match the phrases already in the codebase. Tightening
+// these (for example dropping "follow-up") needs a manual review of every
+// false positive.
 const PHRASE_RE =
   /(not yet (supported|implemented)|not supported in this release|is deferred|are deferred|deferred to|future work|out of scope|punt to a follow-up|coming in a follow-up|coming soon|planned but not yet|planned future work)/i;
 
@@ -106,7 +106,7 @@ function parseDeferred(): {
   const rows = new Map<string, { title: string; status: string; section: string }>();
   const idsInOrder: string[] = [];
 
-  // Section §B (Decisions) records won't-implement choices with `### <title>`
+  // Section §B (Decisions) records will-not-implement choices with `### <title>`
   // (no DEF-NNN ID) — pull only §A. Section markers are `## §A.` / `## §B.`.
   const sectionStart = text.indexOf("## §A.");
   const sectionEnd = text.indexOf("## §B.");
@@ -169,7 +169,7 @@ describe("deferred-tracking drift protection", () => {
   const allowlist = parseAllowlist();
 
   function isAllowlisted(file: string, text: string): boolean {
-    // Don't short-circuit — multiple allowlist entries may match the same
+    // Do not short-circuit — multiple allowlist entries may match the same
     // line. The stale-allowlist gate needs to see every entry that matches
     // anything, not just the first.
     for (let i = 0; i < allowlist.length; i++) {
@@ -185,10 +185,10 @@ describe("deferred-tracking drift protection", () => {
     for (let i = 0; i < surface.length; i++) {
       const line = surface[i];
       // Scan every line, not just phrase-bearing ones. An allowlist entry's
-      // phrase might be a substring of a line that doesn't itself carry a
+      // phrase might be a substring of a line that does not itself carry a
       // canonical deferral phrase but is part of a multi-line context.
       // Tighten: only count hits on lines that ARE phrase-bearing (otherwise
-      // a stale phrase wouldn't be detected as stale).
+      // a stale phrase would not be detected as stale).
       if (!PHRASE_RE.test(line.text)) continue;
       for (let j = 0; j < allowlist.length; j++) {
         if (hits.has(j)) continue;
@@ -260,7 +260,7 @@ describe("deferred-tracking drift protection", () => {
     const violations: string[] = [];
     for (const [id, row] of rows) {
       if (tagsInSurface.has(id)) continue;
-      // design-only rows are exempt — they describe future work that hasn't
+      // design-only rows are exempt — they describe future work that has not
       // produced a rejection site in code yet.
       if (row.status === "design-only" || row.status.startsWith("design-only")) continue;
       violations.push(
