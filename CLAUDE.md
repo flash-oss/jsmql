@@ -131,6 +131,26 @@ scripts/
 
 ## Rules
 
+### Write in Simplified Technical English
+All prose follows **ASD-STE100** — documents, code comments, test titles, error
+messages, commit messages, PR text, and replies in chat. The full digest, the
+official links and the banned-word table live in [docs/STE.md](docs/STE.md). The
+rules that bite here:
+
+- One idea per sentence. At most 20 words in an instruction, 25 in a description.
+- Active voice. Simple present, past or future — never a continuous or perfect tense.
+- No `-ing` as a verb. Write "the pass lowers X", never "lowering X" or "is responsible for lowering X".
+- One word, one meaning, one part of speech. Write "because", not "since"; "use", not "utilize".
+- Keep the article: "the emitter reads the row", not "emitter reads row".
+- No idiom and no metaphor. "out of the box" → "immediately".
+- At most three words in a noun cluster.
+- A term from MQL, JavaScript, MongoDB or this compiler is a Technical Name or
+  Technical Verb, and the dictionary does not restrict it.
+
+Excluded: [docs/DEVLOG.md](docs/DEVLOG.md) history (new entries still follow the
+rule), generated files, and code itself — a code block, an inline code span and a
+`// →` claim pair stay exact.
+
 ### Plans must include worked examples
 Every implementation plan that touches the language surface MUST include both a
 **simple** and a **complex** JSMQL input example together with its exact emitted

@@ -9,6 +9,7 @@
 | `docs/DEVLOG.md` | Future-self / contributors asking "why?" | Every observable change — feature, refactor, naming, doc decision |
 | `docs/DEFERRED.md` | Anyone wanting "what's left to do?" / "what did we decide against?" | Adding a new "not yet supported" throw, shipping a deferred item, or recording a "won't implement" decision. See root `CLAUDE.md` § Maintain docs/DEFERRED.md. |
 | `docs/specs/*.md` | Claude / contributors implementing jsmql | Code structure or internal behaviour changes |
+| `docs/STE.md` | Anyone who writes prose here | The ASD-STE100 digest we write from — rules, the banned-word table, the Technical Name exemption, the official links. The short form that binds every session is in root `CLAUDE.md` § Write in Simplified Technical English. |
 
 Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples in the specs. Each spec is the **single source of truth** for its feature's internals (see root `CLAUDE.md` § "Single source of truth"); the table below is an **index** — one short scope phrase per spec, not a second copy of its contents.
 

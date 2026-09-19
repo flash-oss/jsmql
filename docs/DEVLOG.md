@@ -10,6 +10,47 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-19 — docs: all prose follows ASD-STE100
+
+Every word of prose in this repository now follows ASD-STE100 Simplified Technical
+English: the documents, the code comments, the test titles, the error messages, the
+commit messages, and the replies Claude writes in chat. ASD-STE100 is a controlled
+subset of English. The aerospace industry made it so that a reader with poor English
+can understand a manual, and so that a machine can translate it. Most people who read
+MongoDB documentation do not have English as a first language, and jsmql's top
+priority is developer experience, so the fit is direct.
+
+Two files carry the rule. [docs/STE.md](STE.md) is the digest we write from — the
+rules that bite here, the banned-word table, and the official links. Root `CLAUDE.md`
+§ Write in Simplified Technical English holds the short form that every session reads.
+We chose a digest over the 100-page specification because a session must not spend
+tokens on the standard each time it writes a sentence.
+
+Two decisions shape what the rule means here. First, the dictionary of about 900
+approved words governs general English only: a noun that names a thing in MQL, in
+JavaScript, in MongoDB or in this compiler is a Technical Name, and a verb that acts
+on one is a Technical Verb. We state that as a rule and never as a list, because the
+repository already forbids prose that pins down the membership of an evolving set.
+Second, we ship no mechanical checker. A heuristic for the passive voice or for an
+`-ing` verb misfires often, and the allowlist it would need is machinery that buys
+little. The rule and the digest carry the style instead.
+
+Nothing that a program reads keeps a free pass. A heading is a link target, and 196
+links point at one. `test/deferred-coverage.test.ts` matches phrases with `PHRASE_RE`,
+and `test/deferred-allowlist.txt` pins case-sensitive substrings of live prose.
+`scripts/sync-playground.mjs` copies the `it()` titles of `test/realistic.test.ts` into
+the published `playground.html`. Each rewrite repairs its reader in the same commit.
+
+Three things stay as they are. This file keeps the voice of its own history, and only
+a new entry follows the rule. A generated file follows its generator, so `src/globals.ts`
+and `playground.html` are never edited by hand. Code is not prose, so a code block, an
+inline code span and a `// →` claim pair stay exact — `scripts/check-doc-claims.mjs`
+re-derives those pairs from the compiler.
+
+No behaviour changed with this entry.
+
+---
+
 ## 2026-09-18 — decision: a `?.` stops the chain, and nothing wider
 
 DEF-036 now names the rule it targets. A `?.` makes every link AFTER it not run, and
