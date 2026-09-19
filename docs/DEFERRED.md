@@ -39,7 +39,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering.
 - **Attempted approaches.** None.
 - **Success criteria.** `const bound = jsmql.bind({ collection: "users" }); bound("$$.find(u => u.parentId === $._id);")` lowers to `$lookup` with `from: "users"`.
-- **Rejection site(s).** None — the API simply does not exist. The one live `[DEF-013]` tag is in [`docs/LANGUAGE.md`](LANGUAGE.md), on the `$$.find(…)` self-join bullet.
+- **Rejection site(s).** None — the API does not exist. The live `[DEF-013]` tags sit in [`docs/LANGUAGE.md`](LANGUAGE.md), on each place where the text says that a read needs schema binding.
 - **Spec.** `docs/specs/context-references.md` § Future work bullet 1–2. Will need its own `docs/specs/bind.md`.
 - **Status.** design-only
 - **Effort.** L

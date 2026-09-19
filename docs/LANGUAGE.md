@@ -1,12 +1,12 @@
 # jsmql Language Reference
 
-> This is the **user-facing language reference** for jsmql. For implementation details, see `specs/`. For the list of features not yet implemented or rejected as bad DX, see [DEFERRED.md](DEFERRED.md).
+> This is the **user-facing language reference** for jsmql. For implementation details, see `specs/`. For the list of open items and rejected features, see [DEFERRED.md](DEFERRED.md).
 
 ---
 
 ## Quick Start
 
-jsmql is a JavaScript-subset language that compiles to MongoDB query syntax — like SQL but for MongoDB, using JS syntax you already know. The presence (or absence) of a semicolon picks the output shape, matching the Node.js MongoDB driver's own terminology:
+JSMQL is a JavaScript subset that compiles to MongoDB query syntax. Think of it as SQL for MongoDB, but it uses JS syntax you already know. A semicolon, present or absent, picks the output shape. This matches the terminology of the Node.js MongoDB driver:
 
 - **No `;`** → a **Filter** (the document `db.coll.find(filter)` takes)
 - **Any `;`** → a **Pipeline** of stages (the array `db.coll.aggregate(pipeline)` takes)
@@ -36,7 +36,7 @@ jsmql`$.age >= ${minAge} && $.status === 'active'`;
 // → { age: { $gte: 21 }, status: "active" }
 ```
 
-The same rule applies to the [function form](#function-form): an **expression-body** arrow (`({ $ }) => …`) lowers as a Filter, while a **block-body** arrow (`({ $ }) => { …; … }`) lowers as a Pipeline.
+The same rule applies to the [function form](#function-form). An **expression-body** arrow (`({ $ }) => …`) lowers as a Filter. A **block-body** arrow (`({ $ }) => { …; … }`) lowers as a Pipeline.
 
 ---
 
@@ -78,7 +78,7 @@ The same rule applies to the [function form](#function-form): an **expression-bo
 
 ## Output dispatch: Filter vs Pipeline
 
-`jsmql()` picks its output shape from what's at the top level of the input. Names follow the Node.js MongoDB driver:
+`jsmql()` picks its output shape from the top level of the input. Names follow the Node.js MongoDB driver:
 
 | Input top-level shape | Output | Used with |
 |---|---|---|
@@ -88,13 +88,13 @@ The same rule applies to the [function form](#function-form): an **expression-bo
 | **`;`-separated statements** (even a single trailing `;`) | a **Pipeline** `[…stages…]` | `db.coll.aggregate(pipeline)` |
 | **Anything else** (predicate, expression) | a **Filter** (single document) | `db.coll.find(filter)` |
 
-The first four rows all produce arrays — `jsmql()` is "would the driver call site need an array here?" → yes, give it an array. The `;` is only required to compose **multiple** stages; a single stage written naturally (with or without `;`) works.
+The first four rows all produce arrays. The rule for `jsmql()` is simple: does the driver call site need an array here? If yes, `jsmql()` gives it an array. The `;` is needed only to compose **multiple** stages. A single stage, written with or without `;`, works either way.
 
 ### No semicolons → Filter
 
-The expression is interpreted as a Filter. Field-vs-literal predicates the MongoDB query language can express directly emit indexable `{ field: { $op: lit } }` pairs; anything else (method calls, computed expressions, non-predicate values) rides in a top-level `$expr` residual — a legal Filter operator. So both predicates and computational expressions produce a valid Filter.
+jsmql reads the expression as a Filter. A field-vs-literal predicate the MongoDB query language can express directly emits an indexable `{ field: { $op: lit } }` pair. Anything else — a method call, a computed expression, a non-predicate value — rides in a top-level `$expr` residual, a legal Filter operator. So both a predicate and a computed expression produce a valid Filter.
 
-**A query document is the plain one.** `$.age > 18` is `{ age: { $gt: 18 } }` — the document you would write by hand, and the one every index plan and `explain` output is written against. MongoDB's own rules then apply to it: a field comparison is satisfied when *any element* of an array value satisfies it, and a path traverses an array in the middle. JavaScript does neither, so a comparison that must read ONE value has its own spelling — `$.tags.includes("a")` for containment, `$.items.some(i => i.qty > 5)` for an element test, and `jsmql.expr` when you want the aggregation language's value comparison.
+**A query document is the plain one.** `$.age > 18` is `{ age: { $gt: 18 } }`. This is the document you would write by hand, and the one every index plan and `explain` output is written against. MongoDB's own rules then apply to it. A field comparison is satisfied when *any element* of an array value satisfies it, and a path can traverse an array in the middle. JavaScript does neither. So a comparison that must read exactly ONE value has its own spelling: `$.tags.includes("a")` for containment, `$.items.some(i => i.qty > 5)` for an element test, and `jsmql.expr` for the aggregation language's value comparison.
 
 ```js
 // Pure query-document — indexable on `age` and `status`
@@ -115,13 +115,13 @@ jsmql("$.a + $.b");
 //                     { $ne: [{ $add: ["$a", "$b"] }, false] }, { $ne: [{ $add: ["$a", "$b"] }, ""] }, { $ne: [{ $add: ["$a", "$b"] }, 0] }] } }
 ```
 
-The translation rules are the same ones [`$match` uses inside a Pipeline](#match-indexes-by-default) — see [docs/specs/emit-pass.md](specs/emit-pass.md) for the full table.
+jsmql uses the same translation rules that [`$match` uses inside a Pipeline](#match-indexes-by-default). See [docs/specs/emit-pass.md](specs/emit-pass.md) for the full table.
 
-**`new Date(...)` and indexes.** When all `new Date(...)` arguments are compile-time literals — `new Date("2026-01-01")`, `new Date(2026, 1, 1)`, `new Date(Date.UTC(2026, 1, 1))` — jsmql folds the constructor at compile time and emits a real JS `Date` instance on the query-doc RHS. That's the shape MongoDB indexes on `createdAt` actually need. `new Date()` (zero-arg, server-side `$$NOW`) and `new Date($.someField)` necessarily fall back to `$expr` since they can't be evaluated until query time. Conversely, `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter — MongoDB's query language treats `{ $toDate: ... }` as a literal subdocument, never matching anything. The fold avoids that footgun.
+**`new Date(...)` and indexes.** Take three cases: `new Date("2026-01-01")`, `new Date(2026, 1, 1)`, and `new Date(Date.UTC(2026, 1, 1))`. When all `new Date(...)` arguments are compile-time literals like these, jsmql folds the constructor at compile time and emits a real JS `Date` instance on the query-doc RHS. This is the shape an index on `createdAt` needs. `new Date()` (zero-argument, server-side `$$NOW`) and `new Date($.someField)` fall back to `$expr`, because the server cannot evaluate them before query time. `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter, because MongoDB's query language treats `{ $toDate: ... }` as a literal subdocument that matches nothing. The fold avoids this trap.
 
 ### Stage call → Pipeline (no `;` required)
 
-A top-level stage call or stage-object literal auto-wraps into a one-element Pipeline. No `;` discipline at the call site — the cleanest JS surface produces the cleanest correct MQL.
+A top-level stage call or stage-object literal auto-wraps into a one-element Pipeline. The call site needs no `;` discipline: the cleanest JS surface produces the cleanest correct MQL.
 
 ```js
 // Single-stage Pipeline, no `;` needed
@@ -147,7 +147,7 @@ jsmql("$match($.age > 18); $sort({ age: 1 });");
 // → [ { $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } } ]
 ```
 
-A `;`-separated statement **must** be a stage call (`$match`, `$project`, `$sort`, …), an update op (`$.x = …`), or a `let` binding. A bare expression like `$.age > 18;` is rejected with a `$match(...)` suggestion:
+A `;`-separated statement **must** be a stage call (`$match`, `$project`, `$sort`, …), an update op (`$.x = …`), or a `let` binding. jsmql rejects a bare expression like `$.age > 18;` and suggests `$match(...)`:
 
 ```text
 Element 0 of Pipeline is not a stage call. To filter documents on a
@@ -156,7 +156,7 @@ predicate, wrap it as `$match(...)` — e.g. `$match($.age > 18)`. …
 
 ### Function form mirrors the rule
 
-An **expression-body** arrow (`({ $ }) => …`) is the function equivalent of a no-`;` string — it lowers as a Filter, unless the body is itself a stage call (then auto-wrap fires). A **block-body** arrow (`({ $ }) => { …; … }`) is the equivalent of a `;`-separated string — it lowers as a Pipeline.
+An **expression-body** arrow (`({ $ }) => …`) is the function equivalent of a no-`;` string. It lowers as a Filter, unless the body is itself a stage call, in which case auto-wrap fires. A **block-body** arrow (`({ $ }) => { …; … }`) is the equivalent of a `;`-separated string. It lowers as a Pipeline.
 
 ```js
 jsmql(({ $ }) => $.age > 18);
@@ -172,13 +172,13 @@ jsmql(({ $, $match, $sort }) => {
 // → [ { $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } } ]   (Pipeline)
 ```
 
-The template-tag form (`` jsmql`…` ``) follows the string-form rule: a stage call or any `;` in the assembled source produces a Pipeline.
+The template-tag form (`` jsmql`…` ``) follows the string-form rule. A stage call or any `;` in the assembled source produces a Pipeline.
 
 ---
 
 ## Expressions
 
-An jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggregation expression JSON. Write JS operators, method chains, and lambdas — jsmql handles the translation. For MongoDB operators without a JS equivalent, use the `$op()` escape hatch (the direct operator form).
+A jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggregation expression JSON. Write JS operators, method chains, and lambdas, and jsmql translates them. For a MongoDB operator with no JS equivalent, use the `$op()` escape hatch (the direct operator form).
 
 ### Valid Constructs
 
@@ -200,7 +200,7 @@ An jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 - Date operations: `new Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
 - Escape hatch (direct operator form): `$sampleRate(0.33)`, `$dateTrunc($.createdAt, "day")`, etc.
-- Comments: `// line` and `/* block */` — semantics identical to JavaScript
+- Comments: `// line` and `/* block */` — same behaviour as JavaScript
 
 ### Invalid Constructs
 
@@ -215,7 +215,7 @@ An jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 
 ### Numbers
 
-Integer and floating-point numbers, scientific notation, and numeric separators (`_` between digits):
+Integer and floating-point numbers, scientific notation, and numeric separators (a `_` between two digits):
 
 ```js
 42
@@ -229,7 +229,7 @@ Integer and floating-point numbers, scientific notation, and numeric separators 
 
 Underscores must sit between two digits — `1_`, `_1`, and `1__0` are errors.
 
-**BigInt literals.** Integer literals with an `n` suffix are MongoDB 64-bit integers, and jsmql builds the value rather than asking the server to parse one per document:
+**BigInt literals.** An integer literal with an `n` suffix is a MongoDB 64-bit integer. jsmql builds the value itself, instead of asking the server to parse one per document:
 
 ```js
 123n           // Long.fromString("123")
@@ -239,13 +239,13 @@ $.timestamp - 1000n
                // { $subtract: ["$timestamp", Long.fromString("1000")] }
 ```
 
-Because the value is a real `Long`, a comparison stays a query the index serves and matches an **element** of an array field, as any other query value does:
+The value is a real `Long`, so a comparison stays a query the index serves. It matches an **element** of an array field, as any other query value does:
 
 ```js
 $.n === 9007199254740993n   // { n: Long.fromString("9007199254740993") }
 ```
 
-`n` suffix is integer-only — `1.5n`, `1e2n`, etc. are syntax errors (matches JS). A BigInt past the 64-bit range is refused at compile time, naming `Decimal128` as the type that holds it.
+The `n` suffix works on an integer only. `1.5n` and `1e2n` are syntax errors, as in JS. jsmql refuses a BigInt past the 64-bit range at compile time, and names `Decimal128` as the type that holds it.
 
 ### Strings
 
@@ -260,8 +260,8 @@ Both single and double quotes. Escape sequences: `\\`, `\"`, `\'`, `\n`, `\t`:
 
 #### `$`-prefixed strings: a `"$x"` you type is the field ref `$x`
 
-A string that starts with `$` (like `"$items"`) is read by MongoDB as a **field
-reference** in aggregation expressions. jsmql honours that: a `"$x"` you type in
+MongoDB reads a string that starts with `$` (like `"$items"`) as a **field
+reference** in an aggregation expression. jsmql honours that rule. A `"$x"` you type in
 source **is** the field ref `$x`, and it **passes through verbatim in every
 context** — pipelines, stage bodies, and `jsmql.expr` alike. jsmql never adds a
 `$literal` of its own (this is rule **HR1**; see [LANG_RULES.md](LANG_RULES.md)):
@@ -275,18 +275,18 @@ jsmql.expr(`$eq($.x, "$y")`)       // → { $eq: ["$x", "$y"] }   ("$y" is the f
 ```
 
 Writing `$.items` instead of `"$items"` produces the identical output, so use
-whichever reads better. To force a **literal** string that happens to start with
-`$`, use the `$literal(...)` escape hatch — exactly as in raw MQL:
+whichever reads better. To force a **literal** string that starts with
+`$`, use the `$literal(...)` escape hatch, exactly as in raw MQL:
 
 ```js
 jsmql.expr(`$literal("$y")`)                // → { $literal: "$y" }
 jsmql(`$project({ x: $literal("$y") });`)   // → [{ $project: { x: { $literal: "$y" } } }]
 ```
 
-The one exception is for safety: a **runtime-injected** value (a `jsmql.compile`
+There is one exception, for safety. A **runtime-injected** value (a `jsmql.compile`
 parameter or a template-tag `${…}` interpolation) that looks like `"$x"` *is*
-wrapped in `$literal` in expression position, so untrusted input can't silently
-turn into a field reference:
+wrapped in `$literal` in expression position. This stops untrusted input from
+silently turning into a field reference:
 
 ```js
 jsmql.expr`$.x === ${userInput}`   // userInput = "$secret" → { $eq: ["$x", { $literal: "$secret" }] }
@@ -304,10 +304,10 @@ Backtick-delimited strings with `${expr}` interpolation, just like JS. They comp
 // → { $concat: ["total: ", { $toString: { $add: ["$a", "$b"] } }] }
 ```
 
-Interpolated expressions are wrapped with `$toString` to match JS coercion semantics —
-`` `count: ${$.n}` `` works whether `$.n` is a number or a string. Expressions that are
-statically known to produce strings (string literals, `.toLowerCase()`, `String(x)`,
-nested template literals, etc.) skip the wrap to keep the output compact:
+jsmql wraps an interpolated expression with `$toString` to match JS coercion rules, so
+`` `count: ${$.n}` `` works whether `$.n` is a number or a string. An expression that
+statically produces a string — a string literal, `.toLowerCase()`, `String(x)`,
+a nested template literal, and so on — skips the wrap, to keep the output compact:
 
 ```js
 `name=${$.name.toLowerCase()}`
@@ -331,7 +331,7 @@ null
 
 ### `undefined` — the existence test
 
-`undefined` is not a value in MQL, so jsmql gives it the one meaning it can carry: comparing
+`undefined` is not a value in MQL, so jsmql gives it the one meaning it can carry. A comparison
 against it asks whether a field is **present**.
 
 ```js
@@ -340,7 +340,7 @@ $.deletedAt !== undefined      // the field is present
 ```
 
 It works in every position. In a Filter or `$match` body it becomes MongoDB's indexed
-`$exists`; anywhere else it becomes a `$type` test against `"missing"`. Both draw the same
+`$exists`. Everywhere else it becomes a `$type` test against `"missing"`. Both draw the same
 line, so the two agree on every document:
 
 ```js
@@ -348,12 +348,12 @@ jsmql(`$.a === undefined`);        // → { a: { $exists: false } }
 jsmql.expr(`$.a === undefined`);   // → { $eq: [{ $type: "$a" }, "missing"] }
 ```
 
-**Absent is not the same as null.** A document holding `{ a: null }` *has* the field, so
-`$.a === undefined` is false for it while `$.a === null` is true. That distinction is the
-point of having both.
+**Absent is not the same as null.** A document that holds `{ a: null }` *has* the field, so
+`$.a === undefined` is false for it, while `$.a === null` is true. That distinction is the
+reason to keep both.
 
-Used as a **value** rather than in a comparison, `undefined` is rejected — MQL has nothing to
-lower it to, and quietly emitting `null` would merge two different documents. Write `null`
+jsmql rejects `undefined` as a **value** rather than in a comparison. MQL has nothing to
+lower it to, and a quiet fallback to `null` would merge two different documents. Write `null`
 for the present-but-null case, or `delete $.field` to remove a field.
 
 ### Arrays
@@ -369,7 +369,7 @@ Comma-separated values in brackets, including spread:
 [...$.a, ...$.b]              // spread multiple arrays
 ```
 
-Spread compiles to `$concatArrays`. Consecutive non-spread elements group into one operand, each `...expr` becomes its own operand, and a lone `[...x]` returns `x` directly — no redundant `$concatArrays` wrapper. Each spread argument must evaluate to an array at runtime; this is the same constraint MongoDB's `$concatArrays` itself imposes.
+Spread compiles to `$concatArrays`. Consecutive non-spread elements group into one operand. Each `...expr` becomes its own operand. A lone `[...x]` returns `x` directly, with no redundant `$concatArrays` wrapper. Each spread argument must evaluate to an array at runtime — the same constraint that MongoDB's own `$concatArrays` imposes.
 
 ### Objects
 
@@ -382,7 +382,7 @@ Key-value pairs in braces, including spread:
 { ...$.a, ...$.b, extra: true }            // → { $mergeObjects: ["$a", "$b", { extra: true }] }
 ```
 
-Spread compiles to `$mergeObjects`. Consecutive non-spread keys group into one operand, each `...expr` becomes its own operand, and JS "later wins" semantics on key collision match `$mergeObjects` exactly. A lone `{...x}` returns `x` directly — no redundant `$mergeObjects` wrapper.
+Spread compiles to `$mergeObjects`. Consecutive non-spread keys group into one operand. Each `...expr` becomes its own operand. JS "later wins" behaviour on a key collision matches `$mergeObjects` exactly. A lone `{...x}` returns `x` directly, with no redundant `$mergeObjects` wrapper.
 
 Objects are useful as `$push` arguments in `group()`, as `$project` escape hatch values, and in `$let` bindings.
 
@@ -395,7 +395,7 @@ Keys may be computed expressions, just like in JS:
 { a: 1, [$.dynKey]: 2 }            // → { $arrayToObject: [[{ k: "a", v: 1 }, { k: "$dynKey", v: 2 }]] }
 ```
 
-Whenever a static block of keys contains at least one computed key, that block compiles to `$arrayToObject` (using its `{ k, v }` object-pair form) so MongoDB can build it at query time. (The pairs array is wrapped one level deeper — `{ $arrayToObject: [pairs] }` — because MongoDB reads a bare literal array as an *argument list*; the wrap makes it the single argument.) Computed keys mix with spread — each block is built independently, then `$mergeObjects` joins them:
+When a static block of keys holds at least one computed key, that block compiles to `$arrayToObject` (using its `{ k, v }` object-pair form), so MongoDB can build it at query time. The pairs array is wrapped one level deeper, as `{ $arrayToObject: [pairs] }`, because MongoDB reads a bare literal array as an *argument list*. The wrap makes it the single argument. A computed key mixes with spread. jsmql builds each block on its own, then `$mergeObjects` joins them:
 
 ```js
 { ...$.base, [$.k]: $.v }          // → { $mergeObjects: ["$base", { $arrayToObject: [[{ k: "$k", v: "$v" }]] }] }
@@ -410,26 +410,26 @@ $.items.map(x => ({ x }))
 // → { $map: { input: "$items", as: "x", in: { x: "$$x" } } }
 ```
 
-The shorthand value is treated as an identifier (lambda parameter); using shorthand outside a lambda scope produces an "Unknown identifier" error.
+jsmql treats the shorthand value as an identifier (a lambda parameter). Shorthand outside a lambda scope produces an "Unknown identifier" error.
 
 ---
 
 ## Comments
 
-jsmql accepts JavaScript-style comments and discards them as trivia — they have no effect on the compiled MQL. Both forms are valid anywhere whitespace is.
+jsmql accepts JavaScript-style comments and discards them as trivia; they have no effect on the compiled MQL. Both forms are valid wherever whitespace is valid.
 
 ```js
 $.age >= 18  // line comment to end-of-line
 $.score /* block comment, can span lines */ * 1.1
 ```
 
-Semantics match JavaScript exactly: line comments end at any LineTerminator (LF, CR, LSEP, PSEP) or EOF; block comments do not nest (the first `*/` closes), and an unclosed `/* …` is a parse error. Comments inside string literals, regex literals, and template-literal text are character data, not comments.
+The behaviour matches JavaScript exactly. A line comment ends at a LineTerminator (LF, CR, LSEP, PSEP) or at EOF. A block comment does not nest — the first `*/` closes it — and an unclosed `/* …` is a parse error. Text inside a string literal, a regex literal, or template-literal text is character data, never a comment.
 
 ---
 
 ## Trailing commas
 
-As in JavaScript, a single trailing comma after the last item of any comma-separated list is allowed — and ignored. It works **everywhere** a list appears: call arguments, array and object literals, arrow / `function` parameter lists, and the in-stage update-op chain. This means code your formatter has already touched (prettier and oxfmt add trailing commas when they break a list across lines) pastes straight in.
+As in JavaScript, jsmql allows a single trailing comma after the last item of a comma-separated list, and ignores it. This works **everywhere** a list appears: call arguments, array and object literals, arrow / `function` parameter lists, and the in-stage update-op chain. So code your formatter has already touched — prettier and oxfmt add a trailing comma when they break a list across lines — pastes straight in.
 
 ```js
 Math.max($.a, $.b,)                       // call args
@@ -444,13 +444,13 @@ $match(
 $.a = 1, $.b = 2,                         // update-op chain
 ```
 
-A trailing comma never changes the result — output is identical to the comma-free form — and it is **not** a way to sneak in an extra argument: `Number($.x, $.y)` is still the "takes exactly 1 argument" error, while `Number($.x,)` is fine.
+A trailing comma never changes the result: the output is identical to the comma-free form. It is **not** a way to add an extra argument. `Number($.x, $.y)` still gives the "takes exactly 1 argument" error, while `Number($.x,)` is fine.
 
 ---
 
 ## Field References
 
-Document fields are referenced with `$.` (dollar-dot):
+Use `$.` (dollar-dot) to reference a document field:
 
 ```js
 $.age              // simple field
@@ -459,11 +459,11 @@ $.items[0].name    // array element by index — use bracket access (`$.items.0`
 $.in               // field literally named "in" (no conflict with operator)
 ```
 
-**`$.` always means the *root* document — not "whichever document is nearest".** That matters
-once you read another collection: inside a `$$$.<coll>` chain, an `.aggregate((o) => { … })`
+**`$.` always means the *root* document — never "whichever document is nearest".** This matters
+once you read another collection. Inside a `$$$.<coll>` chain, an `.aggregate((o) => { … })`
 block, or a `.filter((o) => …)` predicate, `$.x` still reads the **outer** document. The
 sub-pipeline's own document is the callback parameter (`o`), or a raw MQL path string
-(`"$x"`). So the two spellings in one stage body address two different documents:
+(`"$x"`). So the two spellings in one stage body point at two different documents:
 
 ```js
 $.t = $$$.orders.$set({ owner: $.tag });    // owner ← the ROOT doc's `tag`
@@ -475,7 +475,7 @@ jsmql threads the root-document read through `$lookup.let` for you; see
 
 ### Bracket Access
 
-> **Dot access is interpreted; bracket access is raw.** A `.member` access can carry compiler meaning — most notably `.length`, which folds to the string-or-array length operator. Square brackets never do: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. jsmql does not interpret what's inside the brackets — whatever you spell is the property you get. So when you mean "the data at this key, verbatim" (including a field literally named `length`), reach for brackets.
+> **jsmql interprets dot access; it reads bracket access raw.** A `.member` access can carry compiler meaning — most notably `.length`, which folds to the string-or-array length operator. Square brackets never do: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. jsmql does not interpret what sits inside the brackets — whatever you write is the property you get. So when you mean "the data at this key, exactly as written" (including a field literally named `length`), use brackets.
 
 Use square brackets for computed index/key access. The compiled MQL depends on the receiver type:
 
@@ -512,10 +512,10 @@ $.items[0]
 The dispatch is a `$switch` and never a nested `$cond`, because MongoDB optimises a
 `$cond`'s branches *before* it reads the test. Where the server holds the receiver as a
 constant — a `$lookup.let` variable, a `jsmql.compile` parameter — a `$cond` folds the
-branch that doesn't apply and the whole pipeline is refused before a document is read
+branch that doesn't apply, and MongoDB refuses the whole pipeline before it reads a document
 (`$.o = $$$.products.find({ _id: $.arr[0] })` answered *"can't convert from BSON type
 array to String"*). A `$switch` drops a branch whose case is false without evaluating it,
-so every receiver type answers the same as it always did.
+so every receiver type answers the same as it always did before.
 
 **A numeric object key builds the stringified field name.** JavaScript coerces every
 property key to a string, so `{ 0: 1 }` is the field `"0"` and `{ 0x10: 1 }` is `"16"` —
@@ -526,10 +526,10 @@ counterpart of reading `doc[0]`:
 ({ 0: 1, 1.5: 2, 0x10: 3 })         // → { "0": 1, "1.5": 2, "16": 3 }   — exactly what JS builds
 ```
 
-A 24-hex `0x…` literal is an ObjectId in jsmql, and an ObjectId isn't a field name, so it
-is rejected as a key with a pointer at the quoted spelling.
+A 24-hex `0x…` literal is an ObjectId in jsmql, and an ObjectId isn't a field name, so
+jsmql rejects it as a key and points at the quoted spelling.
 
-**A negative bracket index is rejected.** In JavaScript `arr[-1]` reads a property named
+**jsmql rejects a negative bracket index.** In JavaScript `arr[-1]` reads a property named
 `"-1"` — normally `undefined` — it does **not** count from the end. `.at(-1)` is the
 JavaScript way to do that, and it works on arrays and strings alike, so jsmql points you
 there instead of silently picking one of the three possible answers:
@@ -541,8 +541,8 @@ $.items[-1]
 //        Use '.at(-1)' to index from the end, which works on both arrays and strings.
 ```
 
-The rejection is compile-time, so it only fires on an index jsmql can *see* is negative.
-A computed index (`$.items[$.i]`) is passed through as written; if it turns out negative at
+The rejection happens at compile time, so it only fires on an index jsmql can *see* is negative.
+jsmql passes a computed index (`$.items[$.i]`) through as written; if it turns out negative at
 query time, MongoDB decides what happens (`$arrayElemAt` counts from the end).
 
 When the key is **provably a string** — a string literal, a `.toLowerCase()`-style
@@ -592,7 +592,7 @@ $[$.fieldName]                      // → { $getField: { field: "$fieldName", i
 
 `?.` is accepted everywhere `.` is, and it does what JavaScript's `?.` does.
 
-**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field is there:
+**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists:
 
 ```js
 $.s?.trim().length   // a call runs after the ?. — the chain stops, and answers null
@@ -601,7 +601,7 @@ $.s.trim().length    // no ?. — but `.length` is a JavaScript method, and its 
 // → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
 ```
 
-**A `?.` with no call after it changes nothing.** There is nothing to stop: the chain's value is the field, and a path through a missing field already answers missing. So the consumer supplies its own empty value, as the table below describes. That table therefore covers every `?.` EXCEPT a chain that calls something.
+**A `?.` with no call after it changes nothing.** There is nothing to stop: the chain's value is the field, and a path through a missing field already answers missing. So the consumer supplies its own empty value, as the table below shows. That table covers every `?.` EXCEPT a chain that calls something.
 
 | Consumer category | Wrapped with | Example |
 |---|---|---|
@@ -614,7 +614,7 @@ $.s.trim().length    // no ?. — but `.length` is a JavaScript method, and its 
 | Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
 | Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
 
-A reader of a whole object follows the same rule. `$.o.keys()` is a plain read and answers `null` for a missing `o`, because `Object.keys(undefined)` is a **TypeError** in JavaScript and `null` is the nearest thing MongoDB has to raising one. `$.o?.keys()` has a call after the `?.`, so the chain stops and answers `null` as well. A lodash object method answers its own empty value either way — `_.pick(undefined, …)` is `{}`, and lodash has no other reading. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument: `Object.keys($.user?.profile)` takes `{}` exactly as `Object.keys($.user.profile)` does.
+A reader of a whole object follows the same rule. `$.o.keys()` is a plain read and answers `null` for a missing `o`, because `Object.keys(undefined)` raises a **TypeError** in JavaScript, and `null` is the nearest thing MongoDB has to that. `$.o?.keys()` has a call after the `?.`, so the chain stops and also answers `null`. A lodash object method answers its own empty value either way — `_.pick(undefined, …)` is `{}`, and lodash has no other reading. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument instead: `Object.keys($.user?.profile)` takes `{}`, exactly as `Object.keys($.user.profile)` does.
 
 These cases produce the same MQL whether you use `.` or `?.`:
 
@@ -627,18 +627,18 @@ These cases produce the same MQL whether you use `.` or `?.`:
 | `$in` first argument (`arr.includes($.x?.y)`) | Searching for null in an array is a defined, non-erroring operation. |
 | Numeric arithmetic operand (`$.a + $.b?.c` in numeric mode, `-`, `*`, `/`, `%`, `**`) | MQL's `$add` etc. return null on null operand — matches JS's `1 + undefined === NaN` closely. Forcing a `0` fallback would silently produce different numbers than JS, which is worse DX than honest null. |
 
-**Scope of the wrap.** `?.` only wraps the chain it appears in. `?.` buried
+**Scope of the wrap.** `?.` only wraps the chain it appears in. A `?.` that sits
 inside a lambda body, a method argument, an `IndexAccess.index`, or a binary
 operand belongs to a *different* chain — it does **not** trigger an outer wrap.
 For example, `$.items.map(x => x?.tags)` wraps inside the lambda body, but the
-outer `.map`'s receiver (`$.items`) is not optional and is not wrapped.
+outer `.map`'s receiver (`$.items`) is not optional, so jsmql leaves it unwrapped.
 
 ### Syntax
 
 - Must start with `$.`
 - Followed by a valid JavaScript identifier (letter or underscore; digits allowed after the first character)
 - May include dots for nested object access (`$.a.b.c`)
-- For array elements, use bracket access — `$.items[0]`, not `$.items.0` (the dotted-digit form is invalid JS and is rejected by the lexer)
+- For array elements, use bracket access — `$.items[0]`, not `$.items.0` (the dotted-digit form is invalid JS, so the lexer rejects it)
 
 ### Invalid field references
 
@@ -650,16 +650,16 @@ $.0.name       // ❌ Can't start with digit after $.
 
 ### Context references: `$$`, `$$$`, `$$$$`
 
-jsmql provides three further prefix levels, parallel to `$.`, for cross-collection / cross-database / cross-cluster references.
+jsmql provides three more prefix levels, parallel to `$.`, for cross-collection, cross-database and cross-cluster references.
 
 | Prefix | Scope                          | Status                                                                  |
 | ------ | ------------------------------ | ----------------------------------------------------------------------- |
-| `$.`   | Current document field         | works today (`$.age`, `$.address.city`)                                 |
-| `$$`   | Current collection             | **live for `.push(...)` → `$unionWith`** ([Collection union](#collection-union-push)) and collection-scoped **diagnostics** (`$$.indexStats()`, … — [System stages](#system--diagnostic-stages-indexstats-currentop-)). `.find` / `.filter` data reads on `$$` still need schema/driver binding (deferred). |
-| `$$$`  | Current database               | **live for `.find/.filter` joins** ([below](#cross-collection-lookups-collfind--filter)) and the `$$$.<coll> = …` `$out` write. No diagnostics — they're collection- or server-scoped. |
-| `$$$$` | Current cluster / server       | **live for the cross-database `$$$$.<db>.<coll> = …` `$out` write** ([below](#out-write-the-pipeline-to-a-collection)) and server/cluster-scoped **diagnostics** (`$$$$.currentOp()`, `$$$$.shardedDataDistribution()`, …). Cross-database **reads** (`.find/.filter`) are **rejected** — see below. |
+| `$.`   | Current document field         | jsmql supports this today (`$.age`, `$.address.city`)                                 |
+| `$$`   | Current collection             | jsmql supports `.push(...)` → `$unionWith` ([Collection union](#collection-union-push)) and collection-scoped diagnostics (`$$.indexStats()`, … — [System stages](#system--diagnostic-stages-indexstats-currentop-)) now. `.find` / `.filter` data reads on `$$` still need schema/driver binding `[DEF-013]`. |
+| `$$$`  | Current database               | jsmql supports `.find/.filter` joins ([below](#cross-collection-lookups-collfind--filter)) and the `$$$.<coll> = …` `$out` write now. `$$$` has no diagnostics, because they are collection- or server-scoped. |
+| `$$$$` | Current cluster / server       | jsmql supports the cross-database `$$$$.<db>.<coll> = …` `$out` write ([below](#out-write-the-pipeline-to-a-collection)) and server/cluster-scoped diagnostics (`$$$$.currentOp()`, `$$$$.shardedDataDistribution()`, …) now. jsmql **rejects** a cross-database **read** (`.find/.filter`) — see below. |
 
-Both dot-identifier (`$$$.myColl`) and bracket-expression (`$$$[collVar]`) postfix forms work — bracket access uses standard JS semantics, so the inner expression can be any value (a `jsmql.compile` parameter, a string literal, a deeper expression).
+Both the dot-identifier form (`$$$.myColl`) and the bracket-expression form (`$$$[collVar]`) work. Bracket access uses standard JS semantics, so the inner expression can be any value — a `jsmql.compile` parameter, a string literal, or a deeper expression.
 
 ```js
 jsmql.expr("$$$.myColl");              // ❌ CodegenError: '$$$.<coll>' must be followed by .find(pred) or .filter(pred)
@@ -669,24 +669,24 @@ jsmql("$$.foo");                        // ❌ '$$' is statement-only and only s
 jsmql("$$$$$.x");                       // ❌ LexError: Up to 4 levels of context reference are supported
 ```
 
-The full `$$$.<coll>.find/filter(...)` and `$$.push(...)` syntaxes are documented next. Cross-database **reads** through `$$$$.<db>.<coll>.find/filter(...)` are **not supported** (a `{ db, coll }` join/union namespace is rejected by every non-federated MongoDB) — see [Cross-database reads](#cross-database-reads-not-supported). The only cross-database `$$$$` write that *is* supported is the `$$$$.<db>.<coll> = …` `$out` destination ([below](#out-write-the-pipeline-to-a-collection)).
+The next sections document the full `$$$.<coll>.find/filter(...)` and `$$.push(...)` syntax. jsmql does **not support** a cross-database **read** through `$$$$.<db>.<coll>.find/filter(...)`, because every non-federated MongoDB rejects a `{ db, coll }` join or union namespace — see [Cross-database reads](#cross-database-reads-not-supported). The only cross-database `$$$$` write jsmql supports is the `$$$$.<db>.<coll> = …` `$out` destination ([below](#out-write-the-pipeline-to-a-collection)).
 
 ### Cross-collection lookups: `$$$.<coll>.find / .filter`
 
-`$$$.<coll>.find(predicate)` and `$$$.<coll>.filter(predicate)` lower to MongoDB's `$lookup` stage — JS-style spellings for the most common join shape. The two methods follow JS semantics:
+`$$$.<coll>.find(predicate)` and `$$$.<coll>.filter(predicate)` lower to MongoDB's `$lookup` stage. They are JS-style spellings for the most common join shape, and the two methods follow JS semantics:
 
 | Method      | Returns                  | MQL lowering                                                    |
 | ----------- | ------------------------ | --------------------------------------------------------------- |
 | `.find(p)`  | one matching doc or null | `$lookup` + `$set { <as>: { $first: "$<as>" } }`               |
 | `.filter(p)`| array of matching docs   | bare `$lookup`                                                  |
 
-**Pipeline-mode only.** Lookups produce stages, not expressions — they're only valid where a Pipeline output makes sense (assigned to a field with `$.x = …`, used as the RHS of `let`, or read inline as part of a chained terminal). `jsmql.filter()`, `jsmql.update()`, and `jsmql.expr()` reject lookup syntax with an actionable message naming `jsmql.pipeline()` / `jsmql()` as the right entry point.
+**Pipeline-mode only.** Lookups produce stages, not expressions, so they are valid only where a Pipeline output makes sense — assigned to a field with `$.x = …`, used as the RHS of `let`, or read inline as part of a chained terminal. `jsmql.filter()`, `jsmql.update()`, and `jsmql.expr()` reject lookup syntax with an actionable message that names `jsmql.pipeline()` / `jsmql()` as the right entry point.
 
-**A chain that opens with a correlated equality is the pair.** A predicate that says this foreign field equals that field of the outer document (`$.x`, or a `const` bound to one) — alone, or as one `&&` condition among others — is the `localField` / `foreignField` join every MongoDB developer reads and writes, and the planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise (the same boundary a query document has) — so `{ productIds: myProductIds }` with an array on both sides joins the orders that share **one** element with the list, from the multikey index.
+**A chain that opens with a correlated equality is the pair.** A predicate that says this foreign field equals that field of the outer document (`$.x`, or a `const` bound to one) — alone, or as one `&&` condition among others — is the `localField` / `foreignField` join every MongoDB developer reads and writes. The planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise, the same boundary a query document has. So `{ productIds: myProductIds }` with an array on both sides joins the orders that share **one** element with the list, from the multikey index.
 
-**The links that follow it run in `pipeline` beside the pair.** MongoDB 5.0+ runs a `$lookup.pipeline` over the documents the pair matched, so a trailing `.toSorted(…)`, `.take(n)`, `.$group(…)` changes what the join *returns* and never what it *matches*: the same predicate is the same join with or without a `.take()`. `.find` is the pair with `{ $limit: 1 }` in that pipeline. The equality has to come first — after a sort or a cut it is a `$match` in place.
+**The links that follow it run in `pipeline` beside the pair.** MongoDB 5.0+ runs a `$lookup.pipeline` over the documents the pair matched, so a trailing `.toSorted(…)`, `.take(n)`, `.$group(…)` changes what the join *returns* and never what it *matches*. The same predicate is the same join with or without a `.take()`. `.find` is the pair with `{ $limit: 1 }` in that pipeline. The equality has to come first; after a sort or a cut it becomes a `$match` in place.
 
-**The other `&&` conditions run beside the pair too.** `o.userId === $._id && o.status === "paid"` is the pair plus a `$match` in the pipeline, over the pair's matches: a constant condition stays a query document there, and a condition that reads a date, a computed value or a second outer field is `$expr`, with every read of the outer document (`$.tier`, a `let` binding) carried into the stage's `let` clause under a correlation variable. When the predicate has no such equality — every condition is a comparison that is not one, or the equality sits under `||` — the whole predicate is `let` + `pipeline` + `$expr`. The pipeline form uses the foreign collection's index too (measured). A later link that reads the outer document keeps its `let` beside the pair.
+**The other `&&` conditions run beside the pair too.** `o.userId === $._id && o.status === "paid"` is the pair plus a `$match` in the pipeline, over the pair's matches. A constant condition stays a query document there. A condition that reads a date, a computed value, or a second outer field is `$expr`, and it carries every read of the outer document (`$.tier`, a `let` binding) into the stage's `let` clause under a correlation variable. When the predicate has no such equality — every condition is a comparison that is not one, or the equality sits under `||` — the whole predicate becomes `let` + `pipeline` + `$expr`. The pipeline form also uses the foreign collection's index (measured). A later link that reads the outer document keeps its `let` beside the pair.
 
 ```js
 // One equality — the compact join, in either spelling
@@ -746,7 +746,7 @@ $.user = $$$.users.find(u => u._id === $.userId && u.active);
 //   ]
 ```
 
-**`.find` / `.filter` take a JavaScript predicate.** Their callback is JavaScript, so a `{ … }` body holds `const`/`let` bindings and one `return <expr>` — `o => { return o.active; }` means exactly what `o => o.active` means. A **pipeline stage** inside one is rejected, because a predicate says which documents to keep, not what stages to run:
+**`.find` / `.filter` take a JavaScript predicate.** Their callback is JavaScript, so a `{ … }` body holds `const`/`let` bindings and one `return <expr>` — `o => { return o.active; }` means exactly what `o => o.active` means. jsmql rejects a **pipeline stage** inside one, because a predicate says which documents to keep, not what stages to run:
 
 ```js
 $.recentOrders = $$$.orders.filter(o => { $match(o.userId === $._id); $sort({ createdAt: -1 }); });
@@ -754,7 +754,7 @@ $.recentOrders = $$$.orders.filter(o => { $match(o.userId === $._id); $sort({ cr
 //   write `$$$.orders.aggregate((o) => { $match(...); $sort(...); ... })`
 ```
 
-**`.aggregate(pipeline)` — a full sub-pipeline (grouping, top-N, reshaping).** When you need more than "keep matching docs" — a `$group`, a `$sort`+`$limit` top-N, a `$bucket`, a window stage — reach for `.aggregate()`, named after the driver's own `db.coll.aggregate(pipeline)`. It runs an arbitrary sub-pipeline against the foreign collection and lowers to `$lookup`. The argument is a **block-body arrow** `(o) => { $stage(...); ... }` (each statement is a stage — no `return`) or a **stage-array literal** `[{ $stage: ... }, ...]`. Inside, `o.<field>` is the foreign document's field and `$.<field>` is the outer document (auto-hoisted into `let`, exactly as `.filter`):
+**`.aggregate(pipeline)` — a full sub-pipeline for grouping, top-N, or reshaping.** When you need more than "keep matching docs" — a `$group`, a `$sort`+`$limit` top-N, a `$bucket`, a window stage — use `.aggregate()`, named after the driver's own `db.coll.aggregate(pipeline)`. It runs an arbitrary sub-pipeline against the foreign collection and lowers to `$lookup`. The argument is a **block-body arrow** `(o) => { $stage(...); ... }`, where each statement is a stage and none returns a value, or a **stage-array literal** `[{ $stage: ... }, ...]`. Inside, `o.<field>` is the foreign document's field, and `$.<field>` is the outer document, auto-hoisted into `let` exactly as in `.filter`:
 
 ```js
 // Uncorrelated — same result attached to every doc (no $. refs → no `let`)
@@ -779,9 +779,9 @@ $.monthlyTotals = $$$.orders.aggregate((o) => {
 ```
 
 `.aggregate` is **a link like any other**, so it composes with the rest of the chain in
-both directions — a `.filter` before it correlates, a lodash method before it bounds the
+both directions. A `.filter` before it correlates, a lodash method before it bounds the
 scan, and a lodash method after it ranks the groups. Everything lands in the one
-`$lookup.pipeline` in source order:
+`$lookup.pipeline`, in source order:
 
 ```js
 $.byMonth = $$$.orders.filter(o => o.userId === $._id).aggregate((o) => {
@@ -795,9 +795,9 @@ $.topRegions = $$$.orders.sort({ createdAt: -1 }).take(1000)
   .sort({ revenue: -1 }).take(3);
 ```
 
-`.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept (the index is positional-only). It is the pipeline-oriented spelling — reshape, roll up, paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. `.aggregate` works on the current stream too (`$$.aggregate((o) => { … })`), where the block's statements are simply the chain's stages — the same thing writing them directly or chaining them (`$$.$sort({ … }).$limit(10)`) does. It earns its keep there in a [`$facet` branch](#facet-via----key--chain--), which *is* a sub-pipeline and so has no "write them directly" alternative.
+`.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept, but the index is positional-only. It is the pipeline-oriented spelling — reshape, roll up, or paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. `.aggregate` also works on the current stream (`$$.aggregate((o) => { … })`), where the block's statements are simply the chain's stages — the same thing writing them directly, or chaining them (`$$.$sort({ … }).$limit(10)`), does. It earns its keep there in a [`$facet` branch](#facet-via----key--chain--), which *is* a sub-pipeline, so it has no "write them directly" alternative.
 
-**The sub-stream count (`(o, _i, coll) => …`).** The 3rd param names the **sub-stream** the pipeline has produced so far; `coll.length` is how many documents are in it, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Useful for an in-pipeline guard:
+**The sub-stream count (`(o, _i, coll) => …`).** The 3rd param names the **sub-stream** the pipeline has produced so far; `coll.length` is how many documents are in it, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Use it as an in-pipeline guard:
 
 ```js
 $.orders = $$$.orders.aggregate((o, _i, coll) => {
@@ -806,9 +806,9 @@ $.orders = $$$.orders.aggregate((o, _i, coll) => {
 });
 ```
 
-Only `coll.length` is available (a stream has no array to index/iterate), and the index (2nd) param may be present but never *used* (no per-doc stream index). **Caveat — empty sub-stream:** an in-pipeline `assert(coll.length > 0, …)` runs *inside* the lookup pipeline, so when a user has **zero** matching orders there's no document for it to reject — the result is just `orders: []`, the assert does not fire. To *guarantee* a non-empty result, assert on the materialised array at the outer level instead: `$.orders = $$$.orders.filter(o => o.userId === $._id); assert($.orders.length > 0, "…");`.
+Only `coll.length` is available, because a stream has no array to index or iterate. The index (2nd) param may be present but jsmql never *uses* it, because there is no per-doc stream index. **Caveat — empty sub-stream:** an in-pipeline `assert(coll.length > 0, …)` runs *inside* the lookup pipeline, so when a user has **zero** matching orders there is no document for it to reject — the result is just `orders: []`, and the assert does not fire. To *guarantee* a non-empty result, assert on the materialised array at the outer level instead: `$.orders = $$$.orders.filter(o => o.userId === $._id); assert($.orders.length > 0, "…");`.
 
-**Chained terminals.** A lookup call is a first-class value: chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.tmp.<N>` slot and reads the rest of the chain as a value over that slot. The same `__jsmql` cleanup pipeline-scoped `let` uses takes care of the slot at the end:
+**Chained terminals.** A lookup call is a first-class value. Chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.tmp.<N>` slot and reads the rest of the chain as a value over that slot. The same pipeline-scoped `let` that cleans up `__jsmql` clears the slot at the end:
 
 ```js
 let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
@@ -828,7 +828,7 @@ let name = $$$.users.find(u => u._id === $.userId).name;
 // .find's $first is applied first; the trailing .name reads off the scalar slot
 ```
 
-**The materialised `$lookup` runs beside the stage that reads it.** A join written inside a callback reads the document that callback's *stage* receives, so the `$lookup` is placed directly ahead of that stage — never at the front of the statement. The callback parameter of a chain link names what the previous link produced, and the join follows it:
+**The materialised `$lookup` runs beside the stage that reads it.** A join written inside a callback reads the document that callback's *stage* receives, so jsmql places the `$lookup` directly ahead of that stage — never at the front of the statement. The callback parameter of a chain link names what the previous link produced, and the join follows it:
 
 ```js
 $$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length }));
@@ -837,9 +837,9 @@ $$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag =
 //    { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } }]
 ```
 
-`g._id` is the group key `$sortByCount` made, and `localField: "_id"` reads it because the join stands after that stage. The same holds inside one `,`-joined run of writes: `$.k = $.pid, $.name = $$$.products.find({ _id: $.k }).name` joins on the `k` the first write made.
+`g._id` is the group key `$sortByCount` made, and `localField: "_id"` reads it because the join stands after that stage. The same holds inside one `,`-joined run of writes: `$.k = $.pid, $.name = $$$.products.find({ _id: $.k }).name` joins on the `k` that the first write made.
 
-**A join can't read a variable an enclosing callback binds.** `$lookup` is a stage, and a stage runs over whole documents — it cannot run once per element of an array inside one document. So a join whose predicate reads a `.map` / `.filter` / `.reduce` element is rejected, and the message names the two spellings that work:
+**A join cannot read a variable an enclosing callback binds.** `$lookup` is a stage, and a stage runs over whole documents — it cannot run once per element of an array inside one document. So jsmql rejects a join whose predicate reads a `.map` / `.filter` / `.reduce` element, and the message names the two spellings that work:
 
 ```js
 $.names = $.items.map(x => $$$.products.find({ _id: x.pid }).name);
@@ -850,11 +850,11 @@ $$ = $.items; $.name = $$$.products.find({ _id: $.pid }).name;     // ✅ each e
 let ps = $$$.products.filter(p => p.ok); $.n = $.items.map(x => ps.length);  // ✅ joined once, outside
 ```
 
-A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter` — a bare `$$$.coll.reduce(...)` would be a Cartesian product over the whole foreign collection and is rejected. `.length` and `.reduce` on a `.find()` result are also rejected with a targeted message — `.find` returns scalar-or-null (after `$set $first`), so array reductions over it aren't meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
+A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter`. jsmql rejects a bare `$$$.coll.reduce(...)`, because it would be a Cartesian product over the whole foreign collection. jsmql also rejects `.length` and `.reduce` on a `.find()` result, with a targeted message: `.find` returns scalar-or-null (after `$set $first`), so an array reduction over it is not meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
 
-**Stream-method chains push into the `$lookup.pipeline` body.** A sequence of registered stream methods (the stream-method vocabulary in [src/registry/names.ts](../src/registry/names.ts) — e.g. `.map`, `.toSorted`, `.slice`) chained on a `$$$.<coll>` receiver becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
+**Stream-method chains push into the `$lookup.pipeline` body.** A sequence of registered stream methods (the stream-method vocabulary in [src/registry/names.ts](../src/registry/names.ts) — for example `.map`, `.toSorted`, `.slice`) chained on a `$$$.<coll>` receiver becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array, with no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
 
-**Any lodash stream method may *start* the chain — not only `.find` / `.filter` / `.aggregate`.** The whole chain lowers, in source order, into one `$lookup.pipeline`, and a `.filter` / `.reject` may sit at any position (each becomes a `$match`, correlating `$.<field>` into `let` when present). Because stages run in chain order, `.toSorted(k).take(n).filter(p)` sorts and caps *before* filtering — a different result from filter-first, and one no prior spelling could express. A chain with no `$.` correlation emits the lean uncorrelated `$lookup` (no `let`, matching the `.aggregate` shape):
+**Any lodash stream method may *start* the chain — not only `.find` / `.filter` / `.aggregate`.** The whole chain lowers, in source order, into one `$lookup.pipeline`, and a `.filter` / `.reject` may sit at any position — each becomes a `$match`, and correlates `$.<field>` into `let` when present. Because stages run in chain order, `.toSorted(k).take(n).filter(p)` sorts and caps the array *before* filtering — a different result from filter-first, one no prior spelling could express. A chain with no `$.` correlation emits the lean uncorrelated `$lookup`, with no `let`, matching the `.aggregate` shape:
 
 ```js
 // The 200 most-recent orders (a recency window), then this product's co-purchases.
@@ -863,7 +863,7 @@ $.recentCoPurchase = $$$.orders.toSorted({ createdAt: -1 }).take(200).filter(o =
 //       pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 200 }, { $match: { $expr: /* includes */ } }], as: … } }
 ```
 
-**Value-collapsing terminals (`.head` / `.first` / `.last` / `.nth` / `.size` / `.every` / `.some` / `.includes` / `.partition`, and the aggregates `.sum` / `.mean` / `.max` / `.min` / `.sumBy` / `.meanBy` / `.minBy` / `.maxBy`) return a *value*, so they're value-position-only.** Like a value-extracting `.map`, they pivot to value-mode over the lookup result — valid in an assignment or binding (`$.first = $$$.orders.filter(o => o.userId === $._id).head()`), and on a **bare** `$$$.<coll>` too (no `.filter` needed — `$$$.orders.head()` means "over all orders"). They are **rejected** as a `$$ = …` stream pivot or a bare statement (a value isn't a stream/stage) — the error points you at the value position, or at `.take(1)` for a one-document stream. (`.keyBy` / `.countBy` / `.groupBy` are **not** in this list: they collapse to a lodash object but *do* have a stream lowering, so they work in both positions — see [Stream methods](#stream-methods-chained-after-the-rhs).)
+**Value-collapsing terminals (`.head` / `.first` / `.last` / `.nth` / `.size` / `.every` / `.some` / `.includes` / `.partition`, and the aggregates `.sum` / `.mean` / `.max` / `.min` / `.sumBy` / `.meanBy` / `.minBy` / `.maxBy`) return a *value*, so they work only in a value position.** Like a value-extracting `.map`, they pivot to value-mode over the lookup result — valid in an assignment or binding (`$.first = $$$.orders.filter(o => o.userId === $._id).head()`), and on a **bare** `$$$.<coll>` too, with no `.filter` needed (`$$$.orders.head()` means "over all orders"). jsmql **rejects** them as a `$$ = …` stream pivot or a bare statement, because a value is not a stream or a stage. The error points you at the value position, or at `.take(1)` for a one-document stream. (`.keyBy` / `.countBy` / `.groupBy` are **not** in this list: they collapse to a lodash object but *do* have a stream lowering, so they work in both positions — see [Stream methods](#stream-methods-chained-after-the-rhs).)
 
 ```js
 $.firstOrder = $$$.orders.filter(o => o.userId === $._id).head();  // ok — the first matching order (a doc value)
@@ -872,7 +872,7 @@ $$ = $$$.orders.head();   // throws — a value can't be the new stream; use `.t
 $$$.orders.head();        // throws — a bare value isn't a pipeline stage; assign it
 ```
 
-**A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)` (any body but an object literal) does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar/array (MongoDB requires a document root). Whether it's the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`. A **block-body** value-extractor (`.map(x => { return <expr>; })`, or with `const`/`let` bindings) behaves identically to the expression form — a `{ … }` callback body is just the arrow in disguise (`x => { const y = …; return y; }` → a `$let`):
+**A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)`, with any body but an object literal, does **not** go into the sub-pipeline. A `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar or an array, because MongoDB requires a document root. Whether it is the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`. A **block-body** value-extractor (`.map(x => { return <expr>; })`, or one with `const`/`let` bindings) behaves identically to the expression form — a `{ … }` callback body is just the arrow in disguise (`x => { const y = …; return y; }` → a `$let`):
 
 ```js
 $.recentTotals = $$$.orders
@@ -905,9 +905,9 @@ $.productIds = $$$.orders.filter(o => o.userId === $._id).map("productIds").flat
 // → $lookup (pipeline: [$match]) + $set { productIds: uniq(flatten($map(result, "productIds"))) }
 ```
 
-The existing `.length` / `.reduce` / member-access terminals continue to take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith` (a following `.take` etc. lowers to `$limit` there); a `.map(x => { … ; return ({ … }) })` block returning one does the same. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
+The existing `.length` / `.reduce` / member-access terminals still take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised, transformed slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith`, and a following `.take` etc. lowers to `$limit` there. A `.map(x => { … ; return ({ … }) })` block that returns one does the same. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
 
-**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript; a stage inside it is rejected. To run stages *and* reshape, use `.aggregate` and write the reshape as `<param> = <expr>` — the body's own document replaced, which is the same `$replaceWith` a `.map` emits. `$` is the OUTER document at every depth, so `$ = …` inside a body is refused with the parameter named. The block has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.length`, nested `$$$.<coll>` lookups:
+**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript, and jsmql rejects a stage inside it. To run stages *and* reshape, use `.aggregate` and write the reshape as `<param> = <expr>`, which replaces the body's own document — the same `$replaceWith` a `.map` emits. `$` is the OUTER document at every depth, so jsmql refuses `$ = …` inside a body and names the parameter. The block has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.length`, and nested `$$$.<coll>` lookups:
 
 ```js
 $.orders = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
@@ -919,20 +919,20 @@ $.orders = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
 //     { $replaceWith: { id: "$_id", total: "$total" } }
 ```
 
-As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$total`), and a `$.<field>` reference *reads* the outer document (auto-hoisted into `let`).
+As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$total`), and a `$.<field>` reference *reads* the outer document, auto-hoisted into `let`.
 
-**Why JS-faithful cardinality for `.find()`?** MongoDB's `$lookup` always returns an array; jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off: one extra in-place `$set` stage. Even when the predicate matches multiple foreign docs, the row count stays stable (vs the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out).
+**Why does `.find()` keep JS-faithful cardinality?** MongoDB's `$lookup` always returns an array. jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off is one extra in-place `$set` stage. Even when the predicate matches several foreign docs, the row count stays stable, unlike the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out.
 
 **Caveats:**
-- **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); u.orders = $$$.orders.filter(o => o.userId === u._id); })`.
-  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope — the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param — computed on that ancestor's own pipeline, not on the one reading it), or an outer-pipeline `let`/`const` declared before the lookup — is captured **once** into the `$lookup.let` of the level it belongs to (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings) and read at every deeper level through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream) — each resolving to its own var with no collision, and the value taken from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`); a bare `$$ = $$$.<coll>.aggregate(…)` (no filter) is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream, so the outer doc / count / `let` can't be read inside it — only `coll.length` is available there.
+- **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. A reference to the enclosing-foreign param (`o.x`) auto-lets into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); u.orders = $$$.orders.filter(o => o.userId === u._id); })`.
+  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope needs one capture, at the level it belongs to. This applies to the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param, computed on that ancestor's own pipeline rather than the one reading it), and an outer-pipeline `let`/`const` declared before the lookup. jsmql captures each **once** into the `$lookup.let` of its own level (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings), and every deeper level reads it back through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream). Each resolves to its own var with no collision, and each takes its value from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`). A bare `$$ = $$$.<coll>.aggregate(…)`, with no filter, is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream, so it cannot read the outer doc, count, or `let` inside it — only `coll.length` is available there.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema or driver `[DEF-013]` — see [DEFERRED.md](DEFERRED.md).
-- **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. For deterministic single-doc selection use `.aggregate((o) => { …; $sort({ … }); $limit(1); }).at(0)`.
-- **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
+- **`.find()` multi-match.** `$first` picks the first matching doc, and the ordering follows MongoDB's storage order. For deterministic single-doc selection, use `.aggregate((o) => { …; $sort({ … }); $limit(1); }).at(0)`.
+- **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — jsmql inlines its value into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot become the compile-time `from` field, so jsmql rejects it with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
 
 ### Cross-database reads: not supported
 
-A cross-database **read** — naming another database in a `.find` / `.filter` join or in a `$$.push(...)` union — is **rejected at compile time**. Any of these forms throws:
+jsmql **rejects a cross-database read at compile time** — naming another database in a `.find` / `.filter` join, or in a `$$.push(...)` union. Each of these forms throws:
 
 ```js
 // All of these throw a CodegenError:
@@ -952,7 +952,7 @@ Reference a collection in the CURRENT database instead — write '$$$.orders'
 (drop the '$$$$.cold_storage.' prefix) …
 ```
 
-**Why.** A cross-database `.find` / `.filter` would have to compile to `$lookup` (or `$unionWith`) with a `from: { db, coll }` *namespace object*. That object form is **Atlas-Data-Federation-only**: every regular MongoDB deployment (standalone, replica set, sharded cluster) server-validates `$lookup.from` to a bare collection-name *string* and rejects the object at runtime. Per HR3 (jsmql never knowingly emits invalid MQL), we reject these reads at compile time rather than emit a shape that won't run. The rejection lives on the join road in [`src/compiler/emit/join.ts`](../src/compiler/emit/join.ts), which every join chain passes through.
+**Why.** A cross-database `.find` / `.filter` would have to compile to `$lookup` (or `$unionWith`) with a `from: { db, coll }` *namespace object*. That object form works only on **Atlas Data Federation**: every regular MongoDB deployment (standalone, replica set, sharded cluster) validates `$lookup.from` on the server as a bare collection-name *string*, and rejects the object at runtime. Per HR3 (jsmql never knowingly emits invalid MQL), jsmql rejects these reads at compile time instead of emitting a shape that will not run. The rejection lives on the join road in [`src/compiler/emit/join.ts`](../src/compiler/emit/join.ts), which every join chain passes through.
 
 **What to write instead.** Reference the collection in the *current* database with same-database `$$$.<coll>` (drop the `$$$$.<db>.` prefix) and run the pipeline against the database that holds the data:
 
@@ -964,11 +964,11 @@ $.archivedOrders = $$$.orders.filter(o => o.userId === $._id);  // ✅ same-db $
 
 ### Collection union: `$$.push(...)`
 
-`$$` is the current collection. `.push(...items)` appends those items to the current stream — the JS-faithful name for MongoDB's [`$unionWith`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/unionWith/) stage. **Statement-only**: `$$.push(...)` emits one or more `$unionWith` stages and has no value. It cannot be used on a RHS, in arithmetic, inside a Filter, or anywhere else an expression is read.
+`$$` is the current collection. `.push(...items)` appends those items to the current stream — the JS-faithful name for MongoDB's [`$unionWith`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/unionWith/) stage. **Statement-only**: `$$.push(...)` emits one or more `$unionWith` stages and has no value. You cannot use it on a RHS, in arithmetic, inside a Filter, or anywhere else jsmql reads an expression.
 
-The spread (`...`) rule is identical to JavaScript's: arrays must be spread, scalars must not. `.concat(list)` is the other JavaScript spelling and takes the array itself.
+The spread (`...`) rule is identical to JavaScript's: you must spread arrays, and you must not spread scalars. `.concat(list)` is the other JavaScript spelling, and it takes the array itself.
 
-**An array the DATA decides cannot be appended.** `$documents` takes a list the program spells out; MEASURED, the server refuses a field path there ("an array is expected"). So `$$.push(...$.items)` is refused, and the message names what does work — another collection, a written list of documents, or `$$ = <array>` to make the stream FROM that array rather than append to it.
+**jsmql cannot append an array the DATA decides.** `$documents` takes a list the program spells out. MEASURED: the server refuses a field path there ("an array is expected"). So jsmql refuses `$$.push(...$.items)`, and the message names what does work — another collection, a written list of documents, or `$$ = <array>` to make the stream FROM that array rather than append to it.
 
 ```js
 // 1. Bare collection — short form.
@@ -1025,31 +1025,31 @@ $$.push(...$$$.archive_users.aggregate(u => {
 
 | Inside `.push(...)` | Spread `...`? | Why |
 |---|---|---|
-| `$$$.coll` (bare collection) | yes | conceptually an array of docs |
+| `$$$.coll` (bare collection) | yes | it stands for an array of docs |
 | `$$$.coll.filter(pred)` | yes | `.filter` returns an array |
 | `$$$.coll.find(pred)` | **no** | `.find` returns a single doc; spreading a scalar is a JS TypeError |
-| `{ ... }` (inline document) | **no** | scalar — push as one item |
+| `{ ... }` (inline document) | **no** | it is a scalar, so push it as one item |
 
-Each rule is enforced at compile time with a targeted error:
+jsmql enforces each rule at compile time with a targeted error:
 
 - `$$.push($$$.coll.filter(pred))` (forgot the `...`) → "use `...` to merge documents from another collection".
 - `$$.push(...$$$.coll.find(pred))` (spurious `...`) → "`.find` returns a single document; drop the `...`".
 
-**`$unionWith` has no `let` slot.** Predicates inside `$$.push(...$$$.coll.filter(pred))` may only reference foreign-document fields. A `$.` reference (`o.userId === $.tenantId`) is a compile-time error pointing you at the fix: move the local filter to a `$match(...)` stage *before* the push.
+**`$unionWith` has no `let` slot.** A predicate inside `$$.push(...$$$.coll.filter(pred))` may reference only foreign-document fields. A `$.` reference (`o.userId === $.tenantId`) triggers a compile-time error that points you at the fix: move the local filter to a `$match(...)` stage *before* the push.
 
-**Index-friendly inner `$match`.** When the predicate translates to query syntax (the same engine `$match` itself uses), the inner `$match` emits the index-friendly `{ field: value }` form — not a blanket `$expr` wrap — so MongoDB can use indexes on the foreign collection.
+**Index-friendly inner `$match`.** When the predicate translates to query syntax, the same engine `$match` itself uses, the inner `$match` emits the index-friendly `{ field: value }` form, not a blanket `$expr` wrap, so MongoDB can use indexes on the foreign collection.
 
-**Server version.** The bare `$documents`-only form of `$unionWith` (used for inline docs without a `coll`) requires **MongoDB 6.0+**. Spreads against existing collections work on every server that supports `$unionWith` (4.4+).
+**Server version.** The bare `$documents`-only form of `$unionWith`, used for inline docs without a `coll`, requires **MongoDB 6.0+**. Spreads against existing collections work on every server that supports `$unionWith` (4.4+).
 
-**Statement-only.** `$$.push(...)` must appear as a top-level Pipeline statement. `let x = $$.push(...)`, `$.x = $$.push(...)`, or any other read of the result is rejected with the statement-only error. Filter / `jsmql.expr` / `jsmql.update` reject the syntax wholesale — collection union is Pipeline-only.
+**Statement-only.** `$$.push(...)` must appear as a top-level Pipeline statement. jsmql rejects `let x = $$.push(...)`, `$.x = $$.push(...)`, or any other read of the result, with the statement-only error. Filter / `jsmql.expr` / `jsmql.update` reject the syntax wholesale, because collection union is Pipeline-only.
 
-**Nested.** `$$.push(...)` inside a lookup's `.aggregate` block or inside a sub-pipeline (`$facet.*`, `$lookup.pipeline`, `$unionWith.pipeline`) is rejected with a hoist-to-outer hint — the stages it would emit can't land inside the inner pipeline without changing what gets unioned.
+**Nested.** jsmql rejects `$$.push(...)` inside a lookup's `.aggregate` block or inside a sub-pipeline (`$facet.*`, `$lookup.pipeline`, `$unionWith.pipeline`), with a hoist-to-outer hint — the stages it would emit cannot land inside the inner pipeline without changing what gets unioned.
 
 ### `assert`: fail the pipeline when an invariant breaks
 
 `assert(condition[, message])` is a guard clause for a pipeline. When `condition`
-holds the document passes through unchanged; when it fails the **whole operation
-aborts** with a server error carrying your `message`. It's the closest thing to
+holds, the document passes through unchanged. When it fails, the **whole operation
+aborts** with a server error that carries your `message`. It is the closest thing to
 `throw new Error(...)` that runs purely server-side.
 
 ```js
@@ -1074,29 +1074,29 @@ jsmql("assert($.active)");   // 0 / "" / null / missing all fail
 When the assertion fails, the driver throws `BadValue (2)` with a message ending
 `Unknown type name: jsmql assertion failed: qty must be >= 0`. The
 `Unknown type name:` prefix is MongoDB boilerplate — your message is the readable
-tail. (jsmql can't set a custom error *code*; only the message text.)
+tail. jsmql cannot set a custom error *code*; it can set only the message text.
 
-**How it works / why no JS.** MongoDB has no native assert/throw operator, and
-the one mechanism that carries a custom message — `$function` (server-side JS) —
-is deprecated in MongoDB 8.0 and unavailable under the Stable API and on Atlas
+**How it works, and why not JS.** MongoDB has no native assert/throw operator. The
+one mechanism that carries a custom message — `$function` (server-side JS) — is
+deprecated in MongoDB 8.0 and unavailable under the Stable API and on Atlas
 Flex/free tiers, so jsmql avoids it. Instead `assert` feeds the (prefixed)
-message to `$convert` as a bogus target type; a holding assertion converts a
-constant `true`→`bool` (a no-op the surrounding `$match` keeps), a failing one
+message to `$convert` as a bogus target type. A holding assertion converts a
+constant `true` to `bool` (a no-op the surrounding `$match` keeps); a failing one
 trips `Unknown type name`. The `jsmql assertion failed:` prefix is required, not
-decorative — it stops a message that happens to be a real type name (e.g.
+decorative — it stops a message that happens to be a real type name (for example
 `"int"`) from making the convert *succeed* and silently skipping the check.
 
 **Statement-only.** `assert(...)` must be a top-level Pipeline statement — it has
-no value. `$.x = assert(...)`, `cond ? a : assert(...)`, or any other read of the
-result is rejected with a hint pointing at the statement form. `jsmql.filter` /
-`jsmql.expr` reject it wholesale (it's Pipeline-only); `jsmql.update` rejects it
-too, because an update document is made of writes.
+no value. jsmql rejects `$.x = assert(...)`, `cond ? a : assert(...)`, or any other
+read of the result, with a hint that points at the statement form. `jsmql.filter` /
+`jsmql.expr` reject it wholesale, because it is Pipeline-only; `jsmql.update`
+rejects it too, because an update document is made of writes.
 
 ### `$$.length`: count the current stream
 
 `$$` is the current stream; `$$.length` is its document count **at the point you
-use it** — the JS array-length idiom. It's a value usable anywhere an expression
-goes: a field, arithmetic, an `assert` condition, a stage body.
+use it** — the JS array-length idiom. It is a value you can use anywhere an
+expression goes: a field, arithmetic, an `assert` condition, a stage body.
 
 ```js
 // Annotate every doc with the size of the (filtered) stream.
@@ -1117,13 +1117,13 @@ jsmql(`$match($.email === "me@x.com"); assert($$.length <= 1, "expected ≤ 1 us
 ```
 
 **How it works.** MongoDB has no inline "stream count" operator, so jsmql
-materialises one: a `$setWindowFields` `$count` stamps the count onto every
-document (under `__jsmql.length`, cleaned up by the trailing `$unset`), and
-`$$.length` reads it back. The materialiser is emitted **once** before the first
-use, **reused** while it stays valid, and **recomputed** after any stage that
+materialises one. A `$setWindowFields` `$count` stamps the count onto every
+document, under `__jsmql.length`, cleaned up by the trailing `$unset`, and
+`$$.length` reads it back. jsmql emits the materialiser **once**, before the first
+use, **reuses** it while it stays valid, and **recomputes** it after any stage that
 changes the count or drops the field (`$match`, `$group`, `$unwind`, `$project`,
-…). Needs **MongoDB 5.0+** (`$setWindowFields`); it buffers the stream
-(100 MB / `allowDiskUse`), like any window/group.
+…). This needs **MongoDB 5.0+** (`$setWindowFields`), and it buffers the stream
+(100 MB / `allowDiskUse`), like any window or group stage.
 
 **`$$` is always the ROOT stream — at any nesting depth.** Mirroring `$` (the
 root document), `$$` is the top-level stream even when you read `$$.length`
@@ -1142,14 +1142,15 @@ jsmql(`$.peers = $$$.users.filter(u => u.orderCount === $$.length);`);
 //   ]
 ```
 
-To count an **inner** sub-stream (not the root), use the 3rd callback param —
+To count an **inner** sub-stream instead of the root, use the 3rd callback param —
 `$$$.orders.filter(p).map((o, _i, coll) => coll.length)` (see *Cross-collection
-lookups* above). `$$.length` = root; `coll.length` = that sub-stream.
+lookups* above). `$$.length` counts the root; `coll.length` counts that sub-stream.
 
 Each handle counts **the stream the callback that bound it runs over**, at any depth.
-A body nested inside another can read both its own and every ancestor's at once, and
-each is taken from the right documents — the ancestor's count is computed on the
-ancestor's own pipeline and carried down through the `$lookup.let` it passes:
+A body nested inside another can read both its own count and every ancestor's at
+once, and jsmql takes each from the right documents — the ancestor's count is
+computed on the ancestor's own pipeline and carried down through the `$lookup.let`
+it passes:
 
 ```js
 $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, _i, ordersColl) => {
@@ -1159,22 +1160,22 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, _i, ordersColl) => {
 });
 ```
 
-**Scope.** Pipeline-only — in a Filter / `jsmql.expr` there is no stream to
-count. `$$.length` is the root count at every depth: a `$lookup` body
-(predicate, `.aggregate` block, or `.map` chain) reads it through the
-`$lookup.let` capture above, a `$facet` branch and a declared function body read
-the stamped field directly. The one place it cannot reach is a `$$.push(…)`
-(`$unionWith`) body — that stage has no `let`, so the compiler refuses
-the read and names the join form that carries the value. Two other positions refuse
-it for the same reason, each naming the rewrite that works: the body of a stage the
-server requires FIRST (`$geoNear`, `$documents`, `$search`, …), because the
+**Scope.** Pipeline-only — a Filter / `jsmql.expr` has no stream to count.
+`$$.length` is the root count at every depth: a `$lookup` body (predicate,
+`.aggregate` block, or `.map` chain) reads it through the `$lookup.let` capture
+above, and a `$facet` branch and a declared function body read the stamped field
+directly. The one place it cannot reach is a `$$.push(…)` (`$unionWith`) body,
+because that stage has no `let`, so the compiler refuses the read and names the
+join form that carries the value. Two other positions refuse it for the same
+reason, and each names the rewrite that works: the body of a stage the server
+requires FIRST (`$geoNear`, `$documents`, `$search`, …), because the
 `$setWindowFields` would have to run ahead of a stage nothing may precede; and the
-body of the stage that writes the output (`$merge`'s `let`), because jsmql clears its
-scratch fields in the stage right before it.
+body of the stage that writes the output (`$merge`'s `let`), because jsmql clears
+its scratch fields in the stage right before it.
 
 ### `$out`: write the pipeline to a collection
 
-Assigning to a context-ref-rooted LHS writes the current pipeline's documents into a destination collection — MongoDB's [`$out`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/out/) stage. The destination is named on the **left** (where the documents go), the (optionally filtered) source on the **right**:
+An assignment to a context-ref-rooted LHS writes the current pipeline's documents into a destination collection — MongoDB's [`$out`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/out/) stage. The destination name sits on the **left** (where the documents go), and the source, optionally filtered, sits on the **right**:
 
 ```js
 // 1. Same-database write — destination is a bare string.
@@ -1212,30 +1213,30 @@ jsmql("$.tier = 'gold'; $$$.gold_users = $$;")
 | `$$$.<coll> = …` / `$$$["<coll>"] = …` | `"<coll>"` (same database) |
 | `$$$$.<db>.<coll> = …` / `$$$$["<db>"]["<coll>"] = …` | `{ db: "<db>", coll: "<coll>" }` (cross-database) |
 
-Bracket and dotted segments mix freely (`$$$$.dw["archive"]` is equivalent to `$$$$["dw"].archive`). Bracket is **required** for non-identifier names (hyphens, dots, leading digits, reserved words). Computed brackets (`$$$[someVar]`) are rejected — the destination must be a literal so it's readable from the source; for parameterised destinations, use `jsmql.compile` and pass the name in as a binding.
+Bracket and dotted segments mix freely (`$$$$.dw["archive"]` is equivalent to `$$$$["dw"].archive`). Bracket is **required** for non-identifier names (hyphens, dots, leading digits, reserved words). jsmql rejects a computed bracket (`$$$[someVar]`), because the destination must be a literal so you can read it from the source. For parameterised destinations, use `jsmql.compile` and pass the name in as a binding.
 
 **RHS chain:**
 
 | Method | Stage | Notes |
 |---|---|---|
 | bare `$$` | (none) | Writes the current stream unchanged. |
-| `$$.filter(<predicate>)` | `$match` | Same index-friendly translator `$match` uses, and the same predicate spellings as everywhere else — query syntax with any residual in `$expr`. For several stages, chain them instead (`$$.$match({ … }).$sort({ … })`). |
-| `$$.reject(<predicate>)` | `$match` | `.filter` negated — `$match: { $expr: { $not: … } }`, same as in a `$$ =` chain. |
-| `$$.<streamMethod>(…)` | that method's stage(s) | Any chainable stream method (e.g. `.take(n)`, `.toSorted(…)`) — see [Stream methods chained after the RHS](#stream-methods-chained-after-the-rhs) for the vocabulary. |
-| `$$.$<stage>(…)` | that stage | A chained stage call (e.g. `$$.$sort({ … })`). A `$out` chain runs at the outer pipeline level, so this is an ordinary top-level stage placed before the write. |
+| `$$.filter(<predicate>)` | `$match` | The same index-friendly translator `$match` uses, and the same predicate spellings as everywhere else — query syntax, with any residual in `$expr`. For several stages, chain them instead (`$$.$match({ … }).$sort({ … })`). |
+| `$$.reject(<predicate>)` | `$match` | The negation of `.filter` — `$match: { $expr: { $not: … } }`, the same as in a `$$ =` chain. |
+| `$$.<streamMethod>(…)` | that method's stage(s) | Any chainable stream method (for example `.take(n)`, `.toSorted(…)`) — see [Stream methods chained after the RHS](#stream-methods-chained-after-the-rhs) for the vocabulary. |
+| `$$.$<stage>(…)` | that stage | A chained stage call (for example `$$.$sort({ … })`). A `$out` chain runs at the outer pipeline level, so this is an ordinary top-level stage placed before the write. |
 
-A method in neither form is rejected, and the error names the equivalent stage call as a workaround (`$group({ … }) before the $out`, …).
+jsmql rejects a method in neither form, and the error names the equivalent stage call as a workaround (`$group({ … }) before the $out`, …).
 
-**`$out` must be the last stage.** Anything after the sugar throws an actionable compile-time error pointing at the offending later statement. Two `$out` statements in one pipeline are rejected via the same guard.
+**`$out` must be the last stage.** Anything after the sugar throws an actionable compile-time error that points at the offending later statement. The same guard rejects two `$out` statements in one pipeline.
 
-**Pipeline-mode only.** Like `$$.push(...)` and `$$$.<coll>.find(...)`, the `$out` sugar can't appear in Filter (`jsmql.filter`), expression (`jsmql.expr`), or update-pipeline (`jsmql.update`) modes — `$out` writes are a Pipeline-only concept and MongoDB itself rejects them inside `db.coll.updateOne(filter, update)`.
+**Pipeline-mode only.** Like `$$.push(...)` and `$$$.<coll>.find(...)`, jsmql refuses the `$out` sugar in Filter (`jsmql.filter`), expression (`jsmql.expr`), or update-pipeline (`jsmql.update`) modes. `$out` writes are a Pipeline-only concept, and MongoDB itself rejects them inside `db.coll.updateOne(filter, update)`.
 
-**Why the `$$$.<coll> = …` LHS, not `$ = $out(...)`?** jsmql reserves `$ = …` for *root-replacing* sugar (see [Replace root via `$ = <expr>`](#replace-root-via---expr)). `$out` writes elsewhere — it doesn't replace the current document — so the LHS makes the destination visible on the left, mirroring `$lookup` (`$$$.<coll>.find(...)`) and `$unionWith` (`$$.push(...)`).
+**Why the `$$$.<coll> = …` LHS, not `$ = $out(...)`?** jsmql reserves `$ = …` for *root-replacing* sugar (see [Replace root via `$ = <expr>`](#replace-root-via---expr)). `$out` writes elsewhere and does not replace the current document, so the LHS makes the destination visible on the left, mirroring `$lookup` (`$$$.<coll>.find(...)`) and `$unionWith` (`$$.push(...)`).
 
 #### Adding to a collection instead of replacing it — `$merge`
 
-`$out` REPLACES the destination: whatever it held is gone. `$merge` ADDS to it — the
-documents whose `_id` matches are updated, the rest are inserted. jsmql spells the
+`$out` REPLACES the destination: whatever it held is gone. `$merge` ADDS to it — it
+updates the documents whose `_id` matches, and inserts the rest. jsmql spells the
 difference as `=` against `+=`:
 
 ```js
@@ -1249,8 +1250,8 @@ jsmql("$$$.metrics += $$.filter(d => d.active);")
 // → [{ $match: <translated d => d.active> }, { $merge: "metrics" }]
 ```
 
-The JavaScript verbs that mean "add to this" write the same stage, and they also take
-an **array** of documents, which `+=` does not:
+The JavaScript verbs that mean "add to this" write the same stage, and they also
+accept an **array** of documents, which `+=` does not:
 
 ```js
 jsmql("$$$.metrics.concat($$);")
@@ -1269,25 +1270,25 @@ jsmql("$$$.metrics.push($.summary);")
 
 The spread is what tells the two `.push` forms apart, exactly as in JavaScript:
 `.push(...xs)` writes one document per element of `xs`, and `.push(x)` writes `x`
-itself as one document. Pushing a list without the spread is refused, and the message
-names the spread.
+itself as one document. If you push a list without the spread, jsmql refuses it and
+the message names the spread.
 
-`$merge`'s four settings — `on`, `whenMatched`, `whenNotMatched`, `let` — have no
-sugar and need none; write the stage:
+`$merge`'s four settings — `on`, `whenMatched`, `whenNotMatched`, `let` — need no
+sugar. Write the stage directly:
 
 ```js
 jsmql('$merge({ into: "metrics", on: "_id", whenMatched: "merge" });')
 // → [{ $merge: { into: "metrics", on: "_id", whenMatched: "merge" } }]
 ```
 
-Everything the `$out` sugar states above holds for `$merge` too: it must be the last
-stage, it is Pipeline-only, and the destination shapes are the same.
+Everything the `$out` sugar states above also holds for `$merge`: it must be the last
+stage, it works only in Pipeline mode, and the destination shapes are the same.
 
 ---
 
 ### System / diagnostic stages: `$$.indexStats()`, `$$$$.currentOp()`, …
 
-A handful of MongoDB stages don't transform the stream — they *produce* it (index metadata, collection stats, running ops, …), so each must be the pipeline's **first** stage. They also differ by *where* they run, and jsmql encodes that scope in the context-ref prefix: call the stage as a method on the ref whose scope matches. There are two tiers — the stages either run on **your collection** (`$$`) or on the **deployment/admin** (`$$$$`); none target the *current* database, so `$$$` carries no diagnostics.
+A handful of MongoDB stages do not transform the stream — they *produce* it (index metadata, collection stats, running ops, …), so each must be the pipeline's **first** stage. They also differ by *where* they run, and jsmql encodes that scope in the context-ref prefix: call the stage as a method on the ref whose scope matches. There are two tiers. The stages run either on **your collection** (`$$`) or on the **deployment/admin** (`$$$$`); none target the *current* database, so `$$$` carries no diagnostics.
 
 ```js
 // Collection-scoped — run on db.coll.aggregate().
@@ -1308,7 +1309,7 @@ jsmql("$$.indexStats(); $sort({ accesses: -1 });");
 // → [{ $indexStats: {} }, { $sort: { accesses: -1 } }]
 ```
 
-The method name is the stage name minus the leading `$`; the optional argument is the stage's options object (omit it for an empty `{}`). The two no-option stages — `$$.indexStats()`, `$$.planCacheStats()`, plus `$$$$.shardedDataDistribution()` — take no argument.
+The method name is the stage name minus the leading `$`. The optional argument is the stage's options object; omit it for an empty `{}`. The two no-option stages — `$$.indexStats()` and `$$.planCacheStats()` — take no argument, and neither does `$$$$.shardedDataDistribution()`.
 
 | Prefix | Scope | Driver | Stages |
 | ------ | ----- | ------ | ------ |
@@ -1316,9 +1317,9 @@ The method name is the stage name minus the leading `$`; the optional argument i
 | `$$$`  | database   | —                      | *(none — diagnostics are collection- or server-scoped)* |
 | `$$$$` | cluster/server | admin / config DB  | `.currentOp({…})`, `.listSessions({…})`, `.listLocalSessions({…})`, `.listSampledQueries({…})`, `.shardedDataDistribution()` |
 
-Why `$$$$` and not `$$$` for `currentOp` & friends? MongoDB requires them to run on the **admin** database (`$listSessions` reads the cluster-wide `config.system.sessions`) — never your current application database — and they report deployment-wide state. `$$$` means "current database" (the DB `$$$.<coll>.find()` joins into), so `$$$.currentOp()` would read as "ops in *this* database", which you physically can't run. `$$$$` (cluster/server) is the honest home.
+Why `$$$$` and not `$$$` for `currentOp` and its siblings? MongoDB requires them to run on the **admin** database — `$listSessions` reads the cluster-wide `config.system.sessions`, never your current application database — and they report deployment-wide state. `$$$` means "current database" (the DB `$$$.<coll>.find()` joins into), so `$$$.currentOp()` would read as "ops in *this* database", which you cannot physically run. `$$$$` (cluster/server) is the honest home.
 
-Because the prefix *is* the scope, using a stage at the wrong scope is a **compile-time** error that names the right prefix — jsmql catches the classic "ran `$currentOp` against a collection / against the wrong database" mistake before it reaches the driver:
+Because the prefix *is* the scope, using a stage at the wrong scope raises a **compile-time** error that names the right prefix. jsmql catches the classic "ran `$currentOp` against a collection, or against the wrong database" mistake before it reaches the driver:
 
 ```js
 jsmql("$$.currentOp()");
@@ -1331,7 +1332,7 @@ jsmql("$match($.x > 1); $$.indexStats();");
 // ❌ '$$.indexStats(...)' produces the pipeline's source documents ($indexStats), so it must be the first stage.
 ```
 
-**Pipeline-mode only**, like `$$.push(...)` and the lookup/`$out` sugars — these are source stages, not Filter predicates.
+**Pipeline-mode only**, like `$$.push(...)` and the lookup/`$out` sugars, because these are source stages, not Filter predicates.
 
 > The plain stage forms (`jsmql("[{ $indexStats: {} }]")` and `jsmql("$indexStats({})")`) still work; the `$$`/`$$$`/`$$$$` sugar adds discoverability and scope-checking.
 
@@ -1377,15 +1378,14 @@ jsmql.expr("$year('2020-01-01')")
 // ✗ '$year' expects a date, but got a string. Use a field path or new Date(…).
 ```
 
-What's checked: stage **placement** (source stages like `$collStats`/`$geoNear`/`$changeStream`
-must be first; `$out`/`$merge` must be last; stages forbidden inside `$facet`/`$lookup`/`$unionWith`
-sub-pipelines), stage **body shape** (literal type/range/enum/required-key/mutual-exclusivity
-rules — e.g. `$count('')`, `$bucket` boundaries out of order, a `$merge` `whenMatched` typo),
-`$match` query operators (`$text` placement, at any depth of the body; the `$near` ban; the `$where` call form), and **operator arguments**
-(operand count — `$divide` takes 2; required and unknown object keys with a `Did you mean '…'?`;
-enum slots — `unit`/`startOfWeek`/`$convert.to`/regex flags; and literal types — a non-date in a
-date slot, a non-number in `$abs`, …). Use `jsmql.validate(...)` to get these as a list of
-`{ message, pos }` instead of a throw.
+jsmql checks four things during a compile:
+
+- **Stage placement.** A source stage such as `$collStats`, `$geoNear`, or `$changeStream` must come first. `$out` and `$merge` must come last. jsmql forbids some stages inside a `$facet`, `$lookup`, or `$unionWith` sub-pipeline.
+- **Stage body shape.** jsmql checks the literal type, range, enum, required-key, and mutual-exclusivity rules — for example `$count('')`, `$bucket` boundaries out of order, or a typo in a `$merge` `whenMatched` value.
+- **`$match` query operators.** jsmql checks `$text` placement at any depth of the body, the `$near` ban, and the `$where` call form.
+- **Operator arguments.** jsmql checks the operand count (`$divide` takes 2 arguments), required and unknown object keys (with a `Did you mean '…'?` hint), enum slots such as `unit`, `startOfWeek`, `$convert.to`, and regex flags, and literal types — for example a non-date value in a date slot, or a non-number value in `$abs`.
+
+Call `jsmql.validate(...)` to get these as a list of `{ message, pos }` objects instead of a throw.
 
 ### A method chained on the wrong type
 
@@ -1408,19 +1408,19 @@ jsmql.expr('$.tags.split(",").toUpperCase()')
 //   Map over the array first, e.g. '.map(x => x.toUpperCase(...))', or take one element with '.at(0)'.
 ```
 
-Every method that applies to only one type takes part, in both directions — an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) is refused on a string, number, date or document receiver, and likewise for the string-only, number-only, date-only and document-only methods. Methods that genuinely accept more than one type are never refused: `.slice`, `.concat`, `.indexOf`, `.includes` and `.lastIndexOf` work on a string or an array, `.size` on an array or a document, `.clamp` and `.inRange` on a number or a date, and `.toString` / `.getTime` on anything.
+Every method that applies to only one type takes part, in both directions. jsmql refuses an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) on a string, number, date or document receiver, and it does the same for the string-only, number-only, date-only and document-only methods. jsmql never refuses a method that genuinely accepts more than one type: `.slice`, `.concat`, `.indexOf`, `.includes` and `.lastIndexOf` work on a string or an array, `.size` works on an array or a document, `.clamp` and `.inRange` work on a number or a date, and `.toString` / `.getTime` work on anything.
 
-A receiver's type is known whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number), from `new Date(…)`, from a literal or a template string, or from `.length`.
+jsmql knows a receiver's type whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number), from `new Date(…)`, from a literal or a template string, or from `.length`.
 
-Where it *isn't* known, nothing is rejected and the MQL is emitted: a field path (`$.whatever`), an element plucked with `.find()` / `.at()`, a `.reduce()` result, a `.clamp()` that could be numeric or a date, and any operator whose result type follows its arguments — `$add` / `$subtract` (number or date), `$min` / `$max` / `$first` (an element of the array), `$ifNull` / `$cond` / `$switch` / `$getField` (whatever they are given). `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
+Where jsmql does not know the type, it rejects nothing and emits the MQL: a field path (`$.whatever`), an element plucked with `.find()` / `.at()`, a `.reduce()` result, a `.clamp()` that could be numeric or a date, and any operator whose result type follows its arguments — `$add` / `$subtract` (number or date), `$min` / `$max` / `$first` (an element of the array), `$ifNull` / `$cond` / `$switch` / `$getField` (whatever value they receive). `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
 
-**This check follows JavaScript, not MongoDB's coercions.** MongoDB would happily run `$toUpper` on a date and hand back the stringified date; JavaScript throws on `date.toUpperCase()`, and so does jsmql, because you almost certainly meant `.format(…)`. Writing the operator by hand (`$toUpper($.createdAt)`) still passes through untouched — raw MQL is yours.
+**This check follows JavaScript, not MongoDB's coercions.** MongoDB would happily run `$toUpper` on a date and hand back the stringified date; JavaScript throws on `date.toUpperCase()`, and so does jsmql, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it still passes through untouched — raw MQL is yours.
 
 **Only certain mistakes throw.** If the offending value is a field reference or expression
-jsmql can't evaluate (`$limit($.pageSize)`, `$bucket({ boundaries: $.bounds })`), the MQL is
-emitted as-is — jsmql never blocks a query it can't *prove* is wrong. Constraints that depend
-on your deployment (sharding, transactions, memory limits, Atlas availability) are also left to
-the server.
+jsmql can't evaluate (`$limit($.pageSize)`, `$bucket({ boundaries: $.bounds })`), jsmql
+emits the MQL as-is — it never blocks a query it can't *prove* is wrong. jsmql also leaves
+constraints that depend on your deployment (sharding, transactions, memory limits, Atlas
+availability) to the server.
 
 ---
 
@@ -1438,14 +1438,14 @@ the server.
 | `**` | `$pow` | `$.base ** 2` |
 | `-x` | `$multiply` by -1 | `-$.amount` |
 
-**Operator flattening:** Chained `&&`, `||`, `+`, `*`, and `??` operators are flattened into a single MongoDB array instead of nesting:
+**Operator flattening:** The compiler flattens chained `&&`, `||`, `+`, `*`, and `??` operators into one MongoDB array. It does not nest them:
 ```js
 $.a + $.b + $.c                // → { $add: ["$a", "$b", "$c"] }
 $.a > 1 && $.b > 2 && $.c > 3  // → { $and: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }   (a Filter merges them into one query document)
 $.a > 1 || $.b > 2 || $.c > 3  // → { $or: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }
 $.a ?? $.b ?? $.c              // → { $ifNull: ["$a", "$b", "$c"] }
 ```
-Between plain values (`$.x && $.y`) the operators keep JavaScript's meaning — the result is the operand that decided, after the JavaScript truthiness test — see [Truthy and falsy](#truthy-and-falsy).
+Between plain values (`$.x && $.y`), the operators keep JavaScript's meaning. The result is the operand that decided, after the JavaScript truthiness test. See [Truthy and falsy](#truthy-and-falsy).
 
 **Context-sensitive `+`:** If any operand is a string literal or string-producing method, the entire chain becomes `$concat`:
 ```js
@@ -1478,10 +1478,10 @@ $.key in { foo: 1, bar: 2 }         // { $in: ["$key", ["foo", "bar"]] }    (pro
 
 #### `===` / `!==` vs `==` / `!=` — null and missing fields
 
-jsmql tracks the JS distinction between strict and loose equality, mapped to the two natural MongoDB semantics around `null` / missing fields:
+jsmql tracks the JS distinction between strict and loose equality. It maps each to a natural MongoDB semantics around `null` / missing fields:
 
 - **`===` / `!==`** are JS-like strict equality. Use them for every comparison except null-vs-missing checks.
-- **`==` / `!=`** are restricted to comparisons against `null` — the one JS idiom where `==` has a clear, useful meaning (matches null or missing). Any other use is a compile error pointing you at `===`. This eliminates the usual JS `==` footgun (silent type coercion).
+- **`==` / `!=`** apply only to comparisons against `null`. This is the one JS idiom where `==` has one clear, useful meaning: it matches null or missing. Any other use is a compile error that points you at `===`. This removes the usual JS `==` trap of silent type coercion, a common source of bugs in plain JavaScript.
 
 | jsmql              | Matches                              | MQL (expression context)                                              | MQL (`$match` body)                          |
 | ------------------ | ------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
@@ -1498,13 +1498,13 @@ The error for non-null `==`:
 
 `null` may appear on either side: `null == $.x` is identical to `$.x == null`.
 
-The `$match` column reads the field's **own** value (see [No semicolons → Filter](#no-semicolons--filter)): an equality excludes an array field, and a negation (`!==`, `!= null`) is a two-branch `$or`, because an array field is *not equal* to the literal in JavaScript and must match.
+The `$match` column reads the field's **own** value (see [No semicolons → Filter](#no-semicolons--filter)). An equality excludes an array field. A negation (`!==`, `!= null`) is a two-branch `$or`, because an array field is *not equal* to the literal in JavaScript and must match.
 
 **`in` operator semantics:**
-- Array on the right → value membership: `$.x in [1, 2, 3]` is true when `$.x` equals 1, 2, or 3. *(JavaScript itself uses index existence here — we deliberately diverge because value membership is what users want for MongoDB queries.)*
-- Object literal on the right → property existence (JS-faithful): `$.x in { a, b }` is true when `$.x` equals `"a"` or `"b"`. Computed keys and `...spread` are supported; spread keys are pulled at runtime via `$objectToArray`.
-- Field reference on the right → array membership against the field's value (assumes the field holds an array at query time).
-- Scalar literal on the right → codegen error (no useful interpretation).
+- Array on the right → value membership: `$.x in [1, 2, 3]` is true when `$.x` equals 1, 2, or 3. *(JavaScript itself tests index existence here. jsmql uses value membership instead, because that is what a MongoDB query needs.)*
+- Object literal on the right → property existence (JS-faithful): `$.x in { a, b }` is true when `$.x` equals `"a"` or `"b"`. jsmql supports computed keys and `...spread`. It reads spread keys at run time through `$objectToArray`.
+- Field reference on the right → array membership against the field's value (jsmql assumes the field holds an array at query time).
+- Scalar literal on the right → codegen error (jsmql has no useful reading for this).
 
 ### Logical
 
@@ -1520,7 +1520,7 @@ $.building && $.building + ","      // includes the suffix only when $.building 
 !$.active                           // logical NOT, JS truthy/falsy semantics
 ```
 
-`&&` and `||` follow JavaScript: they return the operand, not a coerced boolean. When every operand in a chain is already a boolean comparison the codegen emits the cheap `$and` / `$or` form; mixed chains compile to `$cond` so the operand value flows through. See [Truthy and falsy](#truthy-and-falsy) below for the rule used.
+`&&` and `||` follow JavaScript. They return the operand, not a coerced boolean. When every operand in a chain is already a boolean comparison, the compiler emits the plain `$and` / `$or` form. A mixed chain compiles to `$cond`, so the operand value flows through. See [Truthy and falsy](#truthy-and-falsy) for the rule.
 
 ### Conditional
 
@@ -1531,7 +1531,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 ### Truthy and falsy
 
-`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position — an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, and a bare-expression Filter — all use **JavaScript** truthy/falsy semantics, not MongoDB's. This holds whichever spelling the predicate is written in: arrow, `_.matches` object, field-name string, `["field", value]` pair, or bare `Boolean`. The values treated as falsy are:
+`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position use **JavaScript** truthy/falsy semantics, not MongoDB's. A predicate position is: an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, or a bare-expression Filter. This rule holds for every way you write the predicate: an arrow, a `_.matches` object, a field-name string, a `["field", value]` pair, or a bare `Boolean`. The values below are falsy:
 
 | Value | Falsy? |
 |---|---|
@@ -1543,9 +1543,9 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 | `NaN` | **no** — see limitation below |
 | everything else (`[]`, `{}`, `"0"`, `-1`, dates, …) | truthy |
 
-MongoDB's raw `$toBool` and bare `$cond` use a different rule (e.g. `""` is truthy in MQL). When you need raw MongoDB semantics — for example to match the behaviour of an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes are unaffected.
+MongoDB's raw `$toBool` and bare `$cond` use a different rule; for example, `""` is truthy in MQL. To get raw MongoDB semantics — for example, to match an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes keep their own meaning.
 
-One rule across every spelling and every position means the pairs that ought to agree do agree: `.compact()` is `.filter(Boolean)`, `.reject(p)` is the exact complement of `.filter(p)`, `.partition(p)` is `[filter(p), reject(p)]` — so no element can fall out of both halves — and a stream `$$.filter(p)` keeps exactly the documents the value-mode `.filter(p)` keeps.
+One rule for every spelling and every position keeps matching pairs equal. `.compact()` is `.filter(Boolean)`. `.reject(p)` is the exact complement of `.filter(p)`. `.partition(p)` is `[filter(p), reject(p)]`, so no element can fall out of both halves. A stream `$$.filter(p)` keeps exactly the documents that the value-mode `.filter(p)` keeps.
 
 ```js
 $.active                            // Filter: { $expr: <JS-truthy check on "$active"> }
@@ -1553,9 +1553,9 @@ $match($.active)                    // the same check, as a stage
 $$.filter(o => o.active)            // and again, on a stream
 ```
 
-Only the index-friendly half of a `$match` is exempt, because it needs no coercion: a comparison is already a boolean, so `$.age > 18` still emits the plain query form `{ age: { $gt: 18 } }`. When you want MongoDB's own truthiness in a `$match`, write the object-literal escape hatch — `$match({ $expr: $.active })` passes through verbatim.
+Only the index-friendly half of a `$match` is an exception, because it needs no coercion. A comparison is already a boolean, so `$.age > 18` still emits the plain query form `{ age: { $gt: 18 } }`. To get MongoDB's own truthiness in a `$match`, write the object-literal escape hatch: `$match({ $expr: $.active })` passes through as written.
 
-**Known limitation: `NaN` is treated as truthy.** It is the one JS-falsy value the rule above does not catch, so `$.xs.compact()` keeps a `NaN` that `_.compact` would drop. Detecting it needs a per-value `$convert` — MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work — and that measures at roughly +40% on a `$match` and +20% on a `$filter`, paid by *every* predicate in the language. `NaN` values are vanishingly rare in MongoDB data, so the divergence is documented rather than bought at that price. When you do need the check, compare explicitly — `$ne($.x, $toDouble("NaN"))` → `{ "$ne": ["$x", { "$toDouble": "NaN" }] }` — which is true for every value except a `NaN` (of either `double` or `decimal` type).
+**Known limitation: jsmql treats `NaN` as truthy.** It is the one JS-falsy value the rule above does not catch, so `$.xs.compact()` keeps a `NaN` value that `_.compact` would drop. Detecting `NaN` needs a per-value `$convert`. MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work. The `$convert` check costs about +40% on a `$match` and +20% on a `$filter`, and every predicate in the language would pay it. `NaN` values are rare in MongoDB data, so this document states the gap instead of paying that cost. When you need the check, compare explicitly: `$ne($.x, $toDouble("NaN"))` → `{ "$ne": ["$x", { "$toDouble": "NaN" }] }`. This is true for every value except a `NaN` of either the `double` or `decimal` type.
 
 ### Bitwise
 
@@ -1576,7 +1576,7 @@ $.a ^ $.b                           // { $bitXor: ["$a", "$b"] }
 
 **Precedence** matches JS: `===` / `!==` (and the null-restricted `==` / `!=`) bind tighter than `&` / `^` / `|`, which bind tighter than `&&` / `||`. So `$.a === $.b & $.c` parses as `($.a === $.b) & $.c`, just like in JavaScript.
 
-**No shift operators.** MongoDB has no `<<` / `>>` / `>>>`; those tokens are not accepted.
+**No shift operators.** MongoDB has no `<<`, `>>`, or `>>>`. jsmql does not accept those tokens.
 
 ---
 
@@ -1623,9 +1623,9 @@ $.note.padEnd(10)                  // (default pad char is space)
 ```
 
 **`.endsWith()` and out-of-range indices.** MongoDB's `$substrCP` is stricter than JavaScript's
-string slicing: a negative start or length makes the server **abort the whole query** instead of
-returning a value. That bites exactly where JS is most forgiving — `"a@b.com".endsWith("@example.com")`
-is simply `false` in JS, but the tail index `strLen - needleLen` is negative. So jsmql floors every
+string slicing. A negative start or length makes the server **abort the whole query**, instead of
+returning a value. This happens exactly where JS is most forgiving: `"a@b.com".endsWith("@example.com")`
+is simply `false` in JS, but the tail index `strLen - needleLen` is negative there. So jsmql floors every
 index it derives, and `.endsWith()` binds its receiver once:
 
 ```js
@@ -1637,26 +1637,26 @@ $.file.endsWith(".pdf")
 //                       ".pdf"] } } }
 ```
 
-Each method keeps its own JavaScript meaning for a negative index — `.slice()` / `.substr()` count
-from the end, `.substring()` clamps to 0, and `.charAt()` returns `""` (it is never floored, since
-that would return the *first* character). A start or length past the end of the string is safe and
-yields `""`, as in JS.
+Each method keeps its own JavaScript meaning for a negative index. `.slice()` and `.substr()` count
+from the end. `.substring()` clamps to 0. `.charAt()` returns `""`; jsmql never floors it, because
+that would return the *first* character instead. A start or length past the end of the string is safe.
+It yields `""`, as in JS.
 
-**A missing field behaves like `""`, never an error.** MongoDB's `$strLenCP` — which every derived
-length needs — aborts the query when its input is missing or null, where `$indexOfCP` and `$substrCP`
-return `null` / `""`. Left alone, that would make `.endsWith()` take a query down on a document with
-no such field while `.startsWith()` on the same field simply returned `false`. So jsmql coerces the
-receiver of every length it derives, and the whole string surface agrees: on an absent field
-`.length` is `0`, `.padStart(5, "0")` is `"00000"`, `.capitalize()` is `""`, and `.endsWith(…)` is
-`false`. (Plain JS would throw a `TypeError` on `undefined` — matching MQL's null-tolerance is the
-more useful behaviour over a heterogeneous collection, and matches what the already-safe methods
-did.) A *type* mismatch is still an error: an array or number where a string is expected fails the
-same way it always has.
+**A missing field behaves like `""`, never an error.** MongoDB's `$strLenCP` aborts the query when
+its input is missing or null, and every derived length needs `$strLenCP`. `$indexOfCP` and `$substrCP`
+instead return `null` or `""` for a missing input. Left alone, this would make `.endsWith()` abort a
+query on a document with no such field, while `.startsWith()` on the same field simply returned
+`false`. So jsmql coerces the receiver of every length it derives. The whole string surface agrees:
+on an absent field, `.length` is `0`, `.padStart(5, "0")` is `"00000"`, `.capitalize()` is `""`, and
+`.endsWith(…)` is `false`. Plain JS would throw a `TypeError` on `undefined`. Matching MQL's
+null-tolerance is more useful over a mixed collection, and it matches what the already-safe methods
+already did. A *type* mismatch is still an error: an array or a number where a string is expected
+fails the same way it always has.
 
-Note this makes the emitted length of a **literal** fold at compile time, counting **code points**
-the way `$strLenCP` does rather than JS's UTF-16 units — `"a👍b"` is 3, not 4.
+Note: the emitted length of a **literal** folds at compile time. It counts **code points**, the way
+`$strLenCP` does, not JS's UTF-16 units. So `"a👍b"` is 3, not 4.
 
-**Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent, so jsmql drops them from the emitted `options` (keeping `i`/`m`/`s`). Dropping `g` is harmless: `$regexFindAll` is inherently global, and `g` is irrelevant to `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex (matching JS, which throws without it), but the `g` doesn't appear in the output.
+**Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent. So jsmql drops them from the emitted `options` and keeps only `i`/`m`/`s`. Dropping `g` causes no problem: `$regexFindAll` is always global, and `g` has no effect on `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex, matching JS, which throws without one. But `g` itself does not appear in the output.
 
 #### lodash string methods (ASCII-only)
 
@@ -1674,7 +1674,7 @@ $.s.truncate()           // > 30 chars → first 27 + "..."
 $.s.truncate({ length: 24, omission: "…" })
 ```
 
-**ASCII-only, by design.** `$toUpper`/`$toLower` are ASCII (accented letters pass through unchanged), and word-splitting uses the ASCII pattern `[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+` (splits camelCase boundaries and non-alphanumerics; accented characters act as separators). `truncate`'s word-boundary `separator` option is not supported (MQL has no back-search); `deburr` is omitted (a no-op without Unicode). All verified against a live mongod.
+**ASCII-only, by design.** `$toUpper`/`$toLower` work only on ASCII; an accented letter passes through unchanged. Word-splitting uses the ASCII pattern `[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+`. This pattern splits camelCase boundaries and non-alphanumeric characters; an accented character acts as a separator. `truncate`'s word-boundary `separator` option has no MQL equivalent, because MQL cannot search backward. jsmql omits `deburr`, because it is a no-op without Unicode support. A live mongod verified every shape here.
 
 ```js
 // Property access — DOT access is interpreted, BRACKET access is raw
@@ -1755,16 +1755,16 @@ $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 
 `.includes()`, `.indexOf()`, `.at()`, `.slice()`, `.concat()`, `.toString()`, `.size()`, and `.length` work on both strings and arrays:
 
-- **Statically known array** (array literal, `.split()`, `.map()`, `.filter()`, `Object.values()`, etc.) → emits the array form (`$in`, `$indexOfArray`, `$concatArrays`).
-- **Statically known string** (`.toLowerCase()`, `String(x)`, `+` in string context, template literal, etc.) → emits the string form (`$indexOfCP` / `$concat`).
-- **Unknown receiver** (a bare `$.field`, a ternary, etc.) → emits a runtime `$switch` on the value's own `$type`, so the right form runs at query time. A value that is neither — null, a missing field, a number — answers `null`: JavaScript throws there, and null is the nearest thing MongoDB holds. The output is more verbose, but works whether the field is a string or an array.
+- **A statically known array** (an array literal, `.split()`, `.map()`, `.filter()`, `Object.values()`, and similar) emits the array form (`$in`, `$indexOfArray`, `$concatArrays`).
+- **A statically known string** (`.toLowerCase()`, `String(x)`, `+` in string context, a template literal, and similar) emits the string form (`$indexOfCP` / `$concat`).
+- **An unknown receiver** (a bare `$.field`, a ternary, and similar) emits a runtime `$switch` on the value's own `$type`, so the right form runs at query time. A value that is neither — null, a missing field, a number — answers `null`. JavaScript throws there, and null is the nearest value MongoDB holds. The output is more verbose, but it works whether the field is a string or an array.
 
 ```js
 $.tags.includes("active")
 // → { $switch: { branches: [{ case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["active", "$tags"] } }, { case: { $in: [{ $type: "$tags" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] } }], default: null } }
 ```
 
-**A JavaScript method on a receiver that is null or missing answers `null`.** JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to raise inside an expression, and `null` is the nearest thing it holds. Nothing else is acceptable: `$size` and `$strLenCP` ABORT the whole command on null, and `$toUpper`, `$substrCP`, `$regexMatch` and `$indexOfCP` answer a *value* for it — `""`, `false`, `-1` — that hides the missing field. So a receiver jsmql cannot prove is there is tested first, and the method runs only when the test passed. A receiver that is certainly there takes no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result (`$$$.<coll>…`), a field the `$type` test above already proved, a path a `?.` on the way in already tested, and any method over one of those. A **lodash** method is not held to that rule, and the lodash rows do not yet share one answer of their own: `.size()` answers `0`, `.pick([…])` answers `{}`, `.chunk(n)` answers `[]`, and `.uniq()` answers `null`. Which single answer they should give — `null`, as a JavaScript method, or lodash's own — is tracked as [DEF-037]:
+**A JavaScript method on a receiver that is null or missing answers `null`.** JavaScript throws there — `undefined.trim()` is a TypeError — but MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds. No other answer works: `$size` and `$strLenCP` ABORT the whole command on null, and `$toUpper`, `$substrCP`, `$regexMatch`, and `$indexOfCP` each answer a *value* instead — `""`, `false`, `-1` — that hides the missing field. So jsmql tests first any receiver it cannot prove is there, and runs the method only when the test passes. A receiver that is certainly there takes no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result (`$$$.<coll>…`), a field the `$type` test above already proved, a path a `?.` on the way in already tested, and any method over one of those. A **lodash** method does not follow this rule, and the lodash rows do not yet share one answer of their own: `.size()` answers `0`, `.pick([…])` answers `{}`, `.chunk(n)` answers `[]`, and `.uniq()` answers `null`. [DEF-037] tracks which single answer they should give — `null`, as a JavaScript method, or lodash's own:
 
 ```js
 $.a.map(x => x + 1).length        // `a` may be missing → the method is tested first, and answers null
@@ -1783,11 +1783,11 @@ $.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).length;   // a $loo
 // → …, { $set: { n: { $size: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } } }, …
 ```
 
-**The same holds for a list ARGUMENT, which is never provably there.** A method that
+**The same rule applies to a list ARGUMENT, because jsmql can never prove it is there.** A method that
 compares the receiver against a second list reaches `$in` or `$setIsSubset` with that
-list, so the list takes the same guard — and a missing one then means "the empty list",
-which is what lodash reads a missing list as. A list spelled in the source is already
-an array and is handed through untouched:
+list. So the list takes the same guard, and a missing list then means "the empty list" —
+the same reading lodash gives a missing list. jsmql hands a list spelled in the source
+straight through, because it is already an array:
 
 ```js
 $.a.difference($.b)               // `b` may be missing → $in would abort
@@ -1800,17 +1800,17 @@ $.a.isSubsetOf($.b)               // the RECEIVER is tested; a missing ARGUMENT 
 // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setIsSubset: ["$a", { $ifNull: ["$b", []] }] } } }
 ```
 
-The three set PREDICATES — `.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()` —
-therefore read a missing operand as the **empty set** and answer a real boolean, where
-their array-returning siblings (`.union()`, `.intersection()`, `.symmetricDifference()`,
-`.xor()`) answer `null`: `$setUnion` and its kin tolerate null and pass it on, so there
-is nothing for a guard to prevent and nothing is added.
+So the three set PREDICATES — `.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()` —
+read a missing operand as the **empty set** and answer a real boolean. Their
+array-returning siblings — `.union()`, `.intersection()`, `.symmetricDifference()`,
+`.xor()` — answer `null` instead. `$setUnion` and its kin tolerate null and pass it on,
+so no guard is needed and jsmql adds none.
 
-If you know the type at design time and want compact output, bind the value to a `const` with a type-revealing initialiser, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` pins a string — `.slice()` does not pin an array, being an either-type method itself), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
+If you know the type at design time and want compact output, you have three options. Bind the value to a `const` with a type-revealing initialiser. Or chain a type-fixing method first — `$.tags.toLowerCase().includes(...)` pins a string, though `.slice()` does not pin an array, since it is itself an either-type method. Or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
 
-**A query document takes the indexable reading instead.** The `$switch` above is the *expression* road, where no index is at stake. A query document is what an index is read through, so in a filter or a `$match` the unproven receiver takes MongoDB's own reading and nothing else — `$.tags.includes("vip")` is `{ tags: "vip" }`, "equals, or is an array containing", which is what `.includes` asks of an array. A string that merely *contains* the needle is not selected there; `$.name.match(/vip/)` is the query spelling that asks for the substring, and `jsmql.expr` gives the two-reading form.
+**A query document takes the indexable reading instead.** The `$switch` above is the *expression* road, where no index is at stake. An index is read through a query document, so in a filter or a `$match` the unproven receiver takes only MongoDB's own reading. `$.tags.includes("vip")` becomes `{ tags: "vip" }`: "equals, or is an array that contains", which is what `.includes` asks of an array. A string that merely *contains* the needle is not selected there. `$.name.match(/vip/)` is the query spelling that asks for the substring, and `jsmql.expr` gives the two-reading form.
 
-**A `const` carries its type.** A `const` whose initialiser is statically an array or a string counts as "statically known" wherever the binding is read — including inside a `$lookup` predicate, where the binding is threaded in as a correlation variable:
+**A `const` carries its type.** A `const` whose initialiser is statically an array or a string counts as "statically known" everywhere the binding is read. This includes inside a `$lookup` predicate, where jsmql threads the binding in as a correlation variable:
 
 ```js
 const ids = $.tags.uniq();          // provably an array
@@ -1825,15 +1825,15 @@ const hits = $$$.orders.filter(o => ids.includes(o.pid));
 //   ]
 ```
 
-Knowing the type also turns a genuine mistake into a compile-time error instead of a server one — `const s = $.name.trim(); s.map(f)` reports that `.map()` needs an array receiver.
+Knowing the type also turns a genuine mistake into a compile-time error instead of a server error. `const s = $.name.trim(); s.map(f)` reports that `.map()` needs an array receiver.
 
-A `let` does **not** carry its type: it can be reassigned, so its type could change between the declaration and the read, and the runtime `$cond` stays. Use `const` when the value never changes — which is also what you'd write in JavaScript.
+A `let` does **not** carry its type. A `let` can be reassigned, so its type could change between the declaration and the read, and jsmql keeps the runtime `$cond`. Use `const` when the value never changes — which is also what you would write in JavaScript.
 
 **`.at(i)` is the from-the-end reader.** JavaScript has `.at()` on both `Array` and `String`
-(`"abc".at(-1) === "c"`), and it is the only spelling that accepts a negative index —
-brackets reject one. On an array it lowers to `$arrayElemAt` (which takes a negative index
-natively); on a string it lowers to `$substrCP`, which refuses a negative start, so the
-index is resolved against the length first:
+(`"abc".at(-1) === "c"`), and it is the only spelling that accepts a negative index; brackets
+reject one. On an array it lowers to `$arrayElemAt`, which takes a negative index natively.
+On a string it lowers to `$substrCP`, which refuses a negative start, so jsmql resolves the
+index against the length first:
 
 ```js
 $.tags.uniq().at(-1)                // known array  → { $arrayElemAt: [ …, -1] }
@@ -1841,14 +1841,14 @@ $.name.trim().at(-1)                // known string → { $substrCP: [ …, <len
 $.aliases.at(0)                     // unknown → array position, else character, else missing
 ```
 
-On an unknown receiver the third branch is *missing*, not `""` — so `.at()` on an absent
-field stays absent and `$.aliases.at(0) ?? "anonymous"` reaches its fallback.
+On an unknown receiver, the third branch is *missing*, not `""`. So `.at()` on an absent
+field stays absent, and `$.aliases.at(0) ?? "anonymous"` reaches its fallback.
 
-Two JavaScript divergences on **string** receivers, both from `$substrCP`'s clamping: an
-index past the end gives `""` where JS gives `undefined`, and `.at(-99)` on a short string
-gives the first character where JS gives `undefined`.
+There are two JavaScript divergences on **string** receivers, and both come from
+`$substrCP`'s clamping. An index past the end gives `""`, where JS gives `undefined`.
+`.at(-99)` on a short string gives the first character, where JS gives `undefined`.
 
-**`.flat()` depth.** Only `flat()` and `flat(1)` are supported — MongoDB has no recursive flatten primitive, so deeper depths are rejected at compile time.
+**`.flat()` depth.** jsmql supports only `flat()` and `flat(1)`. MongoDB has no recursive flatten primitive, so jsmql rejects a deeper depth at compile time.
 
 ### Lambda Methods
 
@@ -1896,11 +1896,11 @@ $.numbers.reduceRight((acc, x) => acc + x, 0)
 // → same as .reduce but input is wrapped in { $reverseArray: ... }
 ```
 
-**Note:** In `reduce` and `reduceRight`, the accumulator name is mapped to MongoDB's `$$value`. With a 2-param callback the element rides through `$$this`; with a 3-param callback `(acc, x, i)` the input is zipped with `$range` and both `x` and `i` are bound through a `$let` wrapper.
+**Note:** In `reduce` and `reduceRight`, jsmql maps the accumulator name to MongoDB's `$$value`. With a 2-parameter callback, the element rides through `$$this`. With a 3-parameter callback `(acc, x, i)`, jsmql zips the input with `$range` and binds both `x` and `i` through a `$let` wrapper.
 
 ### Callback parameters `(element, index, array)`
 
-JavaScript array-method callbacks receive `(element, index, array)`, and jsmql accepts all three — the third binds the method's own input through a `$let`, so `arr.length` inside the callback is the receiver's size. Naming the index changes what is iterated (the input is zipped with `$range`), so the machinery is emitted only where a parameter is actually read. `.reduce` / `.reduceRight` take a leading `acc` and cap at three parameters. See [Optional Chaining](#optional-chaining) for the fuller treatment.
+JavaScript array-method callbacks receive `(element, index, array)`, and jsmql accepts all three. The third parameter binds the method's own input through a `$let`, so `arr.length` inside the callback gives the receiver's size. Naming the index changes what is iterated, because jsmql then zips the input with `$range`; it emits this machinery only where a parameter is actually read. `.reduce` and `.reduceRight` take a leading `acc` parameter and allow at most three parameters. See [Optional Chaining](#optional-chaining) for the fuller treatment.
 
 ```js
 // Index-aware map: pair each element with its position
@@ -1916,7 +1916,7 @@ $.scores.reduce((acc, x, i) => acc + x * i, 0)
 
 ### Mutators: at statement position, they mutate the field
 
-JavaScript's array mutators (`.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()`) modify the receiver in place. In jsmql they work the same way **when called at statement position on a `$.<field>` receiver** — the call lowers to a `$set` stage that re-assigns the field. JS semantics are preserved: `.toSorted()` returns a new array and leaves the field unchanged; `.sort()` mutates the field.
+JavaScript's array mutators (`.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()`) modify the receiver in place. In jsmql they work the same way **when you call them at statement position on a `$.<field>` receiver**: the call lowers to a `$set` stage that re-assigns the field. jsmql keeps JS semantics: `.toSorted()` returns a new array and leaves the field unchanged, but `.sort()` mutates the field.
 
 ```js
 // At statement position — each line desugars to a $set stage.
@@ -1934,7 +1934,7 @@ $.events.reverse();
 // → { $set: { events: { $reverseArray: "$events" } } }
 ```
 
-Chained mutators on the same field interact with the `$set` coalescer exactly the same way explicit `$.events = …` assignments do — a read-after-write splits into separate stages:
+Chained mutators on the same field interact with the `$set` coalescer exactly the same way an explicit `$.events = …` assignment does: a read-after-write splits into separate stages:
 
 ```js
 jsmql`
@@ -1945,7 +1945,7 @@ jsmql`
 // → three $set stages, in order
 ```
 
-**In expression position, mutators throw.** Calling `.sort()` (or any other mutator) inside an expression — chained, in a `$match` body, as a `$project` value — surfaces a tailored error pointing at both the immutable variant and the statement-position option:
+**In expression position, mutators throw.** Calling `.sort()`, or any other mutator, inside an expression — chained, in a `$match` body, or as a `$project` value — raises a tailored error. It names both the immutable variant and the statement-position option:
 
 | You wrote in expression position | Use instead |
 |---|---|
@@ -1959,9 +1959,9 @@ jsmql`
 | `.fill(v[, s[, e]])` | No direct immutable replacement — call at statement position, or build via `.map` and `$range` |
 | `.copyWithin(...)` | No direct immutable replacement — compose `.slice()` calls with `$concatArrays` |
 
-`.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw tailored errors explaining why they're not expressible (iterator protocol / void return / locale-dependence) and what to use instead.
+`.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw tailored errors. Each explains why it has no MQL form — the iterator protocol, a void return, or locale dependence — and what to use instead.
 
-**A mutator at the END of a chain is expression position too**, which surprises JavaScript developers: `[...].filter(p).sort()` reads fine in JS, because the `.filter` makes a throw-away array and sorting it in place is invisible. jsmql has no throw-away array to mutate, so it asks for the immutable spelling:
+**A mutator at the end of a chain is expression position too.** This surprises a JavaScript developer: `[...].filter(p).sort()` reads fine in JS, because `.filter` makes a throw-away array, and sorting it in place is invisible. jsmql has no throw-away array to mutate, so it asks for the immutable spelling instead:
 
 ```js
 jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().sort()");
@@ -1976,7 +1976,7 @@ jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().toSorted()");
 
 #### `Object.assign(target, ...sources)` mutates `target`
 
-`Object.assign` is JavaScript's *mutating* merge: it writes the merged object back into its first argument. At statement position jsmql honours that — the target may be a document field **or** an in-scope `let`/`const` binding:
+`Object.assign` is JavaScript's *mutating* merge: it writes the merged object back into its first argument. At statement position, jsmql honours this. The target may be a document field **or** an in-scope `let`/`const` binding:
 
 ```js
 // Merge into a document field — one $set:
@@ -1990,11 +1990,11 @@ Object.assign(result, { a: $.foo });
 //   { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } }
 ```
 
-`Object.assign(result, …)` works even when `result` is `const` — mutating a `const`-bound object is legal JavaScript (only *rebinding* it with `result = …` is not). It's the mutating twin of the value form `result = { ...result, ... }`. In **expression** position `Object.assign(a, b)` is unchanged — it lowers to `$mergeObjects` (see [Object Operations](#object-operations)). The first argument must be a writable target (a `$.field` or an in-scope binding); anything else — `Object.assign({}, …)`, an undeclared name — throws an actionable error.
+`Object.assign(result, …)` works even when `result` is `const`, because mutating a `const`-bound object is legal JavaScript; only *rebinding* it with `result = …` is not. It is the mutating twin of the value form `result = { ...result, ... }`. In **expression** position, `Object.assign(a, b)` keeps its own meaning: it lowers to `$mergeObjects` (see [Object Operations](#object-operations)). The first argument must be a writable target — a `$.field` or an in-scope binding. Anything else, such as `Object.assign({}, …)` or an undeclared name, throws an actionable error.
 
 #### Array sort: `.toSorted(<sort>)` and `.sort(<sort>)`
 
-Both accept a field name, an array of field names, a `{ field: 1 | -1 | "asc" | "desc" }` spec, or a key-function lambda. `.toSorted()` returns a new array; `.sort()` mutates at statement position. The same shapes work everywhere:
+Both accept a field name, an array of field names, a `{ field: 1 | -1 | "asc" | "desc" }` spec, or a key-function lambda. `.toSorted()` returns a new array. `.sort()` mutates at statement position. The same shapes work everywhere:
 
 ```js
 $.events.toSorted("distance")             // { $sortArray: { input: "$events", sortBy: { distance: 1 } } }
@@ -2006,18 +2006,18 @@ $.events.toSorted(e => -e.user.name)      // descending, via unary -
 $.events.sort({ distance: -1 });          // statement position → $set with $sortArray
 ```
 
-A **comparator** is a supported spelling: `(a, b) => a.x - b.x` sorts ascending on `x`, `(a, b) => b.x - a.x` descending, and `||` joins keys — each becomes one `sortBy` key.
+A **comparator** is a supported spelling. `(a, b) => a.x - b.x` sorts ascending on `x`; `(a, b) => b.x - a.x` sorts descending. `||` joins keys, and each becomes one `sortBy` key.
 
 ```js
 $.items.toSorted((a, b) => a.x - b.x || b.y - a.y)
 // → { $sortArray: { input: "$items", sortBy: { x: 1, y: -1 } } }
 ```
 
-A **key function** may name a deep path (`x => x.a.b.c` → `sortBy: { "a.b.c": 1 }`). What is refused is a comparator body that is not one field of each subtracted — the message names the two forms and the `{ field: dir }` spec.
+A **key function** may name a deep path: `x => x.a.b.c` → `sortBy: { "a.b.c": 1 }`. jsmql refuses a comparator body that does not subtract one field from each side. The error message names the two forms and the `{ field: dir }` spec.
 
 #### lodash iteratee / predicate shorthands
 
-Every higher-order value method — the native JS ones (`.map` / `.filter` / `.find` / `.findIndex` / `.findLast` / `.some` / `.every` / `.flatMap`) **and** the lodash ones (`.sumBy` / `.uniqBy` / `.groupBy` / `.reject` / `.takeWhile` / `.differenceBy` / …) — accepts the same lodash iteratee/predicate vocabulary, each desugaring to exactly what the equivalent one-parameter arrow would emit:
+Every higher-order value method accepts the same lodash iteratee/predicate vocabulary. This includes the native JS methods (`.map` / `.filter` / `.find` / `.findIndex` / `.findLast` / `.some` / `.every` / `.flatMap`) and the lodash methods (`.sumBy` / `.uniqBy` / `.groupBy` / `.reject` / `.takeWhile` / `.differenceBy` / …). Each shorthand desugars to exactly what the equivalent one-parameter arrow would emit:
 
 | shorthand | example | equivalent arrow |
 |---|---|---|
@@ -2029,11 +2029,11 @@ Every higher-order value method — the native JS ones (`.map` / `.filter` / `.f
 | single-parameter arrow | `.map(x => x.total * 1.1)` | — |
 | omitted (identity) | `.uniq()` | `x => x` |
 
-An iteratee context reads the result as a value (`.map("name")` plucks the field); a predicate context reads it as a boolean (`.filter("active")` keeps the truthy ones). The `_.matches` object is lodash's **partial deep match**: every key is a path, a nested object narrows the path further (`{ a: { b: { c: 3 } } }` says nothing about `a.b.d`), an array of constants is a subset test, an empty object or array matches anything, and a key is a field name whatever it looks like — `{ qty: { $gt: 5 } }` matches a document whose `qty.$gt` field equals `5`, exactly as `_.filter(docs, { qty: { $gt: 5 } })` does; to compare with an operator, write the predicate (`x => x.qty > 5`). A value that is not a plain object or an array of constants compares with `===`.
+An iteratee context reads the result as a value: `.map("name")` plucks the field. A predicate context reads it as a boolean: `.filter("active")` keeps the truthy ones. The `_.matches` object is lodash's **partial deep match**. Every key is a path. A nested object narrows the path further — `{ a: { b: { c: 3 } } }` says nothing about `a.b.d`. An array of constants is a subset test. An empty object or array matches anything. A key is a field name, whatever it looks like: `{ qty: { $gt: 5 } }` matches a document whose `qty.$gt` field equals `5`, exactly as `_.filter(docs, { qty: { $gt: 5 } })` does. To compare with an operator, write the predicate instead: `x => x.qty > 5`. A value that is not a plain object or an array of constants compares with `===`.
 
 #### lodash array methods
 
-Value-mode methods on an array field (iteratee/predicate args take any of the shorthands above).
+These are value-mode methods on an array field. Their iteratee/predicate arguments take any of the shorthands above.
 
 ```js
 $.nums.sum()  / .mean() / .max() / .min()   // $sum / $avg / $max / $min of the array
@@ -2070,11 +2070,11 @@ $.a.sample()                                // one random element ($rand)
 $.a.sampleSize(3)                           // 3 random elements, without replacement
 ```
 
-> Predicate-run methods take an arrow (`x => …`) or a `_.matches` object (`{ active: true }`), stopping at the first element the predicate rejects (JS truthiness, as in `.filter` — see [Truthy and falsy](#truthy-and-falsy)). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so they return a **different result on every run** (non-deterministic, like the stream `.sample()` → `$sample`); `sampleSize` draws **without replacement** and returns the whole (shuffled) array when `n` exceeds the length.
+> A predicate-run method takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element the predicate rejects, using JS truthiness, as `.filter` does — see [Truthy and falsy](#truthy-and-falsy). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so each run gives a **different result** — non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement** and returns the whole shuffled array when `n` exceeds the length.
 
-> **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash); a missing/null key coerces to the string `"null"`, but an object/array key still *errors*. **A stringified key stays a string.** `Object.keys(<a countBy result>)` therefore hands back hex strings, and on the server a string never equals an `ObjectId` — so a join on such a key silently matches nothing. Cast the key back first: `Object.keys(counts).map(id => ObjectId(id))` ([ObjectId](#objectid-literals) lowers to `$toObjectId`). Group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). `.uniq`/`.union`/`.intersection`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** (`$setUnion` sorted one sample, `$setDifference` did not — do not rely on either). lodash preserves input order and jsmql does not; nobody writes an ordering when they write `.uniq()`. `.difference` is the exception and stays a `$filter`, because lodash keeps the receiver's duplicates there and dropping them would change the values, not just their order. All shapes were verified against a live mongod.
+> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `Object.keys(<a countBy result>)` hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `Object.keys(counts).map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and jsmql does not, because nobody writes an ordering when they write `.uniq()`. `.difference` is the exception and stays a `$filter`, because lodash keeps the receiver's duplicates there, and dropping them would change the values, not just their order. A live mongod verified every shape here.
 
-> **Chaining that can't type-check is rejected.** When a method is chained on a receiver whose type is provably wrong for it, jsmql throws at compile time instead of emitting MQL the server would reject — e.g. `.every(p).map(f)` (a boolean has no methods), `s.toUpperCase().map(f)` (a string isn't an array), `a.countBy("t").take(3)` (an object isn't an array), and, over a lookup, `$$$.orders.find(p).take(5)` (`.find` returns one document). The check only fires when the receiver type is **100% certain**: an element of unknown type (`arr.find(p).map(f)` — the element could itself be an array) or a result whose type depends on its arguments (`n.clamp(a, b)`) still compiles.
+> **jsmql rejects chaining that cannot type-check.** When a method is chained on a receiver whose type is provably wrong for it, jsmql throws at compile time, instead of emitting MQL the server would reject. Examples: `.every(p).map(f)` — a boolean has no methods; `s.toUpperCase().map(f)` — a string is not an array; `a.countBy("t").take(3)` — an object is not an array; and, over a lookup, `$$$.orders.find(p).take(5)` — `.find` returns one document. This check fires only when the receiver type is **fully certain**. An element of unknown type still compiles, for example `arr.find(p).map(f)`, because the element could itself be an array. A result whose type depends on its arguments, such as `n.clamp(a, b)`, still compiles too.
 
 #### lodash positional / slicing methods
 
@@ -2090,11 +2090,11 @@ $.xs.nth(2)  / .nth(-1)                       // lodash spelling of `.at(i)`, sa
 $.xs.size()                                  // element count (array) or key count (object) — strings use .length
 ```
 
-> `take`/`drop`/`takeRight`/`dropRight` reject a **negative** count (the message points at the opposite-end method). `n` past the array length is fine — you get the whole array or an empty one, matching lodash. `head`/`first`/`last` on an empty array yield `null` (MongoDB's missing-value).
+> `take`/`drop`/`takeRight`/`dropRight` reject a **negative** count; the error message points at the opposite-end method. An `n` past the array length is fine: you get the whole array or an empty one, matching lodash. `head`/`first`/`last` on an empty array yield `null`, MongoDB's missing-value marker.
 
 ### Bare built-in callbacks
 
-A built-in that converts one value can be passed bare as the callback, just like in plain JavaScript — `Boolean`, `Number`, `String`, `ObjectId`, and the single-argument `Math` methods:
+You can pass a built-in that converts one value bare as the callback, just like in plain JavaScript: `Boolean`, `Number`, `String`, `ObjectId`, and the single-argument `Math` methods:
 
 ```js
 $.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, missing)
@@ -2113,17 +2113,17 @@ $.scores.map(Math.floor)        // round each element down
 // composed display name, skipping missing parts
 ```
 
-Each is sugar for the one-parameter arrow it reads as (`x => Number(x)`), and lowers to exactly what that arrow lowers to. Every method that takes a callback accepts them — the array methods and the lodash iteratee/predicate methods alike (`.uniqBy(Number)`, `.keyBy(ObjectId)`, `.reject(Boolean)`), so one vocabulary covers whichever method you reach for.
+Each is sugar for the one-parameter arrow it reads as (`x => Number(x)`), and it lowers to exactly what that arrow lowers to. Every method that takes a callback accepts them, both the array methods and the lodash iteratee/predicate methods alike — `.uniqBy(Number)`, `.keyBy(ObjectId)`, `.reject(Boolean)`. So one vocabulary covers whichever method you reach for.
 
-The bare form is for **arrays of values**. A pipeline stream carries documents, so `$$.countBy(String)` would stringify a whole document; the stream methods take a field name or an arrow instead ([Stream methods](#stream-methods-chained-after-the-rhs)). Outside of a callback position the bare form errors at compile time — write `Boolean(x)` / `ObjectId(x)` to convert a single value.
+The bare form is for **arrays of values**. A pipeline stream carries documents, so `$$.countBy(String)` would stringify a whole document. The stream methods take a field name or an arrow instead (see [Stream methods](#stream-methods-chained-after-the-rhs)). Outside a callback position, the bare form errors at compile time. Write `Boolean(x)` / `ObjectId(x)` to convert a single value.
 
-**`Date` is intentionally not allowed bare.** The rule is that a bare built-in must mean what it reads as, and `Date` called without `new` ignores its argument entirely and returns the current time as a string. Write the explicit form: `x => new Date(x)`.
+**jsmql does not allow `Date` bare, by design.** The rule is that a bare built-in must mean what it reads as. `Date`, called without `new`, ignores its argument entirely and returns the current time as a string. Write the explicit form instead: `x => new Date(x)`.
 
-**`parseInt` and `parseFloat` are not jsmql names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript — the index arrives as the radix; and MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text (`parseFloat("12abc")` is `12`, `Number("12abc")` is `NaN`), and `$toDouble` refuses `"12abc"` on the server. Both are refused, and the message names `Number(<value>)` — or `Math.trunc(Number(<value>))` for the whole number `parseInt` would give.
+**`parseInt` and `parseFloat` are not jsmql names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. jsmql refuses both, and the error message names `Number(<value>)`, or `Math.trunc(Number(<value>))` for the whole number `parseInt` would give.
 
 ### Set methods (ES2025)
 
-Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper is a JS-syntax tag — MQL has no Set type, so the underlying arrays go straight into the operator.
+Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper is a JS-syntax tag; MQL has no Set type, so the underlying arrays go straight into the operator.
 
 ```js
 new Set($.a).intersection(new Set($.b))   // { $setIntersection: ["$a", "$b"] }
@@ -2133,7 +2133,7 @@ new Set($.a).isSubsetOf(new Set($.b))     // { $cond: { if: { $eq: [{ $ifNull: [
 new Set($.a).isSupersetOf(new Set($.b))   // { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setIsSubset: [{ $ifNull: ["$b", []] }, "$a"] } } }
 ```
 
-The first three pass a null operand straight through and answer null. `$setIsSubset` refuses one and aborts the command, so the receiver is tested first and answers null when it is not there, as every JavaScript method does — see [the rule](#type-aware-dispatch) — and a missing *argument* reads as the empty set.
+The first three pass a null operand straight through and answer null. `$setIsSubset` refuses a null operand and aborts the command. So jsmql tests the receiver first and answers null when it is not there, as every JavaScript method does (see [the rule](#type-aware-dispatch)); a missing *argument* reads as the empty set.
 
 ```js
 new Set($.a).symmetricDifference(new Set($.b))
@@ -2144,9 +2144,9 @@ new Set($.a).isDisjointFrom(new Set($.b))
 // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $eq: [{ $size: { $setIntersection: ["$a", { $ifNull: ["$b", []] }] } }, 0] } } }
 ```
 
-The last two have no single MongoDB operator, so jsmql composes them — each operand is bound once, so a field is read once however the composition uses it. The set-method argument must itself be a `new Set(...)` literal so that the JS reads consistently.
+The last two have no single MongoDB operator, so jsmql composes them. Each operand is bound once, so a field is read once however the composition uses it. The set-method argument must itself be a `new Set(...)` literal, so that the JS reads consistently.
 
-Need `$allElementsTrue` / `$anyElementTrue`? Use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
+For `$allElementsTrue` / `$anyElementTrue`, use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
 
 ### Grouping: `<collection>.groupBy()`
 
@@ -2155,9 +2155,9 @@ $.items.groupBy(x => x.category)
 // → an object keyed by the discriminator, each key holding the matching elements
 ```
 
-The discriminator is a single-parameter arrow, a field name (`"category"`), or omitted for the element itself. A non-string key is wrapped in `$toString`, matching JavaScript, where an object key is coerced to a string.
+The discriminator is a single-parameter arrow, a field name (`"category"`), or omitted for the element itself. jsmql wraps a non-string key in `$toString`, matching JavaScript, which coerces an object key to a string.
 
-**`Object.groupBy(collection, discriminator)` is not a jsmql name.** It said the same thing as the receiver form and emitted the identical MQL, and one capability gets one spelling. The name still parses, so writing it names the form that works:
+**`Object.groupBy(collection, discriminator)` is not a jsmql name.** It said the same thing as the receiver form and emitted identical MQL, and one capability gets one spelling. The name still parses, so jsmql's error names the form that works:
 
 ```js
 Object.groupBy($.items, x => x.category)
@@ -2167,9 +2167,9 @@ Object.groupBy($.items, x => x.category)
 
 ### lodash object methods
 
-Value-mode methods on an object field (built over `$objectToArray` / `$arrayToObject`). The `mapValues` / `mapKeys` / `pickBy` / `omitBy` iteratee is a `(value[, key]) => …` arrow.
+These are value-mode methods on an object field, built over `$objectToArray` / `$arrayToObject`. The `mapValues` / `mapKeys` / `pickBy` / `omitBy` iteratee is a `(value[, key]) => …` arrow.
 
-A reader of an object has both spellings — the JavaScript static and the lodash method — and the two emit the same MQL:
+A reader of an object has two spellings, the JavaScript static and the lodash method, and both emit the same MQL:
 
 ```js
 $.scores.mapValues(v => v * 2)        // { <k>: v*2 }
@@ -2192,11 +2192,11 @@ $.pairs.fromEntries()                 // same MQL as Object.fromEntries($.pairs)
 $.user?.profile?.keys()               // `?.` takes the {} neutral: { $objectToArray: { $ifNull: ["$user.profile", {}] } }
 ```
 
-> `.keys()` / `.values()` / `.entries()` read the object where the receiver's type is not known at compile time. On a receiver jsmql can PROVE is an array they are refused, because JavaScript's `Array.prototype.keys()` returns an iterator and MongoDB has no such value: `$.xs.map(x => x).keys()` names `$op($range, 0, $op($size, arr))` instead.
+> `.keys()` / `.values()` / `.entries()` read the object when the receiver's type is not known at compile time. jsmql refuses them on a receiver it can PROVE is an array, because JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. `$.xs.map(x => x).keys()` names `$op($range, 0, $op($size, arr))` instead.
 
-> `pick` uses flat field names only (deep paths like `"a.b"` aren't supported — use `$op($getField, …)`). `mapKeys`/`invert` **stringify** the produced key (`$toString`; last wins on collision), like lodash. All verified against a live mongod.
+> `pick` uses flat field names only; a deep path such as `"a.b"` has no support here — use `$op($getField, …)` instead. `mapKeys`/`invert` **stringify** the produced key, using `$toString`, and the last one wins on a collision, like lodash. A live mongod verified every shape here.
 
-> **A missing object is `{}` for a lodash method, and for a JavaScript reader only under `?.`.** `$objectToArray` answers `null` for a missing field and `$arrayToObject` passes that null on, so the empty answer has to be asked for. A LODASH method asks for it always — `_.pick(undefined, …)` is `{}` and lodash has no other reading — so every lodash spelling in this section guards its receiver and answers `{}`, or `[]` where it answers an array. A JAVASCRIPT reader does not: `Object.keys(undefined)` is a **TypeError**, MongoDB has no error to raise inside an expression, and `null` is the nearest thing it has. Write `?.` and you have said the field may not be there, which is exactly the question, so the neutral applies:
+> **A missing object is `{}` for a lodash method, but only under `?.` for a JavaScript reader.** `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on, so you must ask for the empty answer. A LODASH method always asks for it — `_.pick(undefined, …)` is `{}`, and lodash has no other reading — so every lodash spelling in this section guards its receiver and answers `{}`, or `[]` where it answers an array. A JAVASCRIPT reader does not: `Object.keys(undefined)` is a **TypeError**, but MongoDB has no error to raise inside an expression, and `null` is the nearest value it has. Write `?.` to say the field may not be there; that is exactly the right question, so the neutral answer applies:
 >
 > ```js
 > $.o.keys()             // → { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
@@ -2204,15 +2204,15 @@ $.user?.profile?.keys()               // `?.` takes the {} neutral: { $objectToA
 > $.o.toPairs()          // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
 > ```
 >
-> That is the one place `.toPairs()` and `.entries()` part company — one is lodash's spelling of the reading and the other is JavaScript's. `Object.keys($)` reads the root document, which is there, so it takes no neutral either way.
+> That is the one place `.toPairs()` and `.entries()` differ: one is lodash's spelling of the reading, and the other is JavaScript's. `Object.keys($)` reads the root document, which is always there, so it needs no neutral answer either way.
 
-> **A `pick` / `omit` key list the source does not spell** — a field path, or a list holding an element read at run time — is read at query time instead: jsmql walks the object's own keys and matches each against the list. A key list that is missing or null picks nothing and omits nothing, as lodash does. The `$$.pick(…)` / `$$.omit(…)` STREAM forms still need a spelled list: they lower to `$project`, and the server reads a stage's field list before it reads any document.
+> **jsmql reads a `pick` / `omit` key list at query time when the source does not spell it out** — for example, a field path, or a list holding an element read at run time. jsmql walks the object's own keys and matches each against the list. A key list that is missing or null picks nothing and omits nothing, as lodash does. The `$$.pick(…)` / `$$.omit(…)` STREAM forms still need a spelled-out list, because they lower to `$project`, and the server reads a stage's field list before it reads any document.
 
 ---
 
 ## Lambda Functions
 
-Lambdas are used with array methods. Two forms are supported:
+Array methods use lambdas. jsmql supports two forms:
 
 ```js
 // Single parameter (no parentheses required)
@@ -2229,7 +2229,7 @@ item => item.price > 0
 
 ### Destructured parameters
 
-A parameter may be an array or object pattern of plain names, as in JavaScript. The pattern is one parameter, and each name is that parameter's part wherever the body reads it — `([id, count]) => -count` **is** `x => -x[1]`, so the MQL is the same and a sort key still sees its minus as the direction:
+A parameter may be an array or object pattern of plain names, as in JavaScript. The pattern is one parameter, and each name is that parameter's part wherever the body reads it. So `([id, count]) => -count` **is** `x => -x[1]`: the MQL is the same, and a sort key still reads its minus sign as the direction:
 
 ```js
 $.tally.entries().sortBy(([id, count]) => -count)       // ≡ .sortBy(e => -e[1]) — count descending
@@ -2243,7 +2243,7 @@ $.items.map(({ sku, qty: n }) => sku + n)                // ≡ .map(x => x.sku 
 $.pairs.map(([, second]) => second)                     // an elision skips an element
 ```
 
-The names are the pattern's whole vocabulary: a default value (`[a = 1]`), a rest element (`[a, ...rest]`), a nested pattern (`[[a]]`, `{ a: { b } }`) or a computed key (`{ [k]: v }`) is refused with the plain-name spelling to write instead (`x => x.a ?? 1`, `x => x.slice(1)`, `x => x[0][0]`). The `function` form takes the same patterns.
+The names are the pattern's whole vocabulary. jsmql refuses a default value (`[a = 1]`), a rest element (`[a, ...rest]`), a nested pattern (`[[a]]`, `{ a: { b } }`), or a computed key (`{ [k]: v }`). Each error names the plain-name spelling to write instead: `x => x.a ?? 1`, `x => x.slice(1)`, `x => x[0][0]`. The `function` form takes the same patterns.
 
 Lambda parameters shadow outer field references within their scope:
 
@@ -2254,7 +2254,7 @@ $.items.map(price => price * $.taxRate)
 
 ### Block bodies with local `const` (→ `$let`)
 
-A lambda can have a **block body** that declares local `const` / `let` bindings and ends with a `return`. Each binding becomes a MongoDB `$let` variable, so you can name intermediate values and reuse them — just like in JavaScript:
+A lambda can have a **block body** that declares local `const` / `let` bindings and ends with a `return`. Each binding becomes a MongoDB `$let` variable, so you can name an intermediate value and reuse it, just as in JavaScript:
 
 ```js
 $.legs.map(leg => {
@@ -2268,7 +2268,7 @@ $.legs.map(leg => {
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
-Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value — an in-document array method, the `$let(vars, fn)` form, an IIFE — **and in every predicate position**, including a `$$$.<coll>` lookup, `$$.filter` / `$$.reject`, a `$facet` branch, an `$out` write chain, and a `$$.push(...)` union source:
+jsmql nests bindings in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value — an in-document array method, the `$let(vars, fn)` form, an IIFE — **and in every predicate position**, including a `$$$.<coll>` lookup, `$$.filter` / `$$.reject`, a `$facet` branch, an `$out` write chain, and a `$$.push(...)` union source:
 
 ```js
 $.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });
@@ -2280,13 +2280,13 @@ $.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; })
 //      as: "recent" } }]
 ```
 
-A `$let` has no query-document form, so a predicate written this way rides entirely in `$expr` rather than being translated to indexable query syntax — worth knowing when the predicate is the one an index would serve. Everything else behaves as it does anywhere else: bindings nest, a `$.<field>` read still hoists into the `$lookup.let`, and `.reject` negates the `return` while keeping the bindings.
+A `$let` has no query-document form, so a predicate written this way rides entirely in `$expr`; jsmql does not translate it to indexable query syntax. Note this when the predicate is one an index would otherwise serve. Everything else behaves as it does elsewhere: bindings nest, a `$.<field>` read still hoists into the `$lookup.let`, and `.reject` negates the `return` while it keeps the bindings.
 
-> **⚠️ JavaScript gotcha — `=> {` is always a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. Writing `x => { a: 1 }` is an error (it has no `return`) — jsmql points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
+> **⚠️ JavaScript pitfall — `=> {` always opens a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. Writing `x => { a: 1 }` is an error, because it has no `return`; jsmql points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
 
 ### Immediately-invoked arrow functions (IIFE → `$let`)
 
-A call expression whose callee is an arrow-function literal compiles to MongoDB's `$let`. This is the JS-natural way to bind a name and avoid recomputing a sub-expression:
+A call expression whose callee is an arrow-function literal compiles to MongoDB's `$let`. This is the JS-natural way to bind a name and avoid computing a sub-expression twice:
 
 ```js
 ((maxAge, minAge) => $.age >= minAge && $.age <= maxAge)(65, 18)
@@ -2299,13 +2299,13 @@ A call expression whose callee is an arrow-function literal compiles to MongoDB'
 // → { $let: { vars: { d: { $multiply: ["$price", 0.1] } }, in: { $subtract: ["$price", "$$d"] } } }
 ```
 
-Either single-param paren style works: `(x => body)(arg)` and `((x) => body)(arg)` produce identical MQL. A parameter may be destructured into plain names (see [Destructured parameters](#destructured-parameters)); default values and rest parameters are refused — write the default with `??` in the body, and slice the parameter for the rest.
+Either single-parameter paren style works: `(x => body)(arg)` and `((x) => body)(arg)` produce identical MQL. A parameter may be destructured into plain names (see [Destructured parameters](#destructured-parameters)). jsmql refuses a default value or a rest parameter; write the default with `??` in the body, and slice the parameter for the rest.
 
-The body of the IIFE can reference outer `$.fields` freely; only the lambda parameters are rebound.
+The body of the IIFE can reference outer `$.fields` freely. Only the lambda parameters are rebound.
 
 ### Reusable functions
 
-Inside a pipeline you can give an arrow function a **name** (`const f = (a) => …`) and call it by that name — a named IIFE. The declaration itself emits nothing; each call expands the body inline as its own `$let`, so a helper declared once can be reused across many fields without storing anything in the document:
+Inside a pipeline, you can give an arrow function a **name** — `const f = (a) => …` — and call it by that name, as a named IIFE. The declaration itself emits nothing. Each call expands the body inline as its own `$let`, so you can declare a helper once and reuse it across many fields, without storing anything in the document:
 
 ```js
 const money = (n) => Math.round(n * 100) / 100;
@@ -2322,7 +2322,7 @@ $ = {
 //   } }]
 ```
 
-A real-world example — a formatter declared once, reused for sender and recipient:
+A practical example: a formatter declared once, reused for sender and recipient.
 
 ```js
 const addressToString = (a) => {
@@ -2336,7 +2336,7 @@ $ = {
 };
 ```
 
-The **`function` keyword** is a second spelling of the same thing — write it however you'd write JavaScript. It works everywhere an arrow does: as a declaration, as an inline callback, and as the `jsmql(fn)` input. A `function` declaration is *self-terminating* (no `;` needed after the `}`, exactly like JS):
+The **`function` keyword** is a second spelling of the same thing. Write it however you would write JavaScript. It works everywhere an arrow does: as a declaration, as an inline callback, and as the `jsmql(fn)` input. A `function` declaration is *self-terminating*: it needs no `;` after the `}`, exactly like JS:
 
 ```js
 function money(n) { return Math.round(n * 100) / 100 }
@@ -2347,16 +2347,16 @@ $.items.map(function (x) { return x * 1.1 })   // inline callback — same as `(
 jsmql(function ({ $ }) { return $.age >= 18 })  // entry form — same as `({ $ }) => $.age >= 18`
 ```
 
-A named function *expression* (`.map(function scale(x) { … })`) is accepted, but the name is ignored — MQL has no recursion, so the name is unreachable. `async function` and generator `function*` are rejected with a pointer to the plain form.
+jsmql accepts a named function *expression*, such as `.map(function scale(x) { … })`, but ignores the name, because MQL has no recursion and the name is unreachable. jsmql rejects `async function` and generator `function*`, and points you at the plain form.
 
 Notes:
 
-- **Both `=>` styles, the `function` keyword, and a block body work** — `x => …`, `(x) => …`, `(x) => { const t = …; return …; }`, and `function f(x) { return …; }`. A block body uses the same local-`const` rules described above.
-- **Bodies can close over the document.** Beyond their parameters, a function body may read `$.fields` and in-scope `let` bindings.
-- **Functions compose** — one function may call another declared earlier in the same pipeline.
-- **Pipeline-only.** A function is a pipeline statement, exactly like [`let`](#local-bindings-let). An arrow declaration needs the `;` that puts the source in pipeline mode; a `function` declaration is self-terminating and triggers pipeline mode on its own. Declare functions at the top level of the pipeline, not inside an arrow body.
-- **Re-lowered per call.** Calling a function twice produces two independent `$let` blocks — there's no shared definition stored anywhere, and a declared-but-uncalled function adds nothing to the output.
-- Calling an undeclared name, the wrong argument count, recursion, or using a function as a value (rather than calling it) each produce an actionable error.
+- **Both `=>` styles, the `function` keyword, and a block body all work**: `x => …`, `(x) => …`, `(x) => { const t = …; return …; }`, and `function f(x) { return …; }`. A block body uses the same local-`const` rules described above.
+- **A function body can close over the document.** Beyond its parameters, a function body may read `$.fields` and in-scope `let` bindings.
+- **Functions compose.** One function may call another declared earlier in the same pipeline.
+- **Functions are pipeline-only.** A function is a pipeline statement, exactly like [`let`](#local-bindings-let). An arrow declaration needs the `;` that puts the source into pipeline mode. A `function` declaration is self-terminating and triggers pipeline mode on its own. Declare functions at the top level of the pipeline, not inside an arrow body.
+- **jsmql re-lowers a function per call.** Calling a function twice produces two independent `$let` blocks. jsmql stores no shared definition anywhere, and a declared-but-uncalled function adds nothing to the output.
+- Each of these produces an actionable error: calling an undeclared name, using the wrong argument count, recursion, or using a function as a value instead of calling it.
 
 ---
 
@@ -2409,7 +2409,7 @@ Math.acosh($.x)                    // { $acosh: "$x" }
 Math.atanh($.x)                    // { $atanh: "$x" }
 ```
 
-For degree/radian conversion (no JS equivalent), drop into the escape hatch:
+MongoDB has no JS equivalent for degree/radian conversion. Use the escape hatch:
 ```js
 $degreesToRadians($.degAngle)      // { $degreesToRadians: "$degAngle" }
 $radiansToDegrees($.radAngle)      // { $radiansToDegrees: "$radAngle" }
@@ -2422,12 +2422,12 @@ Math.PI                            // 3.141592653589793
 Math.E                             // 2.718281828459045
 ```
 
-**Note:** `Math.round(x)` rounds to the nearest integer (`{ $round: [x, 0] }`). For rounding to N decimal places, drop into the `$round()` escape hatch — there is no JS equivalent:
+**Note:** `Math.round(x)` rounds to the nearest integer (`{ $round: [x, 0] }`). To round to N decimal places, use the `$round()` escape hatch. JS has no equivalent:
 ```js
 $round($.value, 2)                 // { $round: ["$value", 2] } (round to 2 decimal places)
 ```
 
-**Note:** `Math.log()` is the natural logarithm. For arbitrary base, drop into the `$log()` escape hatch:
+**Note:** `Math.log()` is the natural logarithm. For another base, use the `$log()` escape hatch:
 ```js
 $log($.value, 10)                  // { $log: ["$value", 10] } (log base 10)
 ```
@@ -2445,7 +2445,7 @@ Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
 Math.trunc(Number($.stringField))  // { $trunc: { $toDouble: "$stringField" } } — the whole number
 ```
 
-`Boolean(x)` follows JavaScript's truthy/falsy rules — `Boolean("")` is `false`, `Boolean(0)` is `false`, `Boolean([])` is `true`. To get MongoDB's raw `$toBool` (where `""` is truthy and `null` propagates as `null`), call the operator directly: `$toBool($.x)`.
+`Boolean(x)` follows JavaScript's truthy and falsy rules. `Boolean("")` is `false`, `Boolean(0)` is `false`, and `Boolean([])` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
 
 ### `typeof` Operator
 
@@ -2455,9 +2455,9 @@ typeof $.age === "string"          // { $eq: [{ $type: "$age" }, "string"] }
 typeof $.age === "number"          // { $in: [{ $type: "$age" }, ["double", "int", "long", "decimal"]] }
 ```
 
-Returns the BSON type name as a string (e.g. `"string"`, `"bool"`, `"objectId"`, `"date"`). An **umbrella** name — `"number"` — is a membership test over the concrete types it covers, because `$type` answers one concrete type.
+It returns the BSON type name as a string, for example `"string"`, `"bool"`, `"objectId"` or `"date"`. An **umbrella** name, such as `"number"`, tests membership over the concrete types it covers, because `$type` answers with one concrete type.
 
-**A `typeof` comparison names a BSON type, not a JavaScript one.** MongoDB's vocabulary is the whole vocabulary here: `"bool"`, not JavaScript's `"boolean"`; `"long"`, not `"bigint"`; `"javascript"`, not `"function"`. Each of those three is refused with the MongoDB name pointed at, rather than lowered to a test that quietly matches nothing. `"undefined"` IS a MongoDB type — the deprecated BSON one — so it means that and nothing else; absence has its own spelling, `x === undefined`.
+**A `typeof` comparison names a BSON type, not a JavaScript type.** MongoDB's vocabulary is the only vocabulary here: `"bool"`, not JavaScript's `"boolean"`; `"long"`, not `"bigint"`; `"javascript"`, not `"function"`. JSMQL refuses each of these three names and points at the MongoDB name, instead of a test that silently matches nothing. `"undefined"` is a MongoDB type, the deprecated BSON one, so it means only that. Absence has its own spelling: `x === undefined`.
 
 ### Number static predicates
 
@@ -2469,11 +2469,11 @@ Number.isNaN($.x)                  // { $and: [{ $isNumber: "$x" }, { $eq: [{ $t
                                    // a string comparison of the value's own rendering.
 ```
 
-`Number.isFinite()` is **not supported** — MongoDB has no Infinity literal that can be referenced cleanly. For finite-bound checks, write the bounds explicitly (e.g. `$.x > -1e300 && $.x < 1e300`) or use `$convert` with an `onError` clause.
+JSMQL does not support `Number.isFinite()`, because MongoDB has no Infinity literal to reference cleanly. For finite-bound checks, write the bounds directly, for example `$.x > -1e300 && $.x < 1e300`. You can also use `$convert` with an `onError` clause.
 
 ### lodash number methods
 
-Value-mode methods on a number field (per-doc, not stream methods):
+Value-mode methods on a number field (per document, not stream methods):
 
 ```js
 $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
@@ -2487,7 +2487,7 @@ $.n.ceil(2)            // scale by 10² via $pow, $ceil, scale back
 $.n.floor(1)           // as ceil, with $floor
 ```
 
-> `round` uses MongoDB's `$round`, which rounds half-to-even — this **differs from lodash** (`_.round(2.5) === 3`). It's kept deliberately so jsmql emits the native operator rather than an emulation.
+> `round` uses MongoDB's `$round`, which rounds half-to-even. This **differs from lodash**, where `_.round(2.5) === 3`. JSMQL emits the native operator on purpose, instead of an emulation.
 
 ### MongoDB Type Conversion Utilities
 
@@ -2506,11 +2506,11 @@ $convert($.field, "int", 0)             // { $convert: { input: "$field", to: "i
 $convert($.field, "int", 0, null)       // { $convert: { input: "$field", to: "int", onError: 0, onNull: null } }
 ```
 
-`to` takes any BSON type name `$convert` accepts — the enum is a fact on the `$convert` row in [`src/registry/names.ts`](../src/registry/names.ts), and a typo is refused at compile time with the valid set named in the message.
+`to` takes any BSON type name that `$convert` accepts. The enum is a fact on the `$convert` row in [`src/registry/names.ts`](../src/registry/names.ts). JSMQL refuses a typo at compile time and names the valid set in the message.
 
 ### ObjectId literals
 
-Write a constant `_id` three ways — they all produce the same live BSON ObjectId:
+Write a constant `_id` in three ways. They all produce the same live BSON ObjectId:
 
 ```js
 $._id === 0x507f1f77bcf86cd799439011        // leanest: type `0x`, paste the 24-char id
@@ -2522,11 +2522,11 @@ $._id === new ObjectId("507f1f77bcf86cd799439011")
 // { _id: { $in: [new ObjectId("507f…"), new ObjectId("698a…")] } }
 ```
 
-The **`0x` hex form** is the most ergonomic — no quotes, no wrapper, just paste a 24-character hex `_id` after `0x` (numeric separators like `0x507f_1f77_…` are allowed). A `0x` literal with **exactly 24 hex digits** is an ObjectId; a shorter one is an ordinary integer (`0xff` → `255`); a longer-than-safe-integer, non-24-digit hex is rejected.
+The **`0x` hex form** is the easiest to use. It needs no quotes and no wrapper: paste a 24-character hex `_id` after `0x` (numeric separators like `0x507f_1f77_…` are allowed). A `0x` literal with **exactly 24 hex digits** is an ObjectId. A shorter one is an ordinary integer (`0xff` → `255`). JSMQL rejects a longer, non-24-digit hex value that exceeds the safe integer range.
 
-jsmql emits a real BSON `ObjectId` value, which is the only thing the MongoDB driver accepts in a query document — so the equality is index-friendly with no `$expr` wrapper. (A hand-written Extended JSON envelope is **not** equivalent: the driver passes it to the server verbatim, which the server rejects as an unknown operator.) The string passed to `ObjectId("…")` is validated as 24 hex chars at compile time, so a typo is caught early.
+jsmql emits a real BSON `ObjectId` value. This is the only value the MongoDB driver accepts in a query document, so the equality test uses the index with no `$expr` wrapper. (A hand-written Extended JSON envelope is **not** equivalent: the driver passes it to the server as written, and the server rejects it as an unknown operator.) JSMQL checks the string passed to `ObjectId("…")` for 24 hex characters at compile time, so it catches a typo early.
 
-**Typo guard.** An ObjectId's first 4 bytes are a creation timestamp, and MongoDB didn't exist before 2009 — so jsmql rejects any ObjectId whose timestamp predates that (the smallest accepted id is `0x4a000000…`, 2009‑05‑05). This catches the common slips: an all‑zeros id, a sequential placeholder like `0x1234…`, or a dropped leading digit. The error names the decoded date so you can see what you actually typed.
+**Typo guard.** The first four bytes of an ObjectId are a creation timestamp. MongoDB did not exist before 2009, so JSMQL rejects any ObjectId whose timestamp predates that date (the smallest accepted id is `0x4a000000…`, 2009-05-05). This catches common mistakes: an all-zeros id, a sequential placeholder such as `0x1234…`, or a dropped leading digit. The error names the decoded date, so you can see what you typed.
 
 Two more forms handle the non-constant cases:
 
@@ -2535,18 +2535,18 @@ $.userId = ObjectId($.idString)    // dynamic value → { $toObjectId: "$idStrin
 $.newId  = ObjectId()              // no argument   → { $createObjectId: {} } (server-side fresh id)
 ```
 
-For an id you only have **at runtime**, pass a real ObjectId via the template tag or a `jsmql.compile` parameter rather than baking a string into the source:
+For an id you only have **at runtime**, pass a real ObjectId through the template tag or a `jsmql.compile` parameter. Do not bake a string into the source:
 
 ```js
 jsmql`$._id === ${someObjectId}`              // interpolate a live ObjectId instance
 jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObjectId }
 ```
 
-The value is an `ObjectId` from **your own `bson`**. jsmql declares `bson` as a peer dependency, so it resolves to the one copy your driver already carries — the value passes `instanceof` in your code and hands to any other module unchanged.
+The value is an `ObjectId` from **your own `bson`** package. jsmql declares `bson` as a peer dependency, so it resolves to the one copy your driver already carries. The value passes `instanceof` in your code, and it moves to any other module unchanged.
 
 ### The other BSON types
 
-Eight more BSON types have the same three-way spelling. A constant is a live BSON value; a runtime value converts on the server; `X(…)` and `new X(…)` are equivalent, and `jsmql.stringify` writes the `new X(…)` form.
+Eight more BSON types have the same three-way spelling. A constant is a live BSON value. A runtime value converts on the server. `X(…)` and `new X(…)` are equivalent, and `jsmql.stringify` writes the `new X(…)` form.
 
 ```js
 $.price === Decimal128("9.99")     // → { price: new Decimal128("9.99") }
@@ -2560,13 +2560,13 @@ $.grade < MaxKey()                 // → { grade: { $lt: new MaxKey() } }
 $.a = Decimal128($.s);             // → [{ $set: { a: { $toDecimal: "$s" } } }]
 ```
 
-If you come from mongosh, its names work too and mean exactly the same thing: `NumberDecimal` → `Decimal128`, `NumberLong` → `Long`, `NumberInt` → `Int32`, `ISODate` → `Date`.
+If you know mongosh, its names also work here and mean exactly the same thing: `NumberDecimal` → `Decimal128`, `NumberLong` → `Long`, `NumberInt` → `Int32`, `ISODate` → `Date`.
 
-`Timestamp`, `Binary`, `DBRef`, `Code`, `BSONSymbol` and `BSONRegExp` have **no source spelling** — they are not analytics types, and `Timestamp` in particular is MongoDB's *internal* oplog type rather than a date. Interpolate one when you need it (`` jsmql`$.ts === ${new Timestamp({ t, i })}` ``); jsmql passes it through untouched and `jsmql.stringify` prints it correctly.
+`Timestamp`, `Binary`, `DBRef`, `Code`, `BSONSymbol` and `BSONRegExp` have **no source spelling**, because they are not analytics types. `Timestamp` in particular is MongoDB's *internal* oplog type, not a date. Interpolate one when you need it (`` jsmql`$.ts === ${new Timestamp({ t, i })}` ``). jsmql passes it through unchanged, and `jsmql.stringify` prints it correctly.
 
-**`Double` is load-bearing.** The driver writes a whole JavaScript number as an **int**, so `$.a = 1;` stores an int and `$.a = Double(1);` stores a double.
+**`Double` changes the stored type.** The driver writes a whole JavaScript number as an **int**, so `$.a = 1;` stores an int, and `$.a = Double(1);` stores a double.
 
-**Arithmetic stays on the server.** jsmql never evaluates arithmetic on a BSON number at compile time, because doing it in JavaScript would destroy the guarantee you asked for by writing the type:
+**Arithmetic stays on the server.** jsmql never computes arithmetic on a BSON number at compile time. Computing it in JavaScript would break the guarantee you asked for when you wrote the type:
 
 ```js
 $.a = Decimal128("0.1") + Decimal128("0.2");
@@ -2576,7 +2576,7 @@ $.a = Decimal128("0.1") + Decimal128("0.2");
 
 The one thing that does fold is an exact read: `Decimal128("1.50").toString()` → `"1.50"`.
 
-**jsmql refuses what `bson` would silently wrap.** `new Int32(5000000000)` is `705032704` in `bson` and in mongosh — a plausible-looking wrong number. jsmql rejects it at the source position and names the type that fits:
+**jsmql refuses what `bson` would silently wrap.** `new Int32(5000000000)` becomes `705032704` in `bson` and in mongosh, a wrong number that looks plausible. jsmql rejects it at the source position and names the type that fits:
 
 ```js
 $.a = Int32(5000000000);
@@ -2587,7 +2587,7 @@ $.a = Int32(5000000000);
 
 ### Surprise: numeric equality is cross-type, but exact
 
-MongoDB compares numbers across BSON types, so `{ price: 1.5 }` matches an int, a long, a double and a decimal `1.5` alike. But the comparison is **exact**, and most decimal fractions are not exactly representable as a double:
+MongoDB compares numbers across BSON types, so `{ price: 1.5 }` matches an int, a long, a double and a decimal `1.5` alike. But the comparison is **exact**, and a double cannot represent most decimal fractions exactly:
 
 ```js
 // a collection storing money as Decimal128
@@ -2595,9 +2595,9 @@ $.price === Decimal128("0.1")   // finds it
 $.price === 0.1                 // finds NOTHING — and reports no error
 ```
 
-The double `0.1` is really `0.1000000000000000055…`, which genuinely differs from decimal `0.1`. On a `Decimal128` column, write the constant as `Decimal128(…)`. (`1.5` happens to be exactly representable, so it matches either way — which is what makes this easy to miss.)
+The double `0.1` is really `0.1000000000000000055…`, which truly differs from decimal `0.1`. On a `Decimal128` column, write the constant as `Decimal128(…)`. (`1.5` happens to store exactly, so it matches either way. This is what makes the mistake easy to miss.)
 
-Two more measured surprises worth knowing. `Long + Double` promotes to a double and loses the integer: `$add: [Long("9007199254740993"), Double(0.5)]` is `9007199254740992`. And `MinKey`/`MaxKey` **compare** with every type but **compute** with none — `$add: [MinKey(), 1]` is a server error.
+Two more measured surprises are worth knowing. `Long + Double` promotes to a double and loses the integer: `$add: [Long("9007199254740993"), Double(0.5)]` gives `9007199254740992`. `MinKey` and `MaxKey` **compare** with every type but **compute** with none: `$add: [MinKey(), 1]` is a server error.
 
 ---
 
@@ -2623,9 +2623,9 @@ Date.UTC(2024, 1, 15)              // 1707955200000  (folded — 15 February)
 Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, timezone: "UTC" } } }
 ```
 
-**Constant folding.** When every argument to `new Date(...)` is a compile-time literal, jsmql evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` / `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document: `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter / `$match` — MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument, never matching anything. Only genuinely runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments don't form a valid date (`new Date("not-a-date")`), jsmql rejects it at compile time rather than emit MQL the server would refuse.
+**Constant folding.** When every argument to `new Date(...)` is a compile-time literal, jsmql evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), jsmql rejects it at compile time instead of emitting MQL that the server would refuse.
 
-**Months count from 0, as in JavaScript — `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`, so a getter round trip needs no adjustment (`new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month) and code pasted from a JavaScript file means what it meant there. An out-of-range part rolls over exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you reach for them through the escape hatch: `$month($.t)` is 1-based and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January — the compiler leaves a `$op(…)` untouched.
+**Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment (`new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month), and code pasted from a JavaScript file means what it meant there. An out-of-range part rolls over exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you reach them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` untouched.
 
 ```js
 new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
@@ -2634,7 +2634,7 @@ $.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1]
 $month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```
 
-**Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default / `Date.UTC` for the constant fold), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly.
+**Note:** JavaScript's multi-argument `new Date(y, m, d, …)` reads in the runtime's *local time*. jsmql reads it as **UTC** (MQL's `$dateFromParts` default, or `Date.UTC` for the constant fold), because "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when you need the UTC behaviour explicitly.
 
 ### Date Getter Methods
 
@@ -2653,7 +2653,7 @@ $.createdAt.getTime()              // { $toLong: "$createdAt" }   (ms since epoc
 $.createdAt.toISOString()          // { $dateToString: { date: "$createdAt" } }   (that format IS $dateToString's default)
 ```
 
-Each component getter has a `getUTC*` variant that reads the date in UTC instead of the server's local zone — matching JavaScript's `getHours()` (local) vs `getUTCHours()` (UTC) split:
+Each component getter has a `getUTC*` variant that reads the date in UTC instead of the server's local zone. This matches JavaScript's split between `getHours()` (local) and `getUTCHours()` (UTC):
 
 ```js
 $.createdAt.getUTCFullYear()       // { $year: "$createdAt" }
@@ -2666,7 +2666,7 @@ $.createdAt.getUTCSeconds()        // { $second: "$createdAt" }
 $.createdAt.getUTCMilliseconds()   // { $millisecond: "$createdAt" }
 ```
 
-**Parts JavaScript has no getter for.** MongoDB counts weeks, ISO weeks and days of the year; JavaScript's `Date` does not, so these carry Moment's method names and MQL's own numbering:
+**Parts with no JavaScript getter.** MongoDB counts weeks, ISO weeks and days of the year, but JavaScript's `Date` does not. So these methods carry Moment's method names and MQL's own numbering:
 
 ```js
 $.t.week()                         // { $week: "$t" }             → 32   (weeks start Sunday, 0–53)
@@ -2679,9 +2679,9 @@ $.t.quarter()                      // { $toInt: { $ceil: { $divide: [{ $month: "
 $.t.week("America/New_York")       // { $week: { date: "$t", timezone: "America/New_York" } }
 ```
 
-Each takes the optional `timezone` argument, which switches the operator to its `{ date, timezone }` form. `.quarter()` is the one derived value — MongoDB has no `$quarter` operator, and the `$toInt` keeps the result an integer like every other getter (`$ceil` of a division is a double). For grouping *by* quarter, prefer `.startOf("quarter")`, which is one operator and sorts as a date.
+Each method takes the optional `timezone` argument, which switches the operator to its `{ date, timezone }` form. `.quarter()` is the one derived value, because MongoDB has no `$quarter` operator. The `$toInt` keeps the result an integer, like every other getter (`$ceil` of a division gives a double). To group *by* quarter, prefer `.startOf("quarter")`, which is one operator and sorts as a date.
 
-**Date arithmetic** — add or subtract a span of time with `.plus(amount, unit)` and `.minus(amount, unit)`, with an optional third `timezone` argument:
+**Date arithmetic.** Add or subtract a span of time with `.plus(amount, unit)` and `.minus(amount, unit)`. Both take an optional third `timezone` argument:
 
 ```js
 $.subscribedAt.plus(30, "day")     // { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } }
@@ -2690,9 +2690,9 @@ $.t.plus(2, "hour", "America/New_York")
 // { $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" } }
 ```
 
-On a constant date the call folds to the instant the server would compute — see [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below); a literal typo is rejected with a suggestion (`.plus(30, "days")` → *"unit must be one of: … — got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer and a literal `timezone` must be a string — otherwise you get the same compile-time error the `$dateAdd(…)` operator form gives; a field path or parameter in either slot passes through unchecked. The method name follows Temporal/Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)` — `amount` first, `unit` second.
+On a constant date the call folds to the instant the server would compute. See [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below). JSMQL rejects a literal typo with a suggestion (`.plus(30, "days")` → *"unit must be one of: … — got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer, and a literal `timezone` must be a string. Otherwise you get the same compile-time error that the `$dateAdd(…)` operator form gives. A field path or parameter in either slot passes through unchecked. The method name follows Temporal and Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)`: `amount` first, `unit` second.
 
-**Date difference** — `.diff(other, unit)` gives the whole number of `unit`s between two dates:
+**Date difference.** `.diff(other, unit)` gives the whole number of `unit`s between two dates:
 
 ```js
 $.end.diff($.start, "day")
@@ -2702,11 +2702,11 @@ new Date().diff($._id, "day")      // how old is this document?
 // { $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" } }
 ```
 
-**The receiver is the later date**, so the result is `receiver − other` — the direction Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all use. `other` may be a date, a BSON timestamp, or an ObjectId (MongoDB reads the creation time out of the id), and so may the receiver.
+**The receiver is the later date**, so the result is `receiver − other`. This is the same direction that Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all use. `other` may be a date, a BSON timestamp, or an ObjectId (MongoDB reads the creation time out of the id), and so may the receiver.
 
-**Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` semantics and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates, so 23:00 to 01:00 the next morning is **1 day** (one midnight crossed) and 00:30 to 23:30 the same day is **0 days**. Moment's elapsed-time subtraction reports the opposite in both cases. For raw elapsed milliseconds, subtract the dates instead: `$.end - $.start` → `{ $subtract: ["$end", "$start"] }`.
+**Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` behaviour, and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates. So 23:00 to 01:00 the next morning is **1 day** (one midnight crossed), and 00:30 to 23:30 the same day is **0 days**. Moment's elapsed-time subtraction reports the opposite result in both cases. For raw elapsed milliseconds, subtract the dates instead: `$.end - $.start` → `{ $subtract: ["$end", "$start"] }`.
 
-**Truncate to a unit** — `.startOf(unit)` rounds a date down to the start of its year, quarter, month, week, day, hour, minute or second. It is the bucket key a time-series `$group` wants:
+**Truncate to a unit.** `.startOf(unit)` rounds a date down to the start of its year, quarter, month, week, day, hour, minute or second. It is the bucket key that a time-series `$group` wants:
 
 ```js
 $.createdAt.startOf("month")
@@ -2716,7 +2716,7 @@ $group({ _id: $.createdAt.startOf("month"), revenue: $sum($.total) });
 // { $group: { _id: { $dateTrunc: { date: "$createdAt", unit: "month" } }, revenue: { $sum: "$total" } } }
 ```
 
-Because the result is a date, it sorts and compares like one and chains like one — `$.createdAt.startOf("month").plus(1, "month")` is the exclusive end of the same bucket. `"quarter"` is available here even though no getter returns a quarter number.
+Because the result is a date, it sorts, compares and chains like one: `$.createdAt.startOf("month").plus(1, "month")` is the exclusive end of the same bucket. `"quarter"` is available here even though no getter returns a quarter number.
 
 Two options refine it. `binSize` groups several units into one bucket, and `startOfWeek` moves the week boundary:
 
@@ -2728,7 +2728,7 @@ $.createdAt.startOf("week", { startOfWeek: "monday" })
 // { $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" } }
 ```
 
-**Format a date as a string** — `.format(spec)` takes MongoDB's own format specifiers:
+**Format a date as a string.** `.format(spec)` takes MongoDB's own format specifiers:
 
 ```js
 $.createdAt.format("%Y-%m-%d")
@@ -2749,11 +2749,11 @@ $.createdAt.format("%H:%M", "America/New_York")
 | `%H` hour (24) | `%M` minute | `%S` second | `%L` millisecond |
 | `%z` UTC offset | `%Z` offset in minutes | `%%` a literal `%` | |
 
-**The specifiers are MongoDB's, not Moment's.** `.format` borrows Moment's method *name*, but a Moment token string is rejected at compile time with the translation — `"YYYY-MM-DD"` → *"Did you mean '%Y-%m-%d'?"*. This matters because such a string is perfectly valid MQL: `$dateToString` formats it as its own literal text, so every document would come back reading `"YYYY-MM-DD"` with nothing to indicate the mistake. A wrong specifier (`%y` for `%Y`) is rejected too, with the case fixed in the suggestion. Translating Moment tokens for real is not on offer: MongoDB has no month-name, weekday-name, 12-hour or 2-digit-year output at all, so a translator would dead-end on `dddd` and `MMM`. Derive those from the numeric parts instead — `["Jan", "Feb", …][$.t.getMonth() - 1]` → `{ $arrayElemAt: [["Jan", "Feb", …], { $subtract: [{ $month: "$t" }, 1] }] }`.
+**The specifiers are MongoDB's, not Moment's.** `.format` borrows Moment's method *name*, but JSMQL rejects a Moment token string at compile time and gives the translation: `"YYYY-MM-DD"` → *"Did you mean '%Y-%m-%d'?"*. This matters because such a string is valid MQL on its own: `$dateToString` formats it as literal text, so every document would come back reading `"YYYY-MM-DD"` with no sign of the mistake. JSMQL also rejects a wrong specifier (`%y` for `%Y`) and fixes the case in the suggestion. JSMQL does not translate Moment tokens fully, because MongoDB has no month-name, weekday-name, 12-hour or 2-digit-year output at all, so a translator could not handle `dddd` or `MMM`. Derive those values from the numeric parts instead: `["Jan", "Feb", …][$.t.getMonth() - 1]` → `{ $arrayElemAt: [["Jan", "Feb", …], { $subtract: [{ $month: "$t" }, 1] }] }`.
 
-`$dateToString`'s `onNull` is not an option here (the method's result is invariantly a string, which is what makes `$.t.format("%Y") + "-x"` compile to `$concat`); reach for `$dateToString({ date: …, format: …, onNull: … })` when you need it.
+`$dateToString`'s `onNull` is not an option here. The method's result is always a string, which is what lets `$.t.format("%Y") + "-x"` compile to `$concat`. Use `$dateToString({ date: …, format: …, onNull: … })` when you need `onNull`.
 
-**The inclusive end of the bucket** — `.endOf(unit)` gives the last instant that still belongs to the same bucket, Moment's `23:59:59.999`:
+**The inclusive end of the bucket.** `.endOf(unit)` gives the last instant that still belongs to the same bucket, Moment's `23:59:59.999`:
 
 ```js
 $.createdAt.endOf("month")
@@ -2763,9 +2763,9 @@ $.createdAt.endOf("month")
 //                                        → 2026-08-31T23:59:59.999Z for any August date
 ```
 
-MongoDB has no ceiling operator, so this is three operators: truncate, add one unit, step back a millisecond. It takes the same options as `.startOf`; with `binSize` the step is the whole bin, so `.endOf("minute", { binSize: 15 })` on `15:47` gives `15:59:59.999`. A `timezone` also carries to the addition, so the step stays DST-aware.
+MongoDB has no ceiling operator, so this needs three operators: truncate, add one unit, and step back a millisecond. `.endOf` takes the same options as `.startOf`. With `binSize`, the step is the whole bin, so `.endOf("minute", { binSize: 15 })` on `15:47` gives `15:59:59.999`. A `timezone` also carries to the addition, so the step stays aware of daylight saving time.
 
-**Prefer a half-open range for date filtering.** `.endOf` is the right answer when you need the last instant itself, but a range test reads better — and emits two operators instead of four — as a half-open interval:
+**Prefer a half-open range for date filtering.** `.endOf` is the right answer when you need the last instant itself. But a range test reads better as a half-open interval, and it emits two operators instead of four:
 
 ```js
 // Recommended: half-open, no millisecond edge to reason about
@@ -2775,9 +2775,9 @@ $.createdAt >= $.t.startOf("month") && $.createdAt < $.t.startOf("month").plus(1
 $.createdAt >= $.t.startOf("month") && $.createdAt <= $.t.endOf("month")
 ```
 
-**Note — the week starts on Sunday.** That is MongoDB's default (and Moment's in an English locale), so `.startOf("week")` on a Wednesday goes back to the preceding Sunday. Luxon's `startOf('week')` uses the ISO Monday instead; pass `{ startOfWeek: "monday" }` when you want that. The weekday name is case-insensitive, and a typo is rejected with a suggestion.
+**Note — the week starts on Sunday.** That is MongoDB's default, and Moment's default in an English locale, so `.startOf("week")` on a Wednesday goes back to the preceding Sunday. Luxon's `startOf('week')` uses the ISO Monday instead. Pass `{ startOfWeek: "monday" }` when you want that. The weekday name is not case-sensitive, and JSMQL rejects a typo with a suggestion.
 
-**Replace parts of a date** — `.set({ … })` reads the date's parts, overrides the ones you name, and rebuilds it (Luxon's `.set`, Temporal's `.with`). Like every JSMQL method it returns a new value; nothing is mutated:
+**Replace parts of a date.** `.set({ … })` reads the date's parts, overrides the ones you name, and rebuilds the date (Luxon's `.set`, Temporal's `.with`). Like every JSMQL method, it returns a new value and mutates nothing:
 
 ```js
 $.t.set({ year: 2030 })
@@ -2792,13 +2792,13 @@ $.t.set({ year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, milliseco
 // { $dateFromParts: { year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 } }
 ```
 
-**`.set` counts months from 1** — `{ month: 1 }` is January, as in Luxon's `.set` and MongoDB's `$dateFromParts`, whose vocabulary this method borrows; it is the one date API here that is not a JavaScript spelling, so it does not share `.getMonth()`'s zero base (`$.t.set({ month: $.t.getMonth() + 1 })` round-trips). Every part must be an integer, and a literal that isn't is rejected at compile time, exactly as the `$dateFromParts` operator would reject it at run time.
+**`.set` counts months from 1.** `{ month: 1 }` is January, as in Luxon's `.set` and MongoDB's `$dateFromParts`, whose vocabulary this method borrows. It is the one date API here that is not a JavaScript spelling, so it does not share `.getMonth()`'s zero base (`$.t.set({ month: $.t.getMonth() + 1 })` round-trips). Every part must be an integer. JSMQL rejects a literal that is not an integer at compile time, exactly as the `$dateFromParts` operator would reject it at run time.
 
-The parts come in two families, and `.set` follows whichever one you name: `year` / `month` / `day`, or the ISO-week `isoWeekYear` / `isoWeek` / `isoDayOfWeek`. Either family may be combined with `hour` / `minute` / `second` / `millisecond`, but the two cannot be mixed — MongoDB builds a date from one family or the other, and a mix is rejected with both offending keys named.
+The parts come in two families, and `.set` follows whichever family you name: `year` / `month` / `day`, or the ISO-week family `isoWeekYear` / `isoWeek` / `isoDayOfWeek`. Either family may combine with `hour` / `minute` / `second` / `millisecond`, but the two families cannot mix. MongoDB builds a date from one family or the other, and JSMQL rejects a mix and names both offending keys.
 
-The parts must be written out as an object literal (MongoDB reads them by name), while their values may be field paths or parameters. The timezone is the *second* argument, not a part — `.set({ year: 2030 }, "America/New_York")` — and it applies to both the read and the rebuild, so the parts are interpreted in that zone.
+Write the parts out as an object literal, because MongoDB reads them by name. Their values may be field paths or parameters. The timezone is the *second* argument, not a part: `.set({ year: 2030 }, "America/New_York")`. It applies to both the read and the rebuild, so the parts read in that zone.
 
-**Compare at a granularity** — `.isSame(other, unit)`, `.isBefore(other, unit)` and `.isAfter(other, unit)` truncate both sides to `unit` and then compare, so "same day" ignores the time of day:
+**Compare at a granularity.** `.isSame(other, unit)`, `.isBefore(other, unit)` and `.isAfter(other, unit)` truncate both sides to `unit` and then compare, so "same day" ignores the time of day:
 
 ```js
 $.a.isSame($.b, "day")
@@ -2810,7 +2810,7 @@ $.a.isBefore($.b, "month")           // strictly an earlier calendar month
 //         { $dateTrunc: { date: "$b", unit: "month" } }] }
 ```
 
-**The unit is required.** Without one these three are exactly `===`, `<` and `>`, which JSMQL already has — so a unit-less call is rejected and points at the operator: `$.a.isSame($.b)` → *".isSame(other) without a unit is just '==='"*. Options apply to both sides (a one-sided timezone would compare two different calendars).
+**The unit is required.** Without one, these three methods are exactly `===`, `<` and `>`, which JSMQL already has. So JSMQL rejects a call with no unit and points at the operator: `$.a.isSame($.b)` → *".isSame(other) without a unit is just '==='"*. Options apply to both sides, because a one-sided timezone would compare two different calendars.
 
 #### The trailing `timezone` / options argument
 
@@ -2825,17 +2825,17 @@ $.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })
 //                timezone: "Europe/Kyiv", startOfWeek: "monday" } }
 ```
 
-Which options a method accepts is exactly the set of fields its operator has left over — `.diff` takes `timezone` and `startOfWeek`, `.plus` / `.minus` take `timezone` alone. An unknown key is rejected at compile time with a suggestion and the valid set. Keys are emitted in the operator's own field order, not the order you wrote them, so the output reads like the MongoDB manual.
+The options a method accepts are exactly the fields its operator has left over. `.diff` takes `timezone` and `startOfWeek`; `.plus` and `.minus` take `timezone` alone. JSMQL rejects an unknown key at compile time and gives a suggestion and the valid set. It emits keys in the operator's own field order, not the order you wrote them, so the output reads like the MongoDB manual.
 
-The options form must be **written out** as an object literal: MongoDB reads these fields by name from the operator document, so the key names have to exist in your source. Their *values* are free to be field paths or `jsmql.compile` parameters (`{ timezone: $.tz }`), and any non-object argument in this slot is the timezone shorthand.
+Write the options form out as an object literal, because MongoDB reads these fields by name from the operator document, so the key names must exist in your source. Their *values* may be field paths or `jsmql.compile` parameters (`{ timezone: $.tz }`). Any non-object argument in this slot is the timezone shorthand.
 
-**Every date number is JavaScript's.** `getMonth()` / `getUTCMonth()` count January as `0` (`{ $subtract: [{ $month: "$t" }, 1] }`), `getDay()` / `getUTCDay()` count Sunday as `0` (`{ $subtract: [{ $dayOfWeek: "$t" }, 1] }`), and the constructors and `Date.UTC` read their month the same way — so a getter round trip needs no adjustment, and code pasted from a JavaScript file means what it meant there. MongoDB's own numbering is one `$op(…)` away: `$month($.t)` is 1-based, `$dayOfWeek($.t)` is 1 = Sunday, and the compiler leaves both untouched.
+**Every date number is JavaScript's.** `getMonth()` and `getUTCMonth()` count January as `0` (`{ $subtract: [{ $month: "$t" }, 1] }`). `getDay()` and `getUTCDay()` count Sunday as `0` (`{ $subtract: [{ $dayOfWeek: "$t" }, 1] }`). The constructors and `Date.UTC` read their month the same way, so a getter round trip needs no adjustment, and code pasted from a JavaScript file means what it meant there. MongoDB's own numbering is one `$op(…)` away: `$month($.t)` is 1-based, `$dayOfWeek($.t)` is 1 for Sunday, and the compiler leaves both untouched.
 
-Week numbering needs no adjustment at all: `week()` is `$week` (0–53, weeks begin Sunday), `isoWeek()` is `$isoWeek` (1–53), `isoWeekday()` is `$isoDayOfWeek` (1 = Monday), and the `startOfWeek` option and `%U` / `%V` / `%u` / `%w` format specifiers are MongoDB's own.
+Week numbering needs no adjustment at all: `week()` is `$week` (0–53, weeks begin Sunday), `isoWeek()` is `$isoWeek` (1–53), and `isoWeekday()` is `$isoDayOfWeek` (1 for Monday). The `startOfWeek` option and the `%U` / `%V` / `%u` / `%w` format specifiers are MongoDB's own.
 
 **Note:** the constructors use the same base, so a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the receiver's own month. See [the constructor note](#date-constructor-and-datenow).
 
-**Note:** these methods require a date receiver, so a literal non-date is rejected at compile time (`"2020-01-01".getFullYear()` → *"'.getFullYear' expects a date, but got a string. Use a field path or new Date(…)."*). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings/numbers.
+**Note:** these methods require a date receiver, so JSMQL rejects a literal non-date at compile time (`"2020-01-01".getFullYear()` → *"'.getFullYear' expects a date, but got a string. Use a field path or new Date(…)."*). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings or numbers.
 
 ### Date Operator Calls
 
@@ -2868,7 +2868,7 @@ Valid `$dateAdd` / `$dateDiff` units: `"year"`, `"quarter"`, `"week"`, `"month"`
 
 ## Escape Hatch (Direct Operator Form)
 
-For MongoDB operators that have no JavaScript equivalent, use the `$opName()` escape hatch — a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way, and unknown operators pass through automatically, making jsmql forward-compatible with new MongoDB releases.
+For a MongoDB operator with no JavaScript equivalent, use the `$opName()` escape hatch: a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way. jsmql passes an unknown operator through automatically, which keeps it compatible with new MongoDB releases.
 
 ### Examples:
 
@@ -2906,7 +2906,7 @@ $trunc($.value, 1)                 // { $trunc: ["$value", 1] }
 
 ### Accumulators (also valid as expressions)
 
-Some operators are commonly used as accumulators in `$group` (taking a single field expression) but also work as expression operators in `$project` (taking multiple expressions to compare). jsmql accepts both shapes — pass one argument for the accumulator form, multiple for the expression form:
+Some operators are commonly used as accumulators in `$group`, where they take a single field expression, but they also work as expression operators in `$project`, where they take multiple expressions to compare. jsmql accepts both shapes: pass one argument for the accumulator form, or multiple for the expression form:
 
 ```js
 $min($.scores)                     // { $min: "$scores" }              (single — accumulator-style)
@@ -2944,16 +2944,16 @@ $setIsSubset($.a, $.b)             // { $setIsSubset: ["$a", "$b"] }
 $setEquals($.a, $.b)               // { $setEquals: ["$a", "$b"] }
 ```
 
-**Operand rules for list operators.** Operators whose operand is a list (the set
-operators, arithmetic `$add`/`$divide`/…, `$and`/`$or`, the bitwise ops) take
-either two-or-more arguments or a single array — both produce the same `{ $op:
-[…] }`. A single *non-array* value is rejected, because such an operator has no
-single-value form (write `$setUnion($.a, $.b)` or `$setUnion([$.a, $.b])`, not
-`$setUnion($.a)`). The JS spread isn't accepted in `$op(...)` — pass a single
-array, or use the JS-method form where it applies (`Math.max(...$.scores)`). The
-comparison operators are the exception: they *do* have a single-value form
-(`$gt($.x)` → `{ $gt: "$x" }`, the query-operator shape), so a lone argument is
-fine there.
+**Operand rules for list operators.** An operator whose operand is a list (the
+set operators, arithmetic `$add` / `$divide` / …, `$and` / `$or`, the bitwise
+operators) takes either two or more arguments, or a single array. Both forms
+produce the same `{ $op: […] }`. JSMQL rejects a single *non-array* value,
+because such an operator has no single-value form (write `$setUnion($.a, $.b)`
+or `$setUnion([$.a, $.b])`, not `$setUnion($.a)`). `$op(...)` does not accept the
+JS spread. Pass a single array instead, or use the JS-method form where it
+applies (`Math.max(...$.scores)`). The comparison operators are the exception:
+they *do* have a single-value form (`$gt($.x)` → `{ $gt: "$x" }`, the
+query-operator shape), so a lone argument is fine there.
 
 ### Object Operations
 
@@ -2973,11 +2973,11 @@ $setField("fieldName", $.doc, val) // { $setField: { field: "fieldName", input: 
 $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input: "$doc" } }
 ```
 
-`Object.assign` shown here is the **expression** form (→ `$mergeObjects`). Called as a bare **statement** it mutates its first argument instead — see [Mutators](#objectassigntarget-sources-mutates-target).
+`Object.assign` shown here is the **expression** form (→ `$mergeObjects`). Called as a bare **statement**, it mutates its first argument instead. See [Mutators](#objectassigntarget-sources-mutates-target).
 
 ### Spread in Variadic Calls
 
-For variadic operators (and `Math.min`/`Math.max`, `Object.assign`), `...arr` passes the whole array through as the operator value:
+For a variadic operator (and `Math.min` / `Math.max`, `Object.assign`), `...arr` passes the whole array through as the operator value:
 
 ```js
 Math.max(...$.scores)              // { $max: "$scores" }
@@ -2985,17 +2985,17 @@ $concatArrays(...$.arrs)           // { $concatArrays: "$arrs" }
 Object.assign(...$.docs)           // { $mergeObjects: "$docs" }
 ```
 
-When mixed with non-spread args, jsmql wraps the non-spreads in single-element arrays and joins via `$concatArrays`:
+When you mix spread with non-spread arguments, jsmql wraps each non-spread value in a single-element array and joins them with `$concatArrays`:
 
 ```js
 Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
 ```
 
-`$getField` and `$setField` are useful when field names are dynamic or contain special characters.
+`$getField` and `$setField` are useful when a field name is dynamic or contains special characters.
 
 ### Variable Binding with `$let`
 
-`$let` binds named variables scoped to a single expression, avoiding repeated sub-expressions:
+`$let` binds named variables scoped to a single expression. This avoids repeated sub-expressions:
 
 ```js
 $let({ discount: $.price * 0.1 }, (discount) => $.price - discount)
@@ -3016,7 +3016,7 @@ $bitNot($.flags)                   // { $bitNot: "$flags" }
 
 ### `$literal` — bypass MongoDB's runtime expression evaluation
 
-A `"$..."` string you write in the source is MongoDB's own spelling of a field path, and passes through as written — jsmql is a strict superset of MQL ([HR1](LANG_RULES.md)), so `{ a: "$b" }` means what it means in raw MQL. To store or compare the *string* `"$foo"`, say so with `$literal`:
+A `"$..."` string that you write in the source is MongoDB's own spelling of a field path, and it passes through as written. jsmql is a strict superset of MQL ([HR1](LANG_RULES.md)), so `{ a: "$b" }` means what it means in raw MQL. To store or compare the *string* `"$foo"`, mark it with `$literal`:
 
 ```js
 ({ a: "$b" })                      // { a: "$b" }              — the field b, as in MQL
@@ -3026,7 +3026,7 @@ $literal(42)                       // { $literal: 42 }         — equivalent to
 $literal({ x: "$foo" })            // { $literal: { x: "$foo" } }
 ```
 
-A value that arrives at **run time** — a template-tag `${…}` interpolation, a `jsmql.compile()` parameter — is a value, never syntax: a `"$..."` string there is wrapped in `$literal` wherever the server would evaluate it (an expression, a `$set` value, a stage body), so user input cannot become a field reference. Two places evaluate nothing and take the string as written: a query slot (`$.a === ${s}` compares against the string) and an update document (`jsmql.update`). See [Template-Tag Form](#template-tag-form--jsmql-) and [Parameterised Queries](#parameterised-queries-jsmqlcompile).
+A value that arrives at **run time** — a template-tag `${…}` interpolation, or a `jsmql.compile()` parameter — is a value, never syntax. jsmql wraps a `"$..."` string there in `$literal` wherever the server would evaluate it (an expression, a `$set` value, a stage body), so user input cannot become a field reference. Two places evaluate nothing and take the string as written: a query slot (`$.a === ${s}` compares against the string) and an update document (`jsmql.update`). See [Template-Tag Form](#template-tag-form--jsmql-) and [Parameterised Queries](#parameterised-queries-jsmqlcompile).
 
 ```js
 jsmql.expr`$.a + ${"$b"}`        // { $add: ["$a", { $literal: "$b" }] }
@@ -3037,7 +3037,7 @@ jsmql.update`$.x = ${"$b"}`      // { $set: { x: "$b" } }
 
 ### `$meta` — per-document aggregation metadata
 
-⚠️ **Watch out:** `$meta` takes a **keyword string** (`"textScore"`, `"indexKey"`, `"searchScore"`, etc.), not an arbitrary expression. jsmql does not validate the keyword.
+⚠️ **Watch out:** `$meta` takes a **keyword string**, for example `"textScore"`, `"indexKey"` or `"searchScore"`, not an arbitrary expression. jsmql does not check the keyword.
 
 ```js
 $meta("textScore")                 // { $meta: "textScore" }
@@ -3045,7 +3045,7 @@ $meta("textScore")                 // { $meta: "textScore" }
 
 ### Custom Aggregation: `$function` and `$accumulator`
 
-⚠️ **Watch out:** the `body`, `init`, `accumulate`, `merge`, and `finalize` fields are **JavaScript source code as a string**, executed by MongoDB's V8 engine on the server. They are NOT jsmql expressions — `$.field` references will not be substituted, and you must pass field values via the `args` / `accumulateArgs` arrays.
+⚠️ **Watch out:** the `body`, `init`, `accumulate`, `merge` and `finalize` fields are **JavaScript source code as a string**. MongoDB's V8 engine executes them on the server. They are NOT jsmql expressions: jsmql does not substitute `$.field` references, so you must pass field values through the `args` / `accumulateArgs` arrays.
 
 ```js
 $function({
@@ -3066,7 +3066,7 @@ $accumulator({
 
 ### Window Operators
 
-These are valid only in a `$setWindowFields` **output** slot, and jsmql holds them to it: written anywhere else, the refusal names the stage and the shape.
+These operators are valid only in a `$setWindowFields` **output** slot, and jsmql holds them to it. Write one anywhere else, and the refusal names the stage and the shape.
 
 ```js
 $project({ r: $rank() });
@@ -3077,7 +3077,7 @@ $setWindowFields({ sortBy: { t: 1 }, output: { r: $rank() } });
 // → [{ $setWindowFields: { sortBy: { t: 1 }, output: { r: { $rank: {} } } } }]
 ```
 
-Every operator below is written in that `output` slot; the shape each one makes is:
+Write every operator below in that `output` slot. Each one makes this shape:
 
 ```js
 $rank()                            // { $rank: {} }
@@ -3129,7 +3129,7 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 
 ## Update filters
 
-Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update op compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple update ops coalesce into the smallest correct stage shape. `jsmql()` always returns a pipeline **array** so the output is safe to pass directly to `db.coll.updateOne(filter, update)` — see [the document form via `jsmql.update`](#document-form-via-jsmqlupdate) at the end of the section for the `{ $set, $inc, … }` update document.
+You can write a document field update in JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update op compiles to a MongoDB pipeline `$set` or `$unset` stage. Multiple update ops coalesce into the smallest correct stage shape. `jsmql()` always returns a pipeline **array**, so you can pass the output directly to `db.coll.updateOne(filter, update)`. See [the document form via `jsmql.update`](#document-form-via-jsmqlupdate) at the end of this section for the `{ $set, $inc, … }` update document.
 
 ```js
 db.users.updateOne({ _id: 1 }, jsmql("$.score = 100"))
@@ -3144,7 +3144,7 @@ db.users.updateOne({ _id: 1 }, jsmql("delete $.tmp"))
 
 ### Sequencing
 
-Multiple update ops in the **same stage** are separated by `,` (trailing comma allowed):
+A `,` separates multiple update ops in the **same stage** (a trailing comma is allowed):
 
 ```js
 jsmql("$.a = 1, $.b = 2")
@@ -3155,7 +3155,7 @@ A `;` is **not** a same-stage separator — it splits stages. See [Pipelines](#p
 
 ### Targets
 
-In a Filter / update-doc, the left-hand side must be a field path: `$.x`, `$.x.y`, `$.x.y.z`. Computed/index access is not assignable, and a bare identifier is assignable only inside a pipeline where it names an in-scope `let` binding (see [Local bindings](#local-bindings-let)):
+In a Filter or an update document, the left side must be a field path: `$.x`, `$.x.y`, `$.x.y.z`. You cannot assign to computed access or index access. A bare identifier is assignable only inside a pipeline, where it names an in-scope `let` binding (see [Local bindings](#local-bindings-let)):
 
 ```js
 x = 5                  // ✗ — bare identifier, no pipeline / not a `let`
@@ -3165,7 +3165,7 @@ $.user.name = "alice"  // ✓ — nested field path
 
 ### Compound assignment
 
-`+=`, `-=`, `*=`, `/=` are sugar for `$.x = $.x <op> rhs`. The `+=` operator inherits the language's type-aware addition: numeric `+=` produces `$add`, string `+=` produces `$concat`.
+`+=`, `-=`, `*=`, `/=` are sugar for `$.x = $.x <op> rhs`. The `+=` operator inherits the language's type-aware addition: a numeric `+=` produces `$add`, and a string `+=` produces `$concat`.
 
 ```js
 jsmql("$.score *= 2")
@@ -3177,7 +3177,7 @@ jsmql("$.greeting += '!'")
 
 ### Increment / decrement
 
-`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. The prefix/postfix distinction is meaningful in JavaScript (return-then-mutate vs mutate-then-return), but in MongoDB pipeline context there is no "value of expression" for a statement-level update op, so all four forms compile to the same `$set` stage.
+`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. JavaScript gives prefix and postfix a different meaning: postfix returns the old value, and prefix returns the new value. A statement-level update op in a MongoDB pipeline has no return value, so all four forms compile to the same `$set` stage.
 
 ```js
 jsmql("$.cnt++")
@@ -3187,11 +3187,11 @@ jsmql("--$.lives")
 // → [{ $set: { lives: { $subtract: ["$lives", 1] } } }]
 ```
 
-Like other update ops, inc/dec is a statement: invalid as a value (`1 + $.x++` is rejected) and restricted to field-path targets.
+Like other update ops, increment/decrement is a statement. You cannot use it as a value (`1 + $.x++` is rejected), and it works only on a field-path target.
 
 ### Chained assignment
 
-`$.a = $.b = expr` is supported (right-associative, like JavaScript); both fields receive the same RHS expression. Compound chains (`a += b += 1`) are rejected — too easy to misread.
+`$.a = $.b = expr` is right-associative, like JavaScript. Both fields receive the same expression on the right side. A compound chain (`a += b += 1`) is rejected, because it is too easy to misread.
 
 ```js
 jsmql("$.x = $.y = 0")
@@ -3200,11 +3200,11 @@ jsmql("$.x = $.y = 0")
 
 ### Coalescing
 
-Consecutive same-kind update ops (all assignments, or all deletes) are grouped into a single `$set`/`$unset` stage. A new stage starts when:
+The compiler groups consecutive update ops of the same kind (all assignments, or all deletes) into one `$set` or `$unset` stage. A new stage starts when:
 
-- The kind changes (assignment ↔ delete)
-- A later update op writes to a path already written in the current group
-- A later assignment **reads** a path the current group has written — preserves JS sequential semantics
+- The kind changes (assignment to delete, or delete to assignment)
+- A later update op writes to a path the current group already wrote
+- A later assignment **reads** a path the current group has written. This keeps the JavaScript order of execution.
 
 ```js
 // Independent assignments → one stage (wrapped as a one-element pipeline)
@@ -3222,7 +3222,7 @@ jsmql("delete $.a, delete $.b, $.status = 'done'")
 
 ### Document form via `jsmql.update`
 
-`jsmql.update()` returns the **update document** — the `{ $set, $inc, $unset, … }` shape `updateOne(filter, update)` takes — with each write lowered to the update operator that means it. It holds constants only: a value computed from the document (`$.b + 1`, `$.name.toUpperCase()`) is refused, because the server reads `"$b"` in an update document as the *string* `"$b"`, never as the field. The refusal names the pipeline form, which `updateOne` accepts as well. See [Strict-shape entry points](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate) for the full rule.
+`jsmql.update()` returns the **update document** — the `{ $set, $inc, $unset, … }` shape that `updateOne(filter, update)` takes. It lowers each write to the update operator that means it. It holds constants only: it refuses a value computed from the document (`$.b + 1`, `$.name.toUpperCase()`), because the server reads `"$b"` in an update document as the *string* `"$b"`, never as the field. The refusal names the pipeline form, which `updateOne` also accepts. See [Strict-shape entry points](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate) for the full rule.
 
 ```js
 jsmql.update("$.score = 100")            // → { $set: { score: 100 } }
@@ -3241,11 +3241,11 @@ jsmql.update("$.name = $.name.toUpperCase()")
 //        ('jsmql.pipeline("$.a = $.b + 1;")'), which 'updateOne' accepts as well.
 ```
 
-`jsmql.expr()` refuses a write altogether — an aggregation expression has no `$set` — and names the two entries that take one.
+`jsmql.expr()` refuses a write altogether, because an aggregation expression has no `$set`. It names the two entries that take one.
 
 ### Update filters inside pipelines
 
-Update filters can appear as pipeline elements alongside ordinary stages. The same coalescing rule applies between adjacent update op elements; non-update op stages act as boundaries:
+An update filter can appear as a pipeline element alongside an ordinary stage. The same coalescing rule applies between adjacent update op elements. A non-update op stage acts as a boundary:
 
 ```js
 jsmql(`[
@@ -3264,19 +3264,19 @@ jsmql(`[
 
 ### Limits
 
-Update filters are **statements**, not expression values. They are valid only at the top level of a `jsmql()` call or as direct pipeline-array elements. They cannot appear:
+An update filter is a **statement**, not an expression value. It is valid only at the top level of a `jsmql()` call or as a direct pipeline-array element. It cannot appear:
 
 - Inside an arbitrary expression (`($.a = 1) + 2` — rejected)
 - Inside a lambda body (`$.list.map(x => $.a = x)` — rejected)
-- As any value other than a top-level statement or pipeline element
+- As any value other than a top-level statement or a pipeline element
 
-The `delete` keyword is statement-only — unlike JavaScript, it does not return a boolean.
+The `delete` keyword is statement-only. Unlike JavaScript, it does not return a boolean.
 
 ### Replace root via `$ = <expr>`
 
-Assigning to bare `$` replaces the **whole document** with the RHS expression. The natural JS shape — the LHS *is* the document — lowers to MongoDB's `$replaceWith` stage (the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`). The trailing `;` is optional when `$ = <expr>` is the only statement — `jsmql("$ = { … }")` and `jsmql("$ = { … };")` both produce the same `$replaceWith` pipeline.
+Assigning to bare `$` replaces the **whole document** with the expression on the right side. The natural JS shape — the left side *is* the document — lowers to MongoDB's `$replaceWith` stage, the shorter equivalent of `$replaceRoot: { newRoot: <expr> }`. The trailing `;` is optional when `$ = <expr>` is the only statement: `jsmql("$ = { … }")` and `jsmql("$ = { … };")` both produce the same `$replaceWith` pipeline.
 
-> **Convention:** a leading `$ =` is reserved for *root-replacing* sugar (`$replaceWith`, the [fan-out](#fan-out-one-document-to-many-documents) form, and the `$facet` variant below). Stages that write elsewhere — `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, `$unionWith` uses `$$.push(…)` — use distinct LHS prefixes so the write destination is visible at a glance.
+> **Convention:** a leading `$ =` is reserved for *root-replacing* sugar (`$replaceWith`, the [fan-out](#fan-out-one-document-to-many-documents) form, and the `$facet` variant below). A stage that writes elsewhere uses a different left-side prefix, so the write destination is visible at a glance: `$out` uses `$$$.<coll> = …`, `$lookup` uses `$$$.<coll>.find(…)`, and `$unionWith` uses `$$.push(…)`.
 
 ```js
 // Lift an embedded sub-document to the top level
@@ -3310,9 +3310,9 @@ jsmql("$ = $$$.users.find(u => u._id === $.userId);")
 //   ]
 ```
 
-Any other method on the bare `$` reads the document as its receiver and stays a `$replaceWith` — `$ = $.mapValues(v => v + 1)` lowers the lodash method over `$$ROOT`.
+Any other method on bare `$` reads the document as its receiver and stays a `$replaceWith`. For example, `$ = $.mapValues(v => v + 1)` lowers the lodash method over `$$ROOT`.
 
-Bare `$` is a new primary expression — the current document. It plays the same role MQL spells as `"$$ROOT"`, and you can use it anywhere a field path is valid:
+Bare `$` is a new primary expression: the current document. It plays the role that MQL spells as `"$$ROOT"`, and you can use it anywhere a field path is valid:
 
 ```js
 jsmql.expr("$mergeObjects($, { x: 1 })")
@@ -3323,19 +3323,19 @@ Compile-time rejections (each with an actionable hint):
 
 | RHS | Why it's rejected |
 |---|---|
-| `$ = []` | An empty array would discard every document. Fan out a data-dependent array (`$ = $.items.filter(...)`) to drop docs conditionally, or use `$$ = []` to empty the stream. |
-| `$ = [1, 2]`, `$ = ["a"]` | Each fanned-out element becomes a document root, so elements must be documents — wrap them: `$ = [{ value: ... }]`. |
-| `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null` | Scalars aren't documents. Wrap with `$ = { value: ... }`. |
-| `$ = undefined` | `undefined` is only meaningful in `$match` position. Use `null` for the present-but-null case, or move the comparison into `$match`. |
-| `$ = $$$.users.filter(...)` | `.filter()` on a collection is a join that returns an array; use `.find()` for a single doc. |
+| `$ = []` | An empty array discards every document. Fan out a data-dependent array (`$ = $.items.filter(...)`) to drop documents conditionally, or use `$$ = []` to empty the stream. |
+| `$ = [1, 2]`, `$ = ["a"]` | Each fanned-out element becomes a document root, so each element must be a document. Wrap it: `$ = [{ value: ... }]`. |
+| `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null` | A scalar is not a document. Wrap it: `$ = { value: ... }`. |
+| `$ = undefined` | `undefined` has meaning only in `$match` position. Use `null` for the present-but-null case, or move the comparison into `$match`. |
+| `$ = $$$.users.filter(...)` | `.filter()` on a collection is a join that returns an array. Use `.find()` for a single document. |
 | `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a scalar. Use `$ = { ...$, ...overrides }` to merge fields. |
 | `delete $` | Bare `$` is the whole document. Use `$ = <newDoc>` to replace it, or `delete $.<field>` to drop a single field. |
 
-`$replaceWith` is a **reshape-clearing stage** — any `let` binding declared before it is gone. A later reference produces a precise error: `` `x` is a `let` binding and can't be read after `$replaceWith` — the stage replaces the document. ``
+`$replaceWith` is a **reshape-clearing stage**: any `let` binding declared before it is gone. A later reference produces a precise error: `` `x` is a `let` binding and can't be read after `$replaceWith` — the stage replaces the document. ``
 
 #### Fan-out: one document to many documents
 
-The root takes ONE document and the stream takes an array, so the destination says which you mean. `$$ = <array>` makes the stream from the array's elements — one document per element, per input document. `$ = <array>` is refused, and the message names the spelling that takes it.
+The root takes one document, and the stream takes an array, so the destination shows which you mean. `$$ = <array>` makes the stream from the array's elements: one document per element, per input document. jsmql refuses `$ = <array>`, and the message names the spelling that takes it.
 
 ```js
 // Explode each order's line-items into per-item documents
@@ -3359,24 +3359,24 @@ jsmql("$ = $.lineItems;")
 //   that takes an array: '$$ = <array>;' …
 ```
 
-A **bare field ref is not** provably an array (field paths carry no compile-time type), so `$ = $.items` stays a single-doc `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` and `$$ = [...$.items]` are the same three stages.
+A **bare field reference is not** provably an array, because a field path carries no compile-time type. So `$ = $.items` stays a single-document `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` and `$$ = [...$.items]` are the same three stages.
 
-A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there and the server decides. The refusal above fires only where a row *states* the element kind — `.split()` gives strings, `Object.keys()` gives strings, `Object.entries()` and `.chunk()` give arrays, `$objectToArray` gives documents. Where nothing is stated, the fan-out stands.
+A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there, and the server decides. The refusal above fires only where a row *states* the element kind: `.split()` gives strings, `Object.keys()` gives strings, `Object.entries()` and `.chunk()` give arrays, and `$objectToArray` gives documents. Where nothing is stated, the fan-out stands.
 
-An array LITERAL of documents on the stream is a different operation: `$$ = [{ … }, { … }]` names the stream's documents outright — every document dropped, the new ones unioned in — wherever in the program it stands. The fan-out reading belongs to an array the data decides, one answer per input document.
+An array LITERAL of documents on the stream is a different operation. `$$ = [{ … }, { … }]` names the stream's documents outright, wherever it stands in the program: it drops every document and unions in the new ones. The fan-out reading belongs to an array that the data decides, with one answer per input document.
 
-**Conditional drop falls out for free.** `$unwind` emits nothing for an empty array, so fanning out a possibly-empty array drops exactly the documents whose array came out empty and fans out the rest.
+**Conditional drop falls out for free.** `$unwind` emits nothing for an empty array. So a fan-out of a possibly-empty array drops exactly the documents whose array came out empty, and fans out the rest.
 
 ```js
 // Docs with no qualifying item are dropped; the rest fan out per qualifying item
 jsmql("$$ = $.items.filter(x => x.qty > 0);")
 ```
 
-This is the idiomatic way to conditionally drop documents. (To empty the *whole* stream unconditionally, write `$$ = []`.)
+This is the idiomatic way to drop documents conditionally. (To empty the *whole* stream unconditionally, write `$$ = []`.)
 
 #### `$facet` via `$ = { key: <$$ chain>, … }`
 
-When every value of the object literal is a `$$` chain, the same `$ = { … }` surface lowers to a `$facet` stage instead — each named branch becomes its own sub-pipeline running against the parent's input docs. A branch is a `$$.filter(<predicate>)`, a chain of stage calls, or any mix:
+When every value in the object literal is a `$$` chain, the same `$ = { … }` surface lowers to a `$facet` stage instead. Each named branch becomes its own sub-pipeline that runs against the parent's input documents. A branch is a `$$.filter(<predicate>)`, a chain of stage calls, or any mix:
 
 ```js
 jsmql(`$ = {
@@ -3391,20 +3391,20 @@ jsmql(`$ = {
 //   } }]
 ```
 
-The lambda parameter (`o` in the examples — name is your choice) represents each input document inside the sub-pipeline. Expression bodies become a `$match` stage; block bodies become the block's stages verbatim.
+The lambda parameter (`o` in the examples; you choose the name) represents each input document inside the sub-pipeline. An expression body becomes a `$match` stage. A block body becomes the block's stages verbatim.
 
 Rules:
 
-- **Every value must be a chain on `$$`.** A `.filter(<lambda>)`, a run of stage calls (`$$.$sort({…}).$limit(10)`), or any mix. A static value (`b: 1`) or a spread (`...rest`) is a compile-time error — the parser would otherwise silently fall through to `$replaceWith`, which would surface a confusing "$$ is statement-only" error inside the codegen.
-- **A `.filter` / `.reject` branch takes exactly one lambda parameter.** You must name the doc explicitly so the error message for stray `$.<field>` references can point at the right replacement. A stage-call chain has no lambda.
-- **Use `o.<field>`, not `$.<field>`.** Inside a facet sub-pipeline, the lambda param IS the current document — supporting both spellings would just invite drift. `$.x` inside the predicate is rejected with a precise hint.
-- **`$facet` clears the let scope** (it replaces the document with `{ facetName: [docs], … }`). A later `let`-binding reference produces the standard "can't be read after `$facet`" error.
+- **Every value must be a chain on `$$`.** Write a `.filter(<lambda>)`, a run of stage calls (`$$.$sort({…}).$limit(10)`), or any mix. A static value (`b: 1`) or a spread (`...rest`) is a compile-time error. Without this check the parser would silently fall through to `$replaceWith`, and that would show a confusing "$$ is statement-only" error inside code generation.
+- **A `.filter` / `.reject` branch takes exactly one lambda parameter.** Name the document explicitly, so the error message for a stray `$.<field>` reference can point at the right replacement. A stage-call chain has no lambda.
+- **Use `o.<field>`, not `$.<field>`.** Inside a facet sub-pipeline, the lambda parameter IS the current document. Supporting both spellings would only invite drift. jsmql rejects `$.x` inside the predicate, with a precise hint.
+- **`$facet` clears the let scope**, because it replaces the document with `{ facetName: [docs], … }`. A later reference to a `let` binding produces the standard "can't be read after `$facet`" error.
 
-For filtering the current stream as a top-level stage (one `$match`, not split into facets), `$$.filter(<predicate>);` is the bare-stream-chain spelling and emits exactly that one `$match` — `$match(<predicate>);` is the same stage written as a stage call. See [Bare-statement stream operations](#bare-statement-stream-operations).
+To filter the current stream as a top-level stage (one `$match`, not split into facets), write `$$.filter(<predicate>);`. This is the bare-stream-chain spelling, and it emits exactly that one `$match`. `$match(<predicate>);` writes the same stage as a stage call. See [Bare-statement stream operations](#bare-statement-stream-operations).
 
 ### Replace stream via `$$ = <expr>`
 
-Sister to `$ = <expr>` at the *stream* level. Assigning to bare `$$` replaces the pipeline's document stream. The trailing `;` below is optional — a lone `$$ = <expr>` is already a Pipeline, per [Output dispatch](#output-dispatch-filter-vs-pipeline). Two RHS shapes are accepted:
+This is the *stream*-level sister of `$ = <expr>`. Assigning to bare `$$` replaces the pipeline's document stream. The trailing `;` below is optional: a lone `$$ = <expr>` is already a Pipeline, per [Output dispatch](#output-dispatch-filter-vs-pipeline). jsmql accepts two shapes on the right side:
 
 ```js
 // Narrow the current stream (equivalent to $match($.client === 156 && $.createdAt >= "2026-01-01"))
@@ -3421,11 +3421,11 @@ jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= new 
 //   ]
 ```
 
-The lambda param IS the document being matched — write `t.client`, not `$.client`. Same convention as the facet form: `$.<field>` inside the predicate of a flat (non-correlated) source-switch is rejected with a "use the lambda parameter" hint. Block-body predicates (`o => { $sort(...); $limit(...); }`) work in the source-switch form just like in lookups.
+The lambda parameter IS the document being matched: write `t.client`, not `$.client`. This follows the same convention as the facet form. jsmql rejects `$.<field>` inside the predicate of a flat (non-correlated) source-switch, with a "use the lambda parameter" hint. A block-body predicate (`o => { $sort(...); $limit(...); }`) works in the source-switch form, just as it does in a lookup.
 
-Because a flat source-switch *replaces* the stream (a `$unionWith` with no `let:`), the outer document, the root `$$.length`, and any outer `let`/`const` are **gone** inside the switched-in pipeline — only the new collection's own fields (via the lambda param) and its own `coll.length` are available. Referencing the outer context there is an error that points you at the correlated form: e.g. an outer `const k` read inside `$$ = $$$.orders.map(o => ({ v: k }))` reports that `k` "isn't available inside `$$ = $$$.orders` … correlate with a `.filter` instead", and a `$.<field>` read explains the original root is gone. To keep the outer context, add a correlating `.filter` (below) — that lowers to `$lookup` and threads it in.
+A flat source-switch *replaces* the stream: it is a `$unionWith` with no `let:`. So inside the switched-in pipeline, the outer document, the root `$$.length`, and any outer `let` or `const` are **gone** — only the new collection's own fields (through the lambda parameter) and its own `coll.length` are available. A reference to the outer context there is an error that points you at the correlated form. For example, an outer `const k` read inside `$$ = $$$.orders.map(o => ({ v: k }))` reports that `k` "isn't available inside `$$ = $$$.orders` … correlate with a `.filter` instead", and a `$.<field>` read explains that the original root is gone. To keep the outer context, add a correlating `.filter` (below); that lowers to `$lookup` and threads it in.
 
-**Correlated source-switch — per-outer-doc pivot via `$lookup`.** When the predicate *does* reference outer-doc fields (`$.<field>`), jsmql auto-rewrites the chain to `$lookup` + `$unwind` + `$replaceWith`. The result is a stream of foreign docs *correlated* to each input — one row per (outer × matching-foreign) pair, with the foreign doc as the new root. MongoDB's `$unionWith` doesn't have a `let:` slot to thread outer-doc context into its sub-pipeline, so this is the only way to express "per-outer-doc source switch" in MQL; jsmql picks the right lowering family automatically based on the predicate shape:
+**Correlated source-switch — per-outer-document pivot via `$lookup`.** When the predicate *does* reference an outer-document field (`$.<field>`), jsmql auto-rewrites the chain to `$lookup` + `$unwind` + `$replaceWith`. The result is a stream of foreign documents *correlated* to each input: one row per (outer × matching-foreign) pair, with the foreign document as the new root. MongoDB's `$unionWith` has no `let:` slot to thread outer-document context into its sub-pipeline, so this is the only way to express a "per-outer-document source switch" in MQL. jsmql picks the right lowering family automatically, based on the predicate shape:
 
 ```js
 // "For each user, pivot the stream onto their orders, top-5 most-recent."
@@ -3449,11 +3449,11 @@ jsmql`$$ = $$$.orders
 // ]
 ```
 
-The predicate is the `localField` / `foreignField` pair when it is one equality, and `let` + `$match $expr` inside the sub-pipeline otherwise — the two shapes of the one `$lookup` route (see [Cross-collection lookups](#cross-collection-lookups-collfind--filter)); the foreign collection's index is used either way.
+The predicate becomes the `localField` / `foreignField` pair when it is one equality. Otherwise it becomes `let` plus `$match $expr` inside the sub-pipeline. These are the two shapes of the one `$lookup` route (see [Cross-collection lookups](#cross-collection-lookups-collfind--filter)). Either way, the foreign collection's index is used.
 
-The `$unwind` drops outer docs with no matches by default — if you need `preserveNullAndEmptyArrays`, write the explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched` chain instead.
+The `$unwind` drops outer documents with no matches by default. If you need `preserveNullAndEmptyArrays`, write the explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched` chain instead.
 
-**`let` bindings cross the source-switch boundary too.** A name bound via `let foo = …` in the surrounding pipeline can be referenced directly inside a correlated `.filter` predicate — jsmql carries it into `$lookup.let` the same way it does `$.<field>` refs. Member access on a `let`-bound object (`user._id` when `let user = $.user`) works too:
+**A `let` binding crosses the source-switch boundary too.** You can reference a name bound with `let foo = …` in the surrounding pipeline directly inside a correlated `.filter` predicate. jsmql carries it into `$lookup.let` the same way it carries a `$.<field>` reference. Member access on a `let`-bound object also works (for example, `user._id` when `let user = $.user`):
 
 ```js
 jsmql`
@@ -3468,9 +3468,9 @@ $$ = $$$.users.filter(u => u._id === uid);
 // ]
 ```
 
-Mixed predicates work too — `$.<field>` refs and outer-`let` refs hoist together into the `$lookup.let` slot of the pipeline-form lookup.
+A mixed predicate works too. A `$.<field>` reference and an outer-`let` reference hoist together into the `$lookup.let` slot of the pipeline-form lookup.
 
-**Putting it all together — narrow, guard, pivot.** The full idiom is three statements: narrow the current stream down to the matching doc(s), assert exactly one matched, then pivot to another collection correlated by the root doc's field. Every line is JavaScript an app developer already knows; jsmql lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape that recurs in nearly every web app:
+**Putting it all together: narrow, guard, pivot.** The full idiom is three statements. Narrow the current stream down to the matching document or documents, assert that exactly one matched, then pivot to another collection correlated by the root document's field. Every line is JavaScript an app developer already knows; jsmql lowers the bookkeeping. This is the "look up the logged-in user, then fetch their recent orders" shape that recurs in nearly every web app:
 
 ```js
 jsmql(`
@@ -3502,24 +3502,24 @@ jsmql(`
 // ]
 ```
 
-Note the contrast with hand-written MQL: `$unionWith` has no `let:` slot, so a source-switch can't carry the user's `_id` forward on its own — only `$lookup` can. jsmql picks the right shape automatically when the foreign predicate references an outer name (here `$._id`, captured as the correlation var `$$jsmql_f0__id`). The `assert` is a stream-count guard: `$$.length` materialises via `$setWindowFields`, and a `$convert`-to-bool that errors on the message aborts the run unless exactly one user matched. The statements stay self-contained: each one means what JS says it means, and the lowering composes them into a single correlated `$lookup`-pivot pipeline. (The final `$replaceWith` drops the whole document, so the scratch `__jsmql` fields need no trailing `$unset`.)
+Note the contrast with hand-written MQL. `$unionWith` has no `let:` slot, so a source-switch cannot carry the user's `_id` forward on its own; only `$lookup` can. jsmql picks the right shape automatically when the foreign predicate references an outer name (here `$._id`, captured as the correlation variable `$$jsmql_f0__id`). The `assert` is a stream-count guard: `$$.length` materialises through `$setWindowFields`, and a `$convert`-to-bool that errors on the message aborts the run unless exactly one user matched. Each statement stays self-contained and means what JS says it means, and the lowering composes them into one correlated `$lookup`-pivot pipeline. (The final `$replaceWith` drops the whole document, so the scratch `__jsmql` fields need no trailing `$unset`.)
 
-**Empty the stream.** `$$ = []` drops every document — it lowers to `[{ $match: { $expr: false } }]` (a never-matching `$match`). MongoDB rejects `$limit: 0` ("the limit must be positive"), so the never-matching `$match` is what jsmql emits. The explicit-stage spelling is `$match(false)`.
+**Empty the stream.** `$$ = []` drops every document. It lowers to `[{ $match: { $expr: false } }]`, a never-matching `$match`. MongoDB rejects `$limit: 0` ("the limit must be positive"), so jsmql emits the never-matching `$match` instead. The explicit-stage spelling is `$match(false)`.
 
 Compile-time rejections:
 
 | RHS | Why it's rejected |
 |---|---|
-| `$$ = cond ? A : B` | Stream-level ternary is not a supported form — a stream has no single condition that swaps the whole stream for A or B. Narrow with `$$.filter(p)` or switch source with `$$$.<coll>.filter(p)`. |
-| `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS but pipelines are arrays. For "first match", write `.filter(p).slice(0, 1)`. For replacing each doc with a single matching foreign doc, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
-| `$$ = $$$.<coll>` (no `.filter` and no other chain method) | Bare collection ref — name a predicate (`.filter(o => …)`) or chain a stream method (e.g. `.slice(0, 10)`). |
+| `$$ = cond ? A : B` | jsmql does not support a stream-level ternary. A stream has no single condition that swaps the whole stream for A or B. Narrow with `$$.filter(p)`, or switch source with `$$$.<coll>.filter(p)`. |
+| `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS, but a pipeline is an array. For "first match", write `.filter(p).slice(0, 1)`. To replace each document with a single matching foreign document, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
+| `$$ = $$$.<coll>` (no `.filter` and no other chain method) | A bare collection reference needs a predicate (`.filter(o => …)`) or a chained stream method, for example `.slice(0, 10)`. |
 | `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |
 
-**Let scope.** The narrow form (`$$.filter(p)`) is just a `$match` and preserves any prior `let` bindings — references resolve to the binding's field as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's docs are gone after the never-matching `$match`, so any prior `let` becomes unreadable, producing `` `x` is a `let` binding and can't be read after `$unionWith` … `` on the next reference.
+**Let scope.** The narrow form (`$$.filter(p)`) is just a `$match`, and it preserves any prior `let` binding: a reference resolves to the binding's field as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's documents are gone after the never-matching `$match`, so any prior `let` becomes unreadable. The next reference produces `` `x` is a `let` binding and can't be read after `$unionWith` … ``.
 
 #### Stream methods chained after the RHS
 
-The RHS of `$$ = …` accepts chainable JS-array-shaped methods after the initial `$$` / `$$$.<coll>` receiver (with or without a leading `.filter(<pred>)`). Each chained method appends one or more stages to the surrounding pipeline (for `$$.<chain>`) or the `$unionWith.pipeline` body (for `$$$.<coll>.<chain>`):
+The right side of `$$ = …` accepts a chainable, JS-array-shaped method after the initial `$$` / `$$$.<coll>` receiver, with or without a leading `.filter(<pred>)`. Each chained method appends one or more stages: to the surrounding pipeline for `$$.<chain>`, or to the `$unionWith.pipeline` body for `$$$.<coll>.<chain>`:
 
 ```js
 // Skip the first 5 and keep the next 10 — pure $skip + $limit, no $match.
@@ -3540,38 +3540,38 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | Method | Args | Lowering |
 |---|---|---|
 | `.slice(start, end?)` | 1-2 non-negative integer literals | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
-| `.concat(...others)` | One or more — same shapes as `$$.push(...)`: spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents` stage |
-| `.map(d => <expr>)` / `.map("field")` | Single-param expression-body arrow (the param is the current document — write `d.x`, not `$.x`), **or** the lodash property shorthand `.map("field")`. Embedded `$$$.<coll>.find/filter(...)` lookups work in both stream contexts | `$replaceWith: <expr>` — the chain-form of `$ = <expr>`; the shorthand → `$replaceWith: "$field"`. Embedded lookups materialise into prologue `$lookup` stages ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
-| `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), `["a", "b"]` (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a comparator `(a, b) => a.<f> - b.<f>` (`\|\|` for compound). `.sort` and `.toSorted` are equivalent on a stream | `$sort: { … }`. Zero-arg is rejected (streams have no natural document ordering) |
-| `.sortBy(<field> \| [fields])` / `.orderBy(keys[, orders])` | The lodash sort aliases. `.sortBy` is ascending by one/more keys; `.orderBy` takes parallel keys + directions (`1`/`-1`/`"asc"`/`"desc"`), **or** a `{ field: dir }` object with the directions inline (like `.sort({…})`) | `$sort: { … }`. `.sortBy({…})` is rejected (an object is a lodash matches-shorthand, not a direction — it points at `.orderBy({…})`) |
-| `.filter(<predicate>)` | An arrow (`o => …`), a matches-object (`{ active: true }`), a field name (`"active"`), or a `["field", value]` pair. The spellings are interchangeable — and interchangeable in *every* position a `$$` predicate may sit (see the note below) | `$match` — the index-friendly translator `$match` uses, as query syntax with any residual in `$expr` |
-| `.reject(<predicate>)` | `.filter` negated — an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair | `$match: { $expr: { $not: … } }` (the `$expr` form, never a query-form De Morgan) |
-| `.pick([fields])` / `.omit([fields])` | The lodash object methods, per document. `.pick` keeps only the named fields (`_id` dropped unless named); `.omit` drops the named fields | `$project` (inclusion / exclusion) |
-| `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | The leading run where the predicate holds (`takeWhile`), or everything from the first failure on (`dropWhile`). Same predicate spellings as `.filter`. **A sort must come first** — any spelling (`.sort` / `.toSorted` / `.sortBy` / `.orderBy` / `.$sort({…})`); with none it is rejected, never defaulted to `_id` | `$setWindowFields` carrying a running "has it failed yet" flag, then `$match` on that flag (`0` keeps, `1` drops). The two are exact complements |
-| `.tail()` | Zero args — all but the first document | `$skip: 1` |
-| `.shuffle()` | Zero args — random document order (non-deterministic, like `.sample`) | `$addFields` a `$rand` key · `$sort` by it · `$unset` it |
-| `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` → `$limit: n` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid); `.drop(n)` → `$skip: n` (`drop(0)` is identity — no stage) |
+| `.concat(...others)` | One or more arguments, with the same shapes as `$$.push(...)`: a spread of `$$$.<coll>[.filter(p)]`, an inline `{...}` document, or `$$$.<coll>.find(p)` (no spread) | One `$unionWith` stage per argument. Consecutive inline documents batch into one `$documents` stage |
+| `.map(d => <expr>)` / `.map("field")` | A single-parameter, expression-body arrow (the parameter is the current document: write `d.x`, not `$.x`), **or** the lodash property shorthand `.map("field")`. An embedded `$$$.<coll>.find/filter(...)` lookup works in both stream contexts | `$replaceWith: <expr>`, the chain form of `$ = <expr>`. The shorthand lowers to `$replaceWith: "$field"`. An embedded lookup materialises into a prologue `$lookup` stage ahead of the `$replaceWith`. In the `$$$.<coll>.<chain>` context, the prologue lands inside the outer `$unionWith.pipeline` (a nested `$lookup`, valid MQL) |
+| `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), `["a", "b"]` (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a comparator `(a, b) => a.<f> - b.<f>` (use `\|\|` for a compound key). `.sort` and `.toSorted` mean the same thing on a stream | `$sort: { … }`. jsmql rejects a zero-argument call, because a stream has no natural document order |
+| `.sortBy(<field> \| [fields])` / `.orderBy(keys[, orders])` | The lodash sort aliases. `.sortBy` sorts ascending by one or more keys. `.orderBy` takes parallel keys and directions (`1`/`-1`/`"asc"`/`"desc"`), **or** a `{ field: dir }` object with the directions inline, like `.sort({…})` | `$sort: { … }`. jsmql rejects `.sortBy({…})`, because an object there is a lodash matches-shorthand, not a direction; the error points you at `.orderBy({…})` |
+| `.filter(<predicate>)` | An arrow (`o => …`), a matches-object (`{ active: true }`), a field name (`"active"`), or a `["field", value]` pair. Each spelling is interchangeable, in every position where a `$$` predicate may sit (see the note below) | `$match`, using the index-friendly translator: query syntax where it can, with any residual in `$expr` |
+| `.reject(<predicate>)` | The negation of `.filter`: an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair | `$match: { $expr: { $not: … } }` (the `$expr` form, never a query-form De Morgan) |
+| `.pick([fields])` / `.omit([fields])` | The lodash object methods, applied per document. `.pick` keeps only the named fields and drops `_id` unless you name it. `.omit` drops the named fields | `$project` (inclusion / exclusion) |
+| `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | The leading run where the predicate holds (`takeWhile`), or everything from the first failure on (`dropWhile`). It accepts the same predicate spellings as `.filter`. **A sort must come first**, in any spelling (`.sort` / `.toSorted` / `.sortBy` / `.orderBy` / `.$sort({…})`). With no sort, jsmql rejects the call rather than default to `_id` | A `$setWindowFields` stage that carries a running "has it failed yet" flag, then a `$match` on that flag (`0` keeps, `1` drops). The two methods are exact complements |
+| `.tail()` | Zero arguments: all but the first document | `$skip: 1` |
+| `.shuffle()` | Zero arguments: random document order (non-deterministic, like `.sample`) | `$addFields` a `$rand` key · `$sort` by it · `$unset` it |
+| `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` lowers to `$limit: n` (`take(0)` lowers to an always-false `$match`, because `$limit: 0` is invalid). `.drop(n)` lowers to `$skip: n` (`drop(0)` is identity: it emits no stage) |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
-| `.sample()` | Zero args | `$sample: { size: 1 }` — one random document (lodash `_.sample`; use `.sampleSize(n)` for more) |
-| `.flatMap(<key>)` | One field key — the array field to flatten | One `$unwind: "$<path>"` stage. From here on **the element is what every callback receives** — `.filter(i => i.qty > 1)` reads `items.qty`, a key-less `.countBy()` groups on the element, and `.sortBy("price")` sorts by `items.price` — while the documents keep their other fields (MQL-natural `$unwind`). For "the elements as the documents" chain `.map(item => item)`. Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected. See [The element after `.flatMap`](#the-element-after-flatmap) |
-| `.groupBy(<key>)` / `.groupBy()` / `.groupBy({ _id, … })` | One field key (or none — the element itself), **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → collapses to the lodash object `{ <key>: [docs] }` (like value-mode `$.arr.groupBy(...)`); body form → `$group: <body>` verbatim (a stream of group docs — the accumulator form has no lodash analogue) |
-| `.countBy(<key>)` / `.countBy()` | One field key, or none — the element itself is the key (lodash's identity default; the natural spelling after `.flatMap`) | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
-| `.keyBy(<key>)` / `.keyBy()` | One field key, or none — the element itself | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
-| `.uniqBy(<key>)` | One field key | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sort(...)` when it matters |
-| `.uniq()` | None | `$group` keyed on the element (the whole document, or the unwound field after `.flatMap`) + `$replaceWith` — one document per distinct element |
-| `.difference(list)` / `.without(...values)` | **After `.flatMap`** — the values to drop. A missing `list` is empty, as lodash reads it | `$match` on the element: `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` for a variable one. On a stream of whole documents it is refused — unwind the field first |
-| `.intersection(list)` | **After `.flatMap`** — the values to keep | `$match: { <el>: { $in: [...] } }` + the `.uniq()` group: lodash keeps each value once |
-| `.differenceBy(list, key)` / `.intersectionBy(list, key)` | **After `.flatMap`** — a list and an iteratee (`"sku"`, `i => i.sku`, a matcher) | `$match: { $expr: { $not: { $in: [<key of the element>, <the list's keys>] } } }` (`$in` for intersection, then the `.uniq()` group on the key) |
-| `.compact()` | **After `.flatMap`**, no args — drop the falsy values | `$match: { <el>: { $nin: [null, 0, false, ""] } }` (`null` in the list drops a missing value too) |
+| `.sample()` | Zero arguments | `$sample: { size: 1 }`: one random document (lodash `_.sample`). Use `.sampleSize(n)` for more |
+| `.flatMap(<key>)` | One field key: the array field to flatten | One `$unwind: "$<path>"` stage. From here on **the element is what every callback receives**: `.filter(i => i.qty > 1)` reads `items.qty`, a key-less `.countBy()` groups on the element, and `.sortBy("price")` sorts by `items.price`. The documents keep their other fields, as MQL's `$unwind` does. For "the elements as the documents", chain `.map(item => item)`. jsmql rejects a complex arrow body (`.flatMap(d => d.items.map(...))`). See [The element after `.flatMap`](#the-element-after-flatmap) |
+| `.groupBy(<key>)` / `.groupBy()` / `.groupBy({ _id, … })` | One field key, or none for the element itself, **or** a raw `$group` body object. The body object must contain `_id`; an accumulator operator such as `$addToSet` is allowed in a field slot | The key form collapses to the lodash object `{ <key>: [docs] }`, like value-mode `$.arr.groupBy(...)`. The body form lowers to `$group: <body>` verbatim: a stream of group documents. The accumulator form has no lodash equivalent |
+| `.countBy(<key>)` / `.countBy()` | One field key, or none, in which case the element itself is the key (lodash's identity default, the natural spelling after `.flatMap`) | Collapses to the lodash object `{ <key>: <count> }`, like value-mode `$.arr.countBy(...)`. For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
+| `.keyBy(<key>)` / `.keyBy()` | One field key, or none for the element itself | Collapses to the lodash object `{ <key>: <last doc> }`, like value-mode `$.arr.keyBy(...)`; the last document wins. "Last" follows the current order, so precede it with `.sort(...)` when the order matters |
+| `.uniqBy(<key>)` | One field key | `$group` keeps the first document per key, then `$replaceWith`. "First" follows the current order, so precede it with `.sort(...)` when the order matters |
+| `.uniq()` | None | `$group` keyed on the element (the whole document, or the unwound field after `.flatMap`), then `$replaceWith`: one document per distinct element |
+| `.difference(list)` / `.without(...values)` | **After `.flatMap`** — the values to drop. jsmql reads a missing `list` as empty, as lodash does | A `$match` on the element: `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, or `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` for a variable one. jsmql refuses it on a stream of whole documents; unwind the field first |
+| `.intersection(list)` | **After `.flatMap`** — the values to keep | A `$match: { <el>: { $in: [...] } }`, then the `.uniq()` group, because lodash keeps each value once |
+| `.differenceBy(list, key)` / `.intersectionBy(list, key)` | **After `.flatMap`** — a list and an iteratee (`"sku"`, `i => i.sku`, a matcher) | `$match: { $expr: { $not: { $in: [<key of the element>, <the list's keys>] } } }`. Use `$in` for intersection, then the `.uniq()` group on the key |
+| `.compact()` | **After `.flatMap`**, no arguments: drop the falsy values | `$match: { <el>: { $nin: [null, 0, false, ""] } }`. `null` in the list also drops a missing value |
 | `.flat()` | **After `.flatMap`**, when the element is itself an array | one more `$unwind: "$<el>"` |
-| `.sortBy()` / `.sort()` / `.toSorted()` with no argument | **After `.flatMap`** — the natural order of the values | `$sort: { <el>: 1 }`. On a stream of whole documents a key is required |
-| `.sortedUniq()` / `.sortedUniqBy(<key>)` | As `.uniq` / `.uniqBy` | Aliases: `$group` needs no sorted input, so lodash's sorted-input precondition has nothing to express in MQL |
+| `.sortBy()` / `.sort()` / `.toSorted()` with no argument | **After `.flatMap`** — the natural order of the values | `$sort: { <el>: 1 }`. On a stream of whole documents, jsmql requires a key |
+| `.sortedUniq()` / `.sortedUniqBy(<key>)` | As `.uniq` / `.uniqBy` | Aliases for `.uniq` / `.uniqBy`: `$group` needs no sorted input, so lodash's sorted-input precondition has nothing to express in MQL |
 
-`.filter(<pred>)` can appear **anywhere** in the chain — not only as the head, so `.flatMap("items").filter(o => o.qty > 0)` composes.
+`.filter(<pred>)` can appear **anywhere** in the chain, not only as the head. So `.flatMap("items").filter(o => o.qty > 0)` composes.
 
 #### Callback spellings
 
-**How you spell a callback never changes the MQL.** The lodash shorthands work the same on a stream as on an array value, and each is exactly its longhand:
+**How you spell a callback never changes the MQL.** A lodash shorthand works the same on a stream as on an array value, and each shorthand is exactly its longhand:
 
 | Slot | Write any of these | They all mean |
 |---|---|---|
@@ -3586,7 +3586,7 @@ $.n = $$$.orders.filter({ userId: $._id }).length;   // ≡ .filter(o => o.userI
 //    { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }]  — the same $lookup either way
 ```
 
-**Group keys may be computed.** MongoDB evaluates `$group._id` per document, so the four grouping methods take any expression — it lowers straight into the key, with no extra stages:
+**A group key may be computed.** MongoDB evaluates `$group._id` per document, so all four grouping methods take any expression. It lowers straight into the key, with no extra stage:
 
 ```js
 $$.countBy(d => d.category.toLowerCase());
@@ -3596,7 +3596,7 @@ $$.groupBy(d => d.email.split("@")[1]);   // group by email domain
 $$.countBy({ active: true });             // count matching vs not (lodash _.matches)
 ```
 
-**Sort keys may be computed too**, but a `$sort` key has to be a literal field path, so jsmql puts the value in a scratch field first and clears it once the chain is done:
+**A sort key may be computed too**, but a `$sort` key must be a literal field path. So jsmql puts the value in a scratch field first, then clears it once the chain finishes:
 
 ```js
 $$.sortBy(d => d.category.toLowerCase());
@@ -3607,7 +3607,7 @@ $$.sortBy(d => d.category.toLowerCase());
 
 The scratch field is cleared once the chain finishes, so it never reaches your output.
 
-**`.flatMap` is the exception** — it takes a field path only. `$unwind` puts each element back into a *named* field, so which field it is is part of what you mean; jsmql can't pick one for you:
+**`.flatMap` is the exception**: it takes only a field path. `$unwind` puts each element back into a *named* field, so which field it is is part of what you mean. jsmql cannot pick one for you:
 
 ```js
 $.allTags = $.tags.concat($.extraTags);
@@ -3616,7 +3616,7 @@ $$.flatMap("allTags");
 
 #### The element after `.flatMap`
 
-In JavaScript, `orders.flatMap(o => o.items)` is a list of **items**, and every method after it works on an item. The stream reads the same way: after `.flatMap("items")` each callback's parameter is the element — the unwound field — so its fields are paths under that field, the lodash shorthands name the element's fields, a comparator on the whole element sorts by the field, and the key-less `.countBy()` / `.groupBy()` / `.keyBy()` group on the element:
+In JavaScript, `orders.flatMap(o => o.items)` is a list of **items**, and every method after it works on an item. The stream reads the same way. After `.flatMap("items")`, each callback's parameter is the element, the unwound field. Its fields are paths under that field, a lodash shorthand names the element's fields, a comparator on the whole element sorts by the field, and a key-less `.countBy()` / `.groupBy()` / `.keyBy()` groups on the element:
 
 ```js
 $$.flatMap("items").filter(i => i.qty > 1).sortBy("price").uniq().pick(["sku"]);
@@ -3630,7 +3630,7 @@ $$.flatMap("productIds").filter(p => !$.owned.includes(p)).countBy();   // { <pr
 // → [ { $unwind: "$productIds" }, { $match: … }, { $group: { _id: "$productIds", … } }, … ]
 ```
 
-The lodash set methods, `.compact()`, `.flat()` and the key-less sorts work on the element too — and only there, because a whole document is never falsy, never nested, and has no natural order:
+The lodash set methods, `.compact()`, `.flat()`, and the key-less sorts work on the element too, and only there. A whole document is never falsy, never nested, and has no natural order:
 
 ```js
 $$.flatMap("ids").difference([1, 2]);
@@ -3662,27 +3662,27 @@ $$.difference([1, 2]);
 // → error: '.difference()' isn't available on '$$' — compares each ELEMENT against a second array, and every element of this stream is a whole document. Unwind the field first — '.flatMap("<field>").difference(<list>)' — or drop documents with '.reject(<pred>)'.
 ```
 
-In a join, the same link on a stream of whole documents is not a stream link: it reads the joined array as a value (`$$$.orders.filter(p).difference(docs)` is lodash's `$filter` over the array), like any method without a stream form.
+In a join, the same link on a stream of whole documents is not a stream link. It reads the joined array as a value — `$$$.orders.filter(p).difference(docs)` is lodash's `$filter` over the array — like any method with no stream form.
 
-The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stream still carries one order per line with `items` holding that line. To make the elements the documents, say so — `.map(item => item)` is `{ $replaceWith: "$items" }` — and from that stage on the document is the element again, as after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and moves nothing: a callback after it still receives the whole document.
+The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stream still carries one order per line, with `items` holding that line. To make the elements the documents, say so: `.map(item => item)` is `{ $replaceWith: "$items" }`. From that stage on, the document is the element again, as it is after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and changes nothing else: a callback after it still receives the whole document.
 
-In a **value** position the chain is JavaScript's value: `$$$.orders.flatMap("items")` is the items themselves (the `$lookup` holds one order per line, and the value reads the line off each), so `.length` counts lines (`{ $size: "$<the joined array>" }` — one joined document per line, so nothing is picked out first), `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
+In a **value** position the chain is JavaScript's value. `$$$.orders.flatMap("items")` is the items themselves: the `$lookup` holds one order per line, and the value reads the line off each. So `.length` counts lines (`{ $size: "$<the joined array>" }`, one joined document per line, so nothing is picked out first), `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
 
-On three methods an object means something richer than a matcher, so it is read that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
+On three methods, an object means something richer than a matcher, so jsmql reads it that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 
-`.map(d => …)` / `.map("field")` replaces each document with the body via `$replaceWith`, so the **body must resolve to a document** (MongoDB requires an object root). A provably non-document body — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])` — is rejected at compile time; a field ref that turns out to be a scalar at runtime (e.g. `.map("userId")` where `userId` is an ObjectId) is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
+`.map(d => …)` / `.map("field")` replaces each document with the body through `$replaceWith`, so the **body must resolve to a document**, because MongoDB requires an object root. jsmql rejects a provably non-document body at compile time — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])`. A field reference that turns out to be a scalar at runtime, for example `.map("userId")` where `userId` is an ObjectId, is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
 
-Methods that count **from the end** (`.takeRight(n)`, `.dropRight(n)`, `.initial()`, `.toReversed()`) are deliberately not on this list either. A MongoDB stream has no order except the one a `$sort` gives it, and there is no stage that reverses one (`$reverseArray` is an *expression*, for an array inside a document) — so "the last 3" has nothing to count back from. Say the order you want and take from the **front**:
+The methods that count **from the end** (`.takeRight(n)`, `.dropRight(n)`, `.initial()`, `.toReversed()`) are also deliberately not on this list. A MongoDB stream has no order except the one a `$sort` gives it, and no stage reverses one (`$reverseArray` is an *expression*, for an array inside a document). So "the last 3" has nothing to count back from. Say the order you want, and take from the **front**:
 
 ```js
 $$.toSorted({ createdAt: -1 }).take(3);   // the 3 most recent
 ```
 
-All four still work in value position on a real array (`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`), where the array carries its own order and they mean exactly what they mean in JS.
+All four still work in value position on a real array (`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`). There, the array carries its own order, and each method means exactly what it means in JS.
 
-Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).take(1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
+The methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list. A pipeline is an array, and chaining a single-element method would mislead. Use `.filter(p).take(1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated: that is a lookup-context shape, not a stream chain. See [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
 
-**A predicate is a predicate, wherever it sits.** `$$.filter(...)` / `$$.reject(...)` accept the same four spellings in every position a `$$` predicate can appear — narrowing the current stream (`$$.filter(p)`), a `$facet` branch (`$ = { k: $$.filter(p) }`), and an `$out` write chain (`$$$.archive = $$.filter(p)`) — and each spelling emits identical MQL, so picking one is purely a matter of taste:
+**A predicate is a predicate, wherever it sits.** `$$.filter(...)` / `$$.reject(...)` accept the same four spellings in every position where a `$$` predicate can appear: narrowing the current stream (`$$.filter(p)`), a `$facet` branch (`$ = { k: $$.filter(p) }`), and an `$out` write chain (`$$$.archive = $$.filter(p)`). Each spelling emits identical MQL, so picking one is purely a matter of taste:
 
 ```js
 jsmql(`$$$.archive = $$.filter({ status: "expired" });`)
@@ -3691,9 +3691,9 @@ jsmql(`$$$.archive = $$.filter(o => o.status === "expired");`)
 // all three → [{ $match: { status: "expired" } }, { $out: "archive" }]
 ```
 
-The one thing a predicate may not do in these positions is reference `$.<field>`: the parameter already *is* the current document, so `o.status` is the spelling. (Inside a `$$$.<coll>` lookup predicate `$.<field>` means the *outer* doc and is auto-`let`-extracted — a different position, a different rule.)
+The one thing a predicate may not do in these positions is reference `$.<field>`. The parameter already *is* the current document, so `o.status` is the spelling. (Inside a `$$$.<coll>` lookup predicate, `$.<field>` means the *outer* document and jsmql auto-extracts it into `let` — a different position, a different rule.)
 
-A worked lodash-style chain — the newest 10 closed orders' distinct products:
+A worked lodash-style chain: the newest 10 closed orders' distinct products:
 
 ```js
 jsmql(`$$.filter({ status: "CLOSED" })
@@ -3720,7 +3720,7 @@ jsmql(`
 // → [{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id", name: "$name" } }]
 ```
 
-Every stream method works this way (e.g. `.filter`, `.map`, `.toSorted`). Chaining and splitting are interchangeable — these three forms all produce the same MQL:
+Every stream method works this way, for example `.filter`, `.map`, `.toSorted`. Chaining and splitting are interchangeable: these three forms all produce the same MQL:
 
 ```js
 $$.filter(p).map(f);        // chained
@@ -3728,11 +3728,11 @@ $$.filter(p); $$.map(f);    // split across statements
 $$.filter(p).map(f);   // explicit assignment
 ```
 
-It holds for the chained stage calls too, so a chain may mix them freely: `$$.filter(p).$sort({ score: -1 }).take(3);` and `$$.filter(p); $sort({ score: -1 }); $limit(3);` are the same pipeline.
+This also holds for chained stage calls, so a chain may mix them freely: `$$.filter(p).$sort({ score: -1 }).take(3);` and `$$.filter(p); $sort({ score: -1 }); $limit(3);` are the same pipeline.
 
-> **Note.** In plain JS, `arr.filter(...)` as a bare statement throws the result away. In a jsmql pipeline a bare `$$.filter(...)` statement *transforms the running stream* — each statement is a stage. (Same spirit as `$$.push(...)`.) The bare `$$` receiver is required; for source-switches keep the explicit `$$ = $$$.<coll>.<chain>;` head.
+> **Note.** In plain JS, `arr.filter(...)` as a bare statement throws away the result. In a jsmql pipeline, a bare `$$.filter(...)` statement *transforms the running stream*: each statement is a stage. (This follows the same idea as `$$.push(...)`.) The bare `$$` receiver is required. For a source-switch, keep the explicit `$$ = $$$.<coll>.<chain>;` head.
 
-**`.reduce` is not a chain method either** — what a reducer returns in JS decides how it's assigned. A reducer that returns a **scalar or object** (one value) must be **wrapped** into a stream-shaped RHS; a reducer that returns an **array** is already a stream and is assigned directly (see the array-returning form below). The two scalar/object wraps both lower to the same `$group` + `$replaceWith` pair — pick whichever reads best at the call site:
+**`.reduce` is not a chain method either.** What a reducer returns in JS decides how you assign it. A reducer that returns a **scalar or object** (one value) must be **wrapped** into a stream-shaped right side. A reducer that returns an **array** is already a stream and is assigned directly (see the array-returning form below). Both scalar/object wraps lower to the same `$group` + `$replaceWith` pair. Pick whichever reads best at the call site:
 
 **Scalar wrap** — one `$$.reduce(...)` per named field:
 
@@ -3767,11 +3767,11 @@ jsmql(`$$ = [$$.reduce(
 // → identical to the multi-aggregate scalar wrap above
 ```
 
-Both forms support the same per-key reducer bodies: `acc + d.<field>` (or `acc.<key> + d.<field>` in the object form) → `$sum`; `acc + 1` → `$sum: 1` (count); `Math.max(acc, d.<field>)` → `$max`; `Math.min(acc, d.<field>)` → `$min`. In the object form each entry must reference `acc.<sameKey>` as the accumulator side, and the init object must declare the same key set as the body (extra or missing keys on either side throw — in JS this would silently work but mean something different).
+Both forms support the same per-key reducer bodies: `acc + d.<field>` (or `acc.<key> + d.<field>` in the object form) lowers to `$sum`; `acc + 1` lowers to `$sum: 1` (count); `Math.max(acc, d.<field>)` lowers to `$max`; `Math.min(acc, d.<field>)` lowers to `$min`. In the object form, each entry must reference `acc.<sameKey>` as the accumulator side, and the init object must declare the same key set as the body. An extra or missing key on either side throws — in JS this would silently work, but it would mean something different.
 
-The `init` value is required for JS-faithfulness but the MQL accumulators have their own neutral elements, so its actual value doesn't matter. Dictionary-build reducers (`(acc, d) => ({...acc, [d.k]: d.v})`) and other richer body shapes are future work.
+The `init` value is required for JS faithfulness, but the MQL accumulators have their own neutral elements, so its actual value does not matter. Dictionary-build reducers (`(acc, d) => ({...acc, [d.k]: d.v})`) and other richer body shapes are future work.
 
-**Array-returning reducer** — for "flatten the stream by projecting each doc to a sub-doc, optionally filtered". A reducer seeded with `[]` already returns an array — a stream — so it's assigned **directly**, without the surrounding `[ ]`:
+**Array-returning reducer** — for "flatten the stream by projecting each document to a sub-document, optionally filtered". A reducer seeded with `[]` already returns an array, a stream, so you assign it **directly**, without the surrounding `[ ]`:
 
 ```js
 // Filter active users with an email, project to their contactDetails sub-doc.
@@ -3786,19 +3786,19 @@ jsmql(`$$.reduce((acc, d) => acc.concat(d.contactDetails), []);`)
 // → [{ $replaceWith: "$contactDetails" }]
 ```
 
-This form lowers to `$match` (when the body is a `cond ? acc.concat(...) : acc` ternary) + `$replaceWith` (when the projection is a field path on `d`). Equivalent to `$$.filter(d => cond).map(d => d.<field>)` written as a single reducer — pick whichever reads better at the call site. Init must be `[]`; the body must be either `acc.concat(d.<path>)` or a ternary whose alternate branch is bare `acc`. Spread-form variants (`[...acc, d.<x>]`, multi-element wrappers) aren't recognised.
+This form lowers to `$match` (when the body is a `cond ? acc.concat(...) : acc` ternary) plus `$replaceWith` (when the projection is a field path on `d`). It is equivalent to `$$.filter(d => cond).map(d => d.<field>)` written as a single reducer; pick whichever reads better at the call site. The init must be `[]`, and the body must be either `acc.concat(d.<path>)` or a ternary whose alternate branch is bare `acc`. jsmql does not recognise a spread-form variant (`[...acc, d.<x>]`, a multi-element wrapper).
 
-Wrapping it in `[ ]` (`$$ = [$$.reduce(…, [])]`) is **rejected** — that would make a stream whose single document is itself an array. (The scalar and object reducer wraps above keep their `[ ]` because those reducers return a single document, so `[ <doc> ]` is a legitimate one-document stream literal.)
+jsmql **rejects** wrapping it in `[ ]` (`$$ = [$$.reduce(…, [])]`), because that would make a stream whose single document is itself an array. (The scalar and object reducer wraps above keep their `[ ]`, because those reducers return a single document, so `[ <doc> ]` is a legitimate one-document stream literal.)
 
 ---
 
 ## Pipelines
 
-`jsmql()` also compiles **whole aggregation pipelines**. The same function detects pipeline mode from the input and returns an `object[]` instead of a single `object`. No new exports, no separate API.
+`jsmql()` also compiles **whole aggregation pipelines**. The same function detects pipeline mode from the input, and returns an `object[]` instead of a single `object`. There is no new export and no separate API.
 
 ### Canonical form: `;` between stages
 
-Write each stage as a top-level statement separated by `;`. Any `;` at the top level — including a single trailing `;` — flips `jsmql()` into pipeline mode. Inside one `;`-separated chunk, `,` keeps its in-stage role for update ops:
+Write each stage as a top-level statement separated by `;`. Any `;` at the top level, including a single trailing `;`, flips `jsmql()` into pipeline mode. Inside one `;`-separated chunk, `,` keeps its in-stage role for update ops:
 
 ```js
 // Stages read like a script — one statement per stage.
@@ -3832,14 +3832,14 @@ jsmql("$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1; $.status = 'done'
 
 Two things to know:
 
-- **`;` is a hard stage boundary.** Adjacent update ops across `;` do **not** coalesce — `$.a = 1; $.b = 2` produces two `$set` stages. Use `,` if you want a single coalesced stage.
-- **A trailing `;` is enough.** `$.a = 1;` returns `[{ $set: { a: 1 } }]`; `$.a = 1` (no `;`) returns `{ $set: { a: 1 } }`. Pick the form that matches what you want from MongoDB — a stage object or a pipeline array.
+- **`;` is a hard stage boundary.** Adjacent update ops across `;` do **not** coalesce. `$.a = 1; $.b = 2` produces two `$set` stages. Use `,` for a single coalesced stage.
+- **A trailing `;` is enough.** `$.a = 1;` returns `[{ $set: { a: 1 } }]`. `$.a = 1` (no `;`) returns `{ $set: { a: 1 } }`. Pick the form that matches what you want from MongoDB: a stage object or a pipeline array.
 
-Each stage body is a regular jsmql expression: arithmetic, accumulators, field refs, and method chains all work as they do anywhere else.
+Each stage body is an ordinary jsmql expression. Arithmetic, an accumulator, a field reference, and a method chain all work as they do anywhere else.
 
 ### Chained form: `.$stage(...)` on a stream
 
-A stage can also be written as a **chain link** on a stream — `$$` (the current
+You can also write a stage as a **chain link** on a stream: `$$` (the current
 collection) or `$$$.<coll>` (another one). It means exactly what the statement form means:
 
 ```js
@@ -3851,23 +3851,23 @@ jsmql("$match({ status: 'shipped' }); $sort({ total: -1 }); $limit(5);");
 ```
 
 **Two spellings, no winner.** Where a stage has a JavaScript equivalent, both compile to the
-same thing — pick whichever reads better for the query at hand:
+same thing. Pick whichever reads better for the query at hand:
 
 ```js
 jsmql("$$.filter({ a: 1 }).take(5);");     // → [{ $match: { a: 1 } }, { $limit: 5 }]
 jsmql("$$.$match({ a: 1 }).$limit(5);");   // → [{ $match: { a: 1 } }, { $limit: 5 }]
 ```
 
-They interleave freely, so a chain can use each where it's clearest:
+They interleave freely, so a chain can use each spelling where it reads clearest:
 
 ```js
 jsmql("$$.filter(p => p.score > 0).$sort({ score: -1 }).take(10);");
 // → [{ $match: { score: { $gt: 0 } } }, { $sort: { score: -1 } }, { $limit: 10 }]
 ```
 
-Where this earns its keep is a **value position**, where you can't drop into statements.
-`$group`, `$unwind`, `$setWindowFields`, `$bucket` and friends have no JavaScript
-spelling, so a chain could never reach them:
+This earns its keep in a **value position**, where you cannot drop into statements.
+`$group`, `$unwind`, `$setWindowFields`, `$bucket`, and similar stages have no JavaScript
+spelling, so a chain could never reach them otherwise:
 
 ```js
 jsmql(`
@@ -3892,11 +3892,11 @@ $set({ topRegions: byRegion });
 //   ]
 ```
 
-The name after the `.` must be a real aggregation stage — jsmql invents none — and takes
-exactly one argument, its body. Two things that may surprise you:
+The name after the `.` must be a real aggregation stage; jsmql invents none. It takes
+exactly one argument: its body. Two things may surprise you:
 
-- **Stages chain only while the chain is still a stream.** A stage runs *inside* the
-  pipeline; once a link turns the chain into a **value** — `.map("<field>")` (extracting a
+- **A stage chains only while the chain is still a stream.** A stage runs *inside* the
+  pipeline. Once a link turns the chain into a **value** — `.map("<field>")` (extracting a
   field, not reshaping a document), `.flatten()`, `.uniq()`, `.sum()`, `.head()`, and the
   other value terminals — everything after it is ordinary array/value work, and a stage
   there has nothing to run in. Put the stages first:
@@ -3907,13 +3907,13 @@ exactly one argument, its body. Two things that may surprise you:
                                                      //    but its receiver here is a value
   ```
 
-  `$.items.$match(...)` is rejected for the same reason — an in-document array was never a
+  jsmql rejects `$.items.$match(...)` for the same reason: an in-document array was never a
   stream. Use the array method `.filter(...)`.
-- **A correlated `$match` is rewritten for you.** In a `$$$.<coll>` chain, `$.` reads the
-  *outer* document. In a `$match` object body MongoDB wouldn't evaluate that (the query
-  language ignores variables, so the match would silently return nothing), so jsmql
-  re-expresses the body as a predicate — exactly what `.filter({ … })` does. Terms that
-  don't read the outer document stay in index-friendly query form:
+- **jsmql rewrites a correlated `$match` for you.** In a `$$$.<coll>` chain, `$.` reads the
+  *outer* document. MongoDB would not evaluate that in a `$match` object body, because the
+  query language ignores variables, so the match would silently return nothing. jsmql
+  re-expresses the body as a predicate instead: exactly what `.filter({ … })` does. A term
+  that does not read the outer document stays in index-friendly query form:
 
   ```js
   $.orders = $$$.orders.$match({ userId: $._id, status: "shipped" });
@@ -3924,7 +3924,7 @@ exactly one argument, its body. Two things that may surprise you:
 
 ### Alternative: bracketed array literal
 
-When you want jsmql to *evaluate to* a pipeline array (rather than statements that build one), wrap the same stage calls in a `[…]` literal. Stages can be written as call expressions or as MongoDB-shaped stage objects — both compile identically and may be mixed in one array.
+When you want jsmql to *evaluate to* a pipeline array, rather than statements that build one, wrap the same stage calls in a `[…]` literal. You can write a stage as a call expression or as a MongoDB-shaped stage object; both compile identically, and you may mix them in one array.
 
 ```js
 // Stage-call form inside an array literal — same stages, expression-style.
@@ -3947,13 +3947,13 @@ jsmql(`[
 ]`);
 ```
 
-Use the bracketed form when you're pasting MQL from MongoDB Compass or the docs (the stage-object shape lets you copy verbatim), or when a build step needs the literal array as a value. For new pipelines, prefer the `;`-separated form above — it reads as JavaScript end-to-end and stays consistent with the update op, `let`-binding, and block-body-arrow forms.
+Use the bracketed form when you paste MQL from MongoDB Compass or the manual, because the stage-object shape lets you copy it verbatim, or when a build step needs the literal array as a value. For a new pipeline, prefer the `;`-separated form above. It reads as JavaScript end-to-end, and it stays consistent with the update op, `let`-binding, and block-body-arrow forms.
 
 ### `$match` indexes by default
 
-In real MongoDB, `$match`'s body can be either a *query document* (`{ field: value }`) or an *aggregation expression* (`$expr: { ... }`). The two look interchangeable, but they aren't: **`$expr` disables index usage**. A naïve translation of `$.email === "alice"` into an `$expr` wrapper turns every match into a collection scan.
+In real MongoDB, the body of `$match` can be either a *query document* (`{ field: value }`) or an *aggregation expression* (`$expr: { ... }`). The two look interchangeable, but they are not: **`$expr` disables index use**. A naïve translation of `$.email === "alice"` into an `$expr` wrapper turns every match into a collection scan.
 
-jsmql translates the index-safe subset of expressions — field-vs-literal comparisons combined with `&&` and `||` — into the query-document form so indexes still work. Anything outside that subset (computed values, method calls, field-to-field comparisons) stays in `$expr`. When part of the predicate is translatable and part isn't, you get both: the indexable part as a query doc, the rest in `$expr` on the same `$match`.
+jsmql translates the index-safe subset of expressions — a field-versus-literal comparison combined with `&&` and `||` — into the query-document form, so an index still works. Anything outside that subset (a computed value, a method call, a field-to-field comparison) stays in `$expr`. When part of the predicate is translatable and part is not, you get both: the indexable part as a query document, and the rest in `$expr` on the same `$match`.
 
 ```js
 // Simple equality → indexable query doc
@@ -3985,7 +3985,7 @@ jsmql("[{ $match: { age: { $gt: 18 } } }]");
 // → [{ $match: { age: { $gt: 18 } } }]
 ```
 
-**Index-friendly JS patterns that translate to MongoDB query operators.** Several common JS shapes have direct query-language equivalents — the translator recognises them and emits the indexable form:
+**Index-friendly JS patterns that translate to MongoDB query operators.** Several common JS shapes have a direct query-language equivalent. The translator recognises them and emits the indexable form:
 
 ```js
 // Array-element / set-membership tests
@@ -4028,9 +4028,9 @@ jsmql(`[{ $match: $.x % 5 === 0 }]`);
 // → [{ $match: { x: { $mod: [5, 0] } } }]
 ```
 
-`.includes(<literal>)` on a field receiver diverges from the expression-form translation — in `$match` position it emits the bare `{ field: value }` shape (which matches arrays-containing-value or scalar equality, but NOT string substring). Use `.match(/value/)` if you want substring match in `$match`.
+`.includes(<literal>)` on a field receiver diverges from the expression-form translation. In `$match` position it emits the bare `{ field: value }` shape, which matches an array that contains the value or a scalar equality, but NOT a string substring. Use `.match(/value/)` for a substring match in `$match`.
 
-**Known semantic divergences.** Query-language equality differs from aggregation `$eq` in three ways: array fields (query mode matches array elements), `$ne` with missing fields (the `!== <value>` shape excludes missing docs), and field-to-field comparison (not done; stays in `$expr`). For null/missing handling, `===` / `!==` and `==` / `!=` translate to two distinct index-friendly shapes — see the [strict vs loose null table](#---vs-----null-and-missing-fields).
+**Known semantic divergences.** Query-language equality differs from aggregation `$eq` in three ways: array fields (query mode matches an array element), `$ne` with a missing field (the `!== <value>` shape excludes a missing document), and field-to-field comparison (jsmql does not do this; it stays in `$expr`). For null/missing handling, `===` / `!==` and `==` / `!=` translate to two distinct index-friendly shapes. See the [strict vs loose null table](#---vs-----null-and-missing-fields).
 
 ```js
 // Strict — only explicit null matches; missing fields excluded
@@ -4046,9 +4046,9 @@ The full rule table and divergence reference live in [docs/specs/emit-pass.md](s
 
 ### Local bindings (`let`)
 
-Pipelines can introduce **named local helpers** with `let`. Each binding is scoped to the rest of the pipeline; the compiler materialises it under a single compiler-owned namespace (`__jsmql.var.<name>`) and emits one cleanup `$unset` at the end.
+A pipeline can introduce a **named local helper** with `let`. Each binding is scoped to the rest of the pipeline. The compiler materialises it under a single compiler-owned namespace (`__jsmql.var.<name>`) and emits one cleanup `$unset` at the end.
 
-A `let` binding is **reassignable** — a later `name = …` re-`$set`s it, just like JavaScript. Each reassignment is its own `$set` stage (a read-after-write needs a separate stage):
+A `let` binding is **reassignable**: a later `name = …` re-`$set`s it, just like JavaScript. Each reassignment is its own `$set` stage, because a read-after-write needs a separate stage:
 
 ```js
 jsmql`
@@ -4143,7 +4143,7 @@ jsmql`
 
 Both declarators of the date example above are constants, so both fold at compile time and neither emits a stage at all.
 
-A declarator whose value is an arrow is a [reusable function](#reusable-functions), in a list as anywhere else. Every declarator needs a value — there is no `undefined` in MQL to bind, so `let x;` is an error naming `let x = <expr>`.
+A declarator whose value is an arrow is a [reusable function](#reusable-functions), in a list as anywhere else. Every declarator needs a value, because MQL has no `undefined` to bind. So `let x;` is an error that names `let x = <expr>`.
 
 Inside a block-body arrow the same rule binds `$let` variables instead of document fields, because `$let` also reads every variable from the enclosing scope:
 
@@ -4154,12 +4154,12 @@ jsmql.expr`$.i.map((v) => { const d = v * 2, e = v + 1; return d + e; })`;
 
 Why use `let` instead of `$.tmp = …; … ; delete $.tmp`:
 
-- Each derived value sits on its own line — natural spot for a one-line `// …` comment.
-- No collision risk: even if your document has a real field named `subtotal`, the let lives under `__jsmql.var.subtotal` and never touches it.
-- No forgotten cleanup — the compiler appends the `$unset` automatically.
-- `subtotal` (a bare identifier) at call sites reads visually distinct from `$.subtotal` (a real document field).
+- Each derived value sits on its own line, a natural spot for a one-line `// …` comment.
+- No collision risk: even when your document has a real field named `subtotal`, the let lives under `__jsmql.var.subtotal` and never touches it.
+- No forgotten cleanup: the compiler appends the `$unset` automatically.
+- `subtotal` (a bare identifier) at a call site reads visually distinct from `$.subtotal` (a real document field).
 
-**Scope rules.** A let is visible from its declaration to the end of the pipeline, with one exception: a stage that *replaces* the document drops the let, because the field carrying it is gone. Which stages those are is a fact on each row of [`src/registry/names.ts`](../src/registry/names.ts) (`replacesDocument`) — `$group` is the one every pipeline meets. Referring to a let after one of them is a compile-time error:
+**Scope rules.** A let is visible from its declaration to the end of the pipeline, with one exception: a stage that *replaces* the document drops the let, because the field that carries it is gone. Which stages do this is a fact on each row of [`src/registry/names.ts`](../src/registry/names.ts) (`replacesDocument`); `$group` is the one every pipeline meets. Referring to a let after one of them is a compile-time error:
 
 ```js
 jsmql`
@@ -4172,9 +4172,9 @@ jsmql`
 //   or rebind after the stage with another `let`.
 ```
 
-`$project` clears the scope in **inclusion** mode only: naming the fields to keep drops `__jsmql` with the rest, so a later let read is the same compile-time error `$group` gives. Expression-mode (`{ x: $.y + 1 }`) and exclusion-mode (`{ a: 0 }`) projections preserve the document, and the let survives them. The row states that as `replacesDocument: "inclusion"`.
+`$project` clears the scope in **inclusion** mode only. Naming the fields to keep drops `__jsmql` with the rest, so a later let read gives the same compile-time error that `$group` gives. An expression-mode projection (`{ x: $.y + 1 }`) and an exclusion-mode projection (`{ a: 0 }`) preserve the document, and the let survives them. The row states this as `replacesDocument: "inclusion"`.
 
-**Indexing pitfall.** A let materialises through `$addFields`/`$set`. A `$match` on a let-bound value cannot use an index, and the optimiser cannot push that `$match` past the `$set` that produced the field. Place index-eligible `$match`es on real document fields **before** your `let` bindings:
+**Indexing pitfall.** A let materialises through `$addFields` / `$set`. A `$match` on a let-bound value cannot use an index, and the optimiser cannot push that `$match` past the `$set` that produced the field. Place an index-eligible `$match` on a real document field **before** your `let` binding:
 
 ```js
 // Good — index on $.status is preserved by the leading $match
@@ -4198,13 +4198,13 @@ jsmql`
 jsmql("[let big = $.score > 100, $match(big), $sort({ score: -1 })]");
 ```
 
-**Sub-pipelines.** Outer lets are not visible inside `$lookup.pipeline`, `$unionWith.pipeline`, or `$facet.*` branches. Each sub-pipeline can declare its own lets independently — they live inside that sub-pipeline only.
+**Sub-pipelines.** An outer let is not visible inside `$lookup.pipeline`, `$unionWith.pipeline`, or a `$facet.*` branch. Each sub-pipeline can declare its own lets independently; they live inside that sub-pipeline only.
 
-**Not the same as `$let`.** MongoDB's `$let` operator is *expression-scoped* — the binding lives inside one `in:` clause. jsmql's `let` is *pipeline-scoped*. They are different constructs that happen to share a name.
+**Not the same as `$let`.** MongoDB's `$let` operator is *expression-scoped*: the binding lives inside one `in:` clause. jsmql's `let` is *pipeline-scoped*. They are different constructs that happen to share a name.
 
 ### Compile-time constants (folding)
 
-When a `const`/`let` right-hand side is a **compile-time constant** — a value that doesn't depend on the document or the environment — jsmql evaluates it once at compile time and **inlines the value** everywhere the name is used. No `$set` stage, no `__jsmql` namespace, no `$unset`. And because the declaration emits no stage, a preamble of constants does not force Pipeline mode — so a constant plus a predicate compiles to a clean, indexable **Filter**:
+When the right side of a `const` / `let` is a **compile-time constant** — a value that does not depend on the document or the environment — jsmql evaluates it once at compile time and **inlines the value** everywhere it names it. There is no `$set` stage, no `__jsmql` namespace, and no `$unset`. Because the declaration emits no stage, a preamble of constants does not force Pipeline mode. So a constant plus a predicate compiles to a clean, indexable **Filter**:
 
 ```js
 jsmql("const userId = 0x507f1f77bcf86cd799439011; $.userId === userId");
@@ -4214,9 +4214,9 @@ jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
 // → { elapsedMs: { $gt: 86400000 } }
 ```
 
-A "compile-time constant" is any pure, deterministic expression over literals and earlier constants — arithmetic, `new Date("2020-01-01")` and the date methods on it, ObjectId literals and their `.toString()`, array/object literals, a constant computed key (`{ [k]: 1 }`), and (see the method sections) string/array transforms. A binding whose RHS reads the document (`$.x`), the clock (`new Date()`), or the RNG (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. This means a constant folds the same way in every entry point — a Filter, a pipeline stage, an expression — including per call in [`jsmql.compile`](#parameterised-queries-jsmqlcompile) (a constant built from a parameter folds against each call's arguments).
+A "compile-time constant" is any pure, deterministic expression over literals and earlier constants: arithmetic, `new Date("2020-01-01")` and the date methods on it, an ObjectId literal and its `.toString()`, an array or object literal, a constant computed key (`{ [k]: 1 }`), and (see the method sections) a string or array transform. A binding whose right side reads the document (`$.x`), the clock (`new Date()`), or the RNG (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. So a constant folds the same way in every entry point — a Filter, a pipeline stage, an expression — including per call in [`jsmql.compile`](#parameterised-queries-jsmqlcompile), where a constant built from a parameter folds against each call's arguments.
 
-A folded value is what the **server** would compute, not what JavaScript computes where the two differ: a month added to 31 January lands on the last day of February as `$dateAdd` does, `.startOf("week")` is the Sunday as `$dateTrunc` does, and `.diff(other, "day")` counts the midnights crossed as `$dateDiff` does. So a date range built from constants is two literal dates, and the `$match` can use the index on the field:
+A folded value is what the **server** would compute, not what JavaScript computes, where the two differ. A month added to 31 January lands on the last day of February, as `$dateAdd` does. `.startOf("week")` gives the Sunday, as `$dateTrunc` does. `.diff(other, "day")` counts the midnights crossed, as `$dateDiff` does. So a date range built from constants is two literal dates, and the `$match` can use the index on the field:
 
 ```js
 jsmql(`const start = new Date("2026-09-01");
@@ -4228,13 +4228,13 @@ jsmql('const monthStart = new Date("2026-09-15").startOf("month"); $match({ day:
 // → [{ $match: { day: "2026-09-01" } }]
 ```
 
-A date method called with a `timezone` or another option (`.plus(1, "month", "Europe/Kyiv")`, `.startOf("week", { startOfWeek: "monday" })`) is **not** folded — a named zone shifts with daylight saving, and that table is the server's — so it stays the aggregation operator. `String(n)` and a `${n}` template slot fold for an integer (both sides write `"42"`); a fraction or a number of sixteen or more digits stays `$toString`, because the two spell exponents differently. `Number("42")` never folds: `$toDouble` yields a double on the server where a written `42` is an int.
+jsmql does **not** fold a date method called with a `timezone` or another option (`.plus(1, "month", "Europe/Kyiv")`, `.startOf("week", { startOfWeek: "monday" })`). A named zone shifts with daylight saving, and that table belongs to the server, so it stays the aggregation operator. `String(n)` and a `${n}` template slot fold for an integer, because both sides write `"42"`. A fraction or a number of sixteen or more digits stays `$toString`, because the two spell an exponent differently. `Number("42")` never folds: `$toDouble` yields a double on the server, where a written `42` is an int.
 
-> A constant expression that can't be represented as a MongoDB literal — e.g. one that evaluates to `Infinity` or `NaN` (`1 / 0`) — is a compile-time error rather than silently-broken MQL.
+> A constant expression that jsmql cannot represent as a MongoDB literal — for example, one that evaluates to `Infinity` or `NaN` (`1 / 0`) — is a compile-time error, not silently broken MQL.
 
 ### Sub-pipelines
 
-`$lookup`, `$unionWith`, and `$facet` carry nested pipelines inside their stage body. jsmql recognises these positions and recurses, so the `$match` translation rule and the strict typo check apply uniformly:
+`$lookup`, `$unionWith`, and `$facet` carry a nested pipeline inside their stage body. jsmql recognises these positions and recurses, so the `$match` translation rule and the strict typo check apply uniformly:
 
 ```js
 jsmql(`[{
@@ -4252,12 +4252,12 @@ jsmql(`[{
 
 ### Detection and typos
 
-Pipeline mode kicks in two ways:
+Pipeline mode starts two ways:
 
-- **`;`-separated form.** Any top-level `;` flips `jsmql()` into pipeline mode. Every statement must be a recognised stage call, a update op, or a `let` binding.
-- **Bracketed form.** A top-level array enters pipeline mode when its first element looks like a stage attempt — a single-`$<name>`-key object literal, or a `$<name>(...)` call. Once pipeline mode is active, every element must be a recognised stage.
+- **`;`-separated form.** Any top-level `;` flips `jsmql()` into pipeline mode. Every statement must be a recognised stage call, an update op, or a `let` binding.
+- **Bracketed form.** A top-level array enters pipeline mode when its first element looks like a stage attempt: a single-`$<name>`-key object literal, or a `$<name>(...)` call. Once pipeline mode is active, every element must be a recognised stage.
 
-Either way, mistakes surface immediately with a Levenshtein-based suggestion:
+Either way, a mistake surfaces immediately, with a Levenshtein-based suggestion:
 
 ```js
 jsmql("[{ $macth: $.age > 18 }]");
@@ -4265,17 +4265,17 @@ jsmql("[{ $macth: $.age > 18 }]");
 //                 aggregation stage. Did you mean '$match'?
 ```
 
-A plain value array like `[1, 2, 3]` is *not* a pipeline — the first element doesn't look like a stage attempt, so jsmql leaves it as a literal array expression.
+A plain value array like `[1, 2, 3]` is *not* a pipeline. The first element does not look like a stage attempt, so jsmql leaves it as a literal array expression.
 
-### What stages are supported?
+### Which stages does JSMQL support?
 
-Every stage the pinned MongoDB aggregation spec defines — one row per stage in [`src/registry/names.ts`](../src/registry/names.ts), which is the live list. A name that is not one of them is refused with the nearest match named (`$grpup` → "Did you mean '$group'?").
+jsmql supports every stage that the pinned MongoDB aggregation spec defines: one row per stage in [`src/registry/names.ts`](../src/registry/names.ts), which is the live list. jsmql refuses a name that is not one of them, and names the nearest match (`$grpup` → "Did you mean '$group'?").
 
 ---
 
 ## Function Form
 
-In addition to a string, `jsmql()` and `jsmql.validate()` accept a **function** whose body is the expression — either an arrow `({ $ }) => …` or the `function` keyword (`function ({ $ }) { return … }`). The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
+`jsmql()` and `jsmql.validate()` accept a string, or a **function** whose body is the expression. The function is an arrow `({ $ }) => …` or a `function` keyword form (`function ({ $ }) { return … }`). The runtime calls `Function.prototype.toString()`, extracts the body, and runs it through the same parser as the string form:
 
 ```js
 const { jsmql } = require("@koresar/jsmql");
@@ -4300,11 +4300,11 @@ jsmql(({ $ }) =>
 // will indent and line-break it like any other JS — that is the whole point.
 ```
 
-**Why use it.** JavaScript formatters (prettier, oxfmt) treat template-literal contents as opaque strings. Long jsmql expressions sit as one un-broken line. Wrapping the expression in a plain function lets every JS formatter handle it for free — no plugin, no config.
+**Why use it.** A JavaScript formatter (prettier, oxfmt) treats template-literal contents as an opaque string. A long jsmql expression then sits as one line with no break. A plain function lets every JS formatter break it for free, with no plugin and no config.
 
 ### Block-body arrows for pipelines
 
-A block-body arrow `({ $ }) => { stmt; stmt; }` is the function-form mirror of the canonical `;`-separated pipeline string form. The body is a sequence of jsmql statements separated by `;`, with `,` keeping its in-stage role:
+A block-body arrow `({ $ }) => { stmt; stmt; }` is the function-form mirror of the canonical `;`-separated pipeline string form. The body is a list of jsmql statements separated by `;`. A `,` keeps its role inside one stage:
 
 ```js
 jsmql(({ $, $match }) => {
@@ -4321,30 +4321,30 @@ jsmql(({ $, $match }) => {
 //   ]
 ```
 
-The `function` keyword mirrors both shapes: `function ({ $ }) { return <expr> }` is the value form (≡ `({ $ }) => <expr>`), and `function ({ $ }) { stmt; stmt; }` is the pipeline form (≡ the block-body arrow above).
+The `function` keyword mirrors both shapes. `function ({ $ }) { return <expr> }` is the value form, the same as `({ $ }) => <expr>`. `function ({ $ }) { stmt; stmt; }` is the pipeline form, the same as the block-body arrow above.
 
-Two formatter quirks worth knowing about. First, prettier and oxfmt wrap top-level assignment statements in parens (`($.x = …)`) when they appear in a position that could be read as a destructuring assignment — the parser accepts this transparently. Second, JavaScript's comma operator combines `$.a = 1, $.b = 2` into a single expression statement; the parser handles that as an in-stage update op chain, identical to the string form.
+Two formatter quirks are worth knowing about. First, prettier and oxfmt wrap a top-level assignment statement in parens (`($.x = …)`) when it appears in a position that could read as a destructuring assignment. The parser accepts this transparently. Second, JavaScript's comma operator combines `$.a = 1, $.b = 2` into one expression statement. The parser reads this as an in-stage update-op chain, the same as the string form.
 
-`return` is **not** part of jsmql — block bodies are statement lists, not JavaScript control flow. Using `return` inside a block-body arrow throws a clear `FunctionInputError` pointing at either the `;`-separated form or an expression-body arrow as alternatives.
+`return` is **not** part of jsmql. A block body is a statement list, not JavaScript control flow. A `return` inside a block-body arrow throws a clear `FunctionInputError` that points at the `;`-separated form or an expression-body arrow as an alternative.
 
 ### Restrictions
 
-- **Arrow or `function`, but synchronous and non-generator.** Both `({ $ }) => …` and `function ({ $ }) { … }` are accepted as the input (a named function expression's name is parsed but discarded — it's unreachable in MQL). `async` functions and generators (`function*`) are rejected, with a message pointing at the synchronous form.
-- **No `return` inside a block body.** Use `;`-separated statements (block body) or a plain expression body — never both, never with `return`. (A single-`return` `function` body is the exception: `function ({ $ }) { return <expr> }` *is* the value form, exactly like `({ $ }) => <expr>`.)
-- **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure — values from the surrounding scope are unresolvable. Two options for parameterising a query exist instead: the [template-tag form](#template-tag-form--jsmql-) for one-shot interpolation, and the [`jsmql.compile(fn)` form](#parameterised-queries-jsmqlcompile) for reusable parameterised queries:
+- **Arrow or `function`, but synchronous and non-generator.** Both `({ $ }) => …` and `function ({ $ }) { … }` are accepted as the input. A named function expression's name is parsed but discarded, because it is unreachable in MQL. An `async` function and a generator (`function*`) are rejected, with a message that points at the synchronous form.
+- **No `return` inside a block body.** Use `;`-separated statements (block body), or a plain expression body — never both, and never with `return`. (A single-`return` `function` body is the exception: `function ({ $ }) { return <expr> }` *is* the value form, the same as `({ $ }) => <expr>`.)
+- **No outer-scope variables.** `Function.prototype.toString()` returns text, not a closure, so jsmql cannot resolve a value from the surrounding scope. Two options exist to parameterise a query instead: the [template-tag form](#template-tag-form--jsmql-) for one-shot interpolation, and the [`jsmql.compile(fn)` form](#parameterised-queries-jsmqlcompile) for a reusable parameterised query:
   ```js
   const minAge = 21;
   jsmql(({ $ }) => $.age > minAge);              // ❌ error: Unknown identifier 'minAge'
   jsmql`$.age > ${minAge}`;                      // ✓ template tag — value interpolated
   jsmql.compile(({ minAge }, { $ }) => $.age > minAge)({ minAge });   // ✓ named param
   ```
-- **The toolbox destructure binds `$` to the document context.** `({ $ }) =>` is the idiom — the destructured `$` is the document root; the `$$` / `$$$` / `$$$$` context refs and `$`-operators come from the same object. Destructuring nothing (or a plain identifier) is rejected.
+- **The toolbox destructure binds `$` to the document context.** `({ $ }) =>` is the idiom. The destructured `$` is the document root. The `$$` / `$$$` / `$$$$` context refs and the `$`-operators come from the same object. Jsmql rejects a bare identifier or no destructure at all.
 
-When an unknown identifier is encountered in the function-form path, the error message also points at the template-tag form of `jsmql` as the right tool for closure interpolation.
+When jsmql meets an unknown identifier on the function-form path, the error message also names the template-tag form of `jsmql` as the right tool for closure interpolation.
 
 ### Escape-hatch operators (`$op` destructure)
 
-Direct `$op(...)` calls (e.g. `$dateDiff`, `$sampleRate`, `$stdDevPop`) work inside the function body, but TypeScript / your IDE will flag the operator name as an unknown identifier. To silence that warning, list the operators you use alongside `$` in the toolbox destructure:
+A direct `$op(...)` call (for example `$dateDiff`, `$sampleRate`, `$stdDevPop`) works inside the function body, but TypeScript or your IDE flags the operator name as an unknown identifier. To silence that warning, list the operators you use alongside `$` in the toolbox destructure:
 
 ```js
 jsmql(({ $, $dateDiff }) =>
@@ -4352,15 +4352,15 @@ jsmql(({ $, $dateDiff }) =>
 );
 ```
 
-The arrow receives a single destructured toolbox object — the document root `$`, the context refs, and the `$`-operators — and listing the names is optional, types-only convenience: the destructured names are typed as callables but never evaluated. The runtime strips the parameter list before parsing, so the body is identical to writing the call directly. Any `$`-prefixed name in the toolbox destructure is accepted by the type system; whether it is a real MongoDB operator is checked at compile time by the codegen.
+The arrow receives one destructured toolbox object: the document root `$`, the context refs, and the `$`-operators. Listing the names is optional, types-only convenience — jsmql types the destructured names as callables but never runs them. The runtime strips the parameter list before it parses, so the body is the same as writing the call directly. The type system accepts any `$`-prefixed name in the toolbox destructure. The code generator checks at compile time whether it names a real MongoDB operator.
 
 ---
 
 ## Partial expressions (`jsmql.expr`)
 
-`jsmql()` is opinionated: it returns a Filter (for `db.coll.find(filter)`) or an aggregation Pipeline array (for `db.coll.aggregate(pipeline)` *and* for the pipeline-form of `db.coll.updateOne(filter, update)`). When you need a **raw aggregation expression** — the shape that goes *inside* a hand-written Pipeline stage body — call `jsmql.expr(input)` instead.
+`jsmql()` picks the shape for you. It returns a Filter for `db.coll.find(filter)`, or an aggregation Pipeline array for `db.coll.aggregate(pipeline)` and for the pipeline form of `db.coll.updateOne(filter, update)`. When you need a **raw aggregation expression** — the shape that goes *inside* a hand-written Pipeline stage body — call `jsmql.expr(input)` instead.
 
-`jsmql.expr` accepts the same three call shapes as `jsmql()` (string / arrow / template tag). A bare expression (no `;`) lowers directly to its aggregation-expression form, with no Filter wrapper and no `$expr` envelope, where `jsmql()` would wrap a non-predicate expression in `$expr` to produce a legal Filter. Anything that is not an expression — a stage, a write (`$.x = …`, `delete $.x`), a stream chain — is refused with the entry that takes it:
+`jsmql.expr` accepts the same three call shapes as `jsmql()`: string, arrow, and template tag. A bare expression (no `;`) lowers directly to its aggregation-expression form, with no Filter wrapper and no `$expr` envelope. `jsmql()` would instead wrap a non-predicate expression in `$expr` to build a legal Filter. jsmql refuses anything that is not an expression — a stage, a write (`$.x = …`, `delete $.x`), a stream chain — and names the entry point that takes it:
 
 ```js
 jsmql.expr("$.score = 100")
@@ -4392,13 +4392,13 @@ db.users.aggregate([
 ]);
 ```
 
-The rule of thumb: **the function you call should match the call site**. `find()`, `aggregate()`, `updateOne()` → `jsmql()`. Inside a hand-written stage body or a `$cond`'s `then`-branch (where you want the raw aggregation expression) → `jsmql.expr()`. For the `{ $set, $inc, … }` update document → [`jsmql.update()`](#jsmqlupdateinput--for-dbcollupdateonefilter-update--updatemany).
+The rule: **match the function to the call site**. Use `jsmql()` for `find()`, `aggregate()`, and `updateOne()`. Use `jsmql.expr()` inside a hand-written stage body, or in a `$cond`'s `then` branch, where you want the raw aggregation expression. For the `{ $set, $inc, … }` update document, use [`jsmql.update()`](#jsmqlupdateinput--for-dbcollupdateonefilter-update--updatemany).
 
 ---
 
 ## Strict-shape entry points (`jsmql.filter`, `jsmql.pipeline`, `jsmql.update`)
 
-`jsmql()` is polymorphic — it picks Filter or Pipeline from the input. When the call site demands a specific shape and a silent mis-dispatch would be a footgun, use one of the three strict entry points. Each accepts the same string / arrow / template-tag inputs `jsmql()` does, but refuses to produce the other shape and throws an actionable error instead.
+`jsmql()` is polymorphic. It picks Filter or Pipeline from the input. When the call site needs one fixed shape, and a silent wrong choice would be a trap, use one of the three strict entry points. Each accepts the same string, arrow, and template-tag inputs as `jsmql()`, but refuses the other shape and throws an actionable error instead.
 
 | Function | Returns | Throws on |
 |---|---|---|
@@ -4406,7 +4406,7 @@ The rule of thumb: **the function you call should match the call site**. `find()
 | `jsmql.pipeline(input)` | a Pipeline (stage array) | a bare expression that would lower to a Filter |
 | `jsmql.update(input)` | the update document `{ $set, $inc, $unset, … }` | a computed value, a stage, anything that is not a write or an update operator |
 
-(The function is `update`, not `updateFilter`, even though the Node MongoDB driver types the slot as `UpdateFilter<TSchema>` — "filter" in that type name routinely trips developers into reaching for it when they meant the query document. The MongoDB type name stays as the driver defines it; we just don't repeat the confusing half of it on this call.)
+(The function is `update`, not `updateFilter`, even though the Node MongoDB driver types the slot as `UpdateFilter<TSchema>`. The word "filter" in that type name routinely leads a developer to reach for it when they mean the query document. The MongoDB type name stays as the driver defines it; jsmql just does not repeat the confusing half of it on this call.)
 
 ### `jsmql.filter(input)` — for `db.coll.find(filter)`
 
@@ -4421,7 +4421,7 @@ jsmql.filter("$match($.age > 18)");
 //        predicate directly to jsmql.filter().
 ```
 
-The accepted branch is identical to the no-`;` path of `jsmql()` — same indexable-conjunct translation, same `$expr` fallback for the untranslatable residual. The only difference is what gets rejected.
+The accepted branch is identical to the no-`;` path of `jsmql()`. It uses the same indexable-conjunct translation, and the same `$expr` fallback for the part it cannot translate. Only the rejected input differs.
 
 ### `jsmql.pipeline(input)` — for `db.coll.aggregate(pipeline)`
 
@@ -4440,7 +4440,7 @@ jsmql.pipeline("$.age > 18");
 //        or wrap the predicate as `$match(...)` to make it a Pipeline.
 ```
 
-A single top-level stage call (`$match(...)`), single stage-object literal (`{ $match: ... }`), update-op chain, and array-literal Pipeline are all accepted — exactly the same auto-wrap rule `jsmql()` uses for Pipeline shapes.
+jsmql accepts a single top-level stage call (`$match(...)`), a single stage-object literal (`{ $match: ... }`), an update-op chain, and an array-literal Pipeline. This is the same auto-wrap rule `jsmql()` uses for a Pipeline shape.
 
 ### `jsmql.update(input)` — for `db.coll.updateOne(filter, update)` / `updateMany`
 
@@ -4463,25 +4463,25 @@ jsmql.update("$match($.age > 18); $set({ x: 1 })");
 // Error: '$match' is not valid in an update document — see its 'where'.
 ```
 
-Output is the **update document** — one key per update operator, the shape `updateOne` / `updateMany` / the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`, `+=` / `-=` / `++` / `--` to `$inc`, `*=` to `$mul`, `delete` to `$unset`, `= new Date()` to `$currentDate`, `Math.min` / `Math.max` of the field and a constant to `$min` / `$max`, `.push(x)` to `$push`, `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. Two writes to one path are refused.
+Output is the **update document**: one key per update operator, the shape `updateOne`, `updateMany`, and the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`; `+=` / `-=` / `++` / `--` to `$inc`; `*=` to `$mul`; `delete` to `$unset`; `= new Date()` to `$currentDate`; `Math.min` / `Math.max` of the field and a constant to `$min` / `$max`; `.push(x)` to `$push`; `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. jsmql refuses two writes to one path.
 
-The values are **constants**. MongoDB's document-form update reads `"$b"` as the string `"$b"`, so a value computed from the document is refused with the pipeline form (`jsmql.pipeline("$.a = $.b + 1;")` or `jsmql()`), which `updateOne` accepts as well and evaluates server-side.
+The values are **constants**. MongoDB's document-form update reads `"$b"` as the string `"$b"`, not as the field. So jsmql refuses a value computed from the document, and names the pipeline form instead (`jsmql.pipeline("$.a = $.b + 1;")` or `jsmql()`). `updateOne` accepts that form too, and MongoDB evaluates it server-side.
 
 ### When to use each
 
-- Call site is `find()` / `deleteOne()` / `countDocuments()` → `jsmql.filter()`.
-- Call site is `aggregate()` → `jsmql.pipeline()`.
-- Call site is `updateOne()` / `updateMany()` with constant values → `jsmql.update()`; with values computed from the document → `jsmql.pipeline()` (or `jsmql()`).
-- The same source string might legitimately produce either Filter or Pipeline → `jsmql()`.
-- Inside another structure (a hand-written stage body, the `then` branch of a `$cond`) → `jsmql.expr()`.
+- Call site is `find()`, `deleteOne()`, or `countDocuments()` → use `jsmql.filter()`.
+- Call site is `aggregate()` → use `jsmql.pipeline()`.
+- Call site is `updateOne()` or `updateMany()` with constant values → use `jsmql.update()`. With values computed from the document → use `jsmql.pipeline()` (or `jsmql()`).
+- The same source string might correctly produce either a Filter or a Pipeline → use `jsmql()`.
+- Inside another structure (a hand-written stage body, the `then` branch of a `$cond`) → use `jsmql.expr()`.
 
-Each strict entry has a parameterised `.compile` variant (`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`) for reusable parameterised queries that keep the same shape guarantee — see [Shape-specific compile builders](#shape-specific-compile-builders).
+Each strict entry has a parameterised `.compile` variant (`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`) for a reusable parameterised query that keeps the same shape guarantee. See [Shape-specific compile builders](#shape-specific-compile-builders).
 
 ---
 
 ## Command Line (`jsmql`)
 
-Installing the package puts a `jsmql` command on your `PATH`: **JSMQL source on stdin, MQL on stdout**, written as JavaScript you can paste into mongosh or a driver script. A positional argument or `--file <path>` can supply the source instead of stdin.
+Installing the package puts a `jsmql` command on your `PATH`. It reads **JSMQL source on stdin** and writes **MQL on stdout**, as JavaScript you can paste into mongosh or a driver script. A positional argument or `--file <path>` can supply the source instead of stdin.
 
 ```sh
 echo '$.age > 18' | jsmql
@@ -4491,7 +4491,7 @@ jsmql --pipeline -c '$match($.age > 18); $sort({ age: -1 })'
 # [{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]
 ```
 
-With no flag, the output shape is dispatched exactly like `jsmql()` (a top-level `;` makes it a Pipeline). The mode flags lock the shape to one of the entry points above:
+With no flag, the CLI dispatches the output shape exactly like `jsmql()` does: a top-level `;` makes it a Pipeline. The mode flags lock the shape to one of the entry points above:
 
 | Flag | Output | Same as |
 | --- | --- | --- |
@@ -4502,7 +4502,7 @@ With no flag, the output shape is dispatched exactly like `jsmql()` (a top-level
 | `--update` | update document | `jsmql.update()` |
 | `--validate` (or `--check`) | `{ valid, errors }`; exits 1 if invalid | `jsmql.validate()` |
 
-Output is pretty-printed (2-space) by default; `-c` / `--compact` emits one line, `--tab` indents with tabs, `--indent N` with N spaces. The printer is `jsmql.stringify` below. Parameterise a query with `--arg` / `--argjson` — the source must then be a parameterised arrow (see [Parameterised Queries](#parameterised-queries-jsmqlcompile)):
+The CLI pretty-prints output with a 2-space indent by default. `-c` / `--compact` writes one line, `--tab` indents with tabs, and `--indent N` indents with N spaces. The printer is `jsmql.stringify` below. Parameterise a query with `--arg` / `--argjson`. The source must then be a parameterised arrow (see [Parameterised Queries](#parameterised-queries-jsmqlcompile)):
 
 ```sh
 echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
@@ -4513,13 +4513,13 @@ echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --ar
 # [{ $match: { age: { $gt: 18 } } }]
 ```
 
-`--arg name value` binds a string; `--argjson name value` binds a JSON value; both repeat. Params work with any output-shape flag (each routes through the matching `*.compile()` builder and enforces that shape) and with `--validate` (which validates the parameterised arrow's shape). Compile errors print with a caret at the offending position. Exit codes: `0` success, `1` compile error (or `--validate` invalid), `2` usage error. Run `jsmql --help` for the full list.
+`--arg name value` binds a string. `--argjson name value` binds a JSON value. Both flags repeat. A param works with any output-shape flag — each routes through the matching `*.compile()` builder and enforces that shape — and with `--validate`, which checks the parameterised arrow's shape. A compile error prints with a caret at the offending position. Exit codes: `0` for success, `1` for a compile error (or an invalid `--validate` result), `2` for a usage error. Run `jsmql --help` for the full list.
 
 ---
 
 ## Printing MQL (`jsmql.stringify`)
 
-`jsmql.stringify(document)` writes a compiled document as **the JavaScript that rebuilds it** — the text the CLI prints and the playground shows. Paste it into mongosh or into a driver script and it means what your source meant.
+`jsmql.stringify(document)` writes a compiled document as **the JavaScript that rebuilds it**. This is the text the CLI prints and the playground shows. Paste it into mongosh or a driver script, and it means what your source meant.
 
 ```js
 const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > new Date("2026-01-01")');
@@ -4532,16 +4532,16 @@ jsmql.stringify(filter);
 // }
 ```
 
-`JSON.stringify` cannot write that document. A Date and an ObjectId each carry a `toJSON`, so both collapse to plain strings the server then compares as strings; a live `RegExp` becomes `{}`, which matches everything; every other BSON value becomes its internal byte fields. The document still runs, and matches nothing.
+`JSON.stringify` cannot write that document. A Date and an ObjectId each carry a `toJSON`, so both collapse to a plain string, and the server then compares them as strings. A live `RegExp` becomes `{}`, which matches every document. Every other BSON value becomes its internal byte fields. The document still runs, and it matches nothing.
 
-Every BSON class is written as `new X(…)`, the form the Node driver requires — and the same text runs in mongosh, which exposes the driver's classes as globals. Pasting into a driver script needs them in scope:
+jsmql writes every BSON class as `new X(…)`, the form the Node driver needs. The same text runs in mongosh, which exposes the driver's classes as globals. A driver script needs them in scope:
 
 ```js
 const { ObjectId, Decimal128, Long, Int32, Double, Binary, UUID, Timestamp,
         MinKey, MaxKey, Code, DBRef, BSONSymbol, BSONRegExp } = require("mongodb");
 ```
 
-A document stays on ONE line while it fits, and breaks one entry per line once it does not, so a pipeline reads one stage per line:
+A document stays on ONE line while it fits. Once it does not fit, it breaks one entry per line, so a pipeline reads one stage per line:
 
 ```js
 jsmql.stringify(jsmql("$match($.age > 18); $set({ t: $.a * 2 }); $sort({ t: -1 })"));
@@ -4552,15 +4552,15 @@ jsmql.stringify(jsmql("$match($.age > 18); $set({ t: $.a * 2 }); $sort({ t: -1 }
 // ]
 ```
 
-Two options control that: `indent` (spaces per level, or the string to indent with — default `2`) and `width` (the column at which a document breaks — default `80`). `jsmql.stringify(doc, { width: Infinity })` puts the whole document on one line; that is what the CLI's `-c` does.
+Two options control that. `indent` sets the spaces per level, or the string to indent with (default `2`). `width` sets the column at which a document breaks (default `80`). `jsmql.stringify(doc, { width: Infinity })` puts the whole document on one line — this is what the CLI's `-c` does.
 
-Three values are refused with a `TypeError`, because writing anything in their place would hide the fault: an Invalid Date, `undefined` (the language declares it an existence test, never a value), and a circular structure.
+jsmql refuses three values with a `TypeError`, because writing anything in their place would hide the fault: an Invalid Date, `undefined` (the language declares it an existence test, never a value), and a circular structure.
 
 Full detail — every BSON spelling and why, the `__proto__` key, the layout rules — is in [docs/specs/mql-stringify.md](specs/mql-stringify.md).
 
 ## Parameterised Queries (`jsmql.compile`)
 
-For queries that run repeatedly with different values — a typical "list users in region X above age Y" handler — use `jsmql.compile(fn)`. It parses the arrow once and returns a callable that you invoke with a fresh **params object** on every call. Each call walks the cached AST and substitutes the bound values inline as MQL literals; no re-parsing happens.
+Use `jsmql.compile(fn)` for a query that runs many times with different values — a typical "list users in region X above age Y" handler. It parses the arrow once and returns a callable. Call it with a fresh **params object** each time. Each call walks the cached AST and puts the bound values inline as MQL literals. No call re-parses the source.
 
 ```js
 const { jsmql } = require("@koresar/jsmql");
@@ -4584,7 +4584,7 @@ eligibleUsersQuery({ minAge: 65, region: "US" });
 
 ### String input
 
-The first argument may also be a **string** containing the same arrow source — useful when the query text is stored elsewhere (config, file, database) and you want the same parse-once-bind-many semantics:
+The first argument may also be a **string** that holds the same arrow source. Use this when the query text lives elsewhere — a config file, a file, a database — and you want the same parse-once, bind-many behaviour:
 
 ```js
 const eligibleUsersQuery = jsmql.compile(
@@ -4595,7 +4595,7 @@ eligibleUsersQuery({ minAge: 21, region: "AU" });
 // → { $and: [{ $gte: ["$age", 21] }, { $eq: ["$region", "AU"] }] }
 ```
 
-The destructure is still the only way to declare parameters; placeholder syntaxes like `${name}` inside the string are deliberately **not** supported — they would break jsmql's strict-JS-subset rule and collide with real template literals. If the query string isn't function-shaped (an arrow `(params, { $ }) => …` or a `function (params, { $ }) { … }`), you get the same `FunctionInputError` the function form would have raised.
+The destructure is still the only way to declare a parameter. jsmql deliberately does **not** support a placeholder syntax like `${name}` inside the string, because it would break jsmql's strict-JS-subset rule and collide with a real template literal. When the query string is not function-shaped — an arrow `(params, { $ }) => …` or a `function (params, { $ }) { … }` — you get the same `FunctionInputError` the function form would raise.
 
 ### The arrow signature
 
@@ -4613,34 +4613,34 @@ Each slot is recognised by **shape**:
 | Destructure whose keys are all `$`-prefixed (`{ $ }`, and any of `$$` / `$$$` / `$$$$` and `$op` names, e.g. `{ $, $match, $project }`) | Toolbox slot — the document root `$`, context refs, and `$`-operators; listing operator names is types-only IDE convenience. |
 | A bare identifier or a bare `$` (not destructured) | Rejected. |
 
-You can omit either slot as long as the remaining one keeps its position. `jsmql.compile(({ minAge }) => …)` is the minimal form when you only need the params.
+You can omit either slot as long as the remaining one keeps its position. `jsmql.compile(({ minAge }) => …)` is the minimal form when you need only the params.
 
 ### Values are inlined as MQL literals
 
-A binding value flows into the MQL output exactly the way an interpolated template-tag value does — as a JSON literal:
+A binding value flows into the MQL output the same way an interpolated template-tag value does: as a JSON literal.
 
 ```js
 jsmql.compile(({ allowed }, { $ }) => $.grade in allowed)({ allowed: ["A", "B"] });
 // → { $in: ["$grade", ["A", "B"]] }
 ```
 
-In particular, `$match` keeps its **index-friendly** translation when the comparison is against a binding: the compiled stage emits MongoDB query-language form, not `$expr`-wrapped aggregation form, so indexes on the compared field still work.
+In particular, `$match` keeps its **index-friendly** translation when the comparison is against a binding. The compiled stage emits MongoDB query-language form, not `$expr`-wrapped aggregation form, so an index on the compared field still works.
 
 ### Restrictions on the params destructure
 
-- **No defaults** — `({ minAge = 18 }) => …` is rejected. The parser cannot evaluate arbitrary default expressions (e.g. `= config.x`), and allowing only literal defaults would create a confusing JS-subset rule. For a runtime fallback, use nullish coalescing at the call site: `q({ minAge: input ?? 18 })`.
-- **No nested destructure** — `({ a: { b } })`. Use a flat key→value map.
-- **No rest pattern** — `({ ...rest })`. List bindings explicitly.
+- **No defaults** — jsmql rejects `({ minAge = 18 }) => …`. The parser cannot evaluate an arbitrary default expression (for example `= config.x`), and allowing only a literal default would create a confusing JS-subset rule. For a runtime fallback, use nullish coalescing at the call site: `q({ minAge: input ?? 18 })`.
+- **No nested destructure** — `({ a: { b } })`. Use a flat key-to-value map.
+- **No rest pattern** — `({ ...rest })`. List each binding by name.
 - **No array destructure** — `[a, b]`. Params is always an object.
 - **No mixing `$`-keys and non-`$`-keys** in the same destructure. Keep them as two separate destructures: `(params, { $, … }) => …`.
 
-Each restriction produces a clear `FunctionInputError` that names the problem and points at the fix.
+Each restriction throws a clear `FunctionInputError` that names the problem and points at the fix.
 
 ### Param values
 
-Each value on the params object must be a JSON-safe literal: number, string, boolean, null, plain array, or plain object. The same validation that template-tag interpolation uses rejects `NaN`, `Infinity`, functions, Symbols, `undefined`, and circular references — at call time, with a `JsmqlInterpolationError` that names the binding key. A BigInt is accepted and becomes a `Long`; one past the 64-bit range is refused.
+Each value on the params object must be a JSON-safe literal: a number, a string, a boolean, `null`, a plain array, or a plain object. jsmql applies the same check that template-tag interpolation uses, and rejects `NaN`, `Infinity`, a function, a Symbol, `undefined`, and a circular reference — at call time, with a `JsmqlInterpolationError` that names the binding key. jsmql accepts a BigInt and turns it into a `Long`. It refuses a value past the 64-bit range.
 
-BSON instance values — `Date`, `RegExp`, `Uint8Array` (and `Buffer`), and ObjectId (duck-typed via `_bsontype`) — are passed through to the MQL output as the live JS instance, exactly the way the template-tag form preserves them. The pass-through works **anywhere** in the binding value: at the top level, nested inside an object, nested inside an array, and arbitrarily deep. The same shape that works via interpolation also works via parameter bindings — no manual unpacking required at the call site:
+A BSON instance value — `Date`, `RegExp`, `Uint8Array` (and `Buffer`), and ObjectId (matched by its `_bsontype` field) — passes through to the MQL output as the live JS instance, exactly the way the template-tag form preserves it. This pass-through works **anywhere** in the binding value: at the top level, nested inside an object, nested inside an array, and at any depth. The same shape that works through interpolation also works through a parameter binding, with no manual unpacking at the call site:
 
 ```js
 // Top-level Date binding — lands in the query doc as a real Date, so MongoDB
@@ -4658,15 +4658,15 @@ stampWindow({ window: { startedAt: new Date("2026-01-01"), mode: "fast" } });
 // → [{ $set: { activeWindow: { startedAt: <Date 2026-01-01>, mode: "fast" } } }]
 ```
 
-If a binding referenced in the body is missing from the params object, the call throws `UnknownIdentifierError` naming the binding (and the aliased outer key if `{ key: alias }` was used).
+When the body references a binding missing from the params object, the call throws `UnknownIdentifierError` and names the binding (and the aliased outer key, when the code used `{ key: alias }`).
 
 ### Validation
 
-`jsmql.compile(fn)` is throw-style — bad input fails fast. For structured per-call errors, wrap the compiled callable in your own `try`/`catch` and route the thrown error through `jsmql.validate()`'s catch-and-classify branch table by re-throwing into it, or — more commonly — keep the throw and let the upstream error handler decide. `jsmql.validate()` accepts the one-shot input shapes (string, arrow / `function`, template tag) **and** a parameterised-function string (it validates the function's shape with bindings stubbed out); the parameterised callable returned by `.compile` stays throw-only.
+`jsmql.compile(fn)` is throw-style: bad input fails fast. For a structured per-call error, wrap the compiled callable in your own `try`/`catch`, and route the thrown error into `jsmql.validate()`'s catch-and-classify branch table by re-throwing it there. More commonly, keep the throw and let the upstream error handler decide. `jsmql.validate()` accepts the one-shot input shapes (string, arrow / `function`, template tag) **and** a parameterised-function string — it checks the function's shape with the bindings stubbed out. The parameterised callable that `.compile` returns stays throw-only.
 
 ### Shape-specific compile builders
 
-`jsmql.compile` is polymorphic — the compiled callable returns a Filter or a Pipeline depending on the arrow body, exactly like `jsmql()`. When the call site has a fixed shape, each strict entry point carries its own `.compile` that locks the output:
+`jsmql.compile` is polymorphic. The compiled callable returns a Filter or a Pipeline based on the arrow body, exactly like `jsmql()` does. When the call site needs a fixed shape, each strict entry point carries its own `.compile` that locks the output:
 
 ```js
 const adultsInRegion = jsmql.filter.compile(({ minAge, region }, { $ }) =>
@@ -4687,13 +4687,13 @@ db.users.updateMany({}, bumpTier({ tier: 2 }));
 // → [ { $set: { tier: 2 } } ]
 ```
 
-`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile` share `jsmql.compile`'s binding mechanics exactly — they only narrow the output and enforce the same shape contract their one-shot siblings do. A compiled builder whose arrow body lowers to the wrong shape throws the identical error the one-shot strict entry would (e.g. `jsmql.pipeline.compile(({ m }, { $ }) => $.age > m)` throws "expects a Pipeline … but received a bare expression" when called).
+`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile` share `jsmql.compile`'s binding mechanics exactly. They only narrow the output and enforce the same shape contract as their one-shot siblings. A compiled builder whose arrow body lowers to the wrong shape throws the identical error the one-shot strict entry would (for example, `jsmql.pipeline.compile(({ m }, { $ }) => $.age > m)` throws "expects a Pipeline … but received a bare expression" when called).
 
 ### Operator autocomplete (`@koresar/jsmql/globals`)
 
-Listing every stage and operator alongside `$` in the toolbox destructure gets tedious. A real-world pipeline mentions five to ten stages plus a handful of escape-hatch expression ops; spelling them out at every call site is bookkeeping the user shouldn't have to do.
+Listing every stage and operator alongside `$` in the toolbox destructure gets tedious. A real pipeline mentions five to ten stages plus a handful of escape-hatch expression ops. Spelling them out at every call site is bookkeeping the user should not have to do.
 
-The `@koresar/jsmql/globals` subpath is a **pure-types** module that surfaces every jsmql stage and operator as an ambient global. Import it once at the top of your file, keep just `$` in the toolbox destructure, and write `$match(…)`, `$dateAdd(…)`, etc. directly — your IDE will autocomplete names and arg objects, catch typos at compile time, and surface the official MongoDB description and doc link on hover.
+The `@koresar/jsmql/globals` subpath is a **pure-types** module that surfaces every jsmql stage and operator as an ambient global. Import it once at the top of your file, keep only `$` in the toolbox destructure, and write `$match(…)`, `$dateAdd(…)`, and so on directly. Your IDE then autocompletes names and arg objects, catches a typo at compile time, and shows the official MongoDB description and doc link on hover.
 
 ```ts
 import "@koresar/jsmql/globals"; // ← side-effect import; loads only `declare global` types
@@ -4724,14 +4724,14 @@ const recent = jsmql(
 
 How it works:
 
-- The compiled module (`dist/globals.js`) is `export {};` — **no exported values, no runtime cost** beyond a single empty module load. Bundlers tree-shake it to nothing in practice. For fully zero-runtime use, add `"@koresar/jsmql/globals"` to your tsconfig `compilerOptions.types` instead of importing.
-- The types are **generated at build time from the official MongoDB MQL spec** ([`mongodb/mql-specifications`](https://github.com/mongodb/mql-specifications)), so they always match the operator the server documents — required vs optional args, function-overload shapes (e.g. `$and(x)` vs `$and(x, y, z)`), full descriptions, version metadata, and links.
-- The declarations are **global** (via TypeScript's `declare global`): once any file in your project imports the module, the names are visible everywhere. **This is intentional** — every alternative (named imports, namespace imports) gets rewritten by bundlers into `(0, _ops.$match)(…)` form, which the jsmql parser can't recognise. Globals are the only shape that survives every transform. The names all start with `$`, so realistic collisions with user identifiers are nil — `$` as an identifier prefix is the MongoDB convention and isn't used elsewhere in the TS ecosystem.
-- The runtime path is unchanged. The jsmql parser already recognises bare `$stage(…)` and `$op(…)` calls regardless of TypeScript's view; this import only quiets TypeScript and gives your IDE something to autocomplete.
+- The compiled module (`dist/globals.js`) is `export {};`. **It exports no value, and costs nothing at runtime** beyond a single empty module load. A bundler tree-shakes it to nothing in practice. For fully zero-runtime use, add `"@koresar/jsmql/globals"` to your tsconfig `compilerOptions.types` instead of importing it.
+- The types are **generated at build time from the official MongoDB MQL spec** ([`mongodb/mql-specifications`](https://github.com/mongodb/mql-specifications)), so they always match the operator the server documents: required versus optional args, a function-overload shape (for example `$and(x)` versus `$and(x, y, z)`), the full description, version metadata, and a link.
+- The declarations are **global**, through TypeScript's `declare global`. Once any file in your project imports the module, the names are visible everywhere. **This is intentional.** A bundler rewrites every alternative — a named import, a namespace import — into `(0, _ops.$match)(…)` form, which the jsmql parser cannot read. A global is the only shape that survives every transform. Each name starts with `$`, so a real collision with a user identifier is nil — `$` as an identifier prefix is the MongoDB convention, and no other part of the TS ecosystem uses it.
+- The runtime path stays the same. The jsmql parser already recognises a bare `$stage(…)` or `$op(…)` call regardless of what TypeScript sees. This import only quiets TypeScript and gives your IDE something to complete.
 
-Listing operator names in the toolbox destructure (`(…, { $, $match, $project })`) is the per-call-site alternative — `@koresar/jsmql/globals` is preferred when you don't want to maintain those lists.
+Listing an operator name in the toolbox destructure (`(…, { $, $match, $project })`) is the per-call-site alternative. `@koresar/jsmql/globals` is the better choice when you do not want to keep those lists.
 
-The import also declares the context-reference prefixes `$$`, `$$$`, and `$$$$`, so arrow-form code using them type-checks instead of erroring on an undeclared name. The collection-scoped (`$$`) and cluster-scoped (`$$$$`) **diagnostic source stages** get full completion and hover docs with annotated option objects:
+The import also declares the context-reference prefixes `$$`, `$$$`, and `$$$$`, so arrow-form code that uses them type-checks instead of erroring on an undeclared name. The collection-scoped (`$$`) and cluster-scoped (`$$$$`) **diagnostic source stages** get full completion and hover documentation with an annotated option object:
 
 ```ts
 import "@koresar/jsmql/globals";
@@ -4742,9 +4742,9 @@ jsmql(({ $ }) => $$$$.currentOp({ allUsers: true }));
 //                      ╰── autocomplete: currentOp, listSessions, shardedDataDistribution, …
 ```
 
-Pipelines complete as well. Stream methods, chained stage calls, and foreign-collection
-chains are all typed members that return the stream, so a chain stays completable from end
-to end — and where a stream genuinely *is* an array, it reads as one:
+A pipeline completes as well. A stream method, a chained stage call, and a foreign-collection
+chain are all typed members that return the stream, so a chain stays completable from end
+to end. Where a stream genuinely *is* an array, it reads as one:
 
 ```ts
 import "@koresar/jsmql/globals";
@@ -4758,18 +4758,18 @@ jsmql(({ $ }) => {
 });
 ```
 
-The document values themselves stay `any` — the interfaces give chaining and completion,
+The document values themselves stay `any`. The interfaces give chaining and completion,
 not per-collection document typing, which needs schema threading `[DEF-013]`. Two other
-limits are worth knowing. A typo of an *unlisted* member (`$$.pus(...)`) still doesn't
-error: the refs keep a permissive index signature so the forms that carry no named type
-(`$$ = …`, `$out` writes, a field read off a materialised lookup) stay legal — jsmql's own
-parser catches the typo instead. And completion needs the ref used **un-destructured**:
-naming `$$` in the toolbox destructure (`({ $, $$ }) => …`) shadows the ambient declaration
+limits are worth knowing. A typo of an *unlisted* member (`$$.pus(...)`) still does not
+error: the refs keep a permissive index signature, so a form that carries no named type
+(`$$ = …`, an `$out` write, a field read off a materialised lookup) stays legal, and jsmql's own
+parser catches the typo instead. Completion also needs the ref used **un-destructured**.
+Naming `$$` in the toolbox destructure (`({ $, $$ }) => …`) shadows the ambient declaration
 with `any`.
 
 #### Value-method completion on typed values
 
-The **value** methods (a JavaScript method jsmql recognises on an array / string / number / date value — e.g. `.uniq()`, `.capitalize()`, `.clamp()`, `.startOf()`) are called on *values*, not on a `$`-prefixed global, so their completion depends on the **receiver's type**. Importing `@koresar/jsmql/globals` augments the built-in `Array<T>` / `String` / `Number` / `Date` types with them, each with a concrete return type so a chain stays completable end to end:
+A **value** method (a JavaScript method jsmql recognises on an array, string, number, or date value — for example `.uniq()`, `.capitalize()`, `.clamp()`, `.startOf()`) is called on a *value*, not on a `$`-prefixed global, so its completion depends on the **receiver's type**. An import of `@koresar/jsmql/globals` augments the built-in `Array<T>` / `String` / `Number` / `Date` types with these methods, each with a concrete return type, so a chain stays completable end to end:
 
 ```ts
 import "@koresar/jsmql/globals";
@@ -4780,12 +4780,12 @@ jsmql(({ $ }: { $: { orders: { total: number; sku: string }[] } }) =>
 );
 ```
 
-The **date** methods are the ones where this matters most. jsmql's date vocabulary
+The **date** methods matter most here. jsmql's date vocabulary
 beyond the native accessors — `.plus()`, `.minus()`, `.diff()`, `.startOf()`, `.endOf()`,
-`.format()`, `.set()`, `.quarter()`, `.isSame()`, … — has no counterpart in JavaScript's
-own `Date`, so without the import a typed date receiver doesn't merely miss completion:
+`.format()`, `.set()`, `.quarter()`, `.isSame()`, and more — has no match in JavaScript's
+own `Date`. So without the import, a typed date receiver does not merely miss completion:
 TypeScript reports an error on code jsmql compiles correctly. Each `unit` argument is
-typed as the MQL time-unit set, so a mistyped unit is caught as you write it:
+typed as the MQL time-unit set, so jsmql catches a mistyped unit as you write it:
 
 ```ts
 import "@koresar/jsmql/globals";
@@ -4797,20 +4797,20 @@ jsmql.expr(({ $ }: { $: { placedAt: Date } }) =>
 );
 ```
 
-Completion flows from any value that has a **concrete type** — an annotated `$` (above), a typed static (`Object.values(o)`, `Object.keys(o)`), a literal, or the result of a known-return method earlier in the chain. A **bare, un-annotated `$.field` is `any`**, and `any.uniq()` stays `any`, so a method on it doesn't autocomplete (it also doesn't error). That is a deliberate trade: `$.field` must stay `any` so the operator forms jsmql relies on — `$.age > 18`, `$.price * 1.1` — keep type-checking; a value can't be both an operator operand and a rich method receiver in TypeScript. Type your document to light up completion.
+Completion flows from any value with a **concrete type**: an annotated `$` (above), a typed static (`Object.values(o)`, `Object.keys(o)`), a literal, or the result of a known-return method earlier in the chain. A **bare, un-annotated `$.field` is `any`**, and `any.uniq()` stays `any`, so a method on it neither autocompletes nor errors. This is a deliberate trade. `$.field` must stay `any` so the operator forms jsmql relies on — `$.age > 18`, `$.price * 1.1` — keep type-checking. In TypeScript, one value cannot be both an operator operand and a rich method receiver. Type your document to light up completion.
 
 Two points on scope:
 
-- The augmentations are **global** once imported (like the operator globals): jsmql's value methods show up in completion on every array/string/number in files that see the import. They are compile-time jsmql methods — types only, no runtime — so calling one *outside* a jsmql expression would fail at run time; treat their appearance as a jsmql-authoring aid.
-- **Object-transform methods** (`.mapValues` / `.pick` / `.omit` / `.invert`, and the like) are **not** augmented. The only interface they could hang on is `Object`, the base of every type, so augmenting it would advertise them on numbers, strings, and arrays too. Write them in jsmql as usual; they simply don't autocomplete.
+- The augmentations are **global** once imported, like the operator globals. jsmql's value methods then show up in completion on every array, string, and number in a file that sees the import. They are compile-time jsmql methods — types only, no runtime — so a call to one *outside* a jsmql expression fails at run time. Treat their appearance as a jsmql-authoring aid.
+- jsmql does **not** augment an **object-transform method** (`.mapValues` / `.pick` / `.omit` / `.invert`, and the like). The only interface they could hang on is `Object`, the base of every type, so augmenting it would advertise them on a number, a string, and an array too. Write them in jsmql as usual; they simply do not autocomplete.
 
 ---
 
 ## Template-Tag Form (`` jsmql`…` ``)
 
-For a query with embedded literal values, call `jsmql` as a template tag. The tag
-dispatches on shape exactly as the string form does — no `;` gives a Filter — and
-`jsmql.expr` / `jsmql.pipeline` / `jsmql.update` are tags too:
+For a query with an embedded literal value, call `jsmql` as a template tag. The tag
+dispatches on shape exactly as the string form does: no `;` gives a Filter.
+`jsmql.expr`, `jsmql.pipeline`, and `jsmql.update` are tags too:
 
 ```js
 const { jsmql } = require("@koresar/jsmql");
@@ -4828,7 +4828,7 @@ const filter3 = jsmql`$.age > ${21} && $.status in ${["active"]}`;
 // → { age: { $gt: 21 }, status: { $in: ["active"] } }
 ```
 
-Template values must be **literals** (numbers, strings, booleans, null, arrays, or plain objects). Field references go in the template string:
+A template value must be a **literal** (a number, a string, a boolean, `null`, an array, or a plain object). A field reference goes in the template string:
 
 ```js
 // ✓ Correct
@@ -4841,7 +4841,7 @@ jsmql`$.${field} > ${25}`  // syntax error
 
 ### BSON instances round-trip
 
-Interpolations are emitted as JSON literals **except** for native BSON instances that have no fidelity-preserving JSON shape — those reach the MQL output as the JS instance itself, which is what the Node MongoDB driver consumes in-situ:
+jsmql emits an interpolation as a JSON literal, **except** for a native BSON instance that has no JSON shape that preserves its fidelity. Such an instance reaches the MQL output as the JS instance itself, which is what the Node MongoDB driver consumes in place:
 
 ```js
 // Date — emitted as a real Date, indexed comparisons still work
@@ -4854,17 +4854,17 @@ jsmql`$.username === ${/^alice/i}`
 // → { username: /^alice/i }
 ```
 
-A RegExp you pass is a value in every position, not only in a query slot: `` jsmql.expr`${re}` `` is the RegExp itself, `` jsmql`$.name = ${re};` `` writes it, and a filter keeps the instance you passed rather than a copy. Only a regex written in the source (`/^a/`) is confined to the regex methods.
+A RegExp you pass is a value in every position, not only in a query slot. `` jsmql.expr`${re}` `` is the RegExp itself, `` jsmql`$.name = ${re};` `` writes it, and a filter keeps the instance you passed rather than a copy. Only a regex written in the source (`/^a/`) stays confined to the regex methods.
 
-Pass-through types: `Date`, `RegExp`, `Uint8Array` (and `Buffer`, which subclasses `Uint8Array`), and ObjectId (duck-typed via `_bsontype`). Everything else goes through `JSON.stringify`. Pass-through also works for **nested** instances — a Date / RegExp / etc. buried inside an interpolated object or array still arrives as a live instance, so realistic operator-call shapes like `` jsmql.expr`$dateDiff(${{ startDate: new Date(...), endDate: new Date(...), unit: "day" })` `` work the way you'd write them by hand.
+Pass-through types: `Date`, `RegExp`, `Uint8Array` (and `Buffer`, which subclasses `Uint8Array`), and ObjectId (matched by its `_bsontype` field). Everything else goes through `JSON.stringify`. Pass-through also works for a **nested** instance. A Date, RegExp, or similar value buried inside an interpolated object or array still arrives as a live instance, so a realistic operator-call shape like `` jsmql.expr`$dateDiff(${{ startDate: new Date(...), endDate: new Date(...), unit: "day" })` `` works the way you would write it by hand.
 
-`jsmql.validate` is polymorphic in the same way, so `` jsmql.validate`$.age > ${minAge}` `` works as the non-throwing counterpart.
+`jsmql.validate` is polymorphic in the same way, so `` jsmql.validate`$.age > ${minAge}` `` works as its non-throwing counterpart.
 
 ---
 
 ## Validation
 
-Use `jsmql.validate()` to check syntax without generating output:
+Use `jsmql.validate()` to check syntax without building output:
 
 ```js
 const { jsmql } = require("@koresar/jsmql");
@@ -4884,15 +4884,15 @@ jsmql.validate("age > 18");
 ```
 
 Use `jsmql.validate()` for:
-- IDE linters and code completion
-- Pre-flight checks before building expressions
-- User input validation in forms
+- an IDE linter and code completion
+- a check before you build an expression
+- a check on user input in a form
 
 ---
 
 ## Error Messages
 
-When you write invalid jsmql, you get clear error messages with suggestions:
+When you write invalid jsmql, you get a clear error message with a suggestion:
 
 ```js
 jsmql("age > 18");
@@ -4918,9 +4918,9 @@ jsmql("$.name.trinm()");
 
 ## Examples
 
-Every example here is an **aggregation expression** — what `jsmql.expr(…)` returns, and
-what goes in a stage field. The same source through `jsmql(…)` is a Filter instead: see
-[Filter or Pipeline](#output-dispatch-filter-vs-pipeline) for the dispatch.
+Every example here is an **aggregation expression**: what `jsmql.expr(…)` returns, and
+what goes in a stage field. The same source through `jsmql(…)` is a Filter instead. See
+[Filter or Pipeline](#output-dispatch-filter-vs-pipeline) for the dispatch rule.
 
 ### Numeric Comparisons
 
@@ -5033,11 +5033,11 @@ const combined = jsmql.expr(`$.age > 21 && $.status in ["active", "pending"]`);
 
 ## Replacing Server-Side JavaScript
 
-MongoDB 8.0 deprecated three operators that run JavaScript on the server: `$function`, `$accumulator`, and `$where`. MongoDB's own docs say to rewrite this logic as native aggregation operators. jsmql does that for you — you write JavaScript, and jsmql compiles it to native operators.
+MongoDB 8.0 deprecated three operators that run JavaScript on the server: `$function`, `$accumulator`, and `$where`. MongoDB's own documentation says to rewrite this logic as a native aggregation operator. jsmql does that for you: you write JavaScript, and jsmql compiles it to a native operator.
 
-For the full pros and cons of server-side JavaScript, see the [README](../README.md). Short version: it's deprecated, slow, can't use indexes, often turned off, and a security risk.
+For the full case for and against server-side JavaScript, see the [README](../README.md). In short: it is deprecated, it is slow, it cannot use an index, many deployments turn it off, and it is a security risk.
 
-**jsmql does not add new syntax for these three operators.** If you need them on older MongoDB versions, the registry passthrough form still works (e.g. `$function({ body: "...", args: [...], lang: "js" })`). No errors, no warnings — existing code keeps working as-is.
+**jsmql adds no new syntax for these three operators.** If you need them on an older MongoDB version, the registry passthrough form still works (for example `$function({ body: "...", args: [...], lang: "js" })`). It gives no error and no warning; existing code keeps working as it is.
 
 Each migration below shows the deprecated form on top, then the jsmql replacement in **template-tag form** (`` jsmql`…` ``) and **function form** (`jsmql(({ $ }) => …)`).
 
@@ -5096,7 +5096,7 @@ jsmql(({ $ }) => $.email.toLowerCase().trim());
 
 ### `$where` — predicate inside `find()` / `$match`
 
-`$where` runs a JavaScript predicate over every document. The native replacement is `$expr` wrapping a comparison. Unlike `$where`, `$expr` lets MongoDB use indexes when it can.
+`$where` runs a JavaScript predicate over every document. The native replacement is `$expr` around a comparison. Unlike `$where`, `$expr` lets MongoDB use an index when it can.
 
 ```js
 // Deprecated
@@ -5109,7 +5109,7 @@ db.users.find({ $expr: jsmql`$.age > 18` });
 db.users.find({ $expr: jsmql(({ $ }) => $.age > 18) });
 ```
 
-Inside an aggregation pipeline, you can use `$match` directly — jsmql translates index-safe predicates to query-document form so MongoDB still uses indexes, and falls back to `$expr` only for parts that can't be expressed as a query (see [Pipelines](#pipelines)):
+Inside an aggregation pipeline, you can use `$match` directly. jsmql translates an index-safe predicate to query-document form, so MongoDB still uses an index, and it falls back to `$expr` only for the part it cannot express as a query (see [Pipelines](#pipelines)):
 
 ```js
 // Translatable comparison → indexable query doc
@@ -5122,7 +5122,7 @@ jsmql(({ $ }) => [{ $match: $.age > 18 }]);
 
 ### `$accumulator` — custom accumulator inside `$group` / `$setWindowFields`
 
-Most uses of `$accumulator` map to a built-in accumulator. Average:
+Most use of `$accumulator` maps to a built-in accumulator. Average:
 
 ```js
 // Deprecated — six JavaScript fields
@@ -5144,7 +5144,7 @@ jsmql`[{ $group: { _id: $.category, avg: $avg($.value) } }]`;
 jsmql(({ $ }) => [{ $group: { _id: $.category, avg: $avg($.value) } }]);
 ```
 
-For accumulators that need custom state, `$reduce` handles the common shapes natively. Running min/max alongside count:
+For an accumulator that needs custom state, `$reduce` handles the common shapes natively. A running min and max alongside a count:
 
 ```js
 // Template-tag form
@@ -5181,11 +5181,11 @@ jsmql(`$function({ body: "function(x) { return x * 2; }", args: [$.qty], lang: "
 // → { $function: { body: "...", args: ["$qty"], lang: "js" } }
 ```
 
-This is unchanged for backwards compatibility. We don't recommend it on MongoDB 8.0+ — deprecation eventually means removal, and many deployments already refuse server-side JavaScript outright. If you do reach for it, leave a comment explaining why, and check whether `$reduce` or a custom pipeline can do the same job.
+This form stays unchanged for backward compatibility. We do not recommend it on MongoDB 8.0 or later. Deprecation eventually means removal, and many deployments already refuse server-side JavaScript outright. If you do reach for it, leave a comment that explains why, and check whether `$reduce` or a custom pipeline can do the same job.
 
 ## Language Grammar (EBNF, simplified)
 
-> The grammar below covers the core structure. Date constructors and type-cast calls follow standard JavaScript syntax and are omitted here for brevity. Statements — `let` / `const`, `function`, a write, a stage call — are the pipeline surface and are covered under [Pipelines](#pipelines).
+> The grammar below covers the core structure. A date constructor and a type-cast call follow standard JavaScript syntax, so this grammar omits them. A statement — `let` / `const`, `function`, a write, a stage call — is the pipeline surface, covered under [Pipelines](#pipelines).
 
 ```ebnf
 expression  = ternary
@@ -5307,15 +5307,15 @@ null        = "null"
 ## FAQ
 
 **Q: How do I get an array's length?**
-A: Use `.length`: `$.items.length` works for both arrays and strings (jsmql dispatches by receiver type). The `$size()` escape hatch is also available if you want to force the array form: `$size($.items)`.
+A: Use `.length`. `$.items.length` works for both an array and a string, because jsmql dispatches by the receiver's type. The `$size()` escape hatch is also there when you want to force the array form: `$size($.items)`.
 
-**Q: How does `$.field.includes(x)` know whether to use `$in` or string-substring matching?**
-A: When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, a `const` bound to any of those, etc. — jsmql emits the array form (`$in` / `$indexOfArray` / `$concatArrays`). When it is demonstrably a string — `.toLowerCase()`, `String(x)`, template literal, etc. — it emits the string form. For a bare field reference whose type can't be known at compile time, the expression road emits a runtime `$switch` on the value's own `$type` that picks the right form at query time; a QUERY document takes the indexable reading instead (see [Type-aware dispatch](#type-aware-dispatch)). If you want compact output, bind the value to a `const`, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes("x")` pins a string), or call the operator directly: `$in(x, $.items)` — the needle first, as MongoDB spells it.
+**Q: How does `$.field.includes(x)` know whether to use `$in` or a string-substring match?**
+A: When the receiver is *demonstrably* an array — an array literal, a `.split()` result, a `.map()` result, a `const` bound to any of those, and the like — jsmql emits the array form (`$in` / `$indexOfArray` / `$concatArrays`). When it is demonstrably a string — `.toLowerCase()`, `String(x)`, a template literal, and the like — it emits the string form. For a bare field reference whose type jsmql cannot know at compile time, the expression road emits a runtime `$switch` on the value's own `$type` that picks the right form at query time. A QUERY document instead takes the indexable reading (see [Type-aware dispatch](#type-aware-dispatch)). For compact output, bind the value to a `const`, chain a type-fixing method first (`$.tags.toLowerCase().includes("x")` pins a string), or call the operator directly: `$in(x, $.items)`, the needle first, as MongoDB spells it.
 
 **Q: Does `?.` actually short-circuit?**
-A: For a bare READ it is sugar: MongoDB already returns null/missing when a path traverses a missing field, so `$.a?.b?.c` and `$.a.b.c` are the same MQL. Once the chain feeds a consumer that is not null-safe, the `?.` adds a real `$ifNull` neutral — which consumer takes which neutral is the table under [Optional Chaining](#optional-chaining).
+A: For a bare READ it is sugar. MongoDB already returns null or missing when a path crosses a missing field, so `$.a?.b?.c` and `$.a.b.c` are the same MQL. Once the chain feeds a consumer that is not null-safe, the `?.` adds a real `$ifNull` neutral value. The table under [Optional Chaining](#optional-chaining) lists which consumer takes which neutral value.
 
 **Q: How do `Math.max(...$.arr)` and `Math.max($.arr)` differ?**
-A: They produce identical MQL (`{ $max: "$arr" }`). The spread form is just JS-natural sugar.
+A: They produce identical MQL (`{ $max: "$arr" }`). The spread form is JS-natural sugar only.
 
 ---

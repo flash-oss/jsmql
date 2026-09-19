@@ -29,7 +29,6 @@
 # -----------------------------------------------------------------------------
 CLAUDE.md::is the single source of truth for every open
 docs/CLAUDE.md::"what did we decide against?"
-docs/LANGUAGE.md::features not yet implemented or rejected
 
 # -----------------------------------------------------------------------------
 # Spec-section headers (categorical — their child bullets carry the tags)
