@@ -345,41 +345,6 @@ every guarded spelling over a document that holds neither operand.
 
 ---
 
-## 2026-09-17 — chore: the deck's generated files are the generator's own output
-
-`oxfmt` was reformatting `presentation.html` and `presentation/examples.json`
-after `gather.mjs` and `build.mjs` had written them, so the committed artifact
-could not be reproduced by running the build: the next build rewrote both files
-with no change of content. They join `playground.html` in the formatter's ignore
-list, as does the hand-authored `presentation_skeleton.html`, which the formatter
-reflows in the same way it would `playground_skeleton.html`.
-
----
-
-## 2026-09-17 — docs: the conference deck lives in the repository
-
-`presentation.html` is a self-contained 36-slide deck for a 45-minute talk, and
-`presentation/` is what builds it. It joins the repository because it holds the
-same property the playground does: no code on a slide is typed by hand.
-
-`gather.mjs` compiles every `examples/*.jsmql` with the real library and prints
-the MQL with `jsmql.stringify`, so a slide and the playground show the same text;
-`extract-wow.mjs` lifts the flagship example out of [realistic.test.ts](test/realistic.test.ts)
-character for character; `tables.mjs` RUNS each whole-query example on the
-project's mongod and records the documents that came back, so the result table
-under a query is its real output; and `verify-ops.mjs` runs every SQL-versus-JSMQL
-row on `:27018` beside the same data in PostgreSQL and fails unless the two agree.
-`build.mjs` injects the gathered JSON island into `presentation_skeleton.html`,
-which is the hand-authored half — the built file is an artifact and is never
-edited directly.
-
-Two examples are deliberate exceptions to "compiler output only", each marked as
-such where it lives: `examples/friday.mql`, the hand-written pipeline the talk's
-story is about, kept verbatim as a historical artifact; and the closing slide's
-hoped-for syntax, which is illustrative and is not compiled.
-
----
-
 ## 2026-09-15 — docs: numeric equality is cross-type, and exact
 
 MEASURED, and it is the trap this language surface can lead an analyst into. MongoDB

@@ -1,5 +1,0 @@
-$$.filter({ status: "paid" }).flatMap("items");
-$.name = $$$.products.find({ _id: $.items.productId }).name;
-$$.$group({ _id: $.name, amount: $sum($.items.qty * $.items.price) })
-  .orderBy({ amount: -1 })
-  .take(10);
