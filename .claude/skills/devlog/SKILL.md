@@ -17,53 +17,59 @@ description: >-
 
 ## What the DEVLOG is
 
-[docs/DEVLOG.md](docs/DEVLOG.md) is jsmql's **single historical record** —
-the answer to future "why is X this way?" questions, and the closest thing the
-project has to a ticket tracker. There is deliberately no separate CHANGELOG or
-ROADMAP. **Every observable change gets an entry**, in the *same commit* as the
-change itself (feature, fix, refactor, rename, or a doc/naming decision all count).
+[docs/DEVLOG.md](docs/DEVLOG.md) is jsmql's **single historical record**. It
+answers future "why is X this way?" questions, and it is the closest thing the
+project has to a ticket tracker. The project keeps no separate CHANGELOG or
+ROADMAP file, by design. **Every observable change gets an entry**, in the
+*same commit* as the change itself. A feature, a fix, a refactor, a rename, or
+a doc or naming decision each counts as an observable change.
 
-Because it is the one place restating is allowed, a DEVLOG entry should actually
-explain the reasoning — it's not a one-line changelog bullet.
+This file is the one place where the repo allows prose to restate a fact. So a
+DEVLOG entry should explain the reasoning in full. It is not a one-line
+changelog bullet.
 
 ## Writing an entry
 
-**1. Get the date in UTC** — the heading date is UTC, so read it, don't assume:
+**1. Get the date in UTC.** The heading date is UTC. Read the date; do not guess
+it:
 
 ```sh
 date -u +%F      # e.g. 2026-07-04
 ```
 
-**2. Prepend the entry to the top of the file.** Newest entry is always first,
-directly under the `---` that closes the header block. Entries are separated by a
-blank-line-`---`-blank-line delimiter.
+**2. Prepend the entry to the top of the file.** The newest entry always comes
+first, directly under the `---` line that closes the header block. A
+blank-line-`---`-blank-line mark separates each entry from the next.
 
-**3. Heading shape.** The header block only *requires* a UTC date and a short title:
+**3. Write the heading in this shape.** The header block requires only a UTC
+date and a short title:
 
 ```
 ## YYYY-MM-DD — <title>
 ```
 
-- The dash is an em-dash `—` (U+2014) with a space on each side, to match every
-  existing heading.
-- **Recommended, and what the recent entries follow:** make `<title>` mirror the
-  [Conventional Commits](https://www.conventionalcommits.org/) type of the commit
-  it ships with — `feat: …` / `fix: …` / `docs: …` / `chore: …` / `refactor: …` /
-  `test: …`, optionally scoped (`feat(lookup): …`, `fix(playground): …`), with
-  `feat!` / `fix!` for breaking changes. Use a plain descriptive title (or a
-  prefix like `decision: …`) when no single type fits — the type prefix is a
-  convention, not a hard requirement of the header.
-- Keep the title distinct: the merge resolver dedupes entries by their **exact
-  heading line**, so two entries on the same day must have different titles.
+- The dash is an em-dash `—` (U+2014), with one space on each side, to match
+  every existing heading.
+- **We recommend this, and recent entries follow it:** make `<title>` mirror
+  the [Conventional Commits](https://www.conventionalcommits.org/) type of the
+  commit it ships with — `feat: …` / `fix: …` / `docs: …` / `chore: …` /
+  `refactor: …` / `test: …`, optionally scoped (`feat(lookup): …`,
+  `fix(playground): …`), with `feat!` / `fix!` for a breaking change. Use a
+  plain descriptive title (or a prefix like `decision: …`) when no single type
+  fits. The type prefix is a convention, not a hard requirement of the header.
+- Keep the title distinct. The merge resolver removes a duplicate entry by
+  matching its **exact heading line**, so two entries on the same day need
+  different titles.
 
-**4. Body: 1–3 paragraphs answering *what* and *why*.** The *why* is the whole
-point — a future contributor reads this to understand a decision they can't
-reconstruct from the diff. Include file references (as markdown links) where
-relevant. Don't just describe the code change; capture the reasoning, the
+**4. Write a body of 1 to 3 paragraphs that answers *what* and *why*.** The
+*why* is the whole point. A future contributor reads this to understand a
+decision the diff alone cannot show. Add a file reference as a markdown link
+where relevant. Do not just describe the code change. State the reasoning, the
 alternative you rejected, and any constraint that forced the shape.
 
-**5. Pre-1.0: no version numbers** in entries. The package stays at `0.1.0` until
-the public API is ready to commit to, so don't write `v1`/`v2`/release markers.
+**5. Do not write a version number in an entry, before version 1.0.** The
+package stays at `0.1.0` until the public API is ready for a commitment, so do
+not write a `v1`, `v2`, or other release marker.
 
 ### Example entry
 
@@ -80,34 +86,38 @@ Chose the `0x` spelling over surfacing Extended-JSON `$oid` because [reason];
 (Illustrative only — match the tone and depth of the entries already at the top of
 the file, not this exact wording.)
 
-## Superseding a past decision — never delete
+## Superseding a past decision — never delete it
 
-If a later change reverses or supersedes an earlier decision, **do not edit or
-delete the old entry.** Add a *new* top-of-file entry that states the new decision
-and links back to the superseded one (by its heading). The append-only history is
-what makes the DEVLOG trustworthy; rewriting it destroys the record.
+When a later change reverses or replaces an earlier decision, **do not edit or
+delete the old entry.** Add a *new* entry at the top of the file. State the new
+decision in it, and link back to the old entry by its heading. The append-only
+history is what makes the DEVLOG trustworthy. Rewriting an old entry destroys
+the record.
 
 ## Resolving a merge conflict on DEVLOG.md
 
-Parallel branches frequently each prepend an entry, which git can't auto-merge. Do
-**not** hand-resolve it — run the structural resolver:
+Parallel branches often each prepend an entry, and git cannot merge these
+automatically. Do **not** resolve the conflict by hand. Run the structural
+resolver instead:
 
 ```sh
 ./scripts/merge-devlog.mjs      # run at repo root during the unresolved merge
 git merge --continue            # (or `git commit`) once it reports success
 ```
 
-It reads the three conflict stages, takes the union of entries (deduped by the
-`## YYYY-MM-DD — Title` heading), sorts newest-first, and `git add`s the result. It
-exits non-zero and leaves the file untouched only when it genuinely can't decide —
-a diverging header edit, or the same past entry edited differently on both sides —
-in which case resolve by hand, then `git add docs/DEVLOG.md`.
+The script reads the three conflict stages. It takes the union of the entries,
+removes a duplicate by its `## YYYY-MM-DD — Title` heading, sorts the result
+newest-first, and runs `git add` on it. The script exits with a non-zero
+status and leaves the file untouched only when it cannot decide — for example,
+a diverging header edit, or the same past entry edited two different ways.
+When this happens, resolve the conflict by hand, then run
+`git add docs/DEVLOG.md`.
 
 ## Pre-commit checklist
 
-- [ ] Entry is at the **top** of the file (newest-first), under the header `---`.
-- [ ] Heading is `## YYYY-MM-DD — <title>` (UTC date, unique title; title follows the commit's type where one fits).
-- [ ] Body explains **why**, not just what; file refs are markdown links.
-- [ ] No version numbers (pre-1.0).
+- [ ] The entry sits at the **top** of the file (newest-first), under the header `---`.
+- [ ] The heading reads `## YYYY-MM-DD — <title>` (UTC date, unique title; the title follows the commit's type where one fits).
+- [ ] The body explains **why**, not only what; each file reference is a markdown link.
+- [ ] The entry carries no version number (before version 1.0).
 - [ ] A superseded decision is linked, not deleted.
-- [ ] The entry is in the **same commit** as the change it documents.
+- [ ] The entry sits in the **same commit** as the change it documents.

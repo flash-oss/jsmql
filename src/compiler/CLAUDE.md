@@ -1,7 +1,7 @@
 # src/compiler/
 
-The compiler, built as five phases over `src/registry/`. Each phase reads the ONE
-registry file that owns its facts and invents nothing a row could have stated.
+The compiler is five phases over `src/registry/`. Each phase reads the one
+registry file that owns its facts. It invents nothing a row could have stated.
 
 ```
   ┌────────────┐   ┌────────────┐   ┌───────────┐   ┌────────────┐   ┌──────────┐
@@ -12,24 +12,24 @@ registry file that owns its facts and invents nothing a row could have stated.
    keywords.ts                        + position       + productions    + productions
 ```
 
-**Phase 4 runs inside phase 3 as well as after it.** Several sugars mean one
-thing as a statement and are refused everywhere else, so a rewrite has to know
-where it stands — and the answer cannot be looked up by identity, because the
-walk rebuilds a parent as soon as a child changes. `passes/position.ts` says what
-the position becomes on each parent-to-property step, and `mapTreeIn` carries it
-down. `passes/shape.ts` answers the other half: which DOCUMENT the whole program
-becomes, which no single step can see.
+**Phase 4 runs inside phase 3, and also after it.** Several sugars mean one
+thing as a statement, and are refused everywhere else. So a rewrite must know
+where it stands. The answer cannot come from identity, because the walk rebuilds
+a parent as soon as a child changes. `passes/position.ts` states the position at
+each parent-to-property step, and `mapTreeIn` carries this position down the
+tree. `passes/shape.ts` answers the other half: which document the whole program
+becomes. No single step can see this on its own.
 
 ## The one rule that shapes everything
 
 **The registry says what the language HAS. It does not say how to build the MQL.**
 
-A row answers: does this name exist, what is it called, what may it attach to, in
-which of the seven positions is it legal, how many arguments does it take there,
-and what does the error say when it is not. A row does NOT hold a renderer,
-because a lowering reads its NEIGHBOURS — the receiver's provable type, the stages
-already emitted, the shape of a sibling argument — and a single row cannot see
-any of that. Lowerings are code, and they live in `emit/`.
+A row answers six questions. Does this name exist? What is it called? What may
+it attach to? In which of the seven positions is it legal? How many arguments
+does it take there? What does the error say when it is not legal? A row does
+not hold a renderer. A lowering reads its neighbours: the receiver's provable
+type, the stages already emitted and the shape of a sibling argument. A single
+row cannot see any of that. Lowerings are code, and they live in `emit/`.
 
 So when a phase needs a fact about the language, it reads a row. When it needs to
 produce a document, it calls a function here.
@@ -52,7 +52,7 @@ lex/
                a table says which spelling makes which token, a scanner decides
                where a token ENDS.
 
-parse/         the Pratt loop driven by precedence / associativity / fixity,
+parse/         the Pratt loop that precedence, associativity and fixity drive,
                plus the mixing rules (noMixWith, leftOperandNot) and the one
                NAME fact it reads: `blockBodyOf`, because only the parser holds a
                callee and its `{ … }` body at the same time.
@@ -64,24 +64,24 @@ passes/        naming.ts answers "which row does this node name", "what is the
                inject carries a runtime value in; fresh mints a parameter name;
                position and shape decide which document the program becomes.
                See docs/specs/desugar-pass.md and docs/specs/position-pass.md.
-emit/          the lowerings, and the dispatcher that checks a row before running one.
+emit/          the lowerings, and the dispatcher that checks a row, then runs one.
   consult.ts   what a row says about one name in one position — a pure read.
   select.ts    which rule runs: the receiver's proof (a closed Receiver) and the
                arguments' class (a closed partition) against the row — a rule, a
                runtime dispatch over the field families, or one of nine refusals.
-  names.ts     every MongoDB variable name written: the injective encoding, the
+  names.ts     every MongoDB variable name the compiler writes: the injective encoding, the
                brands (MongoVar / VarRef / FieldSlot), and Scope — what each
                JavaScript name stands for, and which names a mint must avoid.
-  env.ts       the one record a lowering runs under: scope, site, chain. Made only
-               from another Env; no field optional, no literal, no spread.
+  env.ts       the one record a lowering runs under: scope, site, chain. Only
+               another Env makes one. No field is optional, no literal, no spread.
   mode.ts      value or truth: `truthOf`, the JavaScript truthiness check, and/or/not.
                The only minter of `Truth`.
   mql.ts       the MQL shapes that READ a condition ($cond, $filter, $switch, …),
-               each typed to take a Truth. Built here and nowhere else.
+               each typed to take a Truth. This module builds them, and nothing else does.
   types.ts     what a node PROVABLY is: a literal's kind, a row's measured
                `returns`, a binding's type. A field path proves nothing.
   inputs.ts    the one constructor of the `In` record a renderer receives.
-  check.ts     the literal-gated argument checks, each reading a stated rule.
+  check.ts     the literal-gated argument checks. Each check reads a stated rule.
   errors.ts    every message the phase can produce, worded once.
   lower.ts     the value and truth readings over every node type. See
                docs/specs/emit-pass.md.
@@ -108,16 +108,16 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
 
 - **No name is hard-coded.** If the compiler branches on a literal name (`"Math"`,
   `"$match"`, `".push"`), that fact belongs in a row instead. The one exception is
-  a token spelling inside a scanner, where the character IS the algorithm. The
-  same goes for a LIST of node types or of operator spellings: state it once, as
-  data the type checker can hold against the source of truth (`BINARY_OPS` in
-  ast.ts, `EVALUABLE_TYPES` + `NOT_ASKED_TYPES` in fold.ts), never as a hand copy
-  in a second file.
+  a token spelling inside a scanner, where the character is the algorithm. The
+  same rule applies to a list of node types or of operator spellings. State the
+  list once, as data the type checker can hold against the source of truth
+  (`BINARY_OPS` in ast.ts, `EVALUABLE_TYPES` and `NOT_ASKED_TYPES` in fold.ts).
+  Never keep a hand copy of it in a second file.
 - **Every rejection quotes the registry.** A message is either a row's own
   `unsupported(...)` text or built from a row's `args.sig`. No phase writes prose
   the registry could have carried.
 - **Positions come from `where`, never from a tree probe.** If a construct is
-  legal somewhere, its row says so, and phase 4 reads it. A stage BODY mixes
-  positions, and the row states the layout in `bodyPositions` — never derive it
-  from a key's name.
+  legal somewhere, its row says so, and phase 4 reads this. A stage body can mix
+  positions. The row states the layout in `bodyPositions`; never derive the
+  layout from a key's name.
 - **Strippable TypeScript only**, same as the rest of `src/` — see `src/CLAUDE.md`.

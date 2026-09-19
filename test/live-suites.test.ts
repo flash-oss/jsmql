@@ -15,7 +15,7 @@
  * every suite on that path: a hand-rolled client, or a `catch` that nulls one, is
  * what re-opens the hole.
  *
- * See test/CLAUDE.md § "Suites that talk to a server must say whether they did".
+ * See test/CLAUDE.md § "Suites that connect to a server must report whether they connected".
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";

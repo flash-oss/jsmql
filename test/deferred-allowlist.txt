@@ -27,7 +27,6 @@
 # -----------------------------------------------------------------------------
 # Meta-documentation about the deferral system itself.
 # -----------------------------------------------------------------------------
-CLAUDE.md::out of scope for the current task
 CLAUDE.md::is the single source of truth for every open
 docs/CLAUDE.md::"what did we decide against?"
 docs/LANGUAGE.md::features not yet implemented or rejected

@@ -14,7 +14,7 @@
 // EXPAND THIS FREELY. The dataset is meant to grow as new queries need realistic
 // data. After any edit you MUST re-insert it into mongod (`npm run fixture:seed`)
 // — the tests query the server, not this file. See test/fixtures/CLAUDE.md
-// § "Expanding / changing the data".
+// § "Growing and changing the data".
 
 import { ObjectId } from "mongodb";
 import { createHash } from "node:crypto";
