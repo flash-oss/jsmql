@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-19 — fix: the error messages move to STE
+
+Every user-visible error message now follows ASD-STE100, and 1,253 assertions
+move with them. A caller that matches on message TEXT must update that match.
+The error CLASSES, the `.pos` contract, `.slot` and `.key` do not change, so a
+caller that reads those fields needs no work.
+
+The change is wording, never meaning. A message that named an alternative still
+names it, in the same spelling, because the DX rule says a rejection must tell
+the user what to write instead. An argument-count message still names the
+parameter. A position-bearing message still says `at position N` and still sets
+`.pos`. `internalError` keeps its "please report" framing.
+
+Capitals stay where they tell two errors apart. `$count` "names a field to
+WRITE" and `$unwind` "reads a field PATH" are siblings a user meets one after
+the other, and the capital is what makes the difference visible at a glance.
+The same holds for a sort comparator that sorts by "the WHOLE element" instead
+of a field NAME. ASD-STE100 does not ban a capital, so the emphasis stays.
+
+Two surfaces needed no work. The 2,276 refusal strings in the registry already
+read as STE. The lexer and the scanners did too.
+
+`src/globals.ts` keeps MongoDB's own wording, because a generator writes that
+file from the pinned spec YAML.
+
+---
+
 ## 2026-09-19 — docs: all prose follows ASD-STE100
 
 Every word of prose in this repository now follows ASD-STE100 Simplified Technical

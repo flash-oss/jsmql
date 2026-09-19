@@ -264,13 +264,13 @@ describe("$out — ParamRef in bracket-LHS (jsmql.compile binding)", () => {
 describe("$out — mode gates", () => {
   it("jsmql.filter() rejects $out sugar with a Pipeline-mode hint", () => {
     expect(() => jsmql.filter("$$$.x = $$")).toThrow(
-      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
     );
   });
 
   it("jsmql.expr() rejects $out sugar with a Pipeline-mode hint", () => {
     expect(() => jsmql.expr("$$$.x = $$")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
     );
   });
 
@@ -352,7 +352,7 @@ describe("$out RHS accepts chained stage calls", () => {
     });
     it("rejects a source stage that is not first", () => {
       expect(() => jsmql('$$$.archive = $$.$match({ s: "x" }).$documents([{ x: 1 }]);')).toThrow(
-        "'$documents' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+        "'$documents' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
       );
     });
     it("rejects an unknown stage name with a suggestion", () => {
@@ -437,7 +437,7 @@ describe("$merge — adding to a collection", () => {
 
   it("refuses the writes that name no documents, each naming a spelling that works", () => {
     expect(() => jsmql("$$$.metrics *= $$;")).toThrow(
-      "A collection takes '=' or '+=', not '*=': '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'), and '$$$.<coll> += $$' ADDS to it, updating the documents whose '_id' matches (a '$merge').",
+      "A collection takes '=' or '+=', not '*='. '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'). '$$$.<coll> += $$' ADDS to it: the server updates the documents whose '_id' matches (a '$merge').",
     );
     expect(() => jsmql("$$$.metrics.concat();")).toThrow(
       "Nothing to write into the collection: give the stream ('$$$.<coll>.concat($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one document ('$$$.<coll>.push({ … });').",

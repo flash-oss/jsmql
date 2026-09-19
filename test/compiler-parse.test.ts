@@ -72,8 +72,8 @@ describe("compiler/parse — the forms JavaScript itself refuses", () => {
     ["typeof $.a ** $.b", /without parentheses/],
     ["!$.a ** $.b", /without parentheses/],
     ["~$.a ** $.b", /without parentheses/],
-    ["$.a?.b = 1", /cannot be assigned to.*Drop the '\?\.'/],
-    ["$.a?.b += 1", /cannot be assigned to.*Drop the '\?\.'/],
+    ["$.a?.b = 1", /cannot assign to.*Drop the '\?\.'/],
+    ["$.a?.b += 1", /cannot assign to.*Drop the '\?\.'/],
   ];
   for (const [src, message] of refused) {
     it(`refuses ${src}`, () => {
@@ -533,7 +533,7 @@ describe("compiler/parse — a destructured parameter is one parameter, its name
     expect(() => parseExpression("a.map(({ a = 1 }) => a)")).toThrow(message);
     expect(() => parseExpression("a.map(([1, a]) => a)")).toThrow(message);
     // the refusal names what it saw, and points at it
-    expect(() => parseExpression("a.map(([a, ...rest]) => a)")).toThrow("('...') is not one of them at position 11");
+    expect(() => parseExpression("a.map(([a, ...rest]) => a)")).toThrow("('...') is not one of them, at position 11");
   });
 
   it("a parenthesised list or object that is not followed by an arrow is the expression it looks like", () => {
@@ -548,7 +548,7 @@ describe("compiler/parse — a write target is a place, and an optional chain is
     // `a?.b.c = 1` is as much a SyntaxError as `a?.b = 1` (node --check); the
     // rule that built the chain must stay with it through every later link.
     for (const src of ["$.a?.b.c = 1;", "$.a?.b[0] = 1;", "$.a?.b.c++;", "$.a?.b.c += 1;", "$.a = $.b?.c.d = 1;"]) {
-      expect(() => parse(src), src).toThrow(/cannot be assigned to/);
+      expect(() => parse(src), src).toThrow(/cannot assign to/);
     }
   });
 

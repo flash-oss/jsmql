@@ -336,7 +336,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     // the root replacement reads the chain through `joinRoot`
     // (src/compiler/emit/join.ts), so it gets its own coverage.
     expect(() => jsmql("[ $ = $$$$.analytics.users.find(u => u._id === $.userId) ]")).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 
@@ -374,17 +374,17 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     // `$replaceWith` STAGE, so it belongs to a Pipeline entry — the rejection names
     // both ways out rather than handing back an array from the expression surface.
     expect(() => jsmql.expr("$ = $.profile")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a root-replace `$ = <expr>` (a `$replaceWith` stage). Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a root-replace `$ = <expr>` (a `$replaceWith` stage) instead. Use jsmql.pipeline().",
     );
     expect(() => jsmql.expr("$ = { a: $.b }")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a root-replace `$ = <expr>` (a `$replaceWith` stage). Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a root-replace `$ = <expr>` (a `$replaceWith` stage) instead. Use jsmql.pipeline().",
     );
     expect(() => jsmql.expr("$$ = $$.filter(d => d.x === 1)")).toThrow(/stream-replace/);
     // A facet-shaped RHS is still a root replacement, so it takes the same route.
     expect(() => jsmql.expr("$ = { a: $$.filter(d => d.x === 1) }")).toThrow(/root-replace/);
     // The ordinary update-op form is untouched — it IS an expression building block.
     expect(() => jsmql.expr("$.a = 1")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
     );
   });
 
@@ -550,7 +550,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     // `$replaceWith` is reshape-clearing: any `let` declared before is gone.
     // The next statement's reference to `$$.x` must surface a precise error
     // rather than silently resolve against a slot that no longer exists.
-    expect(() => jsmql("let x = $.a; $ = $.profile; $.b = x;")).toThrow(/can't be read after.*\$replaceWith/);
+    expect(() => jsmql("let x = $.a; $ = $.profile; $.b = x;")).toThrow(/cannot be read after `\$replaceWith`/);
   });
 });
 
@@ -569,7 +569,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("a `.filter` branch takes a JavaScript predicate — a stage in its block is rejected", () => {
     expect(() => jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toThrow(
-      "`$sort(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $sort(...); … })', the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$sort(…)'. at position 35",
+      "`$sort(...)` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $sort(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$sort(…)'. at position 35",
     );
   });
 
@@ -666,7 +666,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("$facet is reshape-clearing: prior lets cannot be read after", () => {
     expect(() => jsmql(`let n = $.threshold; $ = { hot: $$.filter(o => o.score > 0) }; $.copy = n;`)).toThrow(
-      /can't be read after.*\$facet/,
+      /cannot be read after `\$facet`/,
     );
   });
 });
@@ -741,7 +741,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 
   it("cross-DB source switch is rejected", () => {
     expect(() => jsmql(`$$ = $$$$.analytics.events.filter(e => e.type === "purchase");`)).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 
@@ -763,7 +763,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     // (Runtime RHS `$.min`; a compile-time constant would inline everywhere and
     // legitimately survive the source switch.)
     expect(() => jsmql(`let cutoff = $.min; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`)).toThrow(
-      /can't be read after.*\$unionWith/,
+      /cannot be read after `\$unionWith`/,
     );
   });
 
@@ -1025,7 +1025,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // source-switch (the union branch, covered in the "replace stream" describe).
     // Distinct path → own test.
     expect(() => jsmql(`$$ = $$$$.analytics.events.filter(e => e.userId === $._id);`)).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 
@@ -1291,17 +1291,17 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   // Must-be-first (literal forms; the sugar forms are covered in system-stages.test.ts).
   it("rejects a diagnostic source stage that is not first", () => {
     expect(() => jsmql("[ $match($.x > 1), { $collStats: {} } ]")).toThrow(
-      "'$collStats' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+      "'$collStats' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
     );
   });
   it("rejects $geoNear that is not first", () => {
     expect(() => jsmql("[ $sort({ x: 1 }), { $geoNear: { near: [0, 0], distanceField: 'd' } } ]")).toThrow(
-      "'$geoNear' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+      "'$geoNear' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
     );
   });
   it("rejects $changeStream that is not first (;-form)", () => {
     expect(() => jsmql("$match($.x > 1); { $changeStream: {} }")).toThrow(
-      "'$changeStream' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+      "'$changeStream' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
     );
   });
   it("accepts a source stage as the first stage", () => {
@@ -1357,7 +1357,7 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   });
   it("rejects two source stages (the second is not first)", () => {
     expect(() => jsmql("[ { $collStats: {} }, { $indexStats: {} } ]")).toThrow(
-      "'$indexStats' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+      "'$indexStats' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
     );
   });
 
@@ -1400,7 +1400,7 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
         "[ { $lookup: { from: 'c', as: 'r', pipeline: [ $match($.a > 0), { $geoNear: { near: [0, 0], distanceField: 'd' } } ] } } ]",
       ),
     ).toThrow(
-      "'$geoNear' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+      "'$geoNear' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
     );
   });
 
@@ -1411,7 +1411,7 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   // first stage in the pipeline after optimization".
   it("rejects a first-only stage whose body needs a stage of its own ahead of it", () => {
     expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.length } });')).toThrow(
-      /'\$geoNear' has to be the FIRST stage of the pipeline, and a value in its body needs a '\$setWindowFields' stage of its own to run BEFORE it\..*\$geoNear\(\{ … \}\); \$match\(\$\.<field> === \$\$\.length\);/s,
+      /'\$geoNear' has to be the FIRST stage of the pipeline\. A value in its body needs a '\$setWindowFields' stage of its own to run BEFORE it\..*\$geoNear\(\{ … \}\); \$match\(\$\.<field> === \$\$\.length\);/s,
     );
     // the message names the stage jsmql actually had to make, and the value that makes it
     expect(() =>
@@ -1535,7 +1535,7 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   // closed set of stages. The `$merge` row states the set; the server's own answer
   // is compared against it in compiler-statement.test.ts.
   it("refuses a stage an update spec does not run, wherever the $merge stands", () => {
-    const refused = /cannot stand inside '\$merge': that body is an UPDATE, not a pipeline/;
+    const refused = /cannot stand inside '\$merge'\. That body is an UPDATE, not a pipeline/;
     expect(() => jsmql('$merge({ into: "c", whenMatched: [$sort({ a: 1 })] });')).toThrow(refused);
     expect(() => jsmql('$.b = 2; $merge({ into: "c", whenMatched: [$sort({ a: 1 })] });')).toThrow(refused);
     expect(() =>
@@ -1629,7 +1629,7 @@ describe("chained stage calls on the current stream", () => {
   // name — registry chain methods have always reported `$unionWith` here.
   it("a reshaping stage link clears the let scope, naming itself", () => {
     expect(() => jsmql("let n = $.qty * 2; $$.$group({ _id: '$a' }); $set({ x: n });")).toThrow(
-      /`n` is a `let` binding and can't be read after `\$group`/,
+      /`n` is a `let` binding\. It cannot be read after `\$group`/,
     );
   });
 
@@ -1837,7 +1837,7 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
 
   it("rejects `$ = …` and names $replaceWith", () => {
     expect(() => jsmql(wrap("$ = { t: $.total }"))).toThrow(
-      "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'); write the outer field after the join.",
+      "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.",
     );
   });
 
@@ -1854,7 +1854,7 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
 
   it("still lowers an ordinary field assignment", () => {
     expect(() => jsmql(wrap("$.a = 1"))).toThrow(
-      "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'); write the outer field after the join.",
+      "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.",
     );
   });
 });
@@ -1864,7 +1864,7 @@ describe("a lookup inside a literal sub-pipeline array", () => {
   // the reference to its result stayed inside, where the stream is a different collection
   // whose documents never carry the outer scratch slot. The field would read as missing, on
   // every document, silently.
-  const NAMES = /isn't available inside a literal sub-pipeline array|can't be written|no destination|has no 'let'/;
+  const NAMES = /isn't available inside a literal sub-pipeline array|cannot be written|no destination|has no 'let'/;
   it("is rejected in every sub-pipeline container", () => {
     expect(() => jsmql('$unionWith({ coll: "c", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });')).toThrow(
       NAMES,
@@ -1918,7 +1918,7 @@ describe("jsmql() and jsmql.pipeline() agree on the lookup form", () => {
 
   it("jsmql.update() still refuses it — $lookup is not in the update whitelist", () => {
     expect(() => jsmql.update(SRC)).toThrow(
-      "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$$.<coll>.filter(…).length; }`); it has no meaning in a Filter or in 'jsmql.expr'.",
+      "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline — for example, `({ $ }) => { $.n = $$$.<coll>.filter(…).length; }`. It has no meaning in a Filter or in 'jsmql.expr'.",
     );
   });
 });

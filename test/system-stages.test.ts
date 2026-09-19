@@ -91,7 +91,7 @@ describe("system stages — pipeline composition", () => {
 describe("system stages — first-stage-only enforcement", () => {
   it("rejects a diagnostic stage that is not the first stage", () => {
     expect(() => jsmql("$match($.x > 1); $$.indexStats()")).toThrow(
-      "'$indexStats' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+      "'$indexStats' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
     );
   });
 

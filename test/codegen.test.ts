@@ -358,14 +358,14 @@ describe("comparison-operator arity is aggregation-only (query single-value form
 describe("operator enum validation (closed string sets)", () => {
   it("rejects a bad timeUnit (case-sensitive lowercase)", () => {
     expect(() => jsmql.expr('$dateAdd({ startDate: $.t, unit: "fortnight", amount: 5 })')).toThrow(
-      /'\$dateAdd' unit must be one of: year, .* millisecond — got 'fortnight'/,
+      /'\$dateAdd' unit must be one of: year, .* millisecond\. It got 'fortnight'/,
     );
     expect(() => jsmql.expr('$dateTrunc({ date: $.t, unit: "Day" })')).toThrow(/unit must be one of/);
   });
 
   it("rejects a bad startOfWeek but accepts any case (weekday is case-insensitive)", () => {
     expect(() => jsmql.expr('$dateDiff({ startDate: $.a, endDate: $.b, unit: "day", startOfWeek: "funday" })')).toThrow(
-      "'$dateDiff' startOfWeek must be one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday, mon, tue, wed, thu, fri, sat, sun — got 'funday'. Did you mean 'sunday'?",
+      "'$dateDiff' startOfWeek must be one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday, mon, tue, wed, thu, fri, sat, sun. It got 'funday'. Did you mean 'sunday'?",
     );
     // mongod accepts "Monday"/"monday"/"MONDAY" — so jsmql must not reject them.
     expect(jsmql.expr('$dateTrunc({ date: $.t, unit: "week", startOfWeek: "Monday" })')).toEqual({
@@ -375,7 +375,7 @@ describe("operator enum validation (closed string sets)", () => {
 
   it("rejects a bad $convert target type but allows a numeric type code", () => {
     expect(() => jsmql.expr('$convert({ input: $.s, to: "intt" })')).toThrow(
-      /'\$convert' to must be one of: .* — got 'intt'\. Did you mean 'int'\?/,
+      /'\$convert' to must be one of: .* It got 'intt'\. Did you mean 'int'\?/,
     );
     expect(jsmql.expr('$convert({ input: $.s, to: "int" })')).toEqual({ $convert: { input: "$s", to: "int" } });
     expect(jsmql.expr("$convert({ input: $.s, to: 16 })")).toEqual({ $convert: { input: "$s", to: 16 } });
@@ -383,7 +383,7 @@ describe("operator enum validation (closed string sets)", () => {
 
   it("rejects a JS-only regex flag (g/y) through the charset check", () => {
     expect(() => jsmql.expr('$regexMatch({ input: $.s, regex: "a", options: "gi" })')).toThrow(
-      "'$regexMatch' options has an invalid flag 'g'. MongoDB allows only i, m, x, s, u — a JavaScript 'g' or 'y' flag is not supported.",
+      "'$regexMatch' options has an invalid flag 'g'. MongoDB allows only i, m, x, s, u. It does not support a JavaScript 'g' or 'y' flag.",
     );
     expect(jsmql.expr('$regexMatch({ input: $.s, regex: "a", options: "im" })')).toEqual({
       $regexMatch: { input: "$s", regex: "a", options: "im" },
@@ -392,10 +392,10 @@ describe("operator enum validation (closed string sets)", () => {
 
   it("rejects bad method / lang enums", () => {
     expect(() => jsmql("$group({ _id: 1, m: $median({ input: $.v, method: 'exact' }) });")).toThrow(
-      /method must be one of: approximate — got 'exact'/,
+      /method must be one of: approximate\. It got 'exact'/,
     );
     expect(() => jsmql.expr('$function({ body: "function(){}", args: [], lang: "python" })')).toThrow(
-      /lang must be one of: js — got 'python'/,
+      /lang must be one of: js\. It got 'python'/,
     );
   });
 
@@ -540,7 +540,7 @@ describe("zero-arg operators", () => {
   it("$createObjectId() / $count() emit the empty-object form", () => {
     expect(jsmql.expr("$createObjectId()")).toEqual({ $createObjectId: {} });
     expect(() => jsmql.expr("$count()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level '$count' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level '$count' stage call instead. Use jsmql.pipeline().",
     );
   });
 
@@ -550,7 +550,7 @@ describe("zero-arg operators", () => {
     expect(() => jsmql.expr("$rand(1, 2)")).toThrow("'$rand()' takes no arguments, got 2");
     expect(() => jsmql.expr("$createObjectId($.x)")).toThrow("'$createObjectId()' takes no arguments, got 1");
     expect(() => jsmql.expr("$count(5)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level '$count' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level '$count' stage call instead. Use jsmql.pipeline().",
     );
     // object-style is rejected too — the arg count is 1, not 0.
     expect(() => jsmql.expr("$rand({ x: 1 })")).toThrow("'$rand()' takes no arguments, got 1");
@@ -604,7 +604,7 @@ describe("array spread", () => {
   // and answering the bare string "abc" for `[..."abc"]` would be wrong. See docs/DEFERRED.md § B.
   it("refuses to spread a PROVABLE string, in an array literal and in an object literal", () => {
     const message =
-      "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, drop the '...'.";
+      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
     expect(() => jsmql.expr('[..."abc"]')).toThrow(message);
     expect(() => jsmql.expr('[..."abc", "d"]')).toThrow(message);
     expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(message);
@@ -738,7 +738,7 @@ describe("object spread", () => {
   });
 
   it("rejects spread inside operator-arg objects (key shape is wire format)", () => {
-    expect(() => jsmql.expr("$replaceOne({ ...$.opts, input: $.s })")).toThrow(/Spread/);
+    expect(() => jsmql.expr("$replaceOne({ ...$.opts, input: $.s })")).toThrow(/MQL has no spread in an object/);
   });
 });
 
@@ -1721,7 +1721,7 @@ describe("bracket access", () => {
     // JS `arr[-1]` reads a property named "-1" (undefined); only `.at(-1)` counts
     // from the end. $arrayElemAt WOULD return the last element, so emitting it
     // would silently disagree with JavaScript.
-    expect(() => jsmql.expr("$.items[-1]")).toThrow(/Negative bracket index '\[-1\]' isn't allowed/);
+    expect(() => jsmql.expr("$.items[-1]")).toThrow(/Negative bracket index '\[-1\]' is not allowed/);
     expect(() => jsmql.expr("$.items[-1]")).toThrow(/Use '\.at\(-1\)' to index from the end/);
     // Same for a provably-string receiver, and for a provably-array one.
     expect(() => jsmql.pipeline("const s = $.name.trim(); $set({ v: s[-1] });")).toThrow(/Negative bracket index/);
@@ -1766,7 +1766,7 @@ describe("bracket access", () => {
     // An ObjectId literal is not a field name, and JS would read the 24-hex as a
     // precision-losing number — neither reading is useful, so name the one that is.
     expect(() => jsmql.expr("({ 0x507f1f77bcf86cd799439011: 1 })")).toThrow(
-      /An ObjectId literal can't be an object key.*Quote it/s,
+      /An ObjectId literal cannot be an object key.*Quote it/s,
     );
   });
   it("a known-object receiver stringifies the integer key ($getField needs a String field)", () => {
@@ -2438,10 +2438,10 @@ describe("enum slots: an operator's is an expression slot, a stage's is not", ()
       /granularity must be one of/,
     );
     expect(() => jsmql('$merge({ into: "x", whenMatched: "$g" });')).toThrow(
-      "'$merge' whenMatched is one of: replace, keepExisting, merge, fail — or a bracketed list of stages, 'whenMatched: [$set({ … })]'. Got '$g'.",
+      "'$merge' whenMatched is one of: replace, keepExisting, merge, fail. It can also take a bracketed list of stages: 'whenMatched: [$set({ … })]'. It got '$g'.",
     );
     expect(() => jsmql('$merge({ into: "x", whenNotMatched: "$g" });')).toThrow(
-      "'$merge' whenNotMatched must be one of: insert, discard, fail — got '$g'.",
+      "'$merge' whenNotMatched must be one of: insert, discard, fail. It got '$g'.",
     );
     // The same slot takes an update pipeline, and a bracketed list there is stages.
     expect(jsmql('$merge({ into: "x", whenMatched: [$set({ a: 1 })] });')).toEqual([
@@ -2518,7 +2518,7 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   // and MongoDB has no operator that splits a string into its characters (HR3).
   it(".split() refuses an empty separator on both roads, and names a spelling that works", () => {
     const message =
-      "needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.";
+      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.";
     expect(() => jsmql.expr('$.s.split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('"abc".split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('$split($.s, "")')).toThrow(`'$split' ${message}`);
@@ -3308,7 +3308,7 @@ describe("bare built-in callbacks", () => {
   });
   it("a bare ObjectId outside callback position names the call forms", () => {
     expect(() => jsmql.expr("$.a = ObjectId")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
     );
   });
   // A stream element is a document, so a bare built-in is meaningless there. The
@@ -3573,7 +3573,7 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
   it("rejects an unknown unit with a suggestion", () => {
     expect(() => jsmql.expr('$.t.plus(30, "days")')).toThrow(
-      "'plus' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond — got 'days'. Did you mean 'day'?",
+      "'plus' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'days'. Did you mean 'day'?",
     );
   });
   it("rejects the wrong argument count, naming the parameters", () => {
@@ -3665,7 +3665,7 @@ describe("replacing date parts (.set)", () => {
   });
   it("rejects a mix of the two families, which mongod refuses outright", () => {
     expect(() => jsmql.expr("$.t.set({ year: 2030, isoWeek: 5 })")).toThrow(
-      "'set' takes 'year' or 'isoWeek', not both: they belong to two families that never mix — year/month/day against isoWeekYear/isoWeek/isoDayOfWeek.",
+      "'set' takes 'year' or 'isoWeek', not both. These belong to two families that never mix: year/month/day against isoWeekYear/isoWeek/isoDayOfWeek.",
     );
   });
   it("rejects an unknown part with a suggestion", () => {
@@ -3680,10 +3680,10 @@ describe("replacing date parts (.set)", () => {
   });
   it("needs a written-out object literal — MongoDB reads the parts by name", () => {
     expect(() => jsmql.expr("$.t.set($.parts)")).toThrow(
-      "'set' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "'set' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
     expect(() => jsmql.expr("$.t.set({ ...$.p })")).toThrow(
-      "Spread elements in objects are not supported in MQL output",
+      "MQL has no spread in an object. Write Object.assign(a, b) instead.",
     );
   });
   it("rejects a part that is not an integer, as mongod does", () => {
@@ -3729,7 +3729,7 @@ describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
   });
   it("rejects an unknown unit and a literal non-date argument", () => {
     expect(() => jsmql.expr('$.a.isSame($.b, "days")')).toThrow(
-      "'isSame' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond — got 'days'. Did you mean 'day'?",
+      "'isSame' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'days'. Did you mean 'day'?",
     );
     expect(() => jsmql.expr('$.a.isSame("2020-01-01", "day")')).toThrow(
       "'isSame' expects a date, but got a string. Use a field path or new Date(…).",
@@ -3805,12 +3805,12 @@ describe("date formatting (.format)", () => {
     // Valid MQL — it formats as its own literal text — so nothing but the token
     // spelling reveals the mistake. Hence the compile-time rejection.
     expect(() => jsmql.expr('$.createdAt.format("YYYY-MM-DD HH:mm:ss")')).toThrow(
-      /not Moment\/Luxon tokens .* Did you mean '%Y-%m-%d %H:%M:%S'\?/,
+      /not Moment or Luxon tokens\..* Did you mean '%Y-%m-%d %H:%M:%S'\?/,
     );
   });
   it("names the untranslatable tokens instead of dropping them from a suggestion", () => {
     expect(() => jsmql.expr('$.createdAt.format("dddd, DD MMM YYYY")')).toThrow(
-      /no format specifier for 'dddd', 'MMM': it outputs no month name/,
+      /no format specifier for 'dddd', 'MMM'\. It outputs no month name/,
     );
     expect(() => jsmql.expr('$.createdAt.format("hh:mm A")')).toThrow(/no format specifier for 'hh', 'A'/);
   });
@@ -3873,7 +3873,7 @@ describe("date truncation (.startOf)", () => {
   });
   it("rejects an unknown unit with a suggestion", () => {
     expect(() => jsmql.expr('$.createdAt.startOf("months")')).toThrow(
-      "'startOf' argument 1 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond — got 'months'. Did you mean 'month'?",
+      "'startOf' argument 1 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'months'. Did you mean 'month'?",
     );
   });
   it("rejects a literal non-date receiver", () => {
@@ -3951,7 +3951,7 @@ describe("inclusive bucket end (.endOf)", () => {
       "'.endOf(unit[, timezone])' requires 1 or 2 arguments, got 0",
     );
     expect(() => jsmql.expr('$.createdAt.endOf("months")')).toThrow(
-      "'endOf' argument 1 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond — got 'months'. Did you mean 'month'?",
+      "'endOf' argument 1 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'months'. Did you mean 'month'?",
     );
   });
 });
@@ -3986,7 +3986,7 @@ describe("date difference (.diff)", () => {
   });
   it("rejects an unknown unit with a suggestion", () => {
     expect(() => jsmql.expr('$.end.diff($.start, "days")')).toThrow(
-      "'diff' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond — got 'days'. Did you mean 'day'?",
+      "'diff' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'days'. Did you mean 'day'?",
     );
   });
   it("rejects a literal non-date argument", () => {
@@ -4014,7 +4014,7 @@ describe("date-method trailing options argument", () => {
   });
   it("rejects a spread or computed key — MongoDB needs the field names written out", () => {
     expect(() => jsmql.expr('$.end.diff($.start, "day", { ...$.o })')).toThrow(
-      "Spread elements in objects are not supported in MQL output",
+      "MQL has no spread in an object. Write Object.assign(a, b) instead.",
     );
   });
   it("gates option value types the same way the operator form does", () => {
@@ -4022,7 +4022,7 @@ describe("date-method trailing options argument", () => {
       "'diff' timezone expects a string, but got a number.",
     );
     expect(() => jsmql.expr('$.end.diff($.start, "week", { startOfWeek: "moonday" })')).toThrow(
-      "'diff' startOfWeek must be one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday, mon, tue, wed, thu, fri, sat, sun — got 'moonday'. Did you mean 'monday'?",
+      "'diff' startOfWeek must be one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday, mon, tue, wed, thu, fri, sat, sun. It got 'moonday'. Did you mean 'monday'?",
     );
   });
   it("passes option values that are field paths through unchecked (literal-gating)", () => {
@@ -4293,7 +4293,7 @@ describe("Math.* as bare callable in array methods", () => {
   });
   it("rejects bare Math reference used as a value", () => {
     expect(() => jsmql.expr("$.x = Math.floor")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
     );
   });
 });
@@ -4621,9 +4621,11 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   describe("rejects stringifying an array of arrays, instead of mis-emitting it", () => {
     it(".join() and .toString() reject a literal of literals", () => {
       expect(() => jsmql.expr('[[1, 2], [3]].join(",")')).toThrow(
-        /\.join\(\) can't stringify an array of arrays — this array literal holds arrays/,
+        /\.join\(\) cannot stringify an array of arrays\. this array literal holds arrays/,
       );
-      expect(() => jsmql.expr("[[1, 2], [3]].toString()")).toThrow(/\.toString\(\) can't stringify an array of arrays/);
+      expect(() => jsmql.expr("[[1, 2], [3]].toString()")).toThrow(
+        /\.toString\(\) cannot stringify an array of arrays/,
+      );
     });
 
     it("the message offers both ways out", () => {
@@ -4634,7 +4636,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
     it(".partition() is the other provable shape", () => {
       expect(() => jsmql('$.r = $$$.orders.partition(o => o.v > 0).join(",");')).toThrow(
-        /\.join\(\) can't stringify an array of arrays — '\.partition\(\.\.\.\)' holds arrays/,
+        /\.join\(\) cannot stringify an array of arrays\. '\.partition\(\.\.\.\)' holds arrays/,
       );
     });
 
@@ -4665,7 +4667,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
     it("a key-function method gets the same lead and no suggestion", () => {
       expect(() => jsmql("$.r = $$$.orders.sortBy((o) => { $limit(2); });")).toThrow(
-        "`$limit(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $limit(...); … })', the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$limit(…)'. at position 33",
+        "`$limit(...)` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $limit(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$limit(…)'. at position 33",
       );
     });
 
@@ -4983,7 +4985,7 @@ describe("array method additions", () => {
   });
   it(".toSpliced still refuses a negative deleteCount", () => {
     expect(() => jsmql.expr("$.xs.toSpliced(1, -1)")).toThrow(
-      "'toSpliced' argument 2 must be a number from 0 to Infinity — got -1.",
+      "'toSpliced' argument 2 must be a number from 0 to Infinity. It got -1.",
     );
   });
   it(".with(i, v) replaces an element by index", () => {
@@ -5014,7 +5016,7 @@ describe("array method additions", () => {
   });
   it(".with with a negative index literal throws", () => {
     expect(() => jsmql.expr("$.xs.with(-1, 9)")).toThrow(
-      "'with' argument 1 must be a number from 0 to Infinity — got -1.",
+      "'with' argument 1 must be a number from 0 to Infinity. It got -1.",
     );
   });
   it("enforces .with arity (exactly 2)", () => {
@@ -5467,53 +5469,53 @@ describe("array callbacks support (element, index)", () => {
 describe("mutator DX shims (expression position rejects mutators)", () => {
   it(".sort() points at .toSorted() and statement position", () => {
     expect(() => jsmql.expr("$.xs.sort()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'sort' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'sort' stage call instead. Use jsmql.pipeline().",
     );
     expect(() => jsmql.expr("$.xs.sort()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'sort' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'sort' stage call instead. Use jsmql.pipeline().",
     );
   });
   it(".reverse() points at .toReversed() and statement position", () => {
     expect(() => jsmql.expr("$.xs.reverse()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'reverse' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'reverse' stage call instead. Use jsmql.pipeline().",
     );
     expect(() => jsmql.expr("$.xs.reverse()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'reverse' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'reverse' stage call instead. Use jsmql.pipeline().",
     );
   });
   it(".splice() points at .toSpliced()", () => {
     expect(() => jsmql.expr("$.xs.splice(1, 2)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'splice' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'splice' stage call instead. Use jsmql.pipeline().",
     );
   });
   it(".push() points at .concat() / spread", () => {
     expect(() => jsmql.expr("$.xs.push(1)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'push' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'push' stage call instead. Use jsmql.pipeline().",
     );
   });
   it(".pop() points at .at(-1) / .slice(0, -1)", () => {
     expect(() => jsmql.expr("$.xs.pop()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'pop' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'pop' stage call instead. Use jsmql.pipeline().",
     );
   });
   it(".shift() points at .at(0) / .slice(1)", () => {
     expect(() => jsmql.expr("$.xs.shift()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'shift' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'shift' stage call instead. Use jsmql.pipeline().",
     );
   });
   it(".unshift() points at .concat() / spread", () => {
     expect(() => jsmql.expr("$.xs.unshift(1)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'unshift' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'unshift' stage call instead. Use jsmql.pipeline().",
     );
   });
   it(".fill() throws with a workaround hint", () => {
     expect(() => jsmql.expr("$.xs.fill(0)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'fill' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'fill' stage call instead. Use jsmql.pipeline().",
     );
   });
   it(".copyWithin() throws with a workaround hint", () => {
     expect(() => jsmql.expr("$.xs.copyWithin(0, 1)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'copyWithin' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'copyWithin' stage call instead. Use jsmql.pipeline().",
     );
   });
 });
@@ -5743,7 +5745,9 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
         in: { $slice: ["$a", "$$jsmqlI", 2] },
       },
     });
-    expect(() => jsmql.expr("$.a.chunk(0)")).toThrow("'chunk' argument 1 must be a number from 1 to Infinity — got 0.");
+    expect(() => jsmql.expr("$.a.chunk(0)")).toThrow(
+      "'chunk' argument 1 must be a number from 1 to Infinity. It got 0.",
+    );
   });
   it(".intersection is $setIntersection; .difference keeps duplicates, so it stays a $filter", () => {
     // lodash documents `.intersection` as returning UNIQUE values. A `$filter` would
@@ -5955,13 +5959,13 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
   // $map over a boolean/number/string, $slice over an object). Verified on mongod.
   it("rejects a method chained on a provably boolean receiver (only .toString/.getTime survive)", () => {
     expect(() => jsmql.expr("$.items.every(x => x.ok).map(y => y)")).toThrow(
-      "'.map()' is not available on a 'bool' — it is defined on 'array', 'stream'. A boolean has no methods; use it as a condition ('cond ? a : b').",
+      "'.map()' is not available on a 'bool' — it is defined on 'array', 'stream'. A boolean has no methods. Use it as a condition ('cond ? a : b').",
     );
     expect(() => jsmql.expr("$.items.some(x => x.ok).filter(y => y)")).toThrow(
-      "'.filter()' is not available on a 'bool' — it is defined on 'array', 'stream'. A boolean has no methods; use it as a condition ('cond ? a : b').",
+      "'.filter()' is not available on a 'bool' — it is defined on 'array', 'stream'. A boolean has no methods. Use it as a condition ('cond ? a : b').",
     );
     expect(() => jsmql.expr('$.name.startsWith("A").trim()')).toThrow(
-      "'.trim()' is not available on a 'bool' — it is defined on 'string'. A boolean has no methods; use it as a condition ('cond ? a : b').",
+      "'.trim()' is not available on a 'bool' — it is defined on 'string'. A boolean has no methods. Use it as a condition ('cond ? a : b').",
     );
     // …but the two universal methods still compile on a boolean.
     expect(() => jsmql.expr("$.items.every(x => x.ok).toString()")).not.toThrow();
@@ -6187,7 +6191,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // on a field, which `jsmql.expr` reads as the statement it is, and on a
     // computed array, where the value road names the immutable twin.
     expect(() => jsmql.expr("$.a.sort()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'sort' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'sort' stage call instead. Use jsmql.pipeline().",
     );
     expect(() => jsmql.expr("$.a.filter(x => x > 1).sort()")).toThrow(
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'",
@@ -6355,11 +6359,15 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
     });
   });
   it(".take / .takeRight / .drop reject a negative count with a mirror-method hint", () => {
-    expect(() => jsmql.expr("$.a.take(-1)")).toThrow("'take' argument 1 must be a number from 0 to Infinity — got -1.");
-    expect(() => jsmql.expr("$.a.takeRight(-1)")).toThrow(
-      "'takeRight' argument 1 must be a number from 0 to Infinity — got -1.",
+    expect(() => jsmql.expr("$.a.take(-1)")).toThrow(
+      "'take' argument 1 must be a number from 0 to Infinity. It got -1.",
     );
-    expect(() => jsmql.expr("$.a.drop(-1)")).toThrow("'drop' argument 1 must be a number from 0 to Infinity — got -1.");
+    expect(() => jsmql.expr("$.a.takeRight(-1)")).toThrow(
+      "'takeRight' argument 1 must be a number from 0 to Infinity. It got -1.",
+    );
+    expect(() => jsmql.expr("$.a.drop(-1)")).toThrow(
+      "'drop' argument 1 must be a number from 0 to Infinity. It got -1.",
+    );
   });
 });
 
@@ -6550,7 +6558,7 @@ describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
   });
   it(".sortBy rejects an object arg (lodash matches-shorthand, not a direction)", () => {
     expect(() => jsmql.expr("$.a.sortBy({ age: -1 })")).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions — lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. lodash's sortBy takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
     );
   });
   it(".orderBy zips parallel keys + orders; missing orders default ascending", () => {
@@ -6568,7 +6576,7 @@ describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
   });
   it(".orderBy({ … }) rejects a second orders arg (directions are already in the object)", () => {
     expect(() => jsmql.expr('$.a.orderBy({ score: -1 }, ["asc"])')).toThrow(
-      ".orderBy({ field: dir }) carries its directions inline; a second argument has nothing to say.",
+      ".orderBy({ field: dir }) carries its directions inline. A second argument has nothing to say.",
     );
   });
 });
@@ -6605,7 +6613,7 @@ describe("lodash random value methods — sample / sampleSize ($rand)", () => {
       $let: { in: { $map: { input: { $slice: ["$$jsmqlShuffled", 1] } } } },
     });
     expect(() => jsmql.expr("$.a.sampleSize(-1)")).toThrow(
-      "'sampleSize' argument 1 must be a number from 0 to Infinity — got -1.",
+      "'sampleSize' argument 1 must be a number from 0 to Infinity. It got -1.",
     );
   });
 });
@@ -6849,7 +6857,7 @@ describe("statement-position mutators", () => {
   });
   it("expression-position .push in a $project body throws", () => {
     expect(() => jsmql.expr("$.events.push(x)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'push' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'push' stage call instead. Use jsmql.pipeline().",
     );
   });
   it("two writes to the same field split into two $set stages (read-after-write)", () => {
@@ -7426,17 +7434,17 @@ describe("error cases", () => {
   });
   it("lambda in non-method context throws", () => {
     expect(() => jsmql.expr("$abs(x => x)")).toThrow(
-      /A function \(=>\) is only valid as the callback to an iterating array method/,
+      /A function \(=>\) is only valid as the callback to an array method that iterates/,
     );
   });
   it("rejects an assignment to a method-call result, with a precise message", () => {
     expect(() => jsmql.expr("$.s.trim() = 1")).toThrow(
-      "Cannot apply '=' to the result of '.trim()' at position 11 — only a field, a binding, '$', '$$' or a collection can be written. Write the result to a field instead: '$.<field> = <receiver>.trim();'.",
+      "Cannot apply '=' to the result of '.trim()', at position 11. You can write only to a field, a binding, '$', '$$' or a collection. Write the result to a field instead: '$.<field> = <receiver>.trim();'.",
     );
   });
   it("rejects an assignment to a literal, with a precise message", () => {
     expect(() => jsmql.expr("42 = 1")).toThrow(
-      "Cannot apply '=' to a NumberLiteral — only a field, a binding, '$', '$$' or a collection can be written at position 3",
+      "Cannot apply '=' to a NumberLiteral. You can write only to a field, a binding, '$', '$$' or a collection. at position 3",
     );
   });
 });
@@ -7711,16 +7719,16 @@ describe("comparison precedence: relational higher than equality", () => {
 
 describe("in operator RHS validation", () => {
   it("throws on string RHS", () => {
-    expect(() => jsmql.expr('$.x in "abc"')).toThrow(/Right-hand side of 'in'/);
+    expect(() => jsmql.expr('$.x in "abc"')).toThrow(/The right side of 'in'/);
   });
   it("throws on number RHS", () => {
-    expect(() => jsmql.expr("$.x in 42")).toThrow(/Right-hand side of 'in'/);
+    expect(() => jsmql.expr("$.x in 42")).toThrow(/The right side of 'in'/);
   });
   it("throws on boolean RHS", () => {
-    expect(() => jsmql.expr("$.x in true")).toThrow(/Right-hand side of 'in'/);
+    expect(() => jsmql.expr("$.x in true")).toThrow(/The right side of 'in'/);
   });
   it("throws on null RHS", () => {
-    expect(() => jsmql.expr("$.x in null")).toThrow(/Right-hand side of 'in'/);
+    expect(() => jsmql.expr("$.x in null")).toThrow(/The right side of 'in'/);
   });
   it("accepts array literal RHS", () => {
     expect(jsmql.expr('$.x in ["a", "b"]')).toEqual({ $in: ["$x", ["a", "b"]] });
@@ -7755,7 +7763,7 @@ describe("in operator RHS validation", () => {
 describe("EOF error message", () => {
   it("empty string gives Unexpected end of expression", () => {
     expect(() => jsmql.expr("")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a `;`-separated Pipeline instead. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
     );
   });
   it("trailing operator gives Unexpected end of expression", () => {
@@ -8660,7 +8668,7 @@ describe(".flat / .flatMap", () => {
     });
   });
   it("rejects flat(2)", () => {
-    expect(() => jsmql.expr("$.nested.flat(2)")).toThrow("'flat' argument 1 must be a number from 1 to 1 — got 2.");
+    expect(() => jsmql.expr("$.nested.flat(2)")).toThrow("'flat' argument 1 must be a number from 1 to 1. It got 2.");
   });
   it("flatMap with lambda", () => {
     expect(jsmql.expr("$.docs.flatMap(d => d.tags)")).toEqual({
@@ -9510,13 +9518,13 @@ describe("jsmql.compile()", () => {
   describe("error: rejects a default in the destructure", () => {
     it("rejects a literal default, with the explanatory message", () => {
       expect(() => jsmql.compile(({ minAge = 18 }: { minAge?: number }, { $ }) => $.age > minAge)).toThrow(
-        "A default value in the params destructure is not supported ('minAge = …'). Apply the default where the query is called, with JS's `??` at the call site — q({ minAge: input ?? <default> }) — or write the value into the template-tag form. at position 10",
+        "jsmql does not support a default value in the params destructure ('minAge = …'). Apply the default where you call the query. Use JS's `??` at the call site: q({ minAge: input ?? <default> }). Or write the value into the template-tag form. at position 10",
       );
     });
 
     it("rejects an expression default, with the explanatory message", () => {
       expect(() => jsmql.compile(({ now = Date.now() }: { now?: number }, { $ }) => $.createdAt > now)).toThrow(
-        "A default value in the params destructure is not supported ('now = …'). Apply the default where the query is called, with JS's `??` at the call site — q({ now: input ?? <default> }) — or write the value into the template-tag form. at position 7",
+        "jsmql does not support a default value in the params destructure ('now = …'). Apply the default where you call the query. Use JS's `??` at the call site: q({ now: input ?? <default> }). Or write the value into the template-tag form. at position 7",
       );
     });
 
@@ -9556,7 +9564,7 @@ describe("jsmql.compile()", () => {
     it("rejects an array destructure", () => {
       const src = "([a, b], { $ }) => $.x > a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
-        "jsmql expects each parameter to be an object destructure pattern, e.g. '({ $ }) => …', but got '[' at position 1",
+        "jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got '['. at position 1",
       );
     });
   });
@@ -9640,7 +9648,7 @@ describe("jsmql.compile()", () => {
 
     it("rejects a non-arrow string with the same FunctionInputError message", () => {
       expect(() => jsmql.compile("$.age > 18")).toThrow(
-        "jsmql.compile() takes the entry form '(params, { $, … }) => …' — an arrow whose first destructure names the parameters. at position 0",
+        "jsmql.compile() takes the entry form '(params, { $, … }) => …'. This is an arrow whose first destructure names the parameters. at position 0",
       );
     });
 
@@ -9847,13 +9855,13 @@ describe("jsmql.expr()", () => {
 
   it("a update op lowers like jsmql() — to a `$set` update document", () => {
     expect(() => jsmql.expr("$.name = $.name.toUpperCase()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
     );
   });
 
   it("a `;`-separated input lowers like jsmql() — to a Pipeline", () => {
     expect(() => jsmql.expr("$match($.age > 18); $sort({ age: 1 });")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a `;`-separated Pipeline instead. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
     );
   });
 
@@ -9872,7 +9880,7 @@ describe("jsmql.expr()", () => {
     // and as a stage body a bare `$eq` is "unknown top level operator". The stage document
     // comes from `jsmql.pipeline`, and the expression from `jsmql.expr` on the predicate.
     expect(() => jsmql.expr("$match($.a === 0)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level '$match' stage call. Use jsmql.pipeline() — for a Filter, drop the `$match(...)` wrapper and pass its predicate.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level '$match' stage call instead. Use jsmql.pipeline() — for a Filter, drop the `$match(...)` wrapper and pass its predicate.",
     );
     expect(jsmql.pipeline("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
     expect(jsmql.expr("$.a === 0")).toEqual({ $eq: ["$a", 0] });
@@ -9899,12 +9907,12 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
     // docs/specs/union-stage.md.
     it("dot-ident form (not .push / .filter) throws statement-only at codegen", () => {
       expect(() => jsmql.expr("$$.foo")).toThrow(
-        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
+        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
       );
     });
     it("bracket-expr form (string literal) throws statement-only at codegen", () => {
       expect(() => jsmql.expr('$$["foo"]')).toThrow(
-        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
+        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
       );
     });
     it("bracket-expr form (compile-form param) throws when the compiled function is called", () => {
@@ -9938,12 +9946,12 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
       // the `$$$.<coll> = …` $out sugar, the bare reference message points
       // at both supported shapes.
       expect(() => jsmql.expr("$$$.myColl")).toThrow(
-        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
+        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
       );
     });
     it('bracket-expr form: $$$["coll"] is not a value either', () => {
       expect(() => jsmql.expr('$$$["coll"]')).toThrow(
-        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
+        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
       );
     });
     it("$$$.<coll>.find(...) outside Pipeline mode hits the bare-reference error", () => {
@@ -9964,7 +9972,7 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
     // representative case suffices here.
     it("dot.dot: $$$$.myDb.myColl is only a cross-db $out destination", () => {
       expect(() => jsmql.expr("$$$$.myDb.myColl")).toThrow(
-        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
+        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
       );
     });
     it(".pos points at the $$$$ prefix", () => {

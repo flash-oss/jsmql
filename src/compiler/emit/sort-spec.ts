@@ -59,7 +59,7 @@ function paramPath(e: Expr, param: string): string | null {
 const fieldName = (e: Expr, method: string): string => {
   if (e.type !== "StringLiteral" || e.value === "" || e.value.startsWith("$")) {
     throw new CodegenError(
-      `.${method}() sorts by a field NAME — a plain string like "age", with no leading '$'.`,
+      `.${method}() sorts by a field NAME: a plain string like "age", with no leading '$'.`,
       e.pos,
     );
   }
@@ -75,7 +75,7 @@ export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec
     const spec: SortSpec = {};
     for (const el of arg.elements) {
       if (el.type === "SpreadElement")
-        throw new CodegenError(`.${method}([fields]) lists its field names; '...' cannot spread them in.`, el.pos);
+        throw new CodegenError(`.${method}([fields]) lists its field names. '...' cannot spread them in.`, el.pos);
       spec[fieldName(el as Expr, method)] = 1;
     }
     return spec;
@@ -83,7 +83,7 @@ export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec
   if (arg.type === "ObjectLiteral") {
     if (!objects) {
       throw new CodegenError(
-        `.${method}({ … }) reads an object as a lodash matcher, not as directions — lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.`,
+        `.${method}({ … }) reads an object as a lodash matcher, not as directions. lodash's sortBy takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.`,
         arg.pos,
       );
     }
@@ -91,7 +91,7 @@ export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec
     const spec: SortSpec = {};
     for (const entry of arg.entries) {
       if (entry.type === "SpreadElement")
-        throw new CodegenError(`.${method}({ … }) names its fields; '...' cannot spread them in.`, entry.pos);
+        throw new CodegenError(`.${method}({ … }) names its fields. '...' cannot spread them in.`, entry.pos);
       if (entry.key.kind !== "static")
         throw new CodegenError(`.${method}({ … }) keys are field names, written plainly.`, entry.pos);
       const dir = sortDirection(entry.value);
@@ -115,7 +115,7 @@ export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec
 function keyFunctionSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string): SortAsk {
   if (arg.body === undefined) {
     throw new CodegenError(
-      `.${method}(x => …) takes an expression body — 'x => x.age', or 'x => -x.age' for descending.`,
+      `.${method}(x => …) takes an expression body: 'x => x.age', or 'x => -x.age' for descending.`,
       arg.pos,
     );
   }
@@ -204,7 +204,7 @@ export function sortSpecOf(arg: Expr, method: string, objects = true): SortAsk {
     if (arg.params.length === 1) return keyFunctionSpec(arg, method);
     if (arg.params.length === 2) return comparatorSpec(arg, method);
     throw new CodegenError(
-      `.${method}() takes a key function ('x => x.age') or a comparator ('(a, b) => a.age - b.age'), and this arrow has ${arg.params.length} parameters.`,
+      `.${method}() takes a key function ('x => x.age') or a comparator ('(a, b) => a.age - b.age'). This arrow has ${arg.params.length} parameters.`,
       arg.pos,
     );
   }
@@ -231,7 +231,7 @@ export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string
   if (keys.type === "ObjectLiteral") {
     if (orders !== undefined) {
       throw new CodegenError(
-        `.${method}({ field: dir }) carries its directions inline; a second argument has nothing to say.`,
+        `.${method}({ field: dir }) carries its directions inline. A second argument has nothing to say.`,
         orders.pos,
       );
     }
@@ -284,7 +284,7 @@ export function streamSortAsk(ask: SortAsk, method: string, element = ""): Stage
   const named = ask.dir === 1 ? `${a}.age - ${b}.age` : `${b}.age - ${a}.age`;
   const key = ask.dir === 1 ? "d.age" : "-d.age";
   throw new CodegenError(
-    `.${method}((${a}, ${b}) => ${body}) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.${method}((${a}, ${b}) => ${named})', or '.${method}(d => ${key})'.`,
+    `.${method}((${a}, ${b}) => ${body}) sorts by the WHOLE element. A stream carries documents, and MongoDB sorts a document by field NAME. Name the field: '.${method}((${a}, ${b}) => ${named})', or '.${method}(d => ${key})'.`,
     ask.pos,
   );
 }

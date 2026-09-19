@@ -198,13 +198,13 @@ describe("assert — rejections", () => {
 
   it("rejects in jsmql.filter()", () => {
     expect(() => jsmql.filter("assert($.x > 0, 'm')")).toThrow(
-      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a top-level 'assert' stage call. Use jsmql.pipeline().",
+      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes). It received a top-level 'assert' stage call instead. Use jsmql.pipeline().",
     );
   });
 
   it("rejects in jsmql.expr()", () => {
     expect(() => jsmql.expr("assert($.x > 0, 'm')")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'assert' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'assert' stage call instead. Use jsmql.pipeline().",
     );
   });
 

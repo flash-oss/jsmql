@@ -146,7 +146,7 @@ describe("$$.length — call forms", () => {
 describe("$$.length — rejections", () => {
   it("rejects in jsmql.expr() (no stream)", () => {
     expect(() => jsmql.expr("$$.length")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
     );
   });
 

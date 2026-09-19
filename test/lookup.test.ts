@@ -59,7 +59,7 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
     // `null`. A user who writes `o.userId == $._id` gets the same actionable
     // error they would anywhere else in jsmql (pointed at `===`).
     expect(() => jsmql("$.orders = $$$.orders.filter(o => o.userId == $._id);")).toThrow(
-      /'=='\s*is only allowed against null in jsmql\. Use '==='/,
+      /'=='\s*is only allowed against null in JSMQL\. Use '==='/,
     );
   });
 });
@@ -243,7 +243,7 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
           assert(ordersColl.length > 0, "User without orders is impossible");
         });
       `),
-    ).toThrow(/'ordersColl' is the body's own stream, and this body runs '\$match'/);
+    ).toThrow(/'ordersColl' is the body's own stream\. This body runs '\$match'/);
   });
 
   // Deep cross-level capture: a ROOT read (`$.region`) inside a NESTED block-body
@@ -262,7 +262,7 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
         });
       `),
     ).toThrow(
-      "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'); write the outer field after the join.",
+      "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.",
     );
   });
 
@@ -275,7 +275,7 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
   it("rejects a non-`.length` use of the collection handle in the block", () => {
     expect(() =>
       jsmql(`$.x = $$$.orders.aggregate((o, i, c) => { $match(o.userId === $._id); $.first = c[0]; });`),
-    ).toThrow(/can't be written|only 'c/);
+    ).toThrow(/cannot be written|only 'c/);
   });
 
   // An ANCESTOR body's handle is a different stream from this body's, so its count
@@ -419,7 +419,7 @@ describe("$$$.coll.find/filter — chained terminals", () => {
 describe("$$$.coll.find/filter — error cases", () => {
   it("bare $$$ outside a chain points at the lookup and $out shapes", () => {
     expect(() => jsmql.expr("$$$.myColl")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a bare expression that would lower to a Filter (`$.age > 18`) instead. Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.",
     );
   });
 
@@ -459,19 +459,19 @@ describe("$$$.coll.find/filter — error cases", () => {
 
   it("Filter-mode rejection names Pipeline mode as the fix", () => {
     expect(() => jsmql.filter("$.x = $$$.users.find(u => u._id === $._id)")).toThrow(
-      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
     );
   });
 
   it("jsmql.update() pre-rejects lookup with a stage-whitelist hint", () => {
     expect(() => jsmql.update("$.x = $$$.users.find(u => u._id === $._id);")).toThrow(
-      "A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'), which 'updateOne' accepts as well.",
+      "A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'). 'updateOne' also accepts this form.",
     );
   });
 
   it("jsmql.expr() rejects lookup syntax", () => {
     expect(() => jsmql.expr("$$$.users.find(u => u._id === $._id)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'find' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'find' stage call instead. Use jsmql.pipeline().",
     );
   });
 
@@ -491,22 +491,22 @@ describe("$$$.coll.find/filter — error cases", () => {
 
     it("jsmql.filter() rejects it the same way it rejects a `.find` head", () => {
       expect(() => jsmql.filter(streamHead)).toThrow(
-        "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+        "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
       );
       expect(() => jsmql.filter(findHead)).toThrow(
-        "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+        "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
       );
     });
 
     it("jsmql.expr() rejects it instead of emitting a $lookup pipeline", () => {
       expect(() => jsmql.expr(streamHead)).toThrow(
-        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
+        "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a write (`$.x = …`, `delete $.x`) instead. Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.",
       );
     });
 
     it("jsmql.update() rejects it pre-codegen, naming jsmql.pipeline()", () => {
       expect(() => jsmql.update(`${streamHead};`)).toThrow(
-        "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$$.<coll>.filter(…).length; }`); it has no meaning in a Filter or in 'jsmql.expr'.",
+        "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline — for example, `({ $ }) => { $.n = $$$.<coll>.filter(…).length; }`. It has no meaning in a Filter or in 'jsmql.expr'.",
       );
     });
 
@@ -722,7 +722,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     expect(() =>
       jsmql("$.x = $$$.a.aggregate(a => { $match(a.active); $.bs = $$$.b.filter(b => b.aId === a._id); });"),
     ).toThrow(
-      "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'); write the outer field after the join.",
+      "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.",
     );
   });
 
@@ -732,7 +732,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
         "$.x = $$$.a.aggregate(a => { $.bs = $$$.b.aggregate(b => { $match(b.aId === a._id); $sort({ _id: 1 }); }); });",
       ),
     ).toThrow(
-      "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'); write the outer field after the join.",
+      "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.",
     );
   });
 
@@ -788,7 +788,7 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database reads are rejected", (
 
   it("a .filter lookup is rejected", () => {
     expect(() => jsmql("$.x = $$$$.analytics.orders.filter(o => o.userId === $._id)")).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 
@@ -798,7 +798,7 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database reads are rejected", (
   // (`joinValue` in src/compiler/emit/join.ts), so it keeps its own case:
   it("a chained .length on a cross-DB .filter is rejected", () => {
     expect(() => jsmql("let n = $$$$.analytics.orders.filter(o => o.userId === $._id).length;")).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 });
@@ -1191,7 +1191,7 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
 
   it("a cross-database stream-method head is still rejected at the chain base", () => {
     expect(() => jsmql("$.x = $$$$.other.orders.toSorted({ x: -1 });")).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 });
@@ -1299,10 +1299,10 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     // position-accurate: consumed as a value, the chain lowers to an array operator
     // with nowhere to run stages at all. Both named rewrites compile (asserted below).
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
-      "`$sort(...)` at position 28 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
+      "`$sort(...)` at position 28 is a pipeline stage. The 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })'. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
-      "`$sort(...)` at position 28 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
+      "`$sort(...)` at position 28 is a pipeline stage. The 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })'. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
     // Rewrite 1: stay a sub-pipeline and reshape with a stage — `$` inside the body is the OUTER document, which the body reads and never writes.
     expect(() =>
@@ -1316,7 +1316,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
 
   it("the same rejection on a chained `.find` does not offer the `.map`-only rewrite", () => {
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).toThrow(
-      "`$match(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $match(...); … })', the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$match(…)'. at position 58",
+      "`$match(...)` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $match(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$match(…)'. at position 58",
     );
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).not.toThrow(
       /`return` a document/,
@@ -1431,7 +1431,7 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
     // assertion read a missing value: it fired on every document, empty or not.
     expect(() =>
       jsmql('$.g = $$$.c.aggregate((o, _i, coll) => { $group({ _id: "$s" }); assert(coll.length > 0, "empty"); });'),
-    ).toThrow(/'coll' is the body's own stream, and this body runs '\$group'/);
+    ).toThrow(/'coll' is the body's own stream\. This body runs '\$group'/);
   });
 
   it("array form correlates: an outer $. ref inside $expr auto-lets into $lookup.let", () => {
@@ -1771,7 +1771,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
   it("non-.length use of the 3rd 'collection' param is rejected", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate((o, _i, coll) => { $match(o.n === coll[0]); });")).toThrow(
-      "'coll' is the body's own stream, and this body runs '$match', which changes what its count means — 'coll.length' is stamped into a field ahead of the body, and that stage either drops the field or changes how many documents there are. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop 'coll' from the parameter list.",
+      "'coll' is the body's own stream. This body runs '$match', which changes what its count means. The compiler stamps 'coll.length' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop 'coll' from the parameter list.",
     );
   });
 
@@ -1783,7 +1783,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
   it("an empty pipeline is rejected (array form; the arrow form's empty block is a parse error)", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate([]);")).toThrow(
-      "'.aggregate()' needs at least one stage — an empty list has none. List the stages — '.aggregate([$match(…), $sort(…)])' — or drop the '.aggregate()' link.",
+      "'.aggregate()' needs at least one stage. An empty list has none. List the stages — '.aggregate([$match(…), $sort(…)])' — or drop the '.aggregate()' link.",
     );
   });
 
@@ -1832,7 +1832,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
   it("cross-database aggregate read is rejected", () => {
     expect(() => jsmql("$.x = $$$$.db.c.aggregate((o) => { $sort({ a: 1 }); });")).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 
@@ -1860,7 +1860,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
   it("a trailing `return` inside an aggregate block is rejected (it's not a per-doc reshape)", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate((o) => { $sort({ a: 1 }); return o.v; });")).toThrow(
-      "`$sort(...)` at position 31 is a pipeline stage, and the 'return' at position 48 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
+      "`$sort(...)` at position 31 is a pipeline stage. The 'return' at position 48 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })'. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
   });
 
@@ -1907,7 +1907,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
     it("the suggested collection spelling follows a cross-database receiver", () => {
       expect(() => jsmql("$.x = $$$$.dw.orders.head().aggregate((o) => { $limit(1); });")).toThrow(
-        "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+        "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
       );
     });
 
@@ -1973,7 +1973,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
     it("names the way out: a field of the document, or no terminal at all", () => {
       expect(() => jsmql("$.r = $$$.orders.head().map(x => x);")).toThrow(
-        /A document is not a list: read one of its fields \('\.<field>'\), or drop the terminal/,
+        /A document is not a list\. Read one of its fields \('\.<field>'\), or drop the terminal/,
       );
     });
 
@@ -2327,7 +2327,7 @@ describe("$$$.coll — where the hoisted $lookup lands", () => {
   // has nowhere to put one: the body would read a variable the stage never bound.
   it("refuses a join whose body reads a variable an enclosing callback binds", () => {
     expect(() => jsmql("$.n = $.items.map(x => $$$.products.find({ _id: x.pid }).name);")).toThrow(
-      "'x' is bound by an enclosing callback, and a read of another collection is a '$lookup' STAGE: the server runs it over the documents, outside that callback, where 'x' has no value. Make the elements documents first ('$$ = $.<array>;' — then each one is a document the join reads, '$.<field> = $$$.<coll>.find(…)'), or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);') and use that binding inside it.",
+      "'x' is bound by an enclosing callback. A read of another collection is a '$lookup' STAGE: the server runs it over the documents, outside that callback, where 'x' has no value. Make the elements documents first — '$$ = $.<array>;' — then each one is a document the join reads: '$.<field> = $$$.<coll>.find(…)'. Or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);') and use that binding inside it.",
     );
     // both spellings the message names do compile
     expect(jsmql("$$ = $.items; $.name = $$$.products.find({ _id: $.pid }).name;")).toEqual([

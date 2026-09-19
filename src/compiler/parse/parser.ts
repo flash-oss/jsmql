@@ -119,8 +119,8 @@ export function parseExpression(source: string): Expr {
  * `blockBody: "stages"`.
  */
 const needsReturn = (pos: number, got: string): string =>
-  `A block body must end with a \`return <expr>\` statement at position ${pos}, got ${got}. Write \`x => { const a = …; return <expr>; }\` / ` +
-  "`function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly";
+  `A block body must end with a \`return <expr>\` statement at position ${pos}, got ${got}. Write \`x => { const a = …; return <expr>; }\`. ` +
+  "Or write `function f(x) { return <expr>; }`. Or write `x => (<expr>)` to return an object or an expression directly.";
 
 /** How a message spells a statement that stands where a callback's declarations go. */
 /** A statement that IS a pipeline statement: a stage call, a bare call such as `assert(…)`, a write, or a function declaration. This excludes a stray expression (`d.v;`). */
@@ -164,7 +164,7 @@ function statementSpelling(stmt: PipelineStmt): string {
 function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   const wrote = statementSpelling(stmt);
   if (stmt.type === "FuncDecl") {
-    return `\`${wrote}\` declares a reusable function, and a reusable function is declared at the top level of a pipeline, not inside a callback. Write \`${wrote};\` as its own statement before this one, then call '${stmt.name}(…)' inside the callback.`;
+    return `\`${wrote}\` declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(…)' inside the callback.`;
   }
   // '.aggregate' is the one method whose block IS a list of stages, so every way
   // out names it. Deleting only the 'return' leaves the same block on the same
@@ -173,9 +173,9 @@ function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   const link = stmt.type === "OperatorCall" ? `'$$.$${(stmt as { name: string }).name.replace(/^\$/, "")}(…)'` : null;
   const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
   if (retPos !== null) {
-    return `\`${wrote}\` at position ${(stmt as { pos: number }).pos} is a pipeline stage, and the 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}, which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'.${chain}`;
+    return `\`${wrote}\` at position ${(stmt as { pos: number }).pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
   }
-  return `\`${wrote}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to ${stages}, the one method whose block is a list of stages.${chain}`;
+  return `\`${wrote}\` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
 }
 
 /** `$.a.b` for a field target, or the bare name otherwise. */
@@ -209,7 +209,7 @@ type ParamRead =
 function notAPlainPattern(pos: number, wrote?: string): ParseError {
   const got = wrote === undefined ? "" : ` ('${wrote}')`;
   return new ParseError(
-    `A destructured parameter lists plain names only — '([id, count]) => …', '({ sku, qty: n }) => …'. A default value, a rest element, a nested pattern or a computed key${got} is not one of them at position ${pos}. Name the parameter and read its parts: 'x => x[0]', 'x => x.sku ?? 1', 'x => x.slice(1)'.`,
+    `A destructured parameter lists plain names only — '([id, count]) => …', '({ sku, qty: n }) => …'. A default value, a rest element, a nested pattern or a computed key${got} is not one of them, at position ${pos}. Name the parameter. Read its parts instead: 'x => x[0]', 'x => x.sku ?? 1', 'x => x.slice(1)'.`,
     pos,
   );
 }
@@ -271,7 +271,7 @@ class Parser {
     this.c.expect("RParen");
     if (slots.length > 2) {
       throw new ParseError(
-        `An entry function takes at most two parameters — the params destructure and the toolbox destructure. Got ${slots.length}`,
+        `An entry function takes at most two parameters: the params destructure and the toolbox destructure. It got ${slots.length}.`,
         slots[2][0]?.pos ?? open.pos,
       );
     }
@@ -302,7 +302,7 @@ class Parser {
     const open = this.c.peek();
     if (!this.c.is("LBrace")) {
       throw new ParseError(
-        `jsmql expects each parameter to be an object destructure pattern, e.g. '({ $ }) => …', but got ${found(open)}`,
+        `jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got ${found(open)}.`,
         open.pos,
       );
     }
@@ -316,7 +316,7 @@ class Parser {
         // `{ a = 1 }`: a value reaches a compiled query only through the params object, at call time.
         if (this.c.is("Eq")) {
           throw new ParseError(
-            `A default value in the params destructure is not supported ('${key.text} = …'). Apply the default where the query is called, with JS's \`??\` at the call site — q({ ${key.text}: input ?? <default> }) — or write the value into the template-tag form.`,
+            `jsmql does not support a default value in the params destructure ('${key.text} = …'). Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
             this.c.peek().pos,
           );
         }
@@ -374,7 +374,10 @@ class Parser {
       // A `return` in an entry block yields the expression itself. So a bare
       // predicate stays a predicate, and the position phase reads it as a Filter.
       if (stmts.length > 0) {
-        throw new ParseError("A 'return' here isn't a jsmql statement — put the whole predicate in the return", retPos);
+        throw new ParseError(
+          "A 'return' here is not a jsmql statement. Put the whole predicate in the return.",
+          retPos,
+        );
       }
       return ret;
     }
@@ -767,13 +770,13 @@ class Parser {
     if (target.expr.type === "MethodCall") {
       const call = `.${target.expr.wrote ?? target.expr.name}()`;
       throw new ParseError(
-        `Cannot apply '${op}' to the result of '${call}' at position ${pos} — only a field, a binding, '$', '$$' or a collection can be written. Write the result to a field instead: '$.<field> = <receiver>${call};'.`,
+        `Cannot apply '${op}' to the result of '${call}', at position ${pos}. You can write only to a field, a binding, '$', '$$' or a collection. Write the result to a field instead: '$.<field> = <receiver>${call};'.`,
         pos,
       );
     }
     const what = target.rule === null ? `a ${t}` : `a '${spelled(target.rule)}' expression`;
     throw new ParseError(
-      `Cannot apply '${op}' to ${what} — only a field, a binding, '$', '$$' or a collection can be written`,
+      `Cannot apply '${op}' to ${what}. You can write only to a field, a binding, '$', '$$' or a collection.`,
       pos,
     );
   }
@@ -790,7 +793,7 @@ class Parser {
     if (target.rule === null) return;
     const refusal = NEVER_A_WRITE_TARGET.get(target.rule);
     if (refusal === undefined) return;
-    throw new ParseError(`'${refusal.spelling}' cannot be assigned to — JavaScript rejects it. ${refusal.hint}`, pos);
+    throw new ParseError(`You cannot assign to '${refusal.spelling}'. JavaScript rejects it. ${refusal.hint}`, pos);
   }
 
   // ── expressions: one Pratt loop ───────────────────────────────────────────
@@ -826,7 +829,7 @@ class Parser {
       // JavaScript forbids the pair outright, at any precedence level.
       if (mixingRefused(rule, left.rule, "left")) {
         throw new ParseError(
-          `'${this.c.peek().text}' cannot be combined with '${spelled(left.rule)}' without parentheses — JavaScript rejects it`,
+          `You cannot combine '${this.c.peek().text}' with '${spelled(left.rule)}' without parentheses. JavaScript rejects it.`,
           this.c.peek().pos,
         );
       }
@@ -867,7 +870,7 @@ class Parser {
       const right = this.pratt(nextMin);
       if (mixingRefused(rule, right.rule, "right")) {
         throw new ParseError(
-          `'${op.text}' cannot be combined with '${spelled(right.rule)}' without parentheses — JavaScript rejects it`,
+          `You cannot combine '${op.text}' with '${spelled(right.rule)}' without parentheses. JavaScript rejects it.`,
           op.pos,
         );
       }
@@ -884,7 +887,7 @@ class Parser {
       // A prefix operator's operand stands on its RIGHT side.
       if (mixingRefused(rule, argument.rule, "right")) {
         throw new ParseError(
-          `'${op.text}' cannot be combined with '${spelled(argument.rule)}' without parentheses — JavaScript rejects it`,
+          `You cannot combine '${op.text}' with '${spelled(argument.rule)}' without parentheses. JavaScript rejects it.`,
           op.pos,
         );
       }
@@ -1344,7 +1347,7 @@ class Parser {
         const stmt = stmts.find((st) => st.type !== "LetDecl") as PipelineStmt;
         if (!isStageStmt(stmt)) {
           throw new ParseError(
-            `A callback's block holds 'const' declarations and one 'return', and this statement is neither at position ${(stmt as { pos: number }).pos}. Bind it ('const x = …;') or fold it into the 'return'.`,
+            `A callback's block holds 'const' declarations and one 'return'. This statement is neither, at position ${(stmt as { pos: number }).pos}. Bind it ('const x = …;'), or fold it into the 'return'.`,
             (stmt as { pos: number }).pos,
           );
         }
@@ -1442,7 +1445,7 @@ class Parser {
       const literal = this.number();
       if (literal.type === "ObjectIdLiteral") {
         throw new ParseError(
-          `An ObjectId literal can't be an object key at position ${t.pos} — a field name is a string. Quote it (\`{ "${literal.hex}": … }\`) to use it as a field name.`,
+          `An ObjectId literal cannot be an object key, at position ${t.pos}. A field name is a string. Quote it (\`{ "${literal.hex}": … }\`) to use it as a field name.`,
           t.pos,
         );
       }

@@ -68,7 +68,7 @@ function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { 
     internalError("a renderer asked for a callback body from an argument that is not an expression arrow");
   }
   if (cb.params.length !== 1) {
-    internalError(`a renderer asked for a one-parameter callback and the arrow has ${cb.params.length}`);
+    internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
   const bound = env.param(cb.params[0], "unknown", cb.pos);
   return { as: bound.as, ref: bound.ref, in: read(cb.body, childEnv(bound.env, cb, "body")) };

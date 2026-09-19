@@ -10,8 +10,8 @@ import { jsmql } from "../src/index.ts";
 
 describe("stage body validation — $limit / $skip", () => {
   it("rejects a non-positive literal $limit", () => {
-    expect(() => jsmql("[ $limit(0) ]")).toThrow("'$limit' argument 1 must be a number of 1 or more — got 0.");
-    expect(() => jsmql("[ $limit(-5) ]")).toThrow("'$limit' argument 1 must be a number of 1 or more — got -5.");
+    expect(() => jsmql("[ $limit(0) ]")).toThrow("'$limit' argument 1 must be a number of 1 or more. It got 0.");
+    expect(() => jsmql("[ $limit(-5) ]")).toThrow("'$limit' argument 1 must be a number of 1 or more. It got -5.");
   });
   it("rejects a non-integer literal $limit", () => {
     expect(() => jsmql("[ $limit(2.5) ]")).toThrow("'$limit' expects an integer, but got a number.");
@@ -20,7 +20,7 @@ describe("stage body validation — $limit / $skip", () => {
     expect(() => jsmql("[ $limit('x') ]")).toThrow(/'\$limit' expects an integer, but got a string/);
   });
   it("rejects a negative literal $skip", () => {
-    expect(() => jsmql("[ $skip(-1) ]")).toThrow("'$skip' argument 1 must be a number of 0 or more — got -1.");
+    expect(() => jsmql("[ $skip(-1) ]")).toThrow("'$skip' argument 1 must be a number of 0 or more. It got -1.");
   });
   it("accepts $limit(5), $skip(0)", () => {
     expect(jsmql("[ $limit(5) ]")).toEqual([{ $limit: 5 }]);
@@ -32,10 +32,10 @@ describe("stage body validation — $limit / $skip", () => {
   // is itself a certain violation and throws — it does NOT pass through.
   it("rejects a field ref / expression in $limit / $skip (constant-only slot)", () => {
     expect(() => jsmql("[ $limit($.pageSize) ]")).toThrow(
-      "'$limit' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "'$limit' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
     expect(() => jsmql("[ $skip($.n) ]")).toThrow(
-      "'$skip' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "'$skip' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
   });
 });
@@ -43,13 +43,13 @@ describe("stage body validation — $limit / $skip", () => {
 describe("stage body validation — $count", () => {
   it("rejects empty / $-prefixed / dotted field names", () => {
     expect(() => jsmql("[ $count('') ]")).toThrow(
-      "'$count' names a field to WRITE, and '' is empty. The server refuses it — pass a plain field name, e.g. 'total'.",
+      "'$count' names a field to WRITE. '' is empty. The server refuses it. Use a plain field name, for example 'total'.",
     );
     expect(() => jsmql("[ $count('$x') ]")).toThrow(
-      "'$count' names a field to WRITE, and '$x' starts with '$'. The server refuses it — pass a plain field name, e.g. 'total'.",
+      "'$count' names a field to WRITE. '$x' starts with '$'. The server refuses it. Use a plain field name, for example 'total'.",
     );
     expect(() => jsmql("[ $count('a.b') ]")).toThrow(
-      "'$count' names a field to WRITE, and 'a.b' holds a dot. The server refuses it — pass a plain field name, e.g. 'total'.",
+      "'$count' names a field to WRITE. 'a.b' holds a dot. The server refuses it. Use a plain field name, for example 'total'.",
     );
   });
   it("accepts a plain field name", () => {
@@ -151,12 +151,12 @@ describe("stage body validation — $sort", () => {
 describe("stage body validation — $project", () => {
   it("rejects mixing inclusion and exclusion (non-_id)", () => {
     expect(() => jsmql("[ $project({ a: 1, b: 0 }) ]")).toThrow(
-      "'$project' is either an inclusion or an exclusion, not both: 'a' includes and 'b' excludes ('_id' alone may be excluded from an inclusion). The server refuses the mix.",
+      "'$project' is either an inclusion or an exclusion, not both. 'a' includes and 'b' excludes ('_id' alone may be excluded from an inclusion). The server refuses the mix.",
     );
   });
   it("rejects an empty projection", () => {
     expect(() => jsmql("[ $project({}) ]")).toThrow(
-      "'$project' takes at least one field — an empty body names none, and the server refuses it.",
+      "'$project' takes at least one field. An empty body names none, and the server refuses it.",
     );
   });
   it("accepts excluding _id in an inclusion projection, and pure include/exclude", () => {
@@ -169,10 +169,10 @@ describe("stage body validation — $project", () => {
 describe("stage body validation — $unset / $unwind", () => {
   it("rejects an empty $unset string and a non-$ $unwind path", () => {
     expect(() => jsmql("[ $unset('') ]")).toThrow(
-      "'$unset' needs at least one field name — an empty string has none. Name the fields to remove: '$unset([\"a\", \"b\"])'.",
+      "'$unset' needs at least one field name. An empty string has none. Name the fields to remove: '$unset([\"a\", \"b\"])'.",
     );
     expect(() => jsmql("[ $unwind('items') ]")).toThrow(
-      "'$unwind' reads a field PATH, and the server insists it carries its own '$': write '$items'.",
+      "'$unwind' reads a field PATH. The path must start with '$'. Write '$items'.",
     );
   });
   it("accepts a valid $unwind path (field-ref form)", () => {
@@ -184,14 +184,14 @@ describe("stage body validation — $sample / $bucket / $bucketAuto", () => {
   it("requires $sample size and rejects a negative one", () => {
     expect(() => jsmql("[ $sample({}) ]")).toThrow(/requires the 'size' field/);
     expect(() => jsmql("[ $sample({ size: -1 }) ]")).toThrow(
-      "'$sample' size must be at least 1, got -1 — the server refuses it.",
+      "'$sample' size must be at least 1. It got -1. The server refuses it.",
     );
   });
   it("validates $bucket boundaries (required, ≥2, ascending)", () => {
     expect(() => jsmql("[ $bucket({ groupBy: $.x }) ]")).toThrow(/requires the 'boundaries' field/);
     expect(() => jsmql("[ $bucket({ groupBy: $.x, boundaries: [1] }) ]")).toThrow(/at least 2 values/);
     expect(() => jsmql("[ $bucket({ groupBy: $.x, boundaries: [3, 1, 2] }) ]")).toThrow(
-      "'$bucket' boundaries must be sorted ascending: 3 is not less than 1 — the server refuses it.",
+      "'$bucket' boundaries must be sorted ascending. 3 is not less than 1. The server refuses it.",
     );
   });
   it("accepts a valid literal $bucket boundaries array", () => {
@@ -203,12 +203,12 @@ describe("stage body validation — $sample / $bucket / $bucketAuto", () => {
   // field ref (server-rejected as `{ boundaries: "$bounds" }`) throws.
   it("rejects a field ref / expression $bucket boundaries (constant-only slot)", () => {
     expect(() => jsmql("[ $bucket({ groupBy: $.x, boundaries: $.bounds }) ]")).toThrow(
-      "'$bucket' boundaries must be a compile-time constant — the server reads it before any document; got an expression.",
+      "'$bucket' boundaries must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
   });
   it("validates $bucketAuto buckets and granularity enum", () => {
     expect(() => jsmql("[ $bucketAuto({ groupBy: $.x, buckets: 0 }) ]")).toThrow(
-      "'$bucketAuto' buckets must be at least 1, got 0 — the server refuses it.",
+      "'$bucketAuto' buckets must be at least 1. It got 0. The server refuses it.",
     );
     expect(() => jsmql("[ $bucketAuto({ groupBy: $.x, buckets: 5, granularity: 'R7' }) ]")).toThrow(
       /granularity must be one of/,
@@ -229,7 +229,7 @@ describe("stage body validation — $setWindowFields / $fill", () => {
       "'$fill.output.x' requires exactly one of 'value', 'method', but got 'value' and 'method'.",
     );
     expect(() => jsmql("[ $fill({ sortBy: { t: 1 }, output: { x: { method: 'linaer' } } }) ]")).toThrow(
-      "'$fill.output.x' method must be one of: locf, linear — got 'linaer'. Did you mean 'linear'?",
+      "'$fill.output.x' method must be one of: locf, linear. It got 'linaer'. Did you mean 'linear'?",
     );
   });
   it("requires sortBy when a $fill method is linear; locf runs without one", () => {
@@ -258,7 +258,7 @@ describe("stage body validation — required keys & enums", () => {
       jsmql(
         "[ $graphLookup({ from: 'c', startWith: $.x, connectFromField: 'a', connectToField: 'b', as: 'r', maxDepth: -1 }) ]",
       ),
-    ).toThrow("'$graphLookup' maxDepth must be zero or more, got -1 — the server refuses it.");
+    ).toThrow("'$graphLookup' maxDepth must be zero or more. It got -1. The server refuses it.");
   });
   it("rejects an empty $unionWith body", () => {
     expect(() => jsmql("[ $unionWith({}) ]")).toThrow(
@@ -331,7 +331,7 @@ describe("a pipeline stage name used where a value is expected", () => {
     // The bare `jsmql(...)` entry auto-wraps a lone stage call into a pipeline, so the
     // same source is a legitimate statement there — only the expression entry rejects.
     expect(() => jsmql.expr("$match($.a === 0)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level '$match' stage call. Use jsmql.pipeline() — for a Filter, drop the `$match(...)` wrapper and pass its predicate.",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level '$match' stage call instead. Use jsmql.pipeline() — for a Filter, drop the `$match(...)` wrapper and pass its predicate.",
     );
     expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
   });

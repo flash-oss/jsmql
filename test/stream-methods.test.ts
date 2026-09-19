@@ -106,11 +106,15 @@ describe(".slice — rejection branches", () => {
   });
 
   it("negative start → non-negative integer error", () => {
-    expect(() => jsmql("$$ = $$.slice(-1, 5);")).toThrow("'slice' argument 1 must be a number of 0 or more — got -1.");
+    expect(() => jsmql("$$ = $$.slice(-1, 5);")).toThrow(
+      "'slice' argument 1 must be a number of 0 or more. It got -1.",
+    );
   });
 
   it("negative end → non-negative integer error", () => {
-    expect(() => jsmql("$$ = $$.slice(0, -3);")).toThrow("'slice' argument 2 must be a number of 0 or more — got -3.");
+    expect(() => jsmql("$$ = $$.slice(0, -3);")).toThrow(
+      "'slice' argument 2 must be a number of 0 or more. It got -3.",
+    );
   });
 
   it("fractional start → non-negative integer error", () => {
@@ -123,13 +127,13 @@ describe(".slice — rejection branches", () => {
 
   it("non-literal argument → unsupported on streams error", () => {
     expect(() => jsmql("$$ = $$.slice($.offset, 5);")).toThrow(
-      "'slice' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "'slice' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
   });
 
   it("spread argument is rejected", () => {
     expect(() => jsmql("$$ = $$.slice(...[0, 5]);")).toThrow(
-      "'slice' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "'slice' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
   });
 });
@@ -153,14 +157,14 @@ describe(".take(n) → $limit — lodash first-n", () => {
 
   it("rejects a non-integer / negative / computed / extra-arg / spread", () => {
     expect(() => jsmql("$$ = $$.take(1.5);")).toThrow("'take' expects an integer, but got a number.");
-    expect(() => jsmql("$$ = $$.take(-1);")).toThrow("'take' argument 1 must be a number of 0 or more — got -1.");
+    expect(() => jsmql("$$ = $$.take(-1);")).toThrow("'take' argument 1 must be a number of 0 or more. It got -1.");
     expect(() => jsmql('$$ = $$.take("x");')).toThrow("'take' expects an integer, but got a string.");
     expect(() => jsmql("$$ = $$.take($.n);")).toThrow(
-      "'take' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "'take' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
     expect(() => jsmql("$$ = $$.take(1, 2);")).toThrow("'.take([n=1])' requires 0 or 1 arguments, got 2");
     expect(() => jsmql("$$ = $$.take(...[1]);")).toThrow(
-      "'take' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "'take' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
   });
 });
@@ -415,7 +419,7 @@ describe(".sampleSize(n) → $sample", () => {
 
   it("rejects size < 1", () => {
     expect(() => jsmql("$$ = $$.sampleSize(0);")).toThrow(
-      "'sampleSize' argument 1 must be a number of 1 or more — got 0.",
+      "'sampleSize' argument 1 must be a number of 1 or more. It got 0.",
     );
   });
 });
@@ -470,7 +474,7 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
     expect(jsmql('$$ = $$.sortBy("age");')).toEqual([{ $sort: { age: 1 } }]);
     expect(jsmql('$$ = $$.sortBy(["age", "name"]);')).toEqual([{ $sort: { age: 1, name: 1 } }]);
     expect(() => jsmql("$$ = $$.sortBy({ age: -1 });")).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions — lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. lodash's sortBy takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
     );
   });
 
@@ -487,7 +491,7 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
     expect(jsmql("$$ = $$.orderBy({ score: -1 });")).toEqual([{ $sort: { score: -1 } }]);
     expect(jsmql('$$ = $$.orderBy({ score: -1, name: "asc" });')).toEqual([{ $sort: { score: -1, name: 1 } }]);
     expect(() => jsmql('$$ = $$.orderBy({ score: -1 }, ["asc"]);')).toThrow(
-      ".orderBy({ field: dir }) carries its directions inline; a second argument has nothing to say.",
+      ".orderBy({ field: dir }) carries its directions inline. A second argument has nothing to say.",
     );
     // arity error advertises the object form too (parity with value-mode .orderBy)
     expect(() => jsmql("$$ = $$.orderBy();")).toThrow(/\{ field: dir \}/);
@@ -560,7 +564,7 @@ describe(".pick([fields]) / .omit([fields]) → $project (per-document field sel
   it("reject a non-array arg / non-string entries", () => {
     expect(() => jsmql('$$.pick("name");')).toThrow("'pick' expects an array, but got a string.");
     expect(() => jsmql("$$.omit([1, 2]);")).toThrow(
-      "'omit' element 1 names a field to WRITE, and a number is not a name. Pass a plain field name, e.g. 'total'.",
+      "'omit' element 1 names a field to WRITE. a number is not a name. Use a plain field name, for example 'total'.",
     );
   });
 });
@@ -596,7 +600,7 @@ describe(".groupBy(spec | key) → object collapse / $group", () => {
 
   it("rejects a body without _id and a non-string/non-object arg", () => {
     expect(() => jsmql("$$ = $$.groupBy({ n: $sum(1) });")).toThrow(
-      "'$$.groupBy({ … })' on the stream is the '$group' stage, and its body needs an '_id' — the group key: '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field alone, write '$$.groupBy(\"status\")'.",
+      "'$$.groupBy({ … })' on the stream is the '$group' stage. Its body needs an '_id' field: the group key. For example, '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field, write '$$.groupBy(\"status\")'.",
     );
     expect(() => jsmql("$$ = $$.groupBy(5);")).toThrow(
       "'.groupBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a number.",
@@ -767,7 +771,7 @@ describe(".concat(...others) — JS-idiomatic alias for $$.push", () => {
 
   it("spread of a scalar `.find` is rejected", () => {
     expect(() => jsmql("$$ = $$.concat(...$$$.archive.find(u => u._id === 'X'));")).toThrow(
-      "'.find(pred)' gives ONE document, which JavaScript would not spread. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
+      "'.find(pred)' gives ONE document. JavaScript would not spread this. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
     );
   });
 });
@@ -899,13 +903,13 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
           $ = { id: o._id, t: o.total };
         });`),
       ).toThrow(
-        "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'); write the outer field after the join.",
+        "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.",
       );
     });
 
     it("current stream: the stage is a statement and the reshape is `$ = <expr>`", () => {
       expect(() => jsmql(`$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });`)).toThrow(
-        "`$match(...)` at position 19 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $match(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$match(…)'.",
+        "`$match(...)` at position 19 is a pipeline stage. The 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $match(...); … })'. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$match(…)'.",
       );
       expect(jsmql(`$match($.active === true); $ = { id: $._id };`)).toEqual([
         { $match: { active: true } },
@@ -935,7 +939,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
 
     it("a stage-free `.map` block still has to end with `return`", () => {
       expect(() => jsmql(`$$ = $$.map(d => { const t = d.total; });`)).toThrow(
-        "A block body must end with a `return <expr>` statement at position 38, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly",
+        "A block body must end with a `return <expr>` statement at position 38, got '}'. Write `x => { const a = …; return <expr>; }`. Or write `function f(x) { return <expr>; }`. Or write `x => (<expr>)` to return an object or an expression directly.",
       );
     });
 
@@ -954,7 +958,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
           $ = { id: o._id };
         });`),
       ).toThrow(
-        "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'); write the outer field after the join.",
+        "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.",
       );
     });
   });
@@ -1131,16 +1135,16 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
   // nothing else (measured: `{ $sort: 1 }` → "the $sort key specification must be an object").
   it("the whole element as the key is rejected on a stream, per method and direction", () => {
     expect(() => jsmql("$$.toSorted((a, b) => a - b);")).toThrow(
-      ".toSorted((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.toSorted((a, b) => a.age - b.age)', or '.toSorted(d => d.age)'.",
+      ".toSorted((a, b) => a - b) sorts by the WHOLE element. A stream carries documents, and MongoDB sorts a document by field NAME. Name the field: '.toSorted((a, b) => a.age - b.age)', or '.toSorted(d => d.age)'.",
     );
     expect(() => jsmql("$$.sort((a, b) => b - a);")).toThrow(
-      ".sort((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sort((a, b) => b.age - a.age)', or '.sort(d => -d.age)'.",
+      ".sort((a, b) => b - a) sorts by the WHOLE element. A stream carries documents, and MongoDB sorts a document by field NAME. Name the field: '.sort((a, b) => b.age - a.age)', or '.sort(d => -d.age)'.",
     );
     expect(() => jsmql("$$.sortBy((a, b) => a - b);")).toThrow(
-      ".sortBy((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sortBy((a, b) => a.age - b.age)', or '.sortBy(d => d.age)'.",
+      ".sortBy((a, b) => a - b) sorts by the WHOLE element. A stream carries documents, and MongoDB sorts a document by field NAME. Name the field: '.sortBy((a, b) => a.age - b.age)', or '.sortBy(d => d.age)'.",
     );
     expect(() => jsmql("$$.orderBy((a, b) => b - a);")).toThrow(
-      ".orderBy((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.orderBy((a, b) => b.age - a.age)', or '.orderBy(d => -d.age)'.",
+      ".orderBy((a, b) => b - a) sorts by the WHOLE element. A stream carries documents, and MongoDB sorts a document by field NAME. Name the field: '.orderBy((a, b) => b.age - a.age)', or '.orderBy(d => -d.age)'.",
     );
   });
 
@@ -1379,13 +1383,13 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
 
   it("non-path body is rejected with a 'hoist to a separate stage' hint", () => {
     expect(() => jsmql("$$ = $$.flatMap(d => d.items.map(x => x * 2));")).toThrow(
-      "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind', which takes a field path and nothing else.",
+      "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind'. This stage takes a field path and nothing else.",
     );
   });
 
   it("zero-arg body is rejected (no path → not derivable)", () => {
     expect(() => jsmql("$$ = $$.flatMap(d => 5);")).toThrow(
-      "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind', which takes a field path and nothing else.",
+      "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind'. This stage takes a field path and nothing else.",
     );
   });
 
@@ -1453,7 +1457,7 @@ describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary th
 
   it("non-literal init inside the wrap is rejected", () => {
     expect(() => jsmql("$$ = [{ total: $$.reduce((acc, d) => acc + d.x, $.seed) }];")).toThrow(
-      "The initial value of a stream fold is a constant — 0, [], null — because MongoDB's accumulators start empty and the seed is folded in afterwards; a field cannot seed them.",
+      "The initial value of a stream fold is a constant — 0, [], null — because MongoDB's accumulators start empty, and the seed folds in afterwards. A field cannot seed them.",
     );
   });
 
@@ -1735,19 +1739,19 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
 
   it("non-empty init array is rejected", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), [1, 2]);")).toThrow(
-      "'$$.reduce((acc, d) => …, [])' keeps documents by appending: write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
+      "'$$.reduce((acc, d) => …, [])' keeps documents: it appends them. Write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
     );
   });
 
   it("body alternate must be bare `acc` — `cond ? concat : <other>` is rejected", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => (d.active ? acc.concat(d.contactDetails) : []), []);")).toThrow(
-      "'$$.reduce((acc, d) => …, [])' keeps documents by appending: write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
+      "'$$.reduce((acc, d) => …, [])' keeps documents: it appends them. Write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
     );
   });
 
   it("non-concat body is rejected with the supported-shapes list", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.push(d.contactDetails), []);")).toThrow(
-      "'$$.reduce((acc, d) => …, [])' keeps documents by appending: write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
+      "'$$.reduce((acc, d) => …, [])' keeps documents: it appends them. Write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
     );
   });
 
@@ -1779,7 +1783,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
 describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", () => {
   it("bare $$ = $$.reduce(...) is rejected (would collapse the stream to a scalar)", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc + d.amount, 0);")).toThrow(
-      "'$$.reduce((acc, d) => …, [])' keeps documents by appending: write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
+      "'$$.reduce((acc, d) => …, [])' keeps documents: it appends them. Write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
     );
   });
 
@@ -2122,7 +2126,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
       "'.flatMap()' takes a field here — an arrow ('d => …'), or a field name ('\"status\"'). Got an object.",
     );
     expect(() => jsmql(`$.o = $$$.orders.flatMap(d => d.a.concat(d.b));`)).toThrow(
-      "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind', which takes a field path and nothing else.",
+      "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind'. This stage takes a field path and nothing else.",
     );
   });
 
@@ -2131,7 +2135,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
       { $lookup: { from: "orders", pipeline: [{ $sort: { cat: -1 } }], as: "o" } },
     ]);
     expect(() => jsmql(`$.o = $$$.orders.sortBy({ cat: 1 });`)).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions — lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. lodash's sortBy takes iteratees and sorts ascending. For directions, write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })'. Both take an order in every position.",
     );
   });
 
@@ -2174,7 +2178,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
       "'.uniqBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
     );
     expect(() => jsmql(`$.o = $$$.orders.sortBy([5]);`)).toThrow(
-      ".sortBy() sorts by a field NAME — a plain string like \"age\", with no leading '$'.",
+      ".sortBy() sorts by a field NAME: a plain string like \"age\", with no leading '$'.",
     );
   });
 });

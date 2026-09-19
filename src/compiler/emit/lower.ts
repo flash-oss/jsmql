@@ -116,7 +116,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     (node.type === "MethodCall" || node.type === "MemberAccess" || node.type === "IndexAccess") &&
     readsAnotherCollection(node)
   ) {
-    if (joinRoad === null) internalError("the join road was read before statement.ts lent it");
+    if (joinRoad === null) internalError("statement.ts did not lend the join road before lower.ts read it");
     return joinRoad(node, env);
   }
   // A constant is its VALUE, before any row is read. The fold writes back what has
@@ -681,7 +681,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     );
   }
   if (sel.kind === "dispatch") {
-    if (receiver.kind !== "opaque") internalError("a dispatch was selected for a proven receiver");
+    if (receiver.kind !== "opaque") internalError("the select pass chose a dispatch for a proven receiver");
     return runDispatch(sel, name, recv, exprArgs, env, node, spelled, container);
   }
   const format = receiver.kind === "namespace" ? (c: string) => `${receiver.name}.${c}` : (c: string) => `.${c}()`;

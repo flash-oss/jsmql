@@ -167,13 +167,13 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("direct recursion is rejected", () => {
     expect(() => jsmql("const f = (x) => f(x) + 1; $ = { a: f($.n) };")).toThrow(
-      /Recursive function calls aren't supported/,
+      /Recursive function calls are not supported/,
     );
   });
 
   it("mutual recursion is rejected", () => {
     expect(() => jsmql("const a = (x) => b(x); const b = (y) => a(y); $ = { r: a($.n) };")).toThrow(
-      /Recursive function calls aren't supported/,
+      /Recursive function calls are not supported/,
     );
   });
 
@@ -199,7 +199,7 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("a lone `function` declaration (nothing calls it) is rejected like a lone arrow decl", () => {
     expect(() => jsmql("function foo(a) { return a }")).toThrow(
-      "jsmql expects each parameter to be an object destructure pattern, e.g. '({ $ }) => …', but got 'a' at position 13",
+      "jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got 'a'. at position 13",
     );
   });
 
@@ -222,19 +222,19 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("re-declaring a function in the same pipeline is rejected", () => {
     expect(() => jsmql("const f = (x) => x; const f = (y) => y + 1; $ = { a: f($.n) };")).toThrow(
-      "`function f` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.",
+      "`function f` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
     );
   });
 
   it("a function name colliding with a `let` binding is rejected", () => {
     expect(() => jsmql("let total = $.amount; const total = (x) => x; $ = { a: total($.n) };")).toThrow(
-      "`function total` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.",
+      "`function total` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
     );
   });
 
   it("a nested function inside an arrow body is rejected", () => {
     expect(() => jsmql("$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };")).toThrow(
-      "`const g = (…) => …` declares a reusable function, and a reusable function is declared at the top level of a pipeline, not inside a callback. Write `const g = (…) => …;` as its own statement before this one, then call 'g(…)' inside the callback. at position 25",
+      "`const g = (…) => …` declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write `const g = (…) => …;` as its own statement before this one. Then call 'g(…)' inside the callback. at position 25",
     );
   });
 
@@ -250,7 +250,7 @@ describe("reusable functions — validate() carries a meaningful .pos", () => {
     const res = jsmql.validate("const f = (x) => f(x) + 1; $ = { a: f($.n) };");
     expect(res.valid).toBe(false);
     expect(res.errors[0].pos).toBeGreaterThan(0);
-    expect(res.errors[0].message).toMatch(/Recursive function calls aren't supported/);
+    expect(res.errors[0].message).toMatch(/Recursive function calls are not supported/);
   });
 
   it("arity error has a real position", () => {

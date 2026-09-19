@@ -120,8 +120,7 @@ describe("$$.push / $$ = [ … ] — a written document holds only what the prog
   });
 
   it("refuses a value that needs a stage of its own, in either spelling", () => {
-    const made =
-      /writes the documents out as the program spells them, and this value needs a '\$lookup' stage of its own/;
+    const made = /writes the documents out as the program spells them\. This value needs a '\$lookup' stage of its own/;
     expect(() => jsmql('$$.push({ n: $$$.p.find({ _id: "x" }).n });')).toThrow(made);
     expect(() => jsmql('$$.concat([{ n: $$$.p.find({ _id: "x" }).n }]);')).toThrow(made);
     expect(() => jsmql('$$ = [{ n: $$$.p.find({ _id: "x" }).n }];')).toThrow(made);
@@ -148,13 +147,13 @@ describe("$$.push — cross-database through $$$$ is rejected", () => {
   // that bypasses the guard on either path is caught.
   it("a cross-DB .filter() spread source throws (sub-pipeline form)", () => {
     expect(() => jsmql("$$.push(...$$$$.archive.users.filter(u => u.deleted))")).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 
   it("a bare cross-DB collection spread source throws (short-form $unionWith path)", () => {
     expect(() => jsmql("$$.push(...$$$$.archive.users)")).toThrow(
-      "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
 });
@@ -186,7 +185,7 @@ describe("$$.push — error cases", () => {
 
   it(".find with spread → reject with 'drop the ...' hint", () => {
     expect(() => jsmql("$$.push(...$$$.archive.find(o => o._id === 'X'))")).toThrow(
-      "'.find(pred)' gives ONE document, which JavaScript would not spread. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
+      "'.find(pred)' gives ONE document. JavaScript would not spread this. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
     );
   });
 
@@ -247,13 +246,13 @@ describe("$$.push — error cases", () => {
 describe("$$.push — mode rejections", () => {
   it("jsmql.filter() rejects $$.push", () => {
     expect(() => jsmql.filter("$$.push(...$$$.coll)")).toThrow(
-      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a top-level 'push' stage call. Use jsmql.pipeline().",
+      "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes). It received a top-level 'push' stage call instead. Use jsmql.pipeline().",
     );
   });
 
   it("jsmql.expr() rejects $$.push", () => {
     expect(() => jsmql.expr("$$.push(...$$$.coll)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'push' stage call. Use jsmql.pipeline().",
+      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level 'push' stage call instead. Use jsmql.pipeline().",
     );
   });
 

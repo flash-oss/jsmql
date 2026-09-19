@@ -393,7 +393,9 @@ describe("compiler/emit/join — inside the body", () => {
       },
     ]);
     // the outer document cannot be written from inside
-    expect(() => pipeline("$.o = $$$.orders.aggregate(o => { $.x = 1; });")).toThrow(/outer document can't be written/);
+    expect(() => pipeline("$.o = $$$.orders.aggregate(o => { $.x = 1; });")).toThrow(
+      /outer document cannot be written/,
+    );
     // the callback's THIRD parameter is the body's own stream; `$$` is the ROOT stream at every depth (HR4)
     expect(
       compiled("$.o = $$$.orders.aggregate((o, _i, coll) => { coll.filter(d => d.userId === $._id).take(1); });", [
@@ -410,7 +412,7 @@ describe("compiler/emit/join — inside the body", () => {
     // materialised on the root pipeline and carried in through `let`
     expect(() =>
       pipeline("$.o = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); o.n = coll.length; });"),
-    ).toThrow(/'coll' is the body's own stream, and this body runs '\$match', which changes what its count means/);
+    ).toThrow(/'coll' is the body's own stream\. This body runs '\$match', which changes what its count means/);
     expect(
       compiled("$.o = $$$.orders.aggregate(o => { $match(o.userId === $._id); o.n = $$.length; });", [
         {

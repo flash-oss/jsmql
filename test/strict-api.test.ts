@@ -161,7 +161,7 @@ describe("strict-shape `.compile` builders", () => {
   });
   it("a parameter left out at the call is named", () => {
     const q = jsmql.filter.compile(({ minAge }: { minAge: number }) => $.age > minAge);
-    expect(() => q({} as { minAge: number })).toThrow(/'minAge' is a parameter of this query and was not supplied/);
+    expect(() => q({} as { minAge: number })).toThrow(/'minAge' is a parameter of this query, and it is missing/);
   });
   it("rejects a non-arrow input type with an entry-named TypeError", () => {
     expect(() => jsmql.pipeline.compile(42 as never)).toThrow(/jsmql\.pipeline\.compile\(\) expects an arrow function/);

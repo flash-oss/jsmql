@@ -118,7 +118,7 @@ describe("compiler/emit/update — writes become their operators", () => {
     expect(() => update("$.t = Date.now()")).toThrow(/'\$currentDate'.*for milliseconds, use the pipeline form/s);
     // A name whose row has no update-document cell gets the position's own sentence.
     expect(() => update("$.t = typeof $.x")).toThrow(
-      "'typeof' is computed on the server, and a document-form update takes constants. Use the pipeline form ('jsmql.pipeline(\"$.<field> = typeof…;\")'), which 'updateOne' accepts as well, or pass the value from your code.",
+      "'typeof' is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline(\"$.<field> = typeof…;\")'). 'updateOne' also accepts this form. Or pass the value from your code.",
     );
   });
 });

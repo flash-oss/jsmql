@@ -59,7 +59,7 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
       { $facet: { all: [], agg: [{ $match: { a: { $gt: 1 } } }, { $set: { y: { $multiply: ["$a", 2] } } }] } },
     ]);
     // a `let` before it is dropped — the stage replaces the document
-    expect(() => pipeline("let x = $.a; $ = { k: $$.take(1) }; $.z = x;")).toThrow(/can't be read after `\$facet`/);
+    expect(() => pipeline("let x = $.a; $ = { k: $$.take(1) }; $.z = x;")).toThrow(/cannot be read after `\$facet`/);
   });
 
   it("refuses what no server accepts, naming the way out", () => {
@@ -114,7 +114,7 @@ describe("compiler/emit — `$$.push(…)` and `.concat(…)` are $unionWith", (
       /would push the whole array as one document/,
     );
     expect(() => pipeline("$$.push(...$$$.archive.find(o => o.a > 1));")).toThrow(
-      /gives ONE document, which JavaScript would not spread/,
+      /gives ONE document\. JavaScript would not spread this/,
     );
     expect(() => pipeline("$$.push(...$.items);")).toThrow(/An array the DATA decides cannot be appended/);
     // a WRITTEN list of documents is appendable: `$documents` takes a spelled-out list

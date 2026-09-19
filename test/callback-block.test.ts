@@ -73,7 +73,7 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     // A block that also RETURNS cannot become a stage block by moving it: the
     // reader has to drop one of the two, and the message names both positions.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); return true; });`)).toThrow(
-      /is a pipeline stage, and the 'return' at position \d+ makes this block a value callback/,
+      /is a pipeline stage\. The 'return' at position \d+ makes this block a value callback/,
     );
     expect(jsmql(`$.r = $$$.o.aggregate(x => { $sort({ a: 1 }); });`)).toEqual([
       { $lookup: { from: "o", pipeline: [{ $sort: { a: 1 } }], as: "r" } },
@@ -82,7 +82,7 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); });`)).toThrow(/is a pipeline stage/);
     // A declaration belongs at the top level, and moving it out compiles.
     expect(() => jsmql(`$.r = $$$.o.filter(x => { const g = z => z; return g(x.a) > 1; });`)).toThrow(
-      /declares a reusable function, and a reusable function is declared at the top level/,
+      /declares a reusable function\. A pipeline declares a reusable function at its top level/,
     );
     expect(() => jsmql(`const g = z => z; $.r = $$$.o.filter(x => g(x.a) > 1);`)).not.toThrow();
   });
@@ -137,7 +137,7 @@ describe("a stage-free callback block is the JavaScript value form", () => {
 
   it("a block with no `return` has no value to use", () => {
     expect(() => jsmql(`$.r = $$$.orders.filter(o => { const t = o.total; });`)).toThrow(
-      "A block body must end with a `return <expr>` statement at position 50, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly",
+      "A block body must end with a `return <expr>` statement at position 50, got '}'. Write `x => { const a = …; return <expr>; }`. Or write `function f(x) { return <expr>; }`. Or write `x => (<expr>)` to return an object or an expression directly.",
     );
   });
 

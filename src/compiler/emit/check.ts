@@ -97,8 +97,8 @@ const EXPECTS: Record<ArgType, string> = {
   "int-or-long": "expects an integer",
   "number-or-date": "expects a number or a date",
   string: "expects a string",
-  fieldName: "expects the NAME of a field to write — a non-empty string with no '$' prefix and no dot",
-  fieldPath: "expects the PATH of a field to read, carrying its own '$'",
+  fieldName: "expects a field NAME to write: a plain string with no '$' and no dot",
+  fieldPath: "expects a field PATH to read: a string that starts with '$'",
   bool: "expects a boolean",
   array: "expects an array",
   object: "expects a document",
@@ -111,7 +111,7 @@ const hint = (name: string, expected: ArgType): string => {
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   // A stage answers with its OWN smallest correct call: $group's is not $sample's.
   const example = expected === "object" ? bodyExampleOf(name) : undefined;
-  return example === undefined ? "" : ` Write the body as a document, e.g. '${example}'.`;
+  return example === undefined ? "" : ` Write the body as a document. For example: '${example}'.`;
 };
 
 /** A literal of a type the slot can never take. `slot` is the key, or "" for a positional operand. */
@@ -124,7 +124,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
       throw new CodegenError(
-        `'${name}'${slot ? ` ${slot}` : ""} reads a field PATH, and the server insists it carries its own '$': write '$${e.value.replace(/^\$+/, "")}'.`,
+        `'${name}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
         e.pos,
       );
     }
@@ -135,7 +135,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
       const other = literal(e);
       if (other === null || other.kind === "null") return;
       throw new CodegenError(
-        `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE, and ${NOUN[other.kind]} is not a name. Pass a plain field name, e.g. 'total'.`,
+        `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos,
       );
     }
@@ -149,7 +149,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
             : null;
     if (bad === null) return;
     throw new CodegenError(
-      `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE, and '${e.value}' ${bad}. The server refuses it — pass a plain field name, e.g. 'total'.`,
+      `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
       e.pos,
     );
   }
@@ -186,8 +186,8 @@ function checkEnum(
   const near = didYouMean(v, allowed, (s) => s);
   throw new CodegenError(
     alsoStages
-      ? `'${name}' ${key} is one of: ${allowed.join(", ")} — or a bracketed list of stages, '${key}: [$set({ … })]'. Got '${e.value}'.${near}`
-      : `'${name}' ${key} must be one of: ${allowed.join(", ")} — got '${e.value}'.${near}`,
+      ? `'${name}' ${key} is one of: ${allowed.join(", ")}. It can also take a bracketed list of stages: '${key}: [$set({ … })]'. It got '${e.value}'.${near}`
+      : `'${name}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`,
     e.pos,
   );
 }
@@ -198,7 +198,7 @@ function checkCharSet(name: string, key: string, e: Expr, set: string): void {
   for (const ch of e.value) {
     if (!set.includes(ch)) {
       throw new CodegenError(
-        `'${name}' ${key} has an invalid flag '${ch}'. MongoDB allows only ${[...set].join(", ")} — a JavaScript 'g' or 'y' flag is not supported.`,
+        `'${name}' ${key} has an invalid flag '${ch}'. MongoDB allows only ${[...set].join(", ")}. It does not support a JavaScript 'g' or 'y' flag.`,
         e.pos,
       );
     }
@@ -280,7 +280,7 @@ export function checkBody(
       const inB = present.filter((k) => b.includes(k));
       if (inA.length > 0 && inB.length > 0) {
         throw new CodegenError(
-          `'${name}' takes '${inA[0]}' or '${inB[0]}', not both: they belong to two families that never mix — ${a.join("/")} against ${b.join("/")}.`,
+          `'${name}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
           pos,
         );
       }
@@ -328,7 +328,7 @@ export function checkBody(
       if (on === null) continue;
       if (seen !== null && seen.on !== on) {
         throw new CodegenError(
-          `'${name}' is either an inclusion or an exclusion, not both: '${seen.key}' ${seen.on ? "includes" : "excludes"} and '${k}' ${on ? "includes" : "excludes"} ('_id' alone may be excluded from an inclusion). The server refuses the mix.`,
+          `'${name}' is either an inclusion or an exclusion, not both. '${seen.key}' ${seen.on ? "includes" : "excludes"} and '${k}' ${on ? "includes" : "excludes"} ('_id' alone may be excluded from an inclusion). The server refuses the mix.`,
           v.pos,
         );
       }
@@ -374,7 +374,7 @@ export function checkBody(
       const hit = walkBody(body, req.path).find((v) => v.type === "StringLiteral" && req.equals.includes(v.value));
       if (hit !== undefined) {
         throw new CodegenError(
-          `'${name}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => stringify(e)).join(" or ")} — the server refuses it without one.`,
+          `'${name}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => stringify(e)).join(" or ")}. The server refuses it without one.`,
           hit.pos,
         );
       }
@@ -382,7 +382,7 @@ export function checkBody(
   }
   if (rule.nonEmpty === true && body !== null && present.length === 0) {
     throw new CodegenError(
-      `'${name}' takes at least one field — an empty body names none, and the server refuses it.`,
+      `'${name}' takes at least one field. An empty body names none, and the server refuses it.`,
       pos,
     );
   }
@@ -392,7 +392,7 @@ export function checkBody(
     const held = numberOf(v);
     if (held !== null && held < min) {
       throw new CodegenError(
-        `'${name}' ${k} must be ${min === 0 ? "zero or more" : `at least ${min}`}, got ${held} — the server refuses it.`,
+        `'${name}' ${k} must be ${min === 0 ? "zero or more" : `at least ${min}`}. It got ${held}. The server refuses it.`,
         v.pos,
       );
     }
@@ -416,7 +416,7 @@ export function checkBody(
     if (held.length === 0 && v.elements.length > 0) continue; // not all constants: the server judges
     if (held.length < min) {
       throw new CodegenError(
-        `'${name}' ${k} needs at least ${min} values, got ${held.length} — the server refuses it.`,
+        `'${name}' ${k} needs at least ${min} values. It got ${held.length}. The server refuses it.`,
         v.pos,
       );
     }
@@ -429,7 +429,7 @@ export function checkBody(
           : true;
       if (!ordered) {
         throw new CodegenError(
-          `'${name}' ${k} must be sorted ascending: ${stringify(a)} is not less than ${stringify(b)} — the server refuses it.`,
+          `'${name}' ${k} must be sorted ascending. ${stringify(a)} is not less than ${stringify(b)}. The server refuses it.`,
           v.elements[i].pos,
         );
       }
@@ -441,7 +441,7 @@ export function checkBody(
     const v = valueOf(k);
     if (v !== undefined && !evaluate(v, new Map()).ok) {
       throw new CodegenError(
-        `'${name}' ${k} must be a compile-time constant — the server reads it before any document; got an expression.`,
+        `'${name}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         v.pos,
       );
     }
@@ -485,7 +485,7 @@ export function checkSlots(
     const e = operands[i];
     if (e !== undefined && e.type === "NullLiteral") {
       throw new CodegenError(
-        `'${name}' does not accept null — the server refuses it rather than answering null. Guard the operand: '$ifNull(<value>, <fallback>)'.`,
+        `'${name}' does not accept null. The server refuses it instead of answering null. Guard the operand: '$ifNull(<value>, <fallback>)'.`,
         e.pos,
       );
     }
@@ -494,7 +494,7 @@ export function checkSlots(
     const e = operands[Number(i)];
     if (e !== undefined && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
       throw new CodegenError(
-        `'${name}' needs the '${flag}' flag on its regex, as JavaScript does (a TypeError without it): write /…/${flag}.`,
+        `'${name}' needs the '${flag}' flag on its regex, as JavaScript does. JavaScript throws a TypeError without it. Write /…/${flag}.`,
         e.pos,
       );
     }
@@ -516,7 +516,7 @@ export function checkSlots(
     if (e === undefined) continue;
     if ((e.type === "StringLiteral" && e.value === "") || (e.type === "ArrayLiteral" && e.elements.length === 0)) {
       throw new CodegenError(
-        `'${spell(name)}' needs at least one ${noun} — an empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
+        `'${spell(name)}' needs at least one ${noun}. An empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
         e.pos,
       );
     }
@@ -561,14 +561,14 @@ export function checkSlots(
     if (n !== null && (n < lo || n > hi)) {
       // A range whose top is the largest safe integer is a FLOOR, and reads as one.
       const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
-      throw new CodegenError(`'${name}' argument ${Number(i) + 1} must be a number ${bound} — got ${n}.`, e!.pos);
+      throw new CodegenError(`'${name}' argument ${Number(i) + 1} must be a number ${bound}. It got ${n}.`, e!.pos);
     }
   }
   for (const i of args.nonZero ?? []) {
     const e = operands[i];
     if (e !== undefined && numberOf(e) === 0) {
       throw new CodegenError(
-        `'${name}' cannot divide by zero — the server refuses a zero divisor, and JavaScript's NaN has no MongoDB value.`,
+        `'${name}' cannot divide by zero. The server refuses a zero divisor. JavaScript's NaN has no MongoDB value.`,
         e.pos,
       );
     }
@@ -581,7 +581,7 @@ export function checkSlots(
     // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
     if (e !== undefined && e.type !== "ObjectLiteral" && !evaluate(e, new Map()).ok) {
       throw new CodegenError(
-        `'${name}' argument ${i + 1} must be a compile-time constant — the server reads it before any document; got an expression.`,
+        `'${name}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         e.pos,
       );
     }
@@ -632,8 +632,8 @@ function momentFormatHint(fmt: string): string {
   const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
   if (missing === null) return ` Did you mean '${out}'?`;
   return (
-    ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}: it outputs no ` +
-    `month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts (e.g. ["Jan", …][$.t.getMonth()]).`
+    ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}. It outputs no ` +
+    `month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts. For example: ["Jan", …][$.t.getMonth()].`
   );
 }
 
@@ -655,7 +655,7 @@ export function checkDateFormat(name: string, fmt: string, pos: number): void {
   }
   if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
     throw new CodegenError(
-      `'${name}' takes MongoDB's date format specifiers, not Moment/Luxon tokens — '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
+      `'${name}' takes MongoDB's date format specifiers, not Moment or Luxon tokens. '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
       pos,
     );
   }

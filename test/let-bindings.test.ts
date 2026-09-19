@@ -295,25 +295,25 @@ describe("let bindings — template-tag form", () => {
 describe("let bindings — scope-reshaping stages clear the binding", () => {
   it("errors when a let is read after $group", () => {
     expect(() => jsmql("let total = $.price * $.qty; $group({ _id: $.cat }); $match(total > 0)")).toThrow(
-      /`total` is a `let` binding and can't be read after `\$group`/,
+      /`total` is a `let` binding\. It cannot be read after `\$group`, because that stage replaced the document that carried it\./,
     );
   });
 
   it("errors when a let is read after $replaceRoot", () => {
     expect(() => jsmql("let total = $.x; $replaceRoot({ newRoot: $.sub }); $match(total > 0)")).toThrow(
-      /`total` is a `let` binding and can't be read after `\$replaceRoot`/,
+      /`total` is a `let` binding\. It cannot be read after `\$replaceRoot`, because that stage replaced the document that carried it\./,
     );
   });
 
   it("errors when a let is read after $replaceWith", () => {
     expect(() => jsmql("let total = $.x; $replaceWith($.sub); $match(total > 0)")).toThrow(
-      /`total` is a `let` binding and can't be read after `\$replaceWith`/,
+      /`total` is a `let` binding\. It cannot be read after `\$replaceWith`, because that stage replaced the document that carried it\./,
     );
   });
 
   it("errors when a let is read after $bucket", () => {
     expect(() => jsmql("let v = $.x; $bucket({ groupBy: $.y, boundaries: [0, 10, 20] }); $match(v > 0)")).toThrow(
-      /`v` is a `let` binding and can't be read after `\$bucket`/,
+      /`v` is a `let` binding\. It cannot be read after `\$bucket`, because that stage replaced the document that carried it\./,
     );
   });
 
@@ -333,7 +333,7 @@ describe("let bindings — scope-reshaping stages clear the binding", () => {
 describe("let bindings — duplicate declaration", () => {
   it("errors on re-declaring the same name in the same scope", () => {
     expect(() => jsmql("let x = 1; let x = 2; $project({ x })")).toThrow(
-      "`let x` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.",
+      "`let x` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
     );
   });
 });
@@ -427,7 +427,7 @@ describe("let bindings — jsmql.validate() integration", () => {
     expect(result.valid).toBe(false);
     expect(result.errors[0].code).toBe("CODEGEN_ERROR");
     expect(result.errors[0].message).toMatch(
-      "`let x` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.",
+      "`let x` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
     );
   });
 
@@ -435,7 +435,9 @@ describe("let bindings — jsmql.validate() integration", () => {
     const result = jsmql.validate("let total = $.price; $group({ _id: $.cat }); $match(total > 0)");
     expect(result.valid).toBe(false);
     expect(result.errors[0].code).toBe("CODEGEN_ERROR");
-    expect(result.errors[0].message).toMatch(/can't be read after `\$group`/);
+    expect(result.errors[0].message).toMatch(
+      /It cannot be read after `\$group`, because that stage replaced the document that carried it\./,
+    );
   });
 });
 
@@ -685,13 +687,13 @@ describe("let bindings — re-declaration across boundaries", () => {
     expect(() =>
       jsmql("let v = $.x; $group({ _id: $.c, sum: $sum($.a) }); let v = $.sum * 2; $project({ v })"),
     ).toThrow(
-      "`let v` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.",
+      "`let v` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
     );
   });
 
   it("re-declaring after $sort (NOT a reshape stage) is still rejected", () => {
     expect(() => jsmql("let v = $.x; $sort({ x: 1 }); let v = $.y;")).toThrow(
-      "`let v` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.",
+      "`let v` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
     );
   });
 });
@@ -898,7 +900,7 @@ describe("let bindings — function-form input", () => {
 describe("let bindings — all reshape-clearing stages drop the scope", () => {
   it("$bucketAuto clears the let scope", () => {
     expect(() => jsmql("let v = $.x; $bucketAuto({ groupBy: $.y, buckets: 4 }); $match(v > 0)")).toThrow(
-      /`v` is a `let` binding and can't be read after `\$bucketAuto`/,
+      /`v` is a `let` binding\. It cannot be read after `\$bucketAuto`, because that stage replaced the document that carried it\./,
     );
   });
 
@@ -925,7 +927,7 @@ describe("let bindings — $project keeps the let scope (documented trade-off)",
     // null at runtime if their cluster runs it. The user is responsible for
     // putting inclusion-mode $projects last.
     expect(() => jsmql("let x = $.a; $project({ x: 1 }); $match(x > 0)")).toThrow(
-      "`x` is a `let` binding and can't be read after `$project` — that stage replaced the document that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document.",
+      "`x` is a `let` binding. It cannot be read after `$project`, because that stage replaced the document that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document.",
     );
   });
 });

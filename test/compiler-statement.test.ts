@@ -304,8 +304,8 @@ describe("compiler/emit/statement — a stage body is checked from the facts its
     expect(() => pipeline("$sort({ a: 0 });")).toThrow(/takes 1 or -1 for every key/);
     // An unwind reads a PATH, and the server insists it carries its own `$`.
     expect(compiled('$unwind("$items");')).toEqual([{ $unwind: "$items" }]);
-    expect(() => pipeline('$unwind("items");')).toThrow(/carries its own '\$'/);
-    expect(() => pipeline('$unwind({ path: "items" });')).toThrow(/carries its own '\$'/);
+    expect(() => pipeline('$unwind("items");')).toThrow(/The path must start with '\$'/);
+    expect(() => pipeline('$unwind({ path: "items" });')).toThrow(/The path must start with '\$'/);
   });
 
   it("checks a key's literal value against the closed set the server keeps", () => {
@@ -414,8 +414,12 @@ describe("compiler/emit/statement — bindings between stages", () => {
     ]);
     // measured: `$count` and an INCLUSION `$project` drop the field, so a later
     // read of it would resolve against nothing — the compiler refuses instead.
-    expect(() => pipeline('let t = $.a; $count("n"); $.b = t;')).toThrow(/can't be read after `\$count`/);
-    expect(() => pipeline("let t = $.a; $project({ a: 1 }); $.b = t;")).toThrow(/can't be read after `\$project`/);
+    expect(() => pipeline('let t = $.a; $count("n"); $.b = t;')).toThrow(
+      /It cannot be read after `\$count`, because that stage replaced the document that carried it\./,
+    );
+    expect(() => pipeline("let t = $.a; $project({ a: 1 }); $.b = t;")).toThrow(
+      /It cannot be read after `\$project`, because that stage replaced the document that carried it\./,
+    );
     // an EXCLUSION `$project` keeps it
     expect(compiled("let t = $.a; $project({ z: 0 }); $.b = t;")).toEqual([
       { $set: { "__jsmql.var.t": "$a" } },
@@ -443,7 +447,7 @@ describe("compiler/emit/statement — bindings between stages", () => {
     ]);
     // a dropped `const` has no way back but a field of the new document
     expect(() => pipeline("const v = $.x; $group({ _id: $.c }); $.w = v;")).toThrow(
-      /`v` is a `const` binding and can't be read after `\$group`/,
+      /`v` is a `const` binding\. It cannot be read after `\$group`, because that stage replaced the document that carried it\./,
     );
     expect(() => pipeline("const v = $.x; $group({ _id: $.c }); v = 1;")).toThrow(
       /is a 'const' and cannot be assigned again/,
@@ -613,7 +617,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 
   it("refuses a destination that is not a field, and the deletion of the document", () => {
-    expect(() => pipeline("$.s.trim() = 1;")).toThrow(/A write names a field|only a field/);
+    expect(() => pipeline("$.s.trim() = 1;")).toThrow(/You can write only to a field/);
     expect(() => pipeline("delete $;")).toThrow(/delete the document itself/);
   });
 
@@ -673,7 +677,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(() => pipeline("$replaceWith(5);")).toThrow(/expects a document/);
     expect(() => pipeline("$replaceRoot({ newRoot: 5 });")).toThrow(/newRoot expects a document/);
     expect(() => pipeline("$replaceRoot({ bogus: 1 });")).toThrow(/has no parameter 'bogus'/);
-    expect(() => pipeline('{ $unwind: "items" };')).toThrow(/carries its own '\$'/);
+    expect(() => pipeline('{ $unwind: "items" };')).toThrow(/The path must start with '\$'/);
     expect(() => pipeline('{ $sort: { a: "desc" } };')).toThrow(/takes 1 or -1 for every key/);
     // A `$`-led string is a runtime path everywhere but a constant-only slot,
     // where the server reads it as itself.
@@ -869,7 +873,7 @@ describe("compiler/emit/statement — the update spec's closed set, against the 
       if ((ALLOWED as readonly string[]).includes(name)) {
         expect(() => pipeline(src), name).not.toThrow();
       } else {
-        expect(() => pipeline(src), name).toThrow(/cannot stand inside '\$merge': that body is an UPDATE/);
+        expect(() => pipeline(src), name).toThrow(/cannot stand inside '\$merge'\. That body is an UPDATE/);
       }
     }
   });

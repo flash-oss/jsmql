@@ -160,7 +160,7 @@ function settle(name: string, branch: unknown, shaped: Shaped, count: number): S
   if (!isRule(branch)) internalError(`the row '${name}' holds a cell part that is neither a rule nor a refusal`);
   if (shaped.kind === "spread") {
     if (branch.args.spread === true) {
-      internalError(`a spread reached '${name}', whose rule reads one array argument — the desugar pass packs it`);
+      internalError(`a spread reached '${name}'. Its rule reads one array argument, and the desugar pass packs it`);
     }
     return { kind: "spreadRefused", name, sig: branch.args.sig };
   }

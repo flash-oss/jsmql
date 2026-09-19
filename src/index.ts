@@ -110,7 +110,7 @@ function checkValue(value: unknown, slot: number, key?: string): void {
   // The whole value first: a cycle would make the walk below run forever.
   if (isCircular(value)) {
     throw new JsmqlInterpolationError(
-      `jsmql ${where} is a circular structure, which has no MQL representation.`,
+      `jsmql ${where} is a circular structure. It has no MQL representation.`,
       slot,
       key,
     );
@@ -122,13 +122,13 @@ function checkValue(value: unknown, slot: number, key?: string): void {
     if (v === undefined) refuse("is undefined. Pass null for a missing value, or leave the slot out.", path);
     if (typeof v === "function" || typeof v === "symbol") {
       refuse(
-        `has type '${typeof v}', which has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, array, or plain object.`,
+        `has type '${typeof v}'. This type has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, array, or plain object.`,
         path,
       );
     }
     if (typeof v === "number" && !Number.isFinite(v)) {
       refuse(
-        `holds ${v}, which has no MQL representation (NaN and ±Infinity). Replace it with null or a finite number.`,
+        `holds ${v}. This value has no MQL representation (NaN and ±Infinity). Replace it with null or a finite number.`,
         path,
       );
     }
@@ -296,7 +296,7 @@ function defectAsFilter(injected: Program): CodegenError | null {
 function wrongShape(api: string, wanted: Exclude<Mode, "auto">, program: Program): CodegenError {
   const got = received(program);
   return new CodegenError(
-    `${api.replace(/\.compile$/, "")}() expects ${DRIVER[wanted]}, but received ${got.what}. Use ${got.hint}.`,
+    `${api.replace(/\.compile$/, "")}() expects ${DRIVER[wanted]}. It received ${got.what} instead. Use ${got.hint}.`,
     (program as { pos: number }).pos,
   );
 }
@@ -315,7 +315,7 @@ function expressionOf(program: Program): Expr {
       // what reaches here reads the document, so it goes in as the expression.
       if (s.kind !== "const") {
         throw new CodegenError(
-          "A Filter or an expression takes a 'const' prelude; a 'let' needs the pipeline form, where it becomes a field.",
+          "A Filter or an expression takes a 'const' prelude. A 'let' needs the pipeline form. There it becomes a field.",
           s.pos,
         );
       }
@@ -326,7 +326,7 @@ function expressionOf(program: Program): Expr {
     }
     if (s.type === "FuncDecl") {
       throw new CodegenError(
-        "A Filter or an expression cannot declare a function; call it inline, or use the pipeline form.",
+        "A Filter or an expression cannot declare a function. Call it inline, or use the pipeline form.",
         s.pos,
       );
     }
@@ -385,7 +385,7 @@ function oneShot(mode: Mode, api: string, input: JsmqlInput | TemplateStringsArr
     const parsed = parseInput(fnSource(input));
     if (parsed.params.length > 0) {
       throw new FunctionInputError(
-        `${api}() in its one-shot form takes an arrow with the toolbox only ('({ $ }) => …'). A parameter destructure needs values: use ${api}.compile(fn)(params).`,
+        `${api}() in its one-shot form takes an arrow with the toolbox only: '({ $ }) => …'. A parameter destructure needs values. Use ${api}.compile(fn)(params).`,
         parsed.params[0].pos,
       );
     }
@@ -413,7 +413,7 @@ function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBui
     }
     if (!isEntryForm(src)) {
       throw new FunctionInputError(
-        `${api}() takes the entry form '(params, { $, … }) => …' — an arrow whose first destructure names the parameters.`,
+        `${api}() takes the entry form '(params, { $, … }) => …'. This is an arrow whose first destructure names the parameters.`,
       );
     }
     const parsed = parseInput(src);
@@ -424,7 +424,7 @@ function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBui
         if (!Object.prototype.hasOwnProperty.call(given, b.key)) {
           const expected = b.key === b.name ? `'${b.key}'` : `'${b.key}' (bound to '${b.name}' in the body)`;
           throw new CodegenError(
-            `${expected} is a parameter of this query and was not supplied. Pass it: ${api}(fn)({ ${b.key}: … }).`,
+            `${expected} is a parameter of this query, and it is missing. Pass it: ${api}(fn)({ ${b.key}: … }).`,
             b.pos,
           );
         }

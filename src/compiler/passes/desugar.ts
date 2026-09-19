@@ -598,7 +598,7 @@ const groupBodyLink: Rule = {
     // rule is known, not four phases later.
     if (!hasId) {
       throw new CodegenError(
-        `'$$.groupBy({ … })' on the stream is the '$group' stage, and its body needs an '_id' — the group key: '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field alone, write '$$.groupBy("status")'.`,
+        `'$$.groupBy({ … })' on the stream is the '$group' stage. Its body needs an '_id' field: the group key. For example, '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field, write '$$.groupBy("status")'.`,
         (args[0] as { pos: number }).pos,
       );
     }
