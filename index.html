@@ -1,15 +1,14 @@
 <!doctype html>
 <!--
-  The jsmql.js.org landing page. Hand-authored and static: GitHub Pages copies
-  it verbatim because it carries no YAML front matter, so Jekyll never runs
-  Liquid over it and JS-syntax brace blocks survive untouched (same reason
-  playground.html and dist/jsmql.js pass through unrendered — see _config.yml).
+  This is the jsmql.js.org landing page. A person wrote it by hand, and it stays static. GitHub Pages copies it
+  as written, because it carries no YAML front matter. So Jekyll never runs Liquid over it, and the JS-syntax
+  brace blocks survive untouched. playground.html and dist/jsmql.js pass through unrendered for the same reason;
+  see _config.yml.
 
-  Every MQL block on this page is computed in the browser at load time by the
-  same dist/jsmql.js bundle the playground imports. Nothing here restates an
-  emitted document, so the page cannot drift from the compiler. The examples
-  are checked by test/site.test.ts, which compiles each one and asserts the
-  output shape the surrounding prose claims.
+  The browser computes every MQL block on this page at load time, with the same dist/jsmql.js bundle that the
+  playground imports. Nothing here restates an emitted document, so the page cannot drift from the compiler.
+  test/site.test.ts checks the examples: it compiles each one and asserts the output shape that the surrounding
+  prose claims.
 -->
 <html lang="en">
   <head>
@@ -18,7 +17,7 @@
     <title>Compile JS you know to the MQL for DB-side performance efficiency</title>
     <meta
       name="description"
-      content="JSMQL is plain JavaScript syntax that compiles to MongoDB's MQL. Write hard MQL in the simple JS you already know."
+      content="JSMQL is plain JavaScript syntax. It compiles to MongoDB's MQL. Write difficult MQL in the JavaScript syntax you already know."
     />
     <link rel="canonical" href="https://jsmql.js.org/" />
     <meta property="og:type" content="website" />
@@ -26,7 +25,7 @@
     <meta property="og:title" content="JSMQL — complex MongoDB queries in simple JavaScript" />
     <meta
       property="og:description"
-      content="Plain JavaScript syntax that compiles to MongoDB MQL — the syntax you already know."
+      content="Plain JavaScript syntax that compiles to MongoDB MQL. You already know the syntax."
     />
     <meta name="twitter:card" content="summary" />
     <link
@@ -34,13 +33,11 @@
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232a6df4'/><text x='16' y='24' font-family='ui-monospace,monospace' font-size='21' font-weight='700' fill='%23fff' text-anchor='middle'>$</text></svg>"
     />
 
-    <!-- The playground's highlighter, in read-only form. Same pinned CodeMirror
-         release, same JavaScript mode, same `neo` theme, so a block here and the
-         same block in the editor carry identical colours. `runmode-standalone`
-         is that tokeniser without the editor around it — a thirtieth of the
-         core's weight, and this page shows code rather than editing it. The
-         page works without all three: the module script below leaves every
-         block as plain text when the CDN does not answer. -->
+    <!-- This is the playground's highlighter, in read-only form. It uses the same pinned CodeMirror release,
+         the same JavaScript mode, and the same `neo` theme, so a block here and the same block in the editor
+         carry identical colours. `runmode-standalone` is that tokeniser without the editor around it. It is a
+         thirtieth of the core's weight, and this page shows code rather than editing it. The page works without
+         all three files: when the CDN does not answer, the module script below leaves every block as plain text. -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/neo.min.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/runmode/runmode-standalone.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
@@ -48,11 +45,10 @@
 
     <style>
       :root {
-        /* Both themes come from this token block and its dark counterpart
-           below. Every rule on the page reads a token, so the two themes share
-           one set of rules and cannot drift apart. `color-scheme` tells the
-           browser to paint its own surfaces — scroll bars, form controls, the
-           canvas behind the page — to match. */
+        /* Both themes come from this token block and its dark counterpart below. Every rule on the page reads a
+           token, so the two themes share one set of rules and cannot drift apart. `color-scheme` tells the
+           browser to paint its own surfaces to match: scroll bars, form controls, and the canvas behind the
+           page. */
         color-scheme: light dark;
 
         --fg: #1a1a1a;
@@ -80,32 +76,29 @@
         --code-fg: #2e383c;
         --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
-        /* Width of one code panel — the only measure on the page the code
-           dictates. `jsmql.stringify` breaks a line at 80 columns, so a panel
-           holds a whole line once it fits 80 monospace characters, its
-           line-number gutter, and the space around both:
+        /* This is the width of one code panel. It is the only measure on the page that the code dictates.
+           `jsmql.stringify` breaks a line at 80 columns. So a panel holds a whole line once it fits 80
+           monospace characters, its line-number gutter, and the space around both:
 
-             627px  80 columns — each character advances 0.6em ≈ 7.83px at the
-                    13px `--mono` size
-              24px  the 3-digit gutter the longest panel reaches
+             627px  80 columns. Each character advances 0.6em, about 7.83px, at the 13px `--mono` size.
+              24px  the 3-digit gutter that the longest panel reaches
               10px  --gutter-gap
-              28px  the `pre` padding, 14px a side
+              28px  the `pre` padding, 14px on each side
                2px  the `pre` border
-              17px  a vertical scroll bar, which a panel taller than its cap
-                    grows and which takes layout width on every platform that
-                    does not overlay it
-              12px  slack, because the scroll bar width and the character
-                    advance both vary a little by platform and by font
+              17px  a vertical scroll bar. A panel taller than its cap grows this bar, and it takes layout
+                    width on every platform that does not overlay it.
+              12px  slack. The scroll bar width and the character advance both vary a little by platform
+                    and by font.
 
-           A window too narrow to give a panel this much scrolls it sideways
-           instead — the panel never breaks a line to fit. */
+           A window too narrow to give a panel this much space scrolls the panel sideways instead. The
+           panel never breaks a line to fit. */
         --code-panel: 720px;
         --gutter-gap: 10px;
       }
 
-      /* The reader's system theme selects the palette. There is no switch on
-         the page: a browser set to dark gets the tokens below, and the layout,
-         the spacing and the colour meanings stay exactly as they are above. */
+      /* The reader's system theme selects the palette. The page has no switch. A browser set to dark gets
+         the tokens below, and the layout, the spacing and the colour meanings stay exactly as they are
+         above. */
       @media (prefers-color-scheme: dark) {
         :root {
           --fg: #e6e9ef;
@@ -133,11 +126,10 @@
           --code-fg: #d7dce4;
         }
 
-        /* The pinned `neo` stylesheet picks its token colours against white,
-           so a dark surface needs them again. Each keeps the hue `neo` gives
-           it and changes only lightness, so a keyword stays blue and a string
-           stays orange in both themes — and the playground, which loads the
-           same stylesheet and repeats these rules, matches this page. */
+        /* The pinned `neo` stylesheet picks its token colours against white, so a dark surface needs them
+           again. Each colour keeps the hue that `neo` gives it and changes only the lightness. So a
+           keyword stays blue and a string stays orange in both themes. The playground loads the same
+           stylesheet and repeats these rules, so it matches this page. */
         .cm-s-neo .cm-comment {
           color: #7f8b98;
         }
@@ -200,22 +192,19 @@
         padding: 0 20px;
       }
 
-      /* The example cards are the one thing on the page that reads at the code
-         measure rather than the page measure: two side-by-side panels of
-         `--code-panel`, their 14px gap, the 38px the card spends on padding and
-         border, and the wrap's own 20px gutters. On a wide screen the cards
-         therefore reach past the prose column on both sides and show an
-         80-column line whole; on a narrow one this cap never binds and the
-         cards sit in the page measure like everything else. */
+      /* The example cards are the one thing on the page that reads at the code measure rather than the page
+         measure. This measure adds two side-by-side panels of `--code-panel`, their 14px gap, the 38px
+         that the card spends on padding and border, and the wrap's own 20px gutters. On a wide screen the
+         cards reach past the prose column on both sides and show an 80-column line whole. On a narrow
+         screen this cap never binds, and the cards sit in the page measure like everything else. */
       .wrap.code {
         max-width: calc(var(--code-panel) * 2 + 92px);
       }
 
       /* ── Header ──────────────────────────────────────────────────────────── */
-      /* One row at every width: the wordmark, then the three places a reader
-         goes next. Nothing else — a caption here would say what the heading
-         under it says, and a second GitHub link in the corner would fight the
-         nav for the same 48px on a phone. */
+      /* This is one row at every width: the wordmark, then the three places a reader goes next. It holds
+         nothing else. A caption here would say what the heading under it already says, and a second GitHub
+         link in the corner would compete with the nav for the same 48px on a phone. */
       header.bar {
         padding: 11px 20px;
         border-bottom: 1px solid var(--border);
@@ -248,9 +237,9 @@
       }
 
       /* ── Hero ────────────────────────────────────────────────────────────── */
-      /* Text beside a live compile, so the first screen shows the thing itself
-         and not only a claim about it. Under 900px the card drops below the
-         text; the call to action stays inside the first screen either way. */
+      /* This puts text beside a live compile, so the first screen shows the thing itself and not only a
+         claim about it. Under 900px the card drops below the text. The call to action stays inside the
+         first screen either way. */
       .hero {
         padding: 44px 0 40px;
         border-bottom: 1px solid var(--border);
@@ -409,9 +398,9 @@
         gap: 14px;
       }
 
-      /* A grid item defaults to `min-width: auto`, which lets a long line
-         inside the <pre> push the column — and the page — wider than the
-         viewport. Zero the minimum so the <pre> scrolls on its own instead. */
+      /* A grid item defaults to `min-width: auto`. This lets a long line inside the <pre> push the column,
+         and the page, wider than the viewport. Set the minimum to zero, so the <pre> scrolls on its own
+         instead. */
       .io > * {
         min-width: 0;
       }
@@ -443,12 +432,10 @@
         margin-bottom: 5px;
       }
 
-      /* The MQL pane folds behind its label. The script opens every fold on a
-         wide screen, where the two panes sit side by side and the fold costs
-         nothing; on a phone the panes stack, and a closed fold keeps each card
-         to its title, its JSMQL and one line stating how much MQL that made —
-         a tap opens it. The marker is the label itself, so there is no
-         triangle to align. */
+      /* The MQL pane folds behind its label. The script opens every fold on a wide screen, where the two
+         panes sit side by side and the fold costs nothing. On a phone the panes stack, and a closed fold
+         keeps each card to its title, its JSMQL, and one line that states how much MQL that made. A tap
+         opens it. The marker is the label itself, so there is no triangle to align. */
       details.fold > summary {
         list-style: none;
         cursor: pointer;
@@ -482,10 +469,9 @@
         display: none;
       }
 
-      /* Lines are never broken: code reads as it was written. `--code-panel`
-         sizes the panel to hold the 80 columns the printer breaks at, so a
-         window wide enough for that cap shows every line whole and no
-         horizontal scroll bar appears. A narrower window scrolls instead. */
+      /* Lines are never broken: code reads as the author wrote it. `--code-panel` sizes the panel to hold
+         the 80 columns that the printer breaks at. So a window wide enough for that cap shows every line
+         whole, and no horizontal scroll bar appears. A narrower window scrolls instead. */
       pre {
         margin: 0;
         padding: 12px 14px;
@@ -504,9 +490,9 @@
         background-color: var(--panel);
       }
 
-      /* Line numbers, as the playground's editors show them: right-aligned in
-         a gutter the script sizes to the widest number the block reaches. The
-         number is generated content, so it stays out of a copied selection. */
+      /* These are line numbers, as the playground's editors show them. They sit right-aligned in a gutter
+         that the script sizes to the widest number the block reaches. The number is generated content, so
+         it stays out of a copied selection. */
       pre code {
         display: block;
         counter-reset: line;
@@ -527,18 +513,17 @@
         user-select: none;
       }
 
-      /* A highlighted block. The `neo` stylesheet paints the `cm-*` spans the
-         highlighter emits, but keeps its base text colour on a selector only a
-         live editor matches (`.cm-s-neo.CodeMirror`), so name that colour here
-         for the punctuation and operators no token class covers. The class
-         arrives from the script, so a block it never reached keeps the page's
-         own text colour, and `.pending` / `.failed` below outrank it anyway. */
+      /* This is a highlighted block. The `neo` stylesheet paints the `cm-*` spans that the highlighter
+         emits, but it keeps its base text colour on a selector that only a live editor matches
+         (`.cm-s-neo.CodeMirror`). So this rule names that colour here, for the punctuation and operators
+         that no token class covers. The class arrives from the script, so a block it never reached keeps
+         the page's own text colour. `.pending` and `.failed` below outrank it anyway. */
       pre.cm-s-neo {
         color: var(--code-fg);
       }
 
-      /* The address example's MQL runs to seventy lines. Give that pair a
-         taller window — the size gap is the point it makes. */
+      /* The address example's MQL runs to seventy lines. Give that pair a taller window. The size gap is
+         the point that it makes. */
       .example.tall pre {
         max-height: 520px;
       }
@@ -582,12 +567,11 @@
       }
 
       /* ── SQL vs JSMQL ────────────────────────────────────────────────────── */
-      /* One idea per row: what it is, how SQL says it, how JSMQL says it. No
-         MQL on these rows on purpose — this is a comparison of the two
-         languages people write, and a third column of what the machine runs
-         would only say "look how long" about both. Where the SQL dialects
-         disagree, each gets its own line with its name; the disagreement is
-         the point of that row. Under 760px the three cells stack. */
+      /* Each row holds one idea: what it is, how SQL says it, and how JSMQL says it. These rows hold no MQL
+         on purpose. This is a comparison of the two languages that people write, and a third column of what
+         the machine runs would only show the length of both. Where the SQL dialects disagree, each one gets
+         its own line with its name. The disagreement is the point of that row. Under 760px the three cells
+         stack. */
       .vs {
         display: grid;
         grid-template-columns: 150px minmax(0, 1.2fr) minmax(0, 1fr);
@@ -600,9 +584,8 @@
         border-radius: 10px;
       }
 
-      /* Grid items default to `min-width: auto`; a long SQL or JSMQL line would
-         widen the row — and the page — past the viewport. Zero it so each
-         <pre> scrolls on its own, as the example panes do. */
+      /* Grid items default to `min-width: auto`. A long SQL or JSMQL line would widen the row, and the page,
+         past the viewport. Set it to zero, so each <pre> scrolls on its own, as the example panes do. */
       .vs > *,
       .dl > * {
         min-width: 0;
@@ -637,7 +620,7 @@
         background-color: var(--sidebar-bg);
       }
 
-      /* A dialect line: the dialect's name, then its spelling. */
+      /* This is a dialect line: the dialect's name, then its spelling. */
       .dl {
         display: grid;
         grid-template-columns: 92px minmax(0, 1fr);
@@ -682,7 +665,7 @@
         gap: 16px;
       }
 
-      /* a heading straight above the grid keeps the gap an intro used to give */
+      /* A heading placed directly above the grid keeps the same gap that an intro used to give. */
       h2 + .grid {
         margin-top: 20px;
       }
@@ -878,8 +861,8 @@
         <div>
           <h1>Complex MongoDB queries in simple JavaScript</h1>
           <p class="lede">
-            JSMQL is plain JavaScript syntax that compiles to MongoDB's query language: everyday JavaScript in, native
-            MQL out.
+            JSMQL is plain JavaScript syntax that compiles to MongoDB's query language. You give it everyday JavaScript,
+            and it gives you native MQL.
           </p>
           <div class="cta">
             <a class="btn primary" href="playground.html">Try the playground</a>
@@ -912,15 +895,15 @@
         <h2>One expression. Seventy lines of MQL.</h2>
 
         <div class="notice" id="live-notice" hidden>
-          The compiler could not be loaded, so the MQL output is not shown. The page has to be served over http(s), not
-          opened from a local file; the compiled examples are also in the
+          The compiler did not load, so the page does not show the MQL output. Serve the page over http or https. Do not
+          open the page from a local file. You can also find the compiled examples in the
           <a href="https://github.com/flash-oss/jsmql/blob/master/test/realistic.test.ts">worked examples</a>.
         </div>
         <noscript>
           <div class="notice">
-            The MQL output on this page is compiled by JavaScript in the browser. With JavaScript off, every JSMQL
-            example below is still readable; the compiled output is spelled out in the
-            <a href="https://github.com/flash-oss/jsmql/blob/master/README.md">README</a>.
+            JavaScript in the browser compiles the MQL output on this page. When you turn off JavaScript, you can still
+            read each JSMQL example below. The
+            <a href="https://github.com/flash-oss/jsmql/blob/master/README.md">README</a> shows the compiled output.
           </div>
         </noscript>
       </div>
@@ -955,8 +938,8 @@
         <h2>SQL vs JSMQL</h2>
       </div>
 
-      <!-- The rows take the code measure, as the example cards do, so a SQL
-           line and its JSMQL line each sit whole on a wide screen. -->
+      <!-- The rows take the code measure, as the example cards do. So a SQL line and its JSMQL line each sit
+           whole on a wide screen. -->
       <div class="wrap code">
         <div class="vs-head"><span></span><span>SQL</span><span>JSMQL</span></div>
 
@@ -1066,9 +1049,8 @@ GROUP BY customer_id HAVING SUM(total) &gt; 1000</code></pre>
         <p class="section-intro">Every MQL document on this page is compiled in the browser.</p>
       </div>
 
-      <!-- The examples take their own, wider wrap: the heading above reads as
-           prose and keeps the page measure, while these cards are sized by the
-           code they hold. See `.wrap.code`. -->
+      <!-- The examples take their own, wider wrap. The heading above reads as prose and keeps the page
+           measure. These cards are sized by the code that they hold. See `.wrap.code`. -->
       <div class="wrap code">
         <article class="example" data-example data-mode="pipeline">
           <h3><span class="chip pipeline">Pipeline</span> Stages are statements</h3>
@@ -1158,29 +1140,29 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
             <p>
               A developer thinks <code>$.qty * $.price + $.shipping</code>. MongoDB needs
               <code>{ $add: [{ $multiply: ["$qty", "$price"] }, "$shipping"] }</code>. That is the abstract syntax tree
-              of the expression. Writing MQL by hand is writing an AST by hand.
+              of the expression. When you write MQL by hand, you write an AST by hand.
             </p>
           </div>
           <div class="card">
             <h3>LLM-generated MQL still needs to be reviewed</h3>
             <p>
-              Code generated by an LLM still has to be reviewed by a person. The smaller the diff, the faster the
-              review: five lines of JavaScript are read in seconds; 250 lines of nested <code>$reduce</code> are not.
-              LLMs like smaller diffs too — less to generate, less to get wrong.
+              A person must still review code that an LLM generates. A smaller diff gives a faster review. A person
+              reads five lines of JavaScript in seconds, but not 250 lines of nested <code>$reduce</code>. A smaller
+              diff also helps the LLM, because it generates less code and makes fewer mistakes.
             </p>
           </div>
           <div class="card">
             <h3>Existing MQL keeps working</h3>
-            <p>Any MQL pasted into JSMQL comes out unchanged, so existing MQL code will work out of the box.</p>
+            <p>Any MQL that you paste into JSMQL comes out unchanged. Existing MQL code works immediately.</p>
           </div>
           <div class="card">
             <h3>Every operator is a function call</h3>
             <p>
-              Any MongoDB operator can be written as a function: <code>$op(args)</code> becomes
+              You can write any MongoDB operator as a function. <code>$op(args)</code> becomes
               <code>{ $op: args }</code>. <code>$dateTrunc({ date: $.createdAt, unit: "week" })</code> compiles to
-              <code>{ $dateTrunc: { date: "$createdAt", unit: "week" } }</code>, and
-              <code>$setUnion($.tags, $.extra)</code> to <code>{ $setUnion: ["$tags", "$extra"] }</code>. This also
-              covers operators that do not exist yet.
+              <code>{ $dateTrunc: { date: "$createdAt", unit: "week" } }</code>.
+              <code>$setUnion($.tags, $.extra)</code> compiles to <code>{ $setUnion: ["$tags", "$extra"] }</code>. This
+              also works for operators that MongoDB does not have yet.
             </p>
           </div>
           <div class="card">
@@ -1192,7 +1174,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
           </div>
           <div class="card">
             <h3>Indexes keep working</h3>
-            <p>JSMQL makes sure that collection indexes are used as much as possible.</p>
+            <p>JSMQL makes sure that queries use collection indexes as much as possible.</p>
           </div>
           <div class="card">
             <h3>Errors suggest a fix</h3>
@@ -1200,36 +1182,39 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
           </div>
           <div class="card">
             <h3>Never invalid MQL</h3>
-            <p>JSMQL makes sure it never generates invalid MQL — unless you write <code>$typo</code> yourself.</p>
+            <p>
+              JSMQL makes sure it never generates invalid MQL. An error can happen only if you write
+              <code>$typo</code> yourself.
+            </p>
           </div>
           <div class="card">
             <h3>Not server-side JavaScript</h3>
             <p>
-              MongoDB 8.0 deprecated <code>$function</code>, <code>$accumulator</code> and <code>$where</code>:
-              JavaScript running inside the server, per document, without indexes. Rightly. JSMQL compiles ahead of
-              time, on the application side; the server only ever sees ordinary MQL.
+              MongoDB 8.0 deprecated <code>$function</code>, <code>$accumulator</code> and <code>$where</code>. These
+              ran JavaScript inside the server, for each document, without indexes. This was the right choice. JSMQL
+              compiles ahead of time, on the application side. The server only ever sees ordinary MQL.
             </p>
           </div>
           <div class="card">
             <h3>Computations on the server</h3>
             <p>
-              A typical pattern: fetch all the documents, then filter, group and sum them on the client side. JSMQL
-              helps you move that computation to the database server.
+              A typical pattern is this: you fetch all the documents, then you filter, group and sum them on the client
+              side. JSMQL helps you move that computation to the database server.
             </p>
           </div>
           <div class="card">
             <h3>No need to learn a new programming language</h3>
             <p>
-              Two in three developers write JavaScript, and lodash is downloaded tens of millions of times a week.
-              <code>.filter</code>, <code>.groupBy</code>, <code>.sumBy</code> are already known words.
+              Two in three developers write JavaScript. People download lodash tens of millions of times a week. You
+              already know words such as <code>.filter</code>, <code>.groupBy</code> and <code>.sumBy</code>.
             </p>
           </div>
           <div class="card">
             <h3>SQL over MongoDB keeps failing</h3>
             <p>
-              Since 2015 MongoDB has offered analysts SQL three times: a BI connector built on PostgreSQL, then its
-              Atlas successor now deprecated, and a read-only SQL-92 interface. Each assumed the people who need data
-              speak SQL. JSMQL assumes they speak JavaScript.
+              MongoDB offered analysts SQL three times since 2015: a BI connector built on PostgreSQL, then its Atlas
+              successor, now deprecated, and a read-only SQL-92 interface. Each attempt assumed that people who need
+              data speak SQL. JSMQL assumes they speak JavaScript.
             </p>
           </div>
           <div class="card">
@@ -1242,24 +1227,24 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
           <div class="card">
             <h3>Parse once, run many times</h3>
             <p>
-              On a hot path the same JSMQL should not be compiled on every request.
-              <code>jsmql.compile((params, { $ }) =&gt; …)</code> parses it once, at startup, and returns a function;
-              each call only binds the parameter values.
+              On a hot path, do not compile the same JSMQL on every request.
+              <code>jsmql.compile((params, { $ }) =&gt; …)</code> parses it once, at startup. It returns a function.
+              Each call only binds the parameter values.
             </p>
           </div>
           <div class="card">
             <h3>Mongoose plugin</h3>
             <p>
-              Model methods accept JSMQL wherever they take a filter, an update or a pipeline; plain MQL keeps working
-              untouched. <code>UserModel.find(`$.email.endsWith("@gmail.com")`)</code>, or
+              Model methods accept JSMQL wherever they take a filter, an update or a pipeline. Plain MQL still works,
+              unchanged. For example: <code>UserModel.find(`$.email.endsWith("@gmail.com")`)</code>, or
               <code>OrderModel.aggregate(() =&gt; $$.groupBy("sku"))</code>.
             </p>
           </div>
           <div class="card">
             <h3>Command line</h3>
             <p>
-              <code>echo '$.age &gt; 18' | jsmql</code> prints <code>{ age: { $gt: 18 } }</code>. Compiles JSMQL to MQL
-              in a shell — handy for LLM coding tools.
+              <code>echo '$.age &gt; 18' | jsmql</code> prints <code>{ age: { $gt: 18 } }</code>. The command line
+              compiles JSMQL to MQL in a shell. This is useful for LLM coding tools.
             </p>
           </div>
         </div>
@@ -1274,23 +1259,23 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
             <h3>Install</h3>
             <p class="install"><span class="prompt">$</span> npm install @koresar/jsmql</p>
             <ul style="margin-top: 14px">
-              <li><a href="playground.html">Playground</a> — JSMQL on the left, its MQL on the right.</li>
+              <li><a href="playground.html">Playground</a> — JSMQL is on the left, and its MQL is on the right.</li>
             </ul>
           </div>
           <div>
             <h3>Read</h3>
             <ul>
               <li>
-                <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Language reference</a> — the
-                syntax, what each piece compiles to, and where it departs from JavaScript.
+                <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Language reference</a> — this
+                describes the syntax, what each piece compiles to, and where it departs from JavaScript.
               </li>
               <li>
                 <a href="https://github.com/flash-oss/jsmql/blob/master/test/realistic.test.ts">Worked examples</a> —
-                complete queries, each asserted against the exact MQL it produces.
+                complete queries, each checked against the exact MQL it produces.
               </li>
               <li>
                 <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANG_RULES.md">Language rules</a> — the
-                promises the compiler keeps, including that the server never receives MQL that would fail.
+                promises the compiler keeps, including that the server never gets MQL that cannot run.
               </li>
             </ul>
           </div>
@@ -1317,20 +1302,19 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
     </footer>
 
     <script type="module">
-      // Compile every example on the page with the real library, so no MQL on
-      // this page is a hand-copied snapshot of what the compiler used to emit.
-      // `data-mode` names the entry point, using the same mode keys the
-      // playground uses, so one value drives both the compile below and the
-      // share link that opens the example in the playground.
+      // This script compiles every example on the page with the real library, so no MQL on this page is a
+      // hand-copied snapshot of a past compiler result. `data-mode` names the entry point. It uses the same
+      // mode keys that the playground uses, so one value drives both the compile below and the share link
+      // that opens the example in the playground.
       const examples = document.querySelectorAll("[data-example]");
-      // The SQL-vs-JSMQL rows carry a JSMQL cell and no MQL pane: each one is
-      // compiled too — a cell that stops compiling marks itself — and its link
-      // opens the playground, which is where the MQL is shown.
+      // Each SQL-vs-JSMQL row carries a JSMQL cell and no MQL pane. The script compiles each one too: a
+      // cell that fails to compile marks itself. Its link opens the playground, which is where the MQL
+      // shows.
       const versus = document.querySelectorAll("[data-vs]");
 
-      // The playground restores a session from a `#s=<base64url>` fragment
-      // holding { v, input, vars, mode } — see playground_skeleton.html. Build
-      // the same payload here so "Open in playground" carries the example.
+      // The playground restores a session from a `#s=<base64url>` fragment that holds { v, input, vars,
+      // mode }; see playground_skeleton.html. This builds the same payload here, so "Open in playground"
+      // carries the example.
       function toB64Url(str) {
         const bytes = new TextEncoder().encode(str);
         let bin = "";
@@ -1338,22 +1322,20 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
         return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
       }
 
-      // Both panels hold JavaScript: JSMQL is a JavaScript subset, and the MQL
-      // beside it is the JavaScript that rebuilds the document — `new Date(…)`,
-      // `new ObjectId(…)`, bare keys. The JSON tokeniser would mis-read all three.
+      // Both panels hold JavaScript. JSMQL is a JavaScript subset, and the MQL beside it is the JavaScript
+      // that rebuilds the document: `new Date(…)`, `new ObjectId(…)`, bare keys. The JSON tokeniser would
+      // read all three wrongly.
       const JSMQL_MODE = { name: "javascript" };
       const MQL_MODE = { name: "javascript" };
       const SQL_MODE = { name: "text/x-sql" };
 
-      // Highlight one block into numbered lines. `runMode` is CodeMirror's
-      // tokeniser without an editor, and its callback form reports one token at
-      // a time with the style the mode gives it — the same `cm-*` names the
-      // playground's editors carry, which the `neo` stylesheet colours. The
-      // callback form is what makes the line split safe: one run tokenises the
-      // whole text, so a construct that spans lines still reads correctly,
-      // while each line lands in its own element for the CSS counter to number.
-      // With no CodeMirror on the page — a blocked CDN — the lines still land,
-      // just uncoloured.
+      // This function highlights one block into numbered lines. `runMode` is CodeMirror's tokeniser
+      // without an editor. Its callback form reports one token at a time, with the style that the mode
+      // gives it. These are the same `cm-*` names that the playground's editors carry, and that the `neo`
+      // stylesheet colours. The callback form makes the line split safe: one run tokenises the whole text,
+      // so a construct that spans lines still reads correctly, while each line lands in its own element
+      // for the CSS counter to number. When the page has no CodeMirror, because the CDN is blocked, the
+      // lines still land, just without colour.
       function paint(codeEl, mode, text = codeEl.textContent) {
         const lines = [];
         const openLine = () => {
@@ -1365,16 +1347,15 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
 
         let line = openLine();
         const emit = (chunk, style) => {
-          // A token can carry newlines (a run of blank lines arrives as one
-          // chunk), so every chunk is split rather than only the ones that
-          // look like line breaks.
+          // A token can carry newlines; a run of blank lines arrives as one chunk. So this splits every
+          // chunk, rather than only the ones that look like line breaks.
           chunk.split("\n").forEach((part, i) => {
             if (i > 0) line = openLine();
             if (!part) return;
             if (!style) return void line.append(part);
             const span = document.createElement("span");
-            // A style is space-separated ("string property"), and each name
-            // takes the `cm-` prefix the stylesheet matches on.
+            // A style holds space-separated names, such as "string property". Each name takes the `cm-`
+            // prefix that the stylesheet matches on.
             span.className = "cm-" + style.split(" ").join(" cm-");
             span.textContent = part;
             line.append(span);
@@ -1388,14 +1369,14 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
         }
 
         codeEl.replaceChildren(...lines);
-        // Size the gutter to the widest number this block reaches, so a short
-        // example spends no width on digits it never shows.
+        // This sizes the gutter to the widest number that this block reaches, so a short example spends no
+        // width on digits it never shows.
         codeEl.closest("pre").style.setProperty("--gutter", String(lines.length).length + "ch");
       }
 
-      // Read every JSMQL source before anything rewrites its block, and paint it
-      // now: it is already on the page, so it does not wait on the bundle that
-      // the MQL side needs. The SQL cells are painted the same way.
+      // This reads every JSMQL source before anything rewrites its block, and paints it now. The source is
+      // already on the page, so it does not wait on the bundle that the MQL side needs. The SQL cells are
+      // painted the same way.
       const sources = new Map();
       for (const el of [...examples, ...versus]) {
         const code = el.querySelector(".src code");
@@ -1404,17 +1385,16 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
       }
       for (const code of document.querySelectorAll("pre.sql code")) paint(code, SQL_MODE);
 
-      // On a wide screen the two panes sit side by side, so every MQL fold is
-      // open; on a phone they stack, and a closed fold keeps the page short —
-      // one line says how much MQL there is, a tap shows it. The hero card is
-      // the exception: it exists to show the compile, so its MQL stays open.
+      // On a wide screen the two panes sit side by side, so every MQL fold stays open. On a phone they
+      // stack, and a closed fold keeps the page short: one line states how much MQL there is, and a tap
+      // shows it. The hero card is the exception. It exists to show the compile, so its MQL stays open.
       const narrow = matchMedia("(max-width: 760px)").matches;
       if (narrow) for (const d of document.querySelectorAll(".example:not(.hero) details.fold")) d.open = false;
 
-      // The library prints its own MQL: `jsmql.stringify` writes the document as the
-      // JavaScript that rebuilds it, so a Date, an ObjectId or a Binary reads here
-      // exactly as the CLI and the playground write it, and pastes into a shell as it
-      // stands. The page holds no printer of its own to drift from that one.
+      // The library prints its own MQL. `jsmql.stringify` writes the document as the JavaScript that
+      // rebuilds it. So a Date, an ObjectId or a Binary reads here exactly as the CLI and the playground
+      // write it, and it pastes into a shell as it stands. The page holds no printer of its own that could
+      // drift from that one.
       let entries, stringify;
       try {
         const { jsmql } = await import("./dist/jsmql.js");
@@ -1441,7 +1421,7 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
 
         const out = el.querySelector(".out");
         if (!out) {
-          // a SQL-vs-JSMQL row: compile to prove the cell, show nothing but a failure
+          // This is a SQL-vs-JSMQL row. The script compiles it to prove the cell, and shows only a failure.
           try {
             entries[mode](source);
           } catch (err) {
@@ -1464,8 +1444,8 @@ $.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pr
           const lines = el.querySelector("[data-lines]");
           if (lines) lines.textContent = `${to} line${to === 1 ? "" : "s"}`;
 
-          // Where the example asks for it, state the size gap in its own terms.
-          // Counted from the rendered text so the figures cannot go stale.
+          // Where the example asks for it, this states the size gap in its own terms. It counts from the
+          // rendered text, so the figures cannot go stale.
           const loc = el.querySelector("[data-loc]");
           if (loc) {
             const from = source.split("\n").length;

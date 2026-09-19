@@ -1,28 +1,28 @@
-# Allowlist for the deferred-coverage drift test.
+# This is the allowlist for the deferred-coverage drift test.
 #
-# Format: each non-blank, non-comment line is `<filepath>::<phrase-substring>`.
-# The drift test matches a "not yet supported" / "future work" / "deferred"
-# phrase in <filepath> against <phrase-substring> (case-sensitive substring).
-# If a phrase line matches an allowlist entry AND has no [DEF-NNN] tag within
-# ±2 lines, the test skips it (i.e. treats it as known).
+# Format: each non-blank, non-comment line holds `<filepath>::<phrase-substring>`.
+# The drift test matches a "not yet supported", "future work" or "deferred"
+# phrase in <filepath> against <phrase-substring>, as a case-sensitive substring.
+# When a phrase line matches an allowlist entry and has no [DEF-NNN] tag within
+# two lines, the test skips it and treats it as known.
 #
-# Why allowlist at all? Three reasons:
-#   (1) A rejection site that is actively being removed — tagging it would
-#       only have to be undone when the work lands. Allowlist instead, and
+# The allowlist exists for three reasons:
+#   (1) A rejection site is under active removal. A tag here would only need
+#       removal again once the work lands. Use the allowlist instead, and
 #       drop the entry with the site.
-#   (2) A handful of spec-section headers (`## Out of scope`, `## Future
-#       work`) are *categorical* — their children may individually carry
-#       [DEF-NNN] tags, but the header itself doesn't need one.
-#   (3) The deferred-system meta-documentation itself describes the
-#       deferral phrases — those lines mention the words but aren't
-#       deferrals. Allowlist.
+#   (2) A few spec-section headers (`## Out of scope`, `## Future
+#       work`) are categorical. Their child bullets may each carry a
+#       [DEF-NNN] tag, but the header itself needs none.
+#   (3) The deferred-system meta-documentation describes the
+#       deferral phrases itself. Those lines mention the words, but they are not
+#       deferrals. Add them to the allowlist.
 #
-# CRITICAL RULE: the test fails if an allowlist entry no longer matches any
-# phrase. So the allowlist can only shrink — it can never accumulate stale
-# entries that mask new untagged phrases.
+# CRITICAL RULE: the test fails when an allowlist entry no longer matches any
+# phrase. So the allowlist can only shrink. It can never hold a stale
+# entry that masks a new untagged phrase.
 #
-# When you remove an entry: you've either (a) tagged the phrase, (b) shipped
-# the feature and the phrase is gone, or (c) cleaned up stale doc wording.
+# When you remove an entry, one of three things happened: you tagged the phrase, you
+# shipped the feature and the phrase is gone, or you cleaned up stale doc wording.
 
 # -----------------------------------------------------------------------------
 # Meta-documentation about the deferral system itself.

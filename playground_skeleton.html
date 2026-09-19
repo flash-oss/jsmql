@@ -834,8 +834,8 @@
         color: var(--error);
       }
 
-      /* The vars editor never takes the panel's flex-stretch (that's the query
-         editor's job) — it grows with its content up to a cap, then scrolls. */
+      /* The vars editor never takes the panel's flex-stretch; that is the query
+         editor's job. The vars editor grows with its content up to a cap, then scrolls. */
       .vars-editor {
         border-top: 1px solid var(--border);
       }
@@ -1374,8 +1374,8 @@
         <div class="vars-section" id="vars-section" hidden>
           <div class="vars-header">
             <span class="vars-title">Variables</span>
-            <span class="lang-tag js" title="Plain JavaScript — evaluated in your run-time to build the params object, then bound to the query via jsmql.compile(). This box is not JSMQL.">run-time JS</span>
-            <span class="vars-hint" id="vars-hint">optional — bound via jsmql.compile()</span>
+            <span class="lang-tag js" title="Plain JavaScript — evaluated in your run-time to build the params object, then bound to the query through jsmql.compile(). This box is not JSMQL.">run-time JS</span>
+            <span class="vars-hint" id="vars-hint">optional — bound through jsmql.compile()</span>
           </div>
           <div class="vars-editor">
             <textarea
@@ -1417,15 +1417,15 @@
     <!-- jsmql-examples:end -->
 
     <script type="module">
-      // Pure-ESM library bundle, committed at dist/jsmql.js and rebuilt by
-      // scripts/sync-playground.mjs. Served over http(s) (local server / GitHub
-      // Pages) — module imports don't load over file://.
+      // This is the pure-ESM library bundle, committed at dist/jsmql.js and rebuilt by
+      // scripts/sync-playground.mjs. Serve it over http or https (local server or GitHub
+      // Pages). A module import does not load over file://.
       import { jsmql, ObjectId } from "./dist/jsmql.js";
 
-      // A newable factory so the Variables editor accepts BOTH `ObjectId("…")`
-      // and `new ObjectId("…")`: the exported class can't be called without
-      // `new`, but a plain function works either way (calling it returns the
-      // instance; `new` on it returns that same returned object).
+      // This is a newable factory, so the Variables editor accepts both `ObjectId("…")`
+      // and `new ObjectId("…")`. The exported class cannot be called without
+      // `new`, but a plain function works either way: a call returns the
+      // instance, and `new` on it returns that same returned object.
       function makeObjectId(hex) {
         return new ObjectId(hex);
       }
@@ -1455,12 +1455,12 @@
       const varsHint = document.getElementById("vars-hint");
       const varsToggleBtn = document.getElementById("vars-toggle");
 
-      // What the Variables editor starts with: a commented-out template. It
-      // parses to `{}` — no bindings, so the playground behaves exactly as it
-      // does with an empty box — while naming the two shapes people reach for
-      // first (a plain run-time value, and an ObjectId literal, which is the
-      // one that isn't obvious because JSON can't express it). Seeded onto the
-      // textarea BEFORE CodeMirror adopts it, so no `change` fires and the
+      // This is what the Variables editor starts with: a commented-out template. It
+      // parses to `{}`, with no bindings, so the playground behaves exactly as it
+      // does with an empty box. It also names the two shapes that people reach for
+      // first: a plain run-time value, and an ObjectId literal, which is the
+      // shape that is not obvious, because JSON cannot express it. The script seeds this onto the
+      // textarea before CodeMirror adopts it, so no `change` event fires, and the
       // restore ladder at the bottom can still overwrite it.
       const DEFAULT_VARS = `{
   // runTimeVar1: "runTimeValue",
@@ -1618,8 +1618,8 @@
         varsSection.hidden = !open;
         varsToggleBtn.setAttribute("aria-expanded", String(open));
         varsToggleBtn.title = open ? "Hide the Variables editor" : "Show the Variables editor";
-        // CodeMirror can't measure itself inside a `display: none` parent — it
-        // lays out at zero height and stays that way until told to re-measure.
+        // CodeMirror cannot measure itself inside a `display: none` parent. It
+        // lays out at zero height and stays that way until it is told to re-measure.
         if (open) requestAnimationFrame(() => varsCm.refresh());
       }
       varsToggleBtn.addEventListener("click", () => {
@@ -1778,20 +1778,20 @@
         // toggle mode can rebuild the call site for the same collection.
         const collMatch = ex.usage && ex.usage.match(/^db\.([A-Za-z0-9_$]+)\./);
         currentColl = collMatch ? collMatch[1] : "collection";
-        // Update the compile mode BEFORE `setValue` — the change-event-driven
-        // `render()` fires synchronously inside `setValue`, so any state it
-        // reads (compile mode, the call-site hint, anything else that changes
-        // per-example) must be in place first or the output panel renders the
-        // new input with the OLD example's compile mode. `setMode` also
-        // refreshes the call-site hint via `updateUsageBar`.
+        // This updates the compile mode before `setValue`. The change-event-driven
+        // `render()` fires synchronously inside `setValue`, so any state that it
+        // reads (compile mode, the call-site hint, or anything else that changes
+        // per example) must be in place first. Otherwise the output panel renders the
+        // new input with the old example's compile mode. `setMode` also
+        // refreshes the call-site hint through `updateUsageBar`.
         setMode(modeForCall(ex.call), { rerender: false });
         loadingFromList = true;
         inputCm.setValue(ex.query);
         loadingFromList = false;
-        // Belt-and-braces: explicitly re-render after every state update is
-        // done. If `setValue` ever stops firing the change event (e.g. CM
-        // optimises a no-op replaceRange), this guarantees the output panel
-        // still reflects the freshly-selected example.
+        // As a safeguard, this explicitly re-renders after every state update
+        // finishes. Assume `setValue` stops firing the change event some day, for example when CM
+        // optimises a no-op replaceRange. This still guarantees that the output panel
+        // reflects the freshly selected example.
         render();
 
         currentTitleEl.textContent = ex.displayTitle;
@@ -1965,9 +1965,9 @@
         clearErrorMarker();
         const src = inputCm.getValue();
         if (src.length === 0) return;
-        // Clamp positions past end-of-input back to the last character so the
-        // marker is always visible (e.g. unterminated `$.x &&` points just
-        // beyond the source).
+        // This clamps a position past the end of input back to the last character, so the
+        // marker stays visible. For example, an unterminated `$.x &&` points just
+        // beyond the source.
         const safePos = Math.min(pos, src.length - 1);
         const from = inputCm.posFromIndex(safePos);
         const to = inputCm.posFromIndex(safePos + 1);
@@ -2012,7 +2012,7 @@
         }
         if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
           return {
-            error: 'Variables must be a plain object literal, e.g. { age: 18, since: new Date("2026-01-01") }.',
+            error: 'Variables must be a plain object literal. For example: { age: 18, since: new Date("2026-01-01") }.',
           };
         }
         const keys = Object.keys(obj);
@@ -2044,22 +2044,22 @@
         return { src: prefix + query + "\n}", prefixLen: prefix.length };
       }
 
-      // Persist the editor session — the JSMQL query, the Variables object, and
-      // the active compile mode — to localStorage so a page refresh restores
-      // exactly what the user was working on. Query + Variables are the user's
-      // own work; the compile mode rides along so the restored query produces
-      // the same MQL output it did before the refresh. Both calls are wrapped
-      // because localStorage access throws when storage is unavailable (private
-      // mode, disabled cookies, a sandboxed iframe) — persistence is a
+      // This persists the editor session to localStorage: the JSMQL query, the Variables object, and
+      // the active compile mode. So a page refresh restores exactly what
+      // the user had open. The query and the Variables are the user's
+      // own work. The compile mode rides along, so the restored query produces
+      // the same MQL output that it did before the refresh. Both calls sit inside a try block,
+      // because localStorage access throws when storage is unavailable: private
+      // mode, disabled cookies, or a sandboxed iframe. Persistence is a
       // best-effort nicety, never a hard dependency.
       //
-      // The key is scoped to the page's full URL (origin + path), not a fixed
-      // string, so two playgrounds served from different locations keep separate
-      // sessions. localStorage is already origin-scoped by the browser (so
-      // :1234 and :4321 never collide), but it is NOT path-scoped — without the
-      // pathname, every playground under the same origin (e.g.
-      // jsmql.js.org/playground.html and a dev copy at .../experiment/) would
-      // share one session and clobber each other. Including the origin too keeps
+      // The key is scoped to the page's full URL, origin plus path, not a fixed
+      // string. So two playgrounds served from different locations keep separate
+      // sessions. The browser already scopes localStorage by origin, so
+      // :1234 and :4321 never collide, but it does not scope by path. Without the
+      // pathname, every playground under the same origin, for example
+      // jsmql.js.org/playground.html and a dev copy at .../experiment/, would
+      // share one session and overwrite each other. The origin also keeps
       // the key self-documenting as "state depends on the whole URL".
       const STORAGE_KEY =
         "jsmql-playground:session:v1:" + location.origin + location.pathname;
@@ -2158,10 +2158,10 @@
       function buildShareUrl() {
         return location.origin + location.pathname + location.search + "#s=" + encodeSession();
       }
-      // Decode a `#s=<payload>` share hash into a session, or null when the hash
-      // isn't a share link / can't be decoded (a malformed link falls through to
-      // the normal restore ladder rather than blanking the page). Unknown modes
-      // coerce to `auto`, matching the localStorage-restore path.
+      // This decodes a `#s=<payload>` share hash into a session, or returns null when the hash
+      // is not a share link, or cannot be decoded. A malformed link falls through to
+      // the normal restore ladder, rather than blanking the page. An unknown mode
+      // coerces to `auto`, matching the localStorage-restore path.
       function parseShareHash() {
         const raw = location.hash.slice(1);
         if (!raw.startsWith("s=")) return null;
@@ -2177,11 +2177,11 @@
           return null;
         }
       }
-      // Load a decoded share session into the editors, then normalise the URL.
-      // The snapshot now lives in the editors (and, via the change→`saveState`
-      // hooks the `setValue` calls fire, in localStorage), so the consumed `#s=`
-      // hash is dropped — otherwise it would linger and go stale the moment the
-      // user edits. Mirrors the order the localStorage-restore path uses: mode
+      // This loads a decoded share session into the editors, then normalises the URL.
+      // The snapshot now lives in the editors, and, through the change-to-`saveState`
+      // hooks that the `setValue` calls fire, in localStorage too. So the script drops the consumed `#s=`
+      // hash. Otherwise the hash would linger and go stale the moment the
+      // user edits. This mirrors the order that the localStorage-restore path uses: mode
       // before the input `setValue`, so the synchronous render sees it.
       function applySharedSession(shared) {
         varsCm.setValue(shared.vars);
@@ -2242,8 +2242,8 @@
         varsHint.textContent = vars.error
           ? vars.error
           : varsActive
-            ? `bound via jsmql.compile() — ${currentVarKeys.length} var${currentVarKeys.length === 1 ? "" : "s"}`
-            : "optional — bound via jsmql.compile()";
+            ? `bound through jsmql.compile() — ${currentVarKeys.length} var${currentVarKeys.length === 1 ? "" : "s"}`
+            : "optional — bound through jsmql.compile()";
 
         if (src.trim() === "") {
           clearErrorMarker();
@@ -2261,10 +2261,10 @@
           return;
         }
 
-        // A malformed variables object blocks compilation: the query may be
-        // fine, but we can't bind values to it. Surface the precise vars error
-        // rather than silently dropping the variables (which would then misfire
-        // as "unknown identifier" on the names the user clearly meant to bind).
+        // A malformed variables object blocks compilation. The query may be
+        // fine, but the script cannot bind values to it. This shows the precise vars error,
+        // rather than silently dropping the variables, which would then misfire
+        // as "unknown identifier" on the names that the user clearly meant to bind.
         if (vars.error) {
           clearErrorMarker();
           outputCm.setOption("mode", null);
@@ -2279,29 +2279,29 @@
         // Identity when no variables are in play.
         const toQueryPos = (pos) => (varsActive ? pos - arrow.prefixLen : pos);
 
-        // Validate the wrapped arrow when variables are in play (`jsmql.validate`
+        // This validates the wrapped arrow when variables are active. `jsmql.validate`
         // accepts a compile-form arrow string and resolves the bindings to null
-        // placeholders), otherwise the raw query.
+        // placeholders. Otherwise it validates the raw query.
         const result = jsmql.validate(varsActive ? arrow.src : src);
         if (result.valid) {
           clearErrorMarker();
-          // Dispatch through the entry point the compile-mode toggle selects.
-          // AUTO is the plain `jsmql()` shape-detector; the others force a
-          // strict-shape entry point. This is also why Expression examples
-          // (jsmql.expr-authored) render correctly — without the strict
+          // This dispatches through the entry point that the compile-mode toggle selects.
+          // AUTO is the plain `jsmql()` shape detector; the others force a
+          // strict-shape entry point. This is also why Expression examples,
+          // authored with jsmql.expr, render correctly. Without the strict
           // dispatch they would go through `jsmql()` and pick up the find-
           // filter wrap (`{ $expr: <agg> }`) instead of the bare aggregation
           // expression. See docs/specs/filter-mode.md for the dispatch. With
-          // variables the matching `.compile(...)` builder is bound to the
+          // variables, the script binds the matching `.compile(...)` builder to the
           // params object instead.
           //
           // `jsmql.validate` checks the source against the shape-detecting
-          // `jsmql()` semantics, so a strict-shape entry point (filter /
-          // update / pipeline) can still throw here when the input would
-          // lower to the OTHER shape — e.g. forcing `pipeline` on a bare
-          // predicate. Those throws carry the same actionable wording the
-          // library shows at the call site, so surface them in the error
-          // panel rather than letting the exception strand stale output.
+          // `jsmql()` semantics, so a strict-shape entry point (filter,
+          // update or pipeline) can still throw here when the input would
+          // lower to the other shape, for example when it forces `pipeline` on a bare
+          // predicate. Those throws carry the same actionable wording that the
+          // library shows at the call site, so the script surfaces them in the error
+          // panel, rather than letting the exception strand stale output.
           let out;
           try {
             out = varsActive
@@ -2405,16 +2405,16 @@
           selectExample(slug, { scroll: true });
         }
       });
-      // Restore the session so a refresh — or a shared link — keeps the work.
-      // The Variables editor is independent of which example/query is shown, so
-      // a saved vars value is restored on every NON-share path. Priority order:
-      //   1. a `#s=` share link — an explicit snapshot of someone's session
-      //      (Variables + query + compile mode); wins over everything, including
+      // This restores the session, so a refresh, or a shared link, keeps the work.
+      // The Variables editor is independent of which example or query shows, so
+      // a saved vars value is restored on every non-share path. This is the priority order:
+      //   1. a `#s=` share link. This is an explicit snapshot of a person's session
+      //      (Variables, query, and compile mode), and it wins over everything, including
       //      a saved localStorage session. `applySharedSession` normalises the
-      //      URL afterwards so the consumed link doesn't go stale on edit;
-      //   2. a URL hash targeting a real example — a shared/explicit `#slug`
-      //      link (only present when viewing an unmodified example; free editing
-      //      clears it via clearActiveOnUserEdit);
+      //      URL afterwards, so the consumed link does not go stale on edit.
+      //   2. a URL hash that targets a real example. This is a shared or explicit `#slug`
+      //      link, present only when the visitor views an unmodified example; free editing
+      //      clears it through clearActiveOnUserEdit.
       //   2b. the example a superseded session was holding — reached only when
       //      `staleExampleSession` discarded that session, so the visitor lands
       //      on the same example with its CURRENT text rather than the copy

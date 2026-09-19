@@ -1,13 +1,14 @@
 #!/bin/sh
-# Hook glue for .claude/settings.json's PostToolUse hook.
+# This is the hook glue for .claude/settings.json's PostToolUse hook.
 #
-# After any Edit or Write tool call, Claude Code pipes a JSON payload to stdin with
-# the tool name and inputs. This script extracts tool_input.file_path. If the changed
-# file is test/realistic.test.ts (drives the examples manifest) or playground_skeleton.html
-# (the playground UI source), it runs the playground sync script to regenerate playground.html.
-# Otherwise it exits 0 silently.
+# After an Edit or Write tool call, Claude Code sends a JSON payload to this script through
+# stdin. The payload holds the tool name and its inputs. This script reads tool_input.file_path
+# from that payload. Assume the changed file is test/realistic.test.ts, which drives the
+# examples manifest, or playground_skeleton.html, the playground UI source. In both cases,
+# this script runs the playground sync script, which regenerates playground.html. In every
+# other case, this script exits with status 0 and prints nothing.
 #
-# Requires jq (already in the project's permissions allow-list).
+# This script needs jq. jq is already on the project's permissions allow list.
 set -eu
 file=$(jq -r '.tool_input.file_path // ""' 2>/dev/null || true)
 case "$file" in
