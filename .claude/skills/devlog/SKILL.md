@@ -17,7 +17,7 @@ description: >-
 
 ## What the DEVLOG is
 
-[docs/DEVLOG.md](docs/DEVLOG.md) is jsmql's **single historical record**. It
+[docs/DEVLOG.md](docs/DEVLOG.md) is JSMQL's **single historical record**. It
 answers future "why is X this way?" questions, and it is the closest thing the
 project has to a ticket tracker. The project keeps no separate CHANGELOG or
 ROADMAP file, by design. **Every observable change gets an entry**, in the

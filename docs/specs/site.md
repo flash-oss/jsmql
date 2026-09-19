@@ -19,10 +19,10 @@ owner requested the subdomain.
 ## Jekyll passes all three through untouched
 
 GitHub Pages runs Jekyll over the repository. Jekyll renders Liquid **only** in
-files that carry YAML front matter, and treats every other file as a static
+files that carry YAML front matter, and it treats every other file as a static
 asset to copy verbatim. None of the three published files carries front matter,
-so none is rendered — which is what keeps their JavaScript and MQL brace blocks
-intact. A `{{ … }}` sequence in a rendered file is a Liquid tag and breaks the
+so Jekyll renders none of them — which keeps their JavaScript and MQL brace blocks
+intact. A `{{ … }}` sequence in a rendered file is a Liquid tag, and it breaks the
 build.
 
 [_config.yml](../../_config.yml) excludes the rest of the repository for the
@@ -32,8 +32,8 @@ with neither front matter nor a Liquid delimiter.
 
 ## The landing page states no MQL of its own
 
-Every MQL document on the landing page is compiled in the reader's browser, at
-load time, by `dist/jsmql.js` — the same bundle npm ships and the playground
+`dist/jsmql.js` compiles every MQL document on the landing page in the reader's
+browser, at load time — the same bundle npm ships and the playground
 imports. The page holds JSMQL inputs and nothing else, so it cannot show output
 that the compiler no longer produces. This is the site's application of the
 single-source-of-truth rule: the compiler owns its output, and the page quotes
@@ -53,7 +53,7 @@ Each example is one `<article>` carrying:
   source-to-output line counts, measured from the text it has just rendered.
 
 The MQL pane sits inside a `<details class="fold">`. The script leaves every
-fold open on a wide screen, where the two panes sit side by side, and closes
+fold open on a wide screen, where the two panes sit side by side, and it closes
 them under 760px, where the panes stack: a phone then shows each example as its
 title, its JSMQL and one line stating how many lines of MQL that made, and a
 tap opens the pane. The prose and the JSMQL never fold.
@@ -69,9 +69,10 @@ playground link for it, which is where its MQL is shown.
 The script writes output with **`jsmql.stringify`**, the library's own printer,
 taken from the same bundle it compiles with — see
 [mql-stringify.md](mql-stringify.md). Neither page carries a printer of its own,
-so an example, its "Open in playground" link and the terminal all show one text.
+so one text shows in an example, its "Open in playground" link and the terminal
+alike.
 
-Two consequences the page's layout depends on. The output is JavaScript, not
+Two consequences follow for the page's layout. The output is JavaScript, not
 JSON, so the MQL pane is highlighted with CodeMirror's JavaScript mode and not
 its JSON mode. And the printer breaks a line at 80 columns, which is where the
 panel width below comes from: a node stays on one line while it fits, so a
@@ -100,11 +101,11 @@ work:
 | `addon/runmode/runmode-standalone.min.js` | `CodeMirror.runMode`: the tokeniser with no editor around it. It fills an element with the same `cm-*` spans an editor holds, at a thirtieth of the core's weight. |
 | `mode/javascript/javascript.min.js` | The JavaScript mode, in the two configurations the playground's editors use — plain for JSMQL, `json: true` for MQL. |
 
-The markup holds each JSMQL source as plain text and the script rewrites the
+The markup holds each JSMQL source as plain text, and the script rewrites the
 block in place, so the source stays readable with JavaScript off, stays
 selectable as text, and stays in the one shape both the page and the drift guard
 below read. The script paints the inputs before it imports the bundle, because
-their text is already on the page, and paints each MQL document as it compiles
+their text is already on the page, and it paints each MQL document as it compiles
 it.
 
 Two cases stay plain text. Where the CDN does not answer, `paint` writes the
@@ -129,14 +130,14 @@ entry its `data-mode` names, and asserts:
 - every SQL-vs-JSMQL row's JSMQL cell compiles to the shape its `data-mode`
   names, and the extraction found as many rows as the markup declares;
 - `CNAME` matches the host in `package.json#homepage` **when the file is
-  present**. It has to be absent while the domain does not resolve yet, because
-  Pages redirects the github.io URL to whatever `CNAME` names, leaving nowhere
-  to review the site;
+  present**. The file has to be absent while the domain does not resolve yet,
+  because Pages redirects the github.io URL to whatever `CNAME` names, leaving
+  nowhere to review the site;
 - `_config.yml` publishes both pages, and the page imports the bundle.
 
-What these guards cannot see is whether an example's MQL *does the right thing*
-on real data — they assert what the compiler emits, never what the server
-returns. An example whose behaviour matters belongs in
+These guards can see only what the compiler emits, never what the server
+returns, so they cannot see whether an example's MQL *does the right thing* on
+real data. An example whose behaviour matters belongs in
 [test/integration.test.ts](../../test/integration.test.ts) as well.
 
 The extraction fails loudly when the markup changes shape, so the cases cannot
@@ -154,5 +155,5 @@ in its own repository. The entry is:
 
 Entries are alphabetical, double-quoted, one per line, comma-terminated. The
 service requires a working GitHub Pages site with real content behind the
-`CNAME` before it accepts the request, and rejects placeholder pages, automatic
+`CNAME` before it accepts the request, and it rejects placeholder pages, automatic
 redirects off the js.org domain, and content unrelated to JavaScript.

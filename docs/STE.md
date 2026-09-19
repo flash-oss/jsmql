@@ -102,7 +102,8 @@ those things is a Technical Verb. So `AST`, `accumulator`, `emitter`, `node`,
 `compile`, `desugar`, `emit`, `lex`, `lower` and `parse` are legal verbs.
 
 Two spellings carry their own rule. "JSMQL" names the language and the project.
-"jsmql" names the npm module's API and a code identifier only.
+The lower-case form names the npm module's API and a code identifier only, as in
+`jsmql.compile()`.
 
 ## Machine-read prose
 

@@ -2,8 +2,8 @@
 
 How a JSMQL source becomes an MQL document: the phases, the registry they read,
 and the module that owns each construct. The user-facing behaviour is in
-[docs/LANGUAGE.md](../LANGUAGE.md); the language axioms in
-[docs/LANG_RULES.md](../LANG_RULES.md); each phase has its own spec, linked below.
+[docs/LANGUAGE.md](../LANGUAGE.md). The language axioms are in
+[docs/LANG_RULES.md](../LANG_RULES.md). Each phase has its own spec, linked below.
 
 ## Overview
 
@@ -16,15 +16,16 @@ source string ─▶ lex ─▶ parse ─▶ fold ─▶ desugar ─▶ (shape) 
 
 Two directories carry the compiler:
 
-- **`src/registry/`** — the single source of truth. One row per NAME (`names.ts`:
-  every JavaScript method, MongoDB operator, global, context reference), per
-  CONSTRUCT (`productions.ts`: the operators and statement forms), per LEXEME
-  (`tokens.ts`, `keywords.ts`), in one vocabulary (`vocabulary.ts`). A row states
-  what the language HAS — the positions a name is valid in (`where`), a cell per
-  position (a rule, or a refusal that names the alternative), its receiver
-  families, its arguments rule, what it returns — and nothing here builds MQL for a
-  construct that needs its neighbours. `mql.ts` holds the pure MQL builders the
-  cells share; `ast.ts` the node shapes. See [src/registry/CLAUDE.md](../../src/registry/CLAUDE.md).
+- **`src/registry/`** — the single source of truth. It holds one row per NAME
+  (`names.ts`: every JavaScript method, MongoDB operator, global, and context
+  reference), per CONSTRUCT (`productions.ts`: the operators and statement
+  forms), and per LEXEME (`tokens.ts`, `keywords.ts`), in one vocabulary
+  (`vocabulary.ts`). A row states what the language HAS: the positions where a
+  name is valid (`where`), a cell for each position (a rule, or a refusal that
+  names the alternative), its receiver families, its arguments rule, and what
+  it returns. No row here builds MQL for a construct that needs its
+  neighbours. `mql.ts` holds the pure MQL builders the cells share; `ast.ts`
+  holds the node shapes. See [src/registry/CLAUDE.md](../../src/registry/CLAUDE.md).
 - **`src/compiler/`** — the five phases over the registry. A phase asks a row; it
   never lists names of its own. See [src/compiler/CLAUDE.md](../../src/compiler/CLAUDE.md).
 
@@ -38,12 +39,13 @@ Two directories carry the compiler:
 | 4 POSITION | `compiler/passes/position.ts` | Where every node stands — value, filter, statement, stream, group, window, updateDoc — answered on the way down from the root the entry states | [position-pass.md](position-pass.md) |
 | 5 EMIT | `compiler/emit/` | MQL, one target per root position; the Env that tracks scope, levels and captures | [emit-pass.md](emit-pass.md) |
 
-Two more passes sit beside them: `passes/shape.ts` reads a Filter or a Pipeline
-off the PARSED program (a `;`, a write or a stage makes a pipeline; a `const`
-prelude before one predicate stays a Filter), and `passes/inject.ts` splices the
-values a call supplied — `jsmql.compile` parameters, template slots — into the
-tree as literals or as `Injected` nodes, so that nothing a caller passes is ever
-read as syntax, an operator or a field reference (HR1).
+Two more passes sit beside them. `passes/shape.ts` reads a Filter or a
+Pipeline off the PARSED program: a `;`, a write, or a stage makes a pipeline;
+a `const` prelude before one predicate stays a Filter. `passes/inject.ts`
+splices the values a call supplied — `jsmql.compile` parameters, template
+slots — into the tree as literals or as `Injected` nodes. This way, the
+compiler never reads a value a caller passed as syntax, an operator, or a
+field reference (HR1).
 
 ## The emit targets
 
@@ -54,23 +56,25 @@ read as syntax, an operator or a field reference (HR1).
 | `statement` | `jsmql.pipeline`, `jsmql()` with one | `emit/statement.ts` (+ `join.ts`, `union.ts`, `reduce-wrap.ts`) | a stage array |
 | `updateDoc` | `jsmql.update` | `emit/update.ts` | the update document `updateOne` takes |
 
-Inside a target, a position is a cell of the row: a stream link (`$$.filter(…)`)
-runs the row's `stream` cell, a `$group` output field its `group` cell, a
-`$setWindowFields.output` entry its `window` cell. `emit/consult.ts` finds the
-cell, `emit/select.ts` picks the rule the receiver and the arguments select,
-`emit/check.ts` runs the literal-gated checks the row states (`args`, `body`),
-`emit/inputs.ts` builds the record a cell receives (`ExprIn`, `FilterIn`, `StageIn`,
-`GroupIn`) — the services a lowering needs, never an import.
+Inside a target, a position is a cell of the row. A stream link
+(`$$.filter(…)`) runs the row's `stream` cell. A `$group` output field runs
+its `group` cell. A `$setWindowFields.output` entry runs its `window` cell.
+`emit/consult.ts` finds the cell. `emit/select.ts` picks the rule that the
+receiver and the arguments select. `emit/check.ts` runs the literal-gated
+checks the row states (`args`, `body`). `emit/inputs.ts` builds the record a
+cell receives (`ExprIn`, `FilterIn`, `StageIn`, `GroupIn`): the services a
+lowering needs, never an import.
 
 ## The public surface (`src/index.ts`)
 
 `jsmql` is a callable with properties: `jsmql(input)`, `jsmql.expr`,
-`jsmql.filter`, `jsmql.pipeline`, `jsmql.update`, each with a `.compile`, and
-`jsmql.validate`. Every one takes the three call shapes — a string, an arrow (its
-source read with `Function.prototype.toString`; the entry form binds parameters),
-a template tag (each slot a bound value). The module turns input into source and
-values, runs the compiler from the root the entry states, and maps the errors
-to `validate()` results. See [strict-shape-entries.md](strict-shape-entries.md),
+`jsmql.filter`, `jsmql.pipeline`, `jsmql.update` (each with a `.compile`), and
+`jsmql.validate`. Every one takes the three call shapes: a string; an arrow,
+whose source the module reads with `Function.prototype.toString` (the entry
+form binds parameters); or a template tag, where each slot is a bound value.
+The module turns the input into source and values, runs the compiler from the
+root the entry states, and maps the errors to `validate()` results. See
+[strict-shape-entries.md](strict-shape-entries.md),
 [function-form-params.md](function-form-params.md).
 
 ## Error types

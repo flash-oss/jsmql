@@ -17,10 +17,10 @@ description: >-
 
 ## Why this exists
 
-jsmql's whole pitch is that it produces *runnable* MQL. HR3 (see
-[docs/LANG_RULES.md](docs/LANG_RULES.md)) says jsmql never *knowingly* emits
+JSMQL's whole pitch is that it produces *runnable* MQL. HR3 (see
+[docs/LANG_RULES.md](docs/LANG_RULES.md)) says JSMQL never *knowingly* emits
 invalid MQL. The only way to *know* a shape is valid is to run it on a real
-server. A passing `toEqual(...)` in a test proves only that jsmql emitted a
+server. A passing `toEqual(...)` in a test proves only that JSMQL emitted a
 given document. It says nothing about whether MongoDB would accept it. Many real
 bugs — the `$arrayToObject` double-array bug and the constant-only-slot
 rejections among them — hid for a long time behind green `toEqual`s for exactly
@@ -40,7 +40,7 @@ shape, `test/probe` prints the rejection word for word and exits with a
 non-zero status. **That refusal is the signal you probe for.**
 
 It composes directly with the `jsmql` CLI. Pick the CLI flag that matches the
-shape you're producing, and pass matching `--doc` seed data:
+shape you are producing, and pass matching `--doc` seed data:
 
 ```sh
 # Filter (no top-level ';')  — find(filter)

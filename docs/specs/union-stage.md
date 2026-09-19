@@ -2,16 +2,16 @@
 
 ## Overview
 
-`$$.push(args...)` is the jsmql surface for MongoDB's `$unionWith` stage. The
+`$$.push(args...)` is the JSMQL surface for MongoDB's `$unionWith` stage. The
 receiver `$$` is the current-collection context-reference (`CollectionRef`).
-`.push(...)` is the JS array-mutation idiom — append items to the end — which
-is the semantic of `$unionWith` itself: take documents from another source
+`.push(...)` is the JS array-mutation idiom — append items to the end. This
+is also the semantic of `$unionWith` itself: take documents from another source
 and append them to the current stream.
 
 Statement-only: `$$.push(...)` emits one or more `$unionWith` pipeline stages
-and has no value. Using it on a RHS, as an expression operand, inside a
-Filter / `jsmql.expr` / `jsmql.update`, or inside another lookup's sub-pipeline
-is rejected at compile time.
+and has no value. JSMQL rejects it at compile time on a RHS, as an expression
+operand, inside a Filter / `jsmql.expr` / `jsmql.update`, or inside another
+lookup's sub-pipeline.
 
 See [`docs/LANGUAGE.md#collection-union-push`](../LANGUAGE.md#collection-union-push)
 for the user-facing reference.
@@ -24,11 +24,11 @@ for the user-facing reference.
 | `...$$$.<coll>.filter(pred)` | `{ $unionWith: { coll: "<coll>", pipeline: [<translated pred>] } }` |
 | `$$$.<coll>.find(pred)` (no spread) | `{ $unionWith: { coll: "<coll>", pipeline: [<translated pred>, { $limit: 1 }] } }` |
 | `{ inline document }` (one or more, consecutive) | `{ $unionWith: { pipeline: [{ $documents: [<docs>] }] } }` (consecutive inline docs batch into one stage) |
-| `...$$$$.<db>.<coll>[.filter(pred)]` | **rejected** — a `{ db, coll }` `$unionWith` namespace is Atlas-Data-Federation-only; the join road refuses it ("A read of another DATABASE isn't supported …") and redirects to `...$$$.<coll>` |
+| `...$$$$.<db>.<coll>[.filter(pred)]` | **rejected** — a `{ db, coll }` `$unionWith` namespace works only on Atlas Data Federation; the join road refuses it ("A read of another DATABASE isn't supported …") and redirects the reader to `...$$$.<coll>` |
 | `$$$$.<db>.<coll>.find(pred)` | **rejected** — same cross-database read rejection as the line above |
 
-Source order across the argument list is preserved exactly. A `{...}` between
-two non-inline args produces three stages — the implementation flushes the
+Source order across the argument list stays exactly as written. A `{...}` between
+two non-inline args produces three stages, because the implementation flushes the
 inline batch whenever a collection-sourced argument arrives.
 
 ### Predicate translation
@@ -42,9 +42,9 @@ An expression-body predicate lowers through the filter road ([filter-mode.md § 
 | `o.active` (truthiness) | `{ $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] }, { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } }` — the JavaScript truthiness test |
 | `o.active && o.tier === "gold"` | `{ $match: { tier: "gold", $expr: { … } } }` |
 
-Block-body predicates pass through verbatim — each statement is lowered to a
-stage exactly as it would be at the top level. The body is lowered by the join
-road (`lookupOf` in `src/compiler/emit/join.ts`, entered over `$unionWith`), so a
+Block-body predicates pass through verbatim — JSMQL lowers each statement to a
+stage exactly as it would at the top level. The join road lowers the body
+(`lookupOf` in `src/compiler/emit/join.ts`, entered over `$unionWith`), so a
 union body and a lookup body read the same rows; `src/compiler/emit/union.ts` owns
 only what differs — the stage's shape and its missing `let`.
 
@@ -56,16 +56,16 @@ is refused too ("\$documents can only be run with database or cluster-level
 aggregation"). So the appendable forms are: another collection (`coll`, with or without
 a sub-pipeline), one written document, and a written list of them — `$$.push({ … })`,
 `$$.push(...[{ … }, { … }])` and `$$.concat([{ … }])` all batch into one `$documents`,
-consecutive arguments together, source order kept. An array the data decides has no
+consecutive arguments together, kept in source order. An array the data decides has no
 append form at all; `$$ = <array>` makes the stream from it instead.
 
-The list is lowered inside the `$unionWith` body, where the server evaluates it —
+JSMQL lowers the list inside the `$unionWith` body, where the server evaluates it —
 `noStageInDocuments` in [src/compiler/emit/union.ts](../../src/compiler/emit/union.ts)
 holds the other half of that. Nothing there can read the outer document (the body has
 no `let`, below), and `$documents` is the FIRST stage of that body, so nothing can
-stand ahead of it to produce a value either: a field whose value would need a stage of
-its own — a `$$$.<coll>` read's `$lookup`, the root count's `$setWindowFields` — is
-refused, naming the collection append (`$$.push(...$$$.<coll>.filter(…))`) and the
+stand ahead of it to produce a value either: JSMQL refuses a field whose value would need
+a stage of its own — a `$$$.<coll>` read's `$lookup`, the root count's `$setWindowFields` —
+and names the collection append (`$$.push(...$$$.<coll>.filter(…))`) and the
 constant / `jsmql.compile` parameter as the two ways out. Both spellings of the list
 go through the same gate, so `$$.push({ n: <value> })` and `$$ = [{ n: <value> }]`
 answer alike; lowered outside the boundary the second one emitted a field path the
@@ -73,7 +73,7 @@ server answered `{}` for, in silence.
 
 ### `$unionWith` has no `let`
 
-`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so a read of the outer document or of an outer binding inside it is refused rather than silently misread: "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value." The same holds for `$$.length` there ([stream-length.md](stream-length.md)).
+`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so JSMQL refuses a read of the outer document, or of an outer binding, inside it rather than silently misreading it: "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value." The same holds for `$$.length` there ([stream-length.md](stream-length.md)).
 
 ## AST and parser
 
@@ -103,23 +103,23 @@ or `[` after `$$` already accommodates `.push(...)`.
 
 ## Server-version note
 
-The `coll`-less `$unionWith` shape that wraps a `$documents` stage requires
+The `coll`-less `$unionWith` shape that wraps a `$documents` stage needs
 **MongoDB 6.0+**. Inline-doc pushes lower to that shape. Spread-of-collection
 pushes work on every version that supports `$unionWith` (4.4+).
 
 ## Deferred
 
-- **Custom let-substitution.** Atlas's `$lookup.let` doesn't apply to
-  `$unionWith`, but a future jsmql release could synthesise the same effect
-  via a `$set` stage *before* the push and a `$match` against that captured
+- **Custom let-substitution.** Atlas's `$lookup.let` does not apply to
+  `$unionWith`, but a future JSMQL release could synthesise the same effect
+  through a `$set` stage *before* the push and a `$match` against that captured
   value inside the sub-pipeline. Out of scope — the explicit "no
   correlation" error is the documented contract.
 - **Cross-database unions are rejected at compile time.** A cross-database
   `$$.push(...$$$$.<db>.<coll>...)` / `$$.push($$$$.<db>.<coll>.find(...))`
-  does not emit a `{ db, coll }` `$unionWith` namespace (that shape is
-  Atlas-Data-Federation-only and a regular server rejects it at runtime);
+  does not emit a `{ db, coll }` `$unionWith` namespace (that shape works only
+  on Atlas Data Federation, and a regular server rejects it at runtime);
   the join road refuses it — see
   [`docs/specs/lookup-stage.md`](./lookup-stage.md) § Cross-database reads
   are rejected. The cross-database `$out` write is unaffected.
-- **Auto-`$documents`-only `$unionWith` server-version guard.** No compile-time
+- **Auto-`$documents`-only `$unionWith` server-version guard.** There is no compile-time
   check that the deployment is 6.0+ — the runtime error is precise enough.

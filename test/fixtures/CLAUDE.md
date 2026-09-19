@@ -2,7 +2,7 @@
 
 This directory holds a small, deterministic e-commerce dataset, and the code that
 serves it to [`test/integration.test.ts`](../integration.test.ts) from a real
-MongoDB. The integration suite runs jsmql's emitted MQL against this data, and
+MongoDB. The integration suite runs JSMQL's emitted MQL against this data, and
 asserts on the documents that come back. This is the only way to *prove* that a
 query which looks valid actually runs, and returns what the user meant (HR3; see
 [docs/LANG_RULES.md](../../docs/LANG_RULES.md)).
@@ -74,7 +74,7 @@ Three invariants make exact assertions possible:
    fixed number. **Never use `Math.random()` or `Date.now()`.** A test asserts
    an exact returned document, so the data must be byte-identical everywhere.
 2. **Each ObjectId carries a plausible timestamp prefix** (`0x65000000…`, from
-   2023). An all-zero prefix decodes to 1970, and jsmql's `0x…` literal guard
+   2023). An all-zero prefix decodes to 1970, and JSMQL's `0x…` literal guard
    (`assertPlausibleObjectId`) would reject it. That would make "find by `_id`
    through the `0x` literal" impossible to query. A tag nibble (`a` for `users`,
    up to `e` for `reviews`) plus an index keeps each id readable in output.
@@ -95,7 +95,7 @@ to fail loudly when the data has drifted.
 **This dataset is meant to grow.** It is not frozen. Expand it freely whenever a
 new query, operator, stage, or edge case needs realistic data to run against: add
 a document, a field, a new collection, or a deliberately null or boundary value.
-A richer fixture means that more of jsmql's surface gets *executed*, not just
+A richer fixture means that more of JSMQL's surface gets *executed*, not just
 *emitted*. When you add a feature whose realistic test would benefit from live
 data, extend this dataset instead of inventing a one-off dataset.
 

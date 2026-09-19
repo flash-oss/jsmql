@@ -2,32 +2,32 @@
 
 ## Overview
 
-`assert(condition[, message])` is the jsmql surface for raising a **conditional
+`assert(condition[, message])` is the JSMQL surface that raises a **conditional
 runtime error** from inside an aggregation pipeline — the MongoDB equivalent of
-a guard clause. When `condition` holds the document passes through untouched;
-when it fails the whole operation aborts and the server returns an error whose
+a guard clause. When `condition` holds, the document passes through untouched.
+When it fails, the whole operation aborts, and the server returns an error whose
 text carries `message`.
 
 Statement-only: `assert(...)` emits one pipeline stage and has **no value**.
-Using it on a RHS, as an expression operand, inside a ternary branch, or in a
-Filter / `jsmql.expr` is rejected at compile time (see *Rejections* below).
+The compiler rejects it on a RHS, as an expression operand, inside a ternary
+branch, or in a Filter / `jsmql.expr` (see *Rejections* below).
 
 See [`docs/LANGUAGE.md#assert`](../LANGUAGE.md#assert-fail-the-pipeline-when-an-invariant-breaks) for the user-facing
 reference.
 
 ## Why this mechanism (and not `$function`)
 
-MongoDB has **no** dedicated error/assert/throw aggregation operator (confirmed
-against the v8.x operator reference and the long-open JIRA SERVER-27190). The
-only mechanism that carries a fully custom message is `$function` (server-side
-JS `throw`) — but server-side JS is **deprecated as of MongoDB 8.0**, excluded
-from the Stable API (`apiStrict:true`), and unavailable on Atlas Flex / free
-tiers. jsmql therefore does **not** use it.
+MongoDB has **no** dedicated error, assert, or throw aggregation operator
+(confirmed against the v8.x operator reference and the long-open JIRA
+SERVER-27190). The only mechanism with a fully custom message is `$function`
+(server-side JS `throw`). But server-side JS is **deprecated as of MongoDB
+8.0**. The Stable API (`apiStrict:true`) excludes it, and Atlas Flex and the
+free tiers do not offer it. JSMQL therefore does **not** use it.
 
-Instead jsmql abuses a portable, non-deprecated runtime failure: feeding an
-unrecognised **type name** to `$convert`. `{ $convert: { input: …, to: "<not a
+Instead JSMQL uses a portable runtime failure that is not deprecated: it feeds
+an unrecognised **type name** to `$convert`. `{ $convert: { input: …, to: "<not a
 type>" } }` fails at runtime with `BadValue (2): Unknown type name: <not a
-type>`. The custom message rides in as the bogus type name.
+type>`. The custom message rides in as the bad type name.
 
 ## Lowering
 
@@ -40,22 +40,24 @@ type>`. The custom message rides in as the bogus type name.
 } } } }
 ```
 
-- **Holds** → `to` resolves to `"bool"`; `$convert(true → bool)` = `true`; the
-  `$match` keeps the document. A `$match` neither adds nor drops fields, so a
-  holding assertion is **invisible** in the output (no throwaway field).
+- **Holds** → `to` resolves to `"bool"`. `$convert(true → bool)` equals `true`,
+  so the `$match` keeps the document. A `$match` adds no field and drops no
+  field, so a holding assertion is **invisible** in the output (no throwaway
+  field).
 - **Fails** → `to` resolves to `<failType>` (a string that is never a valid
-  bson type name); `$convert` throws `Unknown type name: <failType>`.
+  bson type name), so `$convert` throws `Unknown type name: <failType>`.
 
-Built by the `assert` row's `statement` cell in
-[`src/registry/names.ts`](../../src/registry/names.ts) — the `$convert` guard and the
-`$match` around it — which the statement road emits like any stage.
+The `assert` row's `statement` cell in
+[`src/registry/names.ts`](../../src/registry/names.ts) builds this: the `$convert`
+guard and the `$match` around it. The statement road emits it like any other
+stage.
 
 ### `<cond>`
 
-Lowered from the condition through the `truth` service exactly like every other
-boolean position (a comparison passes bare, a value gets the JavaScript test), so
-`assert($.active)` treats `0` / `""` / `null` / missing as failing — the JS
-meaning, not MongoDB's.
+The `truth` service lowers the condition, exactly like every other boolean
+position: a comparison passes bare, and a value gets the JavaScript test. So
+`assert($.active)` treats `0`, `""`, `null`, and a missing field as failing —
+the JS meaning, not MongoDB's.
 
 ### `<failType>` and the prefix invariant
 
@@ -65,33 +67,35 @@ meaning, not MongoDB's.
 | string literal `"m"` | `"jsmql assertion failed: m"` (constant) |
 | any other expression `e` | `{ $concat: ["jsmql assertion failed: ", { $toString: <e> }] }` |
 
-The `jsmql assertion failed` prefix is **load-bearing, not cosmetic**: a raw
-message that happened to be a valid type name (e.g. `assert($.ok, "int")`)
-would make `$convert` **succeed** and silently skip the assertion. The prefix
-(spaces + the leading words) guarantees the failing-branch string is never a
-real type name, so the assertion always fires. It also reclaims the inevitable
-`Unknown type name:` boilerplate — the user's text reads as the tail of the
-sentence.
+The `jsmql assertion failed` prefix is **load-bearing, not cosmetic**. A raw
+message that happens to be a valid type name (for example `assert($.ok,
+"int")`) would make `$convert` **succeed** and skip the assertion silently.
+The prefix (the spaces and the leading words) guarantees that the
+failing-branch string is never a real type name, so the assertion always
+fires. It also reuses the inevitable `Unknown type name:` boilerplate — the
+user's text reads as the tail of the sentence.
 
-The dynamic branch wraps the message in `$toString` so a non-string expression
-(`assert($.ok, $.count)`) is coerced rather than crashing `$concat`.
+The dynamic branch wraps the message in `$toString`, so a non-string
+expression (`assert($.ok, $.count)`) is coerced instead of crashing
+`$concat`.
 
 ## Why the gating is robust
 
-The `$convert` is **always evaluated** — the gating lives entirely in its
-runtime `to` value, computed per-document. This deliberately does **not** rely
-on `$cond`/`$and` short-circuiting an untaken branch, which MongoDB does **not**
-document or guarantee (the `$and`/`$or` reference explicitly warns a later
-operand "may cause an error even if the first expression evaluates to false").
-Placing the failing-branch *expression* directly in a `$cond` branch would also
-risk the optimizer constant-folding a constant message at planning time, firing
-the error unconditionally; routing it through `$convert.to` avoids that too.
+The server always evaluates the `$convert`. The gating lives only in its
+runtime `to` value, computed per document. This design does **not** rely on
+`$cond` or `$and` to short-circuit an untaken branch, because MongoDB does
+**not** document or guarantee that behaviour (the `$and`/`$or` reference warns
+that a later operand "may cause an error even if the first expression
+evaluates to false"). Placing the failing-branch *expression* directly in a
+`$cond` branch would also risk the optimiser folding a constant message at
+planning time, which would fire the error unconditionally. Routing it through
+`$convert.to` avoids that risk too.
 
 ## Dispatch (call forms)
 
-`assert(...)` is a bare-identifier `CallExpression` whose row lists a `statement`
-form and no value form, so it is a statement wherever it stands: a lone
-`assert(…)` with no `;` is a pipeline by the shape rule
+`assert(...)` is a bare-identifier `CallExpression`. Its row lists a
+`statement` form and no value form, so it is a statement wherever it stands.
+A lone `assert(…)` with no `;` is a pipeline by the shape rule
 ([filter-mode.md § The decision](filter-mode.md)). All of these work:
 
 - `({ $ }) => { assert($.q >= 0, "m"); $.fee = … }` — multi-statement pipeline
@@ -100,8 +104,8 @@ form and no value form, so it is a statement wherever it stands: a lone
 - `"[assert($.q >= 0, 'm'), $sort({ q: 1 })]"` — bracketed array
 - `jsmql.pipeline(…)` — strict pipeline entry
 
-A user-declared `const assert = …` takes precedence (the built-in yields when
-`assert` is a reusable function in scope), so the name is not hard-reserved.
+A user-declared `const assert = …` takes precedence. The built-in yields when
+`assert` is a reusable function in scope, so the name is not hard-reserved.
 
 ## Rejections
 
@@ -114,14 +118,15 @@ A user-declared `const assert = …` takes precedence (the built-in yields when
 
 ## `jsmql.update()`
 
-`assert(...)` lowers to a `$match`, which is **not** in MongoDB's
-update-pipeline stage whitelist, so `jsmql.update(...)` rejects it through the
+`assert(...)` lowers to a `$match`. MongoDB's update-pipeline stage whitelist
+does **not** include `$match`, so `jsmql.update(...)` rejects it through the
 existing whitelist check (naming `$match`). Assertions belong in a read
-pipeline, not an update.
+pipeline, not in an update.
 
 ## Error shape at runtime
 
 A failing assertion surfaces as a driver error with `code: 2`,
-`codeName: "BadValue"`, and `errmsg` ending in
+`codeName: "BadValue"`, and an `errmsg` that ends in
 `Unknown type name: jsmql assertion failed: <message>`. The numeric code is
-fixed (it is MongoDB's, not jsmql's) — only the message text is controllable.
+fixed, because it is MongoDB's code, not JSMQL's. Only the message text is
+under the user's control.

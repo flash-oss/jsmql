@@ -78,7 +78,7 @@ After the edits land, the file goes through `oxfmt`. So the formatter owns the l
 
 Run `node scripts/check-doc-claims.mjs [file …]`. By default it checks `README.md`, `docs/LANGUAGE.md`, `docs/LANG_RULES.md`, and every file in `docs/specs/`. It re-derives every `<jsmql source>  // → <MQL>` pair in the prose from the compiler, and it prints the pairs that disagree.
 
-A doc example is a promise about what jsmql emits, and prose has no test to keep it honest. This script catches a promise that the compiler stopped keeping.
+A doc example is a promise about what JSMQL emits, and prose has no test to keep it honest. This script catches a promise that the compiler stopped keeping.
 
 This is an AUDIT tool, not a gate. It parses markdown, so it can report a false positive: a template tag that interpolates a value, a claim that shows one stage of a longer pipeline, or host code around a `jsmql(…)` call. A human must classify each report.
 

@@ -2,11 +2,24 @@
 
 ## What this covers
 
-The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-collfind--filter). Covers detection of the `$$$.<coll>` same-database shape (a `$$$$.<db>.<coll>` cross-database **read** is detected only to be **rejected** — see § Cross-database reads are rejected), predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.tmp.<N>` slots, where a materialised `$lookup` stands in the pipeline (§ Where a hoisted stage lands), the mode-gate behaviour, the cross-database rejection at the `foreignChain` choke point in [src/compiler/emit/join.ts](../../src/compiler/emit/join.ts), and the error catalog.
+This file is the implementation companion to the user guide in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-collfind--filter).
+
+This file covers:
+
+- detection of the `$$$.<coll>` same-database shape (the compiler detects a `$$$$.<db>.<coll>` cross-database **read** only to refuse it — see § Cross-database reads are refused)
+- predicate translation (the basic form, the pipeline form, and auto-`let` extraction)
+- the chained-terminal materialisation (`.length`, `.reduce`, member access)
+- the slot-allocation contract for internal `__jsmql.tmp.<N>` slots
+- the place of a materialised `$lookup` in the pipeline (§ Where a hoisted stage lands)
+- the mode-gate behaviour
+- the cross-database refusal at the `foreignChain` choke point in [src/compiler/emit/join.ts](../../src/compiler/emit/join.ts)
+- the error catalog
 
 ## Why `$$$` (and not `this.`)
 
-`this.<coll>.find(pred)` reads well, and cannot be the surface: `this` is a JavaScript reserved word that is *parse-rejected* outside a class or method body, so `({ $ }) => this.users.find(...)` would not round-trip through a `.js` file — the strict-JS-subset rule in the root [`CLAUDE.md`](../../CLAUDE.md). The context-reference prefixes (`$$` / `$$$` / `$$$$`) parse anywhere, never collide with the host language, and give one uniform vocabulary for the four document-context scopes (`$.`, `$$`, `$$$`, `$$$$`). See [`context-references.md`](./context-references.md) for the prefix grammar and AST nodes.
+`this.<coll>.find(pred)` reads well, but it cannot be the surface. `this` is a JavaScript reserved word, and a parser refuses it outside a class or a method body. So `({ $ }) => this.users.find(...)` would not parse as a `.js` file — see the strict-JS-subset rule in the root [`CLAUDE.md`](../../CLAUDE.md).
+
+The context-reference prefixes (`$$` / `$$$` / `$$$$`) parse anywhere. They never collide with the host language, and they give one uniform vocabulary for the four document-context scopes (`$.`, `$$`, `$$$`, `$$$$`). See [`context-references.md`](./context-references.md) for the prefix grammar and the AST nodes.
 
 ## Grammar
 
@@ -22,7 +35,7 @@ No new lexer or parser tokens. The receiver chain is one of:
 
 All shapes are built by the standard primary-postfix loop ([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)). The method call `.find(pred)` / `.filter(pred)` parses as the existing `MethodCall` node.
 
-**Block bodies.** The parser accepts a `{ … }` body on any callback (see [grammar.md](grammar.md)); what the block MEANS is the row's business. `.aggregate((o) => { $sort(…); $limit(5); })` keeps its statements as the stages of the sub-pipeline. `.find` / `.filter` / `.reject` / `.map` are JavaScript methods: a stage-free block folds back to its value (`{ return E }` → `E`; `{ const … ; return E }` → a `$let`), and a stage-bearing one is refused, naming the stage and the `.aggregate` rewrite ([method-dispatch of callback blocks](emit-pass.md)). Parsing first is what buys that message: a grammar that stopped at the first `$` could only say "unexpected token".
+**Block bodies.** The parser accepts a `{ … }` body on any callback (see [grammar.md](grammar.md)). What the block MEANS is the row's own business. `.aggregate((o) => { $sort(…); $limit(5); })` keeps its statements as the stages of the sub-pipeline. `.find` / `.filter` / `.reject` / `.map` are JavaScript methods. A stage-free block folds back to its value (`{ return E }` → `E`; `{ const … ; return E }` → a `$let`). The compiler refuses a stage-bearing block, and the message names the stage and the `.aggregate` rewrite ([method-dispatch of callback blocks](emit-pass.md)). Parsing first is what buys that message: a grammar that stopped at the first `$` could only say "unexpected token".
 
 ## AST extension
 
@@ -32,32 +45,46 @@ All shapes are built by the standard primary-postfix loop ([`src/compiler/parse/
 | { type: "Lambda"; params: string[]; body?: Expr; block?: Pipeline; pos: number }
 ```
 
-Exactly one of `body` / `block` is set. Every consumer that needs a value (an array method's callback, an IIFE, `$let`) refuses a block-form lambda with an actionable error — `.aggregate` is the one position that keeps a block — so a call site that reads `lambda.body` is total after that check.
+Exactly one of `body` / `block` is set. Every consumer that needs a value (an array method's callback, an IIFE, `$let`) refuses a block-form lambda with an actionable error. `.aggregate` is the one position that keeps a block. So a call site that reads `lambda.body` is total after that check.
 
 ## The join road
 
-[`src/compiler/emit/join.ts`](../../src/compiler/emit/join.ts) lowers every `$$$.<coll>.<chain>`. Two shapes, one road: a body that opens with a correlated equality — alone, or as one `&&` conjunct of the first predicate — is the `localField` / `foreignField` pair, with the other conjuncts and the links that follow in `pipeline` beside the pair (MongoDB 5.0+ runs that pipeline over the pair's matches), and everything else is `let` + `pipeline` + `$expr` (the shapes, the server-version fact and the rules that apply to each: [emit-pass.md § The join road](emit-pass.md)).
+[`src/compiler/emit/join.ts`](../../src/compiler/emit/join.ts) lowers every `$$$.<coll>.<chain>`. There are two shapes, and both use one road.
 
-**`lookupOf(node, env)`** turns the chain into a `$lookup`. It peels the links from the collection outwards, asking each link's row for the stages it means on a stream (the same `stream` cell a top-level `$$.<link>` uses — [stream-methods.md](stream-methods.md)), and appends them to the sub-pipeline: `.filter(p)` → `$match`, `.sortBy(k)` → `$sort`, `.take(n)` → `$limit`, a stage link `.$group(…)` → the stage, `.aggregate(block)` → the block's stages. `.find(p)` is the first match as ONE document — `$match` + `$limit: 1`, and the destination unwraps the array with `$first`. The peel stops at the first link that makes a VALUE of the documents (`.length`, `.map(o => o.total)`, `.sum()`, a field read after `.find`): what follows is `rest`, and `complete` is false.
+A body that opens with a correlated equality is the `localField` / `foreignField` pair. The equality can stand alone, or as one `&&` conjunct of the first predicate. The pair sits beside the other conjuncts and the links that follow, in `pipeline` (MongoDB 5.0+ runs that pipeline over the pair's matches). Everything else lowers as `let` + `pipeline` + `$expr`. For the shapes, the server-version fact, and the rule for each, see [emit-pass.md § The join road](emit-pass.md).
 
-**The body's Env.** The sub-pipeline is lowered one level deeper: `env.enter` crosses a `$lookup` boundary with a fresh `Capture`, so every read of the OUTER document inside the body is interned into the stage's `let` and read back as a `$$` variable — `$.userId` → `let: { jsmql_f0_userId: "$userId" }`, a pipeline `let` binding → `jsmql_v0_<name>`, the root count `$$.length` → `jsmql_s0_length` ([stream-length.md](stream-length.md)). The number is the level the read comes FROM, so a nested body captures an ancestor under a distinct name and MQL's lexical `$$` scoping never shadows it. The callback's first parameter is the foreign document (`o.total` → `"$total"`); the second is refused as a read (a stream has no index); the third is the joined stream itself (`coll.length`, `coll.filter(…)`). `$.` is the outer document at every depth (HR4); a write inside the body goes through the parameter (`o.x = …`).
+**`lookupOf(node, env)`** turns the chain into a `$lookup`. It peels the links from the collection outwards. For each link, it asks the link's row for the stages it means on a stream — the same `stream` cell a top-level `$$.<link>` uses ([stream-methods.md](stream-methods.md)) — and it appends them to the sub-pipeline: `.filter(p)` → `$match`, `.sortBy(k)` → `$sort`, `.take(n)` → `$limit`, a stage link `.$group(…)` → the stage, `.aggregate(block)` → the block's stages.
 
-**A value terminal gives ONE DOCUMENT.** The `$lookup.as` array holds the foreign collection's documents, so the binding for the slot states `elements: "object"`, and a method whose row answers `returns: "element"` — `.head()`, `.first()`, `.last()`, `.at(i)`, `.nth(i)`, `.find(p)`, `.findLast(p)`, `.min()`, `.max()`, `.minBy(k)`, `.maxBy(k)` — is typed `"object"` over it. Every array method is then refused on that document, with the field read named as the way out. The proof belongs to the binding and travels no further: a link that REPLACES the elements (`$$$.c.map(f).head()`) leaves them unproven, and a field path proves nothing at all (`$.items.head()`), so both keep every method open. Before the elements were stated, `$$$.c.head().map(f)` emitted `$map` over a document, which mongod refuses at execution time on a non-empty collection and silently answers null on an empty one.
+`.find(p)` gives the first match as ONE document: `$match` + `$limit: 1`, and the destination unwraps the array with `$first`. The peel stops at the first link that makes a VALUE of the documents (`.length`, `.map(o => o.total)`, `.sum()`, a field read after `.find`). What follows is `rest`, and `complete` is false.
 
-**The callback's third parameter** (`(o, _i, c) => …`) is the body's own stream: `c.length` is its count and a chain on it (`c.filter(…)`) its stages. Read as a value on its own (`c.total`, `c`) it is refused by name — it is neither a document nor a value.
+**The body's Env.** The sub-pipeline is lowered one level deeper. `env.enter` crosses a `$lookup` boundary with a fresh `Capture`. So every read of the OUTER document inside the body is interned into the stage's `let`, and read back as a `$$` variable: `$.userId` → `let: { jsmql_f0_userId: "$userId" }`, a pipeline `let` binding → `jsmql_v0_<name>`, the root count `$$.length` → `jsmql_s0_length` ([stream-length.md](stream-length.md)).
+
+The number is the level the read comes FROM. So a nested body captures an ancestor under a distinct name, and MQL's lexical `$$` scoping never shadows it.
+
+The callback's first parameter is the foreign document (`o.total` → `"$total"`). The compiler refuses the second parameter as a read, because a stream has no index. The third parameter is the joined stream itself (`coll.length`, `coll.filter(…)`). `$.` is the outer document at every depth (HR4). A write inside the body goes through the parameter (`o.x = …`).
+
+**A value terminal gives ONE DOCUMENT.** The `$lookup.as` array holds the foreign collection's documents. So the binding for the slot states `elements: "object"`. A method whose row answers `returns: "element"` — `.head()`, `.first()`, `.last()`, `.at(i)`, `.nth(i)`, `.find(p)`, `.findLast(p)`, `.min()`, `.max()`, `.minBy(k)`, `.maxBy(k)` — is typed `"object"` over it. The compiler then refuses every array method on that document, and it names the field read as the way out.
+
+The proof belongs to the binding, and it travels no further. A link that REPLACES the elements (`$$$.c.map(f).head()`) leaves them unproven. A field path proves nothing at all (`$.items.head()`). So both keep every method open.
+
+Before this rule stated the elements, `$$$.c.head().map(f)` emitted `$map` over a document. mongod refuses this at execution time on a non-empty collection, and it silently answers null on an empty one.
+
+**The callback's third parameter** (`(o, _i, c) => …`) is the body's own stream. `c.length` is its count, and a chain on it (`c.filter(…)`) gives its stages. When the source reads it as a value on its own (`c.total`, `c`), the compiler refuses it by name, because it is neither a document nor a value.
 
 **Four destinations**, by the statement the chain stands in:
 
 | Statement | Lowering | Function |
 |---|---|---|
 | `$.o = $$$.c.<chain>` with nothing after the peel | the target IS `as`; `.find` adds `$set: { o: { $first: "$o" } }` | `joinWrite` |
-| any VALUE position (`$.n = <chain>.length`, `let t = <chain>.reduce(…)`, a stage body) | the `$lookup` is hoisted ahead of the stage that reads it (§ Where a hoisted stage lands) into a scratch slot `__jsmql.tmp.<N>`, bound as a typed name (an array for `.filter`, a document for `.find`), and the rest of the chain is lowered as a value over the slot — `.length` → `$size`, `.map(f).sum()` → `$sum: { $map: … }`, `.name` → a path | `joinValue` |
+| any VALUE position (`$.n = <chain>.length`, `let t = <chain>.reduce(…)`, a stage body) | the compiler hoists the `$lookup` ahead of the stage that reads it (§ Where a hoisted stage lands), into a scratch slot `__jsmql.tmp.<N>` bound as a typed name (an array for `.filter`, a document for `.find`); it then lowers the rest of the chain as a value over the slot — `.length` → `$size`, `.map(f).sum()` → `$sum: { $map: … }`, `.name` → a path | `joinValue` |
 | `$ = $$$.c.find(p)` | `$lookup` into a slot, `$unwind`, `$replaceWith`: each document becomes the one it found, and a document that found nothing leaves the stream (`$unwind` of an empty slot drops it — by design) | `joinRoot` |
-| `$$ = $$$.c.<chain>` | correlated (the body read the outer document): a `$lookup` per outer document, `$unwind`, `$replaceWith`; uncorrelated: the current stream is dropped and the other collection's pipeline unioned in (`$unionWith`) | `joinStream` |
+| `$$ = $$$.c.<chain>` | correlated (the body read the outer document): a `$lookup` per outer document, `$unwind`, `$replaceWith`; uncorrelated: the compiler drops the current stream and unions in the other collection's pipeline (`$unionWith`) | `joinStream` |
 
-A write whose chain goes on after the peel (`$.o = $$$.c.filter(p).map(f)`) is lowered twice — once to learn it is not complete, once on the value road — and the first attempt takes back what it hoisted, so a `$$.length` stamp lands once. A `let` whose value is a complete chain uses its own slot `__jsmql.var.<name>` as `as` ([let-bindings.md](let-bindings.md)). The scratch slots live under `__jsmql`, which the chain's single trailing `{ $unset: "__jsmql" }` removes; inside a sub-pipeline the cleanup is the sub-pipeline's own.
+The compiler lowers a write whose chain goes on after the peel (`$.o = $$$.c.filter(p).map(f)`) twice. It lowers the write once to learn it is not complete, then once more on the value road. The first attempt takes back what it hoisted, so a `$$.length` stamp lands once.
 
-**Nested reads.** A `$$$.<coll2>` read inside a body is a `$lookup` inside the sub-pipeline, hoisted ahead of the stage that reads it, with its own `let` at its own level:
+A `let` whose value is a complete chain uses its own slot `__jsmql.var.<name>` as `as` ([let-bindings.md](let-bindings.md)). The scratch slots live under `__jsmql`. The chain's single trailing `{ $unset: "__jsmql" }` removes them. Inside a sub-pipeline, the cleanup belongs to the sub-pipeline itself.
+
+**Nested reads.** A `$$$.<coll2>` read inside a body is a `$lookup` inside the sub-pipeline. The compiler hoists it ahead of the stage that reads it, with its own `let` at its own level:
 
 ```js
 $.a = $$$.b.filter(x => x.n > $.m && $$$.c.filter(y => y.k === x.k).length > 0)
@@ -69,10 +96,10 @@ $.a = $$$.b.filter(x => x.n > $.m && $$$.c.filter(y => y.k === x.k).length > 0)
 
 ## Where a hoisted stage lands
 
-A join in a VALUE position materialises a `$lookup` into a scratch slot, and that
-stage is placed by the chain's `hoist` / `ahead` pair ([`src/compiler/emit/env.ts`](../../src/compiler/emit/env.ts)).
+A join in a VALUE position materialises a `$lookup` into a scratch slot. The chain's
+`hoist` / `ahead` pair places that stage ([`src/compiler/emit/env.ts`](../../src/compiler/emit/env.ts)).
 It lands **directly ahead of the stages of the lowering that hoisted it**, never at
-the front of the statement: a callback's parameter names the document ITS stage
+the front of the statement. A callback's parameter names the document ITS stage
 receives, so that is the document the `$lookup` has to read.
 
 ```js
@@ -83,50 +110,59 @@ $$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag =
 ```
 
 `g._id` is the group key `$sortByCount` MADE, so `localField: "_id"` must be read
-after it. Ahead of the statement the same `_id` is the source document's, and
-`$sortByCount` then replaces the document and discards the slot — the read comes
-back missing and the server says nothing about it. Every stage that reshapes the
-document (`$group`, `$replaceWith` / `$replaceRoot`, `$project`, `$unwind`,
-`$bucket`, …) puts the two documents further apart; the drain is therefore per
-STAGE, not per statement, on every road that makes several stages out of one
-source statement — the stream chain (one drain per link), a `,`-joined run of
-writes (one per op, so `$.k = $.pid, $.name = $$$.c.find({ _id: $.k }).name` joins
-on the `k` the first write made), the array reducer, a bracketed program, and a
-stage block's statements. `lookupOf` has always drained per link, which is why the
-same chain inside a `$lookup` body placed its nested join correctly.
+after it. Ahead of the statement, the same `_id` is the source document's.
+`$sortByCount` then replaces the document and discards the slot. The read comes
+back missing, and the server says nothing about it.
 
-**A variable an enclosing expression binds is refused.** `$lookup` is a stage, so
-it is hoisted out of any `$map` / `$filter` / `$reduce` / `$let` the source wrote
-it inside, and its body would then name a variable the server never bound there
-("Use of undefined variable: x", measured). There is no placement that fixes it —
-the join is per ARRAY ELEMENT and a stage is per DOCUMENT — so the read is refused
-where it stands, and the message names the two spellings that work: make the
-elements documents first (`$$ = $.items;`), or read the collection outside the
-callback into a binding (`let ps = $$$.<coll>.filter(…);`) the callback then uses.
-`Env.render` holds the gate: a `Located` of kind `var` carries the LEVEL it was
+Every stage that reshapes the document (`$group`, `$replaceWith` / `$replaceRoot`,
+`$project`, `$unwind`, `$bucket`, …) puts the two documents further apart. So the
+drain runs per STAGE, not per statement, on every road that makes several stages
+out of one source statement: the stream chain (one drain per link), a
+`,`-joined run of writes (one per op, so `$.k = $.pid, $.name = $$$.c.find({ _id:
+$.k }).name` joins on the `k` the first write made), the array reducer, a
+bracketed program, and a stage block's statements. `lookupOf` has always drained
+per link. This is why the same chain inside a `$lookup` body placed its nested
+join correctly.
+
+**A variable an enclosing expression binds is refused.** `$lookup` is a stage. So
+the compiler hoists it out of any `$map` / `$filter` / `$reduce` / `$let` the
+source wrote it inside, and its body would then name a variable the server never
+bound there ("Use of undefined variable: x", measured).
+
+No placement fixes this: the join runs per ARRAY ELEMENT, and a stage runs per
+DOCUMENT. So the compiler refuses the read where it stands. The message names
+the two spellings that work: make the elements documents first (`$$ = $.items;`),
+or read the collection outside the callback into a binding (`let ps =
+$$$.<coll>.filter(…);`) that the callback then uses.
+
+`Env.render` holds the gate. A `Located` of kind `var` carries the LEVEL it was
 bound on, and a read of one from a deeper level is the refusal.
 
 **A correlated key is a CONSTANT to the server.** `$lookup` evaluates its `let`
-against the outer document and then optimises the sub-pipeline with the result
-substituted in, so a type-dispatching expression there is folded against that one
-value, branch by branch. A nested `$cond` folds the branch that does not apply and the
-whole pipeline is refused before a document is read — MEASURED, `$.o =
+against the outer document, then it optimises the sub-pipeline with the result
+substituted in. So a type-dispatching expression there folds against that one
+value, branch by branch.
+
+A nested `$cond` folds the branch that does not apply, and the server refuses the
+whole pipeline before it reads a document — MEASURED: `$.o =
 $$$.products.find({ _id: $.arr[0] })` answered "can't convert from BSON type array to
-String" for an array key and "$arrayElemAt's first argument must be an array" for a
-string one. So every runtime type dispatch jsmql writes is a `$switch`, which drops a
-branch whose case folds to false without optimising it (`indexAccess` in
+String" for an array key, and "$arrayElemAt's first argument must be an array" for a
+string one.
+
+So every runtime type dispatch JSMQL writes is a `$switch`. A `$switch` drops a
+branch whose case folds to false, without optimising it (`indexAccess` in
 [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts), and the family dispatch
 `select.ts` builds). The same hazard reaches a plain expression through any value the
 server holds as a constant — a `jsmql.compile` parameter inside `$literal` — so the
-shape is one shape everywhere and never chosen by position.
+shape is one shape everywhere, and no rule ever picks it by position.
 
-**The collection's name** is a compile-time constant: `$$$.orders`, `$$$["orders"]`, or a `jsmql.compile` parameter / template slot holding a string (`$$$[coll]`) — MongoDB's `$lookup.from` takes no expression. `$$$[$.name]` is refused ("the collection is named when the pipeline is written"), and `$$$[""]` names no collection.
+**The collection's name** is a compile-time constant: `$$$.orders`, `$$$["orders"]`, or a `jsmql.compile` parameter or template slot that holds a string (`$$$[coll]`). MongoDB's `$lookup.from` takes no expression. The compiler refuses `$$$[$.name]` ("the collection is named when the pipeline is written"), and `$$$[""]` names no collection.
 
-**Cross-database reads are refused.** `$$$$.<db>.<coll>.<chain>` would need `from: { db, coll }`, which is Atlas Data Federation's form and not a MongoDB server's; the refusal says to drop the `$$$$.<db>.` prefix and run the pipeline against that database, and that the cross-database WRITE (`$$$$.<db>.<coll> = $$` → `$out`) works ([out-stage.md](out-stage.md)).
+**Cross-database reads are refused.** `$$$$.<db>.<coll>.<chain>` would need `from: { db, coll }`. That is Atlas Data Federation's form, not a MongoDB server's. The refusal tells the reader to drop the `$$$$.<db>.` prefix and run the pipeline against that database. It also states that the cross-database WRITE (`$$$$.<db>.<coll> = $$` → `$out`) works ([out-stage.md](out-stage.md)).
 
 ## Mode gates
 
-A join materialises a `$lookup` stage, so it needs a pipeline to place it in. `jsmql.filter()`, `jsmql()` on a bare expression and `jsmql.expr()` refuse it — "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline …" — and `jsmql.update()` refuses it as it refuses everything that is not a write ("An update document is made of writes …").
+A join materialises a `$lookup` stage, so it needs a pipeline to place it in. `jsmql.filter()`, `jsmql()` on a bare expression, and `jsmql.expr()` refuse it: "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline …". `jsmql.update()` refuses it too, the same way it refuses everything that is not a write ("An update document is made of writes …").
 
 ## Error catalog
 

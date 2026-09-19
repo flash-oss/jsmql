@@ -1,11 +1,11 @@
 # CLI — the `jsmql` bin
 
-The `jsmql` command-line tool transpiles JSMQL source to MongoDB MQL:
-**source in (positional arg / `--file` / stdin), MQL out (stdout)** as the
-JavaScript that rebuilds it, errors on stderr with a non-zero exit code. It is a thin wrapper
-over the public API in [src/index.ts](../../src/index.ts) — there is no
-compilation logic in the CLI, only argument routing, output formatting, and
-error rendering.
+The `jsmql` command-line tool transpiles JSMQL source to MongoDB MQL. Source
+goes in through the positional argument, `--file`, or stdin. MQL comes out on
+stdout, as the JavaScript that rebuilds it. Errors go to stderr, with a
+non-zero exit code. The CLI is a thin wrapper over the public API in
+[src/index.ts](../../src/index.ts). It holds no compilation logic — only
+argument routing, output formatting, and error rendering.
 
 Source: [src/cli.ts](../../src/cli.ts). Bin name: `jsmql`
 (`package.json#bin → dist/cjs/cli.cjs`).
@@ -18,12 +18,12 @@ Source: [src/cli.ts](../../src/cli.ts). Bin name: `jsmql`
 2. `--file <path>` (read with `readFileSync(path, "utf8")`);
 3. stdin, read synchronously via `readFileSync(0, "utf8")` (fd 0).
 
-If none of these is available **and** `process.stdin.isTTY` is true (an
-interactive terminal with nothing piped), it is a **usage error** (exit 2) —
-the CLI must not hang waiting on a TTY. The resolved source is `trimEnd()`-ed:
-trailing whitespace (notably the newline a shell `echo`/heredoc appends) is
-insignificant to the language, and trimming keeps an end-of-input error's caret
-on the source line rather than a dangling blank one.
+If none of these is available, and `process.stdin.isTTY` is true (an
+interactive terminal with nothing piped), this is a **usage error** (exit 2).
+The CLI must not hang while it waits on a TTY. The CLI applies `trimEnd()` to
+the resolved source. Trailing whitespace, notably the newline a shell `echo`
+or heredoc appends, has no meaning in the language. Trimming keeps an
+end-of-input error's caret on the source line, instead of a dangling blank one.
 
 ## Output shape
 
@@ -36,34 +36,35 @@ on the source line rather than a dangling blank one.
 | `--update` | `jsmql.update(source)` | update document (`{ $set, $inc, … }`, constants only) |
 | `--validate` / `--check` | `jsmql.validate(source)` | `{ valid, errors }` JSON |
 
-The mode flags are mutually exclusive; two of them is a usage error. The strict
-flags inherit the library's actionable wrong-shape errors verbatim (e.g. a bare
-expression under `--pipeline` produces the same "wrap it as `$match(...)`"
-message the JS `jsmql.pipeline()` throws) — the CLI invents no new wording.
+The mode flags are mutually exclusive. Two of them together is a usage error.
+The strict flags inherit the library's actionable wrong-shape errors verbatim.
+For example, a bare expression under `--pipeline` produces the same "wrap it
+as `$match(...)`" message that the JS `jsmql.pipeline()` throws. The CLI
+invents no new wording.
 
 ## Formatting
 
-Output is what `jsmql.stringify(result, { indent, width })` writes — the
-library's own printer, which the CLI holds no copy of. It writes the document as
-the JavaScript that rebuilds it, so the text pastes into a driver script or into
-mongosh and means what the source meant. The rules, the BSON classes and the
-layout are in [mql-stringify.md](mql-stringify.md).
+The output is what `jsmql.stringify(result, { indent, width })` writes. This
+is the library's own printer; the CLI holds no copy of it. It writes the
+document as the JavaScript that rebuilds it. So the text pastes into a driver
+script or into mongosh, and it means what the source meant. The rules, the
+BSON classes, and the layout are in [mql-stringify.md](mql-stringify.md).
 
-`--indent N` sets the indent to N spaces (an integer 0–10, validated) and
-`--tab` sets it to a tab; the default is 2. `-c`/`--compact` lifts the line
-width to infinity, which puts the whole document on one line whatever the
-indent says.
+`--indent N` sets the indent to N spaces (an integer from 0 to 10, validated).
+`--tab` sets the indent to a tab. The default is 2 spaces. `-c` / `--compact`
+lifts the line width to infinity. This puts the whole document on one line,
+whatever the indent says.
 
-`--validate` is the exception: it reports `{ valid, errors }`, which holds
-strings and numbers only. That is a machine-readable report rather than a
-document, so it is written as JSON — indented by `--indent`, on one line under
-`--compact`.
+`--validate` is the exception. It reports `{ valid, errors }`, which holds
+strings and numbers only. This is a machine-readable report, not a document,
+so the CLI writes it as JSON. It is indented by `--indent`, and on one line
+under `--compact`.
 
 ## Parameters (`--arg` / `--argjson`)
 
-Presence of any `--arg`/`--argjson` switches the source
-interpretation: instead of a bare query the source must be a **parameterised
-arrow**, and it is routed through `jsmql.compile(source)(params)` (see
+The presence of any `--arg` or `--argjson` switches the source interpretation.
+Instead of a bare query, the source must be a **parameterised arrow**. The CLI
+routes it through `jsmql.compile(source)(params)` (see
 [function-form-params.md](function-form-params.md)):
 
 ```sh
@@ -71,15 +72,16 @@ echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
 # → { age: { $gt: 18 } }
 ```
 
-`--arg NAME VALUE` binds `NAME` to the string `VALUE`; `--argjson NAME VALUE`
-binds it to `JSON.parse(VALUE)` (a malformed value is a usage error). Both are
-repeatable and accumulate into one params object.
+`--arg NAME VALUE` binds `NAME` to the string `VALUE`. `--argjson NAME VALUE`
+binds it to `JSON.parse(VALUE)`. A malformed value is a usage error. Both
+flags are repeatable, and they accumulate into one params object.
 
-Params combine with any output-shape flag. With params present the source is a
-parameterised arrow, so each mode routes through the matching `*.compile()`
-builder — `jsmql.filter.compile` / `jsmql.pipeline.compile` /
-`jsmql.expr.compile` / `jsmql.update.compile`, defaulting to `jsmql.compile` —
-which binds the values and still enforces that mode's shape contract:
+Params combine with any output-shape flag. When params are present, the
+source is a parameterised arrow. So each mode routes through the matching
+`*.compile()` builder: `jsmql.filter.compile`, `jsmql.pipeline.compile`,
+`jsmql.expr.compile`, or `jsmql.update.compile`, and it defaults to
+`jsmql.compile`. This builder binds the values, and it still enforces that
+mode's shape contract:
 
 ```sh
 echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
@@ -88,9 +90,9 @@ echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --pipeline --argjson minAge
 # → exit 1: jsmql.pipeline() expects a Pipeline … (the arrow lowers to a Filter)
 ```
 
-`--validate` with params validates the parameterised arrow's shape (the bound
-values don't affect validity) — `jsmql.validate` accepts a parameterised-arrow
-string directly.
+`--validate` with params validates the parameterised arrow's shape. The bound
+values do not affect validity. `jsmql.validate` accepts a
+parameterised-arrow string directly.
 
 ## Exit codes
 
@@ -100,8 +102,8 @@ string directly.
 | `1` | compile/parse error; or `--validate` with `valid: false` |
 | `2` | usage error — unknown/conflicting flags, a missing flag value, no input on a TTY, or an invalid `--argjson` value |
 
-`main()` returns the code; the module sets `process.exitCode` (no mid-stream
-`process.exit`).
+`main()` returns the code. The module sets `process.exitCode`. It does not
+call `process.exit` mid-stream.
 
 ## Error rendering
 
@@ -113,41 +115,43 @@ jsmql: error: <err.message>
   <spaces><caret ^ under the offending column>
 ```
 
-Every jsmql compile error (`LexError` / `ParseError` / `CodegenError` /
-`UnknownIdentifierError` / `FunctionInputError`) carries `pos: number`; the
-caret column is `pos - lineStart`. When `pos` is absent or out of range, only
-the `jsmql: error:` line is printed. Usage errors are formatted differently —
-`jsmql: <message>` followed by `Try 'jsmql --help'.` — so the two error classes
-are visually distinct.
+Every JSMQL compile error (`LexError`, `ParseError`, `CodegenError`,
+`UnknownIdentifierError`, or `FunctionInputError`) carries `pos: number`. The
+caret column is `pos - lineStart`. When `pos` is absent or out of range, the
+CLI prints only the `jsmql: error:` line. Usage errors are formatted
+differently: `jsmql: <message>`, followed by `Try 'jsmql --help'.`. So the two
+error classes look different.
 
 ## Versioning
 
-`src/cli.ts` references `__JSMQL_VERSION__`, replaced at build time by esbuild's
-`define` (in [scripts/build-cjs.mjs](../../scripts/build-cjs.mjs)) with
-`package.json`'s version. A `typeof` guard falls back to `"0.0.0-dev"` so the
-un-bundled `node src/cli.ts` run (no `define`) still works.
+`src/cli.ts` references `__JSMQL_VERSION__`. esbuild's `define` (in
+[scripts/build-cjs.mjs](../../scripts/build-cjs.mjs)) replaces this at build
+time with `package.json`'s version. A `typeof` guard falls back to
+`"0.0.0-dev"`. So the un-bundled `node src/cli.ts` run, which has no
+`define`, still works.
 
 ## Build & packaging
 
-`src/cli.ts` stays in the strippable-TS subset and carries `#!/usr/bin/env
-node` as its first line. The `cli` esbuild entry in `scripts/build-cjs.mjs`
-bundles it to `dist/cjs/cli.cjs` (Node 14 target, shebang preserved), and the
-script `chmod`s it `0o755`. `package.json#bin` maps the command name `jsmql` to
-that file.
+`src/cli.ts` stays in the strippable-TS subset. Its first line carries
+`#!/usr/bin/env node`. The `cli` esbuild entry in `scripts/build-cjs.mjs`
+bundles it to `dist/cjs/cli.cjs` (Node 14 target, shebang preserved). The
+script also runs `chmod 0o755` on it. `package.json#bin` maps the command
+name `jsmql` to that file.
 
 ## Tests
 
-- [test/cli.test.ts](../../test/cli.test.ts) — spawns `node src/cli.ts` (native
-  type-stripping, no build needed): input sources, every output shape,
-  formatting flags, `--validate` valid/invalid, params combined with each
-  output-shape / `--validate` flag, error carets, and usage errors.
+- [test/cli.test.ts](../../test/cli.test.ts) — spawns `node src/cli.ts`
+  (native type-stripping, no build needed). It covers input sources, every
+  output shape, formatting flags, `--validate` for valid and invalid input,
+  params combined with each output-shape or `--validate` flag, error carets,
+  and usage errors.
 - [test/smoke.test.ts](../../test/smoke.test.ts) — a strippable-TS check
-  (`node src/cli.ts --help`) plus a dist-gated case driving the built
-  `dist/cjs/cli.cjs` (stdin → MQL, `--version`, shebang assertion).
+  (`node src/cli.ts --help`), plus a dist-gated case that drives the built
+  `dist/cjs/cli.cjs` (stdin to MQL, `--version`, shebang assertion).
 
 ## Deferred work and non-goals
 
-A deliberate **non-goal** is a `-S`/`--sort-keys` flag: reordering object keys can
-change MQL semantics (e.g. `$project` computed-field order), so it is recorded
-as a won't-implement decision in [DEFERRED.md](../DEFERRED.md) §B rather than
-left as a TODO.
+A `-S` / `--sort-keys` flag is a deliberate **non-goal**. Reordering object
+keys can change MQL semantics — for example, `$project` computed-field order.
+So the project records this as a will not-implement decision in
+[DEFERRED.md](../DEFERRED.md) §B, instead of a TODO.
