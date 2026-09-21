@@ -9,7 +9,7 @@
 // Those neighbour-reading cases are the ones whose production row says
 // `inCode`, and this file is the file it names.
 
-import type { Expr, Position, Truth } from "../../registry/vocabulary.ts";
+import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
@@ -44,11 +44,11 @@ import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
 import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
-import { cond, letOne, readsRef, switchOn } from "./mql.ts";
+import { cond, letOne, readsRef, switchOn, switchOver } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
-import { ANY, maybeAbsent } from "./type.ts";
+import { ANY, kindsOf, maybeAbsent } from "./type.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
 import { injectedNeedsLiteral } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
@@ -624,12 +624,21 @@ function receiverOf(recv: Expr, env: Env): Receiver {
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
   if (src === "set") return { kind: "value", family: "set", lowered };
-  const kind = kindOf(recv, env);
-  const family = familyOfKind(kind);
-  if (family !== null) return { kind: "value", family, lowered };
-  // A kind the registry PROVES but no method family has — `$.a > 1` is a boolean —
-  // is not "unknown": every row refuses it, naming what it takes.
-  return kind === "unknown" ? { kind: "opaque", lowered } : { kind: "opaque", lowered, proved: kind };
+  const t = typeOf(recv, env);
+  const kinds = kindsOf(t);
+  if (kinds === null) return { kind: "opaque", lowered };
+  if (kinds.length === 1) {
+    const family = familyOfKind(kinds[0]);
+    if (family !== null) return { kind: "value", family, lowered };
+    // A kind the registry PROVES but no method family has — `$.a > 1` is a boolean —
+    // is not "unknown": every row refuses it, naming what it takes.
+    return { kind: "opaque", lowered, proved: kinds[0] };
+  }
+  // Several possible kinds: the dispatch runs over the field families among them,
+  // and a kind no family has falls to the row's default. None at all is a refusal.
+  const possible = kinds.map(familyOfKind).filter((f): f is FieldFamily => f !== null);
+  if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
+  return { kind: "opaque", lowered, possible, exact: possible.length === kinds.length, present: !t.absent };
 }
 
 const spelledMethod = (name: string, recv: Expr): string =>
@@ -747,6 +756,12 @@ function runDispatch(
     );
   };
   const branches = sel.branches.map((b) => ({ case: truthOf(b.guard(ref), true), then: run(b.rule) }));
+  // Every kind the receiver can be has a branch, and the value is there: the default
+  // can never fire, so the `$switch` states none. See `switchOver` for why it is not a `$cond`.
+  if (sel.complete && branches.length >= 2) {
+    const doc = switchOver(branches);
+    return bound === null ? doc : letOne(bound.as, lowered, doc);
+  }
   const otherwise = sel.otherwise;
   let fallback: unknown;
   if (typeof otherwise === "function")

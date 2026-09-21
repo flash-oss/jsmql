@@ -39,6 +39,17 @@ export const switchOn = (
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
 };
 
+/**
+ * A `$switch` whose branches cover every value that can reach it, so it states no
+ * default. Never a `$cond`: MEASURED, the server optimises a `$cond`'s branches
+ * BEFORE it reads the test, so `{ $cond: [<is array>, { $size: v }, { $strLenCP: v }] }`
+ * over a constant `v` — a `$let` variable, a `$literal` — fails with "Failed to
+ * optimize pipeline", while the same branches under `$switch` run on every receiver.
+ */
+export const switchOver = (branches: readonly { readonly case: Truth; readonly then: unknown }[]): unknown => ({
+  $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) },
+});
+
 /** A condition as a query document: `{ $expr: <truth> }`. */
 export const matchExpr = (test: Truth): QueryDoc => ({ $expr: test });
 

@@ -42,8 +42,22 @@ export type Receiver =
    * A value whose family is not provable — a field path, an unknown-typed binding —
    * or one PROVEN to hold a kind no method family has (`proved`: a boolean, an
    * ObjectId). Every field-family row refuses this receiver.
+   *
+   * `possible` names the field families the value CAN be, when the proof shows
+   * several: `cond ? "a" : [1]` is a string or an array, and the dispatch runs over
+   * those two alone. `present` says the value is certainly there, so a dispatch
+   * that covers every possible kind needs no default. Absent, the value can be
+   * anything, and the dispatch runs over every family the row lists.
    */
-  | { readonly kind: "opaque"; readonly lowered: unknown; readonly proved?: string };
+  | {
+      readonly kind: "opaque";
+      readonly lowered: unknown;
+      readonly proved?: string;
+      readonly possible?: readonly FieldFamily[];
+      /** Does `possible` name EVERY kind the value can be? False when a kind no family covers is possible too. */
+      readonly exact?: boolean;
+      readonly present?: boolean;
+    };
 
 /** The class of the argument list. A PARTITION — see `shapeOf` for the order. */
 export type Shaped =
@@ -85,12 +99,18 @@ export type Branch = {
 /** The one answer. Every variant is final, except `rule` and `dispatch`, which name what to run. */
 export type Selected =
   | { readonly kind: "rule"; readonly name: string; readonly rule: AnyRule }
-  /** Two or more field families could hold the receiver: one `$switch`, with the row's `uncertain` as the default. */
+  /**
+   * Two or more field families could hold the receiver: one `$switch`, with the
+   * row's `uncertain` as the default. `complete` says the branches cover every
+   * kind the receiver can be, and the value is there — so the default can never
+   * fire, and the consumer drops it. See docs/specs/types.md § The dispatch.
+   */
   | {
       readonly kind: "dispatch";
       readonly name: string;
       readonly branches: readonly Branch[];
       readonly otherwise: AnyEmit | Refusal;
+      readonly complete: boolean;
     }
   | { readonly kind: "refused"; readonly name: string; readonly message: string; readonly needsSubject: boolean }
   | { readonly kind: "fallback"; readonly name: string }
@@ -229,10 +249,17 @@ function fromPerFamily(
   }
   // An unprovable receiver. With one field family in `on`, the receiver IS that
   // family. With two or more, the compiler runs the runtime dispatch, in the row's
-  // own order, over the families that hold a rule, with the row's `uncertain` as the default.
-  const listed = (
+  // own order, over the families that hold a rule, with the row's `uncertain` as the
+  // default. A receiver whose proof names its possible families narrows the list to
+  // those; one that names none of the row's families is refused.
+  const accepted = (
     on === undefined || on === "any" ? FIELD_FAMILIES : on.filter(isFieldFamily)
   ) as readonly FieldFamily[];
+  const possible = receiver.possible;
+  const listed = possible === undefined ? accepted : accepted.filter((f) => possible.includes(f));
+  if (possible !== undefined && listed.length === 0) {
+    return { kind: "wrongReceiver", name, got: possible.join(" or "), accepts: on ?? "any" };
+  }
   // A `$switch` separates only what `$type` tells apart: `set` and `array` share the
   // one test, so no branch can choose between them. The row's declaration order gives its
   // precedence, so the first family with a given test answers. The family that loses
@@ -245,7 +272,14 @@ function fromPerFamily(
     return true;
   });
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
-  if (fieldFamilies.length === 1) {
+  // Does the row take EVERY kind the value can be? Only then can a lone branch run
+  // with no test, and only then can a dispatch drop its default. A possible kind
+  // the row has no branch for — a number under `.length` — falls to the default.
+  const covered = possible !== undefined && receiver.exact === true && possible.every((f) => listed.includes(f));
+  // One family left, and the value can be nothing else: the rule runs directly. So does
+  // a row with ONE field family and no `uncertain`: the call is on that family, or the
+  // server raises an error — the row's own claim, whatever else the value could be.
+  if (fieldFamilies.length === 1 && (possible === undefined || covered || uncertain === undefined)) {
     const branch = branches[fieldFamilies[0]];
     if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
     return settle(name, branch, shaped, count);
@@ -262,7 +296,14 @@ function fromPerFamily(
     if (bad !== null && bad.kind !== "rule") return bad;
     out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
   }
-  return { kind: "dispatch", name, branches: out, otherwise: uncertain as AnyEmit | Refusal };
+  // The default fires for a null or missing value, and for a possible kind no
+  // branch takes. Neither can happen when the value is there and every possible
+  // family has a branch.
+  const complete =
+    covered &&
+    receiver.present === true &&
+    possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
+  return { kind: "dispatch", name, branches: out, otherwise: uncertain as AnyEmit | Refusal, complete };
 }
 
 /**

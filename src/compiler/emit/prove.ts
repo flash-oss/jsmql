@@ -63,11 +63,19 @@ const NAMESPACES = namespaceNames();
  * argument are also present — `$map` over an array that is there gives an
  * array that is there. A field path is present only where the document's
  * proof says so: the document may lack it, and every array operator returns
- * null for a missing input.
+ * null for a missing input. A `? :` is present when both branches are; a
+ * property read is present when the object's proof says so.
  * MEASURED: `{ $size: null }` and `{ $in: [x, null] }` abort the command.
  * So a cell guards with `$ifNull` exactly where this function returns false.
  */
-export function isPresent(node: Expr, env: Env): boolean {
+export const isPresent = (node: Expr, env: Env): boolean => !typeOf(node, env).absent;
+
+/**
+ * What a ROW or the source states about presence, or null where the proof's own
+ * `absent` flag is the answer — a `? :` joins its branches, a property read
+ * carries the object's proof, a binding carries what its value proved.
+ */
+function statedPresence(node: Expr, env: Env): boolean | null {
   switch (node.type) {
     case "NumberLiteral":
     case "BigIntLiteral":
@@ -82,11 +90,6 @@ export function isPresent(node: Expr, env: Env): boolean {
       return namedRow(node) === null;
     case "Injected":
       return node.value !== null && node.value !== undefined && !isMqlShaped(node.value);
-    case "FieldRef":
-      // the root document, or a path the document's proof shows is there
-      return !env.typeAt(node.path, 0).absent;
-    case "Ident":
-      return env.scope.has(node.name) && !env.lookup(node.name, node.pos).type.absent;
     case "MethodCall": {
       const name = namedRow(node) ?? node.name;
       if (!neverNullOf(name)) return false;
@@ -101,6 +104,34 @@ export function isPresent(node: Expr, env: Env): boolean {
     }
     case "OperatorCall":
       return neverNullOf(node.name) && node.args.every((a) => argPresent(a, env));
+    case "CallExpression":
+      if (node.callee.type === "Ident" && !env.scope.has(node.callee.name)) {
+        return neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env));
+      }
+      return null;
+    case "NewExpression":
+      return node.callee.type === "Ident" && !env.scope.has(node.callee.name)
+        ? neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env))
+        : false;
+    case "UnaryExpr": {
+      const key = productionForOperator("UnaryExpr", node.op);
+      return key !== undefined && neverNullOf(key) && isPresent(node.argument, env);
+    }
+    case "BinaryExpr": {
+      if (node.op === "&&" || node.op === "||" || node.op === "??") return null;
+      const key = productionForOperator("BinaryExpr", node.op);
+      return key !== undefined && neverNullOf(key) && isPresent(node.left, env) && isPresent(node.right, env);
+    }
+    case "FieldRef":
+    case "Ident":
+    case "CollectionRef":
+    case "MemberAccess":
+    case "IndexAccess":
+    case "TernaryExpr":
+    case "ExprBlock":
+    case "NullLiteral":
+    case "UndefinedLiteral":
+      return null;
     default:
       return false;
   }
@@ -248,11 +279,14 @@ function injectedType(v: unknown): Type {
 
 /**
  * What `node` provably is under `env`. `ANY` wherever the registry and the
- * document's proof cannot show anything. `absent` is `isPresent`'s answer.
+ * document's proof cannot show anything. Presence is what the row or the
+ * source states, else what the proof itself carries.
  */
 export function typeOf(node: Expr, env: Env): Type {
   const t = kindsOf(node, env);
-  return isPresent(node, env) ? present(t) : maybeAbsent(t);
+  const stated = statedPresence(node, env);
+  if (stated === null) return t;
+  return stated ? present(t) : maybeAbsent(t);
 }
 
 /** The kinds, elements and properties `node` proves — everything but presence. */
@@ -287,11 +321,18 @@ function kindsOf(node: Expr, env: Env): Type {
     case "ObjectLiteral": {
       // A raw `{ $op: … }` is an operator, and its result is the operator's.
       if (namedRow(node) !== null) return ANY;
+      // A spread of an object that may be absent spreads as `{}`: its properties may be missing.
       const props = new Map<string, Type>();
       let open = false;
       for (const entry of node.entries) {
         if (entry.type === "SpreadElement") {
-          open = true;
+          const spread = typeOf(entry.argument, env);
+          if (spread.kinds === "any" || spread.open) {
+            // an unknown property of the spread may override any name written so far
+            for (const [k, t] of props) props.set(k, join(t, spread.values ?? ANY));
+            open = true;
+          }
+          for (const [k, t] of spread.props ?? []) props.set(k, spread.absent ? maybeAbsent(t) : t);
           continue;
         }
         const key = staticKey(entry);
@@ -361,9 +402,12 @@ function kindsOf(node: Expr, env: Env): Type {
         if (l === "string" || r === "string") return of("string");
         return l === "number" && r === "number" ? of("number") : ANY;
       }
-      if (node.op === "&&" || node.op === "||" || node.op === "??") {
-        return join(kindsOf(node.left, env), kindsOf(node.right, env));
+      if (node.op === "??") {
+        // `a ?? b` is `b` exactly when `a` is null or missing: the result is there when `b` is.
+        const r = kindsOf(node.right, env);
+        return { ...join(kindsOf(node.left, env), r), absent: r.absent };
       }
+      if (node.op === "&&" || node.op === "||") return join(kindsOf(node.left, env), kindsOf(node.right, env));
       const key = productionForOperator("BinaryExpr", node.op);
       return key === undefined ? ANY : callOn(key, ANY, null, [], env);
     }

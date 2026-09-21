@@ -10,6 +10,41 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — feat: a written field carries the type of its value
+
+`$.arr = $.tags.uniq(); $.bool = $.arr.includes("red"); $.result = $.bool ? "R"
+: "OTHER";` emitted a `$switch` over `$arr`'s `$type` and a four-test truthy
+check on `$bool`, because the compiler kept no type for a field the pipeline
+wrote. It now records each write's proof on the document `Type` of its level
+(`Env.written`, `Env.removed`), so the next read of `$.arr` proves an array and
+the next read of `$.bool` proves a boolean. The program emits three lean stages,
+and [test/compiler-types.test.ts](../test/compiler-types.test.ts) runs it on the
+fixture mongod. The write rules — a whole field replaces, a dotted path keeps the
+parent's other properties, a replacing stage resets the level — are measured and
+stated in [docs/specs/types.md](specs/types.md). One measurement shaped the
+dotted rule: `{ $set: { "a.b": 1 } }` writes `b` into EVERY element of an array
+`a`, so a dotted write into an unknown parent proves an object or an array of
+objects, and a read of `a.b` proves a number or an array of numbers.
+
+A `let` now takes the type of each value it is assigned; before, it kept its
+first. A value that can be several kinds dispatches over those kinds alone: the
+`Receiver` carries `possible`, `exact` and `present`, and `select.ts` marks a
+dispatch `complete` when every possible kind has a branch and the value is there.
+A complete dispatch is a `$switch` with no `default`. It is not a `$cond`, which
+the interview had proposed: MEASURED, the server optimises a `$cond`'s branches
+before it reads the test, so the shape fails with "Failed to optimize pipeline"
+over a `$let` variable or a `$literal`, while `$switch` runs everywhere
+(`switchOver` in `emit/mql.ts`). A method on a field proven to hold a kind it has
+no form for — `$.bool.trim()` — is now a compile-time refusal that names what the
+method takes; before, it compiled to a runtime null.
+
+Presence is part of the proof now, not a second walk: `statedPresence` in
+`prove.ts` answers where a row or the source states it, and the algebra carries
+`absent` everywhere else, so a `? :` with two present branches is present, and
+`a ?? b` is present exactly when `b` is.
+
+---
+
 ## 2026-09-21 — refactor: one `Type` value carries every proof
 
 The compiler now proves a value with one record, `Type` in

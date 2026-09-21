@@ -31,6 +31,7 @@ A new operator or syntax feature lands as a row in the registry. You update the 
 | `specs/desugar-pass.md` | Sugar → explicit nodes before lowering runs. The precedence between overlapping forms matters here. |
 | `specs/position-pass.md` | The seven positions: the source of each one, how a stage row lays out its body, and why an accumulator slot takes one operand |
 | `specs/emit-pass.md` | The emit phase's value and filter targets: the reading order, the receiver proof and runtime dispatch, operand shapes, the checks, the query cells and the per-branch `$or` |
+| `specs/types.md` | The type tracker: the `Type` model, the write rules, the merge rules, a row's `returns` grammar, the stage `document` effect, and each consumer's rule (the dispatch, the null guard) |
 | `specs/grammar.md` | The formal grammar (EBNF) that the parser in `src/compiler/parse/` accepts |
 | `specs/operator-registry.md` | The registry of operator shapes: how it works, and how to add or change an entry |
 | `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` body rule |

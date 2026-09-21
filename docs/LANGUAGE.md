@@ -1757,11 +1757,20 @@ $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 
 - **A statically known array** (an array literal, `.split()`, `.map()`, `.filter()`, `Object.values()`, and similar) emits the array form (`$in`, `$indexOfArray`, `$concatArrays`).
 - **A statically known string** (`.toLowerCase()`, `String(x)`, `+` in string context, a template literal, and similar) emits the string form (`$indexOfCP` / `$concat`).
-- **An unknown receiver** (a bare `$.field`, a ternary, and similar) emits a runtime `$switch` on the value's own `$type`, so the right form runs at query time. A value that is neither — null, a missing field, a number — answers `null`. JavaScript throws there, and null is the nearest value MongoDB holds. The output is more verbose, but it works whether the field is a string or an array.
+- **An unknown receiver** (a `$.field` the pipeline never wrote, a callback parameter, and similar) emits a runtime `$switch` on the value's own `$type`, so the right form runs at query time. A value that is neither — null, a missing field, a number — answers `null`. JavaScript throws there, and null is the nearest value MongoDB holds. The output is more verbose, but it works whether the field is a string or an array.
 
 ```js
 $.tags.includes("active")
 // → { $switch: { branches: [{ case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["active", "$tags"] } }, { case: { $in: [{ $type: "$tags" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] } }], default: null } }
+```
+
+**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();` the compiler knows `arr` is an array, or null when `tags` is missing, so `$.arr.includes("red")` takes the array form with only the null guard. After `$.bool = $.arr.includes("red");` it knows `bool` is a boolean, so `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows every write — a whole field, a dotted path such as `$.address.full = …`, a `let` and each value it is assigned again — until a stage that replaces the document (`$group`, `$ = …`), which starts a fresh document. A method on a field proven to hold a kind it has no form for is a compile-time error that names what the method takes, so `$.bool.trim()` fails before it runs. A value that can be one of several kinds (`c ? "abc" : [1, 2]`) dispatches over those kinds alone, and drops the `default` when every kind has a branch and the value is there. See [docs/specs/types.md](specs/types.md).
+
+```js
+$.arr = $.tags.uniq();
+$.bool = $.arr.includes("red");
+$.result = $.bool ? "R" : "OTHER";
+// → [{ $set: { arr: { $setUnion: "$tags" } } }, { $set: { bool: { $cond: { if: { $eq: [{ $ifNull: ["$arr", null] }, null] }, then: null, else: { $in: ["red", "$arr"] } } } } }, { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } }]
 ```
 
 **A JavaScript method on a receiver that is null or missing answers `null`.** JavaScript throws there — `undefined.trim()` is a TypeError — but MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds. No other answer works: `$size` and `$strLenCP` ABORT the whole command on null, and `$toUpper`, `$substrCP`, `$regexMatch`, and `$indexOfCP` each answer a *value* instead — `""`, `false`, `-1` — that hides the missing field. So JSMQL tests first any receiver it cannot prove is there, and runs the method only when the test passes. A receiver that is certainly there takes no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result (`$$$.<coll>…`), a field the `$type` test above already proved, a path a `?.` on the way in already tested, and any method over one of those. A **lodash** method does not follow this rule, and the lodash rows do not yet share one answer of their own: `.size()` answers `0`, `.pick([…])` answers `{}`, `.chunk(n)` answers `[]`, and `.uniq()` answers `null`. [DEF-037] tracks which single answer they should give — `null`, as a JavaScript method, or lodash's own:

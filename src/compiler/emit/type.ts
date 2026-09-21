@@ -85,9 +85,23 @@ export function itemOf(t: Type, i: number): Type {
   return elementOf(t);
 }
 
-/** What property `name` of an object value holds. A closed object without it holds nothing. */
+/**
+ * What property `name` of a value holds. A closed object without it holds
+ * nothing. A path THROUGH an array reads the property of every element, as an
+ * array: MEASURED, `"$a.b"` over `a: [{ b: 1 }, { b: 2 }]` is `[1, 2]`. So a
+ * value that may be an array holds either its object's property or that list.
+ */
 export function propOf(t: Type, name: string): Type {
-  if (t.kinds !== "any" && !t.kinds.has("object")) return NOTHING;
+  if (t.kinds === "any") return ANY;
+  const asObject = t.kinds.has("object") ? ownProp(t, name) : NOTHING;
+  const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name)) : NOTHING;
+  if (isNothing(asArray)) return asObject;
+  if (isNothing(asObject)) return asArray;
+  return join(asObject, asArray);
+}
+
+/** The property an OBJECT value holds under `name`. */
+function ownProp(t: Type, name: string): Type {
   const known = t.props?.get(name);
   if (known !== undefined) return known;
   if (!t.open) return NOTHING;
@@ -109,7 +123,10 @@ export function at(t: Type, path: string): Type {
  * The document after `path` is written with `value`. A whole-field write
  * replaces the field's proof. A dotted write keeps the parent's other
  * properties: `$.address.full = s` makes `address` a present object, open when it
- * was not known, with `full` set inside it. See docs/specs/types.md § The write rules.
+ * was not known, with `full` set inside it. MEASURED, `{ $set: { "a.b": 1 } }`:
+ * a scalar, null or missing `a` becomes `{ b: 1 }`; an object `a` keeps its
+ * other fields; an ARRAY `a` gets `b` written into every element, so
+ * `[1, 2]` becomes `[{ b: 1 }, { b: 1 }]`. See docs/specs/types.md § The write rules.
  */
 export function written(doc: Type, path: string, value: Type): Type {
   if (path === "") return value;
@@ -117,10 +134,33 @@ export function written(doc: Type, path: string, value: Type): Type {
   const head = dot === -1 ? path : path.slice(0, dot);
   const rest = dot === -1 ? "" : path.slice(dot + 1);
   const parent = asObject(doc);
-  const props = new Map(parent.props ?? []);
-  const child = rest === "" ? value : written(propOf(parent, head), rest, value);
-  props.set(head, child);
-  return { ...parent, props };
+  if (rest === "") return withProp(parent, head, value);
+  return withProp(
+    parent,
+    head,
+    into(propOf(parent, head), (obj) => written(obj, rest, value)),
+  );
+}
+
+/** The same object proof with one property set. */
+function withProp(obj: Type, name: string, value: Type): Type {
+  const props = new Map(obj.props ?? []);
+  props.set(name, value);
+  return { ...obj, props };
+}
+
+/**
+ * A dotted write lands INSIDE `t`: on the object it is, on every element of
+ * the array it is, or on either when the proof cannot tell. A value proven to
+ * be neither becomes the object the server makes of it.
+ */
+function into(t: Type, write: (parent: Type) => Type): Type {
+  if (isOnly(t, "array") && !t.absent) return { ...t, element: write(asObject(elementOf(t))) };
+  const asObj = write(asObject(t));
+  const canBeArray = t.kinds === "any" || (t.kinds.has("array") && !t.absent);
+  if (!canBeArray) return asObj;
+  const asArr: Type = { ...arrayOf(write(asObject(elementOf(t)))), absent: false };
+  return join(asObj, asArr);
 }
 
 /** The document after `path` is removed. */
@@ -137,13 +177,14 @@ export function removed(doc: Type, path: string): Type {
     const child = propOf(doc, head);
     if (!isNothing(child)) props.set(head, removed(child, rest));
   }
-  return { ...doc, kinds: doc.kinds, props };
+  return { ...doc, props };
 }
 
 /** A value read as the object a dotted write makes of it: present, an object, and open when it was not proven closed. */
 function asObject(t: Type): Type {
   if (isOnly(t, "object") && !t.absent) return t;
-  const known = isOnly(t, "object");
+  // A value that may be an object keeps what is known of that object's properties.
+  const known = t.kinds !== "any" && t.kinds.has("object");
   return {
     kinds: new Set<Kind>(["object"]),
     absent: false,

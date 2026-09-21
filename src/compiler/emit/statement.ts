@@ -48,7 +48,7 @@ import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { elementKindOf, kindOf, typeOf } from "./prove.ts";
-import { ANY, maybeAbsent, of } from "./type.ts";
+import { ANY, DOCUMENT, arrayOf, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
 import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
@@ -910,6 +910,14 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
   let inner = childEnv(env, uf, "ops");
   // `x = …` on a `let` a stage dropped carries it again: the next statement reads it.
   let revived = env;
+  // What each write proved about its path, since the last stage that replaced the
+  // document. The statement's Env after its stages replays these onto the document,
+  // so the next statement reads a written field as what its value was.
+  let proofs: { path: string; type: Type | null }[] = [];
+  const prove = (path: string, type: Type | null): void => {
+    proofs.push({ path, type });
+    inner = type === null ? inner.removed(path) : inner.written(path, type);
+  };
   const out: Stage[] = [];
   let sets: { paths: string[]; fields: Record<string, unknown> } | null = null;
   let unsets: string[] | null = null;
@@ -929,6 +937,12 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
    */
   const emit = (made: readonly Stage[] = []): void => {
     out.push(...env.chain.ahead(), ...made);
+    // A stage that replaced the document takes every proof about it away — the
+    // next write in this statement lands on a document nothing is known about.
+    if (made.some((st) => replacesDocument(Object.keys(st)[0], st))) {
+      proofs = [];
+      inner = inner.document(DOCUMENT);
+    }
   };
 
   for (const op of uf.ops) {
@@ -981,6 +995,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       if (path === "") throw E.cannotDeleteRoot(op.pos);
       if (sets !== null) flush();
       (unsets ??= []).push(path);
+      prove(path, null);
       continue;
     }
     if (op.op !== "=") internalError(`an assignment reached the emit phase spelled '${op.op}'`);
@@ -1024,6 +1039,8 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       if (w !== null) {
         flush();
         emit(w.stages);
+        // the server always writes the `as` array; a `.find` may find nothing
+        prove(path, w.yields === "array" ? arrayOf(DOCUMENT) : maybeAbsent(of(w.yields)));
         continue;
       }
     }
@@ -1047,20 +1064,35 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     sets ??= { paths: [], fields: {} };
     sets.paths.push(path);
     setKey(sets.fields, path, replacesWhole(value) ? { $mergeObjects: [value] } : value);
-    if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
-      const binding: Declared = {
-        ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
-        type: maybeAbsent(typeOf(op.value, inner)),
-        mutable: true,
-        pos: op.target.pos,
-      };
-      inner = inner.bind(op.target.name, binding);
-      revived = revived.bind(op.target.name, binding);
-      env.chain.dirty = true;
+    const written = typeOf(op.value, childEnv(inner, op, "value"));
+    if (op.target.type === "Ident" && inner.scope.has(op.target.name)) {
+      const was = inner.lookup(op.target.name, op.target.pos);
+      if (was.ref.kind === "dropped") {
+        const binding: Declared = {
+          ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
+          type: maybeAbsent(written),
+          mutable: true,
+          pos: op.target.pos,
+        };
+        inner = inner.bind(op.target.name, binding);
+        revived = revived.bind(op.target.name, binding);
+        env.chain.dirty = true;
+        continue;
+      }
+      // `x = <value>`: from here on, `x` is what the value proved.
+      if (was.ref.kind === "field") {
+        const binding: Declared = { ref: was.ref, type: written, mutable: was.mutable, pos: was.pos };
+        inner = inner.bind(op.target.name, binding);
+        revived = revived.bind(op.target.name, binding);
+        continue;
+      }
     }
+    prove(path, written);
   }
   flush();
-  return { stages: out, env: afterStages(out, revived) };
+  let after = afterStages(out, revived);
+  for (const p of proofs) after = p.type === null ? after.removed(p.path) : after.written(p.path, p.type);
+  return { stages: out, env: after };
 }
 
 /**

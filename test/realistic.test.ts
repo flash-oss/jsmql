@@ -675,6 +675,32 @@ $ = { ...$, computedScore: $.points * 1.1 };
   });
 });
 
+describe("flag the orders that carry a red tag (a written field keeps its type)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // Each write tells the compiler what the field holds from then on. `arr` is an
+    // array (or null, when `tags` is missing), so `.includes` takes the array form
+    // with only the null guard; `bool` is a boolean, so the `? :` reads it as its
+    // own truth — MongoDB already reads null and missing as false there.
+    expect(
+      jsmql`
+$.arr = $.tags.uniq();
+$.bool = $.arr.includes("red");
+$.result = $.bool ? "R" : "OTHER";
+      `,
+    ).toEqual([
+      { $set: { arr: { $setUnion: "$tags" } } },
+      {
+        $set: {
+          bool: {
+            $cond: { if: { $eq: [{ $ifNull: ["$arr", null] }, null] }, then: null, else: { $in: ["red", "$arr"] } },
+          },
+        },
+      },
+      { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } },
+    ]);
+  });
+});
+
 describe("shape the public user record (`$ = $.pick([...])`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // An API response carries a few public fields of each active user and nothing

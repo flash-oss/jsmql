@@ -22696,6 +22696,7 @@ function single2(t) {
   if (t.kinds === "any" || t.kinds.size !== 1) return "unknown";
   return [...t.kinds][0];
 }
+var kindsOf = (t) => t.kinds === "any" ? null : [...t.kinds];
 function elementOf(t) {
   if (!has(t, "array")) return NOTHING;
   return t.element ?? ANY;
@@ -22705,7 +22706,14 @@ function itemOf(t, i) {
   return elementOf(t);
 }
 function propOf(t, name2) {
-  if (t.kinds !== "any" && !t.kinds.has("object")) return NOTHING;
+  if (t.kinds === "any") return ANY;
+  const asObject2 = t.kinds.has("object") ? ownProp(t, name2) : NOTHING;
+  const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name2)) : NOTHING;
+  if (isNothing(asArray)) return asObject2;
+  if (isNothing(asObject2)) return asArray;
+  return join(asObject2, asArray);
+}
+function ownProp(t, name2) {
   const known = t.props?.get(name2);
   if (known !== void 0) return known;
   if (!t.open) return NOTHING;
@@ -22726,14 +22734,44 @@ function written(doc, path, value) {
   const head = dot === -1 ? path : path.slice(0, dot);
   const rest = dot === -1 ? "" : path.slice(dot + 1);
   const parent = asObject(doc);
-  const props = new Map(parent.props ?? []);
-  const child = rest === "" ? value : written(propOf(parent, head), rest, value);
-  props.set(head, child);
-  return { ...parent, props };
+  if (rest === "") return withProp(parent, head, value);
+  return withProp(
+    parent,
+    head,
+    into(propOf(parent, head), (obj) => written(obj, rest, value))
+  );
+}
+function withProp(obj, name2, value) {
+  const props = new Map(obj.props ?? []);
+  props.set(name2, value);
+  return { ...obj, props };
+}
+function into(t, write) {
+  if (isOnly(t, "array") && !t.absent) return { ...t, element: write(asObject(elementOf(t))) };
+  const asObj = write(asObject(t));
+  const canBeArray = t.kinds === "any" || t.kinds.has("array") && !t.absent;
+  if (!canBeArray) return asObj;
+  const asArr = { ...arrayOf(write(asObject(elementOf(t)))), absent: false };
+  return join(asObj, asArr);
+}
+function removed(doc, path) {
+  const dot = path.indexOf(".");
+  const head = dot === -1 ? path : path.slice(0, dot);
+  const rest = dot === -1 ? "" : path.slice(dot + 1);
+  if (!has(doc, "object")) return doc;
+  const props = new Map(doc.props ?? []);
+  if (rest === "") {
+    if (doc.open) props.set(head, NOTHING);
+    else props.delete(head);
+  } else {
+    const child = propOf(doc, head);
+    if (!isNothing(child)) props.set(head, removed(child, rest));
+  }
+  return { ...doc, props };
 }
 function asObject(t) {
   if (isOnly(t, "object") && !t.absent) return t;
-  const known = isOnly(t, "object");
+  const known = t.kinds !== "any" && t.kinds.has("object");
   return {
     kinds: /* @__PURE__ */ new Set(["object"]),
     absent: false,
@@ -23736,6 +23774,10 @@ var Env = class _Env {
   written(path, type) {
     return this.withDocument(written(this.documents[this.level], path, type));
   }
+  /** The same Env, after `delete` of the field at `path` on this level. */
+  removed(path) {
+    return this.withDocument(removed(this.documents[this.level], path));
+  }
   /** The same Env, with the document on this level replaced by `doc`. */
   document(doc) {
     return this.withDocument(doc);
@@ -24512,7 +24554,8 @@ function checkDateFormat(name2, fmt, pos) {
 
 // src/compiler/emit/prove.ts
 var NAMESPACES2 = namespaceNames();
-function isPresent(node, env) {
+var isPresent = (node, env) => !typeOf(node, env).absent;
+function statedPresence(node, env) {
   switch (node.type) {
     case "NumberLiteral":
     case "BigIntLiteral":
@@ -24526,10 +24569,6 @@ function isPresent(node, env) {
       return namedRow(node) === null;
     case "Injected":
       return node.value !== null && node.value !== void 0 && !isMqlShaped(node.value);
-    case "FieldRef":
-      return !env.typeAt(node.path, 0).absent;
-    case "Ident":
-      return env.scope.has(node.name) && !env.lookup(node.name, node.pos).type.absent;
     case "MethodCall": {
       const name2 = namedRow(node) ?? node.name;
       if (!neverNullOf(name2)) return false;
@@ -24538,6 +24577,32 @@ function isPresent(node, env) {
     }
     case "OperatorCall":
       return neverNullOf(node.name) && node.args.every((a) => argPresent(a, env));
+    case "CallExpression":
+      if (node.callee.type === "Ident" && !env.scope.has(node.callee.name)) {
+        return neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env));
+      }
+      return null;
+    case "NewExpression":
+      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env)) : false;
+    case "UnaryExpr": {
+      const key = productionForOperator("UnaryExpr", node.op);
+      return key !== void 0 && neverNullOf(key) && isPresent(node.argument, env);
+    }
+    case "BinaryExpr": {
+      if (node.op === "&&" || node.op === "||" || node.op === "??") return null;
+      const key = productionForOperator("BinaryExpr", node.op);
+      return key !== void 0 && neverNullOf(key) && isPresent(node.left, env) && isPresent(node.right, env);
+    }
+    case "FieldRef":
+    case "Ident":
+    case "CollectionRef":
+    case "MemberAccess":
+    case "IndexAccess":
+    case "TernaryExpr":
+    case "ExprBlock":
+    case "NullLiteral":
+    case "UndefinedLiteral":
+      return null;
     default:
       return false;
   }
@@ -24644,10 +24709,12 @@ function injectedType(v) {
   return ANY;
 }
 function typeOf(node, env) {
-  const t = kindsOf(node, env);
-  return isPresent(node, env) ? present(t) : maybeAbsent(t);
+  const t = kindsOf2(node, env);
+  const stated = statedPresence(node, env);
+  if (stated === null) return t;
+  return stated ? present(t) : maybeAbsent(t);
 }
-function kindsOf(node, env) {
+function kindsOf2(node, env) {
   switch (node.type) {
     case "NumberLiteral":
     case "BigIntLiteral":
@@ -24680,7 +24747,12 @@ function kindsOf(node, env) {
       let open = false;
       for (const entry of node.entries) {
         if (entry.type === "SpreadElement") {
-          open = true;
+          const spread = typeOf(entry.argument, env);
+          if (spread.kinds === "any" || spread.open) {
+            for (const [k, t] of props) props.set(k, join(t, spread.values ?? ANY));
+            open = true;
+          }
+          for (const [k, t] of spread.props ?? []) props.set(k, spread.absent ? maybeAbsent(t) : t);
           continue;
         }
         const key = staticKey(entry);
@@ -24719,11 +24791,11 @@ function kindsOf(node, env) {
     case "OperatorCall":
       return callOn(node.name, ANY, null, node.args, env);
     case "CallExpression":
-      if (node.callee.type === "Lambda" && node.callee.body !== void 0) return kindsOf(node.callee.body, env);
+      if (node.callee.type === "Lambda" && node.callee.body !== void 0) return kindsOf2(node.callee.body, env);
       if (node.callee.type === "Ident" && env.scope.has(node.callee.name)) {
         const b = env.lookup(node.callee.name, node.callee.pos);
         if (b.ref.kind === "function" && b.ref.lambda.type === "Lambda" && b.ref.lambda.body !== void 0)
-          return kindsOf(b.ref.lambda.body, env);
+          return kindsOf2(b.ref.lambda.body, env);
       }
       return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? callOn(node.callee.name, ANY, null, node.args, env) : ANY;
     case "NewExpression":
@@ -24739,16 +24811,18 @@ function kindsOf(node, env) {
         if (l === "string" || r === "string") return of("string");
         return l === "number" && r === "number" ? of("number") : ANY;
       }
-      if (node.op === "&&" || node.op === "||" || node.op === "??") {
-        return join(kindsOf(node.left, env), kindsOf(node.right, env));
+      if (node.op === "??") {
+        const r = kindsOf2(node.right, env);
+        return { ...join(kindsOf2(node.left, env), r), absent: r.absent };
       }
+      if (node.op === "&&" || node.op === "||") return join(kindsOf2(node.left, env), kindsOf2(node.right, env));
       const key = productionForOperator("BinaryExpr", node.op);
       return key === void 0 ? ANY : callOn(key, ANY, null, [], env);
     }
     case "TernaryExpr":
-      return join(kindsOf(node.consequent, env), kindsOf(node.alternate, env));
+      return join(kindsOf2(node.consequent, env), kindsOf2(node.alternate, env));
     case "ExprBlock":
-      return kindsOf(node.ret, env);
+      return kindsOf2(node.ret, env);
     default:
       return ANY;
   }
@@ -25172,6 +25246,9 @@ var switchOn = (branches, fallback) => {
   if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
 };
+var switchOver = (branches) => ({
+  $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) }
+});
 var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
   $let: { vars: { [as]: value }, in: body }
@@ -25294,7 +25371,12 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count) {
     if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
     return settle(name2, branch, shaped, count);
   }
-  const listed = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
+  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
+  const possible = receiver.possible;
+  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
+  if (possible !== void 0 && listed.length === 0) {
+    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
+  }
   const tests = /* @__PURE__ */ new Set();
   const fieldFamilies = listed.filter((family) => {
     const test = TYPES[family].join(",");
@@ -25303,7 +25385,8 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count) {
     return true;
   });
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-  if (fieldFamilies.length === 1) {
+  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
+  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
     const branch = branches[fieldFamilies[0]];
     if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
     return settle(name2, branch, shaped, count);
@@ -25320,7 +25403,8 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count) {
     if (bad !== null && bad.kind !== "rule") return bad;
     out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
   }
-  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain };
+  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
+  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
 }
 function select(verdict, receiver, shaped, count) {
   const name2 = verdict.name;
@@ -26508,10 +26592,17 @@ function receiverOf(recv, env) {
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
   if (src === "set") return { kind: "value", family: "set", lowered };
-  const kind = kindOf3(recv, env);
-  const family = familyOfKind(kind);
-  if (family !== null) return { kind: "value", family, lowered };
-  return kind === "unknown" ? { kind: "opaque", lowered } : { kind: "opaque", lowered, proved: kind };
+  const t = typeOf(recv, env);
+  const kinds = kindsOf(t);
+  if (kinds === null) return { kind: "opaque", lowered };
+  if (kinds.length === 1) {
+    const family = familyOfKind(kinds[0]);
+    if (family !== null) return { kind: "value", family, lowered };
+    return { kind: "opaque", lowered, proved: kinds[0] };
+  }
+  const possible = kinds.map(familyOfKind).filter((f) => f !== null);
+  if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
+  return { kind: "opaque", lowered, possible, exact: possible.length === kinds.length, present: !t.absent };
 }
 var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES3.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
@@ -26580,6 +26671,10 @@ function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) 
     );
   };
   const branches = sel.branches.map((b) => ({ case: truthOf(b.guard(ref), true), then: run(b.rule) }));
+  if (sel.complete && branches.length >= 2) {
+    const doc2 = switchOver(branches);
+    return bound === null ? doc2 : letOne(bound.as, lowered, doc2);
+  }
   const otherwise = sel.otherwise;
   let fallback;
   if (typeof otherwise === "function")
@@ -27627,24 +27722,24 @@ function facetStages(doc, env, first) {
   }
   return place("$facet", { $facet: branches }, env, first, doc.pos);
 }
-function pathsRead(node, into) {
-  if (node === null || typeof node !== "object") return into;
+function pathsRead(node, into2) {
+  if (node === null || typeof node !== "object") return into2;
   if (Array.isArray(node)) {
-    for (const el of node) pathsRead(el, into);
-    return into;
+    for (const el of node) pathsRead(el, into2);
+    return into2;
   }
   const n2 = node;
-  if (n2.type === "FieldRef" && typeof n2.path === "string") into.add(n2.path);
+  if (n2.type === "FieldRef" && typeof n2.path === "string") into2.add(n2.path);
   if (n2.type === "StringLiteral" && typeof n2.value === "string" && n2.value.startsWith("$")) {
     const spelled3 = n2.value.slice(1);
-    if (!spelled3.startsWith("$")) into.add(spelled3);
-    else if (spelled3 === "$ROOT" || spelled3 === "$CURRENT") into.add("");
+    if (!spelled3.startsWith("$")) into2.add(spelled3);
+    else if (spelled3 === "$ROOT" || spelled3 === "$CURRENT") into2.add("");
   }
   for (const [k, v] of Object.entries(n2)) {
     if (k === "type" || k === "pos") continue;
-    pathsRead(v, into);
+    pathsRead(v, into2);
   }
-  return into;
+  return into2;
 }
 var replacesWhole = (v) => isPlainObject(v) && Object.keys(v).every((k) => !k.startsWith("$"));
 var ELEMENT_NOUN = {
@@ -27671,6 +27766,11 @@ var touches = (x, y) => x === y || x === "" || y === "" || x.startsWith(`${y}.`)
 function writeStages(uf, env, first) {
   let inner = childEnv(env, uf, "ops");
   let revived = env;
+  let proofs = [];
+  const prove = (path, type) => {
+    proofs.push({ path, type });
+    inner = type === null ? inner.removed(path) : inner.written(path, type);
+  };
   const out = [];
   let sets = null;
   let unsets = null;
@@ -27682,6 +27782,10 @@ function writeStages(uf, env, first) {
   };
   const emit = (made = []) => {
     out.push(...env.chain.ahead(), ...made);
+    if (made.some((st) => replacesDocument(Object.keys(st)[0], st))) {
+      proofs = [];
+      inner = inner.document(DOCUMENT);
+    }
   };
   for (const op of uf.ops) {
     const out_ = outTarget(op.target);
@@ -27711,6 +27815,7 @@ function writeStages(uf, env, first) {
       if (path === "") throw cannotDeleteRoot(op.pos);
       if (sets !== null) flush();
       (unsets ??= []).push(path);
+      prove(path, null);
       continue;
     }
     if (op.op !== "=") internalError(`an assignment reached the emit phase spelled '${op.op}'`);
@@ -27744,6 +27849,7 @@ function writeStages(uf, env, first) {
       if (w !== null) {
         flush();
         emit(w.stages);
+        prove(path, w.yields === "array" ? arrayOf(DOCUMENT) : maybeAbsent(of(w.yields)));
         continue;
       }
     }
@@ -27763,20 +27869,34 @@ function writeStages(uf, env, first) {
     sets ??= { paths: [], fields: {} };
     sets.paths.push(path);
     setKey(sets.fields, path, replacesWhole(value) ? { $mergeObjects: [value] } : value);
-    if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
-      const binding = {
-        ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
-        type: maybeAbsent(typeOf(op.value, inner)),
-        mutable: true,
-        pos: op.target.pos
-      };
-      inner = inner.bind(op.target.name, binding);
-      revived = revived.bind(op.target.name, binding);
-      env.chain.dirty = true;
+    const written2 = typeOf(op.value, childEnv(inner, op, "value"));
+    if (op.target.type === "Ident" && inner.scope.has(op.target.name)) {
+      const was = inner.lookup(op.target.name, op.target.pos);
+      if (was.ref.kind === "dropped") {
+        const binding = {
+          ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
+          type: maybeAbsent(written2),
+          mutable: true,
+          pos: op.target.pos
+        };
+        inner = inner.bind(op.target.name, binding);
+        revived = revived.bind(op.target.name, binding);
+        env.chain.dirty = true;
+        continue;
+      }
+      if (was.ref.kind === "field") {
+        const binding = { ref: was.ref, type: written2, mutable: was.mutable, pos: was.pos };
+        inner = inner.bind(op.target.name, binding);
+        revived = revived.bind(op.target.name, binding);
+        continue;
+      }
     }
+    prove(path, written2);
   }
   flush();
-  return { stages: out, env: afterStages(out, revived) };
+  let after = afterStages(out, revived);
+  for (const p of proofs) after = p.type === null ? after.removed(p.path) : after.written(p.path, p.type);
+  return { stages: out, env: after };
 }
 function refuseUnbuiltSugar(value) {
   const base = chainBase(value);

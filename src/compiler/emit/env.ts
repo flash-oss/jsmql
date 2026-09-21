@@ -22,7 +22,7 @@ import type { BodyPath } from "../rows.ts";
 import type { Where } from "../passes/position.ts";
 import type { Binding, Binder, Declared, FieldSlot, Located, MongoVar, VarRef } from "./names.ts";
 import { Capture, Scope, scratchSlot } from "./names.ts";
-import { DOCUMENT, at, present, written } from "./type.ts";
+import { DOCUMENT, at, present, removed, written } from "./type.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
 import { pipelineOverOf, preservesCountOf } from "../rows.ts";
@@ -269,6 +269,11 @@ export class Env {
   /** The same Env, after a write of a value proven `type` at `path` on this level. */
   written(path: string, type: Type): Env {
     return this.withDocument(written(this.documents[this.level], path, type));
+  }
+
+  /** The same Env, after `delete` of the field at `path` on this level. */
+  removed(path: string): Env {
+    return this.withDocument(removed(this.documents[this.level], path));
   }
 
   /** The same Env, with the document on this level replaced by `doc`. */
