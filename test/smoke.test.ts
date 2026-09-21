@@ -157,6 +157,9 @@ describe("smoke: built dist", () => {
       );
       expect(result.status, result.stdout + result.stderr).toBe(0);
     },
+    // A `tsc` run over mongoose's own types takes seconds, and more when the
+    // whole suite runs beside it. The default budget is 5 s.
+    60_000,
   );
 
   const tscBin = resolve(ROOT, "node_modules/.bin/tsc");
