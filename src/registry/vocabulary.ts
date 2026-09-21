@@ -554,7 +554,9 @@ export interface FamilyMap extends Partial<Record<Family, TypeExpr>> {}
  * states one. The compiler evaluates it after the stage's own writes.
  * See docs/specs/types.md § The document after a stage.
  *
- *   "keeps"       the input fields survive; the body's writes go through the write rules — `$set`, `$match`, `$sort`
+ *   "keeps"       the input fields survive; the body's writes go through the write rules — `$set`, `$sort`
+ *   "narrows"     the input fields survive, and only the documents the body's QUERY selects pass: what the
+ *                 query states about a field — present, of a kind — holds after it — `$match`
  *   "fields"      the document is exactly the body's keys, each typed by its value, closed — `$group`, `$facet`;
  *                 a string body names the one number field the stage writes — `$count`
  *   "value"       the document is the body value's type — `$replaceRoot`, `$replaceWith`
@@ -563,7 +565,7 @@ export interface FamilyMap extends Partial<Record<Family, TypeExpr>> {}
  *   "unknown"     an open object with nothing known — `$unionWith`, `$documents`, a diagnostic stage, and a
  *                 stage whose output fields no body layout states yet (`$bucket`, `$sortByCount`)
  */
-export type DocumentEffect = "keeps" | "fields" | "value" | "projection" | "element" | "unknown";
+export type DocumentEffect = "keeps" | "narrows" | "fields" | "value" | "projection" | "element" | "unknown";
 
 /**
  * What one positional parameter of a callback BINDS.

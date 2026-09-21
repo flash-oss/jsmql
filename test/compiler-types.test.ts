@@ -475,3 +475,94 @@ describe("types — a call's result follows its row's `returns` term", () => {
     });
   });
 });
+
+describe("types — a `$match` narrows the document for the statements after it", () => {
+  it("a presence test drops the null guard downstream", () => {
+    expect(
+      jsmql(
+        '$match($.tags != null); $.arr = $.tags.uniq(); $.bool = $.arr.includes("red"); $.result = $.bool ? "R" : "OTHER";',
+      ),
+    ).toEqual([
+      { $match: { tags: { $ne: null } } },
+      { $set: { arr: { $setUnion: "$tags" } } },
+      { $set: { bool: { $in: ["red", "$arr"] } } },
+      { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } },
+    ]);
+  });
+
+  it("a `typeof` test and an equality prove the kind; a comparison proves its literal's kind, in its type bracket", () => {
+    expect(jsmql('$match(typeof $.b === "string"); $.u = $.b.trim();')[1]).toEqual({
+      $set: { u: { $trim: { input: "$b" } } },
+    });
+    expect(jsmql('$$.filter({ status: "a" }); $.s = $.status.toUpperCase();')[1]).toEqual({
+      $set: { s: { $toUpper: "$status" } },
+    });
+    // `n` is a number, or an array holding one (the query language reads an array element by element):
+    // a number owes only the zero test, an array none, and neither can be missing.
+    expect(jsmql("$match($.n > 5); $.x = $.n ? 1 : 2;")[1]).toEqual({
+      $set: { x: { $cond: { if: { $ne: ["$n", 0] }, then: 1, else: 2 } } },
+    });
+  });
+
+  it("an `||` proves nothing; `$expr` proves nothing", () => {
+    expect(jsmql("$match($.x === 5 || $.y > 1); $.z = $.x ? 1 : 2;")[1]).toEqual({
+      $set: {
+        z: {
+          $cond: {
+            if: {
+              $and: [
+                { $ne: [{ $ifNull: ["$x", null] }, null] },
+                { $ne: ["$x", false] },
+                { $ne: ["$x", ""] },
+                { $ne: ["$x", 0] },
+              ],
+            },
+            then: 1,
+            else: 2,
+          },
+        },
+      },
+    });
+  });
+});
+
+describe.skipIf(up === null)("types — the server agrees with the narrowing", () => {
+  let client: MongoClient;
+  let coll: Collection;
+  beforeAll(async () => {
+    client = (await liveClient())!;
+    coll = client.db("jsmql_compiler_types").collection("narrow");
+    await coll.deleteMany({});
+    await coll.insertMany([
+      { _id: 1, tags: ["red", "blue"], n: 7, s: " a " },
+      { _id: 2, tags: ["blue"], n: 9, s: "b" },
+      { _id: 3, n: "x", s: 5 },
+      { _id: 4, tags: null, n: [1, 8] },
+    ]);
+  });
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  const run = async (src: string): Promise<unknown[]> =>
+    coll.aggregate([...(jsmql(src) as object[]), { $sort: { _id: 1 } }]).toArray();
+
+  it("only the selected documents reach the narrowed stages, and they answer as JavaScript would", async () => {
+    const a = await run(
+      '$match($.tags != null); $.arr = $.tags.uniq(); $.bool = $.arr.includes("red"); $.result = $.bool ? "R" : "OTHER";',
+    );
+    expect(a.map((d) => [d._id, d.result])).toEqual([
+      [1, "R"],
+      [2, "OTHER"],
+    ]);
+    // `n > 5` selects 7, 9 and the array holding 8 — never the string
+    const b = await run("$match($.n > 5); $.x = $.n ? 1 : 2;");
+    expect(b.map((d) => [d._id, d.x])).toEqual([
+      [1, 1],
+      [2, 1],
+      [4, 1],
+    ]);
+    const c = await run('$match(typeof $.s === "string"); $.u = $.s.trim();');
+    expect(c.map((d) => d.u)).toEqual(["a", "b"]);
+  });
+});

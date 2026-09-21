@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — feat: a `$match` narrows the document for the statements after it
+
+A filter passes only the documents its query selects, so what the query states
+about a field holds after it. The `$match` row now states the document effect
+`narrows`, and `narrowedBy` in `src/compiler/emit/prove.ts` reads the emitted
+query document: each top-level field clause and each `$and` member intersects
+its field's kinds with what the clause allows, and a clause that excludes null
+proves the field present. `$or`, `$nor`, `$expr` and the rest prove nothing. So
+`$match($.tags != null); $.arr = $.tags.uniq(); $.arr.includes("red")` emits
+`{ $in: ["red", "$arr"] }` with no null guard, and `$match($.n > 5); $.n ? 1 : 2`
+keeps only the zero test.
+
+The developer chose the widest level: a comparison proves its literal's kind,
+because the query language compares inside one BSON type bracket (measured).
+One honesty applies to every clause: the query language reads an array field
+element by element, so `{ a: { $gt: 5 } }` also selects `a: [5, 6]`, and a clause
+that names a kind proves that kind OR an array. The table of clauses lives in
+`docs/specs/types.md` § A filter narrows the document.
+
+---
+
 ## 2026-09-21 — feat: a call's result follows its row's `returns` term, callbacks and shapes included
 
 The `TypeExpr` grammar gains `elementOf`, `oneOf` and `args`, and the compiler

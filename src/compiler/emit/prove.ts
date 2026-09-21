@@ -31,7 +31,8 @@ import {
   returnsOf,
   soleFieldFamilyOf,
 } from "../rows.ts";
-import { bsonTagOf, BSON_KIND, isDate, isPlainObject } from "../../bson.ts";
+import { bsonTagOf, BSON_KIND, isDate, isPlainObject, isRegExp } from "../../bson.ts";
+import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 import {
   ANY,
@@ -544,6 +545,8 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
   switch (documentOf(name)) {
     case "keeps":
       return keptDocument(name, body, doc);
+    case "narrows":
+      return narrowedBy(body, doc);
     case "fields": {
       // `$group` and `$facet` state the output fields as their body. `$count` names
       // the one number field it writes.
@@ -610,4 +613,128 @@ function keptDocument(name: string, body: unknown, doc: Type): Type {
     return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
   }
   return doc;
+}
+
+// ── what a QUERY proves about the documents that pass it ─────────────────────
+
+/**
+ * The kind a query `$type` name selects. The field families state their BSON
+ * type names once (`FIELD_FAMILY_TYPES`); the three kinds no family covers are
+ * their own `$type` name. `"number"` is the query language's alias for every
+ * numeric type.
+ */
+const KIND_OF_TYPE_NAME: ReadonlyMap<string, Kind> = new Map<string, Kind>([
+  ...(["string", "array", "number", "object", "date"] as const).flatMap((family) =>
+    FIELD_FAMILY_TYPES[family].map((t): [string, Kind] => [t, family]),
+  ),
+  ["number", "number"],
+  ["bool", "bool"],
+  ["objectId", "objectId"],
+  ["binData", "binData"],
+]);
+
+/** The kind a query LITERAL is, or null for a literal that proves none (null, a regex). */
+function kindOfQueryLiteral(v: unknown): Kind | null {
+  if (v === null || v === undefined || isRegExp(v)) return null;
+  const t = injectedType(v);
+  const k = single(t);
+  return k === "unknown" ? null : k;
+}
+
+/** What one field's query clause proves of the field, or null when it proves nothing. */
+type Proven = { readonly kinds: ReadonlySet<Kind> | "any"; readonly present: boolean };
+
+/** The kinds both proofs allow — `"any"` allows every kind. */
+function bothKinds(a: ReadonlySet<Kind> | "any", b: ReadonlySet<Kind> | "any"): ReadonlySet<Kind> | "any" {
+  if (a === "any") return b;
+  if (b === "any") return a;
+  return new Set([...a].filter((k) => b.has(k)));
+}
+
+const intersect = (a: Proven, b: Proven): Proven => ({
+  kinds: bothKinds(a.kinds, b.kinds),
+  present: a.present || b.present,
+});
+
+/**
+ * A field clause in the QUERY language reads an array field element by element:
+ * `{ a: 5 }` and `{ a: { $gt: 5 } }` select `a: 5` and `a: [5, 6]` alike, and
+ * `{ a: { $type: "string" } }` selects `a: ["x"]`. So a clause that names a kind
+ * proves that kind OR an array, and a clause that excludes null proves presence.
+ * MEASURED, the comparison operators compare inside one BSON type bracket, so
+ * `{ a: { $gt: 5 } }` never selects a string.
+ */
+function provenByClause(clause: unknown): Proven | null {
+  const orArray = (k: Kind): Proven => ({ kinds: new Set<Kind>([k, "array"]), present: true });
+  if (isPlainObject(clause) && Object.keys(clause).some((k) => k.startsWith("$"))) {
+    let out: Proven | null = null;
+    for (const [op, arg] of Object.entries(clause)) {
+      let one: Proven | null = null;
+      switch (op) {
+        case "$eq":
+        case "$gt":
+        case "$gte":
+        case "$lt":
+        case "$lte": {
+          const k = kindOfQueryLiteral(arg);
+          one = k === null ? null : orArray(k);
+          break;
+        }
+        case "$in": {
+          if (!Array.isArray(arg) || arg.length === 0) break;
+          const kinds = arg.map(kindOfQueryLiteral);
+          if (kinds.some((k) => k === null)) break;
+          one = { kinds: new Set<Kind>([...(kinds as Kind[]), "array"]), present: true };
+          break;
+        }
+        case "$ne":
+          if (arg === null) one = { kinds: "any", present: true };
+          break;
+        case "$type": {
+          const names = Array.isArray(arg) ? arg : [arg];
+          const kinds = names.map((n) => (typeof n === "string" ? KIND_OF_TYPE_NAME.get(n) : undefined));
+          if (kinds.some((k) => k === undefined)) break;
+          one = { kinds: new Set<Kind>([...(kinds as Kind[]), "array"]), present: true };
+          break;
+        }
+        case "$size":
+        case "$all":
+        case "$elemMatch":
+          one = { kinds: new Set<Kind>(["array"]), present: true };
+          break;
+        case "$regex":
+          one = orArray("string");
+          break;
+        default:
+          break;
+      }
+      if (one !== null) out = out === null ? one : intersect(out, one);
+    }
+    return out;
+  }
+  if (isRegExp(clause)) return orArray("string");
+  if (clause === null || clause === undefined) return null;
+  if (Array.isArray(clause)) return { kinds: new Set<Kind>(["array"]), present: true };
+  if (isPlainObject(clause)) return { kinds: new Set<Kind>(["object", "array"]), present: true };
+  const k = kindOfQueryLiteral(clause);
+  return k === null ? null : orArray(k);
+}
+
+/** The document after a `$match`: each top-level field clause, and each `$and` member, narrows its field. `$or`, `$nor`, `$expr` and the rest prove nothing. */
+export function narrowedBy(query: unknown, doc: Type): Type {
+  if (!isPlainObject(query)) return doc;
+  let out = doc;
+  for (const [key, clause] of Object.entries(query)) {
+    if (key === "$and" && Array.isArray(clause)) {
+      out = clause.reduce<Type>((d, q) => narrowedBy(q, d), out);
+      continue;
+    }
+    if (key.startsWith("$")) continue;
+    const proven = provenByClause(clause);
+    if (proven === null) continue;
+    const was = at(out, key);
+    const narrowed: Type = { ...was, kinds: bothKinds(was.kinds, proven.kinds), absent: was.absent && !proven.present };
+    out = written(out, key, narrowed);
+  }
+  return out;
 }

@@ -5900,7 +5900,7 @@ export const NAMES = {
     doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
     where: ["stream", "statement"],
     // MEASURED: { $match: [1] } → the match filter must be an expression in an object
-    document: "keeps",
+    document: "narrows",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "filter" },
     forbiddenIn: [],

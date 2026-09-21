@@ -187,6 +187,44 @@ $.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length;
 // → …, { $replaceWith: "$p" }, { $set: { c: { $strLenCP: "$b" } } }
 ```
 
+### A filter narrows the document
+
+A `$match` passes only the documents its query selects, so what the query
+states about a field holds for every document after it. The `$match` row states
+the effect `narrows`, and `narrowedBy` in
+[prove.ts](../../src/compiler/emit/prove.ts) reads the emitted **query
+document** — so every road that filters feeds it: `$match(<predicate>)`, a
+`$$.filter(p)` link, a raw `{ status: "a" }` pass-through. Each top-level field
+clause, and each member of a top-level `$and`, narrows its field: the field's
+kinds intersect with what the clause allows, and a clause that excludes null
+proves the field present. `$or`, `$nor`, `$expr` and every other top-level
+operator prove nothing, so a conjunct that fell to the `$expr` residual proves
+nothing either.
+
+The query language reads an array field element by element: `{ a: 5 }` and
+`{ a: { $gt: 5 } }` select `a: 5` and `a: [5, 6]` alike, and
+`{ a: { $type: "string" } }` selects `a: ["x"]`. So a clause that names a kind
+proves that kind **or an array**. MEASURED: the comparison operators compare
+inside one BSON type bracket, so `{ a: { $gt: 5 } }` never selects a string.
+
+| Clause | Proves |
+|---|---|
+| `{ f: <literal> }`, `$eq`, `$gt`, `$gte`, `$lt`, `$lte` | the literal's kind or an array, present — nothing for `null` |
+| `$in: [<literals>]` | the literals' kinds or an array, present — nothing when the list holds `null` |
+| `$type: <name>` | the named kind or an array, present |
+| `$ne: null` | present, any kind |
+| `$size`, `$all`, `$elemMatch`, a literal array | an array, present |
+| `$regex`, a regex literal | a string or an array, present |
+| a literal sub-document | an object or an array, present |
+| `$ne: <value>`, `$nin`, `$exists`, `$not`, and every other clause | nothing |
+
+```js
+$match($.tags != null);  $.arr = $.tags.uniq();  $.bool = $.arr.includes("red");
+// → [{ $match: { tags: { $ne: null } } }, { $set: { arr: { $setUnion: "$tags" } } }, { $set: { bool: { $in: ["red", "$arr"] } } }]
+$match($.n > 5);  $.x = $.n ? 1 : 2;     // n: a number or an array, present → only the zero test
+// → [{ $match: { n: { $gt: 5 } } }, { $set: { x: { $cond: { if: { $ne: ["$n", 0] }, then: 1, else: 2 } } } }]
+```
+
 ## The consumers
 
 ### The dispatch
