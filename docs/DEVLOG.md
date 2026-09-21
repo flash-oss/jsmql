@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — feat: a call's result follows its row's `returns` term, callbacks and shapes included
+
+The `TypeExpr` grammar gains `elementOf`, `oneOf` and `args`, and the compiler
+evaluates `{ callback: n }`: it binds the callback's parameters as the row's
+`params` say — the element, the index, the key, the receiver, the seed — and
+proves the body under them. Twenty-five reshaping rows restate their result with
+the grammar: `.map(f)` is `{ arrayOf: { callback: 0 } }`, `.filter(p)` and its kin
+are `"same"`, `.pick` and `.omit` are `"picked"` and `"omitted"`, `.assign` and
+`Object.assign` are a `merge` over their arguments, `.groupBy`, `.countBy`,
+`.keyBy` and `.mapValues` are `recordOf`, `.entries()` an array of tuples,
+`.reduce(f, seed)` `oneOf` the seed and the callback's answer. So
+`$.tags.map(t => t.trim())[0].length` takes `$strLenCP` with no `$switch`,
+`{ ...$.address, done: true }.done` is a boolean, and `$.o.pick(["a"]).b` is
+certainly missing.
+
+Two proofs learned to carry absence down: a property or an element read off a
+value that may be missing may be missing too, so `.filter(p).head().q` keeps its
+null guard. One realistic expectation narrowed: the `.filter(Boolean)` after a
+`.map` whose callback answers an object or null now tests only for null.
+
+---
+
 ## 2026-09-21 — feat: a stage's effect on the document is read off the stage it emitted
 
 After `$group`, `$ = …`, `.flatMap("items")` or a `$project`, the compiler knew

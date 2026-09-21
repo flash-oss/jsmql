@@ -512,9 +512,13 @@ export type Type = {
  *   "element"               one element of the receiver — `.head()`, `.max()`
  *   "unknown"               follows the operands; nothing is stated
  *   { arrayOf: T }          an array whose elements are T — `.keys()` is `{ arrayOf: "string" }`
+ *   { elementOf: T }        one element of T when T is an array, T itself when it is not — what
+ *                           `.flatMap` keeps of a callback's answer; an object's property values
  *   { callback: n }         what the n-th callback argument returns — `.map(f)` is `{ arrayOf: { callback: 0 } }`
  *   { arg: n }              the n-th argument's type — `$ifNull(a, b)` reads its operands
+ *   { args: n }             every argument from the n-th on, one term each — only inside `merge` and `oneOf`
  *   { merge: [T, …] }       an object merge; a later term's property wins — `.assign(o)`
+ *   { oneOf: [T, …] }       one of the terms — `.reduce(f, seed)` is `{ oneOf: [{ arg: 1 }, { callback: 0 }] }`
  *   { recordOf: T }         an open object whose properties all hold T — `.groupBy(k)`
  *   { tuple: [T, …] }       an array of a fixed length — `.entries()` is `{ arrayOf: { tuple: ["string", "element"] } }`
  *   "picked" / "omitted"    the receiver's props kept / dropped by the first argument's names
@@ -532,9 +536,12 @@ export type TypeExpr =
   | "picked"
   | "omitted"
   | { readonly arrayOf: TypeExpr }
+  | { readonly elementOf: TypeExpr }
   | { readonly callback: number }
   | { readonly arg: number }
+  | { readonly args: number }
   | { readonly merge: readonly TypeExpr[] }
+  | { readonly oneOf: readonly TypeExpr[] }
   | { readonly recordOf: TypeExpr }
   | { readonly tuple: readonly TypeExpr[] }
   | FamilyMap;

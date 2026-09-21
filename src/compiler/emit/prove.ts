@@ -20,6 +20,7 @@ import type { CallArg } from "../../registry/ast.ts";
 import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
 import {
+  callbackParamsOf,
   constructedFamilyOf,
   documentOf,
   familiesOf,
@@ -40,6 +41,7 @@ import {
   at,
   elementOf,
   evaluate,
+  flattenOnce,
   isOnly,
   itemOf,
   join,
@@ -217,24 +219,61 @@ function namesIn(arg: Expr | undefined): readonly string[] | null {
 }
 
 /** The site a row's `returns` evaluates at: the receiver, its source family, and the arguments. */
-function siteOf(receiver: Type, family: string | null, args: readonly CallArg[], env: Env): Site {
+function siteOf(name: string, receiver: Type, family: string | null, args: readonly CallArg[], env: Env): Site {
+  const arg = (n: number): Type => {
+    const a = args[n];
+    return a === undefined || a.type === "Lambda" || a.type === "SpreadElement" ? ANY : typeOf(a, env);
+  };
   return {
     receiver,
     family: family as Site["family"],
-    arg: (n) => {
-      const a = args[n];
-      return a === undefined || a.type === "Lambda" || a.type === "SpreadElement" ? ANY : typeOf(a, env);
-    },
-    // A callback's return needs the body lowered under its bound parameters; the
-    // rows that state `callback` are evaluated where that Env exists.
-    callback: () => ANY,
+    arg,
+    argCount: args.length,
+    callback: (n) => callbackAnswer(name, receiver, args, n, arg, env),
     names: namesIn(args[0] as Expr | undefined),
   };
 }
 
+/**
+ * What the n-th callback argument RETURNS, its parameters bound as the row's
+ * `params` say: the element (`value`), the index (a number), the key (a string),
+ * the whole receiver (`collection`), the seed (`accumulator`). A parameter is
+ * never proven present. A callback that is not an arrow with a body proves nothing.
+ */
+function callbackAnswer(
+  name: string,
+  receiver: Type,
+  args: readonly CallArg[],
+  n: number,
+  arg: (n: number) => Type,
+  env: Env,
+): Type {
+  const cb = args[n];
+  if (cb === undefined || cb.type !== "Lambda" || cb.body === undefined) return ANY;
+  const kinds = callbackParamsOf(name, "value") ?? [];
+  let bodyEnv = env.block();
+  cb.params.forEach((p, i) => {
+    const kind = kinds[i];
+    const t =
+      kind === "value"
+        ? flattenOnce(receiver)
+        : kind === "index"
+          ? of("number")
+          : kind === "key"
+            ? of("string")
+            : kind === "collection"
+              ? receiver
+              : kind === "accumulator"
+                ? arg(n + 1)
+                : ANY;
+    bodyEnv = bodyEnv.param(p, maybeAbsent(t), cb.pos).env;
+  });
+  return typeOf(cb.body, bodyEnv);
+}
+
 /** A call's result when the receiver's family is PROVEN: the row's term for that family. */
 function callOn(name: string, receiver: Type, family: string | null, args: readonly CallArg[], env: Env): Type {
-  return evaluate(returnsOf(name), siteOf(receiver, family, args, env));
+  return evaluate(returnsOf(name), siteOf(name, receiver, family, args, env));
 }
 
 /**
@@ -246,7 +285,7 @@ function callOn(name: string, receiver: Type, family: string | null, args: reado
  */
 function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], env: Env): Type {
   const r = returnsOf(name);
-  const site = siteOf(receiver, null, args, env);
+  const site = siteOf(name, receiver, null, args, env);
   if (typeof r === "string") return r === "same" || r === "element" ? ANY : evaluate(r, site);
   if (!isFamilyMap(r)) return evaluate(r, site);
   const sole = soleFieldFamilyOf(name);
@@ -263,15 +302,8 @@ function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], 
   return answers.length === 0 ? ANY : joinAll(answers);
 }
 
-const isFamilyMap = (r: unknown): boolean =>
-  typeof r === "object" &&
-  r !== null &&
-  !("arrayOf" in r) &&
-  !("callback" in r) &&
-  !("arg" in r) &&
-  !("merge" in r) &&
-  !("recordOf" in r) &&
-  !("tuple" in r);
+const TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple"];
+const isFamilyMap = (r: unknown): boolean => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 
 /** A runtime value carried in: its proof, as deep as a plain value can show. */
 function injectedType(v: unknown): Type {
@@ -489,6 +521,7 @@ export function typeOfEmitted(value: unknown, doc: Type): Type {
       receiver: ANY,
       family: null,
       arg: (n) => (n < args.length ? typeOfEmitted(args[n], doc) : ANY),
+      argCount: args.length,
       callback: () => ANY,
       names: null,
     };

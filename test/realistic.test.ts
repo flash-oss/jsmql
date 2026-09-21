@@ -963,14 +963,7 @@ $$ = ["sender", "recipient"].map(party => {
                 },
               },
               as: "x",
-              cond: {
-                $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
-                ],
-              },
+              cond: { $ne: [{ $ifNull: ["$$x", null] }, null] },
             },
           },
         },

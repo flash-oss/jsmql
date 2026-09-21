@@ -119,6 +119,22 @@ an error; so the result is the row's answers over its field families, joined.
 `.size()` is a number on an array and on an object, so it is a number; a receiver
 that may be several kinds proves several.
 
+**A callback's answer** (`{ callback: n }`) is the body's proof under the
+parameters the row's `params` bind: `value` is one element of the receiver (or a
+property value of an object receiver), `index` a number, `key` a string,
+`collection` the receiver, `accumulator` the seed argument. A parameter is never
+proven present. So `.map(t => t.trim())` over an array proves an array of strings
+that may be null, `.flatMap(f)` flattens one level of the callback's answer
+(`elementOf`), and `.reduce(f, seed)` is one of the seed and the callback's
+answer (`oneOf`).
+
+**An object shape** follows the same terms. `{ ...a, ...b }` and `.assign(...)`
+are `merge` (later wins, an open operand makes the earlier properties unknown, an
+absent operand's properties may be missing); `.pick([...])` and `.omit([...])`
+are `picked` and `omitted`, closed and open respectively; `.groupBy`, `.countBy`,
+`.keyBy` and `.mapValues` are `recordOf` a value type; `.entries()` is an array
+of `[string, value]` tuples, so a destructured pair reads each position.
+
 ### Presence
 
 A proof's `absent` flag comes from the row or the source where either states it

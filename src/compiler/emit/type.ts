@@ -76,7 +76,9 @@ export const kindsOf = (t: Type): readonly Kind[] | null => (t.kinds === "any" ?
 /** What ONE element of an array value is. A value that may not be an array proves nothing of its elements. */
 export function elementOf(t: Type): Type {
   if (!has(t, "array")) return NOTHING;
-  return t.element ?? ANY;
+  const element = t.element ?? ANY;
+  // an element read off a missing array is missing too
+  return t.absent ? maybeAbsent(element) : element;
 }
 
 /** What position `i` of an array value holds: the tuple's item when stated, else the element. */
@@ -95,9 +97,9 @@ export function propOf(t: Type, name: string): Type {
   if (t.kinds === "any") return ANY;
   const asObject = t.kinds.has("object") ? ownProp(t, name) : NOTHING;
   const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name)) : NOTHING;
-  if (isNothing(asArray)) return asObject;
-  if (isNothing(asObject)) return asArray;
-  return join(asObject, asArray);
+  const own = isNothing(asArray) ? asObject : isNothing(asObject) ? asArray : join(asObject, asArray);
+  // a property read off a missing value is missing too
+  return t.absent ? maybeAbsent(own) : own;
 }
 
 /** The property an OBJECT value holds under `name`. */
@@ -270,6 +272,8 @@ export type Site = {
   readonly family: Family | null;
   /** The n-th argument's proof. */
   readonly arg: (n: number) => Type;
+  /** How many arguments the call has, for `args`. */
+  readonly argCount: number;
   /** What the n-th callback argument returns. */
   readonly callback: (n: number) => Type;
   /** The property names the first argument spells, for `picked` / `omitted`, or null when it spells none. */
@@ -302,12 +306,15 @@ export function evaluate(e: TypeExpr, site: Site): Type {
     }
   }
   if (isTerm(e, "arrayOf")) return arrayOf(evaluate((e as { arrayOf: TypeExpr }).arrayOf, site));
+  if (isTerm(e, "elementOf")) return flattenOnce(evaluate((e as { elementOf: TypeExpr }).elementOf, site));
   if (isTerm(e, "callback")) return site.callback((e as { callback: number }).callback);
   if (isTerm(e, "arg")) return site.arg((e as { arg: number }).arg);
+  if (isTerm(e, "args")) return joinAll(expandArgs((e as { args: number }).args, site));
   if (isTerm(e, "merge")) {
-    const terms = (e as { merge: readonly TypeExpr[] }).merge.map((t) => evaluate(t, site));
+    const terms = expandList((e as { merge: readonly TypeExpr[] }).merge, site);
     return terms.reduce((acc, t) => merge(acc, t), objectOf(new Map(), false));
   }
+  if (isTerm(e, "oneOf")) return joinAll(expandList((e as { oneOf: readonly TypeExpr[] }).oneOf, site));
   if (isTerm(e, "recordOf")) return objectOf(new Map(), true, evaluate((e as { recordOf: TypeExpr }).recordOf, site));
   if (isTerm(e, "tuple")) return tupleOf((e as { tuple: readonly TypeExpr[] }).tuple.map((t) => evaluate(t, site)));
   // A per-family map: the receiver's own family picks the term.
@@ -318,6 +325,40 @@ export function evaluate(e: TypeExpr, site: Site): Type {
     return term === undefined ? ANY : evaluate(term, site);
   }
   return ANY;
+}
+
+/** The terms of a list, with an `{ args: n }` term expanded to one proof per argument. */
+function expandList(terms: readonly TypeExpr[], site: Site): Type[] {
+  return terms.flatMap((t) =>
+    isTerm(t, "args") ? expandArgs((t as { args: number }).args, site) : [evaluate(t, site)],
+  );
+}
+
+/** Every argument from `n` on. */
+function expandArgs(n: number, site: Site): Type[] {
+  const out: Type[] = [];
+  for (let i = n; i < site.argCount; i++) out.push(site.arg(i));
+  return out;
+}
+
+/**
+ * One level of flattening: an array gives its element, anything else stays —
+ * what `.flatMap` keeps of a callback's answer, and what an object's property
+ * values are (`elementOf` on an object).
+ */
+export function flattenOnce(t: Type): Type {
+  if (t.kinds === "any") return ANY;
+  const parts: Type[] = [];
+  if (t.kinds.has("array")) parts.push(t.element ?? ANY);
+  if (t.kinds.has("object") && !t.kinds.has("array")) {
+    // the values of an object: its unnamed value, joined with every named property
+    const values = [...(t.props?.values() ?? [])];
+    if (t.open) values.push(t.values ?? ANY);
+    return joinAll(values);
+  }
+  const rest = [...t.kinds].filter((k) => k !== "array");
+  if (rest.length > 0) parts.push({ ...t, kinds: new Set(rest), element: undefined, items: undefined });
+  return joinAll(parts);
 }
 
 /** The one family a `Type` belongs to, or null when it shows none or several. */

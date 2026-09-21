@@ -788,6 +788,10 @@ export function topKindOf(r: TypeExpr): Kind | "unknown" {
     return r === "same" || r === "element" || r === "picked" || r === "omitted" ? "unknown" : r;
   if ("arrayOf" in r || "tuple" in r) return "array";
   if ("merge" in r || "recordOf" in r) return "object";
+  if ("oneOf" in r) {
+    const kinds = new Set((r as { oneOf: readonly TypeExpr[] }).oneOf.map(topKindOf));
+    return kinds.size === 1 ? [...kinds][0] : "unknown";
+  }
   return "unknown";
 }
 

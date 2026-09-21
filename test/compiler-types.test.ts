@@ -423,3 +423,55 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
     expect(out).toEqual([{ a: "x", n: 1, m: 2 }]);
   });
 });
+
+describe("types — a call's result follows its row's `returns` term", () => {
+  it("`.map(f)` proves an array of what the callback returns", () => {
+    expect(jsmql("$.names = $.tags.map(t => t.trim()); $.n = $.names[0].length;")[1]).toEqual({
+      $set: {
+        n: {
+          $let: {
+            vars: { jsmqlRecv: { $arrayElemAt: ["$names", 0] } },
+            in: {
+              $cond: {
+                if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+                then: null,
+                else: { $strLenCP: "$$jsmqlRecv" },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("a spread and `.assign()` merge object shapes, so a merged property has its type", () => {
+    expect(jsmql("const addr1 = { ...$.address, done: true }; $.r = addr1.done ? 1 : 2;")[1]).toEqual({
+      $set: { r: { $cond: { if: "$__jsmql.var.addr1.done", then: 1, else: 2 } } },
+    });
+    expect(jsmql("$.a2 = $.address.assign({ done: true }); $.r = $.a2.done ? 1 : 2;")[1]).toEqual({
+      $set: { r: { $cond: { if: "$a2.done", then: 1, else: 2 } } },
+    });
+  });
+
+  it("`.pick()` keeps the named properties and nothing else", () => {
+    expect(
+      jsmql('$.o = { a: "x", b: 1 }; $.p = $.o.pick(["a"]); $.n = $.p.a.length; $.m = $.p.b ? 1 : 2;').slice(2),
+    ).toEqual([
+      { $set: { n: { $strLenCP: "$p.a" } } },
+      // `b` was not picked: certainly missing, so the condition folds to its `else`
+      { $set: { m: 2 } },
+    ]);
+  });
+
+  it("`.filter(p)` keeps the elements; `.head()` may find nothing, so a property of it may be missing", () => {
+    expect(
+      jsmql('$.items = [{ q: "s" }]; $.first = $.items.filter(i => i.q).head(); $.n = $.first.q.length;')[2],
+    ).toEqual({
+      $set: {
+        n: {
+          $cond: { if: { $eq: [{ $ifNull: ["$first.q", null] }, null] }, then: null, else: { $strLenCP: "$first.q" } },
+        },
+      },
+    });
+  });
+});

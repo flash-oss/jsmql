@@ -7321,7 +7321,7 @@ export const NAMES = {
     doc: "'.slice()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["string", "array", "stream"],
-    returns: { string: "string", array: "array", stream: "stream" },
+    returns: { string: "same", array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7564,7 +7564,7 @@ export const NAMES = {
           '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (lodash reads an object as a matcher); a stream has no natural order, so a key is required',
       },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7808,7 +7808,7 @@ export const NAMES = {
       // $unwind needs a field path, and a matcher is provably a boolean.
       stream: { 0: ["propertyPath"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: { arrayOf: { elementOf: { callback: 0 } } }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7856,7 +7856,7 @@ export const NAMES = {
       // $replaceWith needs a document, and a matcher is provably a boolean.
       stream: { 0: ["propertyPath"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: { arrayOf: { callback: 0 } }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7890,7 +7890,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -8146,7 +8146,7 @@ export const NAMES = {
     iterateeSlots: {
       array: { arrowOnly: "the callback takes (accumulator, value[, index]) and a shorthand cannot stand in for it" },
     },
-    returns: "unknown",
+    returns: { oneOf: [{ arg: 1 }, { callback: 0 }] },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8470,7 +8470,11 @@ export const NAMES = {
     doc: "'Object.entries(obj)' / '.entries()' — the object as [key, value] pairs. The array form is refused.",
     call: true,
     on: ["array", "object", "Object"],
-    returns: { arrayOf: "array" },
+    returns: {
+      array: { arrayOf: { tuple: ["number", "element"] } },
+      object: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
+      Object: { arrayOf: { tuple: ["string", { elementOf: { arg: 0 } }] } },
+    },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -8533,7 +8537,11 @@ export const NAMES = {
     doc: "'Object.values(obj)' / '.values()' — an array of the object's values. The array form is refused.",
     call: true,
     on: ["array", "object", "Object"],
-    returns: "array",
+    returns: {
+      array: "same",
+      object: { arrayOf: { elementOf: "same" } },
+      Object: { arrayOf: { elementOf: { arg: 0 } } },
+    },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -9787,7 +9795,7 @@ export const NAMES = {
     doc: "'.uniq()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9818,7 +9826,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10131,7 +10139,7 @@ export const NAMES = {
     doc: "'.compact()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -10162,7 +10170,7 @@ export const NAMES = {
     doc: "'.flatten()' — see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "array",
+    returns: { arrayOf: { elementOf: "element" } },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -10190,7 +10198,7 @@ export const NAMES = {
     doc: "'.chunk()' — see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: { arrayOf: "array" },
+    returns: { arrayOf: "same" },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -10898,7 +10906,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] },
     },
-    returns: { array: "object", stream: "stream" },
+    returns: { array: { recordOf: "element" }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10933,7 +10941,7 @@ export const NAMES = {
       // '_id' is the group key. The other two spellings are iteratees as usual.
       stream: { 0: ["propertyPath", "matchesPropertyPair", "omitted"] },
     },
-    returns: { array: "object", stream: "stream", Object: "object" },
+    returns: { array: { recordOf: "same" }, stream: "stream", Object: { recordOf: { arg: 0 } } },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10976,7 +10984,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] },
     },
-    returns: { array: "object", stream: "stream" },
+    returns: { array: { recordOf: "number" }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -11010,7 +11018,7 @@ export const NAMES = {
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: { arrayOf: "array" },
+    returns: { tuple: ["same", "same"] },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -11044,7 +11052,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -11077,7 +11085,7 @@ export const NAMES = {
         arrowOnly: "the callback takes (value, key) and a shorthand cannot stand in for a two-parameter arrow",
       },
     },
-    returns: "object",
+    returns: { recordOf: { callback: 0 } },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11111,7 +11119,7 @@ export const NAMES = {
         arrowOnly: "the callback takes (value, key) and a shorthand cannot stand in for a two-parameter arrow",
       },
     },
-    returns: "object",
+    returns: { recordOf: { elementOf: "same" } },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11142,7 +11150,9 @@ export const NAMES = {
     call: true,
     on: ["object", "stream"],
     // The value form builds a document literal, so the result IS an object.
-    returns: { object: "object", stream: "stream" },
+    returns: { object: "picked", stream: "stream" },
+    // MEASURED: `$.o.pick(["a"])` answers `{ a: 1 }` for `o: { a: 1, b: 2 }`, `{}` for a missing `o`, and `{ a: null }` for `o: null` — an object every time
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -11196,7 +11206,9 @@ export const NAMES = {
     call: true,
     on: ["object", "stream"],
     // The value form builds a document literal, so the result IS an object.
-    returns: { object: "object", stream: "stream" },
+    returns: { object: "omitted", stream: "stream" },
+    // MEASURED: `$.o.omit(["a"])` answers `{ b: 2 }` for `o: { a: 1, b: 2 }` and `{}` for a missing or null `o` — an object every time
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -11326,7 +11338,7 @@ export const NAMES = {
     doc: "'.toPairs()' — see docs/LANGUAGE.md.",
     call: true,
     on: "object",
-    returns: { arrayOf: "array" },
+    returns: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -13090,7 +13102,9 @@ export const NAMES = {
     call: true,
     on: ["object", "Object"],
     mutatesArgumentAt: 0,
-    returns: "object",
+    returns: { object: { merge: ["same", { args: 0 }] }, Object: { merge: [{ args: 0 }] } },
+    // MEASURED: `$.o.assign({ z: 1 })` answers `{ a: 1, b: 2, z: 1 }` for `o: { a: 1, b: 2 }` and `{ z: 1 }` for a missing or null `o`; `Object.assign({}, $.o)` answers `{}` there — an object every time
+    neverNull: true,
     // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
     // before the compiler reads any statement cell — so the row states only the value.
     where: ["value"],
@@ -13125,7 +13139,7 @@ export const NAMES = {
     doc: "'Object.fromEntries(entries)' / '.fromEntries()' — emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
     on: ["array", "Object"],
-    returns: "object",
+    returns: { recordOf: "unknown" },
     where: ["value"],
     filter: viaFallback,
     expr: {
