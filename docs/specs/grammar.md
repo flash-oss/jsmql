@@ -428,7 +428,7 @@ Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse erro
 
 ## String-context `+`
 
-When any operand of a `+` chain is **string-producing**, the whole chain emits `$concat` instead of `$add`. String-producing is a PROOF, not a list: `kindOf` in [src/compiler/emit/types.ts](../../src/compiler/emit/types.ts) answers `"string"` for a string or template literal, for a call or method whose row states `returns: "string"` (`String(x)`, `typeof x`, `$.name.trim()`), and, recursively, for a nested `+` chain with at least one string-producing operand. A field path proves nothing, and stays `"unknown"`, so `$.a + $.b` is `$add`.
+When any operand of a `+` chain is **string-producing**, the whole chain emits `$concat` instead of `$add`. String-producing is a PROOF, not a list: `kindOf` in [src/compiler/emit/prove.ts](../../src/compiler/emit/prove.ts) answers `"string"` for a string or template literal, for a call or method whose row states `returns: "string"` (`String(x)`, `typeof x`, `$.name.trim()`), and, recursively, for a nested `+` chain with at least one string-producing operand. A field path proves nothing, and stays `"unknown"`, so `$.a + $.b` is `$add`.
 
 ## JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
 

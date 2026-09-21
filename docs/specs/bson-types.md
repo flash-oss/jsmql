@@ -123,7 +123,7 @@ banned tests.
 | `src/bson.ts` | the classes, `isBsonType`, `isUUID`, `isObjectId`, `objectIdHex`; re-exports the vocabulary's recognisers |
 | `src/compiler/passes/literal.ts` | a value ⇄ the AST literal that spells it |
 | `src/compiler/passes/fold-methods.ts` | the exact reads a fold may run on a constant |
-| `src/compiler/emit/types.ts` | the kind a value proves |
+| `src/compiler/emit/prove.ts` | the type a value proves |
 | `src/compiler/emit/filter.ts` | whether the query language compares it as written |
 | `src/compiler/emit/lower.ts` | a literal to the value the driver sends |
 | `src/stringify.ts` | the value as the JavaScript that rebuilds it — tag-keyed, never `instanceof` |

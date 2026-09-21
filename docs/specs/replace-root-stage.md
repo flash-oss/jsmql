@@ -162,7 +162,7 @@ destination that takes many. `rootIsArray` refuses `$ = <array>`; `$$ = <array>`
 fans out.
 
 When the right side of `$$ = …` is **provably an array** and is not a chain
-on a stream (`kindOf` in [src/compiler/emit/types.ts](../../src/compiler/emit/types.ts)),
+on a stream (`kindOf` in [src/compiler/emit/prove.ts](../../src/compiler/emit/prove.ts)),
 one input document produces one output document per element. `$unwind`
 needs a materialised field path — it cannot unwind an inline array
 expression — so the compiler parks the array in a fresh compiler slot with

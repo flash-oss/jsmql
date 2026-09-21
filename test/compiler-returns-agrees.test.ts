@@ -19,7 +19,8 @@ import { resolve } from "node:path";
 import yaml from "js-yaml";
 import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MongoClient, ObjectId, Timestamp } from "mongodb";
 import { NAMES } from "../src/registry/names.ts";
-import type { Position } from "../src/registry/vocabulary.ts";
+import type { Position, TypeExpr } from "../src/registry/vocabulary.ts";
+import { topKindOf } from "../src/compiler/rows.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
@@ -306,7 +307,10 @@ type BodyShape = {
   optional: readonly string[];
   enums?: Record<string, readonly string[]>;
 };
-type Row = { kind?: string; where?: readonly Position[]; shape?: Shape; returns?: unknown };
+type Row = { kind?: string; where?: readonly Position[]; shape?: Shape; returns?: TypeExpr };
+
+/** The kind a row's `returns` states for the server to confirm: the term's top kind. */
+const stated = (row: Row): string => (row.returns === undefined ? "unknown" : topKindOf(row.returns));
 
 function operandFor(arg: SpecArg): string {
   const list = Array.isArray(arg.type) ? arg.type : [arg.type];
@@ -393,7 +397,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo") continue;
       if (!PRODUCES.some((p) => row.where?.includes(p) === true)) continue;
-      if (row.returns === "unknown") continue; // proved to vary, below
+      if (stated(row) === "unknown") continue; // proved to vary, below
       if (CANNOT_MEASURE[name] !== undefined) continue;
 
       const hand = BY_HAND[name];
@@ -415,8 +419,8 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
         }
         answered = true;
         checked++;
-        if (r.kinds.length !== 1 || r.kinds[0] !== row.returns) {
-          wrong.push(`${name} in ${slot}: registry says ${String(row.returns)}, mongod says ${r.kinds.join("/")}`);
+        if (r.kinds.length !== 1 || r.kinds[0] !== stated(row)) {
+          wrong.push(`${name} in ${slot}: registry says ${stated(row)}, mongod says ${r.kinds.join("/")}`);
         }
         break;
       }
@@ -453,12 +457,10 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       // and says nothing about whether the accepted one varies.
       if (!a.ok || !b.ok) continue;
       const varies = a.kinds.join("/") !== b.kinds.join("/");
-      if (varies && row.returns !== "unknown") {
-        wrong.push(
-          `${name}: answers ${a.kinds.join("/")} and ${b.kinds.join("/")}, but the row says ${String(row.returns)}`,
-        );
+      if (varies && stated(row) !== "unknown") {
+        wrong.push(`${name}: answers ${a.kinds.join("/")} and ${b.kinds.join("/")}, but the row says ${stated(row)}`);
       }
-      if (!varies && row.returns === "unknown") {
+      if (!varies && stated(row) === "unknown") {
         wrong.push(`${name}: both calls answered ${a.kinds.join("/")} — the row should say so, not "unknown"`);
       }
     }
@@ -470,7 +472,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     // above that shows it varying, or a named reason the server cannot be asked.
     const unproven: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
-      if (row.kind !== "mongo" || row.returns !== "unknown") continue;
+      if (row.kind !== "mongo" || row.returns === undefined || stated(row) !== "unknown") continue;
       if (CANNOT_MEASURE[name] !== undefined) continue;
       if (VARIES_BY_OPERAND[name] === undefined) unproven.push(name);
     }

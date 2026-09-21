@@ -58,7 +58,7 @@ no `$ifNull` of its own. A row that dispatches on the receiver's type lets null
 and missing fall to its `uncertain` default, which answers null. No branch
 admits them through `alsoTypes` any more. The compiler skips the test when the
 receiver is PRESENT (`ExprIn.present`): proven from the source by `isPresent`
-(`emit/types.ts` — a literal, the root document, a `$lookup`'s array, a `let`
+(`emit/prove.ts` — a literal, the root document, a `$lookup`'s array, a `let`
 of a present value through the binding's `present`, a `neverNull` row over
 present operands, or a path in `Env.proven`), or proven at run time by the
 `$type` test of the dispatch branch the cell runs under. A LODASH cell never

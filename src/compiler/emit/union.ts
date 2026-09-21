@@ -21,7 +21,7 @@ import { Chain, type Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { lookupOf, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { lowerValue } from "./lower.ts";
-import { kindOf } from "./types.ts";
+import { kindOf } from "./prove.ts";
 import { childEnv } from "./inputs.ts";
 import { bansNestedOf } from "../rows.ts";
 

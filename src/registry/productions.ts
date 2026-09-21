@@ -16,7 +16,7 @@
 //
 // MQL enters the language side here. tokens.ts and keywords.ts hold no MQL.
 
-import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
+import type { NodeName, On, Only, Position, TypeExpr } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
 import { bsonTagOf, isDate, isRegExp, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
@@ -66,7 +66,7 @@ export type ProductionSpec<
   associativity?: "left" | "right" | "none";
   fixity?: "prefix" | "infix" | "postfix" | "ternary" | "prefixOrPostfix";
   on: O;
-  returns: Returns;
+  returns: TypeExpr;
   where: W;
   only?: readonly Only[];
   /** Rules that the parser must try BEFORE this one, when two triggers overlap. The audit below tests them. */

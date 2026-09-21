@@ -17,11 +17,12 @@
 // emit/inputs.ts builds a lowering's `In` record from an Env; the lowering
 // never sees the Env itself.
 
-import type { Position, Stage } from "../../registry/vocabulary.ts";
+import type { Position, Stage, Type } from "../../registry/vocabulary.ts";
 import type { BodyPath } from "../rows.ts";
 import type { Where } from "../passes/position.ts";
 import type { Binding, Binder, Declared, FieldSlot, Located, MongoVar, VarRef } from "./names.ts";
 import { Capture, Scope, scratchSlot } from "./names.ts";
+import { DOCUMENT, at, present, written } from "./type.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
 import { pipelineOverOf, preservesCountOf } from "../rows.ts";
@@ -232,25 +233,47 @@ export class Env {
   readonly site: Site;
   readonly chain: Chain;
   /**
-   * Field paths that a test on the way in PROVES are there.
-   *
-   * A `?.` stops its chain with a test on the guarded field, and the rest of the
-   * chain runs only when that test passes — so inside it the field cannot be
-   * missing, and the `$ifNull` that a cell would otherwise put on it is dead.
-   * `isPresent` reads this set.
+   * What the compiler proves about the DOCUMENT on each level: index 0 is the root
+   * pipeline's document, and each body over another collection adds one. A write
+   * records its value's proof at the written path; a read of `$.a.b` answers the
+   * proof at that path; a stage that replaces the document resets its level. A
+   * `?.` on the way in proves the guarded path present, so inside its chain the
+   * `$ifNull` a cell would otherwise put on it is dead. See docs/specs/types.md.
    */
-  readonly proven: ReadonlySet<string>;
+  readonly documents: readonly Type[];
 
-  private constructor(scope: Scope, site: Site, chain: Chain, proven: ReadonlySet<string> = new Set()) {
+  private constructor(scope: Scope, site: Site, chain: Chain, documents: readonly Type[] = [DOCUMENT]) {
     this.scope = scope;
     this.site = site;
     this.chain = chain;
-    this.proven = proven;
+    this.documents = documents;
   }
 
-  /** The same Env, with one more field path proven to be there. */
+  /** The proof at a dotted path of the document on `level` — this level unless said otherwise. */
+  typeAt(path: string, level: number = this.level): Type {
+    return at(this.documents[level], path);
+  }
+
+  /** The same Env, with the document on this level changed. */
+  private withDocument(doc: Type): Env {
+    const documents = [...this.documents];
+    documents[this.level] = doc;
+    return new Env(this.scope, this.site, this.chain, documents);
+  }
+
+  /** The same Env, with one field path proven to be there. */
   proving(path: string): Env {
-    return new Env(this.scope, this.site, this.chain, new Set([...this.proven, path]));
+    return this.withDocument(written(this.documents[this.level], path, present(this.typeAt(path))));
+  }
+
+  /** The same Env, after a write of a value proven `type` at `path` on this level. */
+  written(path: string, type: Type): Env {
+    return this.withDocument(written(this.documents[this.level], path, type));
+  }
+
+  /** The same Env, with the document on this level replaced by `doc`. */
+  document(doc: Type): Env {
+    return this.withDocument(doc);
   }
 
   /**
@@ -267,7 +290,7 @@ export class Env {
 
   /** A name bound to something other than a variable — the document, a slot, a function. */
   bind(js: string, binding: Declared): Env {
-    return new Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain, this.proven);
+    return new Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain, this.documents);
   }
 
   /** How many bodies over another collection enclose this node: the level of ITS documents. */
@@ -311,20 +334,20 @@ export class Env {
 
   /**
    * The Env after a stage that replaced the document: every field-carried
-   * binding is gone, and so is every path a test proved — the document that
-   * held those paths is not the document the next stage sees.
+   * binding is gone, and so is every proof about the document — the document
+   * that held those paths is not the document the next stage sees.
    */
   dropFields(by: string, message: (js: string, mutable: boolean) => string): Env {
-    return new Env(this.scope.dropFields(by, message), this.site, this.chain);
+    return new Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
   }
 
   /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
   block(): Env {
-    return new Env(this.scope.block(), this.site, this.chain, this.proven);
+    return new Env(this.scope.block(), this.site, this.chain, this.documents);
   }
 
   /** The developer's own variable — a lambda parameter, a `$let` var. */
-  param(js: string, type: Binding["type"], pos: number): Bound {
+  param(js: string, type: Type, pos: number): Bound {
     return this.bound(this.scope.param(js, type, pos, this.level));
   }
 
@@ -335,17 +358,17 @@ export class Env {
 
   /** Move to where phase 4 says a child stands. */
   at(where: Where): Env {
-    return new Env(this.scope, { ...this.site, where }, this.chain, this.proven);
+    return new Env(this.scope, { ...this.site, where }, this.chain, this.documents);
   }
 
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name: string | null): Env {
-    return new Env(this.scope, { ...this.site, inside: name }, this.chain, this.proven);
+    return new Env(this.scope, { ...this.site, inside: name }, this.chain, this.documents);
   }
 
   /** Inside `$literal(…)`. */
   literal(): Env {
-    return new Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain, this.proven);
+    return new Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain, this.documents);
   }
 
   /**
@@ -357,17 +380,18 @@ export class Env {
       ...this.site,
       boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [], element: param, capture: null }],
     };
-    return new Env(this.scope, site, this.chain, this.proven);
+    return new Env(this.scope, site, this.chain, this.documents);
   }
 
-  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. */
+  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. A body over another collection starts a document level of its own. */
   enter(boundary: Boundary, chain: Chain): Env {
     const site: Site = {
       ...this.site,
       where: { at: "statement" },
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }],
     };
-    return new Env(this.scope, site, chain, this.proven);
+    const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
+    return new Env(this.scope, site, chain, documents);
   }
 
   /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
@@ -382,6 +406,6 @@ export class Env {
   }
 
   private bound(b: Binder): Bound {
-    return { as: b.as, ref: b.ref, env: new Env(b.scope, this.site, this.chain, this.proven) };
+    return { as: b.as, ref: b.ref, env: new Env(b.scope, this.site, this.chain, this.documents) };
   }
 }

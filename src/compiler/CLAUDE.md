@@ -78,8 +78,12 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
                The only minter of `Truth`.
   mql.ts       the MQL shapes that READ a condition ($cond, $filter, $switch, …),
                each typed to take a Truth. This module builds them, and nothing else does.
-  types.ts     what a node PROVABLY is: a literal's kind, a row's measured
-               `returns`, a binding's type. A field path proves nothing.
+  type.ts      the `Type` value — what the compiler proves about a value — and the
+               operations over two proofs: join, merge, the walk of a document by a
+               dotted path, and the evaluation of a row's `returns` term. It reads
+               no node and no row. See docs/specs/types.md.
+  prove.ts     what a node PROVABLY is: a literal's type, a row's `returns` at its
+               call site, a binding's type, the document's proof at a field path.
   inputs.ts    the one constructor of the `In` record a renderer receives.
   check.ts     the literal-gated argument checks. Each check reads a stated rule.
   errors.ts    every message the phase can produce, worded once.

@@ -24,7 +24,7 @@
 // The spellings themselves — `jsmql<Hint>`, `__jsmql.tmp.<n>` — live in
 // src/namespace.ts, the one home for the three namespaces of JSMQL.
 
-import type { Expr, Kind } from "../../registry/vocabulary.ts";
+import type { Expr, Type } from "../../registry/vocabulary.ts";
 // Type-only, so nothing is imported at run time, and env.ts can still import this file.
 import type { Chain } from "./env.ts";
 import { UnknownIdentifierError, internalError } from "../../errors.ts";
@@ -151,22 +151,13 @@ export type Ref =
 /** Everything a read needs to know about a name. Every field is required. */
 export type Binding = {
   readonly ref: Ref;
-  /** The provable type, or "unknown". The chain type check reads this. */
-  readonly type: Kind | "unknown";
   /**
-   * What ONE element of this binding is, or "unknown". A method whose row
-   * answers `returns: "element"` — `.head()`, `.find(p)`, `.maxBy(k)` — has this
-   * kind, so the value that follows it has a type, and the wrong method on it is
-   * refused. Only a binding that can SHOW its elements states one: a
-   * `$lookup.as` array holds the documents of the foreign collection.
+   * What the compiler proves about the value: its kinds, whether it may be null
+   * or missing, its elements, its properties. `ANY` when it proves nothing. A
+   * `$lookup.as` array is a present array of documents; a `let` carries what
+   * its value proved. `prove.ts` reads this field. See docs/specs/types.md.
    */
-  readonly elements: Kind | "unknown";
-  /**
-   * Is the value certainly THERE — never null, never missing? A `$lookup`'s array
-   * is (the server always writes one); a `let` bound to a present value is; a
-   * field, a parameter and a function are not. `isPresent` (types.ts) reads this field.
-   */
-  readonly present: boolean;
+  readonly type: Type;
   /** `let` is mutable. Everything else is not. */
   readonly mutable: boolean;
   /** Where the binding was made, for the message that names it. */
@@ -328,11 +319,11 @@ export class Scope {
    * The developer's own variable binder — a lambda parameter, a `$let` var.
    * The compiler encodes it and never renames it. `type` is what the row says the parameter holds.
    */
-  param(js: string, type: Kind | "unknown", pos: number, level: number): Binder {
+  param(js: string, type: Type, pos: number, level: number): Binder {
     const as = mongoVarName(js);
     const ref = refOf(as);
     const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type, elements: "unknown", present: false, mutable: false, pos, level });
+    bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
     const own = new Set(this.own);

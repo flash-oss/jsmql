@@ -11,7 +11,7 @@
 //
 // See docs/specs/emit-pass.md § the statement target.
 
-import type { Expr, QueryDoc, Stage } from "../../registry/vocabulary.ts";
+import type { Expr, QueryDoc, Stage, Type } from "../../registry/vocabulary.ts";
 import type { FuncDecl, LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
 import { readsRef } from "./mql.ts";
 import { setKey } from "../../registry/mql.ts";
@@ -30,7 +30,7 @@ import {
   onlyOf,
   elementOnlyOf,
   receiverFamiliesOf,
-  replacesDocumentOf,
+  documentOf,
   restoresDocumentsOf,
   stageBodyRuleOf,
   pipelineOverOf,
@@ -47,7 +47,8 @@ import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
-import { elementKindOf, isPresent, kindOf } from "./types.ts";
+import { elementKindOf, kindOf, typeOf } from "./prove.ts";
+import { ANY, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
 import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
@@ -238,9 +239,7 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
       stages: [],
       env: env.bind(decl.name, {
         ref: { kind: "function", lambda, expanding: lambda.body === undefined },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: decl.pos,
       }),
@@ -360,15 +359,8 @@ function letStages(decl: LetDecl, env: Env): Step {
     throw E.shadowsOuterBinding(decl.kind, decl.name, decl.pos);
   refuseUnbuiltSugar(decl.value);
   const slot = fieldSlot(bindingSlot(decl.name));
-  const bind = (type: Declared["type"], present: boolean): Env =>
-    env.bind(decl.name, {
-      ref: { kind: "field", slot },
-      type,
-      elements: "unknown",
-      present,
-      mutable: decl.kind === "let",
-      pos: decl.pos,
-    });
+  const bind = (type: Type): Env =>
+    env.bind(decl.name, { ref: { kind: "field", slot }, type, mutable: decl.kind === "let", pos: decl.pos });
   // `const f = (x) => …` the fold did not settle — its body reads another declared
   // name — is a function like `function f(x) { … }`: a name for a body, no stage.
   if (decl.value.type === "Lambda") {
@@ -376,9 +368,7 @@ function letStages(decl: LetDecl, env: Env): Step {
       stages: [],
       env: env.bind(decl.name, {
         ref: { kind: "function", lambda: decl.value, expanding: decl.value.body === undefined },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: decl.pos,
       }),
@@ -390,15 +380,12 @@ function letStages(decl: LetDecl, env: Env): Step {
     if (w !== null) {
       env.chain.dirty = true;
       // the server always writes the `as` array; a `.find` may find nothing
-      return { stages: w.stages, env: bind(w.yields, w.yields === "array") };
+      return { stages: w.stages, env: bind(w.yields === "array" ? of("array") : maybeAbsent(of(w.yields))) };
     }
   }
   const value = readIn(decl.value, childEnv(env, decl, "value"));
   env.chain.dirty = true;
-  return {
-    stages: [{ $set: { [slot.path]: value } }],
-    env: bind(kindOf(decl.value, env), isPresent(decl.value, childEnv(env, decl, "value"))),
-  };
+  return { stages: [{ $set: { [slot.path]: value } }], env: bind(typeOf(decl.value, childEnv(env, decl, "value"))) };
 }
 
 /**
@@ -421,8 +408,10 @@ function afterStages(stages: readonly Stage[], env: Env): Env {
 
 /** Does this stage replace the document — the row's fact, an inclusion `$project` judged by its body? */
 function replacesDocument(name: string, stage: Stage): boolean {
-  const fact = replacesDocumentOf(name);
-  return fact === true || (fact === "inclusion" && isInclusion(stage[name]));
+  const fact = documentOf(name);
+  return (
+    fact === "fields" || fact === "value" || fact === "unknown" || (fact === "projection" && isInclusion(stage[name]))
+  );
 }
 
 /** A `$project` body that names fields to KEEP: every value is an inclusion, `_id: 0` aside. */
@@ -1061,9 +1050,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
       const binding: Declared = {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
-        type: kindOf(op.value, inner),
-        elements: "unknown",
-        present: false,
+        type: maybeAbsent(typeOf(op.value, inner)),
         mutable: true,
         pos: op.target.pos,
       };

@@ -267,10 +267,6 @@ export function elementsOf(name: string): "scalar" | undefined {
 }
 
 /** The kind of ONE element of the array a name returns, where its own lowering fixes it. */
-export function elementKindOf(name: string): Kind | undefined {
-  return (row(name) as { elementKind?: Kind } | undefined)?.elementKind;
-}
-
 export function argCountOf(name: string, family?: Family): ArgCount | undefined {
   const cell = (row(name) as { expr?: unknown } | undefined)?.expr;
   if (cell === null || typeof cell !== "object") return undefined;
@@ -332,12 +328,12 @@ export function lists(name: string, where: Position): boolean {
 
 // ── the facts the emit phase reads ───────────────────────────────────────────
 
-import type { Binds, BodyRule, Returns } from "../registry/vocabulary.ts";
+import type { Binds, BodyRule, DocumentEffect, TypeExpr } from "../registry/vocabulary.ts";
 import type { CallbackParams } from "../registry/vocabulary.ts";
 import { PRODUCTIONS } from "../registry/productions.ts";
 
 type EmitRow = {
-  returns?: Returns;
+  returns?: TypeExpr;
   params?: CallbackParams;
   binds?: Binds;
   shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
@@ -407,7 +403,7 @@ export function isKnownName(name: string): boolean {
 }
 
 /** The result type a name states, or "unknown" when it states none. */
-export function returnsOf(name: string): Returns {
+export function returnsOf(name: string): TypeExpr {
   return emitRow(name)?.returns ?? "unknown";
 }
 
@@ -620,8 +616,15 @@ export function preservesCountOf(name: string): boolean {
   return (row(name) as { preservesCount?: true } | undefined)?.preservesCount === true;
 }
 
-export function replacesDocumentOf(name: string): true | "inclusion" | false {
-  return (row(name) as { replacesDocument?: true | "inclusion" } | undefined)?.replacesDocument ?? false;
+/** What the stage does to the document `Type` — see `DocumentEffect` — or null for a name that is not a stage. */
+export function documentOf(name: string): DocumentEffect | null {
+  return (row(name) as { document?: DocumentEffect } | undefined)?.document ?? null;
+}
+
+/** The families a name's `on` lists, or null when it lists none or accepts any. */
+export function familiesOf(name: string): readonly Family[] | null {
+  const fams = families(row(name)?.on);
+  return fams === undefined || fams === "any" ? null : fams;
 }
 
 export function onlyOf(name: string): readonly string[] {
@@ -773,13 +776,25 @@ export function valueMethodNames(): string[] {
   return methodRows().filter((n) => lists(n, "value") || (row(n) as { expr?: unknown }).expr !== undefined);
 }
 
+/**
+ * The one kind a `TypeExpr` states whatever the call site — a fixed kind, an
+ * `arrayOf` or `tuple` (an array), a `merge` or `recordOf` (an object) — or
+ * "unknown" when the kind follows the receiver or the operands. The globals
+ * generator and the server measurement read this; the compiler evaluates the
+ * full term instead (src/compiler/emit/type.ts).
+ */
+export function topKindOf(r: TypeExpr): Kind | "unknown" {
+  if (typeof r === "string")
+    return r === "same" || r === "element" || r === "picked" || r === "omitted" ? "unknown" : r;
+  if ("arrayOf" in r || "tuple" in r) return "array";
+  if ("merge" in r || "recordOf" in r) return "object";
+  return "unknown";
+}
+
 /** The kind each value method states it returns — a Kind, or "unknown" when it depends on the receiver. */
 export function valueMethodReturns(): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const n of valueMethodNames()) {
-    const r = returnsOf(n);
-    out[n] = typeof r === "string" ? r : "unknown";
-  }
+  for (const n of valueMethodNames()) out[n] = topKindOf(returnsOf(n));
   return out;
 }
 

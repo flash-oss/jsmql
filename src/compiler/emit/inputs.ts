@@ -35,7 +35,8 @@ import {
   streamHandleAfterReplace,
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
-import { chainHasOptional, elementKindOf, isPresent, kindOf } from "./types.ts";
+import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
+import { ANY, DOCUMENT, elementOf, maybeAbsent, of } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
@@ -70,7 +71,7 @@ function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { 
   if (cb.params.length !== 1) {
     internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
-  const bound = env.param(cb.params[0], "unknown", cb.pos);
+  const bound = env.param(cb.params[0], ANY, cb.pos);
   return { as: bound.as, ref: bound.ref, in: read(cb.body, childEnv(bound.env, cb, "body")) };
 }
 
@@ -103,7 +104,7 @@ function arrayCallback(
   // list of strings, a `.split()`, a row that states `elementKind`. Without it a
   // string key read as `$.m[k]` would take the runtime array/object dispatch, whose
   // array arm hands `$arrayElemAt` a string — MEASURED, the server refuses that.
-  const element = recvNode === undefined ? "unknown" : elementKindOf(recvNode, env);
+  const element = recvNode === undefined ? ANY : maybeAbsent(elementOf(typeOf(recvNode, env)));
   const usesIndex = index !== undefined && readsParam(cb.body, index);
   if (!usesIndex) {
     // A callback that names no parameter still needs a binder, and it must be a name
@@ -113,7 +114,7 @@ function arrayCallback(
     let bodyEnv = bound.env;
     const vars: Record<string, unknown> = {};
     if (arr !== undefined) {
-      const a = bodyEnv.param(arr, "array", cb.pos);
+      const a = bodyEnv.param(arr, of("array", true), cb.pos);
       vars[a.as] = recv;
       bodyEnv = a.env;
     }
@@ -132,11 +133,11 @@ function arrayCallback(
   const x = bodyEnv.param(elem, element, cb.pos);
   vars[x.as] = { $arrayElemAt: [pair.ref, 1] };
   bodyEnv = x.env;
-  const i = bodyEnv.param(index, "number", cb.pos);
+  const i = bodyEnv.param(index, of("number", true), cb.pos);
   vars[i.as] = { $arrayElemAt: [pair.ref, 0] };
   bodyEnv = i.env;
   if (arr !== undefined) {
-    const a = bodyEnv.param(arr, "array", cb.pos);
+    const a = bodyEnv.param(arr, of("array", true), cb.pos);
     vars[a.as] = recv;
     bodyEnv = a.env;
   }
@@ -179,7 +180,7 @@ function reducerCallback(
     throw reducerShape(name, (cb as { pos: number }).pos);
   }
   const [acc, elem, index] = cb.params;
-  const accType = kindOf(seed, env);
+  const accType = maybeAbsent(typeOf(seed, env));
   const direct = !callsSomething(cb.body);
   const vars: Record<string, unknown> = {};
   let bodyEnv = env;
@@ -187,8 +188,6 @@ function reducerCallback(
     bodyEnv = bodyEnv.bind(acc, {
       ref: { kind: "var", ref: reduceVar("value") },
       type: accType,
-      elements: "unknown",
-      present: false,
       mutable: false,
       pos: cb.pos,
     });
@@ -201,23 +200,21 @@ function reducerCallback(
     if (direct) {
       bodyEnv = bodyEnv.bind(elem, {
         ref: { kind: "var", ref: reduceVar("this") },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: cb.pos,
       });
       return { input: recv, in: read(cb.body, childEnv(bodyEnv, cb, "body")) };
     }
-    const x = bodyEnv.param(elem, "unknown", cb.pos);
+    const x = bodyEnv.param(elem, ANY, cb.pos);
     vars[x.as] = reduceVar("this");
     bodyEnv = x.env;
     return { input: recv, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
   }
-  const x = bodyEnv.param(elem, "unknown", cb.pos);
+  const x = bodyEnv.param(elem, ANY, cb.pos);
   vars[x.as] = { $arrayElemAt: [reduceVar("this"), 1] };
   bodyEnv = x.env;
-  const i = bodyEnv.param(index, "number", cb.pos);
+  const i = bodyEnv.param(index, of("number", true), cb.pos);
   vars[i.as] = { $arrayElemAt: [reduceVar("this"), 0] };
   bodyEnv = i.env;
   return { input: indexedPairs(recv), in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
@@ -238,7 +235,7 @@ function elementsCallback(
   let bodyEnv = pair.env;
   const vars: Record<string, unknown> = {};
   cb.params.forEach((p, k) => {
-    const b = bodyEnv.param(p, "unknown", cb.pos);
+    const b = bodyEnv.param(p, ANY, cb.pos);
     vars[b.as] = { $arrayElemAt: [pair.ref, k] };
     bodyEnv = b.env;
   });
@@ -292,11 +289,11 @@ export function exprInputs(
       // `value` and `key` are variables over the pair: bound as the developer's own names
       let bodyEnv = kv.env;
       const vars: Record<string, unknown> = {};
-      const v = bodyEnv.param(cb.params[0], "unknown", cb.pos);
+      const v = bodyEnv.param(cb.params[0], ANY, cb.pos);
       vars[v.as] = `${kv.ref}.v`;
       bodyEnv = v.env;
       if (cb.params.length === 2) {
-        const k = bodyEnv.param(cb.params[1], "string", cb.pos);
+        const k = bodyEnv.param(cb.params[1], of("string", true), cb.pos);
         vars[k.as] = `${kv.ref}.k`;
         bodyEnv = k.env;
       }
@@ -417,14 +414,7 @@ export function filterInputs(
       // The element is the root inside `$elemMatch`: the parameter stands for the document.
       const bodyEnv = argEnv
         .element(cb.params[0])
-        .bind(cb.params[0], {
-          ref: { kind: "document", path: "" },
-          type: "unknown",
-          elements: "unknown",
-          present: false,
-          mutable: false,
-          pos: cb.pos,
-        });
+        .bind(cb.params[0], { ref: { kind: "document", path: "" }, type: ANY, mutable: false, pos: cb.pos });
       return read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
     },
     value: (e) => read.lowerValue(e, argEnv),
@@ -446,14 +436,7 @@ export function filterInputs(
       }
       const bodyEnv = argEnv
         .element(cb.params[0])
-        .bind(cb.params[0], {
-          ref: { kind: "document", path: "" },
-          type: "unknown",
-          elements: "unknown",
-          present: false,
-          mutable: false,
-          pos: cb.pos,
-        });
+        .bind(cb.params[0], { ref: { kind: "document", path: "" }, type: ANY, mutable: false, pos: cb.pos });
       const q = read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
       if (q === null) throw elementNeedsQuery(name, cb.pos);
       return q;
@@ -510,9 +493,7 @@ export function stageInputs(
     if (cb.params.length >= 1) {
       e = e.bind(cb.params[0], {
         ref: { kind: "document", path: env.chain.element },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: cb.pos,
       });
@@ -524,9 +505,7 @@ export function stageInputs(
           message: unfilledParam(cb.params[1], name, "a stream has no per-document index; leave the parameter unused."),
           replaced: false,
         },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: cb.pos,
       });
@@ -547,9 +526,7 @@ export function stageInputs(
                 message: streamHandleAfterReplace(cb.params[2], replaces, cb.pos).message,
                 replaced: false,
               },
-        type: "stream",
-        elements: "unknown",
-        present: false,
+        type: of("stream", true),
         mutable: false,
         pos: cb.pos,
       });

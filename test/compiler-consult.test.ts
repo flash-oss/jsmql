@@ -350,7 +350,7 @@ describe("registry — exactly the value-producing rows state a return type", ()
     expect(wrong).toEqual([]);
   });
 
-  it("names a kind the vocabulary has", () => {
+  it("names a kind the vocabulary has, bare or as the element of an `arrayOf`", () => {
     const KINDS: readonly string[] = [
       "string",
       "array",
@@ -367,7 +367,9 @@ describe("registry — exactly the value-producing rows state a return type", ()
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo" && row.kind !== "root") continue;
       if (row.returns === undefined) continue;
-      if (typeof row.returns !== "string" || !KINDS.includes(row.returns)) {
+      const r = row.returns as string | { arrayOf?: unknown };
+      const bare = typeof r === "string" ? r : typeof r === "object" && r !== null ? r.arrayOf : undefined;
+      if (typeof bare !== "string" || !KINDS.includes(bare)) {
         wrong.push(`${name} = ${JSON.stringify(row.returns)}`);
       }
     }

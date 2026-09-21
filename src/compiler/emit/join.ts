@@ -37,7 +37,8 @@ import { Chain, type Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { lowerValue } from "./lower.ts";
 import { Capture, type FieldSlot } from "./names.ts";
-import { kindOf } from "./types.ts";
+import { kindOf } from "./prove.ts";
+import { DOCUMENT, arrayOf, maybeAbsent, of, present } from "./type.ts";
 import { childEnv } from "./inputs.ts";
 
 type Link = Extract<Expr, { type: "MethodCall" }>;
@@ -327,12 +328,11 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
   // A `$lookup.as` array holds the foreign collection's documents, so a terminal
   // that answers one ELEMENT of it — `.head()`, `.maxBy(k)` — is a document. An
   // unwound field's elements are whatever the field held.
+  const yields = l.yields === "array" && l.element === "" ? arrayOf(DOCUMENT) : of(l.yields);
   const bound = env.bind(name, {
     ref: { kind: "field", slot },
-    type: l.yields,
-    elements: l.yields === "array" && l.element === "" ? "object" : "unknown",
     // The server always writes the `as` array. A `.find` may find nothing.
-    present: l.one !== "find",
+    type: l.one === "find" ? maybeAbsent(yields) : present(yields),
     mutable: false,
     pos: l.pos,
   });

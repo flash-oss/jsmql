@@ -299,10 +299,10 @@ function skipTrivia(src, i) {
       continue;
     }
     if (src[i] === "/" && src[i + 1] === "*") {
-      const at2 = i;
+      const at3 = i;
       i += 2;
       while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      if (i >= src.length) throw new LexError("Unterminated block comment", at2);
+      if (i >= src.length) throw new LexError("Unterminated block comment", at3);
       i += 2;
       continue;
     }
@@ -1046,8 +1046,8 @@ var lastIndexOfArray = ({ recv, args, value, bind }) => {
     }
   };
 };
-var pairsOfObject = (recv, present) => ({
-  $objectToArray: present ? recv : { $ifNull: [recv, {}] }
+var pairsOfObject = (recv, present2) => ({
+  $objectToArray: present2 ? recv : { $ifNull: [recv, {}] }
 });
 var pairsRead = (obj, bind, project, optional = false) => {
   const kv = bind("kv");
@@ -1055,8 +1055,8 @@ var pairsRead = (obj, bind, project, optional = false) => {
     $map: { input: { $objectToArray: optional ? { $ifNull: [obj, {}] } : obj }, as: kv.as, in: project(kv.ref) }
   };
 };
-var nullOr = (recv, present, bind, body) => {
-  if (present) return body(recv);
+var nullOr = (recv, present2, bind, body) => {
+  if (present2) return body(recv);
   const cheap = typeof recv === "string" && recv.startsWith("$");
   const bound = cheap ? null : bind("recv");
   const ref = bound === null ? recv : bound.ref;
@@ -2207,8 +2207,7 @@ var NAMES = {
   $regexFindAll: mongo({
     doc: "Applies a regular expression to a string and returns information on all matched substrings.",
     category: "string",
-    returns: "array",
-    elementKind: "object",
+    returns: { arrayOf: "object" },
     where: ["value"],
     shape: {
       object: {
@@ -2310,8 +2309,7 @@ var NAMES = {
   $split: mongo({
     doc: "Splits a string into substrings based on a delimiter and returns an array of substrings.",
     category: "string",
-    returns: "array",
-    elementKind: "string",
+    returns: { arrayOf: "string" },
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2843,8 +2841,7 @@ var NAMES = {
   $objectToArray: mongo({
     doc: "Converts a document to an array of documents representing key-value pairs.",
     category: "array",
-    returns: "array",
-    elementKind: "object",
+    returns: { arrayOf: "object" },
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2862,9 +2859,8 @@ var NAMES = {
   $range: mongo({
     doc: "Outputs an array containing a sequence of integers according to user-defined inputs.",
     category: "array",
-    returns: "array",
+    returns: { arrayOf: "number" },
     neverNull: true,
-    elementKind: "number",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2991,8 +2987,7 @@ var NAMES = {
   $zip: mongo({
     doc: "Merges two or more arrays element-wise into a single array of arrays.",
     category: "array",
-    returns: "array",
-    elementKind: "array",
+    returns: { arrayOf: "array" },
     where: ["value"],
     shape: {
       object: {
@@ -4363,7 +4358,7 @@ var NAMES = {
     },
     category: "array",
     returns: "number",
-    replacesDocument: true,
+    document: "fields",
     where: ["group", "window", "stream", "statement"],
     shape: "none",
     // MEASURED: { $count: "" } → the count field must be a non-empty string (the operand rule is in `args`)
@@ -4968,6 +4963,7 @@ var NAMES = {
     preservesCount: true,
     only: ["update"],
     // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
+    document: "keeps",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -4992,7 +4988,7 @@ var NAMES = {
   $bucket: mongo({
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
     where: ["stream", "statement"],
-    replacesDocument: true,
+    document: "fields",
     body: {
       required: ["groupBy", "boundaries"],
       optional: ["default", "output"],
@@ -5024,7 +5020,7 @@ var NAMES = {
   $bucketAuto: mongo({
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
     where: ["stream", "statement"],
-    replacesDocument: true,
+    document: "fields",
     body: {
       required: ["groupBy", "buckets"],
       optional: ["output", "granularity"],
@@ -5061,6 +5057,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: { $changeStream: { zzz: 1 } } → BSON field '$changeStream.zzz' is an unknown field
+    document: "unknown",
     body: {
       required: [],
       optional: [
@@ -5103,6 +5100,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageLast"],
     // MEASURED: { $changeStreamSplitLargeEvent: { zzz: 1 } } → $changeStreamSplitLargeEvent spec should be an empty object
+    document: "unknown",
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
@@ -5125,6 +5123,7 @@ var NAMES = {
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
+    document: "unknown",
     body: {
       required: [],
       optional: ["latencyStats", "storageStats", "count", "queryExecStats"],
@@ -5157,6 +5156,7 @@ var NAMES = {
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
+    document: "unknown",
     body: {
       required: [],
       optional: [
@@ -5213,6 +5213,7 @@ var NAMES = {
     where: ["stream", "statement"],
     // MEASURED: { $densify: { field: "t", range: {…}, zzz: 1 } } → BSON field '$densify.zzz' is an unknown field
     // MEASURED: range.bounds: "everything" → Bounds string must either be 'full' or 'partition' (a nested key; not stated here)
+    document: "keeps",
     body: {
       required: ["field", "range"],
       optional: ["partitionByFields"],
@@ -5239,6 +5240,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: { $documents: { a: 1 } } → '$documents' can only be run with database or cluster-level aggregation
+    document: "unknown",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
@@ -5271,7 +5273,7 @@ var NAMES = {
     doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
     statementBody: "pipeline",
     where: ["stream", "statement"],
-    replacesDocument: true,
+    document: "fields",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
@@ -5305,6 +5307,7 @@ var NAMES = {
     // MEASURED: { $fill: { output: {…}, zzz: 1 } } → BSON field '$fill.zzz' is an unknown field
     // MEASURED: partitionBy AND partitionByFields → Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'
     // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
+    document: "keeps",
     body: {
       // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
       // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
@@ -5348,6 +5351,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } } → Unknown argument to $geoNear: zzz
+    document: "keeps",
     body: {
       required: ["near"],
       optional: [
@@ -5389,6 +5393,7 @@ var NAMES = {
   $graphLookup: mongo({
     doc: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
     where: ["stream", "statement"],
+    document: "keeps",
     body: {
       required: ["from", "startWith", "connectFromField", "connectToField", "as"],
       optional: ["maxDepth", "depthField", "restrictSearchWithMatch"],
@@ -5421,7 +5426,7 @@ var NAMES = {
     doc: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
     bodyExample: "$group({ _id: $.category })",
     where: ["stream", "statement"],
-    replacesDocument: true,
+    document: "fields",
     body: { required: ["_id"], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
@@ -5448,6 +5453,7 @@ var NAMES = {
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
+    document: "unknown",
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -5473,6 +5479,7 @@ var NAMES = {
     doc: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
     where: ["stream", "statement"],
     // MEASURED: { $limit: 0 } → the limit must be positive (the operand rule is in `args`)
+    document: "keeps",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5511,6 +5518,7 @@ var NAMES = {
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
+    document: "unknown",
     body: {
       required: [],
       optional: ["users", "allUsers"],
@@ -5544,6 +5552,7 @@ var NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     // MEASURED: not supported on a standalone mongod; the key set is the manual's
+    document: "unknown",
     body: { required: [], optional: ["namespace"], closed: true, keyTypes: { namespace: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5565,6 +5574,7 @@ var NAMES = {
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
+    document: "unknown",
     body: { required: [], optional: ["id", "name"], closed: true, keyTypes: { id: "string", name: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5585,6 +5595,7 @@ var NAMES = {
     where: ["stream", "statement"],
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
+    document: "unknown",
     body: {
       required: [],
       optional: ["users", "allUsers"],
@@ -5618,6 +5629,7 @@ var NAMES = {
     statementBody: "pipeline",
     where: ["stream", "statement"],
     preservesCount: true,
+    document: "keeps",
     body: {
       required: ["as"],
       optional: ["from", "localField", "foreignField", "let", "pipeline"],
@@ -5652,6 +5664,7 @@ var NAMES = {
     doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
     where: ["stream", "statement"],
     // MEASURED: { $match: [1] } → the match filter must be an expression in an object
+    document: "keeps",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
@@ -5677,6 +5690,7 @@ var NAMES = {
     // MEASURED: { $merge: { into: "c", zzz: 1 } } → BSON field '$merge.zzz' is an unknown field
     // MEASURED: whenMatched: "zzz" → Enumeration value 'zzz' for field 'whenMatched' is not a valid value (an array is an update pipeline and passes)
     // MEASURED: whenNotMatched: "zzz" → Enumeration value 'zzz' for field '$merge.whenNotMatched' is not a valid value
+    document: "keeps",
     body: {
       required: ["into"],
       optional: ["on", "let", "whenMatched", "whenNotMatched"],
@@ -5715,6 +5729,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageLast"],
     // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → BSON field '$out.zzz' is an unknown field; { $out: 1 } → $out only supports a string or object argument
+    document: "keeps",
     body: {
       required: ["coll"],
       optional: ["db", "timeseries"],
@@ -5747,6 +5762,7 @@ var NAMES = {
     where: ["stream", "statement"],
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
+    document: "unknown",
     body: {
       required: [],
       optional: ["allHosts"],
@@ -5777,7 +5793,7 @@ var NAMES = {
   $project: mongo({
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
     bodyExample: "$project({ name: 1 })",
-    replacesDocument: "inclusion",
+    document: "projection",
     where: ["stream", "statement"],
     only: ["update"],
     // MEASURED: { $project: {} } → projection specification must have at least one field
@@ -5808,6 +5824,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
+    document: "unknown",
     body: {
       required: ["input"],
       optional: ["combination", "scoreDetails"],
@@ -5832,6 +5849,8 @@ var NAMES = {
     doc: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
     where: ["stream", "statement"],
     // MEASURED: { $redact: "$KEEP" } → accepted
+    // The developer's own expression decides what it prunes; the fields it does not name survive.
+    document: "keeps",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5850,7 +5869,7 @@ var NAMES = {
   $replaceRoot: mongo({
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream", "statement"],
-    replacesDocument: true,
+    document: "value",
     only: ["update"],
     body: {
       required: ["newRoot"],
@@ -5884,7 +5903,7 @@ var NAMES = {
   $replaceWith: mongo({
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream", "statement"],
-    replacesDocument: true,
+    document: "value",
     only: ["update"],
     // MEASURED: { $replaceWith: 1 } → 'replacement document' must evaluate to an object
     body: { required: [], optional: [], closed: false },
@@ -5912,6 +5931,7 @@ var NAMES = {
     doc: "Randomly selects the specified number of documents from its input.",
     bodyExample: "$sample({ size: 10 })",
     where: ["stream", "statement"],
+    document: "keeps",
     body: {
       required: ["size"],
       optional: [],
@@ -5946,6 +5966,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
+    document: "unknown",
     body: {
       required: ["input"],
       optional: ["combination", "scoreDetails"],
@@ -5971,6 +5992,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the operators inside a $search body are its own language and pass through
+    document: "keeps",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -5991,6 +6013,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the operators inside a $searchMeta body are its own language and pass through
+    document: "unknown",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -6013,6 +6036,7 @@ var NAMES = {
     preservesCount: true,
     only: ["update"],
     // MEASURED: { $set: {} } → accepted, the stage is a no-op
+    document: "keeps",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6043,6 +6067,7 @@ var NAMES = {
     preservesCount: true,
     // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
+    document: "keeps",
     body: {
       // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
       nested: {
@@ -6096,6 +6121,7 @@ var NAMES = {
     diagnostic: { scope: "cluster", options: false },
     only: ["stageFirst"],
     // MEASURED: sharded clusters only; the manual takes an empty document
+    document: "unknown",
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6117,6 +6143,7 @@ var NAMES = {
     doc: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
     where: ["stream", "statement"],
     // MEASURED: { $skip: -1 } → Expected a non-negative number; { $skip: 1.5 } → Expected an integer (the operand rule is in `args`)
+    document: "keeps",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6156,6 +6183,7 @@ var NAMES = {
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },
+    document: "keeps",
     body: {
       required: [],
       optional: [],
@@ -6186,7 +6214,7 @@ var NAMES = {
   }),
   $sortByCount: mongo({
     doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
-    replacesDocument: true,
+    document: "fields",
     where: ["stream", "statement"],
     // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
     body: { required: [], optional: [], closed: false },
@@ -6206,7 +6234,7 @@ var NAMES = {
   }),
   $unionWith: mongo({
     // The stream is another collection's documents after it (or a mix): no field of this one is reliable.
-    replacesDocument: true,
+    document: "unknown",
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     pipelineOver: "foreign",
     statementBody: "pipeline",
@@ -6245,6 +6273,7 @@ var NAMES = {
     where: ["stream", "statement", "updateDoc"],
     only: ["update"],
     // MEASURED: { $unset: 1 } → $unset specification must be a string or an array; { $unset: [] } → … with at least one field
+    document: "keeps",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6284,6 +6313,7 @@ var NAMES = {
   $unwind: mongo({
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
     where: ["stream", "statement"],
+    document: "element",
     body: {
       required: ["path"],
       optional: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
@@ -6316,6 +6346,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
+    document: "keeps",
     body: {
       required: ["index", "path", "queryVector", "limit"],
       optional: ["numCandidates", "exact", "filter"],
@@ -6435,7 +6466,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $toLower: r }))
+      emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $toLower: r }))
     },
     stream: unsupported("'.toLowerCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6456,7 +6487,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $toUpper: r }))
+      emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $toUpper: r }))
     },
     stream: unsupported("'.toUpperCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6476,7 +6507,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "start[, count]", allowed: [1, 2] },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => {
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => {
         const start = normaliseSliceIndex(args[0], value(args[0]), r);
         const count = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
         return { $substrCP: [r, start, count] };
@@ -6498,9 +6529,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "start[, end]", allowed: [0, 1, 2] },
-      emit: ({ recv, args, value, present, bind }) => {
+      emit: ({ recv, args, value, present: present2, bind }) => {
         if (args.length === 0) return recv;
-        return nullOr(recv, present, bind, (r) => {
+        return nullOr(recv, present2, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
           const end = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
           return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
@@ -6525,10 +6556,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "index", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) => {
+      emit: ({ recv, args, value, present: present2, bind }) => {
         const lit = literalIndexValue(args[0]);
         if (lit !== null && lit < 0) return "";
-        return nullOr(recv, present, bind, (r) => {
+        return nullOr(recv, present2, bind, (r) => {
           if (lit !== null) return { $substrCP: [r, lit, 1] };
           const index = value(args[0]);
           return cond({ $lt: [index, 0] }, "", { $substrCP: [r, index, 1] });
@@ -6546,9 +6577,8 @@ var NAMES = {
     doc: "'.split()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "string",
-    returns: "array",
+    returns: { arrayOf: "string" },
     neverNull: true,
-    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6593,7 +6623,7 @@ var NAMES = {
     },
     expr: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
     },
     stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6623,10 +6653,10 @@ var NAMES = {
     },
     expr: {
       args: { sig: "searchString", exact: 1 },
-      emit: ({ recv, args, value, bind, present }) => {
+      emit: ({ recv, args, value, bind, present: present2 }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
-        return nullOr(recv, present, bind, (r) => {
+        return nullOr(recv, present2, bind, (r) => {
           const s = bind("str");
           return {
             $let: {
@@ -6724,7 +6754,7 @@ var NAMES = {
     },
     expr: {
       args: { sig: "regex", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) }))
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6742,7 +6772,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "regex", exact: 1, regexFlag: { 0: "g" } },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) }))
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6762,7 +6792,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "regex", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
         $ifNull: [
           { $getField: { field: "idx", input: { $regexFind: regexBody(r, args[0], () => value(args[0])) } } },
           -1
@@ -6785,7 +6815,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "targetLength[, padString]", allowed: [1, 2] },
-      emit: ({ recv, args, value, bind, present }) => nullOr(recv, present, bind, (r) => padded("start", r, args, value, bind))
+      emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("start", r, args, value, bind))
     },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6805,7 +6835,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "targetLength[, padString]", allowed: [1, 2] },
-      emit: ({ recv, args, value, bind, present }) => nullOr(recv, present, bind, (r) => padded("end", r, args, value, bind))
+      emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("end", r, args, value, bind))
     },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6918,7 +6948,7 @@ var NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
             }
           },
-          emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $in: [value(args[0]), r] }))
+          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $in: [value(args[0]), r] }))
         },
         string: {
           args: {
@@ -6928,7 +6958,7 @@ var NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
             }
           },
-          emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
+          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
         }
       },
       uncertain: () => null
@@ -6986,12 +7016,12 @@ var NAMES = {
         ),
         array: {
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value, bind, present }) => nullOr(recv, present, bind, (r) => sliceArray(r, args, value, bind))
+          emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => sliceArray(r, args, value, bind))
         },
         string: {
           // MEASURED: `$substrCP` / `$indexOfCP` of null or a missing field answer as of ""
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => sliceString(r, args, value))
+          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => sliceString(r, args, value))
         }
       },
       uncertain: () => null
@@ -7572,10 +7602,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "callback", exact: 1 },
-      emit: ({ recv, args, callback: callback2, present, bind }) => {
+      emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
-        return nullOr(recv, present, bind, (r) => ({
+        return nullOr(recv, present2, bind, (r) => ({
           $reduce: {
             input: indexedPairs(r),
             initialValue: -1,
@@ -7632,10 +7662,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "callback", exact: 1 },
-      emit: ({ recv, args, callback: callback2, present, bind }) => {
+      emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
-        return nullOr(recv, present, bind, (r) => ({
+        return nullOr(recv, present2, bind, (r) => ({
           $reduce: {
             input: indexedPairs(r),
             initialValue: -1,
@@ -7704,9 +7734,9 @@ var NAMES = {
     },
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ recv, args, callback: callback2, present, bind }) => {
+      emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
-        return nullOr(recv, present, bind, (r) => ({
+        return nullOr(recv, present2, bind, (r) => ({
           $anyElementTrue: { $map: { input: cb.paired ? cb.input : r, as: cb.as, in: cb.in } }
         }));
       }
@@ -7729,9 +7759,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ recv, args, callback: callback2, present, bind }) => {
+      emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
-        return nullOr(recv, present, bind, (r) => ({
+        return nullOr(recv, present2, bind, (r) => ({
           $allElementsTrue: { $map: { input: cb.paired ? cb.input : r, as: cb.as, in: cb.in } }
         }));
       }
@@ -7810,7 +7840,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "separator", allowed: [0, 1] },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ","))
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ","))
     },
     stream: because(
       `joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(", ")'.`
@@ -8058,9 +8088,8 @@ var NAMES = {
     doc: "'Object.entries(obj)' / '.entries()' \u2014 the object as [key, value] pairs. The array form is refused.",
     call: true,
     on: ["array", "object", "Object"],
-    returns: "array",
+    returns: { arrayOf: "array" },
     neverNull: true,
-    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8090,9 +8119,8 @@ var NAMES = {
     doc: "'Object.keys(obj)' / '.keys()' \u2014 an array of the object's keys. The array form is refused.",
     call: true,
     on: ["array", "object", "Object"],
-    returns: "array",
+    returns: { arrayOf: "string" },
     neverNull: true,
-    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9716,17 +9744,16 @@ var NAMES = {
     doc: "'.chunk()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "array",
+    returns: { arrayOf: "array" },
     neverNull: true,
-    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "size", exact: 1, constant: [0], slotType: { 0: "int" }, slotRange: { 0: [1, Infinity] } },
-      emit: ({ recv, args, value, bind, present }) => {
+      emit: ({ recv, args, value, bind, present: present2 }) => {
         const size = value(args[0]);
         const i = bind("i");
-        const n2 = sizeOf(present ? recv : arrayOrEmpty(recv));
+        const n2 = sizeOf(present2 ? recv : arrayOrEmpty(recv));
         return { $map: { input: { $range: [0, n2, size] }, as: i.as, in: { $slice: [recv, i.ref, size] } } };
       }
     },
@@ -9840,10 +9867,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[n=1]", allowed: [0, 1], slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
-      emit: ({ recv, args, value, bind, present }) => {
+      emit: ({ recv, args, value, bind, present: present2 }) => {
         const n2 = args.length === 0 ? 1 : value(args[0]);
         const arr = bind("arr");
-        const keep = { $max: [0, { $subtract: [sizeOf(present ? arr.ref : arrayOrEmpty(arr.ref)), n2] }] };
+        const keep = { $max: [0, { $subtract: [sizeOf(present2 ? arr.ref : arrayOrEmpty(arr.ref)), n2] }] };
         return { $let: { vars: { [arr.as]: recv }, in: { $slice: [arr.ref, keep] } } };
       }
     },
@@ -9888,9 +9915,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind, present }) => {
+      emit: ({ recv, bind, present: present2 }) => {
         const arr = bind("arr");
-        const n2 = sizeOf(present ? arr.ref : arrayOrEmpty(arr.ref));
+        const n2 = sizeOf(present2 ? arr.ref : arrayOrEmpty(arr.ref));
         return { $let: { vars: { [arr.as]: recv }, in: { $slice: [arr.ref, { $max: [0, { $subtract: [n2, 1] }] }] } } };
       }
     },
@@ -9989,9 +10016,9 @@ var NAMES = {
         // lodash's `_.size(undefined)` is 0: this cell guards a receiver that may be missing, as `.length` does.
         array: {
           args: { sig: "", none: true },
-          emit: ({ recv, present }) => sizeOf(present ? recv : arrayOrEmpty(recv))
+          emit: ({ recv, present: present2 }) => sizeOf(present2 ? recv : arrayOrEmpty(recv))
         },
-        object: { args: { sig: "", none: true }, emit: ({ recv, present }) => sizeOf(pairsOfObject(recv, present)) }
+        object: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => sizeOf(pairsOfObject(recv, present2)) }
       },
       uncertain: () => "$$REMOVE"
     },
@@ -10175,9 +10202,9 @@ var NAMES = {
           1: "'.sample()' takes no arguments. It returns one random element. For n elements write '.sampleSize(n)'."
         }
       },
-      emit: ({ recv, bind, present }) => {
+      emit: ({ recv, bind, present: present2 }) => {
         const arr = bind("arr");
-        const n2 = sizeOf(present ? arr.ref : arrayOrEmpty(arr.ref));
+        const n2 = sizeOf(present2 ? arr.ref : arrayOrEmpty(arr.ref));
         return {
           $let: {
             vars: { [arr.as]: recv },
@@ -10258,13 +10285,13 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "values", exact: 1 },
-      emit: ({ recv, args, value, bind, present }) => {
+      emit: ({ recv, args, value, bind, present: present2 }) => {
         const values = value(args[0]);
         const i = bind("i");
         return {
           $arrayToObject: {
             $map: {
-              input: { $range: [0, sizeOf(present ? recv : arrayOrEmpty(recv))] },
+              input: { $range: [0, sizeOf(present2 ? recv : arrayOrEmpty(recv))] },
               as: i.as,
               in: { k: { $toString: { $arrayElemAt: [recv, i.ref] } }, v: { $arrayElemAt: [values, i.ref] } }
             }
@@ -10285,9 +10312,8 @@ var NAMES = {
     doc: "'.zip()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "array",
+    returns: { arrayOf: "array" },
     neverNull: true,
-    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10309,9 +10335,8 @@ var NAMES = {
     doc: "'.unzip()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "array",
+    returns: { arrayOf: "array" },
     neverNull: true,
-    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10349,9 +10374,8 @@ var NAMES = {
     iterateeSlots: {
       array: { arrowOnly: "the callback takes one parameter per zipped array and a shorthand cannot stand in for it" }
     },
-    returns: "array",
+    returns: { arrayOf: "array" },
     neverNull: true,
-    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10513,9 +10537,8 @@ var NAMES = {
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: "array",
+    returns: { arrayOf: "array" },
     neverNull: true,
-    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10584,11 +10607,11 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "iteratee", exact: 1 },
-      emit: ({ recv, args, objIteratee, present }) => {
+      emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0]);
         return {
           $arrayToObject: {
-            $map: { input: pairsOfObject(recv, present), as: it.as, in: { k: `${it.ref}.k`, v: it.body } }
+            $map: { input: pairsOfObject(recv, present2), as: it.as, in: { k: `${it.ref}.k`, v: it.body } }
           }
         };
       }
@@ -10617,12 +10640,12 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "iteratee", exact: 1 },
-      emit: ({ recv, args, objIteratee, present }) => {
+      emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0]);
         return {
           $arrayToObject: {
             $map: {
-              input: pairsOfObject(recv, present),
+              input: pairsOfObject(recv, present2),
               as: it.as,
               in: { k: { $toString: it.body }, v: `${it.ref}.v` }
             }
@@ -10647,14 +10670,14 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present }) => {
+      emit: ({ recv, args, bind, value, present: present2 }) => {
         const keys = spelledKeys(args[0]);
         if (keys === null) {
           const kv = bind("kv");
           return {
             $arrayToObject: {
               $filter: {
-                input: pairsOfObject(recv, present),
+                input: pairsOfObject(recv, present2),
                 as: kv.as,
                 cond: { $in: [`${kv.ref}.k`, arrayOrEmpty(value(args[0]))] }
               }
@@ -10671,12 +10694,12 @@ var NAMES = {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
       // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named, as lodash's does.
       emit: ({ args, value, element: element2 }) => {
-        const at2 = element2().path;
+        const at3 = element2().path;
         const keys = value(args[0]);
         return [
           {
             $project: Object.fromEntries([
-              ...keys.map((k) => [at2 === "" ? k : `${at2}.${k}`, 1]),
+              ...keys.map((k) => [at3 === "" ? k : `${at3}.${k}`, 1]),
               ...keys.includes("_id") ? [] : [["_id", 0]]
             ])
           }
@@ -10699,14 +10722,14 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present }) => {
+      emit: ({ recv, args, bind, value, present: present2 }) => {
         const spelled3 = spelledKeys(args[0]);
         const keys = spelled3 ?? arrayOrEmpty(value(args[0]));
         const kv = bind("kv");
         return {
           $arrayToObject: {
             $filter: {
-              input: pairsOfObject(recv, present),
+              input: pairsOfObject(recv, present2),
               as: kv.as,
               cond: { $not: [{ $in: [`${kv.ref}.k`, keys] }] }
             }
@@ -10718,9 +10741,9 @@ var NAMES = {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
       // Drops the named fields of the ELEMENT.
       emit: ({ args, value, element: element2 }) => {
-        const at2 = element2().path;
+        const at3 = element2().path;
         return [
-          { $project: Object.fromEntries(value(args[0]).map((k) => [at2 === "" ? k : `${at2}.${k}`, 0])) }
+          { $project: Object.fromEntries(value(args[0]).map((k) => [at3 === "" ? k : `${at3}.${k}`, 0])) }
         ];
       }
     },
@@ -10745,9 +10768,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ recv, args, objIteratee, present }) => {
+      emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0]);
-        return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: it.body } } };
+        return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: it.body } } };
       }
     },
     stream: unsupported("'.pickBy()' has no stream form: it produces a value, not a stream of documents."),
@@ -10772,10 +10795,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ recv, args, objIteratee, present }) => {
+      emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0]);
         return {
-          $arrayToObject: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: { $not: [it.body] } } }
+          $arrayToObject: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: { $not: [it.body] } } }
         };
       }
     },
@@ -10795,12 +10818,12 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind, present }) => {
+      emit: ({ recv, bind, present: present2 }) => {
         const kv = bind("kv");
         return {
           $arrayToObject: {
             $map: {
-              input: pairsOfObject(recv, present),
+              input: pairsOfObject(recv, present2),
               as: kv.as,
               in: { k: { $toString: `${kv.ref}.v` }, v: `${kv.ref}.k` }
             }
@@ -10819,16 +10842,15 @@ var NAMES = {
     doc: "'.toPairs()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "object",
-    returns: "array",
+    returns: { arrayOf: "array" },
     neverNull: true,
-    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind, present }) => {
+      emit: ({ recv, bind, present: present2 }) => {
         const kv = bind("kv");
-        return { $map: { input: pairsOfObject(recv, present), as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
+        return { $map: { input: pairsOfObject(recv, present2), as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
       }
     },
     stream: unsupported("'.toPairs()' has no stream form: it produces a value, not a stream of documents."),
@@ -10910,9 +10932,8 @@ var NAMES = {
     doc: "'.words()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "string",
-    returns: "array",
+    returns: { arrayOf: "string" },
     neverNull: true,
-    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => wordsExpr(recv, bind) },
@@ -11322,7 +11343,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $setIsSubset: [r, arrayOrEmpty(value(args[0]))] }))
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, arrayOrEmpty(value(args[0]))] }))
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -11342,7 +11363,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({ $setIsSubset: [arrayOrEmpty(value(args[0])), r] }))
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [arrayOrEmpty(value(args[0])), r] }))
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -12675,7 +12696,7 @@ var NAMES = {
     ),
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) => nullOr(recv, present, bind, (r) => ({
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
         $eq: [sizeOf({ $setIntersection: [r, arrayOrEmpty(value(args[0]))] }), 0]
       }))
     },
@@ -13513,11 +13534,11 @@ var NAMES = {
           args: { sig: "", none: true },
           // `$size` aborts on null; a receiver that may be missing answers null, as a
           // JavaScript method does, and the cell counts one that is there as it is.
-          emit: ({ recv, present, bind }) => Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present, bind, (r) => ({ $size: r }))
+          emit: ({ recv, present: present2, bind }) => Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present2, bind, (r) => ({ $size: r }))
         },
         string: {
           args: { sig: "", none: true },
-          emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $strLenCP: r }))
+          emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $strLenCP: r }))
         },
         // `$$.length` has no inline size: it places a materialiser ahead of the
         // statement and reads the field it wrote.
@@ -13665,8 +13686,8 @@ function strictEqualityQuery(input, negated) {
     }
     return negated ? queryOwnValue(typed.path, { $not: { $type: typed.alias } }) : queryOwnValue(typed.path, { $type: typed.alias });
   }
-  const present = presenceTest(input);
-  if (present !== null) return presenceQuery(present, negated);
+  const present2 = presenceTest(input);
+  if (present2 !== null) return presenceQuery(present2, negated);
   if (comparesALength(input)) return null;
   const mod = moduloTest(input);
   if (mod !== null) {
@@ -14935,9 +14956,6 @@ function receiverFamiliesOf(name2) {
 function elementsOf(name2) {
   return row(name2)?.elements;
 }
-function elementKindOf(name2) {
-  return row(name2)?.elementKind;
-}
 function argCountOf(name2, family) {
   const cell = row(name2)?.expr;
   if (cell === null || typeof cell !== "object") return void 0;
@@ -14990,19 +15008,6 @@ function refusesFamily(name2, family) {
   const cell = row(name2)?.expr;
   const branch = cell?.perFamily?.[family];
   return typeof branch === "object" && branch !== null && typeof branch.unsupported === "string";
-}
-function agreedReturnOf(name2) {
-  const fams = families(row(name2)?.on);
-  const r = returnsOf(name2);
-  if (fams === void 0 || fams === "any" || typeof r !== "object" || r === null) return null;
-  const kinds = /* @__PURE__ */ new Set();
-  for (const f of fams) {
-    if (f === "stream") continue;
-    const k = r[f];
-    if (k === void 0 || k === "same" || k === "element" || k === "unknown") return null;
-    kinds.add(k);
-  }
-  return kinds.size === 1 ? [...kinds][0] : null;
 }
 function isKnownName(name2) {
   return row(name2) !== void 0;
@@ -15110,8 +15115,12 @@ function diagnosticOf(name2) {
 function preservesCountOf(name2) {
   return row(name2)?.preservesCount === true;
 }
-function replacesDocumentOf(name2) {
-  return row(name2)?.replacesDocument ?? false;
+function documentOf(name2) {
+  return row(name2)?.document ?? null;
+}
+function familiesOf(name2) {
+  const fams = families(row(name2)?.on);
+  return fams === void 0 || fams === "any" ? null : fams;
 }
 function onlyOf(name2) {
   return row(name2)?.only ?? [];
@@ -22217,10 +22226,10 @@ var mutatedArgument = {
     const n2 = node;
     if (n2.type !== "MethodCall" || typeof n2.name !== "string") return node;
     const on = n2.object;
-    const at2 = mutatedArgumentOf(n2.name, on?.type === "Ident" ? on.name ?? null : null);
-    if (at2 === void 0) return node;
+    const at3 = mutatedArgumentOf(n2.name, on?.type === "Ident" ? on.name ?? null : null);
+    if (at3 === void 0) return node;
     const args = n2.args;
-    const target = args[at2];
+    const target = args[at3];
     if (!isNode4(target)) return node;
     if (target.type !== "Ident" && (target.type !== "FieldRef" || target.path === "")) return node;
     return writeBack(target, { ...n2 }, n2.pos);
@@ -22633,7 +22642,7 @@ var Scope = class _Scope {
     const as = mongoVarName(js);
     const ref = refOf(as);
     const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type, elements: "unknown", present: false, mutable: false, pos, level });
+    bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
     const own = new Set(this.own);
@@ -22657,6 +22666,176 @@ var Scope = class _Scope {
 var scratchSlot = (n2) => fieldSlot(tmpSlot(n2));
 function fieldSlot(path) {
   return { path, ref: "$" + path };
+}
+
+// src/compiler/emit/type.ts
+var has = (t, k) => t.kinds === "any" || t.kinds.has(k);
+var ANY = { kinds: "any", absent: true, open: true };
+var NOTHING = { kinds: /* @__PURE__ */ new Set(), absent: true, open: false };
+var isNothing = (t) => t.kinds !== "any" && t.kinds.size === 0;
+var DOCUMENT = { kinds: /* @__PURE__ */ new Set(["object"]), absent: false, open: true };
+var of = (k, absent = false) => ({ kinds: /* @__PURE__ */ new Set([k]), absent, open: k === "object" });
+var arrayOf = (element2, absent = false) => ({
+  kinds: /* @__PURE__ */ new Set(["array"]),
+  absent,
+  element: element2,
+  open: false
+});
+var tupleOf = (items, absent = false) => ({
+  kinds: /* @__PURE__ */ new Set(["array"]),
+  absent,
+  element: joinAll(items),
+  items,
+  open: false
+});
+var objectOf = (props, open, values = void 0, absent = false) => ({ kinds: /* @__PURE__ */ new Set(["object"]), absent, props, open, ...values === void 0 ? {} : { values } });
+var present = (t) => t.absent ? { ...t, absent: false } : t;
+var maybeAbsent = (t) => t.absent ? t : { ...t, absent: true };
+var isOnly = (t, k) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has(k);
+function single2(t) {
+  if (t.kinds === "any" || t.kinds.size !== 1) return "unknown";
+  return [...t.kinds][0];
+}
+function elementOf(t) {
+  if (!has(t, "array")) return NOTHING;
+  return t.element ?? ANY;
+}
+function itemOf(t, i) {
+  if (t.items !== void 0) return i < t.items.length ? t.items[i] : NOTHING;
+  return elementOf(t);
+}
+function propOf(t, name2) {
+  if (t.kinds !== "any" && !t.kinds.has("object")) return NOTHING;
+  const known = t.props?.get(name2);
+  if (known !== void 0) return known;
+  if (!t.open) return NOTHING;
+  return t.values ?? ANY;
+}
+function at2(t, path) {
+  if (path === "") return t;
+  let cur = t;
+  for (const seg of path.split(".")) {
+    cur = propOf(cur, seg);
+    if (isNothing(cur)) return NOTHING;
+  }
+  return cur;
+}
+function written(doc, path, value) {
+  if (path === "") return value;
+  const dot = path.indexOf(".");
+  const head = dot === -1 ? path : path.slice(0, dot);
+  const rest = dot === -1 ? "" : path.slice(dot + 1);
+  const parent = asObject(doc);
+  const props = new Map(parent.props ?? []);
+  const child = rest === "" ? value : written(propOf(parent, head), rest, value);
+  props.set(head, child);
+  return { ...parent, props };
+}
+function asObject(t) {
+  if (isOnly(t, "object") && !t.absent) return t;
+  const known = isOnly(t, "object");
+  return {
+    kinds: /* @__PURE__ */ new Set(["object"]),
+    absent: false,
+    props: known ? t.props : void 0,
+    open: known ? t.open : true,
+    ...known && t.values !== void 0 ? { values: t.values } : {}
+  };
+}
+var joinAll = (list) => list.length === 0 ? NOTHING : list.reduce((acc, t) => join(acc, t));
+function join(a, b) {
+  if (isNothing(a)) return maybeAbsent(b);
+  if (isNothing(b)) return maybeAbsent(a);
+  const kinds = a.kinds === "any" || b.kinds === "any" ? "any" : /* @__PURE__ */ new Set([...a.kinds, ...b.kinds]);
+  const out = { kinds, absent: a.absent || b.absent, open: a.open || b.open };
+  if (a.element !== void 0 || b.element !== void 0) out.element = join(a.element ?? ANY, b.element ?? ANY);
+  if (a.items !== void 0 && b.items !== void 0 && a.items.length === b.items.length) {
+    out.items = a.items.map((t, i) => join(t, b.items[i]));
+  }
+  if (a.props !== void 0 || b.props !== void 0) {
+    const props = /* @__PURE__ */ new Map();
+    for (const k of /* @__PURE__ */ new Set([...a.props?.keys() ?? [], ...b.props?.keys() ?? []])) {
+      props.set(k, join(propOf(a, k), propOf(b, k)));
+    }
+    out.props = props;
+  }
+  if (a.values !== void 0 || b.values !== void 0) out.values = join(a.values ?? ANY, b.values ?? ANY);
+  return out;
+}
+function merge(a, b) {
+  const props = /* @__PURE__ */ new Map();
+  const bOpen = b.kinds === "any" || b.open;
+  for (const [k, t] of a.props ?? []) props.set(k, bOpen ? join(t, b.values ?? ANY) : t);
+  for (const [k, t] of b.props ?? []) {
+    const base = props.get(k) ?? propOf(a, k);
+    props.set(k, b.absent ? join(base, t) : t);
+  }
+  const open = a.kinds === "any" || a.open || bOpen;
+  const values = open ? join(a.values ?? (a.open || a.kinds === "any" ? ANY : NOTHING), b.values ?? (bOpen ? ANY : NOTHING)) : void 0;
+  return objectOf(props, open, open ? values : void 0);
+}
+function familyOf(k) {
+  switch (k) {
+    case "string":
+    case "array":
+    case "number":
+    case "object":
+    case "date":
+    case "stream":
+      return k;
+    default:
+      return null;
+  }
+}
+var isTerm = (e, key) => typeof e === "object" && e !== null && key in e;
+function evaluate2(e, site) {
+  if (typeof e === "string") {
+    switch (e) {
+      case "same":
+        return site.receiver;
+      case "element":
+        return elementOf(site.receiver);
+      case "unknown":
+        return ANY;
+      case "picked":
+        return selectProps(site.receiver, site.names, true);
+      case "omitted":
+        return selectProps(site.receiver, site.names, false);
+      default:
+        return of(e);
+    }
+  }
+  if (isTerm(e, "arrayOf")) return arrayOf(evaluate2(e.arrayOf, site));
+  if (isTerm(e, "callback")) return site.callback(e.callback);
+  if (isTerm(e, "arg")) return site.arg(e.arg);
+  if (isTerm(e, "merge")) {
+    const terms = e.merge.map((t) => evaluate2(t, site));
+    return terms.reduce((acc, t) => merge(acc, t), objectOf(/* @__PURE__ */ new Map(), false));
+  }
+  if (isTerm(e, "recordOf")) return objectOf(/* @__PURE__ */ new Map(), true, evaluate2(e.recordOf, site));
+  if (isTerm(e, "tuple")) return tupleOf(e.tuple.map((t) => evaluate2(t, site)));
+  const map = e;
+  const family = site.family ?? familyOfType(site.receiver);
+  if (family !== null) {
+    const term = map[family];
+    return term === void 0 ? ANY : evaluate2(term, site);
+  }
+  return ANY;
+}
+function familyOfType(t) {
+  const k = single2(t);
+  return k === "unknown" ? null : familyOf(k);
+}
+function selectProps(recv, names, keep) {
+  if (names === null) return objectOf(/* @__PURE__ */ new Map(), true);
+  const props = /* @__PURE__ */ new Map();
+  if (keep) {
+    for (const n2 of names) props.set(n2, propOf(recv, n2));
+    return objectOf(props, false);
+  }
+  const open = recv.kinds === "any" || recv.open;
+  for (const [k, t] of recv.props ?? []) if (!names.includes(k)) props.set(k, t);
+  return objectOf(props, open, open ? recv.values : void 0);
 }
 
 // src/levenshtein.ts
@@ -22709,7 +22888,7 @@ function positionOf(where) {
   return where.at in CELL_OF ? where.at : null;
 }
 var isObj2 = (v) => typeof v === "object" && v !== null;
-function familiesOf(row2) {
+function familiesOf2(row2) {
   const on = row2.on;
   if (on === void 0) return void 0;
   if (on === "any") return "any";
@@ -22755,7 +22934,7 @@ function listedIn(name2, position) {
 }
 function familiesFor(name2) {
   const row2 = ROWS2[name2];
-  return row2 === void 0 ? void 0 : familiesOf(row2);
+  return row2 === void 0 ? void 0 : familiesOf2(row2);
 }
 function everyName() {
   return Object.keys(NAMES);
@@ -23064,8 +23243,8 @@ var writeToOwnStream = (name2, pos) => new CodegenError(
   `'${name2}' is the body's own stream, and a stream is not a value a statement writes to. Append documents with '.concat(\u2026)' ('${name2}.concat([{ \u2026 }]);'), keep some with '.filter(\u2026)', or run a stage on it ('${name2}.$match(\u2026);').`,
   pos
 );
-var streamElementsNotDocuments = (noun, written, pos) => new CodegenError(
-  `'${written}' makes documents from the array's ELEMENTS, one each, and these elements are ${noun}. Put each under a field \u2014 '<array>.map((v) => ({ value: v }))' \u2014 or write to a field of the document you have ('$.<field> = <array>;').`,
+var streamElementsNotDocuments = (noun, written2, pos) => new CodegenError(
+  `'${written2}' makes documents from the array's ELEMENTS, one each, and these elements are ${noun}. Put each under a field \u2014 '<array>.map((v) => ({ value: v }))' \u2014 or write to a field of the document you have ('$.<field> = <array>;').`,
   pos
 );
 var notAStreamChain = (pos, noun, lead = "'$$ = \u2026' replaces the STREAM, so the right side has to be MANY documents", how = "Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').") => new CodegenError(`${lead}${noun === void 0 ? "" : ` \u2014 ${noun} is one value`}. ${how}`, pos);
@@ -23142,8 +23321,8 @@ var readsEnclosingVariable = (name2, stage, pos) => new CodegenError(
   `'${name2}' is bound by an enclosing callback. A read of another collection is a '${stage}' STAGE: the server runs it over the documents, outside that callback, where '${name2}' has no value. Make the elements documents first \u2014 '$$ = $.<array>;' \u2014 then each one is a document the join reads: '$.<field> = $$$.<coll>.find(\u2026)'. Or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(\u2026);') and use that binding inside it.`,
   pos
 );
-var documentsNeedNoStage = (written, made, pos) => new CodegenError(
-  `'${written}' writes the documents out as the program spells them. This value needs a '${made}' stage of its own to produce it, and the documents run where nothing may stand ahead of them. Append the other collection's documents themselves: '$$.push(...$$$.<coll>.filter(\u2026))' for many, '$$.push($$$.<coll>.find({ \u2026 }))' for one. Or give the field a value the program already holds \u2014 a constant, or a 'jsmql.compile' parameter.`,
+var documentsNeedNoStage = (written2, made, pos) => new CodegenError(
+  `'${written2}' writes the documents out as the program spells them. This value needs a '${made}' stage of its own to produce it, and the documents run where nothing may stand ahead of them. Append the other collection's documents themselves: '$$.push(...$$$.<coll>.filter(\u2026))' for many, '$$.push($$$.<coll>.find({ \u2026 }))' for one. Or give the field a value the program already holds \u2014 a constant, or a 'jsmql.compile' parameter.`,
   pos
 );
 var notInUpdateSpec = (name2, container, allowed, pos) => new CodegenError(
@@ -23533,15 +23712,33 @@ var Chain = class {
   }
 };
 var Env = class _Env {
-  constructor(scope, site, chain, proven = /* @__PURE__ */ new Set()) {
+  constructor(scope, site, chain, documents = [DOCUMENT]) {
     this.scope = scope;
     this.site = site;
     this.chain = chain;
-    this.proven = proven;
+    this.documents = documents;
   }
-  /** The same Env, with one more field path proven to be there. */
+  /** The proof at a dotted path of the document on `level` — this level unless said otherwise. */
+  typeAt(path, level = this.level) {
+    return at2(this.documents[level], path);
+  }
+  /** The same Env, with the document on this level changed. */
+  withDocument(doc) {
+    const documents = [...this.documents];
+    documents[this.level] = doc;
+    return new _Env(this.scope, this.site, this.chain, documents);
+  }
+  /** The same Env, with one field path proven to be there. */
   proving(path) {
-    return new _Env(this.scope, this.site, this.chain, /* @__PURE__ */ new Set([...this.proven, path]));
+    return this.withDocument(written(this.documents[this.level], path, present(this.typeAt(path))));
+  }
+  /** The same Env, after a write of a value proven `type` at `path` on this level. */
+  written(path, type) {
+    return this.withDocument(written(this.documents[this.level], path, type));
+  }
+  /** The same Env, with the document on this level replaced by `doc`. */
+  document(doc) {
+    return this.withDocument(doc);
   }
   /**
    * The Env a program starts in. The compiler reserves every name the program
@@ -23555,7 +23752,7 @@ var Env = class _Env {
   // ── the transitions: each answers a new Env and changes ONE thing ──────────
   /** A name bound to something other than a variable — the document, a slot, a function. */
   bind(js, binding) {
-    return new _Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain, this.proven);
+    return new _Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain, this.documents);
   }
   /** How many bodies over another collection enclose this node: the level of ITS documents. */
   get level() {
@@ -23589,15 +23786,15 @@ var Env = class _Env {
   }
   /**
    * The Env after a stage that replaced the document: every field-carried
-   * binding is gone, and so is every path a test proved — the document that
-   * held those paths is not the document the next stage sees.
+   * binding is gone, and so is every proof about the document — the document
+   * that held those paths is not the document the next stage sees.
    */
   dropFields(by, message) {
-    return new _Env(this.scope.dropFields(by, message), this.site, this.chain);
+    return new _Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
   }
   /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
   block() {
-    return new _Env(this.scope.block(), this.site, this.chain, this.proven);
+    return new _Env(this.scope.block(), this.site, this.chain, this.documents);
   }
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js, type, pos) {
@@ -23609,15 +23806,15 @@ var Env = class _Env {
   }
   /** Move to where phase 4 says a child stands. */
   at(where) {
-    return new _Env(this.scope, { ...this.site, where }, this.chain, this.proven);
+    return new _Env(this.scope, { ...this.site, where }, this.chain, this.documents);
   }
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name2) {
-    return new _Env(this.scope, { ...this.site, inside: name2 }, this.chain, this.proven);
+    return new _Env(this.scope, { ...this.site, inside: name2 }, this.chain, this.documents);
   }
   /** Inside `$literal(…)`. */
   literal() {
-    return new _Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain, this.proven);
+    return new _Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain, this.documents);
   }
   /**
    * Into an `$elemMatch` body: the element is the root there, and the outer
@@ -23628,16 +23825,17 @@ var Env = class _Env {
       ...this.site,
       boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [], element: param, capture: null }]
     };
-    return new _Env(this.scope, site, this.chain, this.proven);
+    return new _Env(this.scope, site, this.chain, this.documents);
   }
-  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. */
+  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. A body over another collection starts a document level of its own. */
   enter(boundary, chain) {
     const site = {
       ...this.site,
       where: { at: "statement" },
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }]
     };
-    return new _Env(this.scope, site, chain, this.proven);
+    const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
+    return new _Env(this.scope, site, chain, documents);
   }
   /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
   get rootChain() {
@@ -23649,7 +23847,7 @@ var Env = class _Env {
     return this.scope.lookup(js, pos);
   }
   bound(b) {
-    return { as: b.as, ref: b.ref, env: new _Env(b.scope, this.site, this.chain, this.proven) };
+    return { as: b.as, ref: b.ref, env: new _Env(b.scope, this.site, this.chain, this.documents) };
   }
 };
 
@@ -23772,8 +23970,8 @@ function stringify2(value, options) {
         const flat2 = `[${parts2.join(", ")}]`;
         if (pad2 === "" || fits(flat2, depth)) return flat2;
         return `[
-${parts2.map((p) => at2(depth + 1) + p).join(",\n")}
-${at2(depth)}]`;
+${parts2.map((p) => at3(depth + 1) + p).join(",\n")}
+${at3(depth)}]`;
       }
       const entries = Object.entries(v);
       if (entries.length === 0) return "{}";
@@ -23781,14 +23979,14 @@ ${at2(depth)}]`;
       const flat = `{ ${parts.join(", ")} }`;
       if (pad2 === "" || fits(flat, depth)) return flat;
       return `{
-${parts.map((p) => at2(depth + 1) + p).join(",\n")}
-${at2(depth)}}`;
+${parts.map((p) => at3(depth + 1) + p).join(",\n")}
+${at3(depth)}}`;
     } finally {
       seen.delete(v);
     }
   };
-  const at2 = (d) => pad2.repeat(d);
-  const fits = (text, depth) => !text.includes("\n") && at2(depth).length + text.length <= width;
+  const at3 = (d) => pad2.repeat(d);
+  const fits = (text, depth) => !text.includes("\n") && at3(depth).length + text.length <= width;
   return render(value, 0);
 }
 
@@ -23930,7 +24128,7 @@ function checkCharSet(name2, key, e, set) {
 }
 function checkBody(name2, rule, args, keys, pos) {
   if (args.length === 1 && args[0].type === "Injected") return;
-  let present;
+  let present2;
   let hasSpread = false;
   let valueOf2;
   const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
@@ -23943,10 +24141,10 @@ function checkBody(name2, rule, args, keys, pos) {
     hasSpread = false;
     const byKey = /* @__PURE__ */ new Map();
     for (const e of entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
-    present = [...byKey.keys()];
+    present2 = [...byKey.keys()];
     valueOf2 = (k) => byKey.get(k);
   } else {
-    present = keys.slice(0, args.length);
+    present2 = keys.slice(0, args.length);
     valueOf2 = (k) => {
       const i = keys.indexOf(k);
       return i >= 0 && i < args.length ? args[i] : void 0;
@@ -23954,7 +24152,7 @@ function checkBody(name2, rule, args, keys, pos) {
   }
   const closed = [...rule.required, ...rule.optional];
   if (body !== null && !hasSpread && rule.closed) {
-    for (const k of present) {
+    for (const k of present2) {
       if (!closed.includes(k)) {
         throw new CodegenError(
           `'${name2}' has no parameter '${k}'.${didYouMean(k, closed, (s) => s)} Valid keys: ${closed.join(", ")}.`,
@@ -23965,10 +24163,10 @@ function checkBody(name2, rule, args, keys, pos) {
   }
   if (!hasSpread) {
     for (const k of rule.required) {
-      if (!present.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
+      if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
     }
     for (const group of rule.exactlyOneOf ?? []) {
-      const found2 = group.filter((k) => present.includes(k));
+      const found2 = group.filter((k) => present2.includes(k));
       if (found2.length !== 1) {
         throw new CodegenError(
           `'${name2}' requires exactly one of ${group.map((k) => `'${k}'`).join(", ")}${found2.length === 0 ? ", but none is present" : `, but got ${found2.map((k) => `'${k}'`).join(" and ")}`}.`,
@@ -23977,7 +24175,7 @@ function checkBody(name2, rule, args, keys, pos) {
       }
     }
     for (const group of rule.atLeastOneOf ?? []) {
-      if (!group.some((k) => present.includes(k))) {
+      if (!group.some((k) => present2.includes(k))) {
         throw new CodegenError(
           `'${name2}' needs at least one of ${group.map((k) => `'${k}'`).join(", ")}, and none is present.`,
           pos
@@ -23985,8 +24183,8 @@ function checkBody(name2, rule, args, keys, pos) {
       }
     }
     for (const [a, b] of rule.notTogether ?? []) {
-      const inA = present.filter((k) => a.includes(k));
-      const inB = present.filter((k) => b.includes(k));
+      const inA = present2.filter((k) => a.includes(k));
+      const inB = present2.filter((k) => b.includes(k));
       if (inA.length > 0 && inB.length > 0) {
         throw new CodegenError(
           `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
@@ -23995,9 +24193,9 @@ function checkBody(name2, rule, args, keys, pos) {
       }
     }
     for (const group of rule.together ?? []) {
-      const found2 = group.filter((k) => present.includes(k));
+      const found2 = group.filter((k) => present2.includes(k));
       if (found2.length !== 0 && found2.length !== group.length) {
-        const missing = group.filter((k) => !present.includes(k));
+        const missing = group.filter((k) => !present2.includes(k));
         throw new CodegenError(
           `'${name2}' takes ${group.map((k) => `'${k}'`).join(" and ")} together or neither: ${missing.map((k) => `'${k}'`).join(" and ")} ${missing.length === 1 ? "is" : "are"} missing.`,
           pos
@@ -24006,7 +24204,7 @@ function checkBody(name2, rule, args, keys, pos) {
     }
   }
   const allowed = rule.everyValueIn ?? [];
-  for (const k of rule.everyValueIn === void 0 ? [] : present) {
+  for (const k of rule.everyValueIn === void 0 ? [] : present2) {
     const v = valueOf2(k);
     if (v === void 0) continue;
     const lit = literal(v);
@@ -24021,7 +24219,7 @@ function checkBody(name2, rule, args, keys, pos) {
   }
   if (rule.onePolarity === true && body !== null) {
     let seen = null;
-    for (const k of present) {
+    for (const k of present2) {
       if (k === "_id") continue;
       const v = valueOf2(k);
       if (v === void 0) continue;
@@ -24060,7 +24258,7 @@ function checkBody(name2, rule, args, keys, pos) {
       if (v !== void 0 && v.type === "ObjectLiteral") checkBody(`${name2}.${k}`, inner, [v], [], v.pos);
     }
     if (rule.eachValue !== void 0) {
-      for (const k of present) {
+      for (const k of present2) {
         const v = valueOf2(k);
         if (v !== void 0 && v.type === "ObjectLiteral") checkBody(`${name2}.${k}`, rule.eachValue, [v], [], v.pos);
       }
@@ -24076,7 +24274,7 @@ function checkBody(name2, rule, args, keys, pos) {
       }
     }
   }
-  if (rule.nonEmpty === true && body !== null && present.length === 0) {
+  if (rule.nonEmpty === true && body !== null && present2.length === 0) {
     throw new CodegenError(
       `'${name2}' takes at least one field. An empty body names none, and the server refuses it.`,
       pos
@@ -24312,7 +24510,7 @@ function checkDateFormat(name2, fmt, pos) {
   }
 }
 
-// src/compiler/emit/types.ts
+// src/compiler/emit/prove.ts
 var NAMESPACES2 = namespaceNames();
 function isPresent(node, env) {
   switch (node.type) {
@@ -24329,9 +24527,9 @@ function isPresent(node, env) {
     case "Injected":
       return node.value !== null && node.value !== void 0 && !isMqlShaped(node.value);
     case "FieldRef":
-      return node.path === "" || env.proven.has(node.path);
+      return !env.typeAt(node.path, 0).absent;
     case "Ident":
-      return env.scope.has(node.name) && env.lookup(node.name, node.pos).present;
+      return env.scope.has(node.name) && !env.lookup(node.name, node.pos).type.absent;
     case "MethodCall": {
       const name2 = namedRow(node) ?? node.name;
       if (!neverNullOf(name2)) return false;
@@ -24369,39 +24567,6 @@ function familyOfKind(k) {
       return null;
   }
 }
-function resolveReturns(r, receiver, family, elements = "unknown") {
-  if (typeof r === "string") {
-    if (r === "same") return receiver;
-    if (r === "element") return elements;
-    return r;
-  }
-  const byFamily = family === null ? void 0 : r[family];
-  if (byFamily === void 0) return "unknown";
-  if (byFamily === "element") return elements;
-  return byFamily;
-}
-function elementKindOf2(node, env) {
-  if (node.type === "ArrayLiteral") {
-    let one = null;
-    for (const el of node.elements) {
-      if (el.type === "SpreadElement") return "unknown";
-      const k = kindOf3(el, env);
-      if (k === "unknown" || one !== null && k !== one) return "unknown";
-      one = k;
-    }
-    return one ?? "unknown";
-  }
-  const named = node.type === "MethodCall" || node.type === "OperatorCall" ? namedRow(node) ?? node.name : node.type === "MemberAccess" && isCallable(node.name) ? node.name : null;
-  if (named !== null) {
-    const stated = elementKindOf(named);
-    if (stated !== void 0) return stated;
-  }
-  return elementsRead(node, env);
-}
-function elementsRead(node, env) {
-  if (node.type !== "Ident" || !env.scope.has(node.name)) return "unknown";
-  return env.lookup(node.name, node.pos).elements;
-}
 function sourceFamily(node) {
   if (node.type === "Ident" && NAMESPACES2.has(node.name)) return node.name;
   if (node.type === "RegexLiteral") return "regexp";
@@ -24409,111 +24574,184 @@ function sourceFamily(node) {
     return constructedFamilyOf(node.callee.name) ?? null;
   return null;
 }
-function kindOf3(node, env) {
-  switch (node.type) {
-    case "NumberLiteral":
-    case "BigIntLiteral":
-      return "number";
-    case "StringLiteral":
-      return node.value.startsWith("$") ? "unknown" : "string";
-    case "TemplateLiteral":
-      return "string";
-    case "BooleanLiteral":
-      return "bool";
-    case "ObjectIdLiteral":
-      return "objectId";
-    case "Injected": {
-      const v = node.value;
-      if (typeof v === "number" || typeof v === "bigint") return "number";
-      if (typeof v === "string") return isMqlShaped(v) ? "unknown" : "string";
-      if (typeof v === "boolean") return "bool";
-      if (isDate(v)) return "date";
-      if (Array.isArray(v)) return isMqlShaped(v) ? "unknown" : "array";
-      const tag = bsonTagOf(v);
-      if (tag !== void 0) return BSON_KIND[tag] ?? "unknown";
-      if (isPlainObject(v)) {
-        return isMqlShaped(v) ? "unknown" : "object";
-      }
-      return "unknown";
-    }
-    case "ArrayLiteral":
-      return "array";
-    case "ObjectLiteral":
-      return namedRow(node) === null ? "object" : "unknown";
-    case "FieldRef":
-      return node.path === "" ? "object" : "unknown";
-    case "Ident":
-      return env.scope.has(node.name) ? env.lookup(node.name, node.pos).type : "unknown";
-    case "MemberAccess": {
-      if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
-        return resolveReturns(
-          returnsOf(node.name),
-          kindOf3(node.object, env),
-          receiverFamilyOf(node.object, env),
-          elementsRead(node.object, env)
-        );
-      }
-      return "unknown";
-    }
-    case "MethodCall": {
-      const family = receiverFamilyOf(node.object, env);
-      if (family !== null)
-        return resolveReturns(returnsOf(node.name), kindOf3(node.object, env), family, elementsRead(node.object, env));
-      const r = returnsOf(node.name);
-      if (typeof r === "string" && r !== "same" && r !== "element" && r !== "unknown") return r;
-      const sole = soleFieldFamilyOf(node.name);
-      if (sole !== null) return resolveReturns(r, sole, sole);
-      const agreed = agreedReturnOf(node.name);
-      return agreed ?? "unknown";
-    }
-    case "OperatorCall":
-      return resolveReturns(returnsOf(node.name), "unknown", null);
-    case "CallExpression":
-      if (node.callee.type === "Lambda" && node.callee.body !== void 0) return kindOf3(node.callee.body, env);
-      if (node.callee.type === "Ident" && env.scope.has(node.callee.name)) {
-        const b = env.lookup(node.callee.name, node.callee.pos);
-        if (b.ref.kind === "function" && b.ref.lambda.type === "Lambda" && b.ref.lambda.body !== void 0)
-          return kindOf3(b.ref.lambda.body, env);
-      }
-      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? resolveReturns(returnsOf(node.callee.name), "unknown", null) : "unknown";
-    case "NewExpression":
-      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? resolveReturns(returnsOf(node.callee.name), "unknown", null) : "unknown";
-    case "UnaryExpr": {
-      const key = productionForOperator("UnaryExpr", node.op);
-      return key === void 0 ? "unknown" : resolveReturns(returnsOf(key), "unknown", null);
-    }
-    case "BinaryExpr": {
-      if (node.op === "+") {
-        const l = kindOf3(node.left, env);
-        const r = kindOf3(node.right, env);
-        if (l === "string" || r === "string") return "string";
-        return l === "number" && r === "number" ? "number" : "unknown";
-      }
-      if (node.op === "&&" || node.op === "||") {
-        return kindOf3(node.left, env) === "bool" && kindOf3(node.right, env) === "bool" ? "bool" : "unknown";
-      }
-      if (node.op === "??") {
-        const l = kindOf3(node.left, env);
-        return l === kindOf3(node.right, env) ? l : "unknown";
-      }
-      const key = productionForOperator("BinaryExpr", node.op);
-      return key === void 0 ? "unknown" : resolveReturns(returnsOf(key), "unknown", null);
-    }
-    case "TernaryExpr": {
-      const c = kindOf3(node.consequent, env);
-      return c === kindOf3(node.alternate, env) ? c : "unknown";
-    }
-    case "ExprBlock":
-      return kindOf3(node.ret, env);
-    default:
-      return "unknown";
-  }
-}
+var kindOf3 = (node, env) => single2(typeOf(node, env));
+var elementKindOf = (node, env) => single2(elementOf(typeOf(node, env)));
 function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
   if (src !== null) return src;
   if (node.type === "CollectionRef") return "stream";
   return familyOfKind(kindOf3(node, env));
+}
+function namesIn2(arg) {
+  if (arg === void 0) return null;
+  if (arg.type === "StringLiteral") return [arg.value];
+  if (arg.type !== "ArrayLiteral") return null;
+  const out = [];
+  for (const el of arg.elements) {
+    if (el.type !== "StringLiteral") return null;
+    out.push(el.value);
+  }
+  return out;
+}
+function siteOf(receiver, family, args, env) {
+  return {
+    receiver,
+    family,
+    arg: (n2) => {
+      const a = args[n2];
+      return a === void 0 || a.type === "Lambda" || a.type === "SpreadElement" ? ANY : typeOf(a, env);
+    },
+    // A callback's return needs the body lowered under its bound parameters; the
+    // rows that state `callback` are evaluated where that Env exists.
+    callback: () => ANY,
+    names: namesIn2(args[0])
+  };
+}
+function callOn(name2, receiver, family, args, env) {
+  return evaluate2(returnsOf(name2), siteOf(receiver, family, args, env));
+}
+function callOnUnproven(name2, receiver, args, env) {
+  const r = returnsOf(name2);
+  const site = siteOf(receiver, null, args, env);
+  if (typeof r === "string") return r === "same" || r === "element" ? ANY : evaluate2(r, site);
+  if (!isFamilyMap(r)) return evaluate2(r, site);
+  const sole = soleFieldFamilyOf(name2);
+  if (sole !== null) return evaluate2(r, { ...site, receiver: of(sole), family: sole });
+  const fams = familiesOf(name2);
+  if (fams === null) return ANY;
+  const answers = [];
+  for (const f of fams) {
+    if (f === "stream") continue;
+    const term = r[f];
+    if (term === void 0 || term === "same" || term === "element" || term === "unknown") return ANY;
+    answers.push(evaluate2(term, site));
+  }
+  return answers.length === 0 ? ANY : joinAll(answers);
+}
+var isFamilyMap = (r) => typeof r === "object" && r !== null && !("arrayOf" in r) && !("callback" in r) && !("arg" in r) && !("merge" in r) && !("recordOf" in r) && !("tuple" in r);
+function injectedType(v) {
+  if (typeof v === "number" || typeof v === "bigint") return of("number");
+  if (typeof v === "string") return isMqlShaped(v) ? ANY : of("string");
+  if (typeof v === "boolean") return of("bool");
+  if (isDate(v)) return of("date");
+  if (Array.isArray(v)) return isMqlShaped(v) ? ANY : of("array");
+  const tag = bsonTagOf(v);
+  if (tag !== void 0) {
+    const k = BSON_KIND[tag];
+    return k === void 0 ? ANY : of(k);
+  }
+  if (isPlainObject(v)) return isMqlShaped(v) ? ANY : of("object");
+  return ANY;
+}
+function typeOf(node, env) {
+  const t = kindsOf(node, env);
+  return isPresent(node, env) ? present(t) : maybeAbsent(t);
+}
+function kindsOf(node, env) {
+  switch (node.type) {
+    case "NumberLiteral":
+    case "BigIntLiteral":
+      return of("number");
+    case "StringLiteral":
+      return node.value.startsWith("$") ? ANY : of("string");
+    case "TemplateLiteral":
+      return of("string");
+    case "BooleanLiteral":
+      return of("bool");
+    case "ObjectIdLiteral":
+      return of("objectId");
+    case "NullLiteral":
+    case "UndefinedLiteral":
+      return NOTHING;
+    case "Injected":
+      return injectedType(node.value);
+    case "ArrayLiteral": {
+      const elements = [];
+      let spread = false;
+      for (const el of node.elements) {
+        if (el.type === "SpreadElement") spread = true;
+        else elements.push(typeOf(el, env));
+      }
+      return arrayOf(spread ? ANY : joinAll(elements));
+    }
+    case "ObjectLiteral": {
+      if (namedRow(node) !== null) return ANY;
+      const props = /* @__PURE__ */ new Map();
+      let open = false;
+      for (const entry of node.entries) {
+        if (entry.type === "SpreadElement") {
+          open = true;
+          continue;
+        }
+        const key = staticKey(entry);
+        if (key === null) {
+          open = true;
+          continue;
+        }
+        props.set(key, typeOf(entry.value, env));
+      }
+      return objectOf(props, open);
+    }
+    case "FieldRef":
+      return env.typeAt(node.path, 0);
+    case "Ident":
+      return env.scope.has(node.name) ? env.lookup(node.name, node.pos).type : ANY;
+    case "CollectionRef":
+      return of("stream");
+    case "MemberAccess": {
+      if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
+        return callOn(node.name, typeOf(node.object, env), receiverFamilyOf(node.object, env), [], env);
+      }
+      return propOf(typeOf(node.object, env), node.name);
+    }
+    case "IndexAccess": {
+      const obj = typeOf(node.object, env);
+      if (node.index.type === "NumberLiteral") return itemOf(obj, node.index.value);
+      if (node.index.type === "StringLiteral") return propOf(obj, node.index.value);
+      return ANY;
+    }
+    case "MethodCall": {
+      const receiver = typeOf(node.object, env);
+      const family = receiverFamilyOf(node.object, env);
+      if (family !== null) return callOn(node.name, receiver, family, node.args, env);
+      return callOnUnproven(node.name, receiver, node.args, env);
+    }
+    case "OperatorCall":
+      return callOn(node.name, ANY, null, node.args, env);
+    case "CallExpression":
+      if (node.callee.type === "Lambda" && node.callee.body !== void 0) return kindsOf(node.callee.body, env);
+      if (node.callee.type === "Ident" && env.scope.has(node.callee.name)) {
+        const b = env.lookup(node.callee.name, node.callee.pos);
+        if (b.ref.kind === "function" && b.ref.lambda.type === "Lambda" && b.ref.lambda.body !== void 0)
+          return kindsOf(b.ref.lambda.body, env);
+      }
+      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? callOn(node.callee.name, ANY, null, node.args, env) : ANY;
+    case "NewExpression":
+      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? callOn(node.callee.name, ANY, null, node.args, env) : ANY;
+    case "UnaryExpr": {
+      const key = productionForOperator("UnaryExpr", node.op);
+      return key === void 0 ? ANY : callOn(key, ANY, null, [], env);
+    }
+    case "BinaryExpr": {
+      if (node.op === "+") {
+        const l = kindOf3(node.left, env);
+        const r = kindOf3(node.right, env);
+        if (l === "string" || r === "string") return of("string");
+        return l === "number" && r === "number" ? of("number") : ANY;
+      }
+      if (node.op === "&&" || node.op === "||" || node.op === "??") {
+        return join(kindsOf(node.left, env), kindsOf(node.right, env));
+      }
+      const key = productionForOperator("BinaryExpr", node.op);
+      return key === void 0 ? ANY : callOn(key, ANY, null, [], env);
+    }
+    case "TernaryExpr":
+      return join(kindsOf(node.consequent, env), kindsOf(node.alternate, env));
+    case "ExprBlock":
+      return kindsOf(node.ret, env);
+    default:
+      return ANY;
+  }
 }
 
 // src/compiler/emit/join.ts
@@ -24672,12 +24910,11 @@ function joinValue(node, env, S) {
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));
   env.chain.hoist(stages, slot.path);
   const name2 = `#join${slot.path}`;
+  const yields = l.yields === "array" && l.element === "" ? arrayOf(DOCUMENT) : of(l.yields);
   const bound = env.bind(name2, {
     ref: { kind: "field", slot },
-    type: l.yields,
-    elements: l.yields === "array" && l.element === "" ? "object" : "unknown",
     // The server always writes the `as` array. A `.find` may find nothing.
-    present: l.one !== "find",
+    type: l.one === "find" ? maybeAbsent(yields) : present(yields),
     mutable: false,
     pos: l.pos
   });
@@ -24832,8 +25069,8 @@ function comparatorSpec(arg, method) {
     } else terms.push(e);
   };
   split(arg.body);
-  const single2 = terms.length === 1;
-  const orWhole = single2 ? ` To order the elements themselves, drop the field: '${a} - ${b}'.` : "";
+  const single3 = terms.length === 1;
+  const orWhole = single3 ? ` To order the elements themselves, drop the field: '${a} - ${b}'.` : "";
   for (const t of terms) {
     if (t.type !== "BinaryExpr" || t.op !== "-") {
       throw new CodegenError(
@@ -25009,7 +25246,7 @@ function settle(name2, branch, shaped, count) {
   }
   return countOf(name2, branch.args, count) ?? { kind: "rule", name: name2, rule: branch };
 }
-function familyOf(receiver) {
+function familyOf2(receiver) {
   switch (receiver.kind) {
     case "none":
       return null;
@@ -25030,7 +25267,7 @@ function receiverGate(name2, receiver) {
     if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
     return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
   }
-  const family = familyOf(receiver);
+  const family = familyOf2(receiver);
   if (family !== null && on.includes(family)) return null;
   return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
 }
@@ -25052,7 +25289,7 @@ function fromByArgs(name2, byArgs, shaped, count) {
 function fromPerFamily(name2, branches, uncertain, receiver, shaped, count) {
   const on = familiesFor(name2);
   if (receiver.kind !== "opaque") {
-    const family = familyOf(receiver);
+    const family = familyOf2(receiver);
     const branch = family === null ? void 0 : branches[family];
     if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
     return settle(name2, branch, shaped, count);
@@ -25481,13 +25718,13 @@ var isAlwaysFalse = (d) => Object.keys(d).length === 1 && d.$expr === false;
 
 // src/compiler/emit/inputs.ts
 var childEnv = (env, node, key) => {
-  const at2 = env.at(edge(node, key, env.site.where));
+  const at3 = env.at(edge(node, key, env.site.where));
   const n2 = node;
-  if (n2.type === "OperatorCall" && key === "args") return at2.inside(n2.name ?? null);
+  if (n2.type === "OperatorCall" && key === "args") return at3.inside(n2.name ?? null);
   if (n2.type === "MethodCall" || n2.type === "CallExpression" || n2.type === "NewExpression" || n2.type === "Lambda") {
-    return at2.inside(null);
+    return at3.inside(null);
   }
-  return at2;
+  return at3;
 };
 function callback(cb, env, read) {
   if (cb.type !== "Lambda" || cb.body === void 0) {
@@ -25496,7 +25733,7 @@ function callback(cb, env, read) {
   if (cb.params.length !== 1) {
     internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
-  const bound = env.param(cb.params[0], "unknown", cb.pos);
+  const bound = env.param(cb.params[0], ANY, cb.pos);
   return { as: bound.as, ref: bound.ref, in: read(cb.body, childEnv(bound.env, cb, "body")) };
 }
 function readsParam(node, name2) {
@@ -25510,14 +25747,14 @@ function arrayCallback(cb, recv, recvNode, env, read, name2) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
-  const element2 = recvNode === void 0 ? "unknown" : elementKindOf2(recvNode, env);
+  const element2 = recvNode === void 0 ? ANY : maybeAbsent(elementOf(typeOf(recvNode, env)));
   const usesIndex = index !== void 0 && readsParam(cb.body, index);
   if (!usesIndex) {
     const bound = elem === void 0 ? env.fresh("unused") : env.param(elem, element2, cb.pos);
     let bodyEnv2 = bound.env;
     const vars2 = {};
     if (arr !== void 0) {
-      const a = bodyEnv2.param(arr, "array", cb.pos);
+      const a = bodyEnv2.param(arr, of("array", true), cb.pos);
       vars2[a.as] = recv;
       bodyEnv2 = a.env;
     }
@@ -25536,11 +25773,11 @@ function arrayCallback(cb, recv, recvNode, env, read, name2) {
   const x = bodyEnv.param(elem, element2, cb.pos);
   vars[x.as] = { $arrayElemAt: [pair.ref, 1] };
   bodyEnv = x.env;
-  const i = bodyEnv.param(index, "number", cb.pos);
+  const i = bodyEnv.param(index, of("number", true), cb.pos);
   vars[i.as] = { $arrayElemAt: [pair.ref, 0] };
   bodyEnv = i.env;
   if (arr !== void 0) {
-    const a = bodyEnv.param(arr, "array", cb.pos);
+    const a = bodyEnv.param(arr, of("array", true), cb.pos);
     vars[a.as] = recv;
     bodyEnv = a.env;
   }
@@ -25566,7 +25803,7 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
     throw reducerShape(name2, cb.pos);
   }
   const [acc, elem, index] = cb.params;
-  const accType = kindOf3(seed, env);
+  const accType = maybeAbsent(typeOf(seed, env));
   const direct = !callsSomething(cb.body);
   const vars = {};
   let bodyEnv = env;
@@ -25574,8 +25811,6 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
     bodyEnv = bodyEnv.bind(acc, {
       ref: { kind: "var", ref: reduceVar("value") },
       type: accType,
-      elements: "unknown",
-      present: false,
       mutable: false,
       pos: cb.pos
     });
@@ -25588,23 +25823,21 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
     if (direct) {
       bodyEnv = bodyEnv.bind(elem, {
         ref: { kind: "var", ref: reduceVar("this") },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: cb.pos
       });
       return { input: recv, in: read(cb.body, childEnv(bodyEnv, cb, "body")) };
     }
-    const x2 = bodyEnv.param(elem, "unknown", cb.pos);
+    const x2 = bodyEnv.param(elem, ANY, cb.pos);
     vars[x2.as] = reduceVar("this");
     bodyEnv = x2.env;
     return { input: recv, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
   }
-  const x = bodyEnv.param(elem, "unknown", cb.pos);
+  const x = bodyEnv.param(elem, ANY, cb.pos);
   vars[x.as] = { $arrayElemAt: [reduceVar("this"), 1] };
   bodyEnv = x.env;
-  const i = bodyEnv.param(index, "number", cb.pos);
+  const i = bodyEnv.param(index, of("number", true), cb.pos);
   vars[i.as] = { $arrayElemAt: [reduceVar("this"), 0] };
   bodyEnv = i.env;
   return { input: indexedPairs(recv), in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
@@ -25617,13 +25850,13 @@ function elementsCallback(cb, count, env, read, name2) {
   let bodyEnv = pair.env;
   const vars = {};
   cb.params.forEach((p, k) => {
-    const b = bodyEnv.param(p, "unknown", cb.pos);
+    const b = bodyEnv.param(p, ANY, cb.pos);
     vars[b.as] = { $arrayElemAt: [pair.ref, k] };
     bodyEnv = b.env;
   });
   return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
 }
-function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map(), recvNode, present = false) {
+function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map(), recvNode, present2 = false) {
   const argEnv = childEnv(env, node, "args");
   const value = (e) => overrides.has(e) ? overrides.get(e) : read.value(e, argEnv);
   return {
@@ -25632,7 +25865,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     args,
     keys,
     value,
-    present,
+    present: present2,
     kind: (e) => kindOf3(e, argEnv),
     optionalArg: (e) => chainHasOptional(e),
     truth: (e) => read.truth(e, argEnv),
@@ -25650,11 +25883,11 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
       const kv = env.fresh("kv");
       let bodyEnv = kv.env;
       const vars = {};
-      const v = bodyEnv.param(cb.params[0], "unknown", cb.pos);
+      const v = bodyEnv.param(cb.params[0], ANY, cb.pos);
       vars[v.as] = `${kv.ref}.v`;
       bodyEnv = v.env;
       if (cb.params.length === 2) {
-        const k = bodyEnv.param(cb.params[1], "string", cb.pos);
+        const k = bodyEnv.param(cb.params[1], of("string", true), cb.pos);
         vars[k.as] = `${kv.ref}.k`;
         bodyEnv = k.env;
       }
@@ -25713,14 +25946,7 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
     nativeQuery: (e) => read.lowerNativeFilter(e, argEnv),
     elementQuery: (cb) => {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length !== 1) return null;
-      const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], {
-        ref: { kind: "document", path: "" },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
-        mutable: false,
-        pos: cb.pos
-      });
+      const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], { ref: { kind: "document", path: "" }, type: ANY, mutable: false, pos: cb.pos });
       return read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
     },
     value: (e) => read.lowerValue(e, argEnv),
@@ -25740,21 +25966,14 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length !== 1) {
         throw elementNeedsQuery(name2, cb.pos);
       }
-      const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], {
-        ref: { kind: "document", path: "" },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
-        mutable: false,
-        pos: cb.pos
-      });
+      const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], { ref: { kind: "document", path: "" }, type: ANY, mutable: false, pos: cb.pos });
       const q = read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
       if (q === null) throw elementNeedsQuery(name2, cb.pos);
       return q;
     }
   };
 }
-function stageInputs(name2, args, keys, env, node, read, soFar = [], written = name2) {
+function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = name2) {
   const argEnv = childEnv(env, node, "args");
   const before = [...env.chain.emitted, ...soFar];
   const bound = (cb) => {
@@ -25763,9 +25982,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
     if (cb.params.length >= 1) {
       e = e.bind(cb.params[0], {
         ref: { kind: "document", path: env.chain.element },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: cb.pos
       });
@@ -25777,9 +25994,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
           message: unfilledParam(cb.params[1], name2, "a stream has no per-document index; leave the parameter unused."),
           replaced: false
         },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: cb.pos
       });
@@ -25792,9 +26007,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
           message: streamHandleAfterReplace(cb.params[2], replaces, cb.pos).message,
           replaced: false
         },
-        type: "stream",
-        elements: "unknown",
-        present: false,
+        type: of("stream", true),
         mutable: false,
         pos: cb.pos
       });
@@ -25802,22 +26015,22 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
     return e;
   };
   const callbackRefusal = (cb, what) => {
-    if (cb.type === "Lambda") return tooManyCallbackParams(written, cb.params.length, cb.pos);
-    const forms = slotFormsOf(written, "stream", args.indexOf(cb));
+    if (cb.type === "Lambda") return tooManyCallbackParams(written2, cb.params.length, cb.pos);
+    const forms = slotFormsOf(written2, "stream", args.indexOf(cb));
     if (cb.type === "ObjectLiteral" && forms.includes("matchesObject")) {
       const entries = cb.entries;
-      if (entries !== void 0 && entries.length === 0) return emptyMatcherObject(written, cb.pos);
+      if (entries !== void 0 && entries.length === 0) return emptyMatcherObject(written2, cb.pos);
     }
     if (cb.type === "ArrayLiteral" && forms.includes("matchesPropertyPair")) {
-      return badMatchesPropertyPair(written, cb.pos);
+      return badMatchesPropertyPair(written2, cb.pos);
     }
-    return notAnArrow(written, what, forms, cb);
+    return notAnArrow(written2, what, forms, cb);
   };
   const body = (cb, what) => {
     const e = bound(cb);
     if (e === null) throw callbackRefusal(cb, what);
     const b = cb.body;
-    if (b === void 0) throw blockWhereValueExpected(written, cb.pos);
+    if (b === void 0) throw blockWhereValueExpected(written2, cb.pos);
     return { body: b, env: childEnv(e, cb, "body") };
   };
   return {
@@ -25860,10 +26073,10 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
     block: (cb) => {
       const e = bound(cb);
       if (e === null) {
-        throw cb.type === "Lambda" ? tooManyCallbackParams(written, cb.params.length, cb.pos) : valueWhereBlockExpected(written, cb.pos);
+        throw cb.type === "Lambda" ? tooManyCallbackParams(written2, cb.params.length, cb.pos) : valueWhereBlockExpected(written2, cb.pos);
       }
       const stages = cb.stages;
-      if (stages === void 0) throw valueWhereBlockExpected(written, cb.pos);
+      if (stages === void 0) throw valueWhereBlockExpected(written2, cb.pos);
       return read.block(stages, e);
     },
     sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name2, objects), name2, env.chain.element),
@@ -26227,10 +26440,10 @@ function pathOf(node, env) {
 function reachable(path) {
   const root2 = path.startsWith("$$") ? 2 : 1;
   const segments = path.slice(root2).split(".");
-  const at2 = segments.findIndex((s, i) => i > 0 && s.startsWith("$"));
-  if (at2 < 0) return path;
-  let value = path.slice(0, root2) + segments.slice(0, at2).join(".");
-  for (const seg of segments.slice(at2)) {
+  const at3 = segments.findIndex((s, i) => i > 0 && s.startsWith("$"));
+  if (at3 < 0) return path;
+  let value = path.slice(0, root2) + segments.slice(0, at3).join(".");
+  for (const seg of segments.slice(at3)) {
     value = { $getField: { field: seg.startsWith("$") ? { $literal: seg } : seg, input: value } };
   }
   return value;
@@ -26325,9 +26538,9 @@ function dispatchOn(node, name2, recvNode, args, env) {
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
     checkSlots(name2, sel.rule.args, exprArgs);
-    const present = isPresent(recvNode, recvEnv);
+    const present2 = isPresent(recvNode, recvEnv);
     return sel.rule.emit(
-      exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, present)
+      exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, present2)
     );
   }
   if (sel.kind === "dispatch") {
@@ -26361,9 +26574,9 @@ function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) 
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule) => {
     checkSlots(name2, rule.args, args);
-    const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
+    const present2 = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
     return rule.emit(
-      exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present)
+      exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present2)
     );
   };
   const branches = sel.branches.map((b) => ({ case: truthOf(b.guard(ref), true), then: run(b.rule) }));
@@ -26426,16 +26639,14 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
   let bodyEnv = env;
   args.forEach((a, i) => {
     if (a.type === "SpreadElement") throw spreadInCall(label, a.pos);
-    const bound = bodyEnv.param(lambda.params[i], kindOf3(a, env), lambda.pos);
+    const bound = bodyEnv.param(lambda.params[i], maybeAbsent(typeOf(a, env)), lambda.pos);
     vars[bound.as] = lowerValue(a, env);
     bodyEnv = bound.env;
   });
   if (fnName !== null) {
     bodyEnv = bodyEnv.bind(fnName, {
       ref: { kind: "dropped", message: recursiveFunction(fnName, pos).message, replaced: false },
-      type: "unknown",
-      elements: "unknown",
-      present: false,
+      type: ANY,
       mutable: false,
       pos
     });
@@ -26506,7 +26717,7 @@ function boundArrowOverrides(node, args, env) {
     if (arg === void 0 || arg.type !== "Lambda" || arg.body === void 0) continue;
     if (!arg.params.every((p) => names.includes(p))) throw letParamsMustNameVars(arg.params, names, arg.pos);
     let bodyEnv = childEnv(env, node, "args");
-    for (const p of arg.params) bodyEnv = bodyEnv.param(p, "unknown", arg.pos).env;
+    for (const p of arg.params) bodyEnv = bodyEnv.param(p, ANY, arg.pos).env;
     out.set(arg, lowerValue(arg.body, childEnv(bodyEnv, arg, "body")));
   }
   return out;
@@ -26678,7 +26889,7 @@ function exprBlock(node, env, ret) {
       carry = null;
       if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
       seen.add(d.name);
-      const bound = scope.param(d.name, kindOf3(d.value, scope), d.pos);
+      const bound = scope.param(d.name, maybeAbsent(typeOf(d.value, scope)), d.pos);
       vars[bound.as] = value;
       refs.push(`$$${bound.as}`);
       scope = bound.env;
@@ -26692,9 +26903,9 @@ function exprBlock(node, env, ret) {
 
 // src/compiler/emit/union.ts
 var DOCUMENTS = "$documents";
-function noStageInDocuments(chain, written, pos) {
+function noStageInDocuments(chain, written2, pos) {
   const made = chain.hoisted[0] ?? chain.emitted[0];
-  if (made !== void 0) throw documentsNeedNoStage(written, Object.keys(made)[0], pos);
+  if (made !== void 0) throw documentsNeedNoStage(written2, Object.keys(made)[0], pos);
 }
 function writtenDocuments(e) {
   if (e.type !== "ArrayLiteral" || e.elements.length === 0) return null;
@@ -27015,8 +27226,8 @@ function stageBody(node, env) {
     const key = staticKey(entry);
     if (key === null) return lowerValue(node, env);
     const slot = childEnv(entries, entry, "value");
-    const at2 = slot.site.where.at;
-    out[key] = at2 === "statement" || at2 === "stream" ? pipelineBody(
+    const at3 = slot.site.where.at;
+    out[key] = at3 === "statement" || at3 === "stream" ? pipelineBody(
       entry.value,
       slot,
       env.site.where.at === "stageBody" ? env.site.where.stage : "",
@@ -27108,9 +27319,7 @@ function statementStages(stmt, env, first) {
       stages: [],
       env: env.bind(decl.name, {
         ref: { kind: "function", lambda, expanding: lambda.body === void 0 },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: decl.pos
       })
@@ -27181,22 +27390,13 @@ function letStages(decl, env) {
     throw shadowsOuterBinding(decl.kind, decl.name, decl.pos);
   refuseUnbuiltSugar(decl.value);
   const slot = fieldSlot(bindingSlot(decl.name));
-  const bind = (type, present) => env.bind(decl.name, {
-    ref: { kind: "field", slot },
-    type,
-    elements: "unknown",
-    present,
-    mutable: decl.kind === "let",
-    pos: decl.pos
-  });
+  const bind = (type) => env.bind(decl.name, { ref: { kind: "field", slot }, type, mutable: decl.kind === "let", pos: decl.pos });
   if (decl.value.type === "Lambda") {
     return {
       stages: [],
       env: env.bind(decl.name, {
         ref: { kind: "function", lambda: decl.value, expanding: decl.value.body === void 0 },
-        type: "unknown",
-        elements: "unknown",
-        present: false,
+        type: ANY,
         mutable: false,
         pos: decl.pos
       })
@@ -27206,15 +27406,12 @@ function letStages(decl, env) {
     const w = joinWrite(decl.value, slot.path, childEnv(env, decl, "value"), JOIN);
     if (w !== null) {
       env.chain.dirty = true;
-      return { stages: w.stages, env: bind(w.yields, w.yields === "array") };
+      return { stages: w.stages, env: bind(w.yields === "array" ? of("array") : maybeAbsent(of(w.yields))) };
     }
   }
   const value = readIn(decl.value, childEnv(env, decl, "value"));
   env.chain.dirty = true;
-  return {
-    stages: [{ $set: { [slot.path]: value } }],
-    env: bind(kindOf3(decl.value, env), isPresent(decl.value, childEnv(env, decl, "value")))
-  };
+  return { stages: [{ $set: { [slot.path]: value } }], env: bind(typeOf(decl.value, childEnv(env, decl, "value"))) };
 }
 function afterStages(stages, env) {
   env.chain.advance(stages);
@@ -27229,8 +27426,8 @@ function afterStages(stages, env) {
   return out;
 }
 function replacesDocument(name2, stage) {
-  const fact = replacesDocumentOf(name2);
-  return fact === true || fact === "inclusion" && isInclusion(stage[name2]);
+  const fact = documentOf(name2);
+  return fact === "fields" || fact === "value" || fact === "unknown" || fact === "projection" && isInclusion(stage[name2]);
 }
 function isInclusion(body) {
   if (typeof body !== "object" || body === null) return false;
@@ -27239,17 +27436,17 @@ function isInclusion(body) {
 }
 var DOCUMENTS2 = "$documents";
 var holdsSpread = (list) => list.elements.some((e) => e.type === "SpreadElement");
-function documentsStages(list, env, written = "$$ = [ \u2026 ]") {
+function documentsStages(list, env, written2 = "$$ = [ \u2026 ]") {
   if (isReduceWrap(list)) return reduceWrapStages(list);
   if (holdsStreamReduce(list)) throw reduceWrapMisplaced(list.pos);
   const dropAll = { $match: { $expr: false } };
   if (list.elements.length === 0) return [dropAll];
   const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
-  checkSlots(written, sel.rule.args, [list], false);
+  checkSlots(written2, sel.rule.args, [list], false);
   const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
   const documents = lowerValue(list, childEnv(body, list, "elements").at({ at: "value" }));
-  noStageInDocuments(body.chain, written, list.pos);
+  noStageInDocuments(body.chain, written2, list.pos);
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS2]: documents }] } }];
 }
 function namesWithin(stage, body, path = [], out = /* @__PURE__ */ new Map()) {
@@ -27335,17 +27532,17 @@ function targetPath(op, env) {
   if (t.type === "CollectionRef") return STREAM_TARGET;
   throw notAWriteTarget(op.pos);
 }
-function becomeStream(value, env, valueEnv, first, written = "$$ = \u2026", lead, how) {
-  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written);
+function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lead, how) {
+  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written2);
   const chainOn = chainBase(value);
   const streamRoad = chainOn.type === "CollectionRef" || readsAnotherCollection(value) || onOwnStream(chainOn, env);
   const kind = streamRoad ? "stream" : kindOf3(value, env);
   if (kind !== "stream" && kind !== "array" && kind !== "unknown")
     throw notAStreamChain(value.pos, KIND_NOUN[kind] ?? `a ${kind}`, lead, how);
   if (kind === "stream") return streamStages(value, env, first);
-  const element2 = elementKindOf2(value, env);
+  const element2 = elementKindOf(value, env);
   if (element2 !== "unknown" && element2 !== "object")
-    throw streamElementsNotDocuments(ELEMENT_NOUN[element2] ?? `${element2}s`, written, value.pos);
+    throw streamElementsNotDocuments(ELEMENT_NOUN[element2] ?? `${element2}s`, written2, value.pos);
   const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
   return [{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }];
@@ -27569,9 +27766,7 @@ function writeStages(uf, env, first) {
     if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
       const binding = {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
-        type: kindOf3(op.value, inner),
-        elements: "unknown",
-        present: false,
+        type: maybeAbsent(typeOf(op.value, inner)),
         mutable: true,
         pos: op.target.pos
       };
@@ -27894,7 +28089,7 @@ function lowerUpdate(program, env) {
       continue;
     }
     if (node.type === "OperatorCall") {
-      merge(lowerValue(node, valueEnv), node.pos);
+      merge2(lowerValue(node, valueEnv), node.pos);
       continue;
     }
     if (node.type === "ObjectLiteral") {
@@ -27903,7 +28098,7 @@ function lowerUpdate(program, env) {
         const key = staticKey(e);
         if (key === null || !key.startsWith("$")) throw updateKeyNotOperator(key, e.pos);
         const call = { type: "OperatorCall", name: key, args: [e.value], pos: e.pos };
-        merge(lowerValue(call, valueEnv), e.pos);
+        merge2(lowerValue(call, valueEnv), e.pos);
       }
       continue;
     }
@@ -27911,7 +28106,7 @@ function lowerUpdate(program, env) {
   }
   if (Object.keys(out).length === 0) throw notAnUpdate(program.pos);
   return out;
-  function merge(doc, pos) {
+  function merge2(doc, pos) {
     if (doc === null || typeof doc !== "object" || Array.isArray(doc)) throw notAnUpdate(pos);
     for (const [op, fields] of Object.entries(doc)) {
       if (fields === null || typeof fields !== "object" || Array.isArray(fields)) throw updateNeedsFields(op, pos);

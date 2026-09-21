@@ -47,7 +47,8 @@ import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, readsRef, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
-import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily } from "./types.ts";
+import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
+import { ANY, maybeAbsent } from "./type.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
 import { injectedNeedsLiteral } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
@@ -820,7 +821,7 @@ function applyLambda(
   let bodyEnv = env;
   args.forEach((a, i) => {
     if (a.type === "SpreadElement") throw E.spreadInCall(label, a.pos);
-    const bound = bodyEnv.param(lambda.params[i], kindOf(a, env), lambda.pos);
+    const bound = bodyEnv.param(lambda.params[i], maybeAbsent(typeOf(a, env)), lambda.pos);
     vars[bound.as] = lowerValue(a, env);
     bodyEnv = bound.env;
   });
@@ -829,9 +830,7 @@ function applyLambda(
     // body the function's own name reads as the refusal.
     bodyEnv = bodyEnv.bind(fnName, {
       ref: { kind: "dropped", message: E.recursiveFunction(fnName, pos).message, replaced: false },
-      type: "unknown",
-      elements: "unknown",
-      present: false,
+      type: ANY,
       mutable: false,
       pos,
     });
@@ -940,7 +939,7 @@ function boundArrowOverrides(
     if (arg === undefined || arg.type !== "Lambda" || arg.body === undefined) continue;
     if (!arg.params.every((p) => names.includes(p))) throw E.letParamsMustNameVars(arg.params, names, arg.pos);
     let bodyEnv = childEnv(env, node, "args");
-    for (const p of arg.params) bodyEnv = bodyEnv.param(p, "unknown", arg.pos).env;
+    for (const p of arg.params) bodyEnv = bodyEnv.param(p, ANY, arg.pos).env;
     out.set(arg, lowerValue(arg.body, childEnv(bodyEnv, arg, "body")));
   }
   return out;
@@ -1169,7 +1168,7 @@ function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e
       carry = null;
       if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
       seen.add(d.name);
-      const bound = scope.param(d.name, kindOf(d.value, scope), d.pos);
+      const bound = scope.param(d.name, maybeAbsent(typeOf(d.value, scope)), d.pos);
       vars[bound.as as string] = value;
       refs.push(`$$${bound.as as string}`);
       scope = bound.env;

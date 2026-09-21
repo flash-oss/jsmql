@@ -10,7 +10,9 @@
 import type { Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
 import { unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
+import type { StageFacts } from "../../src/registry/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
+import { ANY } from "../../src/compiler/emit/type.ts";
 import { Chain, Env, type Site } from "../../src/compiler/emit/env.ts";
 import { and, jsTruthy, truthOf } from "../../src/compiler/emit/mode.ts";
 import { cond, filter, matchExpr } from "../../src/compiler/emit/mql.ts";
@@ -79,7 +81,16 @@ export const readAsBinder: MongoVar = systemRef("ROOT");
 // @ts-expect-error — a field slot is built by `fieldSlot`, never as a literal
 export const notASlot: FieldSlot = { path: "__jsmql.tmp.1", ref: "$__jsmql.tmp.1" };
 export const minted: MongoVar = mongoVarName("_id");
-export const read: VarRef = Scope.root([]).param("x", "unknown", 0, 0).ref;
+export const read: VarRef = Scope.root([]).param("x", ANY, 0, 0).ref;
+
+// ── a stage row states its `document` effect with its `body`, never one alone ──
+
+export const stageRow: StageFacts = { body: { required: [], optional: [], closed: false }, document: "keeps" };
+export const valueRow: StageFacts = {};
+// @ts-expect-error — a body without the document effect: the scope tracker would have to guess
+export const bodyAlone: StageFacts = { body: { required: [], optional: [], closed: false } };
+// @ts-expect-error — a document effect on a row that is not a stage
+export const effectAlone: StageFacts = { document: "keeps" };
 
 // ── the environment record: nothing optional, no literal, no spread ──────────
 

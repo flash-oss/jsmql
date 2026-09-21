@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — refactor: one `Type` value carries every proof
+
+The compiler now proves a value with one record, `Type` in
+`src/registry/vocabulary.ts`: the set of kinds it can have, one `absent` flag for
+null-or-missing, its element type, and its known properties with an `open` flag.
+It replaces three side facts that lived apart — `Binding.type`, `Binding.elements`
+and `Binding.present` in `src/compiler/emit/names.ts` — and the `Env.proven` set of
+paths a `?.` test showed present. `Env` now holds one document `Type` per
+document level, and a proven path is a present node in it. `prove.ts` (the
+module `types.ts` was) answers `typeOf(node, env)`; `type.ts` holds the value and
+the operations over two proofs. The old readers `kindOf`, `isPresent` and
+`elementKindOf` stay as one-line readers of `typeOf`, so every consumer emits
+the same document it did before. Every expectation suite passes unchanged.
+
+The registry states its facts in the same shape. A row's `returns` is a
+`TypeExpr`, a closed data grammar the compiler evaluates at the call site; the
+fifteen `elementKind` rows now state `{ arrayOf: <kind> }` instead of a second
+field. Every stage row states a `document` effect from a closed vocabulary —
+`keeps`, `fields`, `value`, `projection`, `element`, `unknown` — in place of the
+`replacesDocument` boolean, and `StageFacts` pairs `body` with `document` at the
+type level, so a stage row cannot omit it. This is the foundation for the type
+tracker: the next entries make the field writes, the dispatch, the truthiness
+check and the stages read these facts. The full design lives in
+`docs/specs/types.md`.
+
+---
+
 ## 2026-09-19 — fix: the error messages move to STE
 
 Every user-visible error message now follows ASD-STE100, and 1,253 assertions

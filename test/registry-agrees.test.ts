@@ -22,7 +22,8 @@ type Row = {
   statementBody?: "pipeline" | readonly string[];
   params?: unknown;
   iterateeSlots?: Readonly<Record<string, unknown>>;
-  replacesDocument?: true;
+  document?: string;
+  body?: unknown;
 };
 
 const rows = Object.entries(NAMES) as [string, Row][];
@@ -102,15 +103,19 @@ describe("registry — `only` and the positions it qualifies", () => {
     expect(stray).toEqual([]);
   });
 
-  it("marks `replacesDocument` only on a stage", () => {
-    // A document is replaced by a STAGE — `$group`, `$replaceRoot`. On a value row
-    // the flag would tell the scope tracker to drop bindings after an expression.
-    const stray: string[] = [];
+  it("states `document` on every stage row, and on no other", () => {
+    // The document `Type` changes at a STAGE — `$group`, `$replaceRoot`, `$set` —
+    // and a stage is the row with a `body`. On a value row the fact would tell the
+    // scope tracker to drop bindings after an expression; on a stage row without
+    // it the tracker would have to guess. So the two fields come as a pair.
+    const wrong: string[] = [];
     for (const [name, row] of rows) {
-      if (row.replacesDocument !== true) continue;
-      if (row.where?.includes("stream") !== true) stray.push(name);
+      const isStage = row.body !== undefined;
+      if (isStage !== (row.document !== undefined)) wrong.push(`${name}: body=${isStage} document=${row.document}`);
+      if (row.document !== undefined && row.where?.includes("stream") !== true)
+        wrong.push(`${name}: not a stream link`);
     }
-    expect(stray).toEqual([]);
+    expect(wrong).toEqual([]);
   });
 });
 

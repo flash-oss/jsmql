@@ -472,15 +472,89 @@ export type Binds =
   | { valueAt: string; default: string; visibleIn: readonly string[] }
   | { fixed: readonly string[]; visibleIn: readonly string[] };
 
-/** The result type. `.filter` on an array is an array; on a stream, a stream. */
-export type Returns =
+/**
+ * What the compiler PROVES about a value: the type tracker's one record.
+ * See docs/specs/types.md.
+ *
+ *   kinds    the kinds the value can have — a closed set, or "any" when nothing is proven
+ *   absent   true when the value may be null or missing. One flag for both, because
+ *            every guard the compiler writes folds the two with `$ifNull`, and the
+ *            truthiness rule reads them alike
+ *   element  what ONE element is, when `kinds` holds `array`
+ *   items    what each position holds, when the array has a fixed length — a `.entries()` pair
+ *   props    the properties the compiler has seen, when `kinds` holds `object`
+ *   open     true when the object may hold properties `props` does not name
+ *   values   what a property `props` does not name holds, when `open` — a `.groupBy()` record
+ *
+ * A field the program never wrote is `{ kinds: "any", absent: true, open: true }`.
+ * A literal proves itself. A row's `returns` states its result as a `TypeExpr`,
+ * and the compiler evaluates it against the receiver and the arguments.
+ */
+export type Type = {
+  readonly kinds: ReadonlySet<Kind> | "any";
+  readonly absent: boolean;
+  readonly element?: Type;
+  readonly items?: readonly Type[];
+  readonly props?: ReadonlyMap<string, Type>;
+  readonly open: boolean;
+  readonly values?: Type;
+};
+
+/**
+ * The result type a row STATES, as data. The compiler evaluates it against the
+ * receiver's `Type` and the arguments' types (src/compiler/emit/type.ts). It is a
+ * closed grammar, so a test can measure every term on mongod, and the globals
+ * generator can turn it into a TypeScript signature. A row whose result no term
+ * describes states `"unknown"`, and a test lists those rows.
+ *
+ *   Kind                    a fixed kind — `.trim()` is a string
+ *   "same"                  the receiver's type — `.slice()`, `.filter(p)`
+ *   "element"               one element of the receiver — `.head()`, `.max()`
+ *   "unknown"               follows the operands; nothing is stated
+ *   { arrayOf: T }          an array whose elements are T — `.keys()` is `{ arrayOf: "string" }`
+ *   { callback: n }         what the n-th callback argument returns — `.map(f)` is `{ arrayOf: { callback: 0 } }`
+ *   { arg: n }              the n-th argument's type — `$ifNull(a, b)` reads its operands
+ *   { merge: [T, …] }       an object merge; a later term's property wins — `.assign(o)`
+ *   { recordOf: T }         an open object whose properties all hold T — `.groupBy(k)`
+ *   { tuple: [T, …] }       an array of a fixed length — `.entries()` is `{ arrayOf: { tuple: ["string", "element"] } }`
+ *   "picked" / "omitted"    the receiver's props kept / dropped by the first argument's names
+ *   per-family map          one term per receiver family — `.filter` on an array is an array, on a stream a stream
+ *
+ * The per-family map is keyed by `Family`, whose members include `array` and
+ * `object`; that is why the element form is spelled `arrayOf` and the record
+ * form `recordOf`.
+ */
+export type TypeExpr =
   | Kind
-  | "same" //     the type of the receiver  (slice, clamp, filter)
-  // An element of the receiver: `["a","b"].max()` is the string "b", not a number.
-  // These names use it: at, nth, find, findLast, head, first, last, min, max, minBy, maxBy, sample.
+  | "same"
   | "element"
   | "unknown"
-  | Partial<Record<Family, Kind | "element" | "unknown">>;
+  | "picked"
+  | "omitted"
+  | { readonly arrayOf: TypeExpr }
+  | { readonly callback: number }
+  | { readonly arg: number }
+  | { readonly merge: readonly TypeExpr[] }
+  | { readonly recordOf: TypeExpr }
+  | { readonly tuple: readonly TypeExpr[] }
+  | FamilyMap;
+
+/** The per-family form of `TypeExpr`. An interface, so the recursion resolves. */
+export interface FamilyMap extends Partial<Record<Family, TypeExpr>> {}
+
+/**
+ * What a STAGE does to the document `Type` the next stage sees. Every stage row
+ * states one. The compiler evaluates it after the stage's own writes.
+ * See docs/specs/types.md § The document after a stage.
+ *
+ *   "keeps"       the input fields survive; the body's writes go through the write rules — `$set`, `$match`, `$sort`
+ *   "fields"      the document is exactly the body's keys, each typed by its value, closed — `$group`, `$facet`, `$count`
+ *   "value"       the document is the body value's type — `$replaceRoot`, `$replaceWith`
+ *   "projection"  inclusion keeps the named paths, closed; exclusion removes them — `$project`
+ *   "element"     the named path becomes its element type — `$unwind`
+ *   "unknown"     an open object with nothing known — `$unionWith`, `$documents`, a diagnostic stage
+ */
+export type DocumentEffect = "keeps" | "fields" | "value" | "projection" | "element" | "unknown";
 
 /**
  * What one positional parameter of a callback BINDS.

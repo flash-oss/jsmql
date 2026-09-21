@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
 import { SYSTEM_VARS, Scope, fieldSlot, mongoVarName, scratchSlot, systemRef } from "../src/compiler/emit/names.ts";
 import { UnknownIdentifierError } from "../src/errors.ts";
+import { of } from "../src/compiler/emit/type.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const up = await liveUp();
@@ -120,15 +121,14 @@ describe("compiler/emit/names — I1: a mint is never a name the program uses", 
 
 describe("compiler/emit/names — I2: a read resolves in scope or is the developer's error", () => {
   it("reads a bound parameter as `$$name`, encoded, with what the row said it holds", () => {
-    const b = Scope.root([]).param("_id", "number", 4);
+    const b = Scope.root([]).param("_id", of("number", true), 4, 0);
     expect(b.ref).toBe("$$v__5fid");
     expect(b.scope.lookup("_id", 0)).toEqual({
       ref: { kind: "var", ref: "$$v__5fid" },
-      type: "number",
-      elements: "unknown",
-      present: false,
+      type: of("number", true),
       mutable: false,
       pos: 4,
+      level: 0,
     });
     expect(b.scope.has("_id")).toBe(true);
   });
