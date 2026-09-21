@@ -47,7 +47,7 @@ import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
-import { elementKindOf, kindOf, typeOf } from "./prove.ts";
+import { documentAfter, elementKindOf, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
 import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
@@ -398,10 +398,16 @@ function afterStages(stages: readonly Stage[], env: Env): Env {
   let out = env;
   for (const stage of stages) {
     const name = Object.keys(stage)[0];
-    if (!replacesDocument(name, stage)) continue;
-    out = out.dropFields(name, E.afterReplace(name));
-    env.chain.placed(true);
-    env.chain.dirty = false;
+    // What the stage made of the document, read off the stage itself — the row's
+    // `document` effect over the emitted body, against the document it ran over.
+    // See docs/specs/types.md.
+    const after = documentAfter(stage, out.documents[out.level]);
+    if (replacesDocument(name, stage)) {
+      out = out.dropFields(name, E.afterReplace(name));
+      env.chain.placed(true);
+      env.chain.dirty = false;
+    }
+    out = out.document(after);
   }
   return out;
 }
@@ -938,10 +944,10 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
   const emit = (made: readonly Stage[] = []): void => {
     out.push(...env.chain.ahead(), ...made);
     // A stage that replaced the document takes every proof about it away — the
-    // next write in this statement lands on a document nothing is known about.
+    // next write in this statement lands on what the stage made.
     if (made.some((st) => replacesDocument(Object.keys(st)[0], st))) {
       proofs = [];
-      inner = inner.document(DOCUMENT);
+      inner = inner.document(made.reduce<Type>((d, st) => documentAfter(st, d), inner.documents[inner.level]));
     }
   };
 

@@ -548,11 +548,13 @@ export interface FamilyMap extends Partial<Record<Family, TypeExpr>> {}
  * See docs/specs/types.md § The document after a stage.
  *
  *   "keeps"       the input fields survive; the body's writes go through the write rules — `$set`, `$match`, `$sort`
- *   "fields"      the document is exactly the body's keys, each typed by its value, closed — `$group`, `$facet`, `$count`
+ *   "fields"      the document is exactly the body's keys, each typed by its value, closed — `$group`, `$facet`;
+ *                 a string body names the one number field the stage writes — `$count`
  *   "value"       the document is the body value's type — `$replaceRoot`, `$replaceWith`
  *   "projection"  inclusion keeps the named paths, closed; exclusion removes them — `$project`
  *   "element"     the named path becomes its element type — `$unwind`
- *   "unknown"     an open object with nothing known — `$unionWith`, `$documents`, a diagnostic stage
+ *   "unknown"     an open object with nothing known — `$unionWith`, `$documents`, a diagnostic stage, and a
+ *                 stage whose output fields no body layout states yet (`$bucket`, `$sortByCount`)
  */
 export type DocumentEffect = "keeps" | "fields" | "value" | "projection" | "element" | "unknown";
 

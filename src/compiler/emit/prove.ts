@@ -21,6 +21,7 @@ import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
 import {
   constructedFamilyOf,
+  documentOf,
   familiesOf,
   isCallable,
   namespaceNames,
@@ -33,10 +34,13 @@ import { bsonTagOf, BSON_KIND, isDate, isPlainObject } from "../../bson.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 import {
   ANY,
+  DOCUMENT,
   NOTHING,
   arrayOf,
+  at,
   elementOf,
   evaluate,
+  isOnly,
   itemOf,
   join,
   joinAll,
@@ -45,7 +49,9 @@ import {
   of,
   present,
   propOf,
+  removed,
   single,
+  written,
 } from "./type.ts";
 import type { Site } from "./type.ts";
 import { staticKey } from "../passes/naming.ts";
@@ -424,4 +430,151 @@ function kindsOf(node: Expr, env: Env): Type {
     default:
       return ANY;
   }
+}
+
+// ── the proof of an EMITTED document ─────────────────────────────────────────
+
+/** Is this MQL value one operator call — `{ $sum: "$x" }`, or `{ $count: {}, window: … }`? Its name, or null. */
+function operatorKeyOf(v: unknown): string | null {
+  if (!isPlainObject(v)) return null;
+  const ops = Object.keys(v).filter((k) => k.startsWith("$"));
+  return ops.length === 1 ? ops[0] : null;
+}
+
+/**
+ * What an emitted MQL VALUE proves, read against the document `doc` it runs
+ * over. This is how the compiler learns what a stage made of the document
+ * without the stage's source: the emitted body names the output fields and the
+ * operators that fill them, whatever road wrote it. A field path reads the
+ * input document's proof; an operator answers its row's `returns`; a literal
+ * proves itself; a `$$` variable proves nothing. See docs/specs/types.md § The
+ * document after a stage.
+ */
+export function typeOfEmitted(value: unknown, doc: Type): Type {
+  if (value === null || value === undefined) return NOTHING;
+  if (typeof value === "string") {
+    if (value.startsWith("$$")) return value === "$$ROOT" || value === "$$CURRENT" ? doc : ANY;
+    if (value.startsWith("$")) return at(doc, value.slice(1));
+    return of("string");
+  }
+  if (typeof value === "number" || typeof value === "bigint") return of("number");
+  if (typeof value === "boolean") return of("bool");
+  if (Array.isArray(value)) return arrayOf(joinAll(value.map((v) => typeOfEmitted(v, doc))));
+  const op = operatorKeyOf(value);
+  if (op !== null) {
+    const raw = (value as Record<string, unknown>)[op];
+    if (op === "$literal") return injectedType(raw);
+    // A raw `$op(…)` passes through as written (HR2), so a body here can have any
+    // shape; the reader answers `ANY` for one it does not recognise.
+    if (op === "$cond") {
+      if (Array.isArray(raw) && raw.length === 3) return join(typeOfEmitted(raw[1], doc), typeOfEmitted(raw[2], doc));
+      if (isPlainObject(raw) && "then" in raw && "else" in raw) {
+        return join(typeOfEmitted(raw.then, doc), typeOfEmitted(raw.else, doc));
+      }
+      return ANY;
+    }
+    if (op === "$switch") {
+      if (!isPlainObject(raw) || !Array.isArray(raw.branches)) return ANY;
+      const answers = raw.branches.map((b: unknown) => (isPlainObject(b) ? typeOfEmitted(b.then, doc) : ANY));
+      if (raw.default !== undefined) answers.push(typeOfEmitted(raw.default, doc));
+      return joinAll(answers);
+    }
+    if (op === "$ifNull") {
+      if (!Array.isArray(raw) || raw.length === 0) return ANY;
+      const last = typeOfEmitted(raw[raw.length - 1], doc);
+      return { ...joinAll(raw.map((v) => typeOfEmitted(v, doc))), absent: last.absent };
+    }
+    const args = Array.isArray(raw) ? raw : [raw];
+    const site: Site = {
+      receiver: ANY,
+      family: null,
+      arg: (n) => (n < args.length ? typeOfEmitted(args[n], doc) : ANY),
+      callback: () => ANY,
+      names: null,
+    };
+    const result = evaluate(returnsOf(op), site);
+    const isPresent = neverNullOf(op) && args.every((a) => !typeOfEmitted(a, doc).absent);
+    return isPresent ? present(result) : maybeAbsent(result);
+  }
+  if (isPlainObject(value)) {
+    const props = new Map<string, Type>();
+    for (const [k, v] of Object.entries(value)) props.set(k, typeOfEmitted(v, doc));
+    return objectOf(props, false);
+  }
+  return injectedType(value);
+}
+
+/** The document `Type` after one emitted stage ran over `doc` — the row's `document` effect, applied. */
+export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
+  const name = Object.keys(stage)[0];
+  const body = stage[name];
+  switch (documentOf(name)) {
+    case "keeps":
+      return keptDocument(name, body, doc);
+    case "fields": {
+      // `$group` and `$facet` state the output fields as their body. `$count` names
+      // the one number field it writes.
+      if (typeof body === "string") return objectOf(new Map([[body, of("number")]]), false);
+      if (!isPlainObject(body)) return DOCUMENT;
+      const props = new Map<string, Type>();
+      for (const [k, v] of Object.entries(body)) {
+        // A key whose value is a pipeline (`$facet`) holds that pipeline's documents.
+        props.set(k, Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(DOCUMENT) : typeOfEmitted(v, doc));
+      }
+      return objectOf(props, false);
+    }
+    case "value": {
+      const root = isPlainObject(body) && "newRoot" in body ? body.newRoot : body;
+      const t = typeOfEmitted(root, doc);
+      return isOnly(t, "object") ? present(t) : DOCUMENT;
+    }
+    case "projection": {
+      if (!isPlainObject(body)) return doc;
+      const entries = Object.entries(body);
+      const inclusion = entries.filter(([k]) => k !== "_id").some(([, v]) => v === 1 || v === true);
+      if (!inclusion) return entries.reduce((d, [k, v]) => (v === 0 || v === false ? removed(d, k) : d), doc);
+      let out: Type = objectOf(new Map(), false);
+      let keepsId = true;
+      for (const [k, v] of entries) {
+        if (k === "_id" && (v === 0 || v === false)) {
+          keepsId = false;
+          continue;
+        }
+        out = written(out, k, v === 1 || v === true ? at(doc, k) : typeOfEmitted(v, doc));
+      }
+      if (keepsId && !("_id" in body)) out = written(out, "_id", at(doc, "_id"));
+      return out;
+    }
+    case "element": {
+      const spec =
+        typeof body === "string" ? { path: body } : (body as { path?: string; preserveNullAndEmptyArrays?: boolean });
+      const path = spec.path?.startsWith("$") ? spec.path.slice(1) : null;
+      if (path === null) return doc;
+      const element = elementOf(at(doc, path));
+      return written(doc, path, spec.preserveNullAndEmptyArrays === true ? maybeAbsent(element) : present(element));
+    }
+    case "unknown":
+      return DOCUMENT;
+    default:
+      return doc;
+  }
+}
+
+/** A `keeps` stage: its output fields land on the document, its removed fields leave it. */
+function keptDocument(name: string, body: unknown, doc: Type): Type {
+  if (name === "$unset") {
+    const paths = typeof body === "string" ? [body] : Array.isArray(body) ? (body as string[]) : [];
+    return paths.reduce((d, p) => removed(d, p), doc);
+  }
+  if (!isPlainObject(body)) return doc;
+  // `$set` / `$addFields`: every key is a written path. `$lookup` / `$graphLookup`
+  // write their `as`. `$setWindowFields` writes each `output` key.
+  if (name === "$set" || name === "$addFields") {
+    return Object.entries(body).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
+  }
+  if (typeof body.as === "string") return written(doc, body.as, arrayOf(DOCUMENT));
+  if (isPlainObject(body.output)) {
+    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
+  }
+  return doc;
 }

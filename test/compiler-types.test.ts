@@ -316,3 +316,110 @@ describe.skipIf(up === null)("types — the server agrees with the truthiness ch
     expect(await ids("$.m = $.n; $match($.flag);")).toEqual([1]);
   });
 });
+
+describe("types — the document after a stage, read off the stage itself", () => {
+  it("`$group` types each output by its accumulator, and `_id` by its expression", () => {
+    expect(
+      jsmql(
+        "$group({ _id: $.k, total: $sum($.amount), items: $push($.item) }); $.t = $.total ? 1 : 2; $.n = $.items.length;",
+      ),
+    ).toEqual([
+      { $group: { _id: "$k", total: { $sum: "$amount" }, items: { $push: "$item" } } },
+      // a number is its own truth
+      { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } },
+      // an array: `$size`, with the null guard while the proof does not show the array is there
+      {
+        $set: {
+          n: { $cond: { if: { $eq: [{ $ifNull: ["$items", null] }, null] }, then: null, else: { $size: "$items" } } },
+        },
+      },
+    ]);
+  });
+
+  it("`$ = <expr>` makes the value's shape the document", () => {
+    expect(jsmql('$.p = { a: 1, b: "x" }; $ = $.p; $.c = $.b.length;')).toEqual([
+      { $set: { p: { $mergeObjects: [{ a: 1, b: "x" }] } } },
+      { $replaceWith: "$p" },
+      { $set: { c: { $strLenCP: "$b" } } },
+    ]);
+  });
+
+  it("`.flatMap(<field>)` makes the field its element", () => {
+    expect(jsmql('$.items = [{ q: 1 }]; $$.flatMap("items"); $.d = $.items.q + 1;')).toEqual([
+      { $set: { items: [{ q: 1 }] } },
+      { $unwind: "$items" },
+      { $set: { d: { $add: ["$items.q", 1] } } },
+    ]);
+  });
+
+  it("a `$project` inclusion keeps the named fields' types and forgets the rest; an exclusion removes its fields", () => {
+    expect(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length; $.m = $.b ? 1 : 2;')).toEqual([
+      { $set: { a: "x" } },
+      { $set: { b: 1 } },
+      { $project: { a: 1, _id: 0 } },
+      { $set: { n: { $strLenCP: "$a" } } },
+      // `b` is gone: certainly missing, so the condition is false and the `$cond` folds
+      { $set: { m: 2 } },
+    ]);
+    expect(jsmql('$.a = "x"; $project({ a: 0 }); $.n = $.a ? 1 : 2;')[2]).toEqual({ $set: { n: 2 } });
+  });
+
+  it("a stage whose output no layout states yet leaves the document unknown", () => {
+    expect(jsmql('$.a = "x"; $sortByCount($.a); $.n = $.a.length;')[2]).toEqual({
+      $set: {
+        n: {
+          $switch: {
+            branches: [
+              { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $size: "$a" } },
+              { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $strLenCP: "$a" } },
+            ],
+            default: null,
+          },
+        },
+      },
+    });
+  });
+});
+
+describe.skipIf(up === null)("types — the server agrees with the stage effects", () => {
+  let client: MongoClient;
+  let coll: Collection;
+  beforeAll(async () => {
+    client = (await liveClient())!;
+    coll = client.db("jsmql_compiler_types").collection("stages");
+    await coll.deleteMany({});
+    await coll.insertMany([
+      { _id: 1, k: "a", amount: 5, item: "x" },
+      { _id: 2, k: "a", amount: 7, item: "y" },
+      { _id: 3, k: "b", amount: 0, item: "z" },
+    ]);
+  });
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  it("the grouped program answers as JavaScript would", async () => {
+    const out = await coll
+      .aggregate([
+        ...(jsmql(
+          "$group({ _id: $.k, total: $sum($.amount), items: $push($.item) }); $.t = $.total ? 1 : 2; $.n = $.items.length;",
+        ) as object[]),
+        { $sort: { _id: 1 } },
+      ])
+      .toArray();
+    expect(out).toEqual([
+      { _id: "a", total: 12, items: ["x", "y"], t: 1, n: 2 },
+      { _id: "b", total: 0, items: ["z"], t: 2, n: 1 },
+    ]);
+  });
+
+  it("the projected program answers as JavaScript would", async () => {
+    const out = await coll
+      .aggregate([
+        ...(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length; $.m = $.b ? 1 : 2;') as object[]),
+        { $limit: 1 },
+      ])
+      .toArray();
+    expect(out).toEqual([{ a: "x", n: 1, m: 2 }]);
+  });
+});

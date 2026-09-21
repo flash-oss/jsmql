@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — feat: a stage's effect on the document is read off the stage it emitted
+
+After `$group`, `$ = …`, `.flatMap("items")` or a `$project`, the compiler knew
+only that the document had changed, and forgot every proof. It now reads what the
+stage MADE from the stage's own emitted body: `documentAfter` in
+`src/compiler/emit/prove.ts` applies the row's `document` effect over the MQL,
+and `typeOfEmitted` proves an MQL value against the input document — a field
+path reads the input's proof, an operator answers its row's `returns`, a `$cond`
+joins its branches. So `$group({ …, total: $sum($.amount) }); $.total ? 1 : 2`
+reads `total` as a number, `$ = $.p` makes `p`'s recorded shape the document, an
+`$unwind` makes the path its element, and a `$project` inclusion keeps the named
+fields' types. The reader runs on the emitted MQL rather than on the source, so
+every road that emits a stage — a statement, a chain link, `$ = …` sugar, a raw
+`$op(…)` pass-through — feeds it, and a body shape it does not recognise answers
+`ANY`.
+
+`$bucket`, `$bucketAuto` and `$sortByCount` move from `fields` to `unknown`: their
+output fields are not their body's keys, and no layout states them yet.
+
+---
+
 ## 2026-09-21 — feat: the truthiness check keeps only the tests the value can fail
 
 `truthOf` read every value the compiler could not prove boolean with the same

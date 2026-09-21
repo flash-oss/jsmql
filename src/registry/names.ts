@@ -5198,7 +5198,9 @@ export const NAMES = {
   $bucket: mongo({
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
     where: ["stream", "statement"],
-    document: "fields",
+    // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
+    // the body's keys, so no layout states them yet: the document is unknown after it.
+    document: "unknown",
     body: {
       required: ["groupBy", "boundaries"],
       optional: ["default", "output"],
@@ -5231,7 +5233,9 @@ export const NAMES = {
   $bucketAuto: mongo({
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
     where: ["stream", "statement"],
-    document: "fields",
+    // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
+    // the body's keys, so no layout states them yet: the document is unknown after it.
+    document: "unknown",
     body: {
       required: ["groupBy", "buckets"],
       optional: ["output", "granularity"],
@@ -6470,7 +6474,9 @@ export const NAMES = {
 
   $sortByCount: mongo({
     doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
-    document: "fields",
+    // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
+    // the body's keys, so no layout states them yet: the document is unknown after it.
+    document: "unknown",
     where: ["stream", "statement"],
     // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
     body: { required: [], optional: [], closed: false },

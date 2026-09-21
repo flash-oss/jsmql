@@ -135,11 +135,41 @@ a cell guards with `$ifNull` exactly where the proof says `absent`.
 Every stage row states a `document` fact, from the `DocumentEffect` vocabulary:
 `keeps`, `fields`, `value`, `projection`, `element`, `unknown`. `StageFacts` in
 [names.ts](../../src/registry/names.ts) pairs it with `body` at the type level, so
-a stage row cannot omit it. The scope tracker drops every field-carried binding,
-resets the document proof and skips the trailing namespace cleanup after a stage
-whose effect is `fields`, `value` or `unknown`, and after a `projection` that
-names fields to keep. MEASURED: a `let` binding survived `{ $project: { x: 0 } }`
-and went away under `{ $project: { x: 1 } }`.
+a stage row cannot omit it. The scope tracker drops every field-carried binding
+and skips the trailing namespace cleanup after a stage whose effect is `fields`,
+`value` or `unknown`, and after a `projection` that names fields to keep.
+MEASURED: a `let` binding survived `{ $project: { x: 0 } }` and went away under
+`{ $project: { x: 1 } }`.
+
+**The effect is applied to the emitted stage, not to its source.** `documentAfter`
+in [prove.ts](../../src/compiler/emit/prove.ts) reads the stage's body as MQL:
+the body names the output fields and the operators that fill them, whatever road
+wrote the stage — a statement, a chain link, `$ = …` sugar. `typeOfEmitted` proves
+an MQL value against the input document: a field path reads the input's proof, an
+operator answers its row's `returns` over its operands (`{ $sum: … }` is a
+number, `{ $push: … }` an array), a `$cond` or `$switch` joins its branches, a
+`$literal` proves itself, a `$$` variable proves nothing. A raw `$op(…)` passes
+through as written (HR2), so the reader answers `ANY` for a body shape it does not
+recognise.
+
+| Effect | The document after the stage |
+|---|---|
+| `keeps` | The input, with `$set` / `$addFields` keys written, `$unset` paths removed, a `$lookup` / `$graphLookup` `as` written as a present array of documents, and each `$setWindowFields` `output` key written. |
+| `fields` | Exactly the body's keys, closed: `$group` types `_id` by its expression and each key by its accumulator; `$facet` gives each key an array of documents; `$count`'s string body names one number field. |
+| `value` | The body value's proof, when it proves an object (`$replaceWith`, `$replaceRoot.newRoot`); otherwise an unknown document. |
+| `projection` | An inclusion is a closed object of the named paths with their input types, `_id` kept unless `0`; an exclusion removes the named paths. |
+| `element` | The unwound path becomes its element, present unless `preserveNullAndEmptyArrays`. |
+| `unknown` | An unknown document. `$bucket`, `$bucketAuto` and `$sortByCount` state this until a layout can name their output fields. |
+
+Inside one statement the same reader runs at each replacing stage, so a write
+after `$ = …` lands on what that stage made.
+
+```js
+$group({ _id: $.k, total: $sum($.amount), items: $push($.item) });  $.t = $.total ? 1 : 2;
+// → …, { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } }
+$.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length;
+// → …, { $replaceWith: "$p" }, { $set: { c: { $strLenCP: "$b" } } }
+```
 
 ## The consumers
 
