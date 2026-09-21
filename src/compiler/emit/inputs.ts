@@ -101,7 +101,7 @@ function arrayCallback(
   if (cb.params.length > 3) throw tooManyCallbackParams(name, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
   // What ONE element of the receiver is, where the registry can show it: a written
-  // list of strings, a `.split()`, a row that states `elementKind`. Without it a
+  // list of strings, a `.split()`, a row whose `returns` states its element. Without it a
   // string key read as `$.m[k]` would take the runtime array/object dispatch, whose
   // array arm hands `$arrayElemAt` a string — MEASURED, the server refuses that.
   const element = recvNode === undefined ? ANY : maybeAbsent(elementOf(typeOf(recvNode, env)));

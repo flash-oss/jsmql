@@ -560,9 +560,11 @@ function setKey(out, name2, value) {
   out[name2] = value;
   return out;
 }
-var cond = (ifExpr, thenExpr, elseExpr) => ({
-  $cond: { if: ifExpr, then: thenExpr, else: elseExpr }
-});
+var cond = (ifExpr, thenExpr, elseExpr) => {
+  if (ifExpr === true) return thenExpr;
+  if (ifExpr === false) return elseExpr;
+  return { $cond: { if: ifExpr, then: thenExpr, else: elseExpr } };
+};
 var isIfNullWrapped = (value) => typeof value === "object" && value !== null && "$ifNull" in value && Object.keys(value).length === 1;
 var coerceStringBinding = (v) => isIfNullWrapped(v) ? v : { $ifNull: [v, ""] };
 var clampNonNegative = (value) => typeof value === "number" ? Math.max(0, value) : { $max: [0, value] };
@@ -4988,7 +4990,9 @@ var NAMES = {
   $bucket: mongo({
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
     where: ["stream", "statement"],
-    document: "fields",
+    // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
+    // the body's keys, so no layout states them yet: the document is unknown after it.
+    document: "unknown",
     body: {
       required: ["groupBy", "boundaries"],
       optional: ["default", "output"],
@@ -5020,7 +5024,9 @@ var NAMES = {
   $bucketAuto: mongo({
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
     where: ["stream", "statement"],
-    document: "fields",
+    // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
+    // the body's keys, so no layout states them yet: the document is unknown after it.
+    document: "unknown",
     body: {
       required: ["groupBy", "buckets"],
       optional: ["output", "granularity"],
@@ -5664,7 +5670,7 @@ var NAMES = {
     doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
     where: ["stream", "statement"],
     // MEASURED: { $match: [1] } → the match filter must be an expression in an object
-    document: "keeps",
+    document: "narrows",
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
@@ -6214,7 +6220,9 @@ var NAMES = {
   }),
   $sortByCount: mongo({
     doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
-    document: "fields",
+    // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
+    // the body's keys, so no layout states them yet: the document is unknown after it.
+    document: "unknown",
     where: ["stream", "statement"],
     // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
     body: { required: [], optional: [], closed: false },
@@ -7005,7 +7013,7 @@ var NAMES = {
     doc: "'.slice()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["string", "array", "stream"],
-    returns: { string: "string", array: "array", stream: "stream" },
+    returns: { string: "same", array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7228,7 +7236,7 @@ var NAMES = {
         sortSpec: '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (lodash reads an object as a matcher); a stream has no natural order, so a key is required'
       }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7461,7 +7469,7 @@ var NAMES = {
       // $unwind needs a field path, and a matcher is provably a boolean.
       stream: { 0: ["propertyPath"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: { arrayOf: { elementOf: { callback: 0 } } }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7508,7 +7516,7 @@ var NAMES = {
       // $replaceWith needs a document, and a matcher is provably a boolean.
       stream: { 0: ["propertyPath"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: { arrayOf: { callback: 0 } }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7541,7 +7549,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7781,7 +7789,7 @@ var NAMES = {
     iterateeSlots: {
       array: { arrowOnly: "the callback takes (accumulator, value[, index]) and a shorthand cannot stand in for it" }
     },
-    returns: "unknown",
+    returns: { oneOf: [{ arg: 1 }, { callback: 0 }] },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8088,7 +8096,11 @@ var NAMES = {
     doc: "'Object.entries(obj)' / '.entries()' \u2014 the object as [key, value] pairs. The array form is refused.",
     call: true,
     on: ["array", "object", "Object"],
-    returns: { arrayOf: "array" },
+    returns: {
+      array: { arrayOf: { tuple: ["number", "element"] } },
+      object: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
+      Object: { arrayOf: { tuple: ["string", { elementOf: { arg: 0 } }] } }
+    },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -8147,7 +8159,11 @@ var NAMES = {
     doc: "'Object.values(obj)' / '.values()' \u2014 an array of the object's values. The array form is refused.",
     call: true,
     on: ["array", "object", "Object"],
-    returns: "array",
+    returns: {
+      array: "same",
+      object: { arrayOf: { elementOf: "same" } },
+      Object: { arrayOf: { elementOf: { arg: 0 } } }
+    },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -9354,7 +9370,7 @@ var NAMES = {
     doc: "'.uniq()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9384,7 +9400,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9687,7 +9703,7 @@ var NAMES = {
     doc: "'.compact()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -9717,7 +9733,7 @@ var NAMES = {
     doc: "'.flatten()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "array",
+    returns: { arrayOf: { elementOf: "element" } },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -9744,7 +9760,7 @@ var NAMES = {
     doc: "'.chunk()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: { arrayOf: "array" },
+    returns: { arrayOf: "same" },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -10429,7 +10445,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
-    returns: { array: "object", stream: "stream" },
+    returns: { array: { recordOf: "element" }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10463,7 +10479,7 @@ var NAMES = {
       // '_id' is the group key. The other two spellings are iteratees as usual.
       stream: { 0: ["propertyPath", "matchesPropertyPair", "omitted"] }
     },
-    returns: { array: "object", stream: "stream", Object: "object" },
+    returns: { array: { recordOf: "same" }, stream: "stream", Object: { recordOf: { arg: 0 } } },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10504,7 +10520,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
-    returns: { array: "object", stream: "stream" },
+    returns: { array: { recordOf: "number" }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10537,7 +10553,7 @@ var NAMES = {
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: { arrayOf: "array" },
+    returns: { tuple: ["same", "same"] },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -10570,7 +10586,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10602,7 +10618,7 @@ var NAMES = {
         arrowOnly: "the callback takes (value, key) and a shorthand cannot stand in for a two-parameter arrow"
       }
     },
-    returns: "object",
+    returns: { recordOf: { callback: 0 } },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10635,7 +10651,7 @@ var NAMES = {
         arrowOnly: "the callback takes (value, key) and a shorthand cannot stand in for a two-parameter arrow"
       }
     },
-    returns: "object",
+    returns: { recordOf: { elementOf: "same" } },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10665,7 +10681,9 @@ var NAMES = {
     call: true,
     on: ["object", "stream"],
     // The value form builds a document literal, so the result IS an object.
-    returns: { object: "object", stream: "stream" },
+    returns: { object: "picked", stream: "stream" },
+    // MEASURED: `$.o.pick(["a"])` answers `{ a: 1 }` for `o: { a: 1, b: 2 }`, `{}` for a missing `o`, and `{ a: null }` for `o: null` — an object every time
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10717,7 +10735,9 @@ var NAMES = {
     call: true,
     on: ["object", "stream"],
     // The value form builds a document literal, so the result IS an object.
-    returns: { object: "object", stream: "stream" },
+    returns: { object: "omitted", stream: "stream" },
+    // MEASURED: `$.o.omit(["a"])` answers `{ b: 2 }` for `o: { a: 1, b: 2 }` and `{}` for a missing or null `o` — an object every time
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10842,7 +10862,7 @@ var NAMES = {
     doc: "'.toPairs()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "object",
-    returns: { arrayOf: "array" },
+    returns: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -12517,7 +12537,9 @@ var NAMES = {
     call: true,
     on: ["object", "Object"],
     mutatesArgumentAt: 0,
-    returns: "object",
+    returns: { object: { merge: ["same", { args: 0 }] }, Object: { merge: [{ args: 0 }] } },
+    // MEASURED: `$.o.assign({ z: 1 })` answers `{ a: 1, b: 2, z: 1 }` for `o: { a: 1, b: 2 }` and `{ z: 1 }` for a missing or null `o`; `Object.assign({}, $.o)` answers `{}` there — an object every time
+    neverNull: true,
     // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
     // before the compiler reads any statement cell — so the row states only the value.
     where: ["value"],
@@ -12551,7 +12573,7 @@ var NAMES = {
     doc: "'Object.fromEntries(entries)' / '.fromEntries()' \u2014 emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
     on: ["array", "Object"],
-    returns: "object",
+    returns: { recordOf: "unknown" },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13734,7 +13756,7 @@ var PRODUCTIONS = {
     filter: viaFallback,
     expr: {
       args: { sig: "test, then, else", exact: 3 },
-      emit: ({ args, value, truth }) => ({ $cond: { if: truth(args[0]), then: value(args[1]), else: value(args[2]) } })
+      emit: ({ args, value, truth }) => cond(truth(args[0]), value(args[1]), value(args[2]))
     },
     stream: unsupported("'?:' produces a value, not a stage."),
     statement: unsupported("'?:' is not a statement \u2014 see its 'where'.")
@@ -22691,6 +22713,7 @@ var tupleOf = (items, absent = false) => ({
 var objectOf = (props, open, values = void 0, absent = false) => ({ kinds: /* @__PURE__ */ new Set(["object"]), absent, props, open, ...values === void 0 ? {} : { values } });
 var present = (t) => t.absent ? { ...t, absent: false } : t;
 var maybeAbsent = (t) => t.absent ? t : { ...t, absent: true };
+var mayBe = has;
 var isOnly = (t, k) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has(k);
 function single2(t) {
   if (t.kinds === "any" || t.kinds.size !== 1) return "unknown";
@@ -22699,7 +22722,8 @@ function single2(t) {
 var kindsOf = (t) => t.kinds === "any" ? null : [...t.kinds];
 function elementOf(t) {
   if (!has(t, "array")) return NOTHING;
-  return t.element ?? ANY;
+  const element2 = t.element ?? ANY;
+  return t.absent ? maybeAbsent(element2) : element2;
 }
 function itemOf(t, i) {
   if (t.items !== void 0) return i < t.items.length ? t.items[i] : NOTHING;
@@ -22709,9 +22733,8 @@ function propOf(t, name2) {
   if (t.kinds === "any") return ANY;
   const asObject2 = t.kinds.has("object") ? ownProp(t, name2) : NOTHING;
   const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name2)) : NOTHING;
-  if (isNothing(asArray)) return asObject2;
-  if (isNothing(asObject2)) return asArray;
-  return join(asObject2, asArray);
+  const own = isNothing(asArray) ? asObject2 : isNothing(asObject2) ? asArray : join(asObject2, asArray);
+  return t.absent ? maybeAbsent(own) : own;
 }
 function ownProp(t, name2) {
   const known = t.props?.get(name2);
@@ -22844,12 +22867,15 @@ function evaluate2(e, site) {
     }
   }
   if (isTerm(e, "arrayOf")) return arrayOf(evaluate2(e.arrayOf, site));
+  if (isTerm(e, "elementOf")) return flattenOnce(evaluate2(e.elementOf, site));
   if (isTerm(e, "callback")) return site.callback(e.callback);
   if (isTerm(e, "arg")) return site.arg(e.arg);
+  if (isTerm(e, "args")) return joinAll(expandArgs(e.args, site));
   if (isTerm(e, "merge")) {
-    const terms = e.merge.map((t) => evaluate2(t, site));
+    const terms = expandList(e.merge, site);
     return terms.reduce((acc, t) => merge(acc, t), objectOf(/* @__PURE__ */ new Map(), false));
   }
+  if (isTerm(e, "oneOf")) return joinAll(expandList(e.oneOf, site));
   if (isTerm(e, "recordOf")) return objectOf(/* @__PURE__ */ new Map(), true, evaluate2(e.recordOf, site));
   if (isTerm(e, "tuple")) return tupleOf(e.tuple.map((t) => evaluate2(t, site)));
   const map = e;
@@ -22859,6 +22885,29 @@ function evaluate2(e, site) {
     return term === void 0 ? ANY : evaluate2(term, site);
   }
   return ANY;
+}
+function expandList(terms, site) {
+  return terms.flatMap(
+    (t) => isTerm(t, "args") ? expandArgs(t.args, site) : [evaluate2(t, site)]
+  );
+}
+function expandArgs(n2, site) {
+  const out = [];
+  for (let i = n2; i < site.argCount; i++) out.push(site.arg(i));
+  return out;
+}
+function flattenOnce(t) {
+  if (t.kinds === "any") return ANY;
+  const parts = [];
+  if (t.kinds.has("array")) parts.push(t.element ?? ANY);
+  if (t.kinds.has("object") && !t.kinds.has("array")) {
+    const values = [...t.props?.values() ?? []];
+    if (t.open) values.push(t.values ?? ANY);
+    return joinAll(values);
+  }
+  const rest = [...t.kinds].filter((k) => k !== "array");
+  if (rest.length > 0) parts.push({ ...t, kinds: new Set(rest), element: void 0, items: void 0 });
+  return joinAll(parts);
 }
 function familyOfType(t) {
   const k = single2(t);
@@ -24593,10 +24642,14 @@ function statedPresence(node, env) {
       const key = productionForOperator("BinaryExpr", node.op);
       return key !== void 0 && neverNullOf(key) && isPresent(node.left, env) && isPresent(node.right, env);
     }
+    case "MemberAccess":
+      if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
+        return neverNullOf(node.name) && (sourceFamily(node.object) !== null || isPresent(node.object, env));
+      }
+      return null;
     case "FieldRef":
     case "Ident":
     case "CollectionRef":
-    case "MemberAccess":
     case "IndexAccess":
     case "TernaryExpr":
     case "ExprBlock":
@@ -24658,26 +24711,38 @@ function namesIn2(arg) {
   }
   return out;
 }
-function siteOf(receiver, family, args, env) {
+function siteOf(name2, receiver, family, args, env) {
+  const arg = (n2) => {
+    const a = args[n2];
+    return a === void 0 || a.type === "Lambda" || a.type === "SpreadElement" ? ANY : typeOf(a, env);
+  };
   return {
     receiver,
     family,
-    arg: (n2) => {
-      const a = args[n2];
-      return a === void 0 || a.type === "Lambda" || a.type === "SpreadElement" ? ANY : typeOf(a, env);
-    },
-    // A callback's return needs the body lowered under its bound parameters; the
-    // rows that state `callback` are evaluated where that Env exists.
-    callback: () => ANY,
+    arg,
+    argCount: args.length,
+    callback: (n2) => callbackAnswer(name2, receiver, args, n2, arg, env),
     names: namesIn2(args[0])
   };
 }
+function callbackAnswer(name2, receiver, args, n2, arg, env) {
+  const cb = args[n2];
+  if (cb === void 0 || cb.type !== "Lambda" || cb.body === void 0) return ANY;
+  const kinds = callbackParamsOf(name2, "value") ?? [];
+  let bodyEnv = env.block();
+  cb.params.forEach((p, i) => {
+    const kind = kinds[i];
+    const t = kind === "value" ? flattenOnce(receiver) : kind === "index" ? of("number") : kind === "key" ? of("string") : kind === "collection" ? receiver : kind === "accumulator" ? arg(n2 + 1) : ANY;
+    bodyEnv = bodyEnv.param(p, maybeAbsent(t), cb.pos).env;
+  });
+  return typeOf(cb.body, bodyEnv);
+}
 function callOn(name2, receiver, family, args, env) {
-  return evaluate2(returnsOf(name2), siteOf(receiver, family, args, env));
+  return evaluate2(returnsOf(name2), siteOf(name2, receiver, family, args, env));
 }
 function callOnUnproven(name2, receiver, args, env) {
   const r = returnsOf(name2);
-  const site = siteOf(receiver, null, args, env);
+  const site = siteOf(name2, receiver, null, args, env);
   if (typeof r === "string") return r === "same" || r === "element" ? ANY : evaluate2(r, site);
   if (!isFamilyMap(r)) return evaluate2(r, site);
   const sole = soleFieldFamilyOf(name2);
@@ -24693,7 +24758,8 @@ function callOnUnproven(name2, receiver, args, env) {
   }
   return answers.length === 0 ? ANY : joinAll(answers);
 }
-var isFamilyMap = (r) => typeof r === "object" && r !== null && !("arrayOf" in r) && !("callback" in r) && !("arg" in r) && !("merge" in r) && !("recordOf" in r) && !("tuple" in r);
+var TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple"];
+var isFamilyMap = (r) => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 function injectedType(v) {
   if (typeof v === "number" || typeof v === "bigint") return of("number");
   if (typeof v === "string") return isMqlShaped(v) ? ANY : of("string");
@@ -24826,6 +24892,226 @@ function kindsOf2(node, env) {
     default:
       return ANY;
   }
+}
+function operatorKeyOf(v) {
+  if (!isPlainObject(v)) return null;
+  const ops = Object.keys(v).filter((k) => k.startsWith("$"));
+  return ops.length === 1 ? ops[0] : null;
+}
+function typeOfEmitted(value, doc) {
+  if (value === null || value === void 0) return NOTHING;
+  if (typeof value === "string") {
+    if (value.startsWith("$$")) return value === "$$ROOT" || value === "$$CURRENT" ? doc : ANY;
+    if (value.startsWith("$")) return at2(doc, value.slice(1));
+    return of("string");
+  }
+  if (typeof value === "number" || typeof value === "bigint") return of("number");
+  if (typeof value === "boolean") return of("bool");
+  if (Array.isArray(value)) return arrayOf(joinAll(value.map((v) => typeOfEmitted(v, doc))));
+  const op = operatorKeyOf(value);
+  if (op !== null) {
+    const raw = value[op];
+    if (op === "$literal") return injectedType(raw);
+    if (op === "$cond") {
+      if (Array.isArray(raw) && raw.length === 3) return join(typeOfEmitted(raw[1], doc), typeOfEmitted(raw[2], doc));
+      if (isPlainObject(raw) && "then" in raw && "else" in raw) {
+        return join(typeOfEmitted(raw.then, doc), typeOfEmitted(raw.else, doc));
+      }
+      return ANY;
+    }
+    if (op === "$switch") {
+      if (!isPlainObject(raw) || !Array.isArray(raw.branches)) return ANY;
+      const answers = raw.branches.map((b) => isPlainObject(b) ? typeOfEmitted(b.then, doc) : ANY);
+      if (raw.default !== void 0) answers.push(typeOfEmitted(raw.default, doc));
+      return joinAll(answers);
+    }
+    if (op === "$ifNull") {
+      if (!Array.isArray(raw) || raw.length === 0) return ANY;
+      const last = typeOfEmitted(raw[raw.length - 1], doc);
+      return { ...joinAll(raw.map((v) => typeOfEmitted(v, doc))), absent: last.absent };
+    }
+    const args = Array.isArray(raw) ? raw : [raw];
+    const site = {
+      receiver: ANY,
+      family: null,
+      arg: (n2) => n2 < args.length ? typeOfEmitted(args[n2], doc) : ANY,
+      argCount: args.length,
+      callback: () => ANY,
+      names: null
+    };
+    const result = evaluate2(returnsOf(op), site);
+    const isPresent3 = neverNullOf(op) && args.every((a) => !typeOfEmitted(a, doc).absent);
+    return isPresent3 ? present(result) : maybeAbsent(result);
+  }
+  if (isPlainObject(value)) {
+    const props = /* @__PURE__ */ new Map();
+    for (const [k, v] of Object.entries(value)) props.set(k, typeOfEmitted(v, doc));
+    return objectOf(props, false);
+  }
+  return injectedType(value);
+}
+function documentAfter(stage, doc) {
+  const name2 = Object.keys(stage)[0];
+  const body = stage[name2];
+  switch (documentOf(name2)) {
+    case "keeps":
+      return keptDocument(name2, body, doc);
+    case "narrows":
+      return narrowedBy(body, doc);
+    case "fields": {
+      if (typeof body === "string") return objectOf(/* @__PURE__ */ new Map([[body, of("number")]]), false);
+      if (!isPlainObject(body)) return DOCUMENT;
+      const props = /* @__PURE__ */ new Map();
+      for (const [k, v] of Object.entries(body)) {
+        props.set(k, Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(DOCUMENT) : typeOfEmitted(v, doc));
+      }
+      return objectOf(props, false);
+    }
+    case "value": {
+      const root2 = isPlainObject(body) && "newRoot" in body ? body.newRoot : body;
+      const t = typeOfEmitted(root2, doc);
+      return isOnly(t, "object") ? present(t) : DOCUMENT;
+    }
+    case "projection": {
+      if (!isPlainObject(body)) return doc;
+      const entries = Object.entries(body);
+      const inclusion = entries.filter(([k]) => k !== "_id").some(([, v]) => v === 1 || v === true);
+      if (!inclusion) return entries.reduce((d, [k, v]) => v === 0 || v === false ? removed(d, k) : d, doc);
+      let out = objectOf(/* @__PURE__ */ new Map(), false);
+      let keepsId = true;
+      for (const [k, v] of entries) {
+        if (k === "_id" && (v === 0 || v === false)) {
+          keepsId = false;
+          continue;
+        }
+        out = written(out, k, v === 1 || v === true ? at2(doc, k) : typeOfEmitted(v, doc));
+      }
+      if (keepsId && !("_id" in body)) out = written(out, "_id", at2(doc, "_id"));
+      return out;
+    }
+    case "element": {
+      const spec = typeof body === "string" ? { path: body } : body;
+      const path = spec.path?.startsWith("$") ? spec.path.slice(1) : null;
+      if (path === null) return doc;
+      const element2 = elementOf(at2(doc, path));
+      return written(doc, path, spec.preserveNullAndEmptyArrays === true ? maybeAbsent(element2) : present(element2));
+    }
+    case "unknown":
+      return DOCUMENT;
+    default:
+      return doc;
+  }
+}
+function keptDocument(name2, body, doc) {
+  if (name2 === "$unset") {
+    const paths = typeof body === "string" ? [body] : Array.isArray(body) ? body : [];
+    return paths.reduce((d, p) => removed(d, p), doc);
+  }
+  if (!isPlainObject(body)) return doc;
+  if (name2 === "$set" || name2 === "$addFields") {
+    return Object.entries(body).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
+  }
+  if (typeof body.as === "string") return written(doc, body.as, arrayOf(DOCUMENT));
+  if (isPlainObject(body.output)) {
+    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
+  }
+  return doc;
+}
+var KIND_OF_TYPE_NAME = new Map([
+  ...["string", "array", "number", "object", "date"].flatMap(
+    (family) => FIELD_FAMILY_TYPES[family].map((t) => [t, family])
+  ),
+  ["number", "number"],
+  ["bool", "bool"],
+  ["objectId", "objectId"],
+  ["binData", "binData"]
+]);
+function kindOfQueryLiteral(v) {
+  if (v === null || v === void 0 || isRegExp(v)) return null;
+  const t = injectedType(v);
+  const k = single2(t);
+  return k === "unknown" ? null : k;
+}
+function bothKinds(a, b) {
+  if (a === "any") return b;
+  if (b === "any") return a;
+  return new Set([...a].filter((k) => b.has(k)));
+}
+var intersect = (a, b) => ({
+  kinds: bothKinds(a.kinds, b.kinds),
+  present: a.present || b.present
+});
+function provenByClause(clause) {
+  const orArray = (k2) => ({ kinds: /* @__PURE__ */ new Set([k2, "array"]), present: true });
+  if (isPlainObject(clause) && Object.keys(clause).some((k2) => k2.startsWith("$"))) {
+    let out = null;
+    for (const [op, arg] of Object.entries(clause)) {
+      let one = null;
+      switch (op) {
+        case "$eq":
+        case "$gt":
+        case "$gte":
+        case "$lt":
+        case "$lte": {
+          const k2 = kindOfQueryLiteral(arg);
+          one = k2 === null ? null : orArray(k2);
+          break;
+        }
+        case "$in": {
+          if (!Array.isArray(arg) || arg.length === 0) break;
+          const kinds = arg.map(kindOfQueryLiteral);
+          if (kinds.some((k2) => k2 === null)) break;
+          one = { kinds: /* @__PURE__ */ new Set([...kinds, "array"]), present: true };
+          break;
+        }
+        case "$ne":
+          if (arg === null) one = { kinds: "any", present: true };
+          break;
+        case "$type": {
+          const names = Array.isArray(arg) ? arg : [arg];
+          const kinds = names.map((n2) => typeof n2 === "string" ? KIND_OF_TYPE_NAME.get(n2) : void 0);
+          if (kinds.some((k2) => k2 === void 0)) break;
+          one = { kinds: /* @__PURE__ */ new Set([...kinds, "array"]), present: true };
+          break;
+        }
+        case "$size":
+        case "$all":
+        case "$elemMatch":
+          one = { kinds: /* @__PURE__ */ new Set(["array"]), present: true };
+          break;
+        case "$regex":
+          one = orArray("string");
+          break;
+        default:
+          break;
+      }
+      if (one !== null) out = out === null ? one : intersect(out, one);
+    }
+    return out;
+  }
+  if (isRegExp(clause)) return orArray("string");
+  if (clause === null || clause === void 0) return null;
+  if (Array.isArray(clause)) return { kinds: /* @__PURE__ */ new Set(["array"]), present: true };
+  if (isPlainObject(clause)) return { kinds: /* @__PURE__ */ new Set(["object", "array"]), present: true };
+  const k = kindOfQueryLiteral(clause);
+  return k === null ? null : orArray(k);
+}
+function narrowedBy(query, doc) {
+  if (!isPlainObject(query)) return doc;
+  let out = doc;
+  for (const [key, clause] of Object.entries(query)) {
+    if (key === "$and" && Array.isArray(clause)) {
+      out = clause.reduce((d, q) => narrowedBy(q, d), out);
+      continue;
+    }
+    if (key.startsWith("$")) continue;
+    const proven = provenByClause(clause);
+    if (proven === null) continue;
+    const was = at2(out, key);
+    const narrowed = { ...was, kinds: bothKinds(was.kinds, proven.kinds), absent: was.absent && !proven.present };
+    out = written(out, key, narrowed);
+  }
+  return out;
 }
 
 // src/compiler/emit/join.ts
@@ -25237,18 +25523,75 @@ function streamSortAsk(ask, method, element2 = "") {
   );
 }
 
+// src/compiler/emit/mode.ts
+var mint = (doc) => doc;
+var TRUE = mint(true);
+var FALSE = mint(false);
+var constantOf = (t) => t === TRUE ? true : t === FALSE ? false : null;
+var boolTruth = (doc) => mint(doc);
+function truthOf(value, type) {
+  if (isNothing(type)) return FALSE;
+  const kinds = type.kinds;
+  if (kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number")) return mint(value);
+  const tests = [];
+  if (type.absent) tests.push({ $ne: [{ $ifNull: [value, null] }, null] });
+  if (mayBe(type, "bool")) tests.push({ $ne: [value, false] });
+  if (mayBe(type, "string")) tests.push({ $ne: [value, ""] });
+  if (mayBe(type, "number")) tests.push({ $ne: [value, 0] });
+  if (tests.length === 0) return TRUE;
+  if (tests.length === 1) return mint(tests[0]);
+  return mint({ $and: tests });
+}
+var asValue = (t) => t;
+var operandsOf = (op, t) => {
+  const doc = t;
+  const inner = typeof doc === "object" && doc !== null ? doc[op] : void 0;
+  return Array.isArray(inner) ? inner : [t];
+};
+function and(...ts) {
+  if (ts.some((t) => t === FALSE)) return FALSE;
+  const live = ts.filter((t) => t !== TRUE);
+  if (live.length === 0) return TRUE;
+  if (live.length === 1) return live[0];
+  return mint({ $and: live.flatMap((t) => operandsOf("$and", t)) });
+}
+function or(...ts) {
+  if (ts.some((t) => t === TRUE)) return TRUE;
+  const live = ts.filter((t) => t !== FALSE);
+  if (live.length === 0) return FALSE;
+  if (live.length === 1) return live[0];
+  return mint({ $or: live.flatMap((t) => operandsOf("$or", t)) });
+}
+var not = (t) => t === TRUE ? FALSE : t === FALSE ? TRUE : mint({ $not: t });
+
 // src/compiler/emit/mql.ts
-var cond2 = (test, then, otherwise) => ({
-  $cond: { if: test, then, else: otherwise }
-});
-var switchOn = (branches, fallback) => {
+var cond2 = (test, then, otherwise) => {
+  const c = constantOf(test);
+  if (c !== null) return c ? then : otherwise;
+  return { $cond: { if: test, then, else: otherwise } };
+};
+var liveBranches = (branches) => {
+  const kept = [];
+  for (const b of branches) {
+    const c = constantOf(b.case);
+    if (c === false) continue;
+    if (c === true) return { kept, decided: b.then };
+    kept.push(b);
+  }
+  return { kept, decided: void 0 };
+};
+var switchOn = (candidates, otherwise) => {
+  const { kept: branches, decided } = liveBranches(candidates);
+  const fallback = decided === void 0 ? otherwise : decided;
   const one = JSON.stringify(fallback);
   if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
 };
-var switchOver = (branches) => ({
-  $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) }
-});
+var switchOver = (candidates) => {
+  const { kept: branches, decided } = liveBranches(candidates);
+  if (decided !== void 0) return switchOn(branches, decided);
+  return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) } };
+};
 var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
   $let: { vars: { [as]: value }, in: body }
@@ -25259,27 +25602,6 @@ var readsRef = (mql, ref) => {
   if (mql !== null && typeof mql === "object") return Object.values(mql).some((m) => readsRef(m, ref));
   return false;
 };
-
-// src/compiler/emit/mode.ts
-var mint = (doc) => doc;
-var jsTruthy = (value) => mint({
-  $and: [
-    { $ne: [{ $ifNull: [value, null] }, null] },
-    { $ne: [value, false] },
-    { $ne: [value, ""] },
-    { $ne: [value, 0] }
-  ]
-});
-var truthOf = (value, isBool) => isBool ? mint(value) : jsTruthy(value);
-var asValue = (t) => t;
-var operandsOf = (op, t) => {
-  const doc = t;
-  const inner = typeof doc === "object" && doc !== null ? doc[op] : void 0;
-  return Array.isArray(inner) ? inner : [t];
-};
-var and = (...ts) => mint({ $and: ts.flatMap((t) => operandsOf("$and", t)) });
-var or = (...ts) => mint({ $or: ts.flatMap((t) => operandsOf("$or", t)) });
-var not = (t) => mint({ $not: t });
 
 // src/compiler/emit/select.ts
 var isObj3 = (v) => typeof v === "object" && v !== null;
@@ -25465,17 +25787,32 @@ function translate(node, env, nativeOnly) {
     if (branches.some((b) => b === null)) return null;
     if (branches.some(isAlwaysTrue)) return {};
     const docs = branches.filter((d) => !isAlwaysFalse(d));
-    if (docs.length === 0) return matchExpr(truthOf(false, true));
+    if (docs.length === 0) return matchExpr(FALSE);
     if (docs.length === 1) return docs[0];
     if (docs.every((d) => Object.keys(d).length === 1 && "$expr" in d))
       return matchExpr(or(...docs.map((d) => d.$expr)));
     return { $or: docs };
   }
   if (node.type === "ObjectLiteral" && !env.scope.has("$")) return rawQuery(node, env);
-  const native = leaf(node, env);
+  const native = leaf(node, env) ?? bareTruth(node, env);
   if (native !== null) return native;
   if (nativeOnly) return null;
   return matchExpr(lowerTruth(node, env.at({ at: "value" })));
+}
+function bareTruth(node, env) {
+  const path = pathOfIn(node, env);
+  if (path === null || path === "") return null;
+  const t = typeOf(node, env.at({ at: "value" }));
+  if (t.kinds === "any" || t.kinds.has("array")) return null;
+  if (isNothing(t)) return matchExpr(FALSE);
+  if (t.kinds.size === 1 && t.kinds.has("bool")) return { [path]: true };
+  const excluded = [];
+  if (t.absent) excluded.push(null);
+  if (t.kinds.has("bool")) excluded.push(false);
+  if (t.kinds.has("string")) excluded.push("");
+  if (t.kinds.has("number")) excluded.push(0);
+  if (excluded.length === 0) return {};
+  return { [path]: excluded.length === 1 ? { $ne: excluded[0] } : { $nin: excluded } };
 }
 function rawQuery(node, env) {
   const valueEnv = env.at({ at: "value" });
@@ -25728,7 +26065,7 @@ function isQueryConstant(x) {
   return false;
 }
 function mergeAnd(a, b) {
-  if (isAlwaysFalse(a) || isAlwaysFalse(b)) return matchExpr(truthOf(false, true));
+  if (isAlwaysFalse(a) || isAlwaysFalse(b)) return matchExpr(FALSE);
   if (isAlwaysTrue(a) || Object.keys(a).length === 0) return b;
   if (isAlwaysTrue(b) || Object.keys(b).length === 0) return a;
   const clauses = [];
@@ -26233,7 +26570,7 @@ function lowerValue(node, env) {
   const stopped = stoppedChain(node);
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     const base = withoutOptional(stopped);
-    const gone = truthOf({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] }, true);
+    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     return cond2(gone, null, lowerValue(withoutOptional(node), proved));
   }
@@ -26314,14 +26651,10 @@ function lowerTruth(node, env) {
   }
   if (node.type === "TernaryExpr") {
     const test = lowerTruth(node.test, childEnv(env, node, "test"));
-    return truthOf(cond2(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)), true);
+    return boolTruth(cond2(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)));
   }
-  if (node.type === "ExprBlock")
-    return truthOf(
-      exprBlock(node, env, (ret, e) => lowerTruth(ret, e)),
-      true
-    );
-  return truthOf(lowerValue(node, env), kindOf3(node, env) === "bool");
+  if (node.type === "ExprBlock") return boolTruth(exprBlock(node, env, (ret, e) => lowerTruth(ret, e)));
+  return truthOf(lowerValue(node, env), typeOf(node, env));
 }
 function templateLiteral(node, env) {
   if (node.exprs.length === 0) return node.quasis[0] ?? "";
@@ -26570,8 +26903,8 @@ function indexAccess(node, env) {
     const o2 = wrapped([]);
     return switchOn(
       [
-        { case: truthOf({ $isArray: o2 }, true), then: { $arrayElemAt: [o2, i] } },
-        { case: truthOf({ $eq: [{ $type: o2 }, "string"] }, true), then: charAt(o2) }
+        { case: boolTruth({ $isArray: o2 }), then: { $arrayElemAt: [o2, i] } },
+        { case: boolTruth({ $eq: [{ $type: o2 }, "string"] }), then: charAt(o2) }
       ],
       fieldAt(o2)
     );
@@ -26580,7 +26913,7 @@ function indexAccess(node, env) {
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);
-  return switchOn([{ case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, idx] } }], {
+  return switchOn([{ case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, idx] } }], {
     $getField: { field: key, input: o }
   });
 }
@@ -26670,7 +27003,7 @@ function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) 
       exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present2)
     );
   };
-  const branches = sel.branches.map((b) => ({ case: truthOf(b.guard(ref), true), then: run(b.rule) }));
+  const branches = sel.branches.map((b) => ({ case: boolTruth(b.guard(ref)), then: run(b.rule) }));
   if (sel.complete && branches.length >= 2) {
     const doc2 = switchOver(branches);
     return bound === null ? doc2 : letOne(bound.as, lowered, doc2);
@@ -26927,13 +27260,13 @@ function logicalValue(node, env) {
     const lhs = rest[0];
     const lowered = lowerValue(lhs, e);
     const rhs = fold2(rest.slice(1), e);
-    const isBool = kindOf3(lhs, e) === "bool";
-    if (pathOf(lhs, e) !== null || isBool) {
-      const test2 = truthOf(lowered, isBool);
+    const t = typeOf(lhs, e);
+    if (pathOf(lhs, e) !== null || kindOf3(lhs, e) === "bool") {
+      const test2 = truthOf(lowered, t);
       return op === "&&" ? cond2(test2, rhs, lowered) : cond2(test2, lowered, rhs);
     }
     const bound = e.fresh("v");
-    const test = jsTruthy(bound.ref);
+    const test = truthOf(bound.ref, t);
     return letOne(bound.as, lowered, op === "&&" ? cond2(test, rhs, bound.ref) : cond2(test, bound.ref, rhs));
   };
   return fold2(chain, inner);
@@ -27083,7 +27416,7 @@ function unionStages(args, env, node, S) {
 
 // src/compiler/emit/reduce-wrap.ts
 function seeded(acc, init, read) {
-  const c = constantOf(init);
+  const c = constantOf2(init);
   if (c === NOT_CONSTANT3) throw reduceWrapSeed(init.pos);
   switch (acc.op) {
     case "$sum":
@@ -27100,7 +27433,7 @@ function seeded(acc, init, read) {
   }
 }
 var NOT_CONSTANT3 = /* @__PURE__ */ Symbol("not constant");
-function constantOf(e) {
+function constantOf2(e) {
   switch (e.type) {
     case "NumberLiteral":
     case "StringLiteral":
@@ -27113,7 +27446,7 @@ function constantOf(e) {
       const out = [];
       for (const el of e.elements) {
         if (el.type === "SpreadElement") return NOT_CONSTANT3;
-        const v = constantOf(el);
+        const v = constantOf2(el);
         if (v === NOT_CONSTANT3) return NOT_CONSTANT3;
         out.push(v);
       }
@@ -27123,7 +27456,7 @@ function constantOf(e) {
       const out = {};
       for (const en of e.entries) {
         if (en.type !== "KeyValueEntry" || en.key.kind !== "static") return NOT_CONSTANT3;
-        const v = constantOf(en.value);
+        const v = constantOf2(en.value);
         if (v === NOT_CONSTANT3) return NOT_CONSTANT3;
         out[en.key.name] = v;
       }
@@ -27513,10 +27846,13 @@ function afterStages(stages, env) {
   let out = env;
   for (const stage of stages) {
     const name2 = Object.keys(stage)[0];
-    if (!replacesDocument(name2, stage)) continue;
-    out = out.dropFields(name2, afterReplace(name2));
-    env.chain.placed(true);
-    env.chain.dirty = false;
+    const after = documentAfter(stage, out.documents[out.level]);
+    if (replacesDocument(name2, stage)) {
+      out = out.dropFields(name2, afterReplace(name2));
+      env.chain.placed(true);
+      env.chain.dirty = false;
+    }
+    out = out.document(after);
   }
   return out;
 }
@@ -27784,7 +28120,7 @@ function writeStages(uf, env, first) {
     out.push(...env.chain.ahead(), ...made);
     if (made.some((st) => replacesDocument(Object.keys(st)[0], st))) {
       proofs = [];
-      inner = inner.document(DOCUMENT);
+      inner = inner.document(made.reduce((d, st) => documentAfter(st, d), inner.documents[inner.level]));
     }
   };
   for (const op of uf.ops) {

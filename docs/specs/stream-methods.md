@@ -164,7 +164,7 @@ compiler keeps them apart:
   element is the document, such a link is not a stream link: `streamLink` refuses it
   with the row's `why` at the top of a pipeline, and `peels` answers false in a join,
   so the link reads the joined array as a value, like any method without a cell.
-- **A stage that replaces the document** (`replacesDocument` on the stage's row —
+- **A stage that replaces the document** (a `document` effect on the stage's row that replaces the document — see docs/specs/types.md —
   `$replaceWith`, `$group`, an inclusion `$project`, …) makes the document the
   element again, whether it comes from a link (`streamLink`) or a statement
   (`afterStages`). A link whose row states `restoresDocuments` (`.uniq`, `.uniqBy`,

@@ -34,13 +34,18 @@ truths, and anything else is `truthOf(value, row says bool)`. See `mode.ts`.
 
 ## The receiver's proof and the runtime dispatch
 
-`types.ts` answers `kindOf(node, env)`: a literal, a binding's recorded type, a
-row's measured `returns` (resolved per family for `.filter`-like rows), or a
-production's `returns`. A field path answers `"unknown"`.
+`prove.ts` answers `typeOf(node, env)`, the receiver's proof: a literal, a
+binding's recorded `Type`, a row's `returns` term evaluated at the call site, a
+written field's recorded proof, and `ANY` for a field nothing wrote. The model,
+the sources of a proof and the four dispatch rules — branches for the possible
+families only, a default only where it can fire, a compile-time refusal only
+where no possible kind is accepted, the one-family claim for `ANY` — are the
+subject of [docs/specs/types.md](types.md). This section keeps what a CELL has to
+know about the proof it runs under.
 
 An unprovable receiver on a row with ONE field family is that family, by the
 row's claim. On a row with two or more families, the compiler dispatches it at
-run time.
+run time over the families the receiver can be.
 
 ```js
 $.x.length
@@ -59,8 +64,9 @@ and missing fall to its `uncertain` default, which answers null. No branch
 admits them through `alsoTypes` any more. The compiler skips the test when the
 receiver is PRESENT (`ExprIn.present`): proven from the source by `isPresent`
 (`emit/prove.ts` — a literal, the root document, a `$lookup`'s array, a `let`
-of a present value through the binding's `present`, a `neverNull` row over
-present operands, or a path in `Env.proven`), or proven at run time by the
+of a present value through the binding's proof, a `neverNull` row over
+present operands, a written field whose value was present, or a path a `?.`
+proved through `Env.proving`), or proven at run time by the
 `$type` test of the dispatch branch the cell runs under. A LODASH cell never
 calls `nullOr`. The lodash rows do not yet share one answer for a missing
 receiver — `.size()` answers 0, `.pick()` answers `{}`, `.uniq()` answers null
@@ -165,11 +171,13 @@ has a reader.
 
 ## Truthiness
 
-A JavaScript spelling checks missing, null, `false`, `""` and `0`. The
-`$op(...)` escape hatch keeps MongoDB's own rules. The compiler does not check
-NaN. `mode.ts` is the one minter of `Truth`, and `mql.ts` builds every slot
-that reads one. The table in [docs/LANG_RULES.md](../LANG_RULES.md) states the
-rule for developers.
+A JavaScript spelling checks missing, null, `false`, `""` and `0` — and only
+the tests the value's proof can fail: the subtractive rule and its constant
+folding live in [docs/specs/types.md § The truthiness rule](types.md#the-truthiness-rule).
+The `$op(...)` escape hatch keeps MongoDB's own rules. The compiler does not
+check NaN. `mode.ts` is the one minter of `Truth`, and `mql.ts` builds every
+slot that reads one. The table in [docs/LANG_RULES.md](../LANG_RULES.md) states
+the rule for developers.
 
 ## The filter target
 
@@ -499,7 +507,7 @@ let x = $.a; $group({ _id: x });     // → the group drops every field, the cle
 ```
 
 The scope THREADS through the program: each statement answers the Env the
-next one lowers under. A stage whose row states `replacesDocument` takes
+next one lowers under. A stage whose `document` effect replaces the document (see docs/specs/types.md) takes
 every field-carried binding with it — `true` for `$group`, `$replaceWith`,
 `$count` and their kind, `"inclusion"` for a `$project` whose body names
 fields to keep — and the compiler refuses a read after that, naming the

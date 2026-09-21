@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — docs: the specs point to the type tracker
+
+`docs/specs/types.md` is the single source of truth for the type tracker: the
+`Type` model, the write rules, the `returns` grammar, the `document` effects,
+the dispatch, the truthiness rule and the `$match` narrowing. The paragraphs in
+`emit-pass.md`, `let-bindings.md`, `stream-methods.md`, `replace-root-stage.md`
+and `LANGUAGE.md` that restated the old mechanism — `replacesDocument`,
+`elementKind`, `Env.proven`, a binding's `present` — now name the current fact
+and point there. The registry guide lists `document` among the measured facts.
+
+---
+
 ## 2026-09-21 — feat: a `$match` narrows the document for the statements after it
 
 A filter passes only the documents its query selects, so what the query states

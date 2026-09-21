@@ -270,7 +270,7 @@ Every name lives in the Env's `Scope` ([src/compiler/emit/env.ts](../../src/comp
 
 ### Stages that replace the document
 
-`afterStages` reads each emitted stage's row. A stage whose `replacesDocument` fact is true (`$group`, `$bucket`, `$bucketAuto`, `$replaceRoot`, `$replaceWith`, and others) — or `$project` in INCLUSION mode (every value `1` / `true`, apart from `_id: 0`) — takes every field-carried binding and the scratch namespace with it. A later read is refused, with a precise message:
+`afterStages` reads each emitted stage's row. A stage whose `document` effect replaces the document — `fields`, `value` or `unknown` (`$group`, `$bucket`, `$replaceWith`, and others; see docs/specs/types.md) — or a `projection` in INCLUSION mode (every value `1` / `true`, apart from `_id: 0`) — takes every field-carried binding and the scratch namespace with it. A later read is refused, with a precise message:
 
 ```
 let x = $.a; $group({ _id: null }); $.y = x

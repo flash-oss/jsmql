@@ -4177,7 +4177,7 @@ Why use `let` instead of `$.tmp = …; … ; delete $.tmp`:
 - No forgotten cleanup: the compiler appends the `$unset` automatically.
 - `subtotal` (a bare identifier) at a call site reads visually distinct from `$.subtotal` (a real document field).
 
-**Scope rules.** A let is visible from its declaration to the end of the pipeline, with one exception: a stage that *replaces* the document drops the let, because the field that carries it is gone. Which stages do this is a fact on each row of [`src/registry/names.ts`](../src/registry/names.ts) (`replacesDocument`); `$group` is the one every pipeline meets. Referring to a let after one of them is a compile-time error:
+**Scope rules.** A let is visible from its declaration to the end of the pipeline, with one exception: a stage that *replaces* the document drops the let, because the field that carries it is gone. Which stages do this is a fact on each row of [`src/registry/names.ts`](../src/registry/names.ts) (the `document` effect); `$group` is the one every pipeline meets. Referring to a let after one of them is a compile-time error:
 
 ```js
 jsmql`
@@ -4190,7 +4190,7 @@ jsmql`
 //   or rebind after the stage with another `let`.
 ```
 
-`$project` clears the scope in **inclusion** mode only. Naming the fields to keep drops `__jsmql` with the rest, so a later let read gives the same compile-time error that `$group` gives. An expression-mode projection (`{ x: $.y + 1 }`) and an exclusion-mode projection (`{ a: 0 }`) preserve the document, and the let survives them. The row states this as `replacesDocument: "inclusion"`.
+`$project` clears the scope in **inclusion** mode only. Naming the fields to keep drops `__jsmql` with the rest, so a later let read gives the same compile-time error that `$group` gives. An expression-mode projection (`{ x: $.y + 1 }`) and an exclusion-mode projection (`{ a: 0 }`) preserve the document, and the let survives them. The row states this as `document: "projection"`.
 
 **Indexing pitfall.** A let materialises through `$addFields` / `$set`. A `$match` on a let-bound value cannot use an index, and the optimiser cannot push that `$match` past the `$set` that produced the field. Place an index-eligible `$match` on a real document field **before** your `let` binding:
 

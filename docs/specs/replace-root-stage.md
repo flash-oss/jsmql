@@ -203,7 +203,7 @@ reading, because its elements are not the documents, and neither is an
 array the data decides, which gives one answer per input document.
 
 **A stream holds DOCUMENTS.** When a row states the kind of ONE element of
-what it returns (`elementKind` — `.split()` gives strings, `Object.entries()`
+what it returns (a `returns: { arrayOf: … }` term — `.split()` gives strings, `Object.entries()`
 gives `[key, value]` arrays, `$objectToArray` gives `{ k, v }` documents),
 the compiler refuses an element that is not a document here, rather than
 letting the server do it. MEASURED,
