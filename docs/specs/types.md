@@ -175,7 +175,7 @@ recognise.
 | `value` | The body value's proof, when it proves an object (`$replaceWith`, `$replaceRoot.newRoot`); otherwise an unknown document. |
 | `projection` | An inclusion is a closed object of the named paths with their input types, `_id` kept unless `0`; an exclusion removes the named paths. |
 | `element` | The unwound path becomes its element, present unless `preserveNullAndEmptyArrays`. |
-| `unknown` | An unknown document. `$bucket`, `$bucketAuto` and `$sortByCount` state this until a layout can name their output fields. |
+| `unknown` | An unknown document. `$bucket`, `$bucketAuto` and `$sortByCount` state this until a layout can name their output fields [DEF-038]. |
 
 Inside one statement the same reader runs at each replacing stage, so a write
 after `$ = …` lands on what that stage made.

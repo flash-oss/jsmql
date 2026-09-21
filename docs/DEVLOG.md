@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — docs: DEF-038 records the stages whose output no layout states
+
+`$bucket`, `$bucketAuto` and `$sortByCount` state `document: "unknown"`, because
+their output fields are not their body's keys and `documentAfter` cannot read
+them. The developer approved recording that gap: DEF-038 in `docs/DEFERRED.md`
+names the target — a layout on the row that says where the output fields come
+from — and the three rows, the `DocumentEffect` comment and the spec table carry
+the tag.
+
+---
+
 ## 2026-09-21 — fix: a refusal reads the whole kind set
 
 Seven refusals still asked `kindOf` for ONE kind: the document root under

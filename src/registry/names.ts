@@ -5199,7 +5199,7 @@ export const NAMES = {
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
     where: ["stream", "statement"],
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
-    // the body's keys, so no layout states them yet: the document is unknown after it.
+    // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
     body: {
       required: ["groupBy", "boundaries"],
@@ -5234,7 +5234,7 @@ export const NAMES = {
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
     where: ["stream", "statement"],
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
-    // the body's keys, so no layout states them yet: the document is unknown after it.
+    // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
     body: {
       required: ["groupBy", "buckets"],
@@ -6475,7 +6475,7 @@ export const NAMES = {
   $sortByCount: mongo({
     doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
-    // the body's keys, so no layout states them yet: the document is unknown after it.
+    // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
     where: ["stream", "statement"],
     // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object

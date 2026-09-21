@@ -145,6 +145,20 @@ This file exists so the project does not forget an open item. Every "not yet sup
 
 ---
 
+### DEF-038 — A `document` layout for the stages whose output fields are not their body's keys
+
+- **What is blocked.** After `$bucket`, `$bucketAuto` or `$sortByCount` the compiler knows nothing about the document: the three rows state `document: "unknown"`. Their output fields — `_id` and the `output` keys of a bucket, `_id` and `count` of `$sortByCount` — are real and typed, but they are not the keys of the stage's body, so `documentAfter` (`src/compiler/emit/prove.ts`) cannot read them the way it reads a `$group` body. A read after one of them takes the runtime dispatch and the null guard it would take on a field nothing wrote.
+- **Target lowering.** A `document` effect that names WHERE the output fields come from, stated on the row: for a bucket, `_id` plus the keys under `output` (each typed by its accumulator, the way `$group` keys are); for `$sortByCount`, `_id` typed by the body expression and `count` as a number. `documentAfter` then builds the closed object from that layout. `$sortByCount($.k); $.n = $.count + 1;` proves `count` a number.
+- **Why blocked.** The `DocumentEffect` vocabulary is a closed set of words. A layout is a small structure, and the right shape — one word per stage, or a `{ fields: … }` object — deserves a decision of its own rather than a special case per name.
+- **Attempted approaches.** None.
+- **Success criteria.** The three rows state a layout; `$sortByCount($.k); $.t = $.count ? 1 : 2;` emits `{ $cond: { if: "$count", … } }`; [test/compiler-types.test.ts](../test/compiler-types.test.ts) runs each stage on the fixture and asserts the typed read.
+- **Rejection site(s).** None. The compiler emits valid MQL after each stage. The live `[DEF-038]` tags are on the three rows in [src/registry/names.ts](../src/registry/names.ts), on the `DocumentEffect` comment in [src/registry/vocabulary.ts](../src/registry/vocabulary.ts), and in [docs/specs/types.md](specs/types.md) § The document after a stage.
+- **Spec.** [docs/specs/types.md](specs/types.md) § The document after a stage.
+- **Status.** design-only
+- **Effort.** S
+
+---
+
 ## §B. Decisions — will not implement (rejected as bad DX or unnecessary)
 
 This section records features the project considered and **rejected**. Each entry keeps the rationale, so the project does not reconsider the idea blindly in the future.

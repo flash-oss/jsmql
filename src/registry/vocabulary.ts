@@ -563,7 +563,7 @@ export interface FamilyMap extends Partial<Record<Family, TypeExpr>> {}
  *   "projection"  inclusion keeps the named paths, closed; exclusion removes them — `$project`
  *   "element"     the named path becomes its element type — `$unwind`
  *   "unknown"     an open object with nothing known — `$unionWith`, `$documents`, a diagnostic stage, and a
- *                 stage whose output fields no body layout states yet (`$bucket`, `$sortByCount`)
+ *                 stage whose output fields no body layout states yet (`$bucket`, `$sortByCount`) [DEF-038]
  */
 export type DocumentEffect = "keeps" | "narrows" | "fields" | "value" | "projection" | "element" | "unknown";
 
