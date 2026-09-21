@@ -197,7 +197,7 @@ describe("$$.push — error cases", () => {
 
   it("null arg → reject", () => {
     expect(() => jsmql("$$.push(null)")).toThrow(
-      "A stream holds documents, and this is a null. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
+      "A stream holds documents, and this is null. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').",
     );
   });
 

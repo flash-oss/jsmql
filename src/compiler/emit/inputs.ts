@@ -18,6 +18,7 @@ import {
   CodegenError,
   emptyMatcherObject,
   mapMustReturnDocument,
+  nounOfKinds,
   needsPipeline,
   notAnArrowCallback,
   objIterateeShape,
@@ -36,7 +37,7 @@ import {
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
 import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
-import { ANY, DOCUMENT, elementOf, maybeAbsent, of } from "./type.ts";
+import { ANY, DOCUMENT, cannotBe, elementOf, maybeAbsent, of } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
@@ -592,8 +593,8 @@ export function stageInputs(
     },
     document: (cb) => {
       const b = body(cb, "a document");
-      const kind = b.body.type === "NullLiteral" ? "null" : kindOf(b.body, b.env);
-      if (kind !== "unknown" && kind !== "object") throw mapMustReturnDocument(name, kind, b.body.pos);
+      const t = typeOf(b.body, b.env);
+      if (cannotBe(t, "object")) throw mapMustReturnDocument(name, nounOfKinds(t), b.body.pos);
       return read.reshape(b.body, b.env);
     },
     fieldPath: (cb) => {

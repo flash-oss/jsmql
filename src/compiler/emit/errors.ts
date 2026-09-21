@@ -7,7 +7,7 @@
 
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
-import type { Arity, Position, SlotForm } from "../../registry/vocabulary.ts";
+import type { Arity, Kind, Position, SlotForm, Type } from "../../registry/vocabulary.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
@@ -100,7 +100,14 @@ export function refusalFor(
       );
     case "wrongReceiver": {
       const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
-      const got = sel.got === null ? "a receiver whose type JSMQL cannot prove" : `a '${sel.got}'`;
+      // Several possible kinds arrive joined by " or "; each one takes its own article.
+      const got =
+        sel.got === null
+          ? "a receiver whose type JSMQL cannot prove"
+          : sel.got
+              .split(" or ")
+              .map((k) => `${/^[aeiou]/i.test(k) ? "an" : "a"} '${k}'`)
+              .join(" or ");
       // The way from what the value IS to what the method takes, when there is one.
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       // A stage runs on ONE context reference. Name that spelling, not the value hints below.
@@ -119,11 +126,13 @@ export function refusalFor(
                 ? ` Render the number as a string first: '.toString()'.`
                 : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
                   ? ` A stream is not an array. Chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
-                  : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
-                    ? ` A document is not a list. Read one of its fields ('.<field>'), or drop the terminal that takes one document to keep the array.`
-                    : sel.got === "bool"
-                      ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').`
-                      : "";
+                  : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString
+                    ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
+                    : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
+                      ? ` A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.`
+                      : sel.got === "bool"
+                        ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').`
+                        : "";
       // a property (`.length`) is spelled without the call parentheses
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);
@@ -547,6 +556,62 @@ export const noStages = (pos: number): CodegenError =>
   );
 
 /** `[..."abc"]` — JavaScript spreads a string into characters; MongoDB has no such operator. */
+/** A provable kind as the noun a message uses for it. */
+const KIND_NOUN: Readonly<Record<string, string>> = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  objectId: "an ObjectId",
+  binData: "binary data",
+  stream: "a stream",
+  minKey: "a MinKey",
+  maxKey: "a MaxKey",
+};
+
+const ELEMENT_NOUN: Readonly<Record<string, string>> = {
+  number: "numbers",
+  string: "strings",
+  bool: "booleans",
+  array: "arrays",
+  object: "documents",
+  date: "dates",
+  objectId: "ObjectIds",
+  binData: "binary data",
+};
+
+const nounFor = (k: Kind, table: Readonly<Record<string, string>>): string => table[k] ?? `a ${k}`;
+
+/** The kinds a proof allows, as one noun phrase: "a string", "a string or a number", "null". */
+export function nounOfKinds(t: Type): string {
+  if (t.kinds === "any") return "a value";
+  if (t.kinds.size === 0) return "null";
+  return [...t.kinds].map((k) => nounFor(k, KIND_NOUN)).join(" or ");
+}
+
+/** The kinds a proof allows for ELEMENTS, as one plural noun phrase: "strings", "strings or numbers". */
+export function pluralNounOfKinds(t: Type): string {
+  if (t.kinds === "any") return "values";
+  if (t.kinds.size === 0) return "null";
+  return [...t.kinds].map((k) => ELEMENT_NOUN[k] ?? `${k}s`).join(" or ");
+}
+
+/** `[...v]` where `v` can never be an array, and is not a string. */
+export const spreadNotAnArray = (noun: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'...' in an array spreads an ARRAY, and this value is ${noun}. To keep the value whole, drop the '...'; to spread its elements, give it an array.`,
+    pos,
+  );
+
+/** `{ ...v }` where `v` can never be a document, and is not a string. */
+export const spreadNotADocument = (noun: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'...' in an object spreads a DOCUMENT's fields, and this value is ${noun}. Put the value under a field ('{ value: … }'), or spread a document.`,
+    pos,
+  );
+
 export const spreadOfString = (pos: number): CodegenError =>
   new CodegenError(
     "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
@@ -708,9 +773,9 @@ export const optionalOnStream = (pos: number): CodegenError =>
   );
 
 /** `.map(d => 5)` — the server refuses every non-document root. */
-export const mapMustReturnDocument = (name: string, kind: string, pos: number): CodegenError =>
+export const mapMustReturnDocument = (name: string, noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'.${name}(d => …)' replaces each document with what the arrow returns, so it has to return a document — ${kind === "null" ? "null" : `a ${kind}`} is not one. Return '({ value: … })' to keep it under a field.`,
+    `'.${name}(d => …)' replaces each document with what the arrow returns, so it has to return a document — ${noun} is not one. Return '({ value: … })' to keep it under a field.`,
     pos,
   );
 
@@ -957,9 +1022,9 @@ export const unionNeedsSpread = (pos: number): CodegenError =>
   );
 
 /** `$$.push(5)` — a stream holds documents. */
-export const unionArg = (kind: string, pos: number): CodegenError =>
+export const unionArg = (noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `A stream holds documents, and this is a ${kind}. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').`,
+    `A stream holds documents, and this is ${noun}. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').`,
     pos,
   );
 

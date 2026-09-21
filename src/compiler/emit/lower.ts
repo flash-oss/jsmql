@@ -48,7 +48,7 @@ import { cond, letOne, readsRef, switchOn, switchOver } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
-import { ANY, kindsOf, maybeAbsent } from "./type.ts";
+import { ANY, cannotBe, isOnly, kindsOf, maybeAbsent } from "./type.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
 import { injectedNeedsLiteral } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
@@ -374,7 +374,9 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       // does, and `$concatArrays` refuses a string outright, so a provable one is
       // refused here rather than answered wrongly — unguarded, `[..."abc"]` lowers
       // to the bare string "abc". See docs/DEFERRED.md § B.
-      if (kindOf(el.argument, inner) === "string") throw E.spreadOfString(el.argument.pos);
+      const t = typeOf(el.argument, inner);
+      if (isOnly(t, "string")) throw E.spreadOfString(el.argument.pos);
+      if (cannotBe(t, "array")) throw E.spreadNotAnArray(E.nounOfKinds(t), el.argument.pos);
       const v = lowerValue(el.argument, inner);
       operands.push(chainHasOptional(el.argument) ? ifNull(v, []) : v);
     } else if (isExpr(el)) group.push(lowerValue(el, inner));
@@ -426,7 +428,9 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
       flush();
       // The same refusal the array literal makes: JavaScript spreads a string into
       // index-keyed entries, and `$mergeObjects` takes documents only.
-      if (kindOf(e.argument, inner) === "string") throw E.spreadOfString(e.argument.pos);
+      const t = typeOf(e.argument, inner);
+      if (isOnly(t, "string")) throw E.spreadOfString(e.argument.pos);
+      if (cannotBe(t, "object")) throw E.spreadNotADocument(E.nounOfKinds(t), e.argument.pos);
       operands.push(lowerValue(e.argument, inner));
     } else group.push(e);
   }

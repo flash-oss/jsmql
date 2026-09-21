@@ -47,8 +47,8 @@ import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
-import { documentAfter, elementKindOf, kindOf, typeOf } from "./prove.ts";
-import { ANY, DOCUMENT, arrayOf, maybeAbsent, of } from "./type.ts";
+import { documentAfter, kindOf, typeOf } from "./prove.ts";
+import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
 import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
@@ -673,17 +673,17 @@ function becomeStream(
   // MEASURED, the server refuses it:
   // `[{ $set: { s: 5 } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`
   // answers "'replacement document' must evaluate to an object".
-  const kind = streamRoad ? "stream" : kindOf(value, env);
-  if (kind !== "stream" && kind !== "array" && kind !== "unknown")
-    throw E.notAStreamChain(value.pos, KIND_NOUN[kind] ?? `a ${kind}`, lead, how);
-  if (kind === "stream") return streamStages(value, env, first);
+  const t = typeOf(value, env);
+  // A value proven a stream that is not a chain (`c ? $$.filter(p) : $$.filter(q)`) hears
+  // the chain road's own refusal, which names the forms a stream takes.
+  if (streamRoad || isOnly(t, "stream")) return streamStages(value, env, first);
+  if (cannotBe(t, "array")) throw E.notAStreamChain(value.pos, E.nounOfKinds(t), lead, how);
   // A stream holds DOCUMENTS. Where the registry shows what ONE element
   // is, the compiler refuses an element that is not a document here,
   // rather than leaving it to the server. MEASURED: `$replaceWith` of a
   // string answers "'replacement document' must evaluate to an object".
-  const element = elementKindOf(value, env);
-  if (element !== "unknown" && element !== "object")
-    throw E.streamElementsNotDocuments(ELEMENT_NOUN[element] ?? `${element}s`, written, value.pos);
+  const element = elementOf(t);
+  if (cannotBe(element, "object")) throw E.streamElementsNotDocuments(E.pluralNounOfKinds(element), written, value.pos);
   const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
   return [{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }];
@@ -783,8 +783,8 @@ function mergeStages(node: Extract<Expr, { type: "MethodCall" }>, env: Env, firs
 
 /** `$$$.<coll>.push(<document>);` — one document per document of the stream. */
 function oneDocumentStages(value: Expr, env: Env): Stage[] {
-  const kind = kindOf(value, env);
-  if (kind !== "object" && kind !== "unknown") throw E.mergeNotADocument(KIND_NOUN[kind] ?? `a ${kind}`, value.pos);
+  const t = typeOf(value, env);
+  if (cannotBe(t, "object")) throw E.mergeNotADocument(E.nounOfKinds(t), value.pos);
   return [{ $replaceWith: lowerValue(value, env.at({ at: "value" })) }];
 }
 
@@ -869,29 +869,6 @@ function pathsRead(node: unknown, into: Set<string>): Set<string> {
 const replacesWhole = (v: unknown): boolean => isPlainObject(v) && Object.keys(v).every((k) => !k.startsWith("$"));
 
 /** A provable ELEMENT kind as the plural noun a message uses for it. */
-const ELEMENT_NOUN: Readonly<Record<string, string>> = {
-  number: "numbers",
-  string: "strings",
-  bool: "booleans",
-  array: "arrays",
-  date: "dates",
-  objectId: "ObjectIds",
-  binData: "binary data",
-};
-
-/** A provable kind as the noun a message uses for it. */
-const KIND_NOUN: Readonly<Record<string, string>> = {
-  number: "a number",
-  string: "a string",
-  bool: "a boolean",
-  array: "an array",
-  object: "a document",
-  date: "a date",
-  objectId: "an ObjectId",
-  binData: "binary data",
-  null: "null",
-};
-
 /** Is one path the other, or a step inside it? `a` and `a.b` touch; `a` and `ab` do not. */
 const touches = (x: string, y: string): boolean =>
   x === y || x === "" || y === "" || x.startsWith(`${y}.`) || y.startsWith(`${x}.`);
@@ -1057,11 +1034,12 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       if (op.value.type === "NullLiteral" || op.value.type === "UndefinedLiteral") {
         throw E.rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
       }
-      const kind = kindOf(op.value, inner);
+      const t = typeOf(op.value, childEnv(inner, op, "value"));
       // `$` is ONE document and `$$` is the stream, so an array names the wrong
-      // destination. The message says which spelling takes it.
-      if (kind === "array") throw E.rootIsArray(op.pos);
-      if (kind !== "unknown" && kind !== "object") throw E.rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
+      // destination. The message says which spelling takes it. A value that can
+      // NEVER be a document is refused; one that may be passes, and the server judges.
+      if (isOnly(t, "array")) throw E.rootIsArray(op.pos);
+      if (cannotBe(t, "object")) throw E.rootMustBeDocument(E.nounOfKinds(t), op.pos);
       flush();
       emit([{ $replaceWith: value }]);
       continue;

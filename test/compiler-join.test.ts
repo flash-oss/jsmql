@@ -557,7 +557,7 @@ describe("compiler/emit/join — the refusals name the way out", () => {
       /'\.find\(predicate\)' requires exactly 1 argument, got 0/,
     );
     expect(() => pipeline("$.x = $$$.orders.find(o => o.a === 1).length")).toThrow(
-      /'\.length' is not available on a 'object' — it is defined on 'array', 'string', 'stream'/,
+      /'\.length' is not available on an 'object' — it is defined on 'array', 'string', 'stream'/,
     );
   });
   it("the collection is named when the pipeline is written, in the current database", () => {

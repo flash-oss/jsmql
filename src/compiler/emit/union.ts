@@ -21,7 +21,8 @@ import { Chain, type Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { lookupOf, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { lowerValue } from "./lower.ts";
-import { kindOf } from "./prove.ts";
+import { typeOf } from "./prove.ts";
+import { cannotBe } from "./type.ts";
 import { childEnv } from "./inputs.ts";
 import { bansNestedOf } from "../rows.ts";
 
@@ -129,12 +130,9 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
       docs.push(...asList);
       continue;
     }
-    const kind = kindOf(a, env);
-    if (kind === "object" || kind === "unknown") {
-      docs.push(a);
-      continue;
-    }
-    throw E.unionArg(kind, a.pos);
+    const t = typeOf(a, env);
+    if (cannotBe(t, "object")) throw E.unionArg(E.nounOfKinds(t), a.pos);
+    docs.push(a);
   }
   flushDocs();
   return out;

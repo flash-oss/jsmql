@@ -61,6 +61,9 @@ export const maybeAbsent = (t: Type): Type => (t.absent ? t : { ...t, absent: tr
 /** Can the value be of kind `k`? `ANY` can be anything. */
 export const mayBe = has;
 
+/** Can the value NOT be of kind `k` — is every kind it can be another one? `ANY` can be anything. */
+export const cannotBe = (t: Type, k: Kind): boolean => t.kinds !== "any" && !t.kinds.has(k);
+
 /** Is the value certainly of kind `k` — one kind, and this one? */
 export const isOnly = (t: Type, k: Kind): boolean => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has(k);
 

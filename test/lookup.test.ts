@@ -375,7 +375,7 @@ describe("$$$.coll.find/filter — chained terminals", () => {
   it("chained .reduce rejects when the lookup is .find (scalar-or-null is not foldable)", () => {
     expect(() =>
       jsmql("let total = $$$.tx.find(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);"),
-    ).toThrow("'.reduce()' is not available on a 'object' — it is defined on 'array'.");
+    ).toThrow("'.reduce()' is not available on an 'object' — it is defined on 'array'.");
   });
 
   it("chained .length rejects when the lookup is .find (scalar doc has no .length)", () => {
@@ -383,7 +383,7 @@ describe("$$$.coll.find/filter — chained terminals", () => {
     // `$size` on a non-array errors at runtime; reject at compile time and point
     // the user at `.filter(...).length` (count matches) instead.
     expect(() => jsmql("let n = $$$.users.find(u => u._id === $._id).length;")).toThrow(
-      "'.length' is not available on a 'object' — it is defined on 'array', 'string', 'stream'.",
+      "'.length' is not available on an 'object' — it is defined on 'array', 'string', 'stream'.",
     );
   });
 
@@ -1325,7 +1325,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
 
   it("a .map after an object-collapsing terminal (.countBy) is rejected, not mis-assembled", () => {
     expect(() => jsmql('$.x = $$$.orders.filter(o => o.uid === $._id).countBy("uid").map(v => v);')).toThrow(
-      "'.map()' is not available on a 'object' — it is defined on 'array', 'stream'.",
+      "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'.",
     );
   });
 });
@@ -1948,7 +1948,7 @@ describe("$$$.coll.aggregate — error cases", () => {
     ]) {
       it(`refuses '.map()' after '.${terminal}'`, () => {
         expect(() => jsmql(`$.r = $$$.orders.${terminal}.map(x => x);`)).toThrow(
-          /'\.map\(\)' is not available on a 'object'/,
+          /'\.map\(\)' is not available on an 'object'/,
         );
       });
     }
@@ -1966,14 +1966,14 @@ describe("$$$.coll.aggregate — error cases", () => {
     ]) {
       it(`refuses '${method}' on the document a terminal gives`, () => {
         expect(() => jsmql(`$.r = $$$.orders.head()${spelling};`)).toThrow(
-          new RegExp(`'\\.${method}\\(\\)' is not available on a 'object'`),
+          new RegExp(`'\\.${method}\\(\\)' is not available on an 'object'`),
         );
       });
     }
 
     it("names the way out: a field of the document, or no terminal at all", () => {
       expect(() => jsmql("$.r = $$$.orders.head().map(x => x);")).toThrow(
-        /A document is not a list\. Read one of its fields \('\.<field>'\), or drop the terminal/,
+        /A document is not a list\. To count its fields, write '\.keys\(\)\.length'/,
       );
     });
 

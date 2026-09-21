@@ -3156,7 +3156,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
       "'.map()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql.pipeline(`const a = $.tags.uniq(); $set({ x: a.toUpperCase() });`)).toThrow(
-      "'.toUpperCase()' is not available on a 'array' — it is defined on 'string'. Map over the array first — '.map(x => x.toUpperCase(…))' — or take one element ('[0]').",
+      "'.toUpperCase()' is not available on an 'array' — it is defined on 'string'. Map over the array first — '.map(x => x.toUpperCase(…))' — or take one element ('[0]').",
     );
   });
 });
@@ -5972,13 +5972,13 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
   });
   it("rejects an array-receiver + string/number/date/object method", () => {
     expect(() => jsmql.expr("$.name.split(',').toUpperCase()")).toThrow(
-      "'.toUpperCase()' is not available on a 'array' — it is defined on 'string'. Map over the array first — '.map(x => x.toUpperCase(…))' — or take one element ('[0]').",
+      "'.toUpperCase()' is not available on an 'array' — it is defined on 'string'. Map over the array first — '.map(x => x.toUpperCase(…))' — or take one element ('[0]').",
     );
     expect(() => jsmql.expr("$.items.map(x => x).round(2)")).toThrow(
-      "'.round()' is not available on a 'array' — it is defined on 'number', 'Math'. Map over the array first — '.map(x => x.round(…))' — or take one element ('[0]').",
+      "'.round()' is not available on an 'array' — it is defined on 'number', 'Math'. Map over the array first — '.map(x => x.round(…))' — or take one element ('[0]').",
     );
     expect(() => jsmql.expr("$.items.map(x => x).mapValues(v => v)")).toThrow(
-      "'.mapValues()' is not available on a 'array' — it is defined on 'object'. Map over the array first — '.map(x => x.mapValues(…))' — or take one element ('[0]').",
+      "'.mapValues()' is not available on an 'array' — it is defined on 'object'. Map over the array first — '.map(x => x.mapValues(…))' — or take one element ('[0]').",
     );
   });
   it("rejects a string/number/object-map receiver + array method", () => {
@@ -5989,10 +5989,10 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       "'.map()' is not available on a 'number' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql.expr('$.items.countBy("t").take(3)')).toThrow(
-      "'.take()' is not available on a 'object' — it is defined on 'array', 'stream'.",
+      "'.take()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
     );
     expect(() => jsmql.expr('$.items.countBy("t").map(v => v)')).toThrow(
-      "'.map()' is not available on a 'object' — it is defined on 'array', 'stream'.",
+      "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
     );
   });
   it("still EMITS for uncertain receivers (element / dual / field / operator) — no false rejection", () => {
@@ -6082,10 +6082,14 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // `returns` is stated PER FAMILY: the stream form is a `$project`, and the value
     // form builds a document literal, so a value-position receiver IS an object. A
     // string, number or date method on it would reach the server and stop the query.
-    expect(() => jsmql.expr('$.o.pick(["a"]).trim()')).toThrow(/'\.trim\(\)' is not available on a 'object'/);
-    expect(() => jsmql.expr('$.o.omit(["a"]).padStart(3)')).toThrow(/'\.padStart\(\)' is not available on a 'object'/);
+    expect(() => jsmql.expr('$.o.pick(["a"]).trim()')).toThrow(
+      "'.trim()' is not available on an 'object' — it is defined on 'string'.",
+    );
+    expect(() => jsmql.expr('$.o.omit(["a"]).padStart(3)')).toThrow(
+      "'.padStart()' is not available on an 'object' — it is defined on 'string'.",
+    );
     expect(() => jsmql.expr("$.o.pickBy(v => v > 1).toISOString()")).toThrow(
-      /'\.toISOString\(\)' is not available on a 'object'/,
+      "'.toISOString()' is not available on an 'object' — it is defined on 'date'.",
     );
     // an object method, a field read and a size still compile
     expect(() => jsmql.expr('$.o.pick(["a"]).mapValues(v => v)')).not.toThrow();
@@ -6111,7 +6115,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       "'.toUpperCase()' is not available on a 'date' — it is defined on 'string'. Render the date as a string first: '.format(\"%Y-%m-%d\")' or '.toISOString()'.",
     );
     expect(() => jsmql.expr("$dateToParts($.t).map(x => x)")).toThrow(
-      "'.map()' is not available on a 'object' — it is defined on 'array', 'stream'.",
+      "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
     );
   });
   it("leaves an operator whose return type depends on its arguments uncertain", () => {

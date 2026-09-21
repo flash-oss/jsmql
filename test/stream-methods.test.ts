@@ -674,10 +674,10 @@ describe("lodash iteratee shorthands on stream methods", () => {
       "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a string is not one. Return '({ value: … })' to keep it under a field.",
     );
     expect(() => jsmql("$$ = $$.map(d => true);")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a bool is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a boolean is not one. Return '({ value: … })' to keep it under a field.",
     );
     expect(() => jsmql("$$ = $$.map(d => [1, 2]);")).toThrow(
-      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a array is not one. Return '({ value: … })' to keep it under a field.",
+      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — an array is not one. Return '({ value: … })' to keep it under a field.",
     );
     // A field ref / `$`-string stays allowed — data-dependent, could be a subdocument.
     expect(jsmql('$$ = $$.map(d => "$sub");')).toEqual([{ $replaceWith: "$sub" }]);
@@ -1757,7 +1757,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
 
   it("concat with multi-element wrapper is rejected (a bare path or `d` is what is supported)", () => {
     expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.concat([d.x, d.y]), []);")).toThrow(
-      "'.reduce(d => …)' replaces each document with what the arrow returns, so it has to return a document — a array is not one. Return '({ value: … })' to keep it under a field.",
+      "'.reduce(d => …)' replaces each document with what the arrow returns, so it has to return a document — an array is not one. Return '({ value: … })' to keep it under a field.",
     );
   });
 

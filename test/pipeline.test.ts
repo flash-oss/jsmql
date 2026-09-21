@@ -1105,10 +1105,10 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
   it("rejects an array/string/number method chained on a `.find()` lookup (a single document)", () => {
     // `.find` yields ONE document; an array/string/number method on it is impossible.
     expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).take(5);`)).toThrow(
-      "'.take()' is not available on a 'object' — it is defined on 'array', 'stream'.",
+      "'.take()' is not available on an 'object' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).map(o => o.total);`)).toThrow(
-      "'.map()' is not available on a 'object' — it is defined on 'array', 'stream'.",
+      "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'.",
     );
     // …but object methods and field reads ARE valid on the matched document.
     expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).pick(["total"]);`)).not.toThrow();

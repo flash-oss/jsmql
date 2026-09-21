@@ -318,7 +318,7 @@ describe("compiler/emit — object methods", () => {
       $arrayToObject: { $map: {} },
     });
     // A method of another family is refused as it is on any document.
-    expect(() => expr("$.trim()")).toThrow(/'\.trim\(\)' is not available on a 'object' — it is defined on 'string'/);
+    expect(() => expr("$.trim()")).toThrow(/'\.trim\(\)' is not available on an 'object' — it is defined on 'string'/);
     expect(() => expr("$.map(x => x)")).toThrow(/A document is not a list/);
     expect(() => expr("$.o.mapValues(5)")).toThrow(/one- or two-parameter arrow/);
   });

@@ -566,3 +566,24 @@ describe.skipIf(up === null)("types — the server agrees with the narrowing", (
     expect(c.map((d) => d.u)).toEqual(["a", "b"]);
   });
 });
+
+describe("types — a refusal reads the whole kind set", () => {
+  // "Possible" is not "proven": a value that MAY be a document passes, and the server judges.
+  // A value that can NEVER be one is refused, and the message names every kind it can be.
+  it("a root write, a stream source, a spread, a union and a merge refuse a value that cannot fit", () => {
+    expect(jsmql("$.x = $.f ? { a: 1 } : 5; $ = $.x;")[1]).toEqual({ $replaceWith: "$x" });
+    expect(() => jsmql('$.x = $.f ? "s" : 5; $ = $.x;')).toThrow("a string or a number is not one");
+    expect(() => jsmql('$.x = $.f ? [1] : ["x"]; $$ = $.x;')).toThrow("these elements are numbers or strings");
+    expect(() => jsmql('$.x = $.f ? "abc" : 5; $.y = [...$.x];')).toThrow(
+      "'...' in an array spreads an ARRAY, and this value is a string or a number.",
+    );
+    expect(() => jsmql("$.x = 5; $.y = { ...$.x };")).toThrow(
+      "'...' in an object spreads a DOCUMENT's fields, and this value is a number.",
+    );
+    // a string keeps its own message, which names the character-wise spelling
+    expect(() => jsmql('$.x = "abc"; $.y = [...$.x];')).toThrow("spreads a string into its characters");
+    expect(() => jsmql("$.n = 5; $$$.out.push($.n);")).toThrow("a number is not a document");
+    expect(() => jsmql("$.b = $.f ? 1 : true; $$.push($.b);")).toThrow("this is a number or a boolean");
+    expect(() => jsmql("$$ = $.tags.map(t => t.length);")).toThrow("these elements are numbers");
+  });
+});

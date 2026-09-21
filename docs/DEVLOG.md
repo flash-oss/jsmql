@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — fix: a refusal reads the whole kind set
+
+Seven refusals still asked `kindOf` for ONE kind: the document root under
+`$ = …`, the elements of `$$ = <array>`, an array spread, an object spread, a
+`$$.push(…)` argument, a `$$$.<coll>.push(<value>)` value, and a `.map(d => …)`
+body that must return a document. A value proven two kinds answered "unknown"
+there, so `$.x = $.f ? "s" : 5; $ = $.x;` compiled to a `$replaceWith` the
+server refuses, and `[...$.x]` over a proven number passed. Each site now asks
+`cannotBe(type, kind)`: a value that can never be the kind is refused, a value
+that may be it passes for the server to judge, and the message names every kind
+the value can be ("a string or a number is not one"). The two noun tables move
+into `errors.ts` beside the messages that read them. The receiver gate of a
+`lower` verdict had the same hole: `$.v.trim()` over a value proven a number or
+an array compiled to a bare `$trim`; it now refuses when none of the receiver's
+possible families is one the row takes. A coverage audit by a sub-agent found the
+sites; two of its other claims did not hold (`"b" + $.x` already emits `$concat`,
+and a value that may be a document is rightly allowed).
+
+Three message changes ride along. A quoted kind takes its article ("an
+'array'", not "a 'array'"). `.map()` on a string names the character-wise
+spelling. The `.length`-on-a-document hint names `.keys().length`, `.<field>` and
+the element-taking call to remove, in place of the word "terminal".
+
+---
+
 ## 2026-09-21 — docs: the specs point to the type tracker
 
 `docs/specs/types.md` is the single source of truth for the type tracker: the

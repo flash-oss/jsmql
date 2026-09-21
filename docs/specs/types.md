@@ -316,6 +316,18 @@ anything else excludes one value per part of the proof that can be falsy —
 road: the query language reads an array field element by element, so
 `{ f: { $nin: [0] } }` drops `f: [0, 1]`, which JavaScript keeps.
 
+### A refusal reads the whole set
+
+A position that takes one kind — the document root under `$ = …`, the elements of
+`$$ = <array>`, a spread's operand, a `$$.push(…)` argument, a `.map(d => …)` body
+under a stream — refuses a value that can **never** be that kind, and lets a value
+that *may* be it through for the server to judge: "possible" is not "proven". The
+message names every kind the value can be (`nounOfKinds` in
+[errors.ts](../../src/compiler/emit/errors.ts)): `$.x = $.f ? "s" : 5; $ = $.x;`
+is refused as "a string or a number is not one", while `$.f ? { a: 1 } : 5` passes.
+A spread of a value proven a string keeps its own message, which names the
+character-wise spelling.
+
 ### The null guard
 
 A cell that would abort or answer a value on null tests the receiver first

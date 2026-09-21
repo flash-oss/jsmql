@@ -209,6 +209,11 @@ function receiverGate(name: string, receiver: Receiver): Selected | null {
   if (on === undefined || on === "any") return null;
   if (receiver.kind === "opaque") {
     if (receiver.proved !== undefined) return { kind: "wrongReceiver", name, got: receiver.proved, accepts: on };
+    // A receiver that can be several families passes when the row takes one of them; one
+    // whose every possible family the row refuses is refused, and the message names them all.
+    if (receiver.possible !== undefined && !receiver.possible.some((f) => on.includes(f))) {
+      return { kind: "wrongReceiver", name, got: receiver.possible.join(" or "), accepts: on };
+    }
     return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name, got: null, accepts: on };
   }
   const family = familyOf(receiver);
