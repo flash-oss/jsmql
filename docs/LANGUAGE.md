@@ -1553,6 +1553,15 @@ $match($.active)                    // the same check, as a stage
 $$.filter(o => o.active)            // and again, on a stream
 ```
 
+**The check shrinks to what the value can be.** Each of the four tests belongs to one kind of value, so a value the compiler has a type for — a field the pipeline wrote, a `let`, a literal, a method result — keeps only the tests that value can fail. A field written as a string keeps the `""` test, and the null test while it may be missing. A field written as an array, an object or a date keeps only the null test, and none at all when it is certainly there, so `$.arr ? a : b` becomes `a`. A boolean or a number is its own truth, because MongoDB already reads `0`, `false`, null and missing as false: `$.n ? 1 : 2` is `{ $cond: { if: "$n", then: 1, else: 2 } }`. In a Filter or a `$match`, a bare field with a known type takes the query form — `{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that may be missing — unless the field may hold an array, which the query language reads element by element. See [docs/specs/types.md](specs/types.md).
+
+```js
+$.s = $.a.trim(); $.t = $.s ? 1 : 2;
+// → [{ $set: { s: { $trim: { input: "$a" } } } }, { $set: { t: { $cond: { if: { $and: [{ $ne: [{ $ifNull: ["$s", null] }, null] }, { $ne: ["$s", ""] }] }, then: 1, else: 2 } } } }]
+$.b = $.n > 1; $match($.b);
+// → [{ $set: { b: { $gt: ["$n", 1] } } }, { $match: { b: true } }]
+```
+
 Only the index-friendly half of a `$match` is an exception, because it needs no coercion. A comparison is already a boolean, so `$.age > 18` still emits the plain query form `{ age: { $gt: 18 } }`. To get MongoDB's own truthiness in a `$match`, write the object-literal escape hatch: `$match({ $expr: $.active })` passes through as written.
 
 **Known limitation: JSMQL treats `NaN` as truthy.** It is the one JS-falsy value the rule above does not catch, so `$.xs.compact()` keeps a `NaN` value that `_.compact` would drop. Detecting `NaN` needs a per-value `$convert`. MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work. The `$convert` check costs about +40% on a `$match` and +20% on a `$filter`, and every predicate in the language would pay it. `NaN` values are rare in MongoDB data, so this document states the gap instead of paying that cost. When you need the check, compare explicitly: `$ne($.x, $toDouble("NaN"))` → `{ "$ne": ["$x", { "$toDouble": "NaN" }] }`. This is true for every value except a `NaN` of either the `double` or `decimal` type.

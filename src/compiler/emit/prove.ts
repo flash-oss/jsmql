@@ -122,10 +122,16 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       const key = productionForOperator("BinaryExpr", node.op);
       return key !== undefined && neverNullOf(key) && isPresent(node.left, env) && isPresent(node.right, env);
     }
+    case "MemberAccess":
+      // A property row (`.length`, `Math.PI`) answers like a call: its row's `neverNull`
+      // over a present receiver. A field read carries the object's proof.
+      if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
+        return neverNullOf(node.name) && (sourceFamily(node.object) !== null || isPresent(node.object, env));
+      }
+      return null;
     case "FieldRef":
     case "Ident":
     case "CollectionRef":
-    case "MemberAccess":
     case "IndexAccess":
     case "TernaryExpr":
     case "ExprBlock":

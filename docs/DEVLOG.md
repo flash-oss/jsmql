@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-21 — feat: the truthiness check keeps only the tests the value can fail
+
+`truthOf` read every value the compiler could not prove boolean with the same
+four tests — null-or-missing, `false`, `""`, `0`. It now reads the value's
+`Type`, and the check is subtractive: each test belongs to one part of the
+proof, and only a part that can be falsy keeps its test. A string keeps the `""`
+test; an array, an object or a date keeps only the null test while it may be
+missing; a value that can only be a boolean or a number is its own truth, because
+MongoDB already reads `0`, a `Long` zero, a `Decimal128` zero, negative zero,
+`false`, null and missing as false (measured, the table in
+`src/compiler/emit/mode.ts`). No test left is the constant `TRUE`, and every slot
+that reads a condition — `cond`, `filter`, `switchOn`, `switchOver`, the
+registry's `cond` builder, `and`, `or`, `not` — folds it, so `$.arr ? a : b`
+over a present array emits `a`. The many `truthOf(doc, true)` call sites, which
+read a document that already IS a boolean, spell that as `boolTruth(doc)` now.
+
+The filter target gains the native half: `bareTruth` in `filter.ts` lowers a
+bare field read whose proof rules an array out to a query clause —
+`{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that
+may be missing, `{}` when nothing can be falsy. A value that may be an array
+stays on the `$expr` road, because the query language reads an array field
+element by element. The rule and the `{ $gt: [v, ""] }` spelling it rejected
+are in `docs/specs/types.md` § The truthiness rule.
+
+---
+
 ## 2026-09-21 — feat: a written field carries the type of its value
 
 `$.arr = $.tags.uniq(); $.bool = $.arr.includes("red"); $.result = $.bool ? "R"

@@ -30,7 +30,9 @@ import * as E from "./errors.ts";
 import { childEnv, filterInputs } from "./inputs.ts";
 import { lowerTruth, lowerValue } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
-import { or, truthOf } from "./mode.ts";
+import { FALSE, or } from "./mode.ts";
+import { typeOf } from "./prove.ts";
+import { isNothing } from "./type.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import {
   isCallable,
@@ -94,7 +96,7 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
     // A folded constant branch: `false` adds nothing, `true` decides everything.
     if ((branches as QueryDoc[]).some(isAlwaysTrue)) return {};
     const docs = (branches as QueryDoc[]).filter((d) => !isAlwaysFalse(d));
-    if (docs.length === 0) return matchExpr(truthOf(false, true));
+    if (docs.length === 0) return matchExpr(FALSE);
     if (docs.length === 1) return docs[0];
     // Every branch an `$expr`: one `$expr: { $or }` says the same thing in less
     // text. A native branch keeps the per-branch form, which keeps its own meaning.
@@ -104,10 +106,41 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
   }
   // A raw query document is the developer's own MQL. The compiler lowers its values and keeps its keys.
   if (node.type === "ObjectLiteral" && !env.scope.has("$")) return rawQuery(node, env);
-  const native = leaf(node, env);
+  const native = leaf(node, env) ?? bareTruth(node, env);
   if (native !== null) return native;
   if (nativeOnly) return null;
   return matchExpr(lowerTruth(node, env.at({ at: "value" })));
+}
+
+/**
+ * A bare field read as a predicate — `$.active`, `u.deleted` — in the QUERY
+ * language, where the proof rules an array out. The query language reads an
+ * array field element by element, so `{ f: { $nin: [0] } }` drops `f: [0, 1]`,
+ * which JavaScript keeps; a value that may be an array stays on the `$expr`
+ * road. Otherwise the check is the same subtractive rule `truthOf` applies:
+ * one excluded value per part of the proof that can be falsy.
+ *
+ *   $.active     active: bool             → { active: true }
+ *   $.n          n: number, present       → { n: { $ne: 0 } }
+ *   $.n          n: number, absent        → { n: { $nin: [null, 0] } }
+ *   $.o          o: object, absent        → { o: { $ne: null } }
+ *   $.o          o: object, present       → {}   (always true)
+ */
+function bareTruth(node: Expr, env: Env): QueryDoc | null {
+  const path = pathOfIn(node, env);
+  if (path === null || path === "") return null;
+  const t = typeOf(node, env.at({ at: "value" }));
+  if (t.kinds === "any" || t.kinds.has("array")) return null;
+  if (isNothing(t)) return matchExpr(FALSE);
+  // A boolean is truthy exactly when it is `true`; null and missing are not.
+  if (t.kinds.size === 1 && t.kinds.has("bool")) return { [path]: true };
+  const excluded: unknown[] = [];
+  if (t.absent) excluded.push(null);
+  if (t.kinds.has("bool")) excluded.push(false);
+  if (t.kinds.has("string")) excluded.push("");
+  if (t.kinds.has("number")) excluded.push(0);
+  if (excluded.length === 0) return {};
+  return { [path]: excluded.length === 1 ? { $ne: excluded[0] } : { $nin: excluded } };
 }
 
 /**
@@ -523,7 +556,7 @@ function isQueryConstant(x: unknown): boolean {
  */
 export function mergeAnd(a: QueryDoc, b: QueryDoc): QueryDoc {
   // A folded constant clause: `true` adds nothing, `false` decides everything.
-  if (isAlwaysFalse(a) || isAlwaysFalse(b)) return matchExpr(truthOf(false, true));
+  if (isAlwaysFalse(a) || isAlwaysFalse(b)) return matchExpr(FALSE);
   if (isAlwaysTrue(a) || Object.keys(a).length === 0) return b;
   if (isAlwaysTrue(b) || Object.keys(b).length === 0) return a;
   type Clause = { key: string; value: unknown };

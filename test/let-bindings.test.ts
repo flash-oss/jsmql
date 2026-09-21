@@ -646,7 +646,7 @@ describe("let bindings — interaction with update ops", () => {
     expect(jsmql("let big = $.x > 100; $.flag = big; $match($.flag)")).toEqual([
       { $set: { "__jsmql.var.big": { $gt: ["$x", 100] } } },
       { $set: { flag: "$__jsmql.var.big" } },
-      { $match: { $expr: "$flag" } },
+      { $match: { flag: true } },
       { $unset: "__jsmql" },
     ]);
   });

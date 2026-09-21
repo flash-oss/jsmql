@@ -44,14 +44,16 @@ export function setKey<T>(out: Record<string, T>, name: string, value: T): Recor
   return out;
 }
 
-/** `{ $cond: { if, then, else } }` — the one spelling of a condition. */
-export const cond = (
-  ifExpr: unknown,
-  thenExpr: unknown,
-  elseExpr: unknown,
-): { $cond: { if: unknown; then: unknown; else: unknown } } => ({
-  $cond: { if: ifExpr, then: thenExpr, else: elseExpr },
-});
+/**
+ * `{ $cond: { if, then, else } }` — the one spelling of a condition. A test the
+ * compiler settled to a constant picks its branch here, so a `? :` whose test
+ * cannot fail emits the branch alone.
+ */
+export const cond = (ifExpr: unknown, thenExpr: unknown, elseExpr: unknown): unknown => {
+  if (ifExpr === true) return thenExpr;
+  if (ifExpr === false) return elseExpr;
+  return { $cond: { if: ifExpr, then: thenExpr, else: elseExpr } };
+};
 
 /** Is `value` already `{ $ifNull: [ … ] }`? A second wrap says nothing more. */
 export const isIfNullWrapped = (value: unknown): boolean =>

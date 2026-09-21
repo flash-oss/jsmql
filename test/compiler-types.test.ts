@@ -246,3 +246,73 @@ describe.skipIf(up === null)("types — the server agrees", () => {
     expect(out.map((d) => d.len)).toEqual([2, null]);
   });
 });
+
+describe("types — the truthiness check keeps only the tests the value can fail", () => {
+  it("a string keeps the empty-string test, and the null test while it may be missing", () => {
+    expect(jsmql("$.s = $.a.trim(); $.t = $.s ? 1 : 2;")[1]).toEqual({
+      $set: {
+        t: {
+          $cond: { if: { $and: [{ $ne: [{ $ifNull: ["$s", null] }, null] }, { $ne: ["$s", ""] }] }, then: 1, else: 2 },
+        },
+      },
+    });
+    expect(jsmql('$.u = "x"; $.v = $.u ? 1 : 2;')[1]).toEqual({
+      $set: { v: { $cond: { if: { $ne: ["$u", ""] }, then: 1, else: 2 } } },
+    });
+  });
+
+  it("a boolean or a number is its own truth; an array that is there needs no test at all", () => {
+    expect(jsmql("$.n = $.a.length; $.x = $.n ? 1 : 2;")[1]).toEqual({
+      $set: { x: { $cond: { if: "$n", then: 1, else: 2 } } },
+    });
+    expect(jsmql("$.arr = [1]; $.w = $.arr ? 1 : 2;")[1]).toEqual({ $set: { w: 1 } });
+  });
+
+  it("in a filter, a bare field with a known type takes the query form", () => {
+    expect(jsmql("$.b = $.n > 1; $match($.b);")[1]).toEqual({ $match: { b: true } });
+    expect(jsmql("$.s = $.a.trim(); $match($.s);")[1]).toEqual({ $match: { s: { $nin: [null, ""] } } });
+    expect(jsmql("$.n = $.a.length; $match($.n);")[1]).toEqual({ $match: { n: { $nin: [null, 0] } } });
+    expect(jsmql("$.o = { a: 1 }; $match($.o);")[1]).toEqual({ $match: {} });
+    // a value that may be an array stays on the `$expr` road: the query language reads an array element by element
+    expect(jsmql("$.v = $.flag ? 0 : [0]; $match($.v);")[1]).toEqual({ $match: { $expr: { $ne: ["$v", 0] } } });
+  });
+});
+
+describe.skipIf(up === null)("types — the server agrees with the truthiness check", () => {
+  let client: MongoClient;
+  let coll: Collection;
+  beforeAll(async () => {
+    client = (await liveClient())!;
+    coll = client.db("jsmql_compiler_types").collection("truth");
+    await coll.deleteMany({});
+    await coll.insertMany([
+      { _id: 1, a: "  x  ", n: 2, flag: true },
+      { _id: 2, a: "    ", n: 0, flag: false },
+      { _id: 3 },
+    ]);
+  });
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  const run = async (src: string, field: string): Promise<unknown[]> => {
+    const out = await coll.aggregate([...(jsmql(src) as object[]), { $sort: { _id: 1 } }]).toArray();
+    return out.map((d) => d[field]);
+  };
+
+  it("answers as JavaScript would on a string, a number, a boolean and a present array", async () => {
+    // JS: "x" → 1, "" → 2, missing → 2
+    expect(await run("$.s = $.a.trim(); $.t = $.s ? 1 : 2;", "t")).toEqual([1, 2, 2]);
+    // JS: 2 → 1, 0 → 2, missing (null) → 2
+    expect(await run("$.x = $.n ? 1 : 2;", "x")).toEqual([1, 2, 2]);
+    expect(await run("$.arr = [1]; $.w = $.arr ? 1 : 2;", "w")).toEqual([1, 1, 1]);
+  });
+
+  it("the query forms select the documents JavaScript keeps", async () => {
+    const ids = async (src: string): Promise<unknown[]> =>
+      (await coll.aggregate([...(jsmql(src) as object[]), { $sort: { _id: 1 } }]).toArray()).map((d) => d._id);
+    expect(await ids("$.b = $.n > 1; $match($.b);")).toEqual([1]);
+    expect(await ids("$.s = $.a.trim(); $match($.s);")).toEqual([1]);
+    expect(await ids("$.m = $.n; $match($.flag);")).toEqual([1]);
+  });
+});

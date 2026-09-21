@@ -181,6 +181,57 @@ $.v = $.flag ? 5 : [1, 2];  $.len = $.v.length;   // a number has no `.length` f
 // → …, { $set: { len: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $size: "$v" } }], default: null } } } }
 ```
 
+### The truthiness rule
+
+`truthOf(value, type)` in [mode.ts](../../src/compiler/emit/mode.ts) reads a
+value as a JavaScript condition. JavaScript has four falsy values JSMQL supports
+— null-or-missing, `false`, `""`, `0` — and each belongs to one part of a proof,
+so the check is **subtractive**: it keeps only the tests some part of the proof
+can fail.
+
+| Test | Kept while |
+|---|---|
+| `{ $ne: [{ $ifNull: [v, null] }, null] }` | `absent` is true |
+| `{ $ne: [v, false] }` | `bool` is a possible kind |
+| `{ $ne: [v, ""] }` | `string` is a possible kind |
+| `{ $ne: [v, 0] }` | `number` is a possible kind |
+
+An array, an object, a date, an ObjectId or binData owes no test: JavaScript
+reads each one as true. Three shape rules follow. One test left is emitted bare,
+with no `$and`. No test left is the constant `TRUE`, and the slot that reads it
+folds: `cond`, `filter`, `switchOn` and `switchOver` in
+[mql.ts](../../src/compiler/emit/mql.ts) and the registry's own `cond` builder
+pick their branch at compile time, and `and`, `or` and `not` fold a constant
+operand. A value whose only possible kinds are `bool` or `number` is its own
+truth, whatever its `absent`: MEASURED, MongoDB reads `0`, a `Long` zero, a
+`Decimal128` zero, negative zero, `false`, null and missing as false, so
+`{ $cond: { if: "$n", … } }` agrees with JavaScript on every number.
+
+```js
+$.s = $.a.trim();  $.t = $.s ? 1 : 2;   // s: string, maybe absent
+// → …, { $set: { t: { $cond: { if: { $and: [{ $ne: [{ $ifNull: ["$s", null] }, null] }, { $ne: ["$s", ""] }] }, then: 1, else: 2 } } } }
+$.u = "x";  $.v = $.u ? 1 : 2;           // u: string, present
+// → …, { $set: { v: { $cond: { if: { $ne: ["$u", ""] }, then: 1, else: 2 } } } }
+$.arr = [1];  $.w = $.arr ? 1 : 2;       // arr: array, present — always true
+// → …, { $set: { w: 1 } }
+$.n = $.a.length;  $.x = $.n ? 1 : 2;    // n: number, maybe absent
+// → …, { $set: { x: { $cond: { if: "$n", then: 1, else: 2 } } } }
+```
+
+The rule rejected: `{ $gt: [v, ""] }` covers a string of any presence in one
+operator, because null sorts below every string. It reads as a comparison, not as
+a truth test, and a reader has to know the BSON sort order to see why it is
+right.
+
+**In the filter target** the same rule has a native form. `bareTruth` in
+[filter.ts](../../src/compiler/emit/filter.ts) lowers a bare field read whose
+proof rules an array out to a query clause: a boolean is `{ f: true }`, and
+anything else excludes one value per part of the proof that can be falsy —
+`{ f: { $ne: 0 } }`, `{ f: { $nin: [null, ""] } }`, `{ f: { $ne: null } }`, or
+`{}` when nothing can be falsy. A value that may be an array stays on the `$expr`
+road: the query language reads an array field element by element, so
+`{ f: { $nin: [0] } }` drops `f: [0, 1]`, which JavaScript keeps.
+
 ### The null guard
 
 A cell that would abort or answer a value on null tests the receiver first

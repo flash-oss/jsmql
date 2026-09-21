@@ -12,16 +12,36 @@
 
 import type { QueryDoc, Truth } from "../../registry/vocabulary.ts";
 import type { MongoVar } from "./names.ts";
+import { constantOf } from "./mode.ts";
 
-/** `{ $cond: { if, then, else } }`. */
-export const cond = (test: Truth, then: unknown, otherwise: unknown): unknown => ({
-  $cond: { if: test, then, else: otherwise },
-});
+/** `{ $cond: { if, then, else } }`. A constant test picks its branch at compile time. */
+export const cond = (test: Truth, then: unknown, otherwise: unknown): unknown => {
+  const c = constantOf(test);
+  if (c !== null) return c ? then : otherwise;
+  return { $cond: { if: test, then, else: otherwise } };
+};
 
-/** `{ $filter: { input, as, cond[, limit] } }`. */
-export const filter = (input: unknown, as: MongoVar, test: Truth, limit?: unknown): unknown => ({
-  $filter: limit === undefined ? { input, as, cond: test } : { input, as, cond: test, limit },
-});
+/** `{ $filter: { input, as, cond[, limit] } }`. A test that is always true keeps the whole input; one that is always false keeps nothing. */
+export const filter = (input: unknown, as: MongoVar, test: Truth, limit?: unknown): unknown => {
+  const c = constantOf(test);
+  if (c === false) return [];
+  if (c === true && limit === undefined) return input;
+  return { $filter: limit === undefined ? { input, as, cond: test } : { input, as, cond: test, limit } };
+};
+
+/** The branches a `$switch` keeps: a case that is always false goes; a case that is always true ends the list and becomes the default. */
+const liveBranches = (
+  branches: readonly { readonly case: Truth; readonly then: unknown }[],
+): { readonly kept: { readonly case: Truth; readonly then: unknown }[]; readonly decided: unknown | undefined } => {
+  const kept: { readonly case: Truth; readonly then: unknown }[] = [];
+  for (const b of branches) {
+    const c = constantOf(b.case);
+    if (c === false) continue;
+    if (c === true) return { kept, decided: b.then };
+    kept.push(b);
+  }
+  return { kept, decided: undefined };
+};
 
 /**
  * `{ $switch: { branches: [{ case, then }…], default } }`.
@@ -31,9 +51,11 @@ export const filter = (input: unknown, as: MongoVar, test: Truth, limit?: unknow
  * `$type` test around it would only cost bytes.
  */
 export const switchOn = (
-  branches: readonly { readonly case: Truth; readonly then: unknown }[],
-  fallback: unknown,
+  candidates: readonly { readonly case: Truth; readonly then: unknown }[],
+  otherwise: unknown,
 ): unknown => {
+  const { kept: branches, decided } = liveBranches(candidates);
+  const fallback = decided === undefined ? otherwise : decided;
   const one = JSON.stringify(fallback);
   if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
@@ -46,9 +68,11 @@ export const switchOn = (
  * over a constant `v` — a `$let` variable, a `$literal` — fails with "Failed to
  * optimize pipeline", while the same branches under `$switch` run on every receiver.
  */
-export const switchOver = (branches: readonly { readonly case: Truth; readonly then: unknown }[]): unknown => ({
-  $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) },
-});
+export const switchOver = (candidates: readonly { readonly case: Truth; readonly then: unknown }[]): unknown => {
+  const { kept: branches, decided } = liveBranches(candidates);
+  if (decided !== undefined) return switchOn(branches, decided);
+  return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) } };
+};
 
 /** A condition as a query document: `{ $expr: <truth> }`. */
 export const matchExpr = (test: Truth): QueryDoc => ({ $expr: test });

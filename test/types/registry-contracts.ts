@@ -14,7 +14,7 @@ import type { StageFacts } from "../../src/registry/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
 import { ANY } from "../../src/compiler/emit/type.ts";
 import { Chain, Env, type Site } from "../../src/compiler/emit/env.ts";
-import { and, jsTruthy, truthOf } from "../../src/compiler/emit/mode.ts";
+import { and, boolTruth, jsTruthy } from "../../src/compiler/emit/mode.ts";
 import { cond, filter, matchExpr } from "../../src/compiler/emit/mql.ts";
 
 const A = { sig: "", none: true } as const;
@@ -116,4 +116,4 @@ export const exprOfValue = matchExpr("$a");
 // @ts-expect-error — `&&` combines truths, not values
 export const andOfValues = and("$a", "$b");
 export const condOfTruth = cond(jsTruthy("$a"), 1, 2);
-export const condOfBool = cond(truthOf({ $gt: ["$a", 1] }, true), 1, 2);
+export const condOfBool = cond(boolTruth({ $gt: ["$a", 1] }), 1, 2);

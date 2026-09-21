@@ -43,7 +43,7 @@ import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
 import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
-import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
+import { and, asValue, boolTruth, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, readsRef, switchOn, switchOver } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
@@ -142,7 +142,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     // `?.` stops the chain: the links after it do not run, and the chain answers null.
     const base = withoutOptional(stopped);
-    const gone = truthOf({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] }, true);
+    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
     // the second branch runs only when the test passed, so the path IS there inside it
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
@@ -232,14 +232,10 @@ export function lowerTruth(node: Expr, env: Env): Truth {
   }
   if (node.type === "TernaryExpr") {
     const test = lowerTruth(node.test, childEnv(env, node, "test"));
-    return truthOf(cond(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)), true);
+    return boolTruth(cond(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)));
   }
-  if (node.type === "ExprBlock")
-    return truthOf(
-      exprBlock(node, env, (ret, e) => lowerTruth(ret, e)),
-      true,
-    );
-  return truthOf(lowerValue(node, env), kindOf(node, env) === "bool");
+  if (node.type === "ExprBlock") return boolTruth(exprBlock(node, env, (ret, e) => lowerTruth(ret, e)));
+  return truthOf(lowerValue(node, env), typeOf(node, env));
 }
 
 // ── literals with structure ──────────────────────────────────────────────────
@@ -596,8 +592,8 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
     const o = wrapped([]);
     return switchOn(
       [
-        { case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, i] } },
-        { case: truthOf({ $eq: [{ $type: o }, "string"] }, true), then: charAt(o) },
+        { case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, i] } },
+        { case: boolTruth({ $eq: [{ $type: o }, "string"] }), then: charAt(o) },
       ],
       fieldAt(o),
     );
@@ -606,7 +602,7 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);
-  return switchOn([{ case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, idx] } }], {
+  return switchOn([{ case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, idx] } }], {
     $getField: { field: key, input: o },
   });
 }
@@ -755,7 +751,7 @@ function runDispatch(
       exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ, undefined, undefined, present),
     );
   };
-  const branches = sel.branches.map((b) => ({ case: truthOf(b.guard(ref), true), then: run(b.rule) }));
+  const branches = sel.branches.map((b) => ({ case: boolTruth(b.guard(ref)), then: run(b.rule) }));
   // Every kind the receiver can be has a branch, and the value is there: the default
   // can never fire, so the `$switch` states none. See `switchOver` for why it is not a `$cond`.
   if (sel.complete && branches.length >= 2) {
@@ -1103,13 +1099,14 @@ function logicalValue(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): un
     const lhs = rest[0];
     const lowered = lowerValue(lhs, e);
     const rhs = fold(rest.slice(1), e);
-    const isBool = kindOf(lhs, e) === "bool";
-    if (pathOf(lhs, e) !== null || isBool) {
-      const test = truthOf(lowered, isBool);
+    const t = typeOf(lhs, e);
+    // A path or a boolean reads cheaply twice: once in the test, once as the operand.
+    if (pathOf(lhs, e) !== null || kindOf(lhs, e) === "bool") {
+      const test = truthOf(lowered, t);
       return op === "&&" ? cond(test, rhs, lowered) : cond(test, lowered, rhs);
     }
     const bound = e.fresh("v");
-    const test = jsTruthy(bound.ref);
+    const test = truthOf(bound.ref, t);
     return letOne(bound.as, lowered, op === "&&" ? cond(test, rhs, bound.ref) : cond(test, bound.ref, rhs));
   };
   return fold(chain, inner);

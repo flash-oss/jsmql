@@ -9379,12 +9379,7 @@ describe("jsmql.compile()", () => {
       const q = jsmql.compile(({ x }: { x: number }, { $ }) => $.items.map((x) => x * 2));
       expect(q({ x: 999 })).toEqual({
         $expr: {
-          $and: [
-            { $ne: [{ $ifNull: [{ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } }, null] }, null] },
-            { $ne: [{ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } }, false] },
-            { $ne: [{ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } }, ""] },
-            { $ne: [{ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } }, 0] },
-          ],
+          $ne: [{ $ifNull: [{ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } }, null] }, null],
         },
       });
     });

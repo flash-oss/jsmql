@@ -20,6 +20,7 @@ import type { NodeName, On, Only, Position, TypeExpr } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
 import { bsonTagOf, isDate, isRegExp, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
+import { cond } from "./mql.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -336,7 +337,7 @@ export const PRODUCTIONS = {
     filter: viaFallback,
     expr: {
       args: { sig: "test, then, else", exact: 3 },
-      emit: ({ args, value, truth }) => ({ $cond: { if: truth(args[0]), then: value(args[1]), else: value(args[2]) } }),
+      emit: ({ args, value, truth }) => cond(truth(args[0]), value(args[1]), value(args[2])),
     },
     stream: unsupported("'?:' produces a value, not a stage."),
     statement: unsupported("'?:' is not a statement — see its 'where'."),
