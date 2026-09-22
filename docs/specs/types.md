@@ -81,8 +81,8 @@ order agree.
    a number or an array of numbers.
 3. **`delete $.a`** removes the property. On an open document the property becomes
    `NOTHING`; on a closed one it is gone.
-4. **A write of a join** (`$.o = $$$.c.filter(p)`) proves `o` a present array of
-   documents, because the server always writes the `as` array; a `.find` may find
+4. **A write of a join** (`$.o = $$$.c.filter(p)`) proves `o` what the join
+   proves, below: a present array of the body's documents; a `.find` may find
    nothing, so it proves a maybe-absent document.
 5. **A stage that replaces the document** takes every proof about it away: the
    document on that level is `DOCUMENT` again. The same reset runs inside a
@@ -97,10 +97,37 @@ statement on: JSMQL has no `if` and no loop at statement level, so a binding's
 type is one straight line. A `let` a document-replacing stage dropped and then
 assigned again is revived with the new value's proof.
 
+A `const` whose value is a chain over another collection takes the join's proof,
+below.
+
 A callback parameter takes the receiver's element proof through the row's
 `binds`. A declared function is inlined per call, so its parameter takes the
 argument's proof at that call. A parameter is never proven present: `$$x` is
 bound to the value, and the value may be null.
+
+### A join
+
+A chain over another collection (`$$$.<coll>.<links>`) lowers to a `$lookup`
+whose body is the peeled links, and the value is the rest of the chain over the
+`as` array ([join.ts](../../src/compiler/emit/join.ts)). The body's documents are
+the other collection's, `DOCUMENT`, run through the body's stages by
+`documentAfter` — so a `.pick([...])` link (a `$project`) closes the element, a
+`.flatMap("f")` link (an `$unwind`) types it by the field, and a `.countBy()`
+link (two `$group`s and a `$replaceWith`) makes it a record of numbers. The
+joined value is then the array of those documents, present, because the server
+always writes `as`; one such document, maybe absent, after a `.find`; or the one
+collapsed document, present, because the unwrap answers `{}` for nothing. The
+rest of the chain is proven over that slot, and the chain's node carries the
+answer (`Chain.proved`) so the statement that binds or writes it reads the same
+proof. A raw `$lookup` stage, and each `$facet` key, fold their own `pipeline`
+the same way.
+
+```js
+const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.includes("x");
+// → [{ $lookup: { from: "orders", pipeline: [{ $match: { status: "a" } }], as: "__jsmql.tmp.0" } }, { $set: { "__jsmql.var.ids": { $setUnion: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.pid" } } } } }, { $set: { hit: { $in: ["x", "$__jsmql.var.ids"] } } }, { $unset: "__jsmql" }]
+$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price ? 1 : 2;   // `price` was not kept: certainly missing
+// → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: 2 } }]
+```
 
 ### A row's `returns`
 
@@ -133,7 +160,19 @@ are `merge` (later wins, an open operand makes the earlier properties unknown, a
 absent operand's properties may be missing); `.pick([...])` and `.omit([...])`
 are `picked` and `omitted`, closed and open respectively; `.groupBy`, `.countBy`,
 `.keyBy` and `.mapValues` are `recordOf` a value type; `.entries()` is an array
-of `[string, value]` tuples, so a destructured pair reads each position.
+of `[string, value]` tuples, so a destructured pair reads each position, and
+`.fromEntries()` is `recordOf` the pair's second item (`itemOf`). An array
+literal with no spread is a tuple too: `["a", 1]` holds a string at 0 and a
+number at 1. A method that keeps the receiver's own elements — a sub-array such
+as `.take(n)`, a reordering such as `.toSorted()` — answers `same`, so the
+element proof survives it.
+
+**A read at an index or name the proof does not state may be missing.** An
+index into an array of unknown length may fall outside it, a property an open
+record does not name may not be there, and an index the compiler cannot read
+(`counts[$.pid]`) is either. Each answers the element or the record's value,
+maybe absent. A tuple's stated position, and a property `props` names, answer
+exactly what they hold.
 
 ### Presence
 
@@ -164,14 +203,18 @@ wrote the stage — a statement, a chain link, `$ = …` sugar. `typeOfEmitted` 
 an MQL value against the input document: a field path reads the input's proof, an
 operator answers its row's `returns` over its operands (`{ $sum: … }` is a
 number, `{ $push: … }` an array), a `$cond` or `$switch` joins its branches, a
-`$literal` proves itself, a `$$` variable proves nothing. A raw `$op(…)` passes
-through as written (HR2), so the reader answers `ANY` for a body shape it does not
-recognise.
+`$literal` proves itself, a `$$` variable proves nothing, and `$arrayToObject`
+over pairs (`[{ k, v }]` or `[[k, v]]`) is a record of the pairs' values. A raw
+`$op(…)` passes through as written (HR2), so the reader answers `ANY` for a body
+shape it does not recognise. An accumulator — a `$group` key, a
+`$setWindowFields` output — answers its empty value over a missing operand
+(MEASURED: `$push` gives `[]`, `$sum` gives `0`), so it is present when its row
+states `neverNull`, whatever its operand.
 
 | Effect | The document after the stage |
 |---|---|
-| `keeps` | The input, with `$set` / `$addFields` keys written, `$unset` paths removed, a `$lookup` / `$graphLookup` `as` written as a present array of documents, and each `$setWindowFields` `output` key written. |
-| `fields` | Exactly the body's keys, closed: `$group` types `_id` by its expression and each key by its accumulator; `$facet` gives each key an array of documents; `$count`'s string body names one number field. |
+| `keeps` | The input, with `$set` / `$addFields` keys written, `$unset` paths removed, a `$lookup` / `$graphLookup` `as` written as a present array of the documents its `pipeline` makes, and each `$setWindowFields` `output` key written. |
+| `fields` | Exactly the body's keys, closed: `$group` types `_id` by its expression and each key by its accumulator; `$facet` gives each key an array of the documents its pipeline makes; `$count`'s string body names one number field. |
 | `value` | The body value's proof, when it proves an object (`$replaceWith`, `$replaceRoot.newRoot`); otherwise an unknown document. |
 | `projection` | An inclusion is a closed object of the named paths with their input types, `_id` kept unless `0`; an exclusion removes the named paths. |
 | `element` | The unwound path becomes its element, present unless `preserveNullAndEmptyArrays`. |

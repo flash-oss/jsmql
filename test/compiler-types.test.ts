@@ -327,12 +327,8 @@ describe("types — the document after a stage, read off the stage itself", () =
       { $group: { _id: "$k", total: { $sum: "$amount" }, items: { $push: "$item" } } },
       // a number is its own truth
       { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } },
-      // an array: `$size`, with the null guard while the proof does not show the array is there
-      {
-        $set: {
-          n: { $cond: { if: { $eq: [{ $ifNull: ["$items", null] }, null] }, then: null, else: { $size: "$items" } } },
-        },
-      },
+      // an array the accumulator always writes: `$size`, with no guard
+      { $set: { n: { $size: "$items" } } },
     ]);
   });
 
@@ -585,5 +581,168 @@ describe("types — a refusal reads the whole kind set", () => {
     expect(() => jsmql("$.n = 5; $$$.out.push($.n);")).toThrow("a number is not a document");
     expect(() => jsmql("$.b = $.f ? 1 : true; $$.push($.b);")).toThrow("this is a number or a boolean");
     expect(() => jsmql("$$ = $.tags.map(t => t.length);")).toThrow("these elements are numbers");
+  });
+});
+
+describe("types — a join carries the shape its body made", () => {
+  it("a `const` bound to a join is a present array: `.includes` takes the array form with no guard", () => {
+    expect(
+      jsmql('const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq(); $.hit = ids.includes("x");'),
+    ).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $match: { status: "a" } }], as: "__jsmql.tmp.0" } },
+      { $set: { "__jsmql.var.ids": { $setUnion: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.pid" } } } } },
+      { $set: { hit: { $in: ["x", "$__jsmql.var.ids"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("a `.pick` in the body closes the element: a field it did not keep is certainly missing", () => {
+    expect(
+      jsmql('$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]); $.t = $.p[0].price ? 1 : 2;'),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "products",
+          pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }],
+          as: "p",
+        },
+      },
+      { $set: { t: 2 } },
+    ]);
+  });
+
+  it("a `.countBy()` in the body is a present record of numbers: a key read is its own truth", () => {
+    const out = jsmql(
+      'const counts = $$$.orders.filter({ status: "a" }).flatMap("pid").countBy(); $.n = Object.keys(counts).length; $.c = counts[$.pid] ? 1 : 2;',
+    ) as object[];
+    expect(out.slice(2)).toEqual([
+      {
+        $set: {
+          n: {
+            $size: { $map: { input: { $objectToArray: "$__jsmql.var.counts" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+          },
+        },
+      },
+      {
+        $set: {
+          c: {
+            $cond: {
+              if: { $getField: { field: { $toString: { $ifNull: ["$pid", ""] } }, input: "$__jsmql.var.counts" } },
+              then: 1,
+              else: 2,
+            },
+          },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("`.take(n)` keeps the element and not the positions; an index into an array of unknown length may miss", () => {
+    // The fold settles a constant receiver to a one-item literal: position 0 is a present string.
+    expect(jsmql('$.a = ["x", "yy"].take(1); $.n = $.a[0].length;')).toEqual([
+      { $set: { a: ["x"] } },
+      { $set: { n: { $strLenCP: { $arrayElemAt: ["$a", 0] } } } },
+    ]);
+    // A receiver the fold cannot settle: the element is a string, and index 0 may miss.
+    expect(jsmql('$.a = [$.s.trim(), "yy"].take(1); $.n = $.a[0].length;')).toEqual([
+      { $set: { a: { $slice: [[{ $trim: { input: "$s" } }, "yy"], 1] } } },
+      {
+        $set: {
+          n: {
+            $let: {
+              vars: { jsmqlRecv: { $arrayElemAt: ["$a", 0] } },
+              in: {
+                $cond: {
+                  if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
+                  then: null,
+                  else: { $strLenCP: "$$jsmqlRecv" },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("`.fromEntries()` over tuple literals is a record of the second items; a named key may be missing", () => {
+    expect(jsmql('$.r = [["a", 1], ["b", 2]].fromEntries(); $.t = $.r.a ? "y" : "n";')[1]).toEqual({
+      $set: { t: { $cond: { if: "$r.a", then: "y", else: "n" } } },
+    });
+  });
+
+  it("an index the compiler cannot read answers the element, maybe absent", () => {
+    expect(jsmql('$.s = ["a", "b"]; $.t = $.s[$.i] ? 1 : 2;')[1]).toEqual({
+      $set: {
+        t: {
+          $cond: {
+            if: {
+              $and: [
+                { $ne: [{ $ifNull: [{ $arrayElemAt: ["$s", "$i"] }, null] }, null] },
+                { $ne: [{ $arrayElemAt: ["$s", "$i"] }, ""] },
+              ],
+            },
+            then: 1,
+            else: 2,
+          },
+        },
+      },
+    });
+  });
+
+  it("an accumulator is present whatever its operand: `.length` on a `$push` array needs no guard", () => {
+    expect(jsmql("$group({ _id: $.k, items: $push($.item) }); $.n = $.items.length;")).toEqual([
+      { $group: { _id: "$k", items: { $push: "$item" } } },
+      { $set: { n: { $size: "$items" } } },
+    ]);
+  });
+});
+
+describe.skipIf(up === null)("types — the server agrees with the join's proof", () => {
+  let client: MongoClient;
+  let orders: Collection;
+  let products: Collection;
+  let users: Collection;
+  beforeAll(async () => {
+    client = (await liveClient())!;
+    const db = client.db("jsmql_compiler_types");
+    orders = db.collection("orders");
+    products = db.collection("products");
+    users = db.collection("users");
+    await Promise.all([orders.deleteMany({}), products.deleteMany({}), users.deleteMany({})]);
+    await orders.insertMany([
+      { _id: 1, status: "a", pid: ["x", "y"] },
+      { _id: 2, status: "a", pid: ["y"] },
+      { _id: 3, status: "b", pid: ["z"] },
+    ]);
+    await products.insertMany([
+      { _id: "x", name: "X", active: true, price: 1 },
+      { _id: "y", name: "Y", active: false },
+    ]);
+    await users.insertMany([
+      { _id: 1, pid: "y" },
+      { _id: 2, pid: "q" },
+    ]);
+  });
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  it("the unguarded `$in` over the joined array, the closed element, and the record read all answer as JavaScript would", async () => {
+    const src = `
+      const ids = $$$.orders.filter({ status: "a" }).map("pid").flatten().uniq();
+      const counts = $$$.orders.filter({ status: "a" }).flatMap("pid").countBy();
+      $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);
+      $.hit = ids.includes($.pid);
+      $.c = counts[$.pid] ? counts[$.pid] : 0;
+      $.t = $.p[0].price ? 1 : 2;
+      $.name = $.p.find({ _id: "x" }).name;
+    `;
+    const out = await users.aggregate([...(jsmql(src) as object[]), { $sort: { _id: 1 } }]).toArray();
+    expect(out.map((d) => [d.hit, d.c, d.t, d.name])).toEqual([
+      [true, 2, 2, "X"],
+      [false, 0, 2, "X"],
+    ]);
   });
 });

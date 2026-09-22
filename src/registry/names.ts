@@ -4490,7 +4490,9 @@ export const NAMES = {
   $addToSet: mongo({
     doc: "Returns an array of unique expression values for each group.",
     category: "array",
-    returns: "array",
+    returns: { arrayOf: { arg: 0 } },
+    // MEASURED: over a missing field the accumulated array is `[]`, never null.
+    neverNull: true,
     where: ["group", "window", "updateDoc"],
     shape: "single",
     filter: unsupported(
@@ -4677,7 +4679,9 @@ export const NAMES = {
   $push: mongo({
     doc: "Returns an array of values that result from applying an expression.",
     category: "array",
-    returns: "array",
+    returns: { arrayOf: { arg: 0 } },
+    // MEASURED: over a missing field the accumulated array is `[]`, never null.
+    neverNull: true,
     where: ["group", "window", "updateDoc"],
     shape: "single",
     filter: unsupported(
@@ -4748,6 +4752,8 @@ export const NAMES = {
     doc: "Returns a sum of numerical values, ignoring non-numeric values.",
     category: "arithmetic",
     returns: "number",
+    // MEASURED: `{ $sum: null }` and a `$group` sum over a missing field both answer 0.
+    neverNull: true,
     where: ["value", "group", "window"],
     shape: "flex",
     filter: viaFallback,
@@ -7502,7 +7508,7 @@ export const NAMES = {
           '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys; a stream has no natural order, so a key is required',
       },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7621,7 +7627,7 @@ export const NAMES = {
           '`"k"`, `("k", "desc")`, `(["k"], ["desc"])` or `{ k: -1 }` — keys with directions; at least one key is required',
       },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7772,7 +7778,7 @@ export const NAMES = {
     doc: "'.flat()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: { arrayOf: { elementOf: "element" } }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -9854,7 +9860,7 @@ export const NAMES = {
     doc: "'.sortedUniq()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9886,7 +9892,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9914,7 +9920,7 @@ export const NAMES = {
     doc: "'.without()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -9980,7 +9986,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element may be a document.
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -10030,7 +10036,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element may be a document.
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -10225,7 +10231,7 @@ export const NAMES = {
     doc: "'.take()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10258,7 +10264,7 @@ export const NAMES = {
     doc: "'.drop()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10346,7 +10352,7 @@ export const NAMES = {
     doc: "'.tail()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10505,7 +10511,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     // As a chain link it keeps a RUN of the stream, and a MongoDB stream has no
@@ -10559,7 +10565,7 @@ export const NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     // As a chain link it keeps a RUN of the stream, and a MongoDB stream has no
@@ -10704,7 +10710,7 @@ export const NAMES = {
     doc: "'.sampleSize()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -11361,7 +11367,8 @@ export const NAMES = {
     doc: "'.fromPairs()' — see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "object",
+    returns: { recordOf: { itemOf: ["element", 1] } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
@@ -11752,7 +11759,7 @@ export const NAMES = {
     doc: "'.intersection()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "set", "stream"],
-    returns: { array: "array", set: "array", stream: "stream" },
+    returns: { array: "same", set: "array", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -11809,7 +11816,7 @@ export const NAMES = {
     doc: "'.difference()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "set", "stream"],
-    returns: { array: "array", set: "array", stream: "stream" },
+    returns: { array: "same", set: "array", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -13139,7 +13146,11 @@ export const NAMES = {
     doc: "'Object.fromEntries(entries)' / '.fromEntries()' — emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
     on: ["array", "Object"],
-    returns: { recordOf: "unknown" },
+    returns: {
+      array: { recordOf: { itemOf: ["element", 1] } },
+      Object: { recordOf: { itemOf: [{ elementOf: { arg: 0 } }, 1] } },
+    },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {

@@ -10,6 +10,42 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-22 — feat: a join's value carries the shape its body made
+
+A `const` bound to a chain over another collection proved nothing: `typeOf`
+read the chain from its `$$$.<coll>` base, where every link answers "stream",
+so `myProductIds.includes(p)` inside the next `$lookup` kept a null guard on an
+array the server always writes. The join road now folds the body's emitted
+stages through `documentAfter` (`Lookup.document`), so a `.pick` closes the
+element, an `$unwind` types it by its field and a `.countBy()` makes a record
+of numbers; the joined value is that array (present), one document (maybe
+absent, after `.find`) or the collapsed document (present). The road records
+the chain's proof on the `Chain` (`proved` / `proofOf`), and `typeOf` answers it
+for the same node. A raw `$lookup` and each `$facet` key fold their `pipeline`
+the same way.
+
+The audit of the developer's recommendation program found five more holes on
+the path, each fixed in the registry or the algebra. `.take`, `.drop`, `.tail`,
+`.toSorted`, `.orderBy` and the other sub-array or reordering rows answered a
+bare `array` and lost the element; they answer `same`. `.fromEntries()` and
+`.fromPairs()` answered `recordOf: "unknown"`; a new `itemOf` term reads the
+pair's second item, and an array literal with no spread is a tuple so
+`[["a", 1]]` gives a record of numbers. `$push` and `$addToSet` collect their
+operand (`arrayOf: { arg: 0 }`), and an accumulator's presence is its row's
+`neverNull` alone (`$push` over a missing field is `[]`, `$sum` is `0`, both
+measured), so `.length` on a `$group` array needs no guard. `typeOfEmitted`
+reads `$arrayToObject` over pairs as a record. A read the proof cannot state —
+an index into an array of unknown length, a property an open record does not
+name, an index the compiler cannot read — is maybe absent, where it was proven
+present.
+
+`test/compiler-types.test.ts` states each rule and runs the MQL on mongod.
+`docs/specs/types.md` § A join is the spec. The only open item on the program is
+the documented rule that a callback parameter is never proven present, so
+`Object.keys(counts).map(ObjectId)` is an array of maybe-absent ObjectIds.
+
+---
+
 ## 2026-09-21 — docs: DEF-038 records the stages whose output no layout states
 
 `$bucket`, `$bucketAuto` and `$sortByCount` state `document: "unknown"`, because

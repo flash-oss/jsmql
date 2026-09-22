@@ -87,7 +87,22 @@ export function elementOf(t: Type): Type {
 /** What position `i` of an array value holds: the tuple's item when stated, else the element. */
 export function itemOf(t: Type, i: number): Type {
   if (t.items !== undefined) return i < t.items.length ? t.items[i] : NOTHING;
-  return elementOf(t);
+  // an index into an array of unknown length may fall outside it
+  return maybeAbsent(elementOf(t));
+}
+
+/**
+ * What an index the compiler cannot read holds: an element of an array, a
+ * property value of an object. Nothing is proven for another kind.
+ */
+export function anyItemOf(t: Type): Type {
+  if (t.kinds === "any") return ANY;
+  if ([...t.kinds].some((k) => k !== "array" && k !== "object")) return ANY;
+  const parts: Type[] = [];
+  if (t.kinds.has("array")) parts.push(elementOf(t));
+  if (t.kinds.has("object")) parts.push(flattenOnce({ ...t, kinds: new Set<Kind>(["object"]), absent: false }));
+  // the index may fall outside the array, or name a property that is not there
+  return maybeAbsent(joinAll(parts));
 }
 
 /**
@@ -110,7 +125,8 @@ function ownProp(t: Type, name: string): Type {
   const known = t.props?.get(name);
   if (known !== undefined) return known;
   if (!t.open) return NOTHING;
-  return t.values ?? ANY;
+  // a property `props` does not name may not be there
+  return t.values === undefined ? ANY : maybeAbsent(t.values);
 }
 
 /** The value at a dotted path under a document `Type`. `""` is the document itself. */
@@ -295,7 +311,8 @@ export function evaluate(e: TypeExpr, site: Site): Type {
   if (typeof e === "string") {
     switch (e) {
       case "same":
-        return site.receiver;
+        // a method over a fixed-length array keeps its elements, not its positions
+        return site.receiver.items === undefined ? site.receiver : { ...site.receiver, items: undefined };
       case "element":
         return elementOf(site.receiver);
       case "unknown":
@@ -320,6 +337,10 @@ export function evaluate(e: TypeExpr, site: Site): Type {
   if (isTerm(e, "oneOf")) return joinAll(expandList((e as { oneOf: readonly TypeExpr[] }).oneOf, site));
   if (isTerm(e, "recordOf")) return objectOf(new Map(), true, evaluate((e as { recordOf: TypeExpr }).recordOf, site));
   if (isTerm(e, "tuple")) return tupleOf((e as { tuple: readonly TypeExpr[] }).tuple.map((t) => evaluate(t, site)));
+  if (isTerm(e, "itemOf")) {
+    const [of, n] = (e as { itemOf: readonly [TypeExpr, number] }).itemOf;
+    return itemOf(evaluate(of, site), n);
+  }
   // A per-family map: the receiver's own family picks the term.
   const map = e as Partial<Record<Family, TypeExpr>>;
   const family = site.family ?? familyOfType(site.receiver);

@@ -4310,7 +4310,9 @@ var NAMES = {
   $addToSet: mongo({
     doc: "Returns an array of unique expression values for each group.",
     category: "array",
-    returns: "array",
+    returns: { arrayOf: { arg: 0 } },
+    // MEASURED: over a missing field the accumulated array is `[]`, never null.
+    neverNull: true,
     where: ["group", "window", "updateDoc"],
     shape: "single",
     filter: unsupported(
@@ -4490,7 +4492,9 @@ var NAMES = {
   $push: mongo({
     doc: "Returns an array of values that result from applying an expression.",
     category: "array",
-    returns: "array",
+    returns: { arrayOf: { arg: 0 } },
+    // MEASURED: over a missing field the accumulated array is `[]`, never null.
+    neverNull: true,
     where: ["group", "window", "updateDoc"],
     shape: "single",
     filter: unsupported(
@@ -4558,6 +4562,8 @@ var NAMES = {
     doc: "Returns a sum of numerical values, ignoring non-numeric values.",
     category: "arithmetic",
     returns: "number",
+    // MEASURED: `{ $sum: null }` and a `$group` sum over a missing field both answer 0.
+    neverNull: true,
     where: ["value", "group", "window"],
     shape: "flex",
     filter: viaFallback,
@@ -4991,7 +4997,7 @@ var NAMES = {
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
     where: ["stream", "statement"],
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
-    // the body's keys, so no layout states them yet: the document is unknown after it.
+    // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
     body: {
       required: ["groupBy", "boundaries"],
@@ -5025,7 +5031,7 @@ var NAMES = {
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
     where: ["stream", "statement"],
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
-    // the body's keys, so no layout states them yet: the document is unknown after it.
+    // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
     body: {
       required: ["groupBy", "buckets"],
@@ -6221,7 +6227,7 @@ var NAMES = {
   $sortByCount: mongo({
     doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
-    // the body's keys, so no layout states them yet: the document is unknown after it.
+    // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
     where: ["stream", "statement"],
     // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
@@ -7179,7 +7185,7 @@ var NAMES = {
         sortSpec: '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys; a stream has no natural order, so a key is required'
       }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7288,7 +7294,7 @@ var NAMES = {
         sortSpec: '`"k"`, `("k", "desc")`, `(["k"], ["desc"])` or `{ k: -1 }` \u2014 keys with directions; at least one key is required'
       }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7434,7 +7440,7 @@ var NAMES = {
     doc: "'.flat()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: { arrayOf: { elementOf: "element" } }, stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -9427,7 +9433,7 @@ var NAMES = {
     doc: "'.sortedUniq()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9458,7 +9464,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9485,7 +9491,7 @@ var NAMES = {
     doc: "'.without()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -9549,7 +9555,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element may be a document.
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -9598,7 +9604,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element may be a document.
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -9786,7 +9792,7 @@ var NAMES = {
     doc: "'.take()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9818,7 +9824,7 @@ var NAMES = {
     doc: "'.drop()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -9903,7 +9909,7 @@ var NAMES = {
     doc: "'.tail()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10055,7 +10061,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     // As a chain link it keeps a RUN of the stream, and a MongoDB stream has no
@@ -10108,7 +10114,7 @@ var NAMES = {
       // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     // As a chain link it keeps a RUN of the stream, and a MongoDB stream has no
@@ -10249,7 +10255,7 @@ var NAMES = {
     doc: "'.sampleSize()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "array", stream: "stream" },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -10884,7 +10890,8 @@ var NAMES = {
     doc: "'.fromPairs()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "object",
+    returns: { recordOf: { itemOf: ["element", 1] } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
@@ -11256,7 +11263,7 @@ var NAMES = {
     doc: "'.intersection()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "set", "stream"],
-    returns: { array: "array", set: "array", stream: "stream" },
+    returns: { array: "same", set: "array", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -11311,7 +11318,7 @@ var NAMES = {
     doc: "'.difference()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "set", "stream"],
-    returns: { array: "array", set: "array", stream: "stream" },
+    returns: { array: "same", set: "array", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -12573,7 +12580,11 @@ var NAMES = {
     doc: "'Object.fromEntries(entries)' / '.fromEntries()' \u2014 emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
     on: ["array", "Object"],
-    returns: { recordOf: "unknown" },
+    returns: {
+      array: { recordOf: { itemOf: ["element", 1] } },
+      Object: { recordOf: { itemOf: [{ elementOf: { arg: 0 } }, 1] } }
+    },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -22714,6 +22725,7 @@ var objectOf = (props, open, values = void 0, absent = false) => ({ kinds: /* @_
 var present = (t) => t.absent ? { ...t, absent: false } : t;
 var maybeAbsent = (t) => t.absent ? t : { ...t, absent: true };
 var mayBe = has;
+var cannotBe = (t, k) => t.kinds !== "any" && !t.kinds.has(k);
 var isOnly = (t, k) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has(k);
 function single2(t) {
   if (t.kinds === "any" || t.kinds.size !== 1) return "unknown";
@@ -22727,7 +22739,15 @@ function elementOf(t) {
 }
 function itemOf(t, i) {
   if (t.items !== void 0) return i < t.items.length ? t.items[i] : NOTHING;
-  return elementOf(t);
+  return maybeAbsent(elementOf(t));
+}
+function anyItemOf(t) {
+  if (t.kinds === "any") return ANY;
+  if ([...t.kinds].some((k) => k !== "array" && k !== "object")) return ANY;
+  const parts = [];
+  if (t.kinds.has("array")) parts.push(elementOf(t));
+  if (t.kinds.has("object")) parts.push(flattenOnce({ ...t, kinds: /* @__PURE__ */ new Set(["object"]), absent: false }));
+  return maybeAbsent(joinAll(parts));
 }
 function propOf(t, name2) {
   if (t.kinds === "any") return ANY;
@@ -22740,7 +22760,7 @@ function ownProp(t, name2) {
   const known = t.props?.get(name2);
   if (known !== void 0) return known;
   if (!t.open) return NOTHING;
-  return t.values ?? ANY;
+  return t.values === void 0 ? ANY : maybeAbsent(t.values);
 }
 function at2(t, path) {
   if (path === "") return t;
@@ -22853,7 +22873,7 @@ function evaluate2(e, site) {
   if (typeof e === "string") {
     switch (e) {
       case "same":
-        return site.receiver;
+        return site.receiver.items === void 0 ? site.receiver : { ...site.receiver, items: void 0 };
       case "element":
         return elementOf(site.receiver);
       case "unknown":
@@ -22878,6 +22898,10 @@ function evaluate2(e, site) {
   if (isTerm(e, "oneOf")) return joinAll(expandList(e.oneOf, site));
   if (isTerm(e, "recordOf")) return objectOf(/* @__PURE__ */ new Map(), true, evaluate2(e.recordOf, site));
   if (isTerm(e, "tuple")) return tupleOf(e.tuple.map((t) => evaluate2(t, site)));
+  if (isTerm(e, "itemOf")) {
+    const [of3, n2] = e.itemOf;
+    return itemOf(evaluate2(of3, site), n2);
+  }
   const map = e;
   const family = site.family ?? familyOfType(site.receiver);
   if (family !== null) {
@@ -23072,10 +23096,10 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       );
     case "wrongReceiver": {
       const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
-      const got = sel.got === null ? "a receiver whose type JSMQL cannot prove" : `a '${sel.got}'`;
+      const got = sel.got === null ? "a receiver whose type JSMQL cannot prove" : sel.got.split(" or ").map((k) => `${/^[aeiou]/i.test(k) ? "an" : "a"} '${k}'`).join(" or ");
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. Read one of its fields ('.<field>'), or drop the terminal that takes one document to keep the array.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -23302,6 +23326,48 @@ var noStages = (pos) => new CodegenError(
   "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
   pos
 );
+var KIND_NOUN = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  objectId: "an ObjectId",
+  binData: "binary data",
+  stream: "a stream",
+  minKey: "a MinKey",
+  maxKey: "a MaxKey"
+};
+var ELEMENT_NOUN = {
+  number: "numbers",
+  string: "strings",
+  bool: "booleans",
+  array: "arrays",
+  object: "documents",
+  date: "dates",
+  objectId: "ObjectIds",
+  binData: "binary data"
+};
+var nounFor = (k, table) => table[k] ?? `a ${k}`;
+function nounOfKinds(t) {
+  if (t.kinds === "any") return "a value";
+  if (t.kinds.size === 0) return "null";
+  return [...t.kinds].map((k) => nounFor(k, KIND_NOUN)).join(" or ");
+}
+function pluralNounOfKinds(t) {
+  if (t.kinds === "any") return "values";
+  if (t.kinds.size === 0) return "null";
+  return [...t.kinds].map((k) => ELEMENT_NOUN[k] ?? `${k}s`).join(" or ");
+}
+var spreadNotAnArray = (noun, pos) => new CodegenError(
+  `'...' in an array spreads an ARRAY, and this value is ${noun}. To keep the value whole, drop the '...'; to spread its elements, give it an array.`,
+  pos
+);
+var spreadNotADocument = (noun, pos) => new CodegenError(
+  `'...' in an object spreads a DOCUMENT's fields, and this value is ${noun}. Put the value under a field ('{ value: \u2026 }'), or spread a document.`,
+  pos
+);
 var spreadOfString = (pos) => new CodegenError(
   "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
   pos
@@ -23388,8 +23454,8 @@ var optionalOnStream = (pos) => new CodegenError(
   "'$$' is the stream of documents and is never null, so '?.' has nothing to guard. Write '$$.' instead.",
   pos
 );
-var mapMustReturnDocument = (name2, kind, pos) => new CodegenError(
-  `'.${name2}(d => \u2026)' replaces each document with what the arrow returns, so it has to return a document \u2014 ${kind === "null" ? "null" : `a ${kind}`} is not one. Return '({ value: \u2026 })' to keep it under a field.`,
+var mapMustReturnDocument = (name2, noun, pos) => new CodegenError(
+  `'.${name2}(d => \u2026)' replaces each document with what the arrow returns, so it has to return a document \u2014 ${noun} is not one. Return '({ value: \u2026 })' to keep it under a field.`,
   pos
 );
 var notAFieldOfTheDocument = (name2, pos) => new CodegenError(
@@ -23519,8 +23585,8 @@ var unionNeedsSpread = (pos) => new CodegenError(
   "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it \u2014 '$$.push(...$$$.<coll>.filter(pred))' \u2014 to push every match, or write '.find(pred)' for the first one.",
   pos
 );
-var unionArg = (kind, pos) => new CodegenError(
-  `A stream holds documents, and this is a ${kind}. Push a document ('$$.push({ \u2026 })'), a written list of them ('$$.push(...[{ \u2026 }])'), or another collection ('$$.push(...$$$.<coll>)').`,
+var unionArg = (noun, pos) => new CodegenError(
+  `A stream holds documents, and this is ${noun}. Push a document ('$$.push({ \u2026 })'), a written list of them ('$$.push(...[{ \u2026 }])'), or another collection ('$$.push(...$$$.<coll>)').`,
   pos
 );
 var outNeedsStream = (pos) => new CodegenError(
@@ -23703,6 +23769,12 @@ var Chain = class {
      */
     this.element = "";
     /**
+     * The proof of a chain over another collection, by its node. The join road
+     * lowers the chain, and only then knows the body's document; `prove.ts` reads
+     * the answer here for the same node. See docs/specs/types.md § A join.
+     */
+    this.proofs = /* @__PURE__ */ new WeakMap();
+    /**
      * The field paths a materialiser stamped, that are still FRESH — see
      * docs/specs/stream-length.md § Compute-once / reuse / recompute. A second
      * read of a stamped path costs no stage. A stage whose row does not state
@@ -23710,6 +23782,12 @@ var Chain = class {
      */
     this.stamped = /* @__PURE__ */ new Set();
     this.isPipeline = isPipeline;
+  }
+  proved(node, type) {
+    this.proofs.set(node, type);
+  }
+  proofOf(node) {
+    return this.proofs.get(node);
   }
   /**
    * A stage lands: one that replaces the document leaves no unwound field to
@@ -24693,7 +24771,6 @@ function sourceFamily(node) {
   return null;
 }
 var kindOf3 = (node, env) => single2(typeOf(node, env));
-var elementKindOf = (node, env) => single2(elementOf(typeOf(node, env)));
 function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
   if (src !== null) return src;
@@ -24758,7 +24835,7 @@ function callOnUnproven(name2, receiver, args, env) {
   }
   return answers.length === 0 ? ANY : joinAll(answers);
 }
-var TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple"];
+var TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple", "itemOf"];
 var isFamilyMap = (r) => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 function injectedType(v) {
   if (typeof v === "number" || typeof v === "bigint") return of("number");
@@ -24775,6 +24852,8 @@ function injectedType(v) {
   return ANY;
 }
 function typeOf(node, env) {
+  const joined = env.chain.proofOf(node);
+  if (joined !== void 0) return joined;
   const t = kindsOf2(node, env);
   const stated = statedPresence(node, env);
   if (stated === null) return t;
@@ -24805,7 +24884,7 @@ function kindsOf2(node, env) {
         if (el.type === "SpreadElement") spread = true;
         else elements.push(typeOf(el, env));
       }
-      return arrayOf(spread ? ANY : joinAll(elements));
+      return spread ? arrayOf(ANY) : tupleOf(elements);
     }
     case "ObjectLiteral": {
       if (namedRow(node) !== null) return ANY;
@@ -24846,7 +24925,7 @@ function kindsOf2(node, env) {
       const obj = typeOf(node.object, env);
       if (node.index.type === "NumberLiteral") return itemOf(obj, node.index.value);
       if (node.index.type === "StringLiteral") return propOf(obj, node.index.value);
-      return ANY;
+      return anyItemOf(obj);
     }
     case "MethodCall": {
       const receiver = typeOf(node.object, env);
@@ -24930,6 +25009,12 @@ function typeOfEmitted(value, doc) {
       const last = typeOfEmitted(raw[raw.length - 1], doc);
       return { ...joinAll(raw.map((v) => typeOfEmitted(v, doc))), absent: last.absent };
     }
+    if (op === "$arrayToObject") {
+      const pairs = typeOfEmitted(Array.isArray(raw) && raw.length === 1 ? raw[0] : raw, doc);
+      const pair = elementOf(pairs);
+      const value2 = pair.items !== void 0 ? itemOf(pair, 1) : propOf(pair, "v");
+      return objectOf(/* @__PURE__ */ new Map(), true, value2, pairs.absent);
+    }
     const args = Array.isArray(raw) ? raw : [raw];
     const site = {
       receiver: ANY,
@@ -24963,7 +25048,10 @@ function documentAfter(stage, doc) {
       if (!isPlainObject(body)) return DOCUMENT;
       const props = /* @__PURE__ */ new Map();
       for (const [k, v] of Object.entries(body)) {
-        props.set(k, Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(DOCUMENT) : typeOfEmitted(v, doc));
+        props.set(
+          k,
+          Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(documentsOf(v, DOCUMENT)) : accumulated2(v, doc)
+        );
       }
       return objectOf(props, false);
     }
@@ -25011,11 +25099,22 @@ function keptDocument(name2, body, doc) {
   if (name2 === "$set" || name2 === "$addFields") {
     return Object.entries(body).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
   }
-  if (typeof body.as === "string") return written(doc, body.as, arrayOf(DOCUMENT));
+  if (typeof body.as === "string") {
+    const pipeline = Array.isArray(body.pipeline) ? body.pipeline : [];
+    return written(doc, body.as, arrayOf(documentsOf(pipeline, DOCUMENT)));
+  }
   if (isPlainObject(body.output)) {
-    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
+    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, accumulated2(v, doc)), doc);
   }
   return doc;
+}
+function documentsOf(pipeline, doc) {
+  return pipeline.reduce((d, s) => isPlainObject(s) ? documentAfter(s, d) : DOCUMENT, doc);
+}
+function accumulated2(v, doc) {
+  const t = typeOfEmitted(v, doc);
+  const op = operatorKeyOf(v);
+  return op !== null && neverNullOf(op) ? present(t) : t;
 }
 var KIND_OF_TYPE_NAME = new Map([
   ...["string", "array", "number", "object", "date"].flatMap(
@@ -25137,6 +25236,11 @@ function foreignChain(node) {
   if (cur.type === "DatabaseRef") throw collectionMissing(cur.pos);
   throw notAJoinChain(node.pos);
 }
+function joinedType(l) {
+  if (l.one === "find") return maybeAbsent(l.document);
+  if (l.one === "collapse") return present(l.document);
+  return present(arrayOf(l.document));
+}
 function documentBody(link, env) {
   const cb = link.args[0];
   if (cb === void 0 || cb.type !== "Lambda" || cb.body === void 0) return false;
@@ -25159,10 +25263,10 @@ function lookupOf(node, env, S, over = "$lookup") {
     const first = body.chain.emitted.length === 0 && body.chain.hoisted.length === 0;
     const asRow = picksOneOf(link.name);
     if (asRow !== null) {
-      const stages2 = S.link(link, body, first, asRow);
-      if (stages2 === null) throw notAJoinChain(link.pos);
+      const stages3 = S.link(link, body, first, asRow);
+      if (stages3 === null) throw notAJoinChain(link.pos);
       body.chain.flush();
-      body.chain.emitted.push(...stages2, { $limit: 1 });
+      body.chain.emitted.push(...stages3, { $limit: 1 });
       one = "find";
       yields = "object";
       peeledTo = link;
@@ -25171,10 +25275,10 @@ function lookupOf(node, env, S, over = "$lookup") {
     }
     if (!S.peels(link, body)) break;
     if (streamBodyOf(link.name) === "document" && !documentBody(link, body)) break;
-    const stages = S.link(link, body, first);
-    if (stages === null) break;
+    const stages2 = S.link(link, body, first);
+    if (stages2 === null) break;
     body.chain.flush();
-    body.chain.emitted.push(...stages);
+    body.chain.emitted.push(...stages2);
     peeledTo = link;
     const c = collapsesOf(link.name);
     const collapsed = c === true || c === "unlessRawBody" && link.args[0]?.type !== "ObjectLiteral";
@@ -25185,8 +25289,10 @@ function lookupOf(node, env, S, over = "$lookup") {
   const complete = rest.length === 0 && head === node;
   const vars = capture !== null && capture.any ? capture.vars : null;
   const element2 = body.chain.element;
-  const shape = takePair(vars, body.chain.close());
-  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, element: element2, pos };
+  const stages = body.chain.close();
+  const document = documentsOf(stages, DOCUMENT);
+  const shape = takePair(vars, stages);
+  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, element: element2, document, pos };
 }
 function pathOn2(base, path, pos) {
   return path.split(".").reduce((object, name2) => ({ type: "MemberAccess", object, name: name2, optional: false, pos }), base);
@@ -25270,16 +25376,12 @@ function joinValue(node, env, S) {
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));
   env.chain.hoist(stages, slot.path);
   const name2 = `#join${slot.path}`;
-  const yields = l.yields === "array" && l.element === "" ? arrayOf(DOCUMENT) : of(l.yields);
-  const bound = env.bind(name2, {
-    ref: { kind: "field", slot },
-    // The server always writes the `as` array. A `.find` may find nothing.
-    type: l.one === "find" ? maybeAbsent(yields) : present(yields),
-    mutable: false,
-    pos: l.pos
-  });
+  const bound = env.bind(name2, { ref: { kind: "field", slot }, type: joinedType(l), mutable: false, pos: l.pos });
   const rebased = rebase(node, l.peeledTo, elementsOf2({ type: "Ident", name: name2, pos: l.pos }, l, env, node));
-  return lowerValue(rebased, bound.at({ at: "value" }));
+  const valueEnv = bound.at({ at: "value" });
+  const value = lowerValue(rebased, valueEnv);
+  env.chain.proved(node, typeOf(rebased, valueEnv));
+  return value;
 }
 function joinWrite(node, path, env, S) {
   const marks = [env.chain, env.rootChain].map((c) => [c, c.mark()]);
@@ -25290,7 +25392,7 @@ function joinWrite(node, path, env, S) {
   }
   const stages = [lookupStage(l, path)];
   if (l.one !== false) stages.push(unwrap(path, l.one));
-  return { stages, yields: l.yields };
+  return { stages, type: joinedType(l) };
 }
 function joinRoot(node, env, S) {
   const l = lookupOf(node, env, S);
@@ -25664,6 +25766,9 @@ function receiverGate(name2, receiver) {
   if (on === void 0 || on === "any") return null;
   if (receiver.kind === "opaque") {
     if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
+    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
+      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
+    }
     return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
   }
   const family = familyOf2(receiver);
@@ -26481,8 +26586,8 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
     },
     document: (cb) => {
       const b = body(cb, "a document");
-      const kind = b.body.type === "NullLiteral" ? "null" : kindOf3(b.body, b.env);
-      if (kind !== "unknown" && kind !== "object") throw mapMustReturnDocument(name2, kind, b.body.pos);
+      const t = typeOf(b.body, b.env);
+      if (cannotBe(t, "object")) throw mapMustReturnDocument(name2, nounOfKinds(t), b.body.pos);
       return read.reshape(b.body, b.env);
     },
     fieldPath: (cb) => {
@@ -26744,7 +26849,9 @@ function arrayLiteral(node, elements, env) {
   for (const el of elements) {
     if (el.type === "SpreadElement") {
       flush();
-      if (kindOf3(el.argument, inner) === "string") throw spreadOfString(el.argument.pos);
+      const t = typeOf(el.argument, inner);
+      if (isOnly(t, "string")) throw spreadOfString(el.argument.pos);
+      if (cannotBe(t, "array")) throw spreadNotAnArray(nounOfKinds(t), el.argument.pos);
       const v = lowerValue(el.argument, inner);
       operands.push(chainHasOptional(el.argument) ? ifNull(v, []) : v);
     } else if (isExpr2(el)) group.push(lowerValue(el, inner));
@@ -26789,7 +26896,9 @@ function objectLiteral(node, entries, env) {
   for (const e of entries) {
     if (e.type === "SpreadElement") {
       flush();
-      if (kindOf3(e.argument, inner) === "string") throw spreadOfString(e.argument.pos);
+      const t = typeOf(e.argument, inner);
+      if (isOnly(t, "string")) throw spreadOfString(e.argument.pos);
+      if (cannotBe(t, "object")) throw spreadNotADocument(nounOfKinds(t), e.argument.pos);
       operands.push(lowerValue(e.argument, inner));
     } else group.push(e);
   }
@@ -27403,12 +27512,9 @@ function unionStages(args, env, node, S) {
       docs.push(...asList);
       continue;
     }
-    const kind = kindOf3(a, env);
-    if (kind === "object" || kind === "unknown") {
-      docs.push(a);
-      continue;
-    }
-    throw unionArg(kind, a.pos);
+    const t = typeOf(a, env);
+    if (cannotBe(t, "object")) throw unionArg(nounOfKinds(t), a.pos);
+    docs.push(a);
   }
   flushDocs();
   return out;
@@ -27834,7 +27940,7 @@ function letStages(decl, env) {
     const w = joinWrite(decl.value, slot.path, childEnv(env, decl, "value"), JOIN);
     if (w !== null) {
       env.chain.dirty = true;
-      return { stages: w.stages, env: bind(w.yields === "array" ? of("array") : maybeAbsent(of(w.yields))) };
+      return { stages: w.stages, env: bind(w.type) };
     }
   }
   const value = readIn(decl.value, childEnv(env, decl, "value"));
@@ -27967,13 +28073,11 @@ function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lea
   if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written2);
   const chainOn = chainBase(value);
   const streamRoad = chainOn.type === "CollectionRef" || readsAnotherCollection(value) || onOwnStream(chainOn, env);
-  const kind = streamRoad ? "stream" : kindOf3(value, env);
-  if (kind !== "stream" && kind !== "array" && kind !== "unknown")
-    throw notAStreamChain(value.pos, KIND_NOUN[kind] ?? `a ${kind}`, lead, how);
-  if (kind === "stream") return streamStages(value, env, first);
-  const element2 = elementKindOf(value, env);
-  if (element2 !== "unknown" && element2 !== "object")
-    throw streamElementsNotDocuments(ELEMENT_NOUN[element2] ?? `${element2}s`, written2, value.pos);
+  const t = typeOf(value, env);
+  if (streamRoad || isOnly(t, "stream")) return streamStages(value, env, first);
+  if (cannotBe(t, "array")) throw notAStreamChain(value.pos, nounOfKinds(t), lead, how);
+  const element2 = elementOf(t);
+  if (cannotBe(element2, "object")) throw streamElementsNotDocuments(pluralNounOfKinds(element2), written2, value.pos);
   const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
   return [{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }];
@@ -28032,8 +28136,8 @@ function mergeStages(node, env, first) {
   return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos)];
 }
 function oneDocumentStages(value, env) {
-  const kind = kindOf3(value, env);
-  if (kind !== "object" && kind !== "unknown") throw mergeNotADocument(KIND_NOUN[kind] ?? `a ${kind}`, value.pos);
+  const t = typeOf(value, env);
+  if (cannotBe(t, "object")) throw mergeNotADocument(nounOfKinds(t), value.pos);
   return [{ $replaceWith: lowerValue(value, env.at({ at: "value" })) }];
 }
 function isFacet(doc) {
@@ -28078,26 +28182,6 @@ function pathsRead(node, into2) {
   return into2;
 }
 var replacesWhole = (v) => isPlainObject(v) && Object.keys(v).every((k) => !k.startsWith("$"));
-var ELEMENT_NOUN = {
-  number: "numbers",
-  string: "strings",
-  bool: "booleans",
-  array: "arrays",
-  date: "dates",
-  objectId: "ObjectIds",
-  binData: "binary data"
-};
-var KIND_NOUN = {
-  number: "a number",
-  string: "a string",
-  bool: "a boolean",
-  array: "an array",
-  object: "a document",
-  date: "a date",
-  objectId: "an ObjectId",
-  binData: "binary data",
-  null: "null"
-};
 var touches = (x, y) => x === y || x === "" || y === "" || x.startsWith(`${y}.`) || y.startsWith(`${x}.`);
 function writeStages(uf, env, first) {
   let inner = childEnv(env, uf, "ops");
@@ -28185,7 +28269,7 @@ function writeStages(uf, env, first) {
       if (w !== null) {
         flush();
         emit(w.stages);
-        prove(path, w.yields === "array" ? arrayOf(DOCUMENT) : maybeAbsent(of(w.yields)));
+        prove(path, w.type);
         continue;
       }
     }
@@ -28194,9 +28278,9 @@ function writeStages(uf, env, first) {
       if (op.value.type === "NullLiteral" || op.value.type === "UndefinedLiteral") {
         throw rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
       }
-      const kind = kindOf3(op.value, inner);
-      if (kind === "array") throw rootIsArray(op.pos);
-      if (kind !== "unknown" && kind !== "object") throw rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
+      const t = typeOf(op.value, childEnv(inner, op, "value"));
+      if (isOnly(t, "array")) throw rootIsArray(op.pos);
+      if (cannotBe(t, "object")) throw rootMustBeDocument(nounOfKinds(t), op.pos);
       flush();
       emit([{ $replaceWith: value }]);
       continue;

@@ -508,7 +508,8 @@ export type Type = {
  * describes states `"unknown"`, and a test lists those rows.
  *
  *   Kind                    a fixed kind — `.trim()` is a string
- *   "same"                  the receiver's type — `.slice()`, `.filter(p)`
+ *   "same"                  the receiver's type — `.slice()`, `.filter(p)`; a fixed-length array keeps its
+ *                           elements, not its positions
  *   "element"               one element of the receiver — `.head()`, `.max()`
  *   "unknown"               follows the operands; nothing is stated
  *   { arrayOf: T }          an array whose elements are T — `.keys()` is `{ arrayOf: "string" }`
@@ -521,6 +522,8 @@ export type Type = {
  *   { oneOf: [T, …] }       one of the terms — `.reduce(f, seed)` is `{ oneOf: [{ arg: 1 }, { callback: 0 }] }`
  *   { recordOf: T }         an open object whose properties all hold T — `.groupBy(k)`
  *   { tuple: [T, …] }       an array of a fixed length — `.entries()` is `{ arrayOf: { tuple: ["string", "element"] } }`
+ *   { itemOf: [T, n] }      the n-th item of T when T has a fixed length — `.fromEntries()` is
+ *                           `{ recordOf: { itemOf: ["element", 1] } }`
  *   "picked" / "omitted"    the receiver's props kept / dropped by the first argument's names
  *   per-family map          one term per receiver family — `.filter` on an array is an array, on a stream a stream
  *
@@ -544,6 +547,7 @@ export type TypeExpr =
   | { readonly oneOf: readonly TypeExpr[] }
   | { readonly recordOf: TypeExpr }
   | { readonly tuple: readonly TypeExpr[] }
+  | { readonly itemOf: readonly [TypeExpr, number] }
   | FamilyMap;
 
 /** The per-family form of `TypeExpr`. An interface, so the recursion resolves. */

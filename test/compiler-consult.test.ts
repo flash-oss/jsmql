@@ -350,7 +350,7 @@ describe("registry — exactly the value-producing rows state a return type", ()
     expect(wrong).toEqual([]);
   });
 
-  it("names a kind the vocabulary has, bare or as the element of an `arrayOf`", () => {
+  it("names a kind the vocabulary has, bare or as the element of an `arrayOf`; an accumulator's element may be its operand", () => {
     const KINDS: readonly string[] = [
       "string",
       "array",
@@ -369,7 +369,9 @@ describe("registry — exactly the value-producing rows state a return type", ()
       if (row.returns === undefined) continue;
       const r = row.returns as string | { arrayOf?: unknown };
       const bare = typeof r === "string" ? r : typeof r === "object" && r !== null ? r.arrayOf : undefined;
-      if (typeof bare !== "string" || !KINDS.includes(bare)) {
+      // `$push` and `$addToSet` collect their operand: the element is `{ arg: 0 }`.
+      const operand = typeof bare === "object" && bare !== null && "arg" in bare;
+      if (!operand && (typeof bare !== "string" || !KINDS.includes(bare))) {
         wrong.push(`${name} = ${JSON.stringify(row.returns)}`);
       }
     }

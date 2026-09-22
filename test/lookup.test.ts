@@ -612,18 +612,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
               },
             },
             { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $ne: [{ $ifNull: ["$__jsmql.tmp.0", null] }, null] },
-                    { $ne: ["$__jsmql.tmp.0", false] },
-                    { $ne: ["$__jsmql.tmp.0", ""] },
-                    { $ne: ["$__jsmql.tmp.0", 0] },
-                  ],
-                },
-              },
-            },
+            { $match: { $expr: { $ne: [{ $ifNull: ["$__jsmql.tmp.0", null] }, null] } } },
             { $limit: 1 },
             { $unset: "__jsmql" },
           ],

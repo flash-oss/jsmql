@@ -379,8 +379,7 @@ function letStages(decl: LetDecl, env: Env): Step {
     const w = joinWrite(decl.value, slot.path, childEnv(env, decl, "value"), JOIN);
     if (w !== null) {
       env.chain.dirty = true;
-      // the server always writes the `as` array; a `.find` may find nothing
-      return { stages: w.stages, env: bind(w.yields === "array" ? of("array") : maybeAbsent(of(w.yields))) };
+      return { stages: w.stages, env: bind(w.type) };
     }
   }
   const value = readIn(decl.value, childEnv(env, decl, "value"));
@@ -1022,8 +1021,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       if (w !== null) {
         flush();
         emit(w.stages);
-        // the server always writes the `as` array; a `.find` may find nothing
-        prove(path, w.yields === "array" ? arrayOf(DOCUMENT) : maybeAbsent(of(w.yields)));
+        prove(path, w.type);
         continue;
       }
     }

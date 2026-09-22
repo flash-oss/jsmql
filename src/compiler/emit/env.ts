@@ -120,6 +120,18 @@ export class Chain {
    * after `.flatMap`.
    */
   element = "";
+  /**
+   * The proof of a chain over another collection, by its node. The join road
+   * lowers the chain, and only then knows the body's document; `prove.ts` reads
+   * the answer here for the same node. See docs/specs/types.md § A join.
+   */
+  private readonly proofs = new WeakMap<object, Type>();
+  proved(node: object, type: Type): void {
+    this.proofs.set(node, type);
+  }
+  proofOf(node: object): Type | undefined {
+    return this.proofs.get(node);
+  }
 
   /**
    * A stage lands: one that replaces the document leaves no unwound field to

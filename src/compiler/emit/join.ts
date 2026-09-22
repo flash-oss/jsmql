@@ -30,15 +30,15 @@
 // lands in the boundary's Capture (env.ts `render`), and the compiler writes the
 // `let` from it once the body is lowered. See docs/specs/emit-pass.md § The join road.
 
-import type { Expr, Stage } from "../../registry/vocabulary.ts";
+import type { Expr, Stage, Type } from "../../registry/vocabulary.ts";
 import { chainBase } from "../passes/naming.ts";
 import { collapsesOf, picksOneOf, streamBodyOf } from "../rows.ts";
 import { Chain, type Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { lowerValue } from "./lower.ts";
 import { Capture, type FieldSlot } from "./names.ts";
-import { kindOf } from "./prove.ts";
-import { DOCUMENT, arrayOf, maybeAbsent, of, present } from "./type.ts";
+import { documentsOf, kindOf, typeOf } from "./prove.ts";
+import { DOCUMENT, arrayOf, maybeAbsent, present } from "./type.ts";
 import { childEnv } from "./inputs.ts";
 
 type Link = Extract<Expr, { type: "MethodCall" }>;
@@ -114,8 +114,22 @@ export type Lookup = {
    * gives the items.
    */
   readonly element: string;
+  /**
+   * The document each element of `as` holds: the foreign collection's document,
+   * after the body's stages. `documentAfter` reads them as emitted, so a
+   * `$project` from `.pick`, a `$group` from `.countBy`, an `$unwind` from
+   * `.flatMap` each shape it. See docs/specs/types.md § A join.
+   */
+  readonly document: Type;
   readonly pos: number;
 };
+
+/** The proof of the joined value once the slot is unwrapped: one document, a record, or the array. */
+export function joinedType(l: Lookup): Type {
+  if (l.one === "find") return maybeAbsent(l.document);
+  if (l.one === "collapse") return present(l.document);
+  return present(arrayOf(l.document));
+}
 
 /** Does a `.map` body provably produce a document? Only then does it peel into the sub-pipeline. */
 function documentBody(link: Link, env: Env): boolean {
@@ -177,8 +191,10 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" 
   const complete = rest.length === 0 && head === node;
   const vars = capture !== null && capture.any ? capture.vars : null;
   const element = body.chain.element;
-  const shape = takePair(vars, body.chain.close());
-  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, element, pos };
+  const stages = body.chain.close();
+  const document = documentsOf(stages, DOCUMENT);
+  const shape = takePair(vars, stages);
+  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, element, document, pos };
 }
 
 /** `<base>.a.b` for the dotted `path` — the element read off one document of the slot. */
@@ -325,20 +341,16 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));
   env.chain.hoist(stages, slot.path);
   const name = `#join${slot.path}`;
-  // A `$lookup.as` array holds the foreign collection's documents, so a terminal
-  // that answers one ELEMENT of it — `.head()`, `.maxBy(k)` — is a document. An
-  // unwound field's elements are whatever the field held.
-  const yields = l.yields === "array" && l.element === "" ? arrayOf(DOCUMENT) : of(l.yields);
-  const bound = env.bind(name, {
-    ref: { kind: "field", slot },
-    // The server always writes the `as` array. A `.find` may find nothing.
-    type: l.one === "find" ? maybeAbsent(yields) : present(yields),
-    mutable: false,
-    pos: l.pos,
-  });
+  // The slot holds the body's documents; an unwound field's elements are read off
+  // them by the rebased chain (`elementsOf`), so the slot's proof is the array's.
+  const bound = env.bind(name, { ref: { kind: "field", slot }, type: joinedType(l), mutable: false, pos: l.pos });
   const rebased = rebase(node, l.peeledTo, elementsOf({ type: "Ident", name, pos: l.pos }, l, env, node));
+  const valueEnv = bound.at({ at: "value" });
   // the rest of the chain is a VALUE over the slot, wherever the chain stood
-  return lowerValue(rebased, bound.at({ at: "value" }));
+  const value = lowerValue(rebased, valueEnv);
+  // The chain's proof is the rebased chain's; a later `typeOf` of the same node reads it.
+  env.chain.proved(node, typeOf(rebased, valueEnv));
+  return value;
 }
 
 /**
@@ -346,12 +358,7 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
  * needs no scratch and no cleanup. Null when the chain goes on after the
  * `$lookup` — the value road then materialises it.
  */
-export function joinWrite(
-  node: Expr,
-  path: string,
-  env: Env,
-  S: JoinServices,
-): { stages: Stage[]; yields: "array" | "object" } | null {
+export function joinWrite(node: Expr, path: string, env: Env, S: JoinServices): { stages: Stage[]; type: Type } | null {
   // The body's lowering may hoist onto the outer chains (`$$.length` stamps
   // the root stream). When the chain goes on, the value road lowers the body
   // again, so the compiler takes back what this attempt hoisted — otherwise
@@ -365,7 +372,7 @@ export function joinWrite(
   }
   const stages: Stage[] = [lookupStage(l, path)];
   if (l.one !== false) stages.push(unwrap(path, l.one));
-  return { stages, yields: l.yields };
+  return { stages, type: joinedType(l) };
 }
 
 /**

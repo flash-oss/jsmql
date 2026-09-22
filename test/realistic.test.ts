@@ -144,19 +144,7 @@ $$ = candidateProductIds
               { $sort: { createdAt: -1 } },
               { $limit: 100 },
               { $unwind: "$productIds" },
-              {
-                $match: {
-                  $expr: {
-                    $not: {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$$jsmql_v0_myProductIds", null] }, null] },
-                        then: null,
-                        else: { $in: ["$productIds", "$$jsmql_v0_myProductIds"] },
-                      },
-                    },
-                  },
-                },
-              },
+              { $match: { $expr: { $not: { $in: ["$productIds", "$$jsmql_v0_myProductIds"] } } } },
               { $group: { _id: "$productIds", __jsmqlTmp: { $sum: 1 } } },
               {
                 $group: {

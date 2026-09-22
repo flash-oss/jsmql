@@ -38,6 +38,7 @@ import {
   ANY,
   DOCUMENT,
   NOTHING,
+  anyItemOf,
   arrayOf,
   at,
   elementOf,
@@ -54,6 +55,7 @@ import {
   propOf,
   removed,
   single,
+  tupleOf,
   written,
 } from "./type.ts";
 import type { Site } from "./type.ts";
@@ -303,7 +305,7 @@ function callOnUnproven(name: string, receiver: Type, args: readonly CallArg[], 
   return answers.length === 0 ? ANY : joinAll(answers);
 }
 
-const TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple"];
+const TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple", "itemOf"];
 const isFamilyMap = (r: unknown): boolean => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 
 /** A runtime value carried in: its proof, as deep as a plain value can show. */
@@ -328,6 +330,9 @@ function injectedType(v: unknown): Type {
  * source states, else what the proof itself carries.
  */
 export function typeOf(node: Expr, env: Env): Type {
+  // A chain over another collection: the join road lowered it, and proved it from the body's stages.
+  const joined = env.chain.proofOf(node);
+  if (joined !== undefined) return joined;
   const t = kindsOf(node, env);
   const stated = statedPresence(node, env);
   if (stated === null) return t;
@@ -361,7 +366,8 @@ function kindsOf(node: Expr, env: Env): Type {
         if (el.type === "SpreadElement") spread = true;
         else elements.push(typeOf(el as Expr, env));
       }
-      return arrayOf(spread ? ANY : joinAll(elements));
+      // a literal with no spread has a fixed length, so each position is its own item
+      return spread ? arrayOf(ANY) : tupleOf(elements);
     }
     case "ObjectLiteral": {
       // A raw `{ $op: … }` is an operator, and its result is the operator's.
@@ -407,7 +413,7 @@ function kindsOf(node: Expr, env: Env): Type {
       const obj = typeOf(node.object, env);
       if (node.index.type === "NumberLiteral") return itemOf(obj, node.index.value);
       if (node.index.type === "StringLiteral") return propOf(obj, node.index.value);
-      return ANY;
+      return anyItemOf(obj);
     }
     case "MethodCall": {
       const receiver = typeOf(node.object, env);
@@ -517,6 +523,13 @@ export function typeOfEmitted(value: unknown, doc: Type): Type {
       const last = typeOfEmitted(raw[raw.length - 1], doc);
       return { ...joinAll(raw.map((v) => typeOfEmitted(v, doc))), absent: last.absent };
     }
+    if (op === "$arrayToObject") {
+      // `[{ k, v }, …]` or `[[k, v], …]` — a record whose values are each pair's `v`.
+      const pairs = typeOfEmitted(Array.isArray(raw) && raw.length === 1 ? raw[0] : raw, doc);
+      const pair = elementOf(pairs);
+      const value = pair.items !== undefined ? itemOf(pair, 1) : propOf(pair, "v");
+      return objectOf(new Map(), true, value, pairs.absent);
+    }
     const args = Array.isArray(raw) ? raw : [raw];
     const site: Site = {
       receiver: ANY,
@@ -555,7 +568,12 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
       const props = new Map<string, Type>();
       for (const [k, v] of Object.entries(body)) {
         // A key whose value is a pipeline (`$facet`) holds that pipeline's documents.
-        props.set(k, Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(DOCUMENT) : typeOfEmitted(v, doc));
+        props.set(
+          k,
+          Array.isArray(v) && v.every((s) => isPlainObject(s))
+            ? arrayOf(documentsOf(v, DOCUMENT))
+            : accumulated(v, doc),
+        );
       }
       return objectOf(props, false);
     }
@@ -608,11 +626,31 @@ function keptDocument(name: string, body: unknown, doc: Type): Type {
   if (name === "$set" || name === "$addFields") {
     return Object.entries(body).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
   }
-  if (typeof body.as === "string") return written(doc, body.as, arrayOf(DOCUMENT));
+  if (typeof body.as === "string") {
+    // the `as` array holds the other collection's documents, after the body's own pipeline
+    const pipeline = Array.isArray(body.pipeline) ? body.pipeline : [];
+    return written(doc, body.as, arrayOf(documentsOf(pipeline, DOCUMENT)));
+  }
   if (isPlainObject(body.output)) {
-    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, typeOfEmitted(v, doc)), doc);
+    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, accumulated(v, doc)), doc);
   }
   return doc;
+}
+
+/** The document after every stage of `pipeline` ran over `doc`. */
+export function documentsOf(pipeline: readonly unknown[], doc: Type): Type {
+  return pipeline.reduce<Type>((d, s) => (isPlainObject(s) ? documentAfter(s, d) : DOCUMENT), doc);
+}
+
+/**
+ * An accumulator's answer. Over a missing operand it answers its empty value
+ * (MEASURED: `$push` gives `[]`, `$sum` gives `0`), so its presence is the
+ * row's `neverNull` alone, and never its operand's.
+ */
+function accumulated(v: unknown, doc: Type): Type {
+  const t = typeOfEmitted(v, doc);
+  const op = operatorKeyOf(v);
+  return op !== null && neverNullOf(op) ? present(t) : t;
 }
 
 // ── what a QUERY proves about the documents that pass it ─────────────────────
