@@ -20,20 +20,12 @@ describe("types — a written field carries what its value proved", () => {
     expect(
       jsmql(`
         $.arr = $.tags.uniq();
-        $.bool = $.arr.includes("red");
+        $.bool = $.arr.has("red");
         $.result = $.bool ? "R" : "OTHER";
       `),
     ).toEqual([
-      { $set: { arr: { $setUnion: "$tags" } } },
-      // `tags` may be missing, so `arr` may be null, and `$in` aborts on null: the guard stays.
-      {
-        $set: {
-          bool: {
-            $cond: { if: { $eq: [{ $ifNull: ["$arr", null] }, null] }, then: null, else: { $in: ["red", "$arr"] } },
-          },
-        },
-      },
-      // MongoDB reads null and missing as false, so a boolean needs no other test.
+      { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } },
+      { $set: { bool: { $in: ["red", "$arr"] } } },
       { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } },
     ]);
   });
@@ -55,7 +47,7 @@ describe("types — a written field carries what its value proved", () => {
   });
 
   it("a `let` takes the type of each value it is assigned", () => {
-    expect(jsmql("let x = $.n + 1; x = $.s.trim(); $.len = x.length;")).toEqual([
+    expect(jsmql("let x = $.n + 1; x = $.s.trim(); $.len = x.length();")).toEqual([
       { $set: { "__jsmql.var.x": { $add: ["$n", 1] } } },
       { $set: { "__jsmql.var.x": { $trim: { input: "$s" } } } },
       {
@@ -74,13 +66,15 @@ describe("types — a written field carries what its value proved", () => {
   });
 
   it("a method on a field proven to hold a kind the method has no form for is refused at compile time", () => {
-    expect(() => jsmql('$.b = $.arr.includes("x"); $.t = $.b.trim();')).toThrow(
+    expect(() => jsmql('$.b = $.arr.has("x"); $.t = $.b.trim();')).toThrow(
       "'.trim()' is not available on a 'bool' — it is defined on 'string'.",
     );
   });
 
   it("a stage that replaces the document forgets every written type", () => {
-    expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $ = { v: $.other }; $.len = $.v.length;')).toEqual([
+    // `.indexOf` has two families. Over the two written kinds the `$switch` needs no default;
+    // after the replacement `v` is unknown, so the null default is back.
+    expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $ = { v: $.other }; $.i = $.v.indexOf("b");')).toEqual([
       {
         $set: {
           v: {
@@ -102,13 +96,13 @@ describe("types — a written field carries what its value proved", () => {
       { $replaceWith: { v: "$other" } },
       {
         $set: {
-          len: {
+          i: {
             $switch: {
               branches: [
-                { case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $size: "$v" } },
-                { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $strLenCP: "$v" } },
+                { case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "b"] } },
+                { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "b"] } },
               ],
-              default: null,
+              default: -1,
             },
           },
         },
@@ -118,14 +112,15 @@ describe("types — a written field carries what its value proved", () => {
 });
 
 describe("types — a value of several possible kinds dispatches over those kinds alone", () => {
+  // `.indexOf` is the method with two families, so it is the one that dispatches.
   it("two kinds the row covers, present: a `$switch` over the two, with no default", () => {
-    expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.len = $.v.length;')[1]).toEqual({
+    expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.i = $.v.indexOf("b");')[1]).toEqual({
       $set: {
-        len: {
+        i: {
           $switch: {
             branches: [
-              { case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $size: "$v" } },
-              { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $strLenCP: "$v" } },
+              { case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "b"] } },
+              { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "b"] } },
             ],
           },
         },
@@ -134,16 +129,28 @@ describe("types — a value of several possible kinds dispatches over those kind
   });
 
   it("a kind the row has no form for keeps the null default", () => {
-    expect(jsmql("$.v = $.flag ? 5 : [1, 2]; $.len = $.v.length;")[1]).toEqual({
+    expect(jsmql('$.v = $.flag ? 5 : [1, 2]; $.i = $.v.indexOf("b");')[1]).toEqual({
       $set: {
-        len: {
+        i: {
           $switch: {
-            branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $size: "$v" } }],
-            default: null,
+            branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "b"] } }],
+            default: -1,
           },
         },
       },
     });
+  });
+
+  it("a method of one family takes that family's operator while the value may be of that kind", () => {
+    // `.length()` is a string length. The value may be a string, so the string form runs, and the
+    // server judges an array at run time. A value that can NEVER be a string is refused.
+    expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.len = $.v.length();')[1]).toEqual({
+      $set: { len: { $strLenCP: "$v" } },
+    });
+    expect(() => jsmql("$.v = $.flag ? 5 : [1, 2]; $.len = $.v.length();")).toThrow(
+      "'.length()' is not available on a 'number' or an 'array' — it is defined on 'string'.",
+    );
+    expect(() => jsmql("$.v = [1, 2]; $.len = $.v.length();")).toThrow("For the number of elements, write '.size()'.");
   });
 });
 
@@ -190,14 +197,12 @@ describe.skipIf(up === null)("types — the server agrees", () => {
     await coll.insertMany([{ _id: 1, tags: ["red", "blue", "red"] }, { _id: 2, tags: ["blue"] }, { _id: 3 }]);
     const out = await coll
       .aggregate([
-        ...(jsmql(
-          '$.arr = $.tags.uniq(); $.bool = $.arr.includes("red"); $.result = $.bool ? "R" : "OTHER";',
-        ) as object[]),
+        ...(jsmql('$.arr = $.tags.uniq(); $.bool = $.arr.has("red"); $.result = $.bool ? "R" : "OTHER";') as object[]),
         { $sort: { _id: 1 } },
       ])
       .toArray();
     expect(out.map((d) => d.result)).toEqual(["R", "OTHER", "OTHER"]);
-    expect(out.map((d) => d.bool)).toEqual([true, false, null]);
+    expect(out.map((d) => d.bool)).toEqual([true, false, false]);
   });
 
   it("a default-less `$switch` over two present kinds runs on both", async () => {
@@ -207,9 +212,12 @@ describe.skipIf(up === null)("types — the server agrees", () => {
       { _id: 2, flag: false },
     ]);
     const out = await coll
-      .aggregate([...(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.len = $.v.length;') as object[]), { $sort: { _id: 1 } }])
+      .aggregate([
+        ...(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.i = $.v.indexOf("b");') as object[]),
+        { $sort: { _id: 1 } },
+      ])
       .toArray();
-    expect(out.map((d) => d.len)).toEqual([3, 2]);
+    expect(out.map((d) => d.i)).toEqual([1, -1]);
   });
 
   it("a dotted `$set` lands on a scalar as an object and into every element of an array", async () => {
@@ -241,7 +249,10 @@ describe.skipIf(up === null)("types — the server agrees", () => {
       { _id: 2, n: 1 },
     ]);
     const out = await coll
-      .aggregate([...(jsmql("let x = $.n + 1; x = $.s.trim(); $.len = x.length;") as object[]), { $sort: { _id: 1 } }])
+      .aggregate([
+        ...(jsmql("let x = $.n + 1; x = $.s.trim(); $.len = x.length();") as object[]),
+        { $sort: { _id: 1 } },
+      ])
       .toArray();
     expect(out.map((d) => d.len)).toEqual([2, null]);
   });
@@ -262,7 +273,7 @@ describe("types — the truthiness check keeps only the tests the value can fail
   });
 
   it("a boolean or a number is its own truth; an array that is there needs no test at all", () => {
-    expect(jsmql("$.n = $.a.length; $.x = $.n ? 1 : 2;")[1]).toEqual({
+    expect(jsmql("$.n = $.a.length(); $.x = $.n ? 1 : 2;")[1]).toEqual({
       $set: { x: { $cond: { if: "$n", then: 1, else: 2 } } },
     });
     expect(jsmql("$.arr = [1]; $.w = $.arr ? 1 : 2;")[1]).toEqual({ $set: { w: 1 } });
@@ -271,7 +282,7 @@ describe("types — the truthiness check keeps only the tests the value can fail
   it("in a filter, a bare field with a known type takes the query form", () => {
     expect(jsmql("$.b = $.n > 1; $match($.b);")[1]).toEqual({ $match: { b: true } });
     expect(jsmql("$.s = $.a.trim(); $match($.s);")[1]).toEqual({ $match: { s: { $nin: [null, ""] } } });
-    expect(jsmql("$.n = $.a.length; $match($.n);")[1]).toEqual({ $match: { n: { $nin: [null, 0] } } });
+    expect(jsmql("$.n = $.a.length(); $match($.n);")[1]).toEqual({ $match: { n: { $nin: [null, 0] } } });
     expect(jsmql("$.o = { a: 1 }; $match($.o);")[1]).toEqual({ $match: {} });
     // a value that may be an array stays on the `$expr` road: the query language reads an array element by element
     expect(jsmql("$.v = $.flag ? 0 : [0]; $match($.v);")[1]).toEqual({ $match: { $expr: { $ne: ["$v", 0] } } });
@@ -321,19 +332,17 @@ describe("types — the document after a stage, read off the stage itself", () =
   it("`$group` types each output by its accumulator, and `_id` by its expression", () => {
     expect(
       jsmql(
-        "$group({ _id: $.k, total: $sum($.amount), items: $push($.item) }); $.t = $.total ? 1 : 2; $.n = $.items.length;",
+        "$group({ _id: $.k, total: $sum($.amount), items: $push($.item) }); $.t = $.total ? 1 : 2; $.n = $.items.size();",
       ),
     ).toEqual([
       { $group: { _id: "$k", total: { $sum: "$amount" }, items: { $push: "$item" } } },
-      // a number is its own truth
       { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } },
-      // an array the accumulator always writes: `$size`, with no guard
       { $set: { n: { $size: "$items" } } },
     ]);
   });
 
   it("`$ = <expr>` makes the value's shape the document", () => {
-    expect(jsmql('$.p = { a: 1, b: "x" }; $ = $.p; $.c = $.b.length;')).toEqual([
+    expect(jsmql('$.p = { a: 1, b: "x" }; $ = $.p; $.c = $.b.length();')).toEqual([
       { $set: { p: { $mergeObjects: [{ a: 1, b: "x" }] } } },
       { $replaceWith: "$p" },
       { $set: { c: { $strLenCP: "$b" } } },
@@ -349,30 +358,20 @@ describe("types — the document after a stage, read off the stage itself", () =
   });
 
   it("a `$project` inclusion keeps the named fields' types and forgets the rest; an exclusion removes its fields", () => {
-    expect(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length; $.m = $.b ? 1 : 2;')).toEqual([
+    expect(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length(); $.m = $.b ? 1 : 2;')).toEqual([
       { $set: { a: "x" } },
       { $set: { b: 1 } },
       { $project: { a: 1, _id: 0 } },
       { $set: { n: { $strLenCP: "$a" } } },
-      // `b` is gone: certainly missing, so the condition is false and the `$cond` folds
       { $set: { m: 2 } },
     ]);
     expect(jsmql('$.a = "x"; $project({ a: 0 }); $.n = $.a ? 1 : 2;')[2]).toEqual({ $set: { n: 2 } });
   });
 
   it("a stage whose output no layout states yet leaves the document unknown", () => {
-    expect(jsmql('$.a = "x"; $sortByCount($.a); $.n = $.a.length;')[2]).toEqual({
-      $set: {
-        n: {
-          $switch: {
-            branches: [
-              { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $size: "$a" } },
-              { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $strLenCP: "$a" } },
-            ],
-            default: null,
-          },
-        },
-      },
+    // `a` was a present string; after the stage it may be missing, so the null guard is back.
+    expect(jsmql('$.a = "x"; $sortByCount($.a); $.n = $.a.length();')[2]).toEqual({
+      $set: { n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } } },
     });
   });
 });
@@ -398,7 +397,7 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
     const out = await coll
       .aggregate([
         ...(jsmql(
-          "$group({ _id: $.k, total: $sum($.amount), items: $push($.item) }); $.t = $.total ? 1 : 2; $.n = $.items.length;",
+          "$group({ _id: $.k, total: $sum($.amount), items: $push($.item) }); $.t = $.total ? 1 : 2; $.n = $.items.size();",
         ) as object[]),
         { $sort: { _id: 1 } },
       ])
@@ -412,7 +411,7 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
   it("the projected program answers as JavaScript would", async () => {
     const out = await coll
       .aggregate([
-        ...(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length; $.m = $.b ? 1 : 2;') as object[]),
+        ...(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length(); $.m = $.b ? 1 : 2;') as object[]),
         { $limit: 1 },
       ])
       .toArray();
@@ -422,7 +421,7 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
 
 describe("types — a call's result follows its row's `returns` term", () => {
   it("`.map(f)` proves an array of what the callback returns", () => {
-    expect(jsmql("$.names = $.tags.map(t => t.trim()); $.n = $.names[0].length;")[1]).toEqual({
+    expect(jsmql("$.names = $.tags.map(t => t.trim()); $.n = $.names[0].length();")[1]).toEqual({
       $set: {
         n: {
           $let: {
@@ -451,17 +450,13 @@ describe("types — a call's result follows its row's `returns` term", () => {
 
   it("`.pick()` keeps the named properties and nothing else", () => {
     expect(
-      jsmql('$.o = { a: "x", b: 1 }; $.p = $.o.pick(["a"]); $.n = $.p.a.length; $.m = $.p.b ? 1 : 2;').slice(2),
-    ).toEqual([
-      { $set: { n: { $strLenCP: "$p.a" } } },
-      // `b` was not picked: certainly missing, so the condition folds to its `else`
-      { $set: { m: 2 } },
-    ]);
+      jsmql('$.o = { a: "x", b: 1 }; $.p = $.o.pick(["a"]); $.n = $.p.a.length(); $.m = $.p.b ? 1 : 2;').slice(2),
+    ).toEqual([{ $set: { n: { $strLenCP: "$p.a" } } }, { $set: { m: 2 } }]);
   });
 
   it("`.filter(p)` keeps the elements; `.head()` may find nothing, so a property of it may be missing", () => {
     expect(
-      jsmql('$.items = [{ q: "s" }]; $.first = $.items.filter(i => i.q).head(); $.n = $.first.q.length;')[2],
+      jsmql('$.items = [{ q: "s" }]; $.first = $.items.filter(i => i.q).head(); $.n = $.first.q.length();')[2],
     ).toEqual({
       $set: {
         n: {
@@ -476,7 +471,7 @@ describe("types — a `$match` narrows the document for the statements after it"
   it("a presence test drops the null guard downstream", () => {
     expect(
       jsmql(
-        '$match($.tags != null); $.arr = $.tags.uniq(); $.bool = $.arr.includes("red"); $.result = $.bool ? "R" : "OTHER";',
+        '$match($.tags != null); $.arr = $.tags.uniq(); $.bool = $.arr.has("red"); $.result = $.bool ? "R" : "OTHER";',
       ),
     ).toEqual([
       { $match: { tags: { $ne: null } } },
@@ -545,7 +540,7 @@ describe.skipIf(up === null)("types — the server agrees with the narrowing", (
 
   it("only the selected documents reach the narrowed stages, and they answer as JavaScript would", async () => {
     const a = await run(
-      '$match($.tags != null); $.arr = $.tags.uniq(); $.bool = $.arr.includes("red"); $.result = $.bool ? "R" : "OTHER";',
+      '$match($.tags != null); $.arr = $.tags.uniq(); $.bool = $.arr.has("red"); $.result = $.bool ? "R" : "OTHER";',
     );
     expect(a.map((d) => [d._id, d.result])).toEqual([
       [1, "R"],
@@ -580,15 +575,13 @@ describe("types — a refusal reads the whole kind set", () => {
     expect(() => jsmql('$.x = "abc"; $.y = [...$.x];')).toThrow("spreads a string into its characters");
     expect(() => jsmql("$.n = 5; $$$.out.push($.n);")).toThrow("a number is not a document");
     expect(() => jsmql("$.b = $.f ? 1 : true; $$.push($.b);")).toThrow("this is a number or a boolean");
-    expect(() => jsmql("$$ = $.tags.map(t => t.length);")).toThrow("these elements are numbers");
+    expect(() => jsmql("$$ = $.tags.map(t => t.length());")).toThrow("these elements are numbers");
   });
 });
 
 describe("types — a join carries the shape its body made", () => {
-  it("a `const` bound to a join is a present array: `.includes` takes the array form with no guard", () => {
-    expect(
-      jsmql('const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq(); $.hit = ids.includes("x");'),
-    ).toEqual([
+  it("a `const` bound to a join is a present array: `.has` needs no guard", () => {
+    expect(jsmql('const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq(); $.hit = ids.has("x");')).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $match: { status: "a" } }], as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.var.ids": { $setUnion: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.pid" } } } } },
       { $set: { hit: { $in: ["x", "$__jsmql.var.ids"] } } },
@@ -613,7 +606,7 @@ describe("types — a join carries the shape its body made", () => {
 
   it("a `.countBy()` in the body is a present record of numbers: a key read is its own truth", () => {
     const out = jsmql(
-      'const counts = $$$.orders.filter({ status: "a" }).flatMap("pid").countBy(); $.n = Object.keys(counts).length; $.c = counts[$.pid] ? 1 : 2;',
+      'const counts = $$$.orders.filter({ status: "a" }).flatMap("pid").countBy(); $.n = Object.keys(counts).size(); $.c = counts[$.pid] ? 1 : 2;',
     ) as object[];
     expect(out.slice(2)).toEqual([
       {
@@ -640,12 +633,12 @@ describe("types — a join carries the shape its body made", () => {
 
   it("`.take(n)` keeps the element and not the positions; an index into an array of unknown length may miss", () => {
     // The fold settles a constant receiver to a one-item literal: position 0 is a present string.
-    expect(jsmql('$.a = ["x", "yy"].take(1); $.n = $.a[0].length;')).toEqual([
+    expect(jsmql('$.a = ["x", "yy"].take(1); $.n = $.a[0].length();')).toEqual([
       { $set: { a: ["x"] } },
       { $set: { n: { $strLenCP: { $arrayElemAt: ["$a", 0] } } } },
     ]);
     // A receiver the fold cannot settle: the element is a string, and index 0 may miss.
-    expect(jsmql('$.a = [$.s.trim(), "yy"].take(1); $.n = $.a[0].length;')).toEqual([
+    expect(jsmql('$.a = [$.s.trim(), "yy"].take(1); $.n = $.a[0].length();')).toEqual([
       { $set: { a: { $slice: [[{ $trim: { input: "$s" } }, "yy"], 1] } } },
       {
         $set: {
@@ -693,15 +686,15 @@ describe("types — a join carries the shape its body made", () => {
 
   it("a callback parameter carries the element's own presence, not the array's", () => {
     // `$map` over a null `a` never runs the body, and each part of a `.split()` is a string that is there.
-    expect(jsmql('$.a = $.s.split(","); $.n = $.a.map(p => p.length); $.ids = $.a.map(ObjectId);')).toEqual([
+    expect(jsmql('$.a = $.s.split(","); $.n = $.a.map(p => p.length()); $.ids = $.a.map(ObjectId);')).toEqual([
       { $set: { a: { $split: ["$s", ","] } } },
-      { $set: { n: { $map: { input: "$a", as: "p", in: { $strLenCP: "$$p" } } } } },
-      { $set: { ids: { $map: { input: "$a", as: "x", in: { $toObjectId: "$$x" } } } } },
+      { $set: { n: { $map: { input: { $ifNull: ["$a", []] }, as: "p", in: { $strLenCP: "$$p" } } } } },
+      { $set: { ids: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $toObjectId: "$$x" } } } } },
     ]);
   });
 
-  it("an accumulator is present whatever its operand: `.length` on a `$push` array needs no guard", () => {
-    expect(jsmql("$group({ _id: $.k, items: $push($.item) }); $.n = $.items.length;")).toEqual([
+  it("an accumulator is present whatever its operand: `.size()` on a `$push` array needs no guard", () => {
+    expect(jsmql("$group({ _id: $.k, items: $push($.item) }); $.n = $.items.size();")).toEqual([
       { $group: { _id: "$k", items: { $push: "$item" } } },
       { $set: { n: { $size: "$items" } } },
     ]);
@@ -743,7 +736,7 @@ describe.skipIf(up === null)("types — the server agrees with the join's proof"
       const ids = $$$.orders.filter({ status: "a" }).map("pid").flatten().uniq();
       const counts = $$$.orders.filter({ status: "a" }).flatMap("pid").countBy();
       $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);
-      $.hit = ids.includes($.pid);
+      $.hit = ids.has($.pid);
       $.c = counts[$.pid] ? counts[$.pid] : 0;
       $.t = $.p[0].price ? 1 : 2;
       $.name = $.p.find({ _id: "x" }).name;

@@ -45,32 +45,51 @@ know about the proof it runs under.
 
 An unprovable receiver on a row with ONE field family is that family, by the
 row's claim. On a row with two or more families, the compiler dispatches it at
-run time over the families the receiver can be.
+run time over the families the receiver can be. `.indexOf()` and `.lastIndexOf()`
+are the two such rows among the JavaScript methods: every other method reads one
+family, and its row states a `sibling` sentence per family it refuses, which the
+refusal (`errors.ts`) puts after its head — `'.length()' is not available on an
+'array' — it is defined on 'string'. For the number of elements, write
+'.size()'.` A branch whose `slotType` cannot take a PROVEN argument kind drops
+out of the dispatch (`argsFit` in `select.ts`), and one branch left runs alone;
+`checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven
+kind.
 
 ```js
-$.x.length
-// → { $switch: { branches: [{ case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: "$x" } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $strLenCP: "$x" } }], default: null } }
+$.x.indexOf("a")
+// → { $switch: { branches: [ { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $indexOfArray: ["$x", "a"] } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $indexOfCP: ["$x", "a"] } } ], default: -1 } }
+$.x.indexOf(1)
+// → { $indexOfArray: [{ $ifNull: ["$x", []] }, 1] }
 ```
 
-**A JavaScript method on a receiver that may be missing answers null.** `nullOr`
+**HR5 — a dot runs an array or object method on the empty collection.**
+`dispatchOn` (`emit/lower.ts`) wraps a receiver the proof does not show present
+in `{ $ifNull: [<recv>, []] }` for an array rule and `{ $ifNull: [<recv>, {}] }`
+for an object rule, before the cell runs, and hands the cell `present: true`.
+The family is the receiver's proven family, else the family the selected rule
+runs on (`Selected.family`, from a per-family cell), else the row's one field
+family. The operator then answers what it answers on the empty collection —
+`[]`, `0`, `false`, `true`, missing — and every array or object method under a
+dot answers a value that is there. `statedPresence` (`emit/prove.ts`) says so:
+such a call is present when no `?.` sits on its spine, so a chain pays the one
+`$ifNull` at its head, and `.size()` after `.uniq()` adds nothing. The third
+callback parameter binds the wrapped input, and is present with it.
+
+**A string method on a receiver that may be missing answers null.** `nullOr`
 in `src/registry/names.ts` is the one shape: `{ $cond: [{ $eq: [{ $ifNull: [r, null] }, null] },
 null, <body over r>] }`, with the receiver bound by `$let` unless it is a path.
-A cell calls it where its operator would otherwise ABORT on null (`$size`,
-`$strLenCP`, `$setIsSubset`, `$in`'s list) or would answer a VALUE for it
-(`$toUpper` → "", `$substrCP` → "", `$regexMatch` → false, `$indexOfCP` → -1) —
-each case measured per row. The body runs on a proven receiver, so it carries
-no `$ifNull` of its own. A row that dispatches on the receiver's type lets null
-and missing fall to its `uncertain` default, which answers null. No branch
-admits them through `alsoTypes` any more. The compiler skips the test when the
-receiver is PRESENT (`ExprIn.present`): proven from the source by `isPresent`
-(`emit/prove.ts` — a literal, the root document, a `$lookup`'s array, a `let`
-of a present value through the binding's proof, a `neverNull` row over
-present operands, a written field whose value was present, or a path a `?.`
-proved through `Env.proving`), or proven at run time by the
-`$type` test of the dispatch branch the cell runs under. A LODASH cell never
-calls `nullOr`. The lodash rows do not yet share one answer for a missing
-receiver — `.size()` answers 0, `.pick()` answers `{}`, `.uniq()` answers null
-— and [DEF-037] tracks which one they should share. The `neverNull` fact is
+A cell calls it where its operator would otherwise ABORT on null (`$strLenCP`)
+or would answer a VALUE for it (`$toUpper` → "", `$substrCP` → "", `$regexMatch`
+→ false, `$indexOfCP` → -1) — each case measured per row. The body runs on a
+proven receiver, so it carries no `$ifNull` of its own. The compiler skips the
+test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
+`isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
+array, a `let` of a present value through the binding's proof, a `neverNull`
+row over present operands, a written field whose value was present, a path a
+`?.` proved through `Env.proving`, or a wrapped collection receiver), or proven
+at run time by the `$type` test of the dispatch branch the cell runs under. A
+row that dispatches on the receiver's type (`.indexOf`) lets null and missing
+fall to its `uncertain` default, which answers `-1`. The `neverNull` fact is
 stated per row: `.map`, `.filter`, `.slice` and `Object.keys` answer null only
 for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.
@@ -80,8 +99,10 @@ for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `IndexAccess` / `MethodCall` down to its base. When a call runs after the
 `?.`, it answers the value the `?.` guards. `lowerValue` then emits `{ $cond:
 [<that value is null or missing>, null, <the chain with every `?.` on its
-spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH, so the
-walk also checks the base `FieldRef`. A `?.` with no call after it answers
+spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH and records
+the path the LAST `?.` tests (`FieldRef.optionalAt`), so the walk also checks the
+base `FieldRef`, and the guard tests `a` alone for `$.a?.b.uniq()`: `a.b` inside
+follows the dot rule. A `?.` with no call after it answers
 null anyway, because a path through a missing field is missing. So the
 compiler emits no test there, and the consumer's neutral still describes it.
 
@@ -91,16 +112,12 @@ it. This is what keeps the cell from putting its own `$ifNull` back on the
 same field. `Env.dropFields` does not carry the set: a stage that replaced the
 document invalidates every path a test proved.
 
-**The optional chain's neutral reaches a row that dispatches too.**
-`withOptional` wraps the receiver in the family's empty value before any cell
-sees it. The family is the receiver's family when proven, otherwise the ONE
-field family the row lowers (`soleFieldFamilyOf`: a namespace is not a field
-family, and neither is a family the row REFUSES, because a receiver of that
-family is not a program that compiles). The wrap happens above the
-rule/dispatch split, so `$.o?.keys()` takes `{}` although `.keys()` resolves
-through a `$switch`. The dispatch reads such a wrapper once per guard rather
-than binding it, because a row with one family left collapses to a single
-branch anyway.
+**A family the row refuses is never the receiver's family.** `fromPerFamily`
+(`emit/select.ts`) drops a refused branch from the families an unproven receiver
+can be, because a receiver of that family is not a program that compiles. So
+`.keys()` on an unproven field is a call on an object, and takes the `{}`. The
+refused branches return only when nothing else is left, so that the refusal is
+what answers.
 
 A cell has to know two more things about the proof. First, a value the row
 guards may arrive as an ARGUMENT rather than as the receiver — a namespace
@@ -138,12 +155,12 @@ $eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex o
 $setUnion($.a)          // refused: a list operator with one scalar (the server refuses it too)
 $and([])                // → {$and:[]}                    an explicit empty list passes where the row states `emptyList`
 $divide([])             // refused: nothing was written, and `$divide` states no empty list
-$concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:["$a",[[1]]]}}  a list with a spread is one array-valued expression
+$concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:[{$ifNull:["$a",[]]},[[1]]]}}  a list with a spread is one array-valued expression
 $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto the first positional key
 $size([$.a])            // → {$size:["$a"]}               a 1-operand operator: one element is the operand list as written
 $size([$.a, 2])         // → {$size:[["$a",2]]}           two or more can only be the array VALUE — wrapped once
 $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       shape "verbatim": the operand is a value, never a list
-[$.a, 2].length         // → {$size:[["$a",2]]}           a JavaScript lowering wraps an array LITERAL receiver itself
+[$.a, 2].size()         // → {$size:[["$a",2]]}           a JavaScript lowering wraps an array LITERAL receiver itself
 ```
 
 `$let(vars, arrow)` binds the arrow's parameters to the vars, and both sides
@@ -195,7 +212,7 @@ $.a === 1 && $.a === 2                 // → {"$and":[{"a":1},{"a":2}]}        
 $.a === 1 && $.q * $.p > 100           // → {"a":1,"$expr":{"$gt":[{"$multiply":["$q","$p"]},100]}}
 $.tags === "red" || $.q * $.p > 100    // → {"$or":[{"tags":"red"},{"$expr":{"$gt":[…]}}]}     PER BRANCH (the ruling)
 $.a || $.b                             // → {"$expr":{"$or":[<truth a>,<truth b>]}}            every branch $expr: one $expr
-$.tags.includes("a") && $.tags.includes("b")  // → {"tags":{"$all":["a","b"]}}
+$.tags.has("a") && $.tags.has("b")  // → {"tags":{"$all":["a","b"]}}
 $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
 { status: "a", x: $gt($.y) }           // → {"status":"a","$expr":{"$gt":["$x","$y"]}}   a raw document keeps its keys, but an operand that READS the document has no query form and lifts through the row's `liftsTo` twin
 $abs($.delta)                          // → {"$expr":<truth of $abs>}            a value operator is a predicate through its truth
@@ -314,7 +331,7 @@ modulo test, the null test, a field against a constant — in that order), and
 and null is the `FilterOut` contract for "wrap my value form". A row with no
 value form (a query-only operator) has nothing to wrap. So inside an
 `$elemMatch` boundary — where the server refuses it — the leaf throws a worded
-refusal before the cell runs. `FilterIn` hands a cell `pathOf` (a `.length` is
+refusal before the cell runs. `FilterIn` hands a cell `pathOf` (a `.length()` call is
 never a path segment; inside a `.some` callback the INNERMOST element is the
 root, and only its fields are paths — an outer callback's parameter read
 inside a nested one has no query form and takes the `$expr` road; the
@@ -393,7 +410,7 @@ the outer chain and silently leaves the body — measured: a `$out` inside a
 empty.
 
 **A first-only row reads a hoist, not just a position.** A value in a stage's
-own body can need a stage of its own — `$$.length` needs a `$setWindowFields`,
+own body can need a stage of its own — `$$.size()` needs a `$setWindowFields`,
 a `$$$.<coll>` read needs a `$lookup` — and the compiler places that stage
 directly ahead of the one that reads it
 ([lookup-stage.md § Where a hoisted stage lands](lookup-stage.md)). So "is
@@ -402,7 +419,7 @@ chain's PENDING hoist, which by then holds whatever this stage's body made.
 A first-only stage with one pending hoist has no placement at all — the
 materialiser cannot follow the read, and nothing may precede the stage. So
 the compiler refuses it and names the later-statement rewrite. The chain it
-asks is `env.chain`, never the root one: a `$$.length` read inside a
+asks is `env.chain`, never the root one: a `$$.size()` read inside a
 sub-pipeline stamps OUTSIDE it and leaves that body's own first stage first
 (measured, the server runs it). The compiler judges a name the BODY holds the
 same way, unless the row files its slot as a sub-pipeline — a stage there is
@@ -474,7 +491,7 @@ in a predicate and `"$x"` in a reshape, and the bare `d` is `"$$ROOT"`. `$.x`
 inside the callback names the same document — the root — as HR4 says it does
 everywhere. The compiler binds the index and collection parameters lodash
 allows, and a READ of either says what to write instead (a stream has no
-per-document index; `$$.length` is its size).
+per-document index; `$$.size()` is its size).
 
 A stream cell receives its arguments as SOURCE and asks for the reading it
 wants: `predicate(cb)` a query document (total — a body with no native form
@@ -596,7 +613,7 @@ let cutoff = $.minTotal; $.big = $$$.orders.filter(o => o.userId === $._id && o.
 $.first = $$$.orders.find(o => o.userId === $._id);
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", pipeline: [{ $limit: 1 }], as: "first" } },
 //    { $set: { first: { $first: "$first" } } }]   — absent when nothing matched
-$.n = $$$.orders.filter(o => o.userId === $._id).length;
+$.n = $$$.orders.filter(o => o.userId === $._id).size();
 // → the $lookup HOISTED into "__jsmql.tmp.0", { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }
 ```
 
@@ -604,7 +621,7 @@ $.n = $$$.orders.filter(o => o.userId === $._id).length;
 `stream` cell that accepts it — `filter`/`reject`, the sort spellings,
 `take`, `aggregate`, a stage link, a `.map` whose body is a provable document
 (the row states `streamBody: "document"`). The first link that is not such a
-link ends the body. It and everything after it — `.length`, `.total`, `[0]`,
+link ends the body. It and everything after it — `.size()`, `.total`, `[0]`,
 a value `.map` — read the materialised array as a VALUE. A row that states
 `elementOnly` (`.difference`, `.compact`, the bare `.sortBy()`, …) is such a
 link only while the body's element is an unwound field; on a stream of whole
@@ -613,12 +630,12 @@ documents it ends the body the same way. `.find` is the one special head
 unwrapped by `$first`. A link that folds the stream into one document
 (`collapses` on the row: `countBy`, `keyBy`, `groupBy` with a field name) is
 unwrapped too, to `{}` when nothing matched, as lodash answers for an empty
-array. The slot is a typed binding, so `.length` on it is `$size` with no
+array. The slot is a typed binding, so `.size()` on it is `$size` with no
 run-time guard, and `.total` after `.find` is a path. When the body ends
 with its element in an unwound field (`Lookup.element`, set by a `.flatMap`
 no later stage replaced), the value is the elements and not their carriers:
 the compiler rebases the rest of the chain onto `<slot>.map(x => x.<element>)`
-(or onto the slot itself when the whole value is a COUNT — `.length` /
+(or onto the slot itself when the whole value is a COUNT — `.size()` /
 `.size()` — since one document holds one element; or `<slot>.<element>`
 after `.find`). The `$ =` road replaces with `$<slot>.<element>`, and the
 direct-to-`as` shortcut declines so the value road runs.
@@ -653,10 +670,10 @@ refuses a read of the outer document inside it, and names the way out.
 **Inside the body.** The callback's parameter IS the body's document: `o.x`
 reads it, `o.x = …` / `delete o.x` write it (`$set` / `$unset`), `o = { … }`
 replaces it. The callback's THIRD parameter is the body's own stream:
-`coll.filter(…)` is a `$match` there, and `coll.length` its count (a
+`coll.filter(…)` is a `$match` there, and `coll.size()` its count (a
 `$setWindowFields` inside the body). `$.` is the OUTER document and `$$` the
 ROOT stream at every depth (HR4): `$.x` is read-only from inside — the
-compiler refuses `$.x = …`, naming `o.x = …` — `$$.length` is the root
+compiler refuses `$.x = …`, naming `o.x = …` — `$$.size()` is the root
 count, materialised on the root pipeline and carried in by `let`, and the
 compiler refuses `$$.filter(…)` inside a body, naming `coll`. A nested
 `$$$.items.filter(…)` inside a predicate is hoisted inside the body's own

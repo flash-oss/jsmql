@@ -97,6 +97,8 @@ function arrayCallback(
   env: Env,
   read: (body: Expr, e: Env) => unknown,
   name: string,
+  /** Is the input certainly there? The third parameter binds that same input, so it carries the same presence. */
+  present = false,
 ): { input: unknown; as: string; ref: string; paired: boolean; in: unknown } {
   if (cb.type !== "Lambda" || cb.body === undefined) throw notAnArrowCallback(name, (cb as { pos: number }).pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name, cb.params.length, cb.pos);
@@ -117,7 +119,7 @@ function arrayCallback(
     let bodyEnv = bound.env;
     const vars: Record<string, unknown> = {};
     if (arr !== undefined) {
-      const a = bodyEnv.param(arr, of("array", true), cb.pos);
+      const a = bodyEnv.param(arr, of("array", !present), cb.pos);
       vars[a.as] = recv;
       bodyEnv = a.env;
     }
@@ -279,7 +281,8 @@ export function exprInputs(
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
-    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name),
+    callback: (cb, mode) =>
+      arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name, present),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name),
     sortSpec: (e, objects) => sortSpecOf(e, name, objects),

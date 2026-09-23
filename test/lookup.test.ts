@@ -227,19 +227,19 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
   });
 });
 
-describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream length)", () => {
-  // The post-filter sub-stream count, through `<coll>.length`, usable inside the
+describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream size)", () => {
+  // The post-filter sub-stream count, through `<coll>.size()`, usable inside the
   // block (here in an assert). Verified end-to-end on a live mongod: alice
   // (2 orders) → orders:[…], bob (0 orders) → orders:[] (the assert no-ops on
   // an empty sub-stream — no doc flows through the lookup pipeline to reject).
-  it("refuses <coll>.length in a body that filters — the stamp is taken before the filter", () => {
+  it("refuses <coll>.size() in a body that filters — the stamp is taken before the filter", () => {
     // The count is stamped ahead of the body, so after a `$match` it is the collection's
     // size and not this user's. The assert the developer wrote is not the one that runs.
     expect(() =>
       jsmql(`
         $.orders = $$$.orders.aggregate((o, i, ordersColl) => {
           $match(o.userId === $._id);
-          assert(ordersColl.length > 0, "User without orders is impossible");
+          assert(ordersColl.size() > 0, "User without orders is impossible");
         });
       `),
     ).toThrow(/'ordersColl' is the body's own stream\. This body runs '\$match'/);
@@ -320,22 +320,22 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
     ).toThrow(/has no value inside/);
   });
 
-  it("rejects a non-`.length` use of the collection handle in the block", () => {
+  it("rejects a use of the collection handle other than `.size()` in the block", () => {
     expect(() => jsmql(`$.x = $$$.orders.aggregate((o, i, c) => { o.first = c[0]; });`)).toThrow(
-      "'c' is the body's own stream, the callback's third parameter: read its count ('c.length') or chain on it ('c.filter(…)'). It is not a document or a value on its own.",
+      "'c' is the body's own stream, the callback's third parameter: read its count ('c.size()') or chain on it ('c.filter(…)'). It is not a document or a value on its own.",
     );
   });
 
   // An ANCESTOR body's handle is a different stream from this body's, so its count
   // is stamped on the ancestor's own pipeline and carried down through each
-  // `$lookup.let` — `jsmql_s<level>_length`, the same hop an outer field takes.
+  // `$lookup.let` — `jsmql_s<level>_size`, the same hop an outer field takes.
   // Stamped on the reading body instead, the two counts collapse onto one field
   // and answer the same number, which the server accepts without a word.
   it("counts an ancestor sub-stream on its OWN pipeline, and the body's own on this one", () => {
     expect(
       jsmql(`$.o = $$$.orders.aggregate((o, i, ordersColl) => {
         o.items = $$$.items.aggregate((t, k, itemsColl) => {
-          t = { here: itemsColl.length, up: ordersColl.length };
+          t = { here: itemsColl.size(), up: ordersColl.size() };
         });
       });`),
     ).toEqual([
@@ -343,14 +343,14 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
         $lookup: {
           from: "orders",
           pipeline: [
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
             {
               $lookup: {
                 from: "items",
-                let: { jsmql_s1_length: "$__jsmql.length" },
+                let: { jsmql_s1_size: "$__jsmql.size" },
                 pipeline: [
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-                  { $replaceWith: { here: "$__jsmql.length", up: "$$jsmql_s1_length" } },
+                  { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+                  { $replaceWith: { here: "$__jsmql.size", up: "$$jsmql_s1_size" } },
                 ],
                 as: "items",
               },
@@ -367,25 +367,25 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
   // top-most chain — not to the body that happens to read it, and not to a
   // `$facet` branch, which assembles a chain of its own at the same level.
   it("keeps the ROOT count on the top-most pipeline, beside a handle's own", () => {
-    expect(jsmql("$ = { peers: $$.filter(u => u.n === $$.length) };")).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $facet: { peers: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.length"] } } }] } },
+    expect(jsmql("$ = { peers: $$.filter(u => u.n === $$.size()) };")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $facet: { peers: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.size"] } } }] } },
     ]);
     // a handle read inside a branch counts the stream the BLOCK runs over, not the branch
-    expect(jsmql("$$.aggregate((o, i, coll) => { $ = { a: $$.filter(x => x.n === coll.length) }; });")).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $facet: { a: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.length"] } } }] } },
+    expect(jsmql("$$.aggregate((o, i, coll) => { $ = { a: $$.filter(x => x.n === coll.size()) }; });")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $facet: { a: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.size"] } } }] } },
     ]);
   });
 
   it("a 3-param `.filter` predicate reads the collection count through its 3rd param", () => {
-    expect(jsmql(`$.x = $$$.orders.filter((o, i, c) => c.length > 0);`)).toEqual([
+    expect(jsmql(`$.x = $$$.orders.filter((o, i, c) => c.size() > 0);`)).toEqual([
       {
         $lookup: {
           from: "orders",
           pipeline: [
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-            { $match: { $expr: { $gt: ["$__jsmql.length", 0] } } },
+            { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+            { $match: { $expr: { $gt: ["$__jsmql.size", 0] } } },
             { $unset: "__jsmql" },
           ],
           as: "x",
@@ -396,8 +396,8 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
 });
 
 describe("$$$.coll.find/filter — chained terminals", () => {
-  it("chained .length on .filter produces $size + slot writeback", () => {
-    const out = jsmql("let n = $$$.orders.filter(o => o.userId === $._id).length;");
+  it("chained .size() on .filter produces $size + slot writeback", () => {
+    const out = jsmql("let n = $$$.orders.filter(o => o.userId === $._id).size();");
     expect(out).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.var.n": { $size: "$__jsmql.tmp.0" } } },
@@ -426,12 +426,12 @@ describe("$$$.coll.find/filter — chained terminals", () => {
     ).toThrow("'.reduce()' is not available on an 'object' — it is defined on 'array'.");
   });
 
-  it("chained .length rejects when the lookup is .find (scalar doc has no .length)", () => {
+  it("chained .size() is refused when the lookup is .find (one document has no .size())", () => {
     // `.find` lowers with `$set $first` so the slot holds a scalar doc (or null).
     // `$size` on a non-array errors at runtime; reject at compile time and point
-    // the user at `.filter(...).length` (count matches) instead.
-    expect(() => jsmql("let n = $$$.users.find(u => u._id === $._id).length;")).toThrow(
-      "'.length' is not available on an 'object' — it is defined on 'array', 'string', 'stream'.",
+    // the user at `.filter(...).size()` (count matches) instead.
+    expect(() => jsmql("let n = $$$.users.find(u => u._id === $._id).size();")).toThrow(
+      "'.size()' is not available on an 'object' — it is defined on 'array', 'stream'. For the number of fields, write '.keys().size()'.",
     );
   });
 
@@ -455,8 +455,8 @@ describe("$$$.coll.find/filter — chained terminals", () => {
 
   it("multiple lookups in one pipeline allocate distinct internal slots", () => {
     const out = jsmql(`
-      let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
-      let nTx = $$$.tx.filter(t => t.userId === $._id).length;
+      let nOrders = $$$.orders.filter(o => o.userId === $._id).size();
+      let nTx = $$$.tx.filter(t => t.userId === $._id).size();
     `);
     expect(out).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
@@ -561,7 +561,7 @@ describe("$$$.coll.find/filter — error cases", () => {
 
     it("jsmql.update() rejects it pre-codegen, naming jsmql.pipeline()", () => {
       expect(() => jsmql.update(`${streamHead};`)).toThrow(
-        "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline — for example, `({ $ }) => { $.n = $$$.<coll>.filter(…).length; }`. It has no meaning in a Filter or in 'jsmql.expr'.",
+        "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline — for example, `({ $ }) => { $.n = $$$.<coll>.filter(…).size(); }`. It has no meaning in a Filter or in 'jsmql.expr'.",
       );
     });
 
@@ -638,7 +638,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   // scoping — no need for the inner to re-let them.
 
   it("2-level filter/filter with outer-foreign-doc cross-reference", () => {
-    expect(jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x).length > 0)")).toEqual([
+    expect(jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x).size() > 0)")).toEqual([
       {
         $lookup: {
           from: "a",
@@ -687,7 +687,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     // `$$jsmql_f1__id` (the post) cannot collide under lexical `$$` scoping.
     expect(
       jsmql(
-        "$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)",
+        "$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).size() > 0)",
       ),
     ).toEqual([
       {
@@ -711,7 +711,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
 
   it("3-level deep nesting works", () => {
     const out = jsmql(
-      "$.x = $$$.a.filter(a => $$$.b.filter(b => $$$.c.filter(c => c.x === b.x).length > 0).length > 0)",
+      "$.x = $$$.a.filter(a => $$$.b.filter(b => $$$.c.filter(c => c.x === b.x).size() > 0).size() > 0)",
     );
     expect(out).toEqual([
       {
@@ -739,18 +739,33 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   });
 
   it("inner lookup with a compound && predicate takes the pair too, and needs no let", () => {
-    const out = jsmql(
-      "$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x && b.active === true).length > 0)",
-    ) as Array<Record<string, unknown>>;
-    const outer = out[0].$lookup as { pipeline: Array<Record<string, unknown>> };
-    const inner = outer.pipeline[0].$lookup as { let: Record<string, string> };
-    expect(inner.let).toEqual(undefined);
+    expect(jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x && b.active === true).size() > 0)")).toEqual([
+      {
+        $lookup: {
+          from: "a",
+          pipeline: [
+            {
+              $lookup: {
+                from: "b",
+                localField: "x",
+                foreignField: "x",
+                pipeline: [{ $match: { active: true } }],
+                as: "__jsmql.tmp.0",
+              },
+            },
+            { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] } } },
+            { $unset: "__jsmql" },
+          ],
+          as: "x",
+        },
+      },
+    ]);
   });
 
   it("a bare enclosing foreign param (no member access) hoists `$$ROOT` into the inner `let`", () => {
     // `a` matches the outer's foreign param with zero segments: the whole outer
     // foreign document, which the inner `let` carries as `$$ROOT`.
-    expect(jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b === a).length > 0)")).toEqual([
+    expect(jsmql("$.x = $$$.a.filter(a => $$$.b.filter(b => b === a).size() > 0)")).toEqual([
       {
         $lookup: {
           from: "a",
@@ -846,10 +861,10 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     );
   });
 
-  it("nested lookup inside a STAGE-BODY expression of a block (.length materialises into a slot)", () => {
+  it("nested lookup inside a STAGE-BODY expression of a block (.size() materialises into a slot)", () => {
     expect(
       jsmql(
-        "$.x = $$$.users.aggregate(u => { $match($$$.orders.filter(o => o.uid === u._id).length > 0); $sort({ name: 1 }); });",
+        "$.x = $$$.users.aggregate(u => { $match($$$.orders.filter(o => o.uid === u._id).size() > 0); $sort({ name: 1 }); });",
       ),
     ).toEqual([
       {
@@ -906,8 +921,8 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database reads are rejected", (
   // case all reject at the SAME chain-base check as the `.filter` case above — not
   // retested. The chained terminal reads the slot as a VALUE afterwards
   // (`joinValue` in src/compiler/emit/join.ts), so it keeps its own case:
-  it("a chained .length on a cross-DB .filter is rejected", () => {
-    expect(() => jsmql("let n = $$$$.analytics.orders.filter(o => o.userId === $._id).length;")).toThrow(
+  it("a chained .size() on a cross-DB .filter is rejected", () => {
+    expect(() => jsmql("let n = $$$$.analytics.orders.filter(o => o.userId === $._id).size();")).toThrow(
       "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
   });
@@ -1073,7 +1088,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // the links after `.flatMap` work on the element, in the body and after it
     expect(
       jsmql(
-        '$.n = $$$.orders.filter(o => o.userId === $._id).flatMap("items").filter(i => i.qty > 1).sortBy("price").length;',
+        '$.n = $$$.orders.filter(o => o.userId === $._id).flatMap("items").filter(i => i.qty > 1).sortBy("price").size();',
       ),
     ).toEqual([
       {
@@ -1094,7 +1109,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       { $unset: "__jsmql" },
     ]);
     // anything else reads the lines off the documents: a value `.map`, an index
-    expect(jsmql('$.n = $$$.orders.flatMap("items").map(i => i.qty).length;')).toEqual([
+    expect(jsmql('$.n = $$$.orders.flatMap("items").map(i => i.qty).size();')).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $unwind: "$items" }], as: "__jsmql.tmp.0" } },
       {
         $set: {
@@ -1156,11 +1171,11 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     ]);
   });
 
-  it("existing chained terminals (.length, .reduce) still take precedence over the chain extension", () => {
-    // `.length` and `.reduce(fn, init)` have no stream rule, so `lookupOf`
+  it("a chained terminal (.size(), .reduce) takes precedence over the chain extension", () => {
+    // `.size()` and `.reduce(fn, init)` have no stream rule, so `lookupOf`
     // (src/compiler/emit/join.ts) stops peeling at them and the rest of the chain
     // reads the slot as a value — the `$size` / `$reduce` shapes.
-    expect(jsmql("$.count = $$$.users.filter(u => u.active).length;")).toEqual([
+    expect(jsmql("$.count = $$$.users.filter(u => u.active).size();")).toEqual([
       {
         $lookup: {
           from: "users",
@@ -1325,15 +1340,15 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
   // Spelling must never change the emitted MQL. The desugar pass rewrites a shorthand
   // predicate to its arrow before the join road reads it, so `.filter({ userId: $._id })`
   // earns the same indexed `localField`/`foreignField` `$lookup` its arrow twin does, and
-  // `.length` on it the same `$size` materialisation. A road that read the two apart would
+  // `.size()` on it the same `$size` materialisation. A road that read the two apart would
   // give one of them a strictly worse plan for the same meaning. Verified against a live mongod.
   const SPELLINGS: ReadonlyArray<readonly [string, string]> = [
     ["matches-object", `{ userId: $._id }`],
     ["matchesProperty", `["userId", $._id]`],
   ];
   for (const [label, shorthand] of SPELLINGS) {
-    it(`a ${label} predicate lowers identically to its arrow — indexed basic form, $size .length`, () => {
-      const arrow = (pred: string) => `let n = $$$.orders.filter(${pred}).length; $project({ n });`;
+    it(`a ${label} predicate lowers identically to its arrow — indexed basic form, $size .size()`, () => {
+      const arrow = (pred: string) => `let n = $$$.orders.filter(${pred}).size(); $project({ n });`;
       expect(jsmql(arrow(shorthand))).toEqual([
         { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
         { $set: { "__jsmql.var.n": { $size: "$__jsmql.tmp.0" } } },
@@ -1347,7 +1362,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
       // Detection drives the mode gate too: an undetected shorthand falls through
       // to the generic "bare '$$$' reference" error instead of the actionable
       // "requires Pipeline mode" one.
-      expect(() => jsmql(`$$$.orders.filter(${shorthand}).length > 0`)).toThrow(/needs Pipeline mode/);
+      expect(() => jsmql(`$$$.orders.filter(${shorthand}).size() > 0`)).toThrow(/needs Pipeline mode/);
     });
   }
 
@@ -1530,10 +1545,10 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
     ]);
   });
 
-  it("chained .length counts the aggregate result", () => {
+  it("chained .size() counts the aggregate result", () => {
     expect(
       jsmql(
-        '$.n = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: "$productId" }); }).length;',
+        '$.n = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: "$productId" }); }).size();',
       ),
     ).toEqual([
       {
@@ -1564,11 +1579,11 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
     ]);
   });
 
-  it("refuses <coll>.length in a body that groups — the stamp is dropped with the fields", () => {
+  it("refuses <coll>.size() in a body that groups — the stamp is dropped with the fields", () => {
     // `$group` keeps no field the input carried, so the stamped count is gone and the
     // assertion read a missing value: it fired on every document, empty or not.
     expect(() =>
-      jsmql('$.g = $$$.c.aggregate((o, _i, coll) => { $group({ _id: "$s" }); assert(coll.length > 0, "empty"); });'),
+      jsmql('$.g = $$$.c.aggregate((o, _i, coll) => { $group({ _id: "$s" }); assert(coll.size() > 0, "empty"); });'),
     ).toThrow(/'coll' is the body's own stream\. This body runs '\$group'/);
   });
 
@@ -1588,15 +1603,15 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
     ]);
   });
 
-  it("$$ = source-switch binds the 3rd 'collection' param's .length (parity with .map)", () => {
-    expect(jsmql("$$ = $$$.products.aggregate((o, _i, coll) => { $set({ n: coll.length }); });")).toEqual([
+  it("$$ = source-switch binds the 3rd 'collection' param's .size() (parity with .map)", () => {
+    expect(jsmql("$$ = $$$.products.aggregate((o, _i, coll) => { $set({ n: coll.size() }); });")).toEqual([
       { $match: { $expr: false } },
       {
         $unionWith: {
           coll: "products",
           pipeline: [
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-            { $set: { n: "$__jsmql.length" } },
+            { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+            { $set: { n: "$__jsmql.size" } },
             { $unset: "__jsmql" },
           ],
         },
@@ -1737,7 +1752,7 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
   it("the 3rd 'collection' param binds the sub-stream count after a lodash chain", () => {
     expect(
       jsmql(
-        "$.r = $$$.orders.sort({ t: -1 }).take(3).aggregate((o, _i, coll) => { $addFields({ n: coll.length }); });",
+        "$.r = $$$.orders.sort({ t: -1 }).take(3).aggregate((o, _i, coll) => { $addFields({ n: coll.size() }); });",
       ),
     ).toEqual([
       {
@@ -1746,8 +1761,8 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
           pipeline: [
             { $sort: { t: -1 } },
             { $limit: 3 },
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-            { $addFields: { n: "$__jsmql.length" } },
+            { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+            { $addFields: { n: "$__jsmql.size" } },
             { $unset: "__jsmql" },
           ],
           as: "r",
@@ -1765,8 +1780,8 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
     ]);
   });
 
-  it("a chained terminal reads the aggregate result as a value (.length / .map)", () => {
-    expect(jsmql("$.n = $$$.orders.sort({ t: -1 }).aggregate((o) => { $group({ _id: o.status }); }).length;")).toEqual([
+  it("a chained terminal reads the aggregate result as a value (.size() / .map)", () => {
+    expect(jsmql("$.n = $$$.orders.sort({ t: -1 }).aggregate((o) => { $group({ _id: o.status }); }).size();")).toEqual([
       {
         $lookup: {
           from: "orders",
@@ -1891,10 +1906,10 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
           "`i` has no value inside `.aggregate()` — a stream has no per-document index; leave the parameter unused.",
       ],
       [
-        "coll param beyond .length",
+        "coll param beyond .size()",
         "(o, _i, c) => { $addFields({ k: c.total }); }",
         () =>
-          "'c' is the body's own stream, the callback's third parameter: read its count ('c.length') or chain on it ('c.filter(…)'). It is not a document or a value on its own.",
+          "'c' is the body's own stream, the callback's third parameter: read its count ('c.size()') or chain on it ('c.filter(…)'). It is not a document or a value on its own.",
       ],
     ];
     for (const [label, arg, message] of pairs) {
@@ -1931,9 +1946,9 @@ describe("$$$.coll.aggregate — error cases", () => {
     );
   });
 
-  it("non-.length use of the 3rd 'collection' param is rejected", () => {
+  it("a use other than .size() of the 3rd 'collection' param is rejected", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate((o, _i, coll) => { $match(o.n === coll[0]); });")).toThrow(
-      "'coll' is the body's own stream. This body runs '$match', which changes what its count means. The compiler stamps 'coll.length' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop 'coll' from the parameter list.",
+      "'coll' is the body's own stream. This body runs '$match', which changes what its count means. The compiler stamps 'coll.size()' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop 'coll' from the parameter list.",
     );
   });
 
@@ -2137,7 +2152,7 @@ describe("$$$.coll.aggregate — error cases", () => {
       ["flat", ".flat()"],
       ["sum", ".sum()"],
       ["take", ".take(1)"],
-      ["includes", ".includes(1)"],
+      ["has", ".has(1)"],
     ]) {
       it(`refuses '${method}' on the document a terminal gives`, () => {
         expect(() => jsmql(`$.r = $$$.orders.head()${spelling};`)).toThrow(
@@ -2148,7 +2163,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
     it("names the way out: a field of the document, or no terminal at all", () => {
       expect(() => jsmql("$.r = $$$.orders.head().map(x => x);")).toThrow(
-        /A document is not a list\. To count its fields, write '\.keys\(\)\.length'/,
+        /A document is not a list\. To count its fields, write '\.keys\(\)\.size\(\)'/,
       );
     });
 
@@ -2162,7 +2177,13 @@ describe("$$$.coll.aggregate — error cases", () => {
         { $lookup: { from: "orders", pipeline: [], as: "__jsmql.tmp.0" } },
         {
           $set: {
-            r: { $map: { input: { $objectToArray: { $first: "$__jsmql.tmp.0" } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+            r: {
+              $map: {
+                input: { $objectToArray: { $ifNull: [{ $first: "$__jsmql.tmp.0" }, {}] } },
+                as: "jsmqlKv",
+                in: "$$jsmqlKv.k",
+              },
+            },
           },
         },
         { $unset: "__jsmql" },
@@ -2182,7 +2203,11 @@ describe("$$$.coll.aggregate — error cases", () => {
     it("a field path proves nothing, so an in-document array keeps its methods", () => {
       // SR2: `$.items` has no provable type, so `.head()` over it is not a document.
       expect(jsmql("$.r = $.items.head().map(x => x);")).toEqual([
-        { $set: { r: { $map: { input: { $first: "$items" }, as: "x", in: "$$x" } } } },
+        {
+          $set: {
+            r: { $map: { input: { $ifNull: [{ $first: { $ifNull: ["$items", []] } }, []] }, as: "x", in: "$$x" } },
+          },
+        },
       ]);
     });
   });
@@ -2526,9 +2551,9 @@ describe("$$$.coll — where the hoisted $lookup lands", () => {
       { $set: { name: "$__jsmql.tmp.1.name" } },
       { $unset: "__jsmql" },
     ]);
-    expect(jsmql("let ps = $$$.products.filter(p => p.ok === true); $.n = $.items.map(x => ps.length);")).toEqual([
+    expect(jsmql("let ps = $$$.products.filter(p => p.ok === true); $.n = $.items.map(x => ps.size());")).toEqual([
       { $lookup: { from: "products", pipeline: [{ $match: { ok: true } }], as: "__jsmql.var.ps" } },
-      { $set: { n: { $map: { input: "$items", as: "x", in: { $size: "$__jsmql.var.ps" } } } } },
+      { $set: { n: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $size: "$__jsmql.var.ps" } } } } },
       { $unset: "__jsmql" },
     ]);
   });

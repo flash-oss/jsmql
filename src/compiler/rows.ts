@@ -518,9 +518,41 @@ export function elementOnlyOf(name: string): { when: "always" | "bare"; why: str
   return (row(name) as { elementOnly?: { when: "always" | "bare"; why: string } } | undefined)?.elementOnly ?? null;
 }
 
+/** Does the row lower this name as a VALUE on the stream itself — `$$.size()`, the document count — rather than as a chain link? */
+export function hasStreamValueCell(name: string): boolean {
+  const expr = (row(name) as { expr?: { perFamily?: Record<string, unknown> } } | undefined)?.expr;
+  const cell = expr?.perFamily?.stream;
+  return typeof cell === "object" && cell !== null && typeof (cell as { emit?: unknown }).emit === "function";
+}
+
 /** Does the value cell answer null only for a null or missing input — never for an input that is there? */
 export function neverNullOf(name: string): boolean {
   return (row(name) as { neverNull?: true } | undefined)?.neverNull === true;
+}
+
+/**
+ * HR5: the EMPTY collection an array, set or object method runs on when its receiver is
+ * null or missing — `[]` for an array or a set, `{}` for an object — or null for a method
+ * of another family. `family` is the receiver's proven family, or null; then the row's own
+ * field families decide, and they must agree on one empty value.
+ */
+export function emptyCollectionOf(name: string, family: string | null): [] | Record<string, never> | null {
+  const own = families(row(name)?.on);
+  const fams: readonly string[] =
+    family !== null
+      ? [family]
+      : own === undefined || own === "any"
+        ? []
+        : own.filter((f) => FIELD_FAMILIES.includes(f));
+  if (fams.length === 0) return null;
+  if (fams.every((f) => f === "array" || f === "set")) return [];
+  if (fams.every((f) => f === "object")) return {};
+  return null;
+}
+
+/** The sentence a refusal adds when the receiver is proven to be `family`, which this row does not take. Null when the row states none. */
+export function siblingOf(name: string, family: string): string | null {
+  return (row(name) as { sibling?: Readonly<Record<string, string>> } | undefined)?.sibling?.[family] ?? null;
 }
 
 /** Do the stream cell's stages give every document back as it arrived — `.uniq()`'s `$group` + `$replaceWith`? */

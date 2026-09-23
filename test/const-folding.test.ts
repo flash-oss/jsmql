@@ -115,11 +115,11 @@ describe("const folding — collapse to Filter", () => {
     });
   });
 
-  it(".length and index fold inside a const RHS (folding applies to the RHS, not query exprs)", () => {
-    // Folding evaluates the const's RHS; a `.length`/index there collapses to a
-    // literal. (In a query expression like `$.count === items.length`, `items`
-    // inlines but `.length` stays `$size` — the server computes it.)
-    expect(jsmql("const n = [10, 20, 30].length; $.count === n")).toEqual({ count: 3 });
+  it(".size() and index fold inside a const RHS (folding applies to the RHS, not query exprs)", () => {
+    // Folding evaluates the const's RHS; a `.size()`/index there collapses to a
+    // literal. (In a query expression like `$.count === items.size()`, `items`
+    // inlines but `.size()` stays `$size` — the server computes it.)
+    expect(jsmql("const n = [10, 20, 30].size(); $.count === n")).toEqual({ count: 3 });
     expect(jsmql("const first = [10, 20, 30][0]; $.first === first")).toEqual({ first: 10 });
   });
 });
@@ -296,7 +296,7 @@ describe("const folding — native method calls", () => {
   });
 
   it("a callback that reads $ makes the whole call non-constant → runtime binding", () => {
-    expect(jsmql("const m = [1, 2, 3].map(x => x + $.offset); $match($.v in m)")).toEqual([
+    expect(jsmql("const m = [1, 2, 3].map(x => x + $.offset); $match(m.has($.v))")).toEqual([
       { $set: { "__jsmql.var.m": { $map: { input: [1, 2, 3], as: "x", in: { $add: ["$$x", "$offset"] } } } } },
       { $match: { $expr: { $in: ["$v", "$__jsmql.var.m"] } } },
       { $unset: "__jsmql" },
@@ -343,14 +343,18 @@ describe("const folding — lodash string methods", () => {
 describe("const folding — inside lambda expr-blocks", () => {
   it("a constant const inside a lambda block folds (no $let)", () => {
     expect(jsmql.expr("$.items.map(x => { const factor = 2; return x * factor })")).toEqual({
-      $map: { input: "$items", as: "x", in: { $let: { vars: { factor: 2 }, in: { $multiply: ["$$x", "$$factor"] } } } },
+      $map: {
+        input: { $ifNull: ["$items", []] },
+        as: "x",
+        in: { $let: { vars: { factor: 2 }, in: { $multiply: ["$$x", "$$factor"] } } },
+      },
     });
   });
 
   it("a const that reads the lambda param stays a runtime $let", () => {
     expect(jsmql.expr("$.items.map(x => { const dbl = x * 2; return dbl + 1 })")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         in: { $let: { vars: { dbl: { $multiply: ["$$x", 2] } }, in: { $add: ["$$dbl", 1] } } },
       },
@@ -359,14 +363,14 @@ describe("const folding — inside lambda expr-blocks", () => {
 
   it("a const shadowing the lambda param keeps its $let (correct shadow)", () => {
     expect(jsmql.expr("$.items.map(x => { const x = 99; return x })")).toEqual({
-      $map: { input: "$items", as: "x", in: { $let: { vars: { x: 99 }, in: "$$x" } } },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $let: { vars: { x: 99 }, in: "$$x" } } },
     });
   });
 
   it("mixed: the constant inlines into the runtime binding's initialiser", () => {
     expect(jsmql.expr("$.items.map(x => { const bump = 10; const y = x + bump; return y })")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         in: { $let: { vars: { bump: 10 }, in: { $let: { vars: { y: { $add: ["$$x", "$$bump"] } }, in: "$$y" } } } },
       },

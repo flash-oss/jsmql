@@ -104,7 +104,7 @@ The compiler accepts `$ = "$sub"`, a field path that resolves to a document at r
 
 ## Sub-pipelines
 
-`pipelineBody` lowers a stage body with a pipeline slot — `$lookup.pipeline`, `$unionWith.pipeline`, every value of `$facet` — as the statements it holds, in an Env that has crossed the stage's boundary (`Env.enter`). The row's `pipelineOver` fact says whether the body runs over the SAME documents (`$facet`: outer bindings readable, `$$.length` the stamped field) or over ANOTHER collection (`$lookup`: the outer document reaches the body through `let`; `$unionWith`: nothing reaches it). A slot whose value is not a pipeline (`pipeline: $.someVar`) lowers as a value. Nested sub-pipelines nest the boundaries.
+`pipelineBody` lowers a stage body with a pipeline slot — `$lookup.pipeline`, `$unionWith.pipeline`, every value of `$facet` — as the statements it holds, in an Env that has crossed the stage's boundary (`Env.enter`). The row's `pipelineOver` fact says whether the body runs over the SAME documents (`$facet`: outer bindings readable, `$$.size()` the stamped field) or over ANOTHER collection (`$lookup`: the outer document reaches the body through `let`; `$unionWith`: nothing reaches it). A slot whose value is not a pipeline (`pipeline: $.someVar`) lowers as a value. Nested sub-pipelines nest the boundaries.
 
 ## Accumulator / window operator positions
 

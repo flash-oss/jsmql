@@ -52,7 +52,6 @@ import {
   singleArrayArg,
   sizeOf,
   sliceArray,
-  sliceString,
   strLenOf,
   stringKeyExpr,
   takeDropWhile,
@@ -104,7 +103,7 @@ import {
   escapeForRegex,
   GROUP_SLOT,
   isDate,
-  LENGTH_SLOT,
+  SIZE_SLOT,
   objectBody,
   queryOwnValue,
   inCode,
@@ -185,6 +184,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * `$ifNull` guard when the chain starts from something that is there.
    */
   neverNull?: true;
+  /**
+   * The way forward when the receiver is PROVEN to be a family this row does not
+   * take, one sentence per such family. `.length()` reads a string, so on an array
+   * the sentence names `.size()`. The refusal (src/compiler/emit/errors.ts) puts the
+   * sentence after its head in place of the generic hint for that family. Absent, the
+   * generic hint stands.
+   */
+  sibling?: Readonly<Partial<Record<Family, string>>>;
   /**
    * The stream cell's stages give every document back as it arrived — fewer of
    * them, none changed. `.uniq()` groups on a key and `$replaceWith`s the document
@@ -923,14 +930,14 @@ const logicalList = ({ name, args, query }: FilterIn): QueryDoc | null => {
 const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement";
 
 /**
- * An array operand that ABORTS the command when it is null, given the `[]` neutral.
+ * An array operand read as the `[]` it is when missing — a list ARGUMENT, above all.
  *
  * A reader over a missing field answers null, not `[]` — MEASURED, `$map`, `$filter`,
- * `$setUnion`, `$slice`, `$sortArray` and `$reduce` all do — so a value the compiler
- * proved is an array can still be null at run time. Most operators accept
- * this and answer null in turn. `$in` and `$size` are the two that refuse ("$in
- * requires an array as a second argument, found: null"), and they take the neutral.
- * A literal is already an array, so the emitter passes it through unchanged.
+ * `$setUnion`, `$slice`, `$sortArray` and `$reduce` all do — and `$in` and `$size`
+ * refuse it ("$in requires an array as a second argument, found: null"). HR5 wraps a
+ * RECEIVER before a cell sees it (`dispatchOn` in src/compiler/emit/lower.ts); a cell
+ * calls this for a list its arguments carry. A literal is already an array, so the
+ * emitter passes it through unchanged.
  */
 const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
 
@@ -963,18 +970,15 @@ const lastIndexOfArray = ({ recv, args, value, bind }: ExprIn): unknown => {
 };
 
 /**
- * An object read as its `{ k, v }` pairs, given the `{}` neutral.
+ * An object read as its `{ k, v }` pairs, given the `{}` neutral where the receiver is
+ * not proven present.
  *
  * A reader over a missing field answers null — MEASURED, `$objectToArray` does — and
- * `$arrayToObject` passes that null on. But `_.pick(undefined, …)`,
- * `_.mapValues(undefined, …)` and their kin answer `{}`, so the LODASH spellings read
- * their receiver through `$ifNull`.
- *
- * The JavaScript ones do not, and share no row with these: `Object.keys(undefined)` is
- * a TypeError in JavaScript, MongoDB has no error to raise inside an expression, and
- * null is the nearest thing to "no answer" it has. `.keys()` / `.values()` / `.entries()`
- * are that row, which is why `.toPairs()` — lodash's spelling of the same reading —
- * answers `[]` where `.entries()` answers null.
+ * `$arrayToObject` passes that null on. HR5 reads a missing object as `{}` under a dot,
+ * so `_.pick(undefined, …)`, `_.mapValues(undefined, …)` and `Object.keys({})` answer
+ * what they answer on the empty object. The compiler wraps the receiver (`dispatchOn`
+ * in src/compiler/emit/lower.ts) and hands the cell `present`; the guard here covers a
+ * cell that reads the object as an ARGUMENT.
  */
 const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
   $objectToArray: present ? recv : { $ifNull: [recv, {}] },
@@ -987,15 +991,12 @@ const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
  * ONE body for all three cells of a row — the object family, the `Object` namespace and
  * a receiver of unproven family must answer the SAME MQL, and three copies of it drift.
  *
- * No neutral unless the source asks for one. `$.o.keys()` is a plain read and answers
- * what MongoDB answers for a missing `o`, which is null — `Object.keys(undefined)` is a
- * TypeError in JavaScript, and null is the nearest thing MongoDB has to raising one.
- * `$.o?.keys()` is the developer saying the field may not be there, and answers `[]`.
- *
- * A RECEIVER gets that neutral from the compiler, which wraps it before this cell sees
- * it (`withOptional` in src/compiler/emit/lower.ts). The `Object` statics have none —
- * their receiver is the namespace — so they pass `optional` themselves, and
- * `Object.keys($.user?.profile)` answers what `$.user?.profile?.keys()` answers.
+ * A RECEIVER takes HR5's `{}` from the compiler, which wraps it before this cell sees it
+ * (`dispatchOn` in src/compiler/emit/lower.ts), so `$.o.keys()` answers `[]` for a
+ * missing `o`. The `Object` statics have no receiver to wrap — theirs is the namespace —
+ * and `Object.keys(undefined)` is a TypeError in JavaScript, so `Object.keys($.o)`
+ * answers null for a missing `o`, and takes the `{}` only where the argument carries a
+ * `?.`: `Object.keys($.user?.profile)`.
  */
 const pairsRead = (
   obj: unknown,
@@ -1010,21 +1011,20 @@ const pairsRead = (
 };
 
 /**
- * A JAVASCRIPT method on a receiver that is null or missing answers null.
+ * A STRING method on a receiver that is null or missing answers null (HR5).
  *
  * JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to
  * raise inside an expression, and null is the nearest thing it holds. Nothing else is
- * acceptable: `$strLenCP` and `$size` ABORT the command on null, and `$toUpper`,
- * `$substrCP`, `$regexMatch` and `$indexOfCP` answer a VALUE for it — "", false, -1 —
- * that hides the missing field. MEASURED on every row that calls this.
+ * acceptable: `$strLenCP` ABORTS the command on null, and `$toUpper`, `$substrCP`,
+ * `$regexMatch` and `$indexOfCP` answer a VALUE for it — "", false, -1 — that hides
+ * the missing field. MEASURED on every row that calls this.
  *
  * `body` runs on a receiver that the test proved, so it needs no guard of its own. A
  * path is cheap to read twice, and this function binds anything else once. A receiver
- * that is `present` skips the test — a literal, `$range(…)`, a `$lookup`'s array, or a
- * path that an earlier `?.` test proved.
- *
- * A LODASH method does not call this. The lodash rows answer a missing receiver each in
- * their own way today; see docs/DEFERRED.md for the one answer they are to share.
+ * that is `present` skips the test — a literal, a `$lookup`'s array, a path that an
+ * earlier `?.` test proved, or an array or object receiver the compiler read as its
+ * empty collection (`dispatchOn` in src/compiler/emit/lower.ts), which is why an
+ * array cell that calls this never emits the test under a dot.
  */
 const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r: unknown) => unknown): unknown => {
   if (present) return body(recv);
@@ -2410,7 +2410,7 @@ export const NAMES = {
           1: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.",
           },
         },
       },
@@ -6881,7 +6881,7 @@ export const NAMES = {
           0: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.",
           },
         },
       },
@@ -7194,10 +7194,12 @@ export const NAMES = {
           },
           emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] }),
         },
+        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
         string: {
           args: {
             sig: "searchValue",
             exact: 1,
+            slotType: { 0: "string" },
             noCallback: {
               0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
             },
@@ -7205,7 +7207,8 @@ export const NAMES = {
           emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] }),
         },
       },
-      uncertain: () => null,
+      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
+      uncertain: () => -1,
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7218,18 +7221,56 @@ export const NAMES = {
   includes: name({
     doc: "'.includes()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "string",
+    sibling: { array: "For membership in an array, write '.has(x)'." },
+    returns: "bool",
+    where: ["value", "filter"],
+    // A regex with no anchor — indexable where the planner can use one, and unlike
+    // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
+    // run-time needle cannot go into a pattern.
+    filter: {
+      args: { sig: "searchString", exact: 1 },
+      emit: ({ recv, args, pathOf }) => {
+        const path = recv === null ? null : pathOf(recv);
+        const needle = args[0];
+        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
+      },
+    },
+    expr: {
+      args: {
+        sig: "searchString",
+        exact: 1,
+        noCallback: {
+          0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => …)'.",
+        },
+      },
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] })),
+    },
+    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'",
+    ),
+    group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  has: name({
+    doc: "'.has()' — see docs/LANGUAGE.md.",
+    call: true,
+    on: "array",
+    sibling: { string: "For a substring test, write '.includes(x)'." },
     returns: "bool",
     where: ["value", "filter"],
     // An INDEX reads a query document, so the query form is the indexable one:
-    // `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
-    // an array containing" — exactly what `.includes` means on an array, and a plain
-    // equality on any other field. `["a","b"].includes($.s)` → { s: { $in: […] } }.
-    // The substring reading that a STRING receiver has belongs to the expression form
-    // below, where no index applies; `.match(/x/)` is the query spelling that asks for it.
+    // `$.tags.has("x")` → { tags: "x" }, MongoDB's "equals, or is an array containing" —
+    // exactly what `.has` means on an array. `["a", "b"].has($.s)` → { s: { $in: […] } }.
     // Anything else keeps the expression fallback.
     filter: {
-      args: { sig: "searchElement", exact: 1 },
+      args: { sig: "value", exact: 1 },
       emit: ({ recv, args, pathOf, constant }) => {
         if (recv === null) return null;
         const path = pathOf(recv);
@@ -7259,63 +7300,36 @@ export const NAMES = {
       },
     },
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
-            },
-          },
-          emit: ({ recv, args, value, present, bind }) =>
-            nullOr(recv, present, bind, (r) => ({ $in: [value(args[0]), r] })),
-        },
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
-            },
-          },
-          emit: ({ recv, args, value, present, bind }) =>
-            nullOr(recv, present, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] })),
+      args: {
+        sig: "value",
+        exact: 1,
+        noCallback: {
+          0: "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
         },
       },
-      uncertain: () => null,
+      // MEASURED: `$in` aborts on a null list, so a receiver that may be missing is tested first.
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $in: [value(args[0]), r] })),
     },
-    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.has()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'",
+      "'.has()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.has();'",
     ),
-    group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
-    ),
+    group: unsupported("'.has()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.has()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   at: name({
     doc: "'.at()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array"],
-    returns: { array: "element", string: "string" },
+    on: "array",
+    sibling: { string: "For one character, write '.charAt(index)'." },
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: { sig: "index", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
-        },
-        string: {
-          args: { sig: "index", exact: 1 },
-          emit: ({ recv, args, value }) => ({
-            $substrCP: [recv, args[0] === undefined ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1],
-          }),
-        },
-      },
-      uncertain: () => null,
+      args: { sig: "index", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7328,8 +7342,9 @@ export const NAMES = {
   slice: name({
     doc: "'.slice()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array", "stream"],
-    returns: { string: "same", array: "same", stream: "stream" },
+    on: ["array", "stream"],
+    sibling: { string: "For a part of a string, write '.substring(start, end)'." },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7343,14 +7358,7 @@ export const NAMES = {
           emit: ({ recv, args, value, bind, present }) =>
             nullOr(recv, present, bind, (r) => sliceArray(r, args, value, bind)),
         },
-        string: {
-          // MEASURED: `$substrCP` / `$indexOfCP` of null or a missing field answer as of ""
-          args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value, present, bind }) =>
-            nullOr(recv, present, bind, (r) => sliceString(r, args, value)),
-        },
       },
-      uncertain: () => null,
     },
     stream: {
       args: {
@@ -7382,8 +7390,9 @@ export const NAMES = {
     mergesInto: true,
     doc: "'.concat()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string", "stream"],
-    returns: { array: "array", string: "string", stream: "stream" },
+    on: ["array", "stream"],
+    sibling: { string: "To join strings, write '+' between them: 'a + b'." },
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7411,34 +7420,7 @@ export const NAMES = {
             ],
           }),
         },
-        // `String.prototype.concat` STRINGIFIES each argument; `$concat` takes strings
-        // only. The emitter joins an argument PROVEN to be an array element by element, and
-        // any other proven non-string goes through `$toString` — JavaScript's answer in both
-        // cases. An argument that proves nothing stays as written.
-        string: {
-          args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value, kind }) => ({
-            $concat: [
-              recv,
-              ...args.map((a) => {
-                const k = kind(a);
-                // JavaScript writes an ARRAY into a string the way `.join(",")` does —
-                // `"a".concat([3, 4])` is "a3,4" — so this is the same helper `.join()` uses.
-                // The exception is the list the desugar packed from a SPREAD call:
-                // `"a".concat(...[3, 4])` passes two arguments, and JavaScript writes each
-                // one on its own, with nothing between them.
-                if (k === "array") {
-                  return a.type === "ArrayLiteral" && a.packed === true
-                    ? joinedWith(value(a), "")
-                    : joinedWith(value(a), ",");
-                }
-                return k === "string" || k === "unknown" ? value(a) : { $toString: value(a) };
-              }),
-            ],
-          }),
-        },
       },
-      uncertain: () => null,
     },
     stream: inCode("src/compiler/emit/union.ts"),
     statement: unsupported(
@@ -8402,7 +8384,7 @@ export const NAMES = {
       by: {
         1: "[..._r].map(() => _0)",
         2: "[...[..._r].slice(0, _1), ...[..._r].slice(_1).map(() => _0)]",
-        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).length + [..._r].slice(_1, _2).length)]",
+        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).size() + [..._r].slice(_1, _2).size())]",
       },
     },
     returns: "unknown",
@@ -8426,8 +8408,8 @@ export const NAMES = {
     mutatorForm: {
       sig: "target, start[, end]",
       by: {
-        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]",
-        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]",
+        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].size() - [..._r].slice(0, _0).size()), ...[..._r].slice([..._r].slice(0, _0).size() + [..._r].slice(_1).slice(0, [..._r].size() - [..._r].slice(0, _0).size()).size())]",
+        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].size() - [..._r].slice(0, _0).size()), ...[..._r].slice([..._r].slice(0, _0).size() + [..._r].slice(_1, _2).slice(0, [..._r].size() - [..._r].slice(0, _0).size()).size())]",
       },
     },
     returns: "unknown",
@@ -9945,7 +9927,7 @@ export const NAMES = {
         const x = bind("x").as;
         const pos = args[0].pos;
         const values: Expr = { type: "ArrayLiteral", elements: args, pos };
-        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "includes", [identOf(x, pos)])), pos)) }];
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "has", [identOf(x, pos)])), pos)) }];
       },
     },
     statement: unsupported(
@@ -10450,24 +10432,14 @@ export const NAMES = {
   nth: name({
     doc: "'.nth()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array"],
-    returns: { array: "element", string: "string" },
+    on: "array",
+    sibling: { string: "For one character, write '.charAt(index)'." },
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: { sig: "[n=0]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
-        },
-        string: {
-          args: { sig: "[n=0]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({
-            $substrCP: [recv, args[0] === undefined ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1],
-          }),
-        },
-      },
-      uncertain: () => "$$REMOVE",
+      args: { sig: "[n=0]", allowed: [0, 1] },
+      emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
     },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10478,28 +10450,48 @@ export const NAMES = {
   }),
 
   size: name({
-    doc: "'.size()' — see docs/LANGUAGE.md.",
+    doc: "'.size()' — the number of elements of an array, or the document count of the stream. See docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "object"],
+    on: ["array", "stream"],
+    sibling: {
+      string: "For the number of characters, write '.length()'.",
+      object: "For the number of fields, write '.keys().size()'.",
+    },
     returns: "number",
     where: ["value"],
-    filter: viaFallback,
+    // Per family, because one answer for both states a legality the stream form
+    // does not have: `$.tags.size() < 5` scans, `$$.size() > 1` does not compile
+    // at all. A flat `viaFallback` would promise that the second merely scans.
+    filter: {
+      perFamily: {
+        array: viaFallback,
+        stream: unsupported(
+          "'$$.size()' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.size(); … }`); it has no meaning in a Filter or in 'jsmql.expr'.",
+        ),
+      },
+    },
     expr: {
       perFamily: {
-        // lodash's `_.size(undefined)` is 0: this cell guards a receiver that may be missing, as `.length` does.
+        // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
+        // missing is read as the empty array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
-          emit: ({ recv, present }) => sizeOf(present ? recv : arrayOrEmpty(recv)),
+          emit: ({ recv, present }) =>
+            Array.isArray(recv) ? { $size: [recv] } : sizeOf(present ? recv : arrayOrEmpty(recv)),
         },
-        object: { args: { sig: "", none: true }, emit: ({ recv, present }) => sizeOf(pairsOfObject(recv, present)) },
+        // `$$.size()` has no inline count: it places a materialiser ahead of the
+        // statement and reads the field it wrote. See docs/specs/stream-size.md.
+        stream: {
+          args: { sig: "", none: true },
+          emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [SIZE_SLOT]: { $count: {} } } } }], SIZE_SLOT),
+        },
       },
-      uncertain: () => "$$REMOVE",
     },
-    stream: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'size' is a value, not a stage. Read it: '$.n = $$.size()'."),
     statement: unsupported(
       "'.size()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.size();'",
     ),
-    group: unsupported("'.size()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    group: unsupported("'.size()' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
     window: unsupported("'.size()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
@@ -11780,7 +11772,7 @@ export const NAMES = {
         const x = bind("x").as;
         const other = listOf(args[0]);
         return [
-          { $match: predicate(arrowOf(x, callOf(other, "includes", [identOf(x, other.pos)]), other.pos)) },
+          { $match: predicate(arrowOf(x, callOf(other, "has", [identOf(x, other.pos)]), other.pos)) },
           ...keepFirstPer(element().ref),
         ];
       },
@@ -11848,9 +11840,7 @@ export const NAMES = {
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
         const other = listOf(args[0]);
-        return [
-          { $match: predicate(arrowOf(x, notOf(callOf(other, "includes", [identOf(x, other.pos)])), other.pos)) },
-        ];
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(other, "has", [identOf(x, other.pos)])), other.pos)) }];
       },
     },
     statement: unsupported(
@@ -12820,10 +12810,10 @@ export const NAMES = {
     forbiddenIn: ["$match"],
     placement: {
       container:
-        "Write the predicate in JSMQL — '$.x > 1', '$.tags.includes(\"a\")' — and it runs as a query, in a '$match' or a 'find' filter alike.",
+        "Write the predicate in JSMQL — '$.x > 1', '$.tags.has(\"a\")' — and it runs as a query, in a '$match' or a 'find' filter alike.",
     },
     filter: unsupported(
-      "'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL — '$.x > 1', '$.tags.includes(\"a\")' — and it runs as a query.",
+      "'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL — '$.x > 1', '$.tags.has(\"a\")' — and it runs as a query.",
     ),
     expr: unsupported(
       "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: … }'.",
@@ -13936,12 +13926,12 @@ export const NAMES = {
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
     // value slot gets a refusal — "'$$' (current collection) is statement-only" —
-    // so `expr` is a refusal even though `$$.length` IS a value: that value is
+    // so `expr` is a refusal even though `$$.size()` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
     filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => …)'."),
     expr: unsupported(
-      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'.",
+      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.size()'.",
     ),
     stream: inCode("src/compiler/emit/statement.ts"),
     statement: inCode("src/compiler/emit/statement.ts"),
@@ -14172,57 +14162,28 @@ export const NAMES = {
   }),
 
   length: name({
-    doc: "The number of elements, the number of characters, or the size of the stream.",
-    call: false,
-    on: ["array", "string", "stream"],
+    doc: "'.length()' — the number of characters of a string. See docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    sibling: {
+      array: "For the number of elements, write '.size()'.",
+      stream: "For the document count, write '$$.size()'.",
+    },
     returns: "number",
     where: ["value"],
-    // Per family, because one answer for all three states a legality the stream
-    // form does not have: `$.tags.length < 5` scans, `$$.length > 1` does not
-    // compile at all. A flat `viaFallback` would promise that the third merely scans.
-    filter: {
-      perFamily: {
-        array: viaFallback,
-        string: viaFallback,
-        stream: unsupported(
-          "'$$.length' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.length; … }`); it has no meaning in a Filter or in 'jsmql.expr'.",
-        ),
-      },
-    },
+    filter: viaFallback,
+    // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
+    // JavaScript method does, and the cell counts one that is there as it is.
     expr: {
-      perFamily: {
-        // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
-        // → { $size: [["$a", 2]] }. The emitter hands a path or an expression over as it is.
-        array: {
-          args: { sig: "", none: true },
-          // `$size` aborts on null; a receiver that may be missing answers null, as a
-          // JavaScript method does, and the cell counts one that is there as it is.
-          emit: ({ recv, present, bind }) =>
-            Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present, bind, (r) => ({ $size: r })),
-        },
-        string: {
-          args: { sig: "", none: true },
-          emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $strLenCP: r })),
-        },
-        // `$$.length` has no inline size: it places a materialiser ahead of the
-        // statement and reads the field it wrote.
-        stream: {
-          args: { sig: "", none: true },
-          emit: ({ hoist }) =>
-            hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT),
-        },
-      },
-      // A receiver that is neither array nor string — null, missing, a number — answers
-      // null, as JavaScript's `undefined` does. A two-way $cond that reads "not an array"
-      // as "string" aborts the whole command.
-      uncertain: () => null,
+      args: { sig: "", none: true },
+      emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $strLenCP: r })),
     },
-    stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
+    stream: unsupported("'.length()' is a value, not a stage. Assign it to a field: '$.n = $.<field>.length()'."),
     statement: unsupported(
       "'.length()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.length();'",
     ),
-    group: unsupported("'length' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
-    window: unsupported("'length' is not a window function."),
+    group: unsupported("'.length()' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
+    window: unsupported("'.length()' is not a window function."),
   }),
 
   now: name({

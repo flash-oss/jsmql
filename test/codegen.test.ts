@@ -559,14 +559,14 @@ describe("array literals", () => {
 
 describe("array spread", () => {
   it("single spread becomes the spread argument directly (no redundant $concatArrays)", () => {
-    expect(jsmql.expr("$foo([...$.arr])")).toEqual({ $foo: "$arr" });
+    expect(jsmql.expr("$foo([...$.arr])")).toEqual({ $foo: { $ifNull: ["$arr", []] } });
   });
 
   // JavaScript spreads a string into its characters; MongoDB has no operator that does,
   // and answering the bare string "abc" for `[..."abc"]` would be wrong. See docs/DEFERRED.md § B.
   it("refuses to spread a PROVABLE string, in an array literal and in an object literal", () => {
     const message =
-      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
+      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
     expect(() => jsmql.expr('[..."abc"]')).toThrow(message);
     expect(() => jsmql.expr('[..."abc", "d"]')).toThrow(message);
     expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(message);
@@ -576,29 +576,37 @@ describe("array spread", () => {
 
   it("a field path proves nothing, so its spread still compiles", () => {
     // the compiler cannot know the type; the server answers
-    expect(jsmql.expr("[...$.s]")).toEqual("$s");
-    expect(jsmql.expr('[...$.a.split(",")]')).toEqual({ $split: ["$a", ","] });
+    expect(jsmql.expr("[...$.s]")).toEqual({ $ifNull: ["$s", []] });
+    expect(jsmql.expr('[...$.a.split(",")]')).toEqual({ $ifNull: [{ $split: ["$a", ","] }, []] });
   });
 
   it("two spreads emit $concatArrays", () => {
-    expect(jsmql.expr("$foo([...$.a, ...$.b])")).toEqual({ $foo: { $concatArrays: ["$a", "$b"] } });
+    expect(jsmql.expr("$foo([...$.a, ...$.b])")).toEqual({
+      $foo: { $concatArrays: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] },
+    });
   });
 
   it("statics before a spread group into one operand", () => {
-    expect(jsmql.expr("$foo([1, 2, ...$.rest])")).toEqual({ $foo: { $concatArrays: [[1, 2], "$rest"] } });
+    expect(jsmql.expr("$foo([1, 2, ...$.rest])")).toEqual({
+      $foo: { $concatArrays: [[1, 2], { $ifNull: ["$rest", []] }] },
+    });
   });
 
   it("statics after a spread group into one operand", () => {
-    expect(jsmql.expr("$foo([...$.base, 1, 2])")).toEqual({ $foo: { $concatArrays: ["$base", [1, 2]] } });
+    expect(jsmql.expr("$foo([...$.base, 1, 2])")).toEqual({
+      $foo: { $concatArrays: [{ $ifNull: ["$base", []] }, [1, 2]] },
+    });
   });
 
   it("statics around a spread split into two grouped operands (left-to-right)", () => {
-    expect(jsmql.expr("$foo([1, ...$.mid, 2])")).toEqual({ $foo: { $concatArrays: [[1], "$mid", [2]] } });
+    expect(jsmql.expr("$foo([1, ...$.mid, 2])")).toEqual({
+      $foo: { $concatArrays: [[1], { $ifNull: ["$mid", []] }, [2]] },
+    });
   });
 
   it("multiple spreads with statics interleaved", () => {
     expect(jsmql.expr("$foo([1, ...$.a, 2, ...$.b, 3])")).toEqual({
-      $foo: { $concatArrays: [[1], "$a", [2], "$b", [3]] },
+      $foo: { $concatArrays: [[1], { $ifNull: ["$a", []] }, [2], { $ifNull: ["$b", []] }, [3]] },
     });
   });
 
@@ -608,7 +616,11 @@ describe("array spread", () => {
 
   it("spread inside .map lambda body remaps the lambda param", () => {
     expect(jsmql.expr("$.xs.map(x => [...$.prefix, x])")).toEqual({
-      $map: { input: "$xs", as: "x", in: { $concatArrays: ["$prefix", ["$$x"]] } },
+      $map: {
+        input: { $ifNull: ["$xs", []] },
+        as: "x",
+        in: { $concatArrays: [{ $ifNull: ["$prefix", []] }, ["$$x"]] },
+      },
     });
   });
 
@@ -621,7 +633,7 @@ describe("array spread", () => {
   });
 
   it("nested array literal with spread inside", () => {
-    expect(jsmql.expr("$foo([[...$.a]])")).toEqual({ $foo: ["$a"] });
+    expect(jsmql.expr("$foo([[...$.a]])")).toEqual({ $foo: [{ $ifNull: ["$a", []] }] });
   });
 });
 
@@ -668,7 +680,7 @@ describe("object spread", () => {
     // `$getField` directly instead of the runtime `$cond` on `$isArray`.
     expect(jsmql.expr("$.statuses.reduce((acc, s) => ({ ...acc, [s]: (acc[s] ?? 0) + 1 }), {})")).toEqual({
       $reduce: {
-        input: "$statuses",
+        input: { $ifNull: ["$statuses", []] },
         initialValue: {},
         in: {
           $mergeObjects: [
@@ -903,7 +915,7 @@ describe("ObjectId literal (in-source constant)", () => {
   });
 
   it("an array of ObjectId literals lowers to $in with live instances", () => {
-    const out = jsmql(`[ObjectId("${HEX}"), ObjectId("${HEX2}")].includes($._id)`) as { _id: { $in: ObjectId[] } };
+    const out = jsmql(`[ObjectId("${HEX}"), ObjectId("${HEX2}")].has($._id)`) as { _id: { $in: ObjectId[] } };
     expect(out._id.$in.every((o) => o instanceof ObjectId)).toBe(true);
     expect(out._id.$in.map((o) => o.toHexString())).toEqual(["698a76556c10b90d8bd0497e", "507f1f77bcf86cd799439011"]);
   });
@@ -987,7 +999,7 @@ describe("ObjectId from a 0x hex literal", () => {
   });
 
   it("an array of 0x literals lowers to $in", () => {
-    const out = jsmql(`[0x${HEX}, 0x${HEX2}].includes($._id)`) as { _id: { $in: ObjectId[] } };
+    const out = jsmql(`[0x${HEX}, 0x${HEX2}].has($._id)`) as { _id: { $in: ObjectId[] } };
     expect(out._id.$in.map((o) => o.toHexString())).toEqual(["507f1f77bcf86cd799439011", "698a76556c10b90d8bd0497e"]);
   });
 
@@ -1327,7 +1339,7 @@ describe("jsBool truthiness normalizes missing → null", () => {
   it("the truthy null-clause is $ifNull-normalized (catches missing AND null)", () => {
     expect(jsmql.expr("$.items.filter(x => x.name)")).toEqual({
       $filter: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         cond: {
           $and: [
@@ -1863,7 +1875,7 @@ describe("bracket access", () => {
   });
   it("bracket access on .map() result stays compact", () => {
     expect(jsmql.expr("$.items.map(x => x.id)[0]")).toEqual({
-      $arrayElemAt: [{ $map: { input: "$items", as: "x", in: "$$x.id" } }, 0],
+      $arrayElemAt: [{ $map: { input: { $ifNull: ["$items", []] }, as: "x", in: "$$x.id" } }, 0],
     });
   });
 });
@@ -1921,7 +1933,11 @@ describe("lambda element-type inference (array-method param typed from a provabl
   });
   it('.split(",") yields string elements → element key → $getField', () => {
     expect(jsmql.expr('$.csv.split(",").map(k => $.m[k])')).toEqual({
-      $map: { input: { $split: ["$csv", ","] }, as: "k", in: { $getField: { field: "$$k", input: "$m" } } },
+      $map: {
+        input: { $ifNull: [{ $split: ["$csv", ","] }, []] },
+        as: "k",
+        in: { $getField: { field: "$$k", input: "$m" } },
+      },
     });
   });
   it("object-literal elements type the element as object → element[k] → $getField", () => {
@@ -1951,7 +1967,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
   it("unknown element type (non-literal input) keeps the runtime $isArray guard", () => {
     expect(jsmql.expr("$.tags.map(t => $.m[t])")).toEqual({
       $map: {
-        input: "$tags",
+        input: { $ifNull: ["$tags", []] },
         as: "t",
         in: {
           $switch: {
@@ -2156,7 +2172,7 @@ describe("string methods", () => {
           { case: { $in: [{ $type: "$name" }, ["array"]] }, then: { $indexOfArray: ["$name", "@"] } },
           { case: { $in: [{ $type: "$name" }, ["string"]] }, then: { $indexOfCP: ["$name", "@"] } },
         ],
-        default: null,
+        default: -1,
       },
     });
   });
@@ -2178,16 +2194,19 @@ describe("string methods", () => {
       $replaceAll: { input: "$slug", find: " ", replacement: "-" },
     });
   });
-  it("includes on bare field → runtime $cond on $isArray", () => {
+  it("includes on a bare field reads a substring, under a null guard", () => {
+    // `.includes` has one family, string. An unproven receiver takes it with no
+    // runtime dispatch. A proven array is refused, and the refusal names `.has(x)`.
     expect(jsmql.expr('$.email.includes("@")')).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$email" }, ["array"]] }, then: { $in: ["@", "$email"] } },
-          { case: { $in: [{ $type: "$email" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] } },
-        ],
-        default: null,
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$email", null] }, null] },
+        then: null,
+        else: { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] },
       },
     });
+    expect(() => jsmql.expr('$.tags.uniq().includes("b")')).toThrow(
+      "'.includes()' is not available on an 'array' — it is defined on 'string'. For membership in an array, write '.has(x)'.",
+    );
   });
   it("includes on known string → string form", () => {
     expect(jsmql.expr('$.email.toLowerCase().includes("@")')).toEqual({
@@ -2235,9 +2254,9 @@ describe("string methods", () => {
     });
   });
   it("length on string-producing expression → $strLenCP", () => {
-    // Coerced: $strLenCP aborts the query on a missing field, so `.length` of an
-    // absent string is 0 rather than an executor error.
-    expect(jsmql.expr("$.name.trim().length")).toEqual({
+    // `$strLenCP` aborts on a missing field, so `.length()` of an absent string
+    // answers null instead of an executor error.
+    expect(jsmql.expr("$.name.trim().length()")).toEqual({
       $let: {
         vars: { jsmqlRecv: { $trim: { input: "$name" } } },
         in: {
@@ -2250,48 +2269,27 @@ describe("string methods", () => {
       },
     });
   });
-  it("length on array-producing expression → $size", () => {
-    expect(jsmql.expr('$.csv.split(",").length')).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $split: ["$csv", ","] } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $size: "$$jsmqlRecv" },
-          },
-        },
-      },
+  it("size on an array-producing expression → $size", () => {
+    expect(jsmql.expr('$.csv.split(",").size()')).toEqual({ $size: { $ifNull: [{ $split: ["$csv", ","] }, []] } });
+  });
+  it("size on a map result → $size", () => {
+    expect(jsmql.expr("$.items.map(x => x).size()")).toEqual({
+      $size: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: "$$x" } },
     });
   });
-  it("length on map result → $size", () => {
-    expect(jsmql.expr("$.items.map(x => x).length")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $map: { input: "$items", as: "x", in: "$$x" } } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $size: "$$jsmqlRecv" },
-          },
-        },
-      },
+  it("length on an unknown field reads a string; size reads an array", () => {
+    // Each method has one family. An unproven receiver takes that family's operator,
+    // and the server judges the value. `.length()` guards a null receiver; `.size()`
+    // reads a missing array as empty.
+    expect(jsmql.expr("$.name.length()")).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $strLenCP: "$name" } },
     });
+    expect(jsmql.expr("$.items.size()")).toEqual({ $size: { $ifNull: ["$items", []] } });
+    expect(() => jsmql.expr("$.items.uniq().length()")).toThrow(
+      "'.length()' is not available on an 'array' — it is defined on 'string'. For the number of elements, write '.size()'.",
+    );
   });
-  it("length on unknown field → runtime dispatch", () => {
-    // Only the string branch coerces — the array branch is already shielded by
-    // the $isArray test, which an absent field fails.
-    expect(jsmql.expr("$.items.length")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-          { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-        ],
-        default: null,
-      },
-    });
-  });
-  it('["length"] is RAW access, NOT the length operator (only dot .length is interpreted)', () => {
+  it('["length"] is RAW access — a property named "length", never a count', () => {
     // Bracket access never folds to $size/$strLenCP — it reads a property called
     // "length" like any other key. "length" is a string literal, so it cannot be
     // a numeric array index → $getField directly (no $isArray dispatch).
@@ -2465,25 +2463,22 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   // and MongoDB has no operator that splits a string into its characters (HR3).
   it(".split() refuses an empty separator on both roads, and names a spelling that works", () => {
     const message =
-      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.";
+      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.";
     expect(() => jsmql.expr('$.s.split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('"abc".split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('$split($.s, "")')).toThrow(`'$split' ${message}`);
     // the spelling the refusal names does compile, and answers per code point
-    expect(jsmql.expr("$range(0, $.s.length).map(i => $.s.charAt(i))")).toEqual({
+    expect(jsmql.expr("$range(0, $.s.length()).map(i => $.s.charAt(i))")).toEqual({
       $map: {
         input: {
-          $range: [
-            0,
+          $ifNull: [
             {
-              $switch: {
-                branches: [
-                  { case: { $in: [{ $type: "$s" }, ["array"]] }, then: { $size: "$s" } },
-                  { case: { $in: [{ $type: "$s" }, ["string"]] }, then: { $strLenCP: "$s" } },
-                ],
-                default: null,
-              },
+              $range: [
+                0,
+                { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } } },
+              ],
             },
+            [],
           ],
         },
         as: "i",
@@ -2531,7 +2526,7 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
     );
     // `.reduce` legitimately takes two, and is unaffected.
     expect(jsmql.expr("$.a.reduce((acc, x) => acc + x, 0)")).toEqual({
-      $reduce: { input: "$a", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
+      $reduce: { input: { $ifNull: ["$a", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
   });
   it("static-call families (Math./Object./Set./regex.) use the same formatter", () => {
@@ -2557,107 +2552,64 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
 });
 
 describe("array methods (no lambda)", () => {
-  // `.at()` is dual-type in JS ("abc".at(-1) === "c"), and it is the only way to
-  // spell a negative index — brackets reject one. So a bare-field receiver
-  // dispatches on `$isArray` like `.slice`/`.includes` do.
-  it("at(n) on bare $.field → runtime three-way dispatch", () => {
-    expect(jsmql.expr("$.items.at(0)")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $substrCP: ["$items", 0, 1] } },
-          { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $arrayElemAt: ["$items", 0] } },
-        ],
-        default: null,
-      },
-    });
+  // `.at()` reads an array. It is the only way to spell a negative index, because
+  // brackets reject one. A proven string is refused, and the refusal names `.charAt`.
+  it("at(n) on a bare field → $arrayElemAt", () => {
+    expect(jsmql.expr("$.items.at(0)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$items", []] }, 0] });
+    expect(() => jsmql.expr("$.name.trim().at(0)")).toThrow(
+      "'.at()' is not available on a 'string' — it is defined on 'array'. For one character, write '.charAt(index)'.",
+    );
   });
-  it("at(-1) — $arrayElemAt takes the negative natively, $substrCP needs it resolved", () => {
+  it("at(-1) — $arrayElemAt takes the negative index as it is", () => {
+    expect(jsmql.expr("$.items.at(-1)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$items", []] }, -1] });
+  });
+  it("at(-1) on a proven receiver: an array takes $arrayElemAt; a string spells it .substr(-1)", () => {
+    expect(jsmql.expr("$.tags.uniq().at(-1)")).toEqual({
+      $arrayElemAt: [{ $setUnion: { $ifNull: ["$tags", []] } }, -1],
+    });
     // `$substrCP` refuses a negative start ("must be nonnegative integer"), so the
-    // string branch resolves -1 against the length, as `.slice`/`.substr` do.
-    expect(jsmql.expr("$.items.at(-1)")).toEqual({
-      $switch: {
-        branches: [
-          {
-            case: { $in: [{ $type: "$items" }, ["string"]] },
-            then: {
-              $substrCP: ["$items", { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$items", ""] } }, 1] }] }, 1],
-            },
-          },
-          { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $arrayElemAt: ["$items", -1] } },
-        ],
-        default: null,
-      },
-    });
-  });
-  it("at() on a provably-typed receiver skips the dispatch", () => {
-    expect(jsmql.expr("$.tags.uniq().at(-1)")).toEqual({ $arrayElemAt: [{ $setUnion: "$tags" }, -1] });
-    const p = jsmql.pipeline("const s = $.name.trim(); $set({ v: s.at(-1) });");
+    // string form resolves -1 against the length.
+    const p = jsmql.pipeline("const s = $.name.trim(); $set({ v: s.substr(-1) });");
     expect((p[1] as { $set: Record<string, unknown> }).$set).toEqual({
       v: {
-        $substrCP: [
-          "$__jsmql.var.s",
-          { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$__jsmql.var.s", ""] } }, 1] }] },
-          1,
-        ],
-      },
-    });
-  });
-  it("at() on neither an array nor a string answers null, as JavaScript's undefined — so ?? still applies", () => {
-    // Live-verified: on a doc with no `aliases`, this yields "anonymous". A loose
-    // "not an array means string" else-branch gave `$substrCP(missing) === ""`,
-    // which is not null, so `$ifNull` returned "" and swallowed the fallback.
-    expect(jsmql.expr('$.aliases.at(0) ?? "anonymous"')).toEqual({
-      $ifNull: [
-        {
-          $switch: {
-            branches: [
-              { case: { $in: [{ $type: "$aliases" }, ["string"]] }, then: { $substrCP: ["$aliases", 0, 1] } },
-              { case: { $in: [{ $type: "$aliases" }, ["array"]] }, then: { $arrayElemAt: ["$aliases", 0] } },
+        $cond: {
+          if: { $eq: [{ $ifNull: ["$__jsmql.var.s", null] }, null] },
+          then: null,
+          else: {
+            $substrCP: [
+              "$__jsmql.var.s",
+              { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$__jsmql.var.s", ""] } }, 1] }] },
+              { $strLenCP: { $ifNull: ["$__jsmql.var.s", ""] } },
             ],
-            default: null,
           },
         },
-        "anonymous",
-      ],
+      },
     });
   });
-  it("slice(start) on bare $.field → runtime $cond on $isArray", () => {
-    // Array branch: JS `slice(start)` = drop the first `start` — position + a
-    // `max(1, size)` count (NOT the 2-arg "first `start`" that MQL `$slice`
-    // would give). count 1 (not 0) keeps an empty array valid.
+  it("at() on a missing field answers null, as JavaScript's undefined — so ?? still applies", () => {
+    // Live-verified: on a doc with no `aliases`, `$arrayElemAt` answers null, so
+    // `$ifNull` yields "anonymous".
+    expect(jsmql.expr('$.aliases.at(0) ?? "anonymous"')).toEqual({
+      $ifNull: [{ $arrayElemAt: [{ $ifNull: ["$aliases", []] }, 0] }, "anonymous"],
+    });
+  });
+  it("slice(start) on a bare field → drop the first `start`, under a null guard", () => {
+    // JS `slice(start)` = drop the first `start` — position + a `max(1, size)` count
+    // (NOT the 2-arg "first `start`" that MQL `$slice` would give). count 1 (not 0)
+    // keeps an empty array valid. A proven string is refused, and the refusal names
+    // `.substring`.
     expect(jsmql.expr("$.items.slice(2)")).toEqual({
-      $switch: {
-        branches: [
-          {
-            case: { $in: [{ $type: "$items" }, ["string"]] },
-            then: {
-              $substrCP: ["$items", 2, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$items", ""] } }, 2] }] }],
-            },
-          },
-          {
-            case: { $in: [{ $type: "$items" }, ["array"]] },
-            then: {
-              $let: {
-                vars: { jsmqlArr: "$items" },
-                in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] },
-              },
-            },
-          },
-        ],
-        default: null,
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$items", []] } },
+        in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] },
       },
     });
+    expect(() => jsmql.expr("$.name.trim().slice(1)")).toThrow(
+      "'.slice()' is not available on a 'string' — it is defined on 'array', 'stream'. For a part of a string, write '.substring(start, end)'.",
+    );
   });
-  it("slice(0, end) on bare $.field → 2-arg 'first end' $slice (end exclusive)", () => {
-    expect(jsmql.expr("$.items.slice(0, 3)")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $substrCP: ["$items", 0, 3] } },
-          { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $slice: ["$items", 3] } },
-        ],
-        default: null,
-      },
-    });
+  it("slice(0, end) on a bare field → 2-arg 'first end' $slice (end exclusive)", () => {
+    expect(jsmql.expr("$.items.slice(0, 3)")).toEqual({ $slice: [{ $ifNull: ["$items", []] }, 3] });
   });
   it("slice(start, end) on known array → count is end - start (JS end-exclusive)", () => {
     // NOT `$slice: [arr, 1, 3]` (which MQL reads as "3 elements from index 1").
@@ -2684,67 +2636,59 @@ describe("array methods (no lambda)", () => {
     expect(jsmql.expr("[1,2,3,4,5].slice(1, -1)")).toEqual([2, 3, 4]);
   });
   it("toReversed()", () => {
-    expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
+    expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: { $ifNull: ["$items", []] } });
   });
 });
 
 describe("array methods (with lambda)", () => {
   it("map with single param", () => {
     expect(jsmql.expr("$.prices.map(p => p * 1.1)")).toEqual({
-      $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } },
+      $map: { input: { $ifNull: ["$prices", []] }, as: "p", in: { $multiply: ["$$p", 1.1] } },
     });
   });
   it("map with parenthesized param", () => {
     expect(jsmql.expr("$.prices.map((p) => p * 1.1)")).toEqual({
-      $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } },
+      $map: { input: { $ifNull: ["$prices", []] }, as: "p", in: { $multiply: ["$$p", 1.1] } },
     });
   });
   it("filter", () => {
     expect(jsmql.expr("$.items.filter(x => x > 0)")).toEqual({
-      $filter: { input: "$items", as: "x", cond: { $gt: ["$$x", 0] } },
+      $filter: { input: { $ifNull: ["$items", []] }, as: "x", cond: { $gt: ["$$x", 0] } },
     });
   });
   it("find", () => {
     expect(jsmql.expr("$.items.find(x => x > 0)")).toEqual({
-      $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: { $gt: ["$$x", 0] } } }, 0],
+      $arrayElemAt: [{ $filter: { input: { $ifNull: ["$items", []] }, as: "x", cond: { $gt: ["$$x", 0] } } }, 0],
     });
   });
   it("some", () => {
     expect(jsmql.expr("$.items.some(x => x > 0)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-        then: null,
-        else: { $anyElementTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x", 0] } } } },
-      },
+      $anyElementTrue: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $gt: ["$$x", 0] } } },
     });
   });
   it("every", () => {
     expect(jsmql.expr("$.items.every(x => x > 0)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-        then: null,
-        else: { $allElementsTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x", 0] } } } },
-      },
+      $allElementsTrue: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $gt: ["$$x", 0] } } },
     });
   });
   it("reduce", () => {
     expect(jsmql.expr("$.ns.reduce((acc, x) => acc + x, 0)")).toEqual({
-      $reduce: { input: "$ns", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
+      $reduce: { input: { $ifNull: ["$ns", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
   });
   it("lambda accesses a doc field through $.", () => {
     expect(jsmql.expr("$.items.map(x => x * $.taxRate)")).toEqual({
-      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", "$taxRate"] } },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", "$taxRate"] } },
     });
   });
   it("lambda accessing nested field on element (x.status → $$x.status)", () => {
     expect(jsmql.expr('$.orders.filter(o => o.status === "active")')).toEqual({
-      $filter: { input: "$orders", as: "o", cond: { $eq: ["$$o.status", "active"] } },
+      $filter: { input: { $ifNull: ["$orders", []] }, as: "o", cond: { $eq: ["$$o.status", "active"] } },
     });
   });
   it("reduce accessing element field ($$this.price)", () => {
     expect(jsmql.expr("$.orders.reduce((sum, o) => sum + o.price, 0)")).toEqual({
-      $reduce: { input: "$orders", initialValue: 0, in: { $add: ["$$value", "$$this.price"] } },
+      $reduce: { input: { $ifNull: ["$orders", []] }, initialValue: 0, in: { $add: ["$$value", "$$this.price"] } },
     });
   });
 });
@@ -2759,7 +2703,7 @@ describe("reduce accumulator type narrowing", () => {
   it("object accumulator: acc[k] emits $getField directly", () => {
     expect(jsmql.expr("$.xs.reduce((a, k) => ({ ...a, [k]: 1 }), {})")).toEqual({
       $reduce: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         initialValue: {},
         in: { $mergeObjects: ["$$value", { $arrayToObject: [[{ k: "$$this", v: 1 }]] }] },
       },
@@ -2768,7 +2712,7 @@ describe("reduce accumulator type narrowing", () => {
     // narrowing reaches IndexAccess and emits $getField, not $cond.
     expect(jsmql.expr("$.xs.reduce((a, k) => ({ ...a, [k]: a[k] }), {})")).toEqual({
       $reduce: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         initialValue: {},
         in: {
           $mergeObjects: [
@@ -2792,28 +2736,32 @@ describe("reduce accumulator type narrowing", () => {
   it("array accumulator: acc[i] emits $arrayElemAt directly", () => {
     expect(jsmql.expr("$.xs.reduce((a, x) => [...a, a[0]], [])")).toEqual({
       $reduce: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         initialValue: [],
-        in: { $concatArrays: ["$$value", [{ $arrayElemAt: ["$$value", 0] }]] },
+        in: { $concatArrays: [{ $ifNull: ["$$value", []] }, [{ $arrayElemAt: ["$$value", 0] }]] },
       },
     });
   });
 
   it("body diverges from initialValue: keeps runtime $cond", () => {
     expect(jsmql.expr("$.xs.reduce((a, x) => x.foo, {})")).toEqual({
-      $reduce: { input: "$xs", initialValue: {}, in: "$$this.foo" },
+      $reduce: { input: { $ifNull: ["$xs", []] }, initialValue: {}, in: "$$this.foo" },
     });
     // When the body returns a member-access on the element, the accumulator
     // is not narrowed, so a bracket access on it still emits the cond.
     expect(jsmql.expr("$.xs.reduce((a, x) => a[0], {})")).toEqual({
-      $reduce: { input: "$xs", initialValue: {}, in: { $getField: { field: "0", input: "$$value" } } },
+      $reduce: {
+        input: { $ifNull: ["$xs", []] },
+        initialValue: {},
+        in: { $getField: { field: "0", input: "$$value" } },
+      },
     });
   });
 
   it("non-literal initialValue: keeps runtime $cond", () => {
     expect(jsmql.expr("$.xs.reduce((a, k) => ({ ...a, k: a[0] }), $.seed)")).toEqual({
       $reduce: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         initialValue: "$seed",
         in: {
           $mergeObjects: [
@@ -2840,7 +2788,7 @@ describe("reduce accumulator type narrowing", () => {
     // anything; only `a` is narrowed to object.
     expect(jsmql.expr("$.xs.reduce((a, x) => ({ ...a, k: x[0] }), {})")).toEqual({
       $reduce: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         initialValue: {},
         in: {
           $mergeObjects: [
@@ -2870,7 +2818,7 @@ describe("reduce accumulator type narrowing", () => {
       jsmql.expr("$.xs.reduce((acc, x) => ({ ...acc, k: x.ys.reduce((acc, y) => [...acc, acc[0]], []) }), {})"),
     ).toEqual({
       $reduce: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         initialValue: {},
         in: {
           $let: {
@@ -2881,9 +2829,9 @@ describe("reduce accumulator type narrowing", () => {
                 {
                   k: {
                     $reduce: {
-                      input: "$$x.ys",
+                      input: { $ifNull: ["$$x.ys", []] },
                       initialValue: [],
-                      in: { $concatArrays: ["$$value", [{ $arrayElemAt: ["$$value", 0] }]] },
+                      in: { $concatArrays: [{ $ifNull: ["$$value", []] }, [{ $arrayElemAt: ["$$value", 0] }]] },
                     },
                   },
                 },
@@ -2901,7 +2849,7 @@ describe("reduce accumulator type narrowing", () => {
     // would be a type error in MongoDB.
     expect(jsmql.expr("$.xs.reduce((a, k) => ({ ...a, [k]: a?.[k] }), {})")).toEqual({
       $reduce: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         initialValue: {},
         in: {
           $mergeObjects: [
@@ -2938,37 +2886,18 @@ describe("reduce accumulator type narrowing", () => {
 describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
   const setOf = (pipeline: unknown[], i: number) => (pipeline[i] as { $set: Record<string, unknown> }).$set;
 
-  it("array-typed const: every dual-dispatch method picks the array branch", () => {
+  it("array-typed const: every method takes the array family, with no runtime dispatch", () => {
     const p = jsmql.pipeline(
       `const a = $.tags.uniq();
-       $set({ inc: a.includes("b"), idx: a.indexOf("b"), sl: a.slice(0, 2), cc: a.concat(["z"]),
-              sz: a.size(), len: a.length, str: a.toString() });`,
+       $set({ inc: a.has("b"), idx: a.indexOf("b"), sl: a.slice(0, 2), cc: a.concat(["z"]),
+              sz: a.size(), str: a.toString() });`,
     );
     expect(setOf(p, 1)).toEqual({
-      inc: {
-        $cond: {
-          if: { $eq: [{ $ifNull: ["$__jsmql.var.a", null] }, null] },
-          then: null,
-          else: { $in: ["b", "$__jsmql.var.a"] },
-        },
-      },
+      inc: { $in: ["b", "$__jsmql.var.a"] },
       idx: { $indexOfArray: ["$__jsmql.var.a", "b"] },
-      sl: {
-        $cond: {
-          if: { $eq: [{ $ifNull: ["$__jsmql.var.a", null] }, null] },
-          then: null,
-          else: { $slice: ["$__jsmql.var.a", 2] },
-        },
-      },
+      sl: { $slice: ["$__jsmql.var.a", 2] },
       cc: { $concatArrays: ["$__jsmql.var.a", ["z"]] },
-      sz: { $size: { $ifNull: ["$__jsmql.var.a", []] } },
-      len: {
-        $cond: {
-          if: { $eq: [{ $ifNull: ["$__jsmql.var.a", null] }, null] },
-          then: null,
-          else: { $size: "$__jsmql.var.a" },
-        },
-      },
+      sz: { $size: "$__jsmql.var.a" },
       str: {
         $let: {
           vars: { jsmqlV: "$__jsmql.var.a" },
@@ -3019,11 +2948,11 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     });
   });
 
-  it("string-typed const: the same methods pick the string branch", () => {
+  it("string-typed const: every method takes the string family", () => {
     const p = jsmql.pipeline(
       `const s = $.name.trim();
        const t = $.other.trim();
-       $set({ inc: s.includes("x"), idx: s.indexOf("x"), sl: s.slice(1, 3), sum: s + t, tpl: \`\${s}-\${t}\` });`,
+       $set({ inc: s.includes("x"), idx: s.indexOf("x"), sl: s.substring(1, 3), sum: s + t, tpl: \`\${s}-\${t}\` });`,
     );
     expect(setOf(p, 2)).toEqual({
       inc: {
@@ -3046,14 +2975,17 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     });
   });
 
-  it("`let` keeps the runtime guard — a reassignment could change its type", () => {
-    const p = jsmql.pipeline(`let a = $.tags.uniq(); $set({ inc: a.includes("b") });`);
-    expect(setOf(p, 1)).toEqual({
-      inc: {
+  it("a `let` binding carries its type until a reassignment to an unproven value", () => {
+    const p = jsmql.pipeline(`let a = $.tags.uniq(); $set({ inc: a.has("b") });`);
+    expect(setOf(p, 1)).toEqual({ inc: { $in: ["b", "$__jsmql.var.a"] } });
+    // After `a = $.name` the binding is unproven, so `.length()` takes its string family.
+    const q = jsmql.pipeline(`let a = $.tags.uniq(); a = $.name; $set({ len: a.length() });`);
+    expect(setOf(q, 2)).toEqual({
+      len: {
         $cond: {
           if: { $eq: [{ $ifNull: ["$__jsmql.var.a", null] }, null] },
           then: null,
-          else: { $in: ["b", "$__jsmql.var.a"] },
+          else: { $strLenCP: "$__jsmql.var.a" },
         },
       },
     });
@@ -3061,30 +2993,16 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
 
   it("a chained const inherits its source's type", () => {
     // `.slice` preserves the receiver type, so `b` is array-typed through `a`.
-    const p = jsmql.pipeline(`const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes("b") });`);
+    const p = jsmql.pipeline(`const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.has("b") });`);
     expect(setOf(p, 1)).toEqual({
       "__jsmql.var.b": {
-        $cond: {
-          if: { $eq: [{ $ifNull: ["$__jsmql.var.a", null] }, null] },
-          then: null,
-          else: {
-            $let: {
-              vars: { jsmqlArr: "$__jsmql.var.a" },
-              in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
-            },
-          },
+        $let: {
+          vars: { jsmqlArr: "$__jsmql.var.a" },
+          in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
         },
       },
     });
-    expect(setOf(p, 2)).toEqual({
-      inc: {
-        $cond: {
-          if: { $eq: [{ $ifNull: ["$__jsmql.var.b", null] }, null] },
-          then: null,
-          else: { $in: ["b", "$__jsmql.var.b"] },
-        },
-      },
-    });
+    expect(setOf(p, 2)).toEqual({ inc: { $in: ["b", "$__jsmql.var.b"] } });
   });
 
   it("jsmql types its OWN materialised lookup slot, so a chained method resolves at compile time", () => {
@@ -3099,19 +3017,19 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     const lk = "$$$.users.filter(u => u._id === $._id)";
     expect(setOfLast(`$.u = ${lk}.at(0);`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
     expect(setOfLast(`$.u = ${lk}[0];`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
-    expect(setOfLast(`$.b = ${lk}.includes(1);`)).toEqual({ b: { $in: [1, "$__jsmql.tmp.0"] } });
+    expect(setOfLast(`$.b = ${lk}.has(1);`)).toEqual({ b: { $in: [1, "$__jsmql.tmp.0"] } });
     expect(setOfLast(`$.s = ${lk}.size();`)).toEqual({ s: { $size: "$__jsmql.tmp.0" } });
     expect(setOfLast(`$.i = ${lk}.indexOf(1);`)).toEqual({ i: { $indexOfArray: ["$__jsmql.tmp.0", 1] } });
     // A COLLAPSING terminal overwrites the slot with the single object it unwrapped,
-    // so the registry records "object" and `.size()` counts keys.
-    expect(setOfLast(`$.k = ${lk}.countBy("tier").size();`)).toEqual({
-      k: { $size: { $objectToArray: "$__jsmql.tmp.0" } },
+    // so the registry records "object", and `.keys().size()` counts its fields.
+    expect(setOfLast(`$.k = ${lk}.countBy("tier").keys().size();`)).toEqual({
+      k: { $size: { $map: { input: { $objectToArray: "$__jsmql.tmp.0" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } },
     });
   });
 
   it("a `$$$.<coll>` lookup const is an array — `.filter` / `.aggregate` keep the `as` array", () => {
     const p = jsmql.pipeline(
-      `const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.includes(1) });`,
+      `const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.has(1) });`,
     );
     expect(setOf(p, 1)).toEqual({ any: { $in: [1, "$__jsmql.var.orders"] } });
   });
@@ -3130,9 +3048,9 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
 // binding holds, so the sub-pipeline inherits its type — see
 // docs/specs/lookup-stage.md § Correlation-var types.
 describe("$lookup.let correlation vars inherit the outer binding's type", () => {
-  it("expression-body predicate: `.includes` on a captured array const is a plain $in", () => {
+  it("expression-body predicate: `.has` on a captured array const is a plain $in", () => {
     const p = jsmql.pipeline(
-      `const ids = $.tags.uniq(); const r = $$$.orders.filter(o => o.pid.some(p => ids.includes(p)));`,
+      `const ids = $.tags.uniq(); const r = $$$.orders.filter(o => o.pid.some(p => ids.has(p)));`,
     );
     expect((p[1] as { $lookup: { let: unknown; pipeline: unknown[] } }).$lookup.let).toEqual({
       jsmql_v0_ids: "$__jsmql.var.ids",
@@ -3141,24 +3059,8 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
       {
         $match: {
           $expr: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$pid", null] }, null] },
-              then: null,
-              else: {
-                $anyElementTrue: {
-                  $map: {
-                    input: "$pid",
-                    as: "p",
-                    in: {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$$jsmql_v0_ids", null] }, null] },
-                        then: null,
-                        else: { $in: ["$$p", "$$jsmql_v0_ids"] },
-                      },
-                    },
-                  },
-                },
-              },
+            $anyElementTrue: {
+              $map: { input: { $ifNull: ["$pid", []] }, as: "p", in: { $in: ["$$p", "$$jsmql_v0_ids"] } },
             },
           },
         },
@@ -3173,47 +3075,44 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
     // Env carries across the sub-pipeline boundary (`Binding.level`).
     const p = jsmql.pipeline(
       `const ids = $.tags.uniq();
-       const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.includes(i.pid)); });`,
+       const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.has(i.pid)); });`,
     );
     expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline[0]).toEqual({
       $lookup: {
         from: "items",
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $cond: {
-                  if: { $eq: [{ $ifNull: ["$$jsmql_v0_ids", null] }, null] },
-                  then: null,
-                  else: { $in: ["$pid", "$$jsmql_v0_ids"] },
-                },
-              },
-            },
-          },
-        ],
+        pipeline: [{ $match: { $expr: { $in: ["$pid", "$$jsmql_v0_ids"] } } }],
         as: "__jsmql.var.inner",
       },
     });
   });
 
   it("a SUB-PATH capture stays untyped — the binding's type says nothing about a member of it", () => {
+    // `.indexOf` reads both families, so an untyped receiver keeps the runtime dispatch.
     const p = jsmql.pipeline(
-      `const cfg = Object.assign({}, $.cfg); const r = $$$.orders.filter(o => cfg.ids.includes(o.pid));`,
+      `const cfg = Object.assign({}, $.cfg); const r = $$$.orders.filter(o => cfg.ids.indexOf(o.pid) >= 0);`,
     );
     expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline).toEqual([
       {
         $match: {
           $expr: {
-            $switch: {
-              branches: [
-                { case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["array"]] }, then: { $in: ["$pid", "$$jsmql_v0_ids"] } },
-                {
-                  case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["string"]] },
-                  then: { $gte: [{ $indexOfCP: ["$$jsmql_v0_ids", "$pid"] }, 0] },
+            $gte: [
+              {
+                $switch: {
+                  branches: [
+                    {
+                      case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["array"]] },
+                      then: { $indexOfArray: ["$$jsmql_v0_ids", "$pid"] },
+                    },
+                    {
+                      case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["string"]] },
+                      then: { $indexOfCP: ["$$jsmql_v0_ids", "$pid"] },
+                    },
+                  ],
+                  default: -1,
                 },
-              ],
-              default: null,
-            },
+              },
+              0,
+            ],
           },
         },
       },
@@ -3223,24 +3122,31 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
 
 describe("bare built-in callbacks", () => {
   it("map(ObjectId) converts each element", () => {
-    expect(jsmql.expr("$.ids.map(ObjectId)")).toEqual({ $map: { input: "$ids", as: "x", in: { $toObjectId: "$$x" } } });
+    expect(jsmql.expr("$.ids.map(ObjectId)")).toEqual({
+      $map: { input: { $ifNull: ["$ids", []] }, as: "x", in: { $toObjectId: "$$x" } },
+    });
   });
   it("map(ObjectId) is the point-free spelling of the arrow form", () => {
-    expect(jsmql.expr("$.ids.map(ObjectId)")).toEqual(jsmql.expr("$.ids.map(x => ObjectId(x))"));
+    expect(jsmql.expr("$.ids.map(ObjectId)")).toEqual({
+      $map: { input: { $ifNull: ["$ids", []] }, as: "x", in: { $toObjectId: "$$x" } },
+    });
+    expect(jsmql.expr("$.ids.map(x => ObjectId(x))")).toEqual({
+      $map: { input: { $ifNull: ["$ids", []] }, as: "x", in: { $toObjectId: "$$x" } },
+    });
   });
   // The lodash iteratee/predicate methods take the same bare callbacks the array
   // methods above do — one vocabulary, whichever method you reach for. They bind
   // the element to the iteratee gensym rather than an arrow's own parameter name.
   it("sumBy(Number) coerces each element before summing", () => {
     expect(jsmql.expr("$.xs.sumBy(Number)")).toEqual({
-      $sum: { $map: { input: "$xs", as: "x", in: { $toDouble: "$$x" } } },
+      $sum: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDouble: "$$x" } } },
     });
   });
   it("keyBy(ObjectId) keys by the converted element", () => {
     expect(jsmql.expr("$.xs.keyBy(ObjectId)")).toEqual({
       $arrayToObject: {
         $map: {
-          input: "$xs",
+          input: { $ifNull: ["$xs", []] },
           as: "x",
           in: { k: { $ifNull: [{ $toString: { $toObjectId: "$$x" } }, "null"] }, v: "$$x" },
         },
@@ -3262,7 +3168,7 @@ describe("bare built-in callbacks", () => {
         field: "out",
         input: {
           $reduce: {
-            input: "$xs",
+            input: { $ifNull: ["$xs", []] },
             initialValue: { seen: [], out: [] },
             in: {
               $let: {
@@ -3286,20 +3192,27 @@ describe("bare built-in callbacks", () => {
     expect(jsmql.expr("$.xs.groupBy(String)")).toEqual({
       $arrayToObject: {
         $map: {
-          input: { $setUnion: [{ $map: { input: "$xs", as: "x", in: stringKey } }, []] },
+          input: { $setUnion: [{ $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: stringKey } }, []] },
           as: "jsmqlKey",
-          in: { k: "$$jsmqlKey", v: { $filter: { input: "$xs", as: "x", cond: { $eq: [stringKey, "$$jsmqlKey"] } } } },
+          in: {
+            k: "$$jsmqlKey",
+            v: { $filter: { input: { $ifNull: ["$xs", []] }, as: "x", cond: { $eq: [stringKey, "$$jsmqlKey"] } } },
+          },
         },
       },
     });
     expect(jsmql.expr("$.xs.countBy(String)")).toEqual({
       $arrayToObject: {
         $map: {
-          input: { $setUnion: [{ $map: { input: "$xs", as: "x", in: stringKey } }, []] },
+          input: { $setUnion: [{ $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: stringKey } }, []] },
           as: "jsmqlKey",
           in: {
             k: "$$jsmqlKey",
-            v: { $size: { $filter: { input: "$xs", as: "x", cond: { $eq: [stringKey, "$$jsmqlKey"] } } } },
+            v: {
+              $size: {
+                $filter: { input: { $ifNull: ["$xs", []] }, as: "x", cond: { $eq: [stringKey, "$$jsmqlKey"] } },
+              },
+            },
           },
         },
       },
@@ -3309,7 +3222,7 @@ describe("bare built-in callbacks", () => {
         vars: {
           jsmqlSorted: {
             $sortArray: {
-              input: { $map: { input: "$xs", as: "x", in: { k: { $toDouble: "$$x" }, v: "$$x" } } },
+              input: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { k: { $toDouble: "$$x" }, v: "$$x" } } },
               sortBy: { k: -1 },
             },
           },
@@ -3318,11 +3231,11 @@ describe("bare built-in callbacks", () => {
       },
     });
     expect(jsmql.expr("$.xs.reject(Boolean)")).toEqual({
-      $filter: { input: "$xs", as: "x", cond: { $not: [truthyX] } },
+      $filter: { input: { $ifNull: ["$xs", []] }, as: "x", cond: { $not: [truthyX] } },
     });
     expect(jsmql.expr("$.xs.takeWhile(Boolean)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$xs" },
+        vars: { jsmqlArr: { $ifNull: ["$xs", []] } },
         in: {
           $let: {
             vars: {
@@ -3339,16 +3252,20 @@ describe("bare built-in callbacks", () => {
       },
     });
     expect(jsmql.expr("$.xs.partition(Boolean)")).toEqual([
-      { $filter: { input: "$xs", as: "x", cond: truthyX } },
-      { $filter: { input: "$xs", as: "x", cond: { $not: [truthyX] } } },
+      { $filter: { input: { $ifNull: ["$xs", []] }, as: "x", cond: truthyX } },
+      { $filter: { input: { $ifNull: ["$xs", []] }, as: "x", cond: { $not: [truthyX] } } },
     ]);
   });
   // Every BSON constructor converts its argument here, so each has a point-free form
   // that reads as what it does — `Date` included, where JavaScript's bare `Date()`
   // would ignore the argument and answer a string.
   it("applies a BSON constructor point-free", () => {
-    expect(jsmql.expr("$.xs.map(Date)")).toEqual({ $map: { input: "$xs", as: "x", in: { $toDate: "$$x" } } });
-    expect(jsmql.expr("$.xs.map(Decimal128)")).toEqual({ $map: { input: "$xs", as: "x", in: { $toDecimal: "$$x" } } });
+    expect(jsmql.expr("$.xs.map(Date)")).toEqual({
+      $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDate: "$$x" } },
+    });
+    expect(jsmql.expr("$.xs.map(Decimal128)")).toEqual({
+      $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDecimal: "$$x" } },
+    });
   });
   // `parseInt` is refused outright — `Number` is the one numeric conversion.
   it("rejects a built-in that is not part of jsmql", () => {
@@ -3370,7 +3287,7 @@ describe("bare built-in callbacks", () => {
   it("filter(Boolean) drops JS-falsy elements", () => {
     expect(jsmql.expr("$.items.filter(Boolean)")).toEqual({
       $filter: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         cond: {
           $and: [
@@ -3384,17 +3301,21 @@ describe("bare built-in callbacks", () => {
     });
   });
   it("map(Number) coerces to double", () => {
-    expect(jsmql.expr("$.nums.map(Number)")).toEqual({ $map: { input: "$nums", as: "x", in: { $toDouble: "$$x" } } });
+    expect(jsmql.expr("$.nums.map(Number)")).toEqual({
+      $map: { input: { $ifNull: ["$nums", []] }, as: "x", in: { $toDouble: "$$x" } },
+    });
   });
   it("map(String) coerces to string", () => {
-    expect(jsmql.expr("$.xs.map(String)")).toEqual({ $map: { input: "$xs", as: "x", in: { $toString: "$$x" } } });
+    expect(jsmql.expr("$.xs.map(String)")).toEqual({
+      $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toString: "$$x" } },
+    });
   });
   it("find(Boolean) returns first JS-truthy element", () => {
     expect(jsmql.expr("$.xs.find(Boolean)")).toEqual({
       $arrayElemAt: [
         {
           $filter: {
-            input: "$xs",
+            input: { $ifNull: ["$xs", []] },
             as: "x",
             cond: {
               $and: [
@@ -3412,23 +3333,17 @@ describe("bare built-in callbacks", () => {
   });
   it("some(Boolean) is any-JS-truthy", () => {
     expect(jsmql.expr("$.xs.some(Boolean)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$xs", null] }, null] },
-        then: null,
-        else: {
-          $anyElementTrue: {
-            $map: {
-              input: "$xs",
-              as: "x",
-              in: {
-                $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
-                ],
-              },
-            },
+      $anyElementTrue: {
+        $map: {
+          input: { $ifNull: ["$xs", []] },
+          as: "x",
+          in: {
+            $and: [
+              { $ne: [{ $ifNull: ["$$x", null] }, null] },
+              { $ne: ["$$x", false] },
+              { $ne: ["$$x", ""] },
+              { $ne: ["$$x", 0] },
+            ],
           },
         },
       },
@@ -3436,23 +3351,17 @@ describe("bare built-in callbacks", () => {
   });
   it("every(Boolean) is all-JS-truthy", () => {
     expect(jsmql.expr("$.xs.every(Boolean)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$xs", null] }, null] },
-        then: null,
-        else: {
-          $allElementsTrue: {
-            $map: {
-              input: "$xs",
-              as: "x",
-              in: {
-                $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
-                ],
-              },
-            },
+      $allElementsTrue: {
+        $map: {
+          input: { $ifNull: ["$xs", []] },
+          as: "x",
+          in: {
+            $and: [
+              { $ne: [{ $ifNull: ["$$x", null] }, null] },
+              { $ne: ["$$x", false] },
+              { $ne: ["$$x", ""] },
+              { $ne: ["$$x", 0] },
+            ],
           },
         },
       },
@@ -3461,7 +3370,7 @@ describe("bare built-in callbacks", () => {
   it("flatMap(Number) survives the desugar", () => {
     expect(jsmql.expr("$.xs.flatMap(Number)")).toEqual({
       $reduce: {
-        input: { $map: { input: "$xs", as: "x", in: { $toDouble: "$$x" } } },
+        input: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDouble: "$$x" } } },
         initialValue: [],
         in: { $concatArrays: ["$$value", "$$this"] },
       },
@@ -3469,66 +3378,53 @@ describe("bare built-in callbacks", () => {
   });
   it("composes through chaining: filter(Boolean).join(' ')", () => {
     expect(jsmql.expr('$.parts.filter(Boolean).join(" ")')).toEqual({
-      $let: {
-        vars: {
-          jsmqlRecv: {
-            $filter: {
-              input: "$parts",
-              as: "x",
-              cond: {
-                $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
-                ],
+      $ifNull: [
+        {
+          $reduce: {
+            input: {
+              $filter: {
+                input: { $ifNull: ["$parts", []] },
+                as: "x",
+                cond: {
+                  $and: [
+                    { $ne: [{ $ifNull: ["$$x", null] }, null] },
+                    { $ne: ["$$x", false] },
+                    { $ne: ["$$x", ""] },
+                    { $ne: ["$$x", 0] },
+                  ],
+                },
+              },
+            },
+            initialValue: null,
+            in: {
+              $cond: {
+                if: { $eq: ["$$value", null] },
+                then: {
+                  $cond: {
+                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                    then: "",
+                    else: { $toString: "$$this" },
+                  },
+                },
+                else: {
+                  $concat: [
+                    "$$value",
+                    " ",
+                    {
+                      $cond: {
+                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                        then: "",
+                        else: { $toString: "$$this" },
+                      },
+                    },
+                  ],
+                },
               },
             },
           },
         },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlRecv",
-                    initialValue: null,
-                    in: {
-                      $cond: {
-                        if: { $eq: ["$$value", null] },
-                        then: {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                        else: {
-                          $concat: [
-                            "$$value",
-                            " ",
-                            {
-                              $cond: {
-                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                then: "",
-                                else: { $toString: "$$this" },
-                              },
-                            },
-                          ],
-                        },
-                      },
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-          },
-        },
-      },
+        "",
+      ],
     });
   });
   it("Boolean as a value (outside callback) errors with the call form suggested", () => {
@@ -3732,7 +3628,7 @@ describe("replacing date parts (.set)", () => {
   it("gensyms its variable around a colliding lambda parameter", () => {
     expect(jsmql.expr("$.items.map(jsmqlParts => jsmqlParts.t.set({ year: 2030 }))")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "jsmqlParts",
         in: {
           $let: {
@@ -4347,30 +4243,32 @@ describe("Math.* as bare callable in array methods", () => {
   // Boolean/Number/String bare-callable shape.
   it("$.scores.map(Math.floor)", () => {
     expect(jsmql.expr("$.scores.map(Math.floor)")).toEqual({
-      $map: { input: "$scores", as: "x", in: { $floor: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $floor: "$$x" } },
     });
   });
   it("$.scores.map(Math.round) adds the 0 precision arg", () => {
     expect(jsmql.expr("$.scores.map(Math.round)")).toEqual({
-      $map: { input: "$scores", as: "x", in: { $round: ["$$x", 0] } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $round: ["$$x", 0] } },
     });
   });
   it("$.scores.map(Math.abs)", () => {
-    expect(jsmql.expr("$.scores.map(Math.abs)")).toEqual({ $map: { input: "$scores", as: "x", in: { $abs: "$$x" } } });
+    expect(jsmql.expr("$.scores.map(Math.abs)")).toEqual({
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $abs: "$$x" } },
+    });
   });
   it("$.scores.map(Math.ceil)", () => {
     expect(jsmql.expr("$.scores.map(Math.ceil)")).toEqual({
-      $map: { input: "$scores", as: "x", in: { $ceil: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $ceil: "$$x" } },
     });
   });
   it("$.scores.map(Math.sqrt)", () => {
     expect(jsmql.expr("$.scores.map(Math.sqrt)")).toEqual({
-      $map: { input: "$scores", as: "x", in: { $sqrt: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $sqrt: "$$x" } },
     });
   });
   it("$.scores.map(Math.trunc)", () => {
     expect(jsmql.expr("$.scores.map(Math.trunc)")).toEqual({
-      $map: { input: "$scores", as: "x", in: { $trunc: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $trunc: "$$x" } },
     });
   });
   it("rejects binary Math methods as bare (Math.pow)", () => {
@@ -4379,7 +4277,9 @@ describe("Math.* as bare callable in array methods", () => {
     );
   });
   it("accepts a variadic Math method as bare (Math.min) — one $min per element", () => {
-    expect(jsmql.expr("$.scores.map(Math.min)")).toEqual({ $map: { input: "$scores", as: "x", in: { $min: "$$x" } } });
+    expect(jsmql.expr("$.scores.map(Math.min)")).toEqual({
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $min: "$$x" } },
+    });
   });
   it("rejects bare Math reference used as a value", () => {
     expect(() => jsmql.expr("Math.floor")).toThrow(
@@ -4542,14 +4442,18 @@ describe("$let with lambda", () => {
 describe("block-body arrow lambdas (→ nested $let)", () => {
   it(".map() with a single-decl block", () => {
     expect(jsmql.expr("$.items.map(x => { const y = x * 2; return y; })")).toEqual({
-      $map: { input: "$items", as: "x", in: { $let: { vars: { y: { $multiply: ["$$x", 2] } }, in: "$$y" } } },
+      $map: {
+        input: { $ifNull: ["$items", []] },
+        as: "x",
+        in: { $let: { vars: { y: { $multiply: ["$$x", 2] } }, in: "$$y" } },
+      },
     });
   });
 
   it(".map() with sequential decls (b references a) → nested $let", () => {
     expect(jsmql.expr("$.items.map(x => { const a = x + 1; const b = a * 2; return b; })")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         in: {
           $let: {
@@ -4567,7 +4471,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     // binding that many times. Same boolean either way.
     expect(jsmql.expr("$.items.filter(x => { const ok = x.active; return ok; })")).toEqual({
       $filter: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         cond: {
           $let: {
@@ -4589,7 +4493,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   it(".reduce() body may be a block", () => {
     expect(jsmql.expr("$.nums.reduce((acc, n) => { const step = n + 1; return acc + step; }, 0)")).toEqual({
       $reduce: {
-        input: "$nums",
+        input: { $ifNull: ["$nums", []] },
         initialValue: 0,
         in: { $let: { vars: { step: { $add: ["$$this", 1] } }, in: { $add: ["$$value", "$$step"] } } },
       },
@@ -4598,14 +4502,14 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
   it("a block with no decls is just `{ return <expr>; }`", () => {
     expect(jsmql.expr("$.items.map(x => { return x.name; })")).toEqual({
-      $map: { input: "$items", as: "x", in: "$$x.name" },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: "$$x.name" },
     });
   });
 
   it("non-lowercase decl names are made $$-safe consistently (binding + reference)", () => {
     expect(jsmql.expr("$.items.map(x => { const _tmp = x * 2; return _tmp; })")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         in: { $let: { vars: { v__5ftmp: { $multiply: ["$$x", 2] } }, in: "$$v__5ftmp" } },
       },
@@ -4617,14 +4521,14 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
       jsmql.expr("$.rows.map(r => { const xs = r.vals.map(v => { const d = v * 2; return d; }); return xs; })"),
     ).toEqual({
       $map: {
-        input: "$rows",
+        input: { $ifNull: ["$rows", []] },
         as: "r",
         in: {
           $let: {
             vars: {
               xs: {
                 $map: {
-                  input: "$$r.vals",
+                  input: { $ifNull: ["$$r.vals", []] },
                   as: "v",
                   in: { $let: { vars: { d: { $multiply: ["$$v", 2] } }, in: "$$d" } },
                 },
@@ -4640,7 +4544,9 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   it("2-param block body composes with the (element,index) pair $let", () => {
     expect(jsmql.expr("$.items.map((x, i) => { const tagged = i; return tagged; })")).toEqual({
       $map: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: "$items" }] }, "$items"] } },
+        input: {
+          $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$items", []] } }] }, { $ifNull: ["$items", []] }] },
+        },
         as: "jsmqlPair",
         in: {
           $let: {
@@ -4670,14 +4576,13 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   // operand we meant. Verified against a live mongod.
   describe("jsmql wraps a literal-array receiver for single-array-argument operators", () => {
     const wrapped: [string, string, unknown][] = [
-      [".length", "[1, 2].length", 2],
       [".size()", "[1, 2].size()", 2],
       [".toReversed()", "[1, 2].toReversed()", [2, 1]],
       [".head()", "[1, 2].head()", 1],
       [".first()", "[1, 2].first()", 1],
       [".last()", "[1, 2].last()", 2],
       // A single-element literal is the sharper case: unwrapped it becomes a scalar.
-      ["1-element .length", "[1].length", 1],
+      ["1-element .size()", "[1].size()", 1],
       ["string elements", '["a", "b"].toReversed()', ["b", "a"]],
     ];
     for (const [label, src, expected] of wrapped) {
@@ -4689,9 +4594,9 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     it("leaves a non-literal receiver alone — the wrap is only for literals", () => {
       // A field path / $$var / operator document is already unambiguous, so adding
       // a level would change what the operator reads.
-      expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: "$items" });
+      expect(jsmql.expr("$.items.toReversed()")).toEqual({ $reverseArray: { $ifNull: ["$items", []] } });
       expect(jsmql.expr("$.items.map(a => a).toReversed()")).toEqual({
-        $reverseArray: { $map: { input: "$items", as: "a", in: "$$a" } },
+        $reverseArray: { $map: { input: { $ifNull: ["$items", []] }, as: "a", in: "$$a" } },
       });
     });
 
@@ -4736,46 +4641,40 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
       expect(jsmql.expr('[1, 2].join(",")')).toBe("1,2");
       // Unknown element type — literal-gating says do not guess.
       expect(jsmql.expr('$.items.join(",")')).toEqual({
-        $cond: {
-          if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-          then: null,
-          else: {
-            $ifNull: [
-              {
-                $reduce: {
-                  input: "$items",
-                  initialValue: null,
-                  in: {
+        $ifNull: [
+          {
+            $reduce: {
+              input: { $ifNull: ["$items", []] },
+              initialValue: null,
+              in: {
+                $cond: {
+                  if: { $eq: ["$$value", null] },
+                  then: {
                     $cond: {
-                      if: { $eq: ["$$value", null] },
-                      then: {
+                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                      then: "",
+                      else: { $toString: "$$this" },
+                    },
+                  },
+                  else: {
+                    $concat: [
+                      "$$value",
+                      ",",
+                      {
                         $cond: {
                           if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
                           then: "",
                           else: { $toString: "$$this" },
                         },
                       },
-                      else: {
-                        $concat: [
-                          "$$value",
-                          ",",
-                          {
-                            $cond: {
-                              if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                              then: "",
-                              else: { $toString: "$$this" },
-                            },
-                          },
-                        ],
-                      },
-                    },
+                    ],
                   },
                 },
               },
-              "",
-            ],
+            },
           },
-        },
+          "",
+        ],
       });
       expect(jsmql.expr('[[1, 2], [3]].flat().join(",")')).toBe("1,2,3");
     });
@@ -4844,7 +4743,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
         { $lookup: { from: "orders", pipeline: [{ $limit: 2 }], as: "r" } },
       ]);
       expect(jsmql.expr("$.items.map((d) => { const a = d.v; return a; })")).toEqual({
-        $map: { input: "$items", as: "d", in: { $let: { vars: { a: "$$d.v" }, in: "$$a" } } },
+        $map: { input: { $ifNull: ["$items", []] }, as: "d", in: { $let: { vars: { a: "$$d.v" }, in: "$$a" } } },
       });
     });
   });
@@ -4856,18 +4755,24 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
       "A block body must end with a `return <expr>` statement at position 19, got an identifier 'k'. Write `x => { const a = …; return <expr>; }`. Or write `function f(x) { return <expr>; }`. Or write `x => (<expr>)` to return an object or an expression directly.",
     );
     expect(jsmql.expr("$.items.map(x => ({ k: x }))")).toEqual({
-      $map: { input: "$items", as: "x", in: { k: "$$x" } },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { k: "$$x" } },
     });
   });
 });
 
 describe("immutable array methods", () => {
   it(".toSorted() with no comparator → ascending", () => {
-    expect(jsmql.expr("$.scores.toSorted()")).toEqual({ $sortArray: { input: "$scores", sortBy: 1 } });
+    expect(jsmql.expr("$.scores.toSorted()")).toEqual({
+      $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: 1 },
+    });
   });
   it(".toSorted((a, b) => a - b) sorts by the elements themselves", () => {
-    expect(jsmql.expr("$.scores.toSorted((a, b) => a - b)")).toEqual({ $sortArray: { input: "$scores", sortBy: 1 } });
-    expect(jsmql.expr("$.scores.toSorted((a, b) => b - a)")).toEqual({ $sortArray: { input: "$scores", sortBy: -1 } });
+    expect(jsmql.expr("$.scores.toSorted((a, b) => a - b)")).toEqual({
+      $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: 1 },
+    });
+    expect(jsmql.expr("$.scores.toSorted((a, b) => b - a)")).toEqual({
+      $sortArray: { input: { $ifNull: ["$scores", []] }, sortBy: -1 },
+    });
   });
   it(".toSorted() takes the whole element only as the whole body", () => {
     // a `||` joins KEYS, and an element that IS the key admits no tiebreaker
@@ -4880,7 +4785,7 @@ describe("immutable array methods", () => {
   });
   it(".toReversed() chainable with .map()", () => {
     expect(jsmql.expr("$.items.toReversed().map(x => x.name)")).toEqual({
-      $map: { input: { $reverseArray: "$items" }, as: "x", in: "$$x.name" },
+      $map: { input: { $reverseArray: { $ifNull: ["$items", []] } }, as: "x", in: "$$x.name" },
     });
   });
   it(".findLast(p) returns last matching element (predicate body wrapped in jsBool)", () => {
@@ -4888,7 +4793,7 @@ describe("immutable array methods", () => {
       $arrayElemAt: [
         {
           $filter: {
-            input: "$items",
+            input: { $ifNull: ["$items", []] },
             as: "x",
             cond: {
               $and: [
@@ -4906,15 +4811,48 @@ describe("immutable array methods", () => {
   });
   it(".findLastIndex(p) reduces (idx, el) pairs (predicate body wrapped in jsBool)", () => {
     expect(jsmql.expr("$.items.findLastIndex(x => x.active)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-        then: null,
-        else: {
-          $reduce: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$items" }] }, "$items"] } },
-            initialValue: -1,
-            in: {
-              $cond: [
+      $reduce: {
+        input: {
+          $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$items", []] } }] }, { $ifNull: ["$items", []] }] },
+        },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $let: {
+                vars: { x: { $arrayElemAt: ["$$this", 1] } },
+                in: {
+                  $and: [
+                    { $ne: [{ $ifNull: ["$$x.active", null] }, null] },
+                    { $ne: ["$$x.active", false] },
+                    { $ne: ["$$x.active", ""] },
+                    { $ne: ["$$x.active", 0] },
+                  ],
+                },
+              },
+            },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
+        },
+      },
+    });
+  });
+});
+
+describe("array method additions", () => {
+  it(".findIndex(p) returns the first matching index (zipped reduce with -1 guard)", () => {
+    expect(jsmql.expr("$.items.findIndex(x => x.active)")).toEqual({
+      $reduce: {
+        input: {
+          $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$items", []] } }] }, { $ifNull: ["$items", []] }] },
+        },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$$value", -1] },
                 {
                   $let: {
                     vars: { x: { $arrayElemAt: ["$$this", 1] } },
@@ -4928,52 +4866,11 @@ describe("immutable array methods", () => {
                     },
                   },
                 },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
               ],
             },
-          },
-        },
-      },
-    });
-  });
-});
-
-describe("array method additions", () => {
-  it(".findIndex(p) returns the first matching index (zipped reduce with -1 guard)", () => {
-    expect(jsmql.expr("$.items.findIndex(x => x.active)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-        then: null,
-        else: {
-          $reduce: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$items" }] }, "$items"] } },
-            initialValue: -1,
-            in: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$$value", -1] },
-                    {
-                      $let: {
-                        vars: { x: { $arrayElemAt: ["$$this", 1] } },
-                        in: {
-                          $and: [
-                            { $ne: [{ $ifNull: ["$$x.active", null] }, null] },
-                            { $ne: ["$$x.active", false] },
-                            { $ne: ["$$x.active", ""] },
-                            { $ne: ["$$x.active", 0] },
-                          ],
-                        },
-                      },
-                    },
-                  ],
-                },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
-              ],
-            },
-          },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
         },
       },
     });
@@ -4983,7 +4880,7 @@ describe("array method additions", () => {
     // test to make, and the answer stands on its own.
     expect(jsmql.expr("$.items.lastIndexOf(42)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$items" },
+        vars: { jsmqlArr: { $ifNull: ["$items", []] } },
         in: {
           $let: {
             vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 42] } },
@@ -5004,13 +4901,17 @@ describe("array method additions", () => {
   });
   it(".reduceRight(fn, init) reverses the input array", () => {
     expect(jsmql.expr("$.xs.reduceRight((acc, x) => acc + x, 0)")).toEqual({
-      $reduce: { input: { $reverseArray: "$xs" }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
+      $reduce: {
+        input: { $reverseArray: { $ifNull: ["$xs", []] } },
+        initialValue: 0,
+        in: { $add: ["$$value", "$$this"] },
+      },
     });
   });
   it(".toSpliced(s, dc, ...items) builds a 3-piece $concatArrays", () => {
     expect(jsmql.expr('$.xs.toSpliced(1, 2, "a", "b")')).toEqual({
       $let: {
-        vars: { jsmqlArr: "$xs" },
+        vars: { jsmqlArr: { $ifNull: ["$xs", []] } },
         in: {
           $let: {
             vars: { jsmqlStart: { $min: [1, { $size: "$$jsmqlArr" }] } },
@@ -5046,7 +4947,7 @@ describe("array method additions", () => {
   it(".toSpliced(s) with no deleteCount removes to end", () => {
     expect(jsmql.expr("$.xs.toSpliced(2)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$xs" },
+        vars: { jsmqlArr: { $ifNull: ["$xs", []] } },
         in: {
           $let: {
             vars: { jsmqlStart: { $min: [2, { $size: "$$jsmqlArr" }] } },
@@ -5082,7 +4983,7 @@ describe("array method additions", () => {
   it(".toSpliced counts a negative start from the end", () => {
     expect(jsmql.expr("$.xs.toSpliced(-1, 1)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$xs" },
+        vars: { jsmqlArr: { $ifNull: ["$xs", []] } },
         in: {
           $let: {
             vars: { jsmqlStart: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] } },
@@ -5123,7 +5024,7 @@ describe("array method additions", () => {
   it(".with(i, v) replaces an element by index", () => {
     expect(jsmql.expr("$.xs.with(1, 99)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$xs", jsmqlIdx: 1, jsmqlVal: 99 },
+        vars: { jsmqlArr: { $ifNull: ["$xs", []] }, jsmqlIdx: 1, jsmqlVal: 99 },
         in: {
           $concatArrays: [
             { $slice: ["$$jsmqlArr", "$$jsmqlIdx"] },
@@ -5157,7 +5058,7 @@ describe("array method additions", () => {
   it(".toString() on a known array lowers to join-with-comma", () => {
     expect(jsmql.expr("$.xs.map(x => x + 1).toString()")).toEqual({
       $let: {
-        vars: { jsmqlV: { $map: { input: "$xs", as: "x", in: { $add: ["$$x", 1] } } } },
+        vars: { jsmqlV: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $add: ["$$x", 1] } } } },
         in: {
           $cond: {
             if: { $isArray: "$$jsmqlV" },
@@ -5311,7 +5212,7 @@ describe("array callbacks support (element, index)", () => {
   it(".map((x, i) => …) zips over $range and wraps in $let", () => {
     expect(jsmql.expr("$.xs.map((x, i) => x + i)")).toEqual({
       $map: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] } },
         as: "jsmqlPair",
         in: {
           $let: {
@@ -5327,7 +5228,9 @@ describe("array callbacks support (element, index)", () => {
       $map: {
         input: {
           $filter: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+            input: {
+              $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] },
+            },
             as: "jsmqlPair",
             cond: {
               $let: {
@@ -5347,7 +5250,11 @@ describe("array callbacks support (element, index)", () => {
   // `$$v` resolves to the outer array's element.
   it("a paramless callback's synthetic `as` does not shadow an enclosing one", () => {
     expect(jsmql.expr("$.a.map(v => $.b.map(() => v))")).toEqual({
-      $map: { input: "$a", as: "v", in: { $map: { input: "$b", as: "jsmqlUnused", in: "$$v" } } },
+      $map: {
+        input: { $ifNull: ["$a", []] },
+        as: "v",
+        in: { $map: { input: { $ifNull: ["$b", []] }, as: "jsmqlUnused", in: "$$v" } },
+      },
     });
   });
   it(".find((x, i) => cond) wraps with double $arrayElemAt", () => {
@@ -5357,7 +5264,9 @@ describe("array callbacks support (element, index)", () => {
           $arrayElemAt: [
             {
               $filter: {
-                input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+                input: {
+                  $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] },
+                },
                 as: "jsmqlPair",
                 cond: {
                   $let: {
@@ -5376,20 +5285,14 @@ describe("array callbacks support (element, index)", () => {
   });
   it(".some((x, i) => cond) wraps the body in $let", () => {
     expect(jsmql.expr("$.xs.some((x, i) => i > 5)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$xs", null] }, null] },
-        then: null,
-        else: {
-          $anyElementTrue: {
-            $map: {
-              input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
-              as: "jsmqlPair",
-              in: {
-                $let: {
-                  vars: { x: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
-                  in: { $gt: ["$$i", 5] },
-                },
-              },
+      $anyElementTrue: {
+        $map: {
+          input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] } },
+          as: "jsmqlPair",
+          in: {
+            $let: {
+              vars: { x: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
+              in: { $gt: ["$$i", 5] },
             },
           },
         },
@@ -5398,36 +5301,30 @@ describe("array callbacks support (element, index)", () => {
   });
   it(".findIndex((x, i) => …) binds both params in $let.vars", () => {
     expect(jsmql.expr("$.xs.findIndex((x, i) => x === i)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$xs", null] }, null] },
-        then: null,
-        else: {
-          $reduce: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
-            initialValue: -1,
-            in: {
-              $cond: [
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] } },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$$value", -1] },
                 {
-                  $and: [
-                    { $eq: ["$$value", -1] },
-                    {
+                  $let: {
+                    vars: { jsmqlPair: "$$this" },
+                    in: {
                       $let: {
-                        vars: { jsmqlPair: "$$this" },
-                        in: {
-                          $let: {
-                            vars: { x: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
-                            in: { $eq: ["$$x", "$$i"] },
-                          },
-                        },
+                        vars: { x: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
+                        in: { $eq: ["$$x", "$$i"] },
                       },
                     },
-                  ],
+                  },
                 },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
               ],
             },
-          },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
         },
       },
     });
@@ -5437,54 +5334,14 @@ describe("array callbacks support (element, index)", () => {
   // ("'_' starts with an invalid character for a user variable name").
   it(".findIndex((_, i) => …) escapes the throwaway param to a server-valid name", () => {
     expect(jsmql.expr("$.xs.findIndex((_, i) => i > 2)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$xs", null] }, null] },
-        then: null,
-        else: {
-          $reduce: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
-            initialValue: -1,
-            in: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$$value", -1] },
-                    {
-                      $let: {
-                        vars: { jsmqlPair: "$$this" },
-                        in: {
-                          $let: {
-                            vars: {
-                              v__5f: { $arrayElemAt: ["$$jsmqlPair", 1] },
-                              i: { $arrayElemAt: ["$$jsmqlPair", 0] },
-                            },
-                            in: { $gt: ["$$i", 2] },
-                          },
-                        },
-                      },
-                    },
-                  ],
-                },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
-              ],
-            },
-          },
-        },
-      },
-    });
-  });
-  it(".findLastIndex((_, i) => …) escapes it too", () => {
-    expect(jsmql.expr("$.xs.findLastIndex((_, i) => i > 2)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$xs", null] }, null] },
-        then: null,
-        else: {
-          $reduce: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
-            initialValue: -1,
-            in: {
-              $cond: [
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] } },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$$value", -1] },
                 {
                   $let: {
                     vars: { jsmqlPair: "$$this" },
@@ -5496,11 +5353,36 @@ describe("array callbacks support (element, index)", () => {
                     },
                   },
                 },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
               ],
             },
-          },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
+        },
+      },
+    });
+  });
+  it(".findLastIndex((_, i) => …) escapes it too", () => {
+    expect(jsmql.expr("$.xs.findLastIndex((_, i) => i > 2)")).toEqual({
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] } },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $let: {
+                vars: { jsmqlPair: "$$this" },
+                in: {
+                  $let: {
+                    vars: { v__5f: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
+                    in: { $gt: ["$$i", 2] },
+                  },
+                },
+              },
+            },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
         },
       },
     });
@@ -5508,7 +5390,7 @@ describe("array callbacks support (element, index)", () => {
   it(".reduce((acc, x, i) => …, init) zips input and rebinds in $let", () => {
     expect(jsmql.expr("$.xs.reduce((acc, x, i) => acc + x * i, 0)")).toEqual({
       $reduce: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] } },
         initialValue: 0,
         in: {
           $let: {
@@ -5522,7 +5404,11 @@ describe("array callbacks support (element, index)", () => {
   it(".reduceRight((acc, x, i) => …, init) reverses the zipped pairs", () => {
     expect(jsmql.expr("$.xs.reduceRight((acc, x, i) => acc + i, 0)")).toEqual({
       $reduce: {
-        input: { $reverseArray: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } } },
+        input: {
+          $reverseArray: {
+            $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] },
+          },
+        },
         initialValue: 0,
         in: {
           $let: {
@@ -5533,74 +5419,55 @@ describe("array callbacks support (element, index)", () => {
       },
     });
   });
-  it(".map with a 3rd 'array' param: arr.length → $size; index unused → no $zip", () => {
+  it(".map with a 3rd 'array' param: arr.size() → $size; index unused → no $zip", () => {
     // `i` is only present positionally to reach `arr`, so the simple `$map` is
     // used (no $zip/$range); `arr` binds to the input through a thin $let.
-    expect(jsmql.expr("$.xs.map((x, i, arr) => arr.length)")).toEqual({
+    expect(jsmql.expr("$.xs.map((x, i, arr) => arr.size())")).toEqual({
       $map: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         as: "x",
-        in: {
-          $let: {
-            vars: { arr: "$xs" },
-            in: { $cond: { if: { $eq: [{ $ifNull: ["$$arr", null] }, null] }, then: null, else: { $size: "$$arr" } } },
-          },
-        },
+        in: { $let: { vars: { arr: { $ifNull: ["$xs", []] } }, in: { $size: "$$arr" } } },
       },
     });
   });
   it(".filter with a 3rd 'array' param: simple $filter, arr is the input", () => {
-    expect(jsmql.expr("$.xs.filter((x, i, arr) => arr.length > 0)")).toEqual({
+    expect(jsmql.expr("$.xs.filter((x, i, arr) => arr.size() > 0)")).toEqual({
       $filter: {
-        input: "$xs",
+        input: { $ifNull: ["$xs", []] },
         as: "x",
-        cond: {
-          $let: {
-            vars: { arr: "$xs" },
-            in: {
-              $gt: [
-                { $cond: { if: { $eq: [{ $ifNull: ["$$arr", null] }, null] }, then: null, else: { $size: "$$arr" } } },
-                0,
-              ],
-            },
-          },
-        },
+        cond: { $let: { vars: { arr: { $ifNull: ["$xs", []] } }, in: { $gt: [{ $size: "$$arr" }, 0] } } },
       },
     });
   });
   it("unused index → simple lowering (no $zip/$range)", () => {
-    expect(jsmql.expr("$.xs.map((x, i) => x)")).toEqual({ $map: { input: "$xs", as: "x", in: "$$x" } });
+    expect(jsmql.expr("$.xs.map((x, i) => x)")).toEqual({
+      $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: "$$x" },
+    });
   });
   it(".map with 4 params throws", () => {
     expect(() => jsmql.expr("$.xs.map((x, i, arr, extra) => x)")).toThrow(/at most 3 parameters/);
   });
   it(".findIndex accepts a third 'array' parameter", () => {
     expect(jsmql.expr("$.xs.findIndex((x, i, arr) => true)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$xs", null] }, null] },
-        then: null,
-        else: {
-          $reduce: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$xs" }] }, "$xs"] } },
-            initialValue: -1,
-            in: {
-              $cond: [
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$xs", []] } }] }, { $ifNull: ["$xs", []] }] } },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$$value", -1] },
                 {
-                  $and: [
-                    { $eq: ["$$value", -1] },
-                    {
-                      $let: {
-                        vars: { x: { $arrayElemAt: ["$$this", 1] } },
-                        in: { $let: { vars: { arr: "$xs" }, in: true } },
-                      },
-                    },
-                  ],
+                  $let: {
+                    vars: { x: { $arrayElemAt: ["$$this", 1] } },
+                    in: { $let: { vars: { arr: { $ifNull: ["$xs", []] } }, in: true } },
+                  },
                 },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
               ],
             },
-          },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
         },
       },
     });
@@ -5666,12 +5533,12 @@ describe("mutator DX shims (expression position rejects mutators)", () => {
 describe("toSorted / sort key function", () => {
   it(".toSorted(x => x.path) → ascending sortBy by that field", () => {
     expect(jsmql.expr("$.events.toSorted(e => e.distance)")).toEqual({
-      $sortArray: { input: "$events", sortBy: { distance: 1 } },
+      $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: 1 } },
     });
   });
   it(".toSorted(x => -x.path) → descending sortBy", () => {
     expect(jsmql.expr("$.events.toSorted(e => -e.distance)")).toEqual({
-      $sortArray: { input: "$events", sortBy: { distance: -1 } },
+      $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: -1 } },
     });
   });
   it("a computed key under a minus is the key with the direction flipped — never the negated key sorted descending", () => {
@@ -5679,7 +5546,10 @@ describe("toSorted / sort key function", () => {
     expect(jsmql.expr("$.nums.sortBy(x => -x)")).toEqual({
       $map: {
         input: {
-          $sortArray: { input: { $map: { input: "$nums", as: "x", in: { k: "$$x", v: "$$x" } } }, sortBy: { k: -1 } },
+          $sortArray: {
+            input: { $map: { input: { $ifNull: ["$nums", []] }, as: "x", in: { k: "$$x", v: "$$x" } } },
+            sortBy: { k: -1 },
+          },
         },
         as: "jsmqlP",
         in: "$$jsmqlP.v",
@@ -5692,7 +5562,11 @@ describe("toSorted / sort key function", () => {
             input: {
               $map: {
                 input: {
-                  $map: { input: { $objectToArray: "$tally" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+                  $map: {
+                    input: { $objectToArray: { $ifNull: ["$tally", {}] } },
+                    as: "jsmqlKv",
+                    in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
+                  },
                 },
                 as: "e",
                 in: { k: { $arrayElemAt: ["$$e", 1] }, v: "$$e" },
@@ -5708,26 +5582,17 @@ describe("toSorted / sort key function", () => {
   });
   it(".toSorted with nested key path", () => {
     expect(jsmql.expr("$.events.toSorted(e => e.user.name)")).toEqual({
-      $sortArray: { input: "$events", sortBy: { "user.name": 1 } },
+      $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { "user.name": 1 } },
     });
   });
   it(".toSorted(keyFn) chains with .slice(-10) (the README example)", () => {
     expect(jsmql.expr("$.events.toSorted(e => e.distance).slice(-10)")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $slice: ["$$jsmqlRecv", -10] },
-          },
-        },
-      },
+      $slice: [{ $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: 1 } } }, -10],
     });
   });
   it("a 2-param comparator lambda sorts by the field it subtracts", () => {
     expect(jsmql.expr("$.events.toSorted((a, b) => a.x - b.x)")).toEqual({
-      $sortArray: { input: "$events", sortBy: { x: 1 } },
+      $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { x: 1 } },
     });
   });
   it("a computed key-function body sorts by the computed key", () => {
@@ -5735,7 +5600,9 @@ describe("toSorted / sort key function", () => {
       $map: {
         input: {
           $sortArray: {
-            input: { $map: { input: "$events", as: "e", in: { k: { $add: ["$$e.x", "$$e.y"] }, v: "$$e" } } },
+            input: {
+              $map: { input: { $ifNull: ["$events", []] }, as: "e", in: { k: { $add: ["$$e.x", "$$e.y"] }, v: "$$e" } },
+            },
             sortBy: { k: 1 },
           },
         },
@@ -5748,7 +5615,10 @@ describe("toSorted / sort key function", () => {
     expect(jsmql.expr("$.events.toSorted(e => e)")).toEqual({
       $map: {
         input: {
-          $sortArray: { input: { $map: { input: "$events", as: "e", in: { k: "$$e", v: "$$e" } } }, sortBy: { k: 1 } },
+          $sortArray: {
+            input: { $map: { input: { $ifNull: ["$events", []] }, as: "e", in: { k: "$$e", v: "$$e" } } },
+            sortBy: { k: 1 },
+          },
         },
         as: "jsmqlP",
         in: "$$jsmqlP.v",
@@ -5758,20 +5628,20 @@ describe("toSorted / sort key function", () => {
 
   it('.toSorted("field") → ascending sortBy by that field', () => {
     expect(jsmql.expr('$.events.toSorted("distance")')).toEqual({
-      $sortArray: { input: "$events", sortBy: { distance: 1 } },
+      $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: 1 } },
     });
   });
   it('.toSorted({ field: 1 | -1 | "asc" | "desc" }) → directed sortBy', () => {
     expect(jsmql.expr("$.events.toSorted({ distance: -1 })")).toEqual({
-      $sortArray: { input: "$events", sortBy: { distance: -1 } },
+      $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: -1 } },
     });
     expect(jsmql.expr('$.events.toSorted({ a: "asc", b: "desc" })')).toEqual({
-      $sortArray: { input: "$events", sortBy: { a: 1, b: -1 } },
+      $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { a: 1, b: -1 } },
     });
   });
   it(".toSorted([fields]) → multi-key ascending sortBy", () => {
     expect(jsmql.expr('$.events.toSorted(["a", "b"])')).toEqual({
-      $sortArray: { input: "$events", sortBy: { a: 1, b: 1 } },
+      $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { a: 1, b: 1 } },
     });
   });
   it("rejects .toSorted with a bad direction, or a $-prefixed field", () => {
@@ -5797,7 +5667,7 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
   it(".pick([keys]) → object select ($getField; missing keys drop out)", () => {
     expect(jsmql.expr('$.o.pick(["a", "b"])')).toEqual({
       $let: {
-        vars: { jsmqlObj: "$o" },
+        vars: { jsmqlObj: { $ifNull: ["$o", {}] } },
         in: {
           a: { $getField: { field: "a", input: "$$jsmqlObj" } },
           b: { $getField: { field: "b", input: "$$jsmqlObj" } },
@@ -5824,7 +5694,7 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.p.fromPairs()")).toEqual({
       $arrayToObject: {
         $map: {
-          input: "$p",
+          input: { $ifNull: ["$p", []] },
           as: "jsmqlP",
           in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
         },
@@ -5876,27 +5746,31 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
 
 describe("lodash array methods (per-doc value vocabulary)", () => {
   it(".sum()/.mean()/.max()/.min() → $sum/$avg/$max/$min of the array", () => {
-    expect(jsmql.expr("$.a.sum()")).toEqual({ $sum: "$a" });
-    expect(jsmql.expr("$.a.mean()")).toEqual({ $avg: "$a" });
-    expect(jsmql.expr("$.a.max()")).toEqual({ $max: "$a" });
-    expect(jsmql.expr("$.a.min()")).toEqual({ $min: "$a" });
+    expect(jsmql.expr("$.a.sum()")).toEqual({ $sum: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr("$.a.mean()")).toEqual({ $avg: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr("$.a.max()")).toEqual({ $max: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr("$.a.min()")).toEqual({ $min: { $ifNull: ["$a", []] } });
   });
   it(".sumBy(iteratee) accepts a field string or an arrow", () => {
-    expect(jsmql.expr('$.a.sumBy("x")')).toEqual({ $sum: { $map: { input: "$a", as: "x", in: "$$x.x" } } });
-    expect(jsmql.expr("$.a.sumBy(o => o.x)")).toEqual({ $sum: { $map: { input: "$a", as: "o", in: "$$o.x" } } });
+    expect(jsmql.expr('$.a.sumBy("x")')).toEqual({
+      $sum: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x.x" } },
+    });
+    expect(jsmql.expr("$.a.sumBy(o => o.x)")).toEqual({
+      $sum: { $map: { input: { $ifNull: ["$a", []] }, as: "o", in: "$$o.x" } },
+    });
   });
   it(".uniq() → $setUnion (dedupe; MongoDB does not define the order)", () => {
     // `$setUnion` of one array IS dedupe. lodash preserves input order and this does
     // not — but nobody writes an ordering when they write `.uniq()`, so MongoDB's
     // behaviour wins (SR2). Same set, verified on a live mongod.
-    expect(jsmql.expr("$.tags.uniq()")).toEqual({ $setUnion: "$tags" });
+    expect(jsmql.expr("$.tags.uniq()")).toEqual({ $setUnion: { $ifNull: ["$tags", []] } });
   });
   it(".compact() → $filter by JS truthiness (same rule as `.filter(x => x)`)", () => {
     // `_.compact(["a", null, 0, "", false])` → `["a"]`: "" is dropped, so the
     // cond must be the jsBool wrap, not raw MQL truthiness (which keeps "").
     expect(jsmql.expr("$.a.compact()")).toEqual({
       $filter: {
-        input: "$a",
+        input: { $ifNull: ["$a", []] },
         as: "jsmqlItem",
         cond: {
           $and: [
@@ -5914,7 +5788,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
       $map: {
         input: { $range: [0, { $size: { $ifNull: ["$a", []] } }, 2] },
         as: "jsmqlI",
-        in: { $slice: ["$a", "$$jsmqlI", 2] },
+        in: { $slice: [{ $ifNull: ["$a", []] }, "$$jsmqlI", 2] },
       },
     });
     expect(() => jsmql.expr("$.a.chunk(0)")).toThrow(
@@ -5925,17 +5799,25 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     // lodash documents `.intersection` as returning UNIQUE values. A `$filter` would
     // keep duplicates from the receiver, matching neither lodash nor MongoDB, so
     // `$setIntersection` is what holds the documented contract — only order differs.
-    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({ $setIntersection: ["$a", "$b"] });
+    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({ $setIntersection: [{ $ifNull: ["$a", []] }, "$b"] });
     // `.difference` is NOT `$setDifference`: lodash keeps the receiver's duplicates, and
     // dropping them would change the SET rather than the order.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
-      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } },
+      $filter: {
+        input: { $ifNull: ["$a", []] },
+        as: "jsmqlItem",
+        cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
+      },
     });
   });
   it(".keyBy(iteratee) → $arrayToObject (last wins, key stringified)", () => {
     expect(jsmql.expr('$.a.keyBy("id")')).toEqual({
       $arrayToObject: {
-        $map: { input: "$a", as: "x", in: { k: { $ifNull: [{ $toString: "$$x.id" }, "null"] }, v: "$$x" } },
+        $map: {
+          input: { $ifNull: ["$a", []] },
+          as: "x",
+          in: { k: { $ifNull: [{ $toString: "$$x.id" }, "null"] }, v: "$$x" },
+        },
       },
     });
   });
@@ -5946,7 +5828,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.a.partition(o => o.ok)")).toEqual([
       {
         $filter: {
-          input: "$a",
+          input: { $ifNull: ["$a", []] },
           as: "o",
           cond: {
             $and: [
@@ -5960,7 +5842,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
       },
       {
         $filter: {
-          input: "$a",
+          input: { $ifNull: ["$a", []] },
           as: "o",
           cond: {
             $not: [
@@ -5979,12 +5861,12 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     ]);
     // A provably-boolean predicate elides the wrap — no `$not` of an `$and` of `$ne`s.
     expect(jsmql.expr("$.a.reject(o => o.n > 1)")).toEqual({
-      $filter: { input: "$a", as: "o", cond: { $not: [{ $gt: ["$$o.n", 1] }] } },
+      $filter: { input: { $ifNull: ["$a", []] }, as: "o", cond: { $not: [{ $gt: ["$$o.n", 1] }] } },
     });
     // A single-key matches shorthand lowers to a bare `$eq` (the arrow-equivalent),
     // not an `$and`-wrapped one — same shape a hand-written `o => o.ok === true` gives.
     expect(jsmql.expr("$.a.reject({ ok: true })")).toEqual({
-      $filter: { input: "$a", as: "x", cond: { $not: [{ $eq: ["$$x.ok", true] }] } },
+      $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $not: [{ $eq: ["$$x.ok", true] }] } },
     });
   });
   it("uniqBy/maxBy/zipObject/union emit their (verified) shapes", () => {
@@ -5993,7 +5875,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
         field: "out",
         input: {
           $reduce: {
-            input: "$a",
+            input: { $ifNull: ["$a", []] },
             initialValue: { seen: [], out: [] },
             in: {
               $let: {
@@ -6018,19 +5900,25 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
       $let: {
         vars: {
           jsmqlSorted: {
-            $sortArray: { input: { $map: { input: "$a", as: "x", in: { k: "$$x.x", v: "$$x" } } }, sortBy: { k: -1 } },
+            $sortArray: {
+              input: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { k: "$$x.x", v: "$$x" } } },
+              sortBy: { k: -1 },
+            },
           },
         },
         in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", 0] } } },
       },
     });
-    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, "$b"] });
     expect(jsmql.expr("$.a.zipObject($.b)")).toEqual({
       $arrayToObject: {
         $map: {
           input: { $range: [0, { $size: { $ifNull: ["$a", []] } }] },
           as: "jsmqlI",
-          in: { k: { $toString: { $arrayElemAt: ["$a", "$$jsmqlI"] } }, v: { $arrayElemAt: ["$b", "$$jsmqlI"] } },
+          in: {
+            k: { $toString: { $arrayElemAt: [{ $ifNull: ["$a", []] }, "$$jsmqlI"] } },
+            v: { $arrayElemAt: ["$b", "$$jsmqlI"] },
+          },
         },
       },
     });
@@ -6041,26 +5929,29 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     const key = { $ifNull: [{ $toString: "$$x.t" }, "null"] };
     // keyBy: key built directly on each element.
     expect(jsmql.expr('$.a.keyBy("t")')).toEqual({
-      $arrayToObject: { $map: { input: "$a", as: "x", in: { k: key, v: "$$x" } } },
+      $arrayToObject: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { k: key, v: "$$x" } } },
     });
     // groupBy/countBy: the distinct-key set uses the same wrap.
     expect(jsmql.expr('$.a.groupBy("t")')).toEqual({
       $arrayToObject: {
         $map: {
-          input: { $setUnion: [{ $map: { input: "$a", as: "x", in: key } }, []] },
+          input: { $setUnion: [{ $map: { input: { $ifNull: ["$a", []] }, as: "x", in: key } }, []] },
           as: "jsmqlKey",
-          in: { k: "$$jsmqlKey", v: { $filter: { input: "$a", as: "x", cond: { $eq: [key, "$$jsmqlKey"] } } } },
+          in: {
+            k: "$$jsmqlKey",
+            v: { $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $eq: [key, "$$jsmqlKey"] } } },
+          },
         },
       },
     });
     expect(jsmql.expr('$.a.countBy("t")')).toEqual({
       $arrayToObject: {
         $map: {
-          input: { $setUnion: [{ $map: { input: "$a", as: "x", in: key } }, []] },
+          input: { $setUnion: [{ $map: { input: { $ifNull: ["$a", []] }, as: "x", in: key } }, []] },
           as: "jsmqlKey",
           in: {
             k: "$$jsmqlKey",
-            v: { $size: { $filter: { input: "$a", as: "x", cond: { $eq: [key, "$$jsmqlKey"] } } } },
+            v: { $size: { $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $eq: [key, "$$jsmqlKey"] } } } },
           },
         },
       },
@@ -6073,7 +5964,11 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     // The identity iteratee keys straight off the element ($$x), not a field.
     expect(jsmql.expr("$.a.keyBy()")).toEqual({
       $arrayToObject: {
-        $map: { input: "$a", as: "x", in: { k: { $ifNull: [{ $toString: "$$x" }, "null"] }, v: "$$x" } },
+        $map: {
+          input: { $ifNull: ["$a", []] },
+          as: "x",
+          in: { k: { $ifNull: [{ $toString: "$$x" }, "null"] }, v: "$$x" },
+        },
       },
     });
     // countBy/groupBy dedupe the identity keys, then size / bucket per key.
@@ -6081,7 +5976,10 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
       $arrayToObject: {
         $map: {
           input: {
-            $setUnion: [{ $map: { input: "$a", as: "x", in: { $ifNull: [{ $toString: "$$x" }, "null"] } } }, []],
+            $setUnion: [
+              { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $ifNull: [{ $toString: "$$x" }, "null"] } } },
+              [],
+            ],
           },
           as: "jsmqlKey",
           in: {
@@ -6089,7 +5987,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
             v: {
               $size: {
                 $filter: {
-                  input: "$a",
+                  input: { $ifNull: ["$a", []] },
                   as: "x",
                   cond: { $eq: [{ $ifNull: [{ $toString: "$$x" }, "null"] }, "$$jsmqlKey"] },
                 },
@@ -6103,14 +6001,17 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
       $arrayToObject: {
         $map: {
           input: {
-            $setUnion: [{ $map: { input: "$a", as: "x", in: { $ifNull: [{ $toString: "$$x" }, "null"] } } }, []],
+            $setUnion: [
+              { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $ifNull: [{ $toString: "$$x" }, "null"] } } },
+              [],
+            ],
           },
           as: "jsmqlKey",
           in: {
             k: "$$jsmqlKey",
             v: {
               $filter: {
-                input: "$a",
+                input: { $ifNull: ["$a", []] },
                 as: "x",
                 cond: { $eq: [{ $ifNull: [{ $toString: "$$x" }, "null"] }, "$$jsmqlKey"] },
               },
@@ -6169,23 +6070,17 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       $let: {
         vars: {
           jsmqlV: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-              then: null,
-              else: {
-                $allElementsTrue: {
-                  $map: {
-                    input: "$items",
-                    as: "x",
-                    in: {
-                      $and: [
-                        { $ne: [{ $ifNull: ["$$x.ok", null] }, null] },
-                        { $ne: ["$$x.ok", false] },
-                        { $ne: ["$$x.ok", ""] },
-                        { $ne: ["$$x.ok", 0] },
-                      ],
-                    },
-                  },
+            $allElementsTrue: {
+              $map: {
+                input: { $ifNull: ["$items", []] },
+                as: "x",
+                in: {
+                  $and: [
+                    { $ne: [{ $ifNull: ["$$x.ok", null] }, null] },
+                    { $ne: ["$$x.ok", false] },
+                    { $ne: ["$$x.ok", ""] },
+                    { $ne: ["$$x.ok", 0] },
+                  ],
                 },
               },
             },
@@ -6255,40 +6150,32 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       "'.map()' is not available on a 'number' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql.expr('$.items.countBy("t").take(3)')).toThrow(
-      "'.take()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
+      "'.take()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
     );
     expect(() => jsmql.expr('$.items.countBy("t").map(v => v)')).toThrow(
-      "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
+      "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
     );
   });
   it("still EMITS for uncertain receivers (element / dual / field / operator) — no false rejection", () => {
     // .find()/.at() on an ordinary array return an element of UNKNOWN type (could be
     // an array) — must not throw.
-    expect(jsmql.expr("$.matrix.find(r => r.length > 0).map(x => x)")).toEqual({
+    expect(jsmql.expr("$.matrix.find(r => r.size() > 0).map(x => x)")).toEqual({
       $map: {
         input: {
-          $arrayElemAt: [
+          $ifNull: [
             {
-              $filter: {
-                input: "$matrix",
-                as: "r",
-                cond: {
-                  $gt: [
-                    {
-                      $switch: {
-                        branches: [
-                          { case: { $in: [{ $type: "$$r" }, ["array"]] }, then: { $size: "$$r" } },
-                          { case: { $in: [{ $type: "$$r" }, ["string"]] }, then: { $strLenCP: "$$r" } },
-                        ],
-                        default: null,
-                      },
-                    },
-                    0,
-                  ],
+              $arrayElemAt: [
+                {
+                  $filter: {
+                    input: { $ifNull: ["$matrix", []] },
+                    as: "r",
+                    cond: { $gt: [{ $size: { $ifNull: ["$$r", []] } }, 0] },
+                  },
                 },
-              },
+                0,
+              ],
             },
-            0,
+            [],
           ],
         },
         as: "x",
@@ -6297,17 +6184,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
     expect(jsmql.expr("$.items.at(0).toLowerCase()")).toEqual({
       $let: {
-        vars: {
-          jsmqlRecv: {
-            $switch: {
-              branches: [
-                { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $substrCP: ["$items", 0, 1] } },
-                { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $arrayElemAt: ["$items", 0] } },
-              ],
-              default: null,
-            },
-          },
-        },
+        vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: ["$items", []] }, 0] } },
         in: {
           $cond: {
             if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
@@ -6327,7 +6204,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
     expect(jsmql.expr("$.items.map(x => x).filter(y => y)")).toEqual({
       $filter: {
-        input: { $map: { input: "$items", as: "x", in: "$$x" } },
+        input: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: "$$x" } },
         as: "y",
         cond: {
           $and: [
@@ -6344,34 +6221,35 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         $map: {
           input: {
             $objectToArray: {
-              $ifNull: [
-                {
-                  $arrayToObject: {
-                    $map: {
-                      input: {
-                        $setUnion: [
-                          { $map: { input: "$items", as: "x", in: { $ifNull: [{ $toString: "$$x.t" }, "null"] } } },
-                          [],
-                        ],
+              $arrayToObject: {
+                $map: {
+                  input: {
+                    $setUnion: [
+                      {
+                        $map: {
+                          input: { $ifNull: ["$items", []] },
+                          as: "x",
+                          in: { $ifNull: [{ $toString: "$$x.t" }, "null"] },
+                        },
                       },
-                      as: "jsmqlKey",
-                      in: {
-                        k: "$$jsmqlKey",
-                        v: {
-                          $size: {
-                            $filter: {
-                              input: "$items",
-                              as: "x",
-                              cond: { $eq: [{ $ifNull: [{ $toString: "$$x.t" }, "null"] }, "$$jsmqlKey"] },
-                            },
-                          },
+                      [],
+                    ],
+                  },
+                  as: "jsmqlKey",
+                  in: {
+                    k: "$$jsmqlKey",
+                    v: {
+                      $size: {
+                        $filter: {
+                          input: { $ifNull: ["$items", []] },
+                          as: "x",
+                          cond: { $eq: [{ $ifNull: [{ $toString: "$$x.t" }, "null"] }, "$$jsmqlKey"] },
                         },
                       },
                     },
                   },
                 },
-                {},
-              ],
+              },
             },
           },
           as: "jsmqlKv",
@@ -6379,7 +6257,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         },
       },
     });
-    // Dual methods (.slice/.includes) are never gated.
+    // A string method on a proven string compiles.
     expect(jsmql.expr('$.name.toUpperCase().includes("A")')).toEqual({
       $let: {
         vars: {
@@ -6516,27 +6394,19 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       "'.map()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
   });
-  it("rejects a wrong-family method after .length, whose type is invariant", () => {
-    expect(() => jsmql.expr("$.s.length.map(x => x)")).toThrow(
+  it("rejects a wrong-family method after .length() or .size(), whose type is invariant", () => {
+    expect(() => jsmql.expr("$.s.length().map(x => x)")).toThrow(
       "'.map()' is not available on a 'number' — it is defined on 'array', 'stream'.",
     );
-    expect(() => jsmql.expr("$.items.length.trim()")).toThrow(
+    expect(() => jsmql.expr("$.items.size().trim()")).toThrow(
       "'.trim()' is not available on a 'number' — it is defined on 'string'. Render the number as a string first: '.toString()'.",
     );
     // Number methods on it still compile.
-    expect(jsmql.expr("$.s.length.clamp(0, 10)")).toEqual({
+    expect(jsmql.expr("$.s.length().clamp(0, 10)")).toEqual({
       $min: [
         {
           $max: [
-            {
-              $switch: {
-                branches: [
-                  { case: { $in: [{ $type: "$s" }, ["array"]] }, then: { $size: "$s" } },
-                  { case: { $in: [{ $type: "$s" }, ["string"]] }, then: { $strLenCP: "$s" } },
-                ],
-                default: null,
-              },
-            },
+            { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } } },
             0,
           ],
         },
@@ -6557,21 +6427,26 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr("$.o.pickBy(v => v > 1).toISOString()")).toThrow(
       "'.toISOString()' is not available on an 'object' — it is defined on 'date'.",
     );
-    // an object method, a field read and a size still compile
+    // an object method, a field read and a key count still compile
     const picked = {
-      $let: { vars: { jsmqlObj: "$o" }, in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } } },
+      $let: {
+        vars: { jsmqlObj: { $ifNull: ["$o", {}] } },
+        in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } },
+      },
     };
     expect(jsmql.expr('$.o.pick(["a"]).mapValues(v => v)')).toEqual({
       $arrayToObject: {
         $map: {
-          input: { $objectToArray: { $ifNull: [picked, {}] } },
+          input: { $objectToArray: picked },
           as: "jsmqlKv",
           in: { k: "$$jsmqlKv.k", v: { $let: { vars: { v: "$$jsmqlKv.v" }, in: "$$v" } } },
         },
       },
     });
     expect(jsmql.expr('$.o.pick(["a"]).a')).toEqual({ $getField: { field: "a", input: picked } });
-    expect(jsmql.expr('$.o.pick(["a"]).size()')).toEqual({ $size: { $objectToArray: { $ifNull: [picked, {}] } } });
+    expect(jsmql.expr('$.o.pick(["a"]).keys().size()')).toEqual({
+      $size: { $map: { input: { $objectToArray: picked }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+    });
   });
   it("an HR1 $-string receiver stays uncertain — it IS a field reference", () => {
     // A source `"$items"` is the field ref $items, a runtime value of any type,
@@ -6592,7 +6467,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       "'.toUpperCase()' is not available on a 'date' — it is defined on 'string'. Render the date as a string first: '.format(\"%Y-%m-%d\")' or '.toISOString()'.",
     );
     expect(() => jsmql.expr("$dateToParts($.t).map(x => x)")).toThrow(
-      "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
+      "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
     );
   });
   it("leaves an operator whose return type depends on its arguments uncertain", () => {
@@ -6605,10 +6480,12 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       $dateAdd: { startDate: { $subtract: ["$a", "$b"] }, unit: "day", amount: 1 },
     });
     expect(jsmql.expr("$ifNull($.a, $.b).trim()")).toEqual({ $trim: { input: { $ifNull: ["$a", "$b"] } } });
-    expect(jsmql.expr("$max($.a).map(x => x)")).toEqual({ $map: { input: { $max: "$a" }, as: "x", in: "$$x" } });
+    expect(jsmql.expr("$max($.a).map(x => x)")).toEqual({
+      $map: { input: { $ifNull: [{ $max: "$a" }, []] }, as: "x", in: "$$x" },
+    });
     expect(jsmql.expr("$first($.a).trim()")).toEqual({ $trim: { input: { $first: "$a" } } });
     expect(jsmql.expr("$cond($.c, $.a, $.b).map(x => x)")).toEqual({
-      $map: { input: { $cond: { if: "$c", then: "$a", else: "$b" } }, as: "x", in: "$$x" },
+      $map: { input: { $ifNull: [{ $cond: { if: "$c", then: "$a", else: "$b" } }, []] }, as: "x", in: "$$x" },
     });
   });
   it("compatible operator chains still compile", () => {
@@ -6617,7 +6494,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
     expect(jsmql.expr("$concat($.a, $.b).trim()")).toEqual({ $trim: { input: { $concat: ["$a", "$b"] } } });
     expect(jsmql.expr('$split($.s, ",").map(x => x)')).toEqual({
-      $map: { input: { $split: ["$s", ","] }, as: "x", in: "$$x" },
+      $map: { input: { $ifNull: [{ $split: ["$s", ","] }, []] }, as: "x", in: "$$x" },
     });
     expect(jsmql.expr("$year($.t).clamp(0, 5)")).toEqual({ $min: [{ $max: [{ $year: "$t" }, 0] }, 5] });
     expect(jsmql.expr("$dateToParts($.t).mapValues(v => v)")).toEqual({
@@ -6660,32 +6537,26 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
     // …and every one of them still compiles on a real array.
     expect(jsmql.expr("$.a.findIndex(x => x > 1)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$a", null] }, null] },
-        then: null,
-        else: {
-          $reduce: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$a" }] }, "$a"] } },
-            initialValue: -1,
-            in: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$$value", -1] },
-                    { $let: { vars: { x: { $arrayElemAt: ["$$this", 1] } }, in: { $gt: ["$$x", 1] } } },
-                  ],
-                },
-                { $arrayElemAt: ["$$this", 0] },
-                "$$value",
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$a", []] } }] }, { $ifNull: ["$a", []] }] } },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$$value", -1] },
+                { $let: { vars: { x: { $arrayElemAt: ["$$this", 1] } }, in: { $gt: ["$$x", 1] } } },
               ],
             },
-          },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
         },
       },
     });
     expect(jsmql.expr("$.a.toSpliced(0, 1)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$a" },
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
         in: {
           $let: {
             vars: { jsmqlStart: 0 },
@@ -6719,7 +6590,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
     expect(jsmql.expr("$.a.with(0, 9)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$a", jsmqlIdx: 0, jsmqlVal: 9 },
+        vars: { jsmqlArr: { $ifNull: ["$a", []] }, jsmqlIdx: 0, jsmqlVal: 9 },
         in: {
           $concatArrays: [
             { $slice: ["$$jsmqlArr", "$$jsmqlIdx"] },
@@ -6742,13 +6613,17 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       },
     });
     expect(jsmql.expr("$.a.reduceRight((acc, x) => acc, 0)")).toEqual({
-      $reduce: { input: { $reverseArray: "$a" }, initialValue: 0, in: "$$value" },
+      $reduce: { input: { $reverseArray: { $ifNull: ["$a", []] } }, initialValue: 0, in: "$$value" },
     });
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
-      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } },
+      $filter: {
+        input: { $ifNull: ["$a", []] },
+        as: "jsmqlItem",
+        cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
+      },
     });
-    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({ $setIntersection: ["$a", "$b"] });
-    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({ $setIntersection: [{ $ifNull: ["$a", []] }, "$b"] });
+    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, "$b"] });
   });
   it("the type error beats the mutator shim when the receiver is a known non-array", () => {
     // "use '.toSorted()'" is the wrong advice for a string, so the family
@@ -6793,12 +6668,14 @@ describe("lodash iteratee / predicate shorthands (uniform across higher-order me
   // `.sumBy`/`.uniqBy`/`.reject`/… — accepts the same shorthand vocabulary, each
   // desugaring to exactly what the equivalent one-parameter arrow would emit.
   it("property string on .map is a pluck; on a predicate it is a truthy test", () => {
-    expect(jsmql.expr('$.a.map("name")')).toEqual({ $map: { input: "$a", as: "x", in: "$$x.name" } });
+    expect(jsmql.expr('$.a.map("name")')).toEqual({
+      $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x.name" },
+    });
     // Predicate context applies JS truthiness (the same cond `.filter(x => x.active)`
     // emits — modulo the internal element-var name).
     expect(jsmql.expr('$.a.filter("active")')).toEqual({
       $filter: {
-        input: "$a",
+        input: { $ifNull: ["$a", []] },
         as: "x",
         cond: {
           $and: [
@@ -6812,15 +6689,17 @@ describe("lodash iteratee / predicate shorthands (uniform across higher-order me
     });
   });
   it("nested property paths work in the shorthand ('a.b.c')", () => {
-    expect(jsmql.expr('$.a.map("addr.city")')).toEqual({ $map: { input: "$a", as: "x", in: "$$x.addr.city" } });
+    expect(jsmql.expr('$.a.map("addr.city")')).toEqual({
+      $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x.addr.city" },
+    });
   });
   it("matches-object shorthand → $eq per key (single key bare, multiple $and-joined)", () => {
     expect(jsmql.expr("$.a.filter({ ok: true })")).toEqual({
-      $filter: { input: "$a", as: "x", cond: { $eq: ["$$x.ok", true] } },
+      $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $eq: ["$$x.ok", true] } },
     });
     expect(jsmql.expr('$.a.filter({ role: "admin", active: true })')).toEqual({
       $filter: {
-        input: "$a",
+        input: { $ifNull: ["$a", []] },
         as: "x",
         cond: { $and: [{ $eq: ["$$x.role", "admin"] }, { $eq: ["$$x.active", true] }] },
       },
@@ -6828,20 +6707,21 @@ describe("lodash iteratee / predicate shorthands (uniform across higher-order me
   });
   it("matchesProperty pair shorthand ['path', value] → a single $eq (nested path ok)", () => {
     expect(jsmql.expr('$.a.find(["status.code", 200])')).toEqual({
-      $arrayElemAt: [{ $filter: { input: "$a", as: "x", cond: { $eq: ["$$x.status.code", 200] } } }, 0],
+      $arrayElemAt: [
+        { $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $eq: ["$$x.status.code", 200] } } },
+        0,
+      ],
     });
   });
   it("shorthands reach the lodash iteratee/predicate methods too (.sumBy / .reject / .some)", () => {
-    expect(jsmql.expr('$.a.sumBy("price")')).toEqual({ $sum: { $map: { input: "$a", as: "x", in: "$$x.price" } } });
+    expect(jsmql.expr('$.a.sumBy("price")')).toEqual({
+      $sum: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x.price" } },
+    });
     expect(jsmql.expr("$.a.reject({ ok: true })")).toEqual({
-      $filter: { input: "$a", as: "x", cond: { $not: [{ $eq: ["$$x.ok", true] }] } },
+      $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $not: [{ $eq: ["$$x.ok", true] }] } },
     });
     expect(jsmql.expr("$.a.some({ ok: true })")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$a", null] }, null] },
-        then: null,
-        else: { $anyElementTrue: { $map: { input: "$a", as: "x", in: { $eq: ["$$x.ok", true] } } } },
-      },
+      $anyElementTrue: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $eq: ["$$x.ok", true] } } },
     });
   });
   it("rejects a bad matchesProperty shape, with a shape hint", () => {
@@ -6853,88 +6733,69 @@ describe("lodash iteratee / predicate shorthands (uniform across higher-order me
 
 describe("lodash positional / slicing methods (per-doc value vocabulary)", () => {
   it(".take([n=1]) / .takeRight([n=1]) → $slice (first / last n)", () => {
-    expect(jsmql.expr("$.a.take(2)")).toEqual({ $slice: ["$a", 2] });
-    expect(jsmql.expr("$.a.take()")).toEqual({ $slice: ["$a", 1] });
-    expect(jsmql.expr("$.a.takeRight(2)")).toEqual({ $slice: ["$a", -2] });
-    expect(jsmql.expr("$.a.takeRight()")).toEqual({ $slice: ["$a", -1] });
+    expect(jsmql.expr("$.a.take(2)")).toEqual({ $slice: [{ $ifNull: ["$a", []] }, 2] });
+    expect(jsmql.expr("$.a.take()")).toEqual({ $slice: [{ $ifNull: ["$a", []] }, 1] });
+    expect(jsmql.expr("$.a.takeRight(2)")).toEqual({ $slice: [{ $ifNull: ["$a", []] }, -2] });
+    expect(jsmql.expr("$.a.takeRight()")).toEqual({ $slice: [{ $ifNull: ["$a", []] }, -1] });
   });
   it(".drop([n=1]) / .dropRight([n=1]) → $slice (skip first / last n), receiver bound once", () => {
     // drop: from position n; count max(1, size) so an empty array → $slice:[[],n,1] → []
     // (mongod rejects a 3-arg $slice count of 0).
     expect(jsmql.expr("$.a.drop(2)")).toEqual({
-      $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", 2, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+      },
     });
     // dropRight: keep first max(0, size-n) through 2-arg $slice (n≥size → count 0 → []).
     expect(jsmql.expr("$.a.dropRight(2)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$a" },
-        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 2] }] }] },
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 2] }] }] },
       },
     });
   });
   it(".head()/.first()/.last() → $first/$last; .nth([n=0]) → $arrayElemAt (negative ok)", () => {
-    expect(jsmql.expr("$.a.head()")).toEqual({ $first: "$a" });
-    expect(jsmql.expr("$.a.first()")).toEqual({ $first: "$a" });
-    expect(jsmql.expr("$.a.last()")).toEqual({ $last: "$a" });
-    // lodash's `_.nth` reads array-LIKE — `_.nth("abc", 1) === "b"` — so it shares
-    // `.at`'s receiver dispatch. A bare `$arrayElemAt` aborted the query whenever
-    // the receiver turned out to be a string.
-    expect(jsmql.expr("$.a.nth(2)")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $substrCP: ["$a", 2, 1] } },
-          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $arrayElemAt: ["$a", 2] } },
-        ],
-        default: "$$REMOVE",
-      },
-    });
-    expect(jsmql.expr("$.a.nth(-1)")).toEqual({
-      $switch: {
-        branches: [
-          {
-            case: { $in: [{ $type: "$a" }, ["string"]] },
-            then: { $substrCP: ["$a", { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$a", ""] } }, 1] }] }, 1] },
-          },
-          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $arrayElemAt: ["$a", -1] } },
-        ],
-        default: "$$REMOVE",
-      },
-    });
-    expect(jsmql.expr("$.a.nth()")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $substrCP: ["$a", 0, 1] } },
-          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $arrayElemAt: ["$a", 0] } },
-        ],
-        default: "$$REMOVE",
-      },
-    });
-    expect(jsmql.expr("$.a.uniq().nth(-1)")).toEqual({ $arrayElemAt: [{ $setUnion: "$a" }, -1] });
+    expect(jsmql.expr("$.a.head()")).toEqual({ $first: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr("$.a.first()")).toEqual({ $first: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr("$.a.last()")).toEqual({ $last: { $ifNull: ["$a", []] } });
+    // `.nth` reads an array, as `.at` does. A proven string is refused, and the
+    // refusal names `.charAt`.
+    expect(jsmql.expr("$.a.nth(2)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, 2] });
+    expect(jsmql.expr("$.a.nth(-1)")).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, -1] });
+    expect(jsmql.expr("$.a.nth()")).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, 0] });
+    expect(jsmql.expr("$.a.uniq().nth(-1)")).toEqual({ $arrayElemAt: [{ $setUnion: { $ifNull: ["$a", []] } }, -1] });
+    expect(() => jsmql.expr("$.s.trim().nth(1)")).toThrow(
+      "'.nth()' is not available on a 'string' — it is defined on 'array'. For one character, write '.charAt(index)'.",
+    );
   });
   it(".tail()/.initial() → $slice (all but first / all but last); count guards empty/n≥size → []", () => {
     // tail: 3-arg $slice with count max(1, size) so an empty array → $slice:[[],1,1] → []
     // (a 3-arg count of 0 is rejected by mongod).
     expect(jsmql.expr("$.a.tail()")).toEqual({
-      $let: { vars: { jsmqlArr: "$a" }, in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] } },
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+      },
     });
     // initial = dropRight(1): keep first max(0, size-1) through 2-arg $slice (count 0 → []).
     expect(jsmql.expr("$.a.initial()")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$a" },
-        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }] }] },
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] }] },
       },
     });
   });
-  it(".size() counts array elements or object keys (runtime $isArray guard on an unknown receiver)", () => {
-    expect(jsmql.expr("$.a.size()")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $size: "$a" } },
-          { case: { $in: [{ $type: "$a" }, ["object"]] }, then: { $size: { $objectToArray: "$a" } } },
-        ],
-        default: "$$REMOVE",
-      },
-    });
+  it(".size() counts array elements; a missing receiver counts as empty", () => {
+    expect(jsmql.expr("$.a.size()")).toEqual({ $size: { $ifNull: ["$a", []] } });
+    // `.size()` counts an array or the stream. A proven object counts its fields through
+    // `.keys().size()`; a proven string counts its characters through `.length()`.
+    expect(() => jsmql.expr('$.o.pick(["a"]).size()')).toThrow(
+      "'.size()' is not available on an 'object' — it is defined on 'array', 'stream'. For the number of fields, write '.keys().size()'.",
+    );
+    expect(() => jsmql.expr("$.s.trim().size()")).toThrow(
+      "'.size()' is not available on a 'string' — it is defined on 'array', 'stream'. For the number of characters, write '.length()'.",
+    );
   });
   it(".take / .takeRight / .drop reject a negative count with a mirror-method hint", () => {
     expect(() => jsmql.expr("$.a.take(-1)")).toThrow(
@@ -6952,27 +6813,36 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
 describe("lodash set-ops & By-iteratee value methods", () => {
   it(".without(...values) → $filter excluding the given values", () => {
     expect(jsmql.expr("$.a.without(2, 4)")).toEqual({
-      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [2, 4]] }] } },
+      $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [2, 4]] }] } },
     });
   });
   it(".xor(other) → symmetric difference through the set operators", () => {
     // lodash documents `.xor` as returning UNIQUE values, so the composition says what
     // it means. Order is not preserved and was never asked for (SR2).
     expect(jsmql.expr("$.a.xor($.b)")).toEqual({
-      $setUnion: [{ $setDifference: ["$a", "$b"] }, { $setDifference: ["$b", "$a"] }],
+      $setUnion: [
+        { $setDifference: [{ $ifNull: ["$a", []] }, "$b"] },
+        { $setDifference: ["$b", { $ifNull: ["$a", []] }] },
+      ],
     });
   });
   it(".differenceBy / .intersectionBy compare by iteratee key", () => {
     expect(jsmql.expr('$.a.differenceBy($.b, "id")')).toEqual({
       $let: {
         vars: { jsmqlOtherKeys: { $map: { input: { $ifNull: ["$b", []] }, as: "x", in: "$$x.id" } } },
-        in: { $filter: { input: "$a", as: "x", cond: { $not: [{ $in: ["$$x.id", "$$jsmqlOtherKeys"] }] } } },
+        in: {
+          $filter: {
+            input: { $ifNull: ["$a", []] },
+            as: "x",
+            cond: { $not: [{ $in: ["$$x.id", "$$jsmqlOtherKeys"] }] },
+          },
+        },
       },
     });
     expect(jsmql.expr('$.a.intersectionBy($.b, "id")')).toEqual({
       $let: {
         vars: { jsmqlOtherKeys: { $map: { input: { $ifNull: ["$b", []] }, as: "x", in: "$$x.id" } } },
-        in: { $filter: { input: "$a", as: "x", cond: { $in: ["$$x.id", "$$jsmqlOtherKeys"] } } },
+        in: { $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $in: ["$$x.id", "$$jsmqlOtherKeys"] } } },
       },
     });
   });
@@ -7003,11 +6873,13 @@ describe("lodash set-ops & By-iteratee value methods", () => {
         },
       },
     });
-    expect(jsmql.expr('$.a.unionBy($.b, "id")')).toEqual(dedupeById({ $concatArrays: ["$a", "$b"] }));
+    expect(jsmql.expr('$.a.unionBy($.b, "id")')).toEqual(
+      dedupeById({ $concatArrays: [{ $ifNull: ["$a", []] }, "$b"] }),
+    );
     // the other list is `$ifNull`-guarded: its keys feed an `$in`, which aborts on a null operand
     expect(jsmql.expr('$.a.xorBy($.b, "id")')).toEqual({
       $let: {
-        vars: { jsmqlA: "$a", jsmqlB: { $ifNull: ["$b", []] } },
+        vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } },
         in: {
           $let: {
             vars: {
@@ -7026,13 +6898,13 @@ describe("lodash set-ops & By-iteratee value methods", () => {
     });
   });
   it(".sortedUniq / .sortedUniqBy alias .uniq / .uniqBy (no sorted-array optimisation in MQL)", () => {
-    expect(jsmql.expr("$.a.sortedUniq()")).toEqual({ $setUnion: "$a" });
+    expect(jsmql.expr("$.a.sortedUniq()")).toEqual({ $setUnion: { $ifNull: ["$a", []] } });
     expect(jsmql.expr('$.a.sortedUniqBy("id")')).toEqual({
       $getField: {
         field: "out",
         input: {
           $reduce: {
-            input: "$a",
+            input: { $ifNull: ["$a", []] },
             initialValue: { seen: [], out: [] },
             in: {
               $let: {
@@ -7063,7 +6935,7 @@ describe("lodash set-ops & By-iteratee value methods", () => {
         field: "out",
         input: {
           $reduce: {
-            input: "$a",
+            input: { $ifNull: ["$a", []] },
             initialValue: { seen: [], out: [] },
             in: {
               $let: {
@@ -7091,7 +6963,7 @@ describe("lodash set-ops & By-iteratee value methods", () => {
         field: "out",
         input: {
           $reduce: {
-            input: "$a",
+            input: { $ifNull: ["$a", []] },
             initialValue: { seen: [], out: [] },
             in: {
               $let: {
@@ -7120,14 +6992,18 @@ describe("lodash transpose value methods — zip / unzip / zipWith", () => {
     // `$zip` IS this operation, and `useLongestLength` is lodash's padding rule: groups
     // run to the longest input and short ones fill with null. Verified byte-identical to
     // the hand-built form on a live mongod across ragged and empty inputs.
-    expect(jsmql.expr("$.a.zip($.b)")).toEqual({ $zip: { inputs: ["$a", "$b"], useLongestLength: true } });
-    expect(jsmql.expr("$.a.zip($.b, $.c)")).toEqual({ $zip: { inputs: ["$a", "$b", "$c"], useLongestLength: true } });
+    expect(jsmql.expr("$.a.zip($.b)")).toEqual({
+      $zip: { inputs: [{ $ifNull: ["$a", []] }, "$b"], useLongestLength: true },
+    });
+    expect(jsmql.expr("$.a.zip($.b, $.c)")).toEqual({
+      $zip: { inputs: [{ $ifNull: ["$a", []] }, "$b", "$c"], useLongestLength: true },
+    });
   });
   it(".zipWith(...arrays, fn) applies an N-parameter arrow (one param per array) to each group", () => {
     // Each arrow parameter binds to its position in the tuple `$zip` produced.
     expect(jsmql.expr("$.a.zipWith($.b, (x, y) => x + y)")).toEqual({
       $map: {
-        input: { $zip: { inputs: ["$a", "$b"], useLongestLength: true } },
+        input: { $zip: { inputs: [{ $ifNull: ["$a", []] }, "$b"], useLongestLength: true } },
         as: "jsmqlPair",
         in: {
           $let: {
@@ -7147,7 +7023,7 @@ describe("lodash transpose value methods — zip / unzip / zipWith", () => {
   it(".unzip() transposes an array of tuples ($ifNull guards an empty receiver)", () => {
     expect(jsmql.expr("$.t.unzip()")).toEqual({
       $let: {
-        vars: { jsmqlT: "$t" },
+        vars: { jsmqlT: { $ifNull: ["$t", []] } },
         in: {
           $map: {
             input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: ["$$jsmqlT", 0] }, []] } }] },
@@ -7164,7 +7040,7 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
   it(".takeWhile(pred) → slice up to the first falsy element (first-false index through $indexOfArray)", () => {
     expect(jsmql.expr("$.a.takeWhile(x => x < 3)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$a" },
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
         in: {
           $let: {
             vars: {
@@ -7205,10 +7081,10 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
   // drop branch slices from the boundary to the end.
   const dropCut = { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] };
   it(".dropWhile keeps from the boundary; all-truthy → []", () => {
-    expect(jsmql.expr("$.a.dropWhile(x => x < 3)")).toEqual(whileRun("$a", [], dropCut));
+    expect(jsmql.expr("$.a.dropWhile(x => x < 3)")).toEqual(whileRun({ $ifNull: ["$a", []] }, [], dropCut));
   });
   it(".takeRightWhile / .dropRightWhile scan the reversed array, then reverse back", () => {
-    const reversed = { $reverseArray: "$a" };
+    const reversed = { $reverseArray: { $ifNull: ["$a", []] } };
     expect(jsmql.expr("$.a.takeRightWhile(x => x < 3)")).toEqual({
       $reverseArray: whileRun(reversed, "$$jsmqlArr", takeCut),
     });
@@ -7217,7 +7093,7 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
   it(".takeWhile accepts a matches-object predicate (like .reject / .partition)", () => {
     expect(jsmql.expr("$.objs.takeWhile({ ok: true })")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$objs" },
+        vars: { jsmqlArr: { $ifNull: ["$objs", []] } },
         in: {
           $let: {
             vars: {
@@ -7238,10 +7114,16 @@ describe("lodash predicate-run value methods — takeWhile / dropWhile / *RightW
 
 describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
   it(".sortBy accepts a field / array / key function (ascending); 0 args → natural sort", () => {
-    expect(jsmql.expr('$.a.sortBy("age")')).toEqual({ $sortArray: { input: "$a", sortBy: { age: 1 } } });
-    expect(jsmql.expr("$.a.sortBy()")).toEqual({ $sortArray: { input: "$a", sortBy: 1 } });
-    expect(jsmql.expr('$.a.sortBy(["x", "y"])')).toEqual({ $sortArray: { input: "$a", sortBy: { x: 1, y: 1 } } });
-    expect(jsmql.expr("$.a.sortBy(u => u.age)")).toEqual({ $sortArray: { input: "$a", sortBy: { age: 1 } } });
+    expect(jsmql.expr('$.a.sortBy("age")')).toEqual({
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: { age: 1 } },
+    });
+    expect(jsmql.expr("$.a.sortBy()")).toEqual({ $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: 1 } });
+    expect(jsmql.expr('$.a.sortBy(["x", "y"])')).toEqual({
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: { x: 1, y: 1 } },
+    });
+    expect(jsmql.expr("$.a.sortBy(u => u.age)")).toEqual({
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: { age: 1 } },
+    });
   });
   it(".sortBy rejects an object arg (lodash matches-shorthand, not a direction)", () => {
     expect(() => jsmql.expr("$.a.sortBy({ age: -1 })")).toThrow(
@@ -7249,16 +7131,22 @@ describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
     );
   });
   it(".orderBy zips parallel keys + orders; missing orders default ascending", () => {
-    expect(jsmql.expr('$.a.orderBy("age", "desc")')).toEqual({ $sortArray: { input: "$a", sortBy: { age: -1 } } });
-    expect(jsmql.expr('$.a.orderBy(["a", "b"], ["asc", "desc"])')).toEqual({
-      $sortArray: { input: "$a", sortBy: { a: 1, b: -1 } },
+    expect(jsmql.expr('$.a.orderBy("age", "desc")')).toEqual({
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: { age: -1 } },
     });
-    expect(jsmql.expr('$.a.orderBy(["a", "b"])')).toEqual({ $sortArray: { input: "$a", sortBy: { a: 1, b: 1 } } });
+    expect(jsmql.expr('$.a.orderBy(["a", "b"], ["asc", "desc"])')).toEqual({
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: { a: 1, b: -1 } },
+    });
+    expect(jsmql.expr('$.a.orderBy(["a", "b"])')).toEqual({
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: { a: 1, b: 1 } },
+    });
   });
   it(".orderBy also accepts a { field: dir } object (directions inline, like .toSorted)", () => {
-    expect(jsmql.expr("$.a.orderBy({ score: -1 })")).toEqual({ $sortArray: { input: "$a", sortBy: { score: -1 } } });
+    expect(jsmql.expr("$.a.orderBy({ score: -1 })")).toEqual({
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: { score: -1 } },
+    });
     expect(jsmql.expr('$.a.orderBy({ score: -1, name: "asc" })')).toEqual({
-      $sortArray: { input: "$a", sortBy: { score: -1, name: 1 } },
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: { score: -1, name: 1 } },
     });
   });
   it(".orderBy({ … }) rejects a second orders arg (directions are already in the object)", () => {
@@ -7272,13 +7160,8 @@ describe("lodash random value methods — sample / sampleSize ($rand)", () => {
   it(".sample() → a random element through $arrayElemAt at floor($rand * size)", () => {
     expect(jsmql.expr("$.a.sample()")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$a" },
-        in: {
-          $arrayElemAt: [
-            "$$jsmqlArr",
-            { $floor: { $multiply: [{ $rand: {} }, { $size: { $ifNull: ["$$jsmqlArr", []] } }] } },
-          ],
-        },
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $arrayElemAt: ["$$jsmqlArr", { $floor: { $multiply: [{ $rand: {} }, { $size: "$$jsmqlArr" }] } }] },
       },
     });
   });
@@ -7288,7 +7171,9 @@ describe("lodash random value methods — sample / sampleSize ($rand)", () => {
         vars: {
           jsmqlShuffled: {
             $sortArray: {
-              input: { $map: { input: "$a", as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } } },
+              input: {
+                $map: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } },
+              },
               sortBy: { k: 1 },
             },
           },
@@ -7301,7 +7186,9 @@ describe("lodash random value methods — sample / sampleSize ($rand)", () => {
         vars: {
           jsmqlShuffled: {
             $sortArray: {
-              input: { $map: { input: "$a", as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } } },
+              input: {
+                $map: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } },
+              },
               sortBy: { k: 1 },
             },
           },
@@ -7507,35 +7394,41 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
 
 describe("statement-position mutators", () => {
   it(".sort() — 0-arg ascending", () => {
-    expect(jsmql("$.events.sort();")).toEqual([{ $set: { events: { $sortArray: { input: "$events", sortBy: 1 } } } }]);
+    expect(jsmql("$.events.sort();")).toEqual([
+      { $set: { events: { $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: 1 } } } },
+    ]);
   });
   it(".sort(keyFn) — desugars to $set with $sortArray sortBy", () => {
     expect(jsmql("$.events.sort(e => e.distance);")).toEqual([
-      { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } } },
+      { $set: { events: { $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: 1 } } } } },
     ]);
   });
   it('.sort("field") / .sort({ field: dir }) — flexible sort args mutate the field', () => {
     expect(jsmql('$.events.sort("distance");')).toEqual([
-      { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } } },
+      { $set: { events: { $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: 1 } } } } },
     ]);
     expect(jsmql("$.events.sort({ distance: -1 });")).toEqual([
-      { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: -1 } } } } },
+      { $set: { events: { $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: { distance: -1 } } } } },
     ]);
   });
   it(".reverse() — desugars to $set with $reverseArray", () => {
-    expect(jsmql("$.events.reverse();")).toEqual([{ $set: { events: { $reverseArray: "$events" } } }]);
+    expect(jsmql("$.events.reverse();")).toEqual([
+      { $set: { events: { $reverseArray: { $ifNull: ["$events", []] } } } },
+    ]);
   });
   it(".push(item) — appends a single element with $concatArrays + array wrap", () => {
     expect(jsmql("$.events.push($.newEvent);")).toEqual([
-      { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } },
+      { $set: { events: { $concatArrays: [{ $ifNull: ["$events", []] }, ["$newEvent"]] } } },
     ]);
   });
   it(".push(a, b) — appends multiple elements", () => {
-    expect(jsmql("$.tags.push('a', 'b');")).toEqual([{ $set: { tags: { $concatArrays: ["$tags", ["a", "b"]] } } }]);
+    expect(jsmql("$.tags.push('a', 'b');")).toEqual([
+      { $set: { tags: { $concatArrays: [{ $ifNull: ["$tags", []] }, ["a", "b"]] } } },
+    ]);
   });
   it(".unshift(a, b) — prepends with items-first", () => {
     expect(jsmql("$.events.unshift($.x, $.y);")).toEqual([
-      { $set: { events: { $concatArrays: [["$x", "$y"], "$events"] } } },
+      { $set: { events: { $concatArrays: [["$x", "$y"], { $ifNull: ["$events", []] }] } } },
     ]);
   });
   it(".pop() — drops last element through the count-tolerant 2-arg $slice (valid on empty/single)", () => {
@@ -7547,7 +7440,7 @@ describe("statement-position mutators", () => {
         $set: {
           events: {
             $let: {
-              vars: { jsmqlArr: "$events" },
+              vars: { jsmqlArr: { $ifNull: ["$events", []] } },
               in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
             },
           },
@@ -7563,7 +7456,7 @@ describe("statement-position mutators", () => {
         $set: {
           events: {
             $let: {
-              vars: { jsmqlArr: "$events" },
+              vars: { jsmqlArr: { $ifNull: ["$events", []] } },
               in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
             },
           },
@@ -7577,7 +7470,7 @@ describe("statement-position mutators", () => {
         $set: {
           events: {
             $let: {
-              vars: { jsmqlArr: "$events" },
+              vars: { jsmqlArr: { $ifNull: ["$events", []] } },
               in: {
                 $let: {
                   vars: { jsmqlStart: 0 },
@@ -7615,28 +7508,34 @@ describe("statement-position mutators", () => {
   });
   it(".fill(v) — every element becomes v through $map", () => {
     expect(jsmql("$.events.fill(0);")).toEqual([
-      { $set: { events: { $map: { input: "$events", as: "jsmqlUnused", in: 0 } } } },
+      { $set: { events: { $map: { input: { $ifNull: ["$events", []] }, as: "jsmqlUnused", in: 0 } } } },
     ]);
   });
   it(".fill(v, s, e) with non-negative literals — IIFE bindings inline the literals (no normalisation $cond)", () => {
+    const events = { $ifNull: ["$events", []] };
     expect(jsmql("$.events.fill(0, 1, 3);")).toEqual([
       {
         $set: {
           events: {
             $concatArrays: [
-              { $slice: ["$events", 1] },
-              { $map: { input: { $slice: ["$events", 1, 2] }, as: "jsmqlUnused", in: 0 } },
+              { $slice: [events, 1] },
+              { $map: { input: { $slice: [events, 1, 2] }, as: "jsmqlUnused", in: 0 } },
               {
-                $let: {
-                  vars: { jsmqlArr: "$events" },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      { $add: [{ $size: { $slice: ["$events", 1] } }, { $size: { $slice: ["$events", 1, 2] } }] },
-                      { $max: [1, { $size: "$$jsmqlArr" }] },
-                    ],
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: { jsmqlArr: events },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
+                          { $add: [{ $size: { $slice: [events, 1] } }, { $size: { $slice: [events, 1, 2] } }] },
+                          { $max: [1, { $size: "$$jsmqlArr" }] },
+                        ],
+                      },
+                    },
                   },
-                },
+                  [],
+                ],
               },
             ],
           },
@@ -7654,12 +7553,12 @@ describe("statement-position mutators", () => {
         $set: {
           arr: {
             $concatArrays: [
-              { $slice: ["$arr", 1] },
+              { $slice: [{ $ifNull: ["$arr", []] }, 1] },
               {
                 $map: {
                   input: {
                     $let: {
-                      vars: { jsmqlArr: "$arr" },
+                      vars: { jsmqlArr: { $ifNull: ["$arr", []] } },
                       in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
                     },
                   },
@@ -7679,11 +7578,13 @@ describe("statement-position mutators", () => {
   });
   it("nested receiver $.user.history.push(...) emits a dotted $set key", () => {
     expect(jsmql("$.user.history.push($.e);")).toEqual([
-      { $set: { "user.history": { $concatArrays: ["$user.history", ["$e"]] } } },
+      { $set: { "user.history": { $concatArrays: [{ $ifNull: ["$user.history", []] }, ["$e"]] } } },
     ]);
   });
   it("top-level mutator without a trailing `;` auto-wraps into Pipeline mode", () => {
-    expect(jsmql("$.events.push($.x)")).toEqual([{ $set: { events: { $concatArrays: ["$events", ["$x"]] } } }]);
+    expect(jsmql("$.events.push($.x)")).toEqual([
+      { $set: { events: { $concatArrays: [{ $ifNull: ["$events", []] }, ["$x"]] } } },
+    ]);
   });
   it("expression-position mutator still throws (not auto-rewritten inside a larger expression)", () => {
     expect(() => jsmql.expr("$.events.sort().slice(-10)")).toThrow(/\.sort\(\) mutates/);
@@ -7697,14 +7598,14 @@ describe("statement-position mutators", () => {
     // The second .sort reads $events (which was just written), so the
     // coalescer correctly splits — same logic as explicit `=` chains.
     expect(jsmql(`$.events.push($.newEvent); $.events.sort(e => e.distance);`)).toEqual([
-      { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } },
+      { $set: { events: { $concatArrays: [{ $ifNull: ["$events", []] }, ["$newEvent"]] } } },
       { $set: { events: { $sortArray: { input: "$events", sortBy: { distance: 1 } } } } },
     ]);
   });
   it("mutator inside a [...] pipeline literal also rewrites", () => {
     expect(jsmql.pipeline("[{ $match: { active: true } }, $.events.sort()]")).toEqual([
       { $match: { active: true } },
-      { $set: { events: { $sortArray: { input: "$events", sortBy: 1 } } } },
+      { $set: { events: { $sortArray: { input: { $ifNull: ["$events", []] }, sortBy: 1 } } } },
     ]);
   });
 });
@@ -7766,35 +7667,35 @@ describe("iterator / void / locale DX shims", () => {
 
 describe("ES2025 Set methods", () => {
   it("intersection", () => {
-    expect(jsmql.expr("new Set($.a).intersection(new Set($.b))")).toEqual({ $setIntersection: ["$a", "$b"] });
+    expect(jsmql.expr("new Set($.a).intersection(new Set($.b))")).toEqual({
+      $setIntersection: [{ $ifNull: ["$a", []] }, "$b"],
+    });
   });
   it("union", () => {
-    expect(jsmql.expr("new Set($.a).union(new Set($.b))")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(jsmql.expr("new Set($.a).union(new Set($.b))")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, "$b"] });
   });
   it("difference — a Set holds each value once, so the set operator answers", () => {
     // MEASURED: { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a Set gives.
-    expect(jsmql.expr("new Set($.a).difference(new Set($.b))")).toEqual({ $setDifference: ["$a", "$b"] });
+    expect(jsmql.expr("new Set($.a).difference(new Set($.b))")).toEqual({
+      $setDifference: [{ $ifNull: ["$a", []] }, "$b"],
+    });
     // lodash keeps the receiver's duplicates, so an ARRAY receiver stays a filter.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
-      $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } },
+      $filter: {
+        input: { $ifNull: ["$a", []] },
+        as: "jsmqlItem",
+        cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
+      },
     });
   });
   it("isSubsetOf", () => {
     expect(jsmql.expr("new Set($.a).isSubsetOf(new Set($.b))")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$a", null] }, null] },
-        then: null,
-        else: { $setIsSubset: ["$a", { $ifNull: ["$b", []] }] },
-      },
+      $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
   });
   it("isSupersetOf swaps args", () => {
     expect(jsmql.expr("new Set($.a).isSupersetOf(new Set($.b))")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$a", null] }, null] },
-        then: null,
-        else: { $setIsSubset: [{ $ifNull: ["$b", []] }, "$a"] },
-      },
+      $setIsSubset: [{ $ifNull: ["$b", []] }, { $ifNull: ["$a", []] }],
     });
   });
   it("works with array literals", () => {
@@ -7808,7 +7709,7 @@ describe("ES2025 Set methods", () => {
   it("symmetricDifference composes $setDifference of the union and the intersection", () => {
     expect(jsmql.expr("new Set($.a).symmetricDifference(new Set($.b))")).toEqual({
       $let: {
-        vars: { jsmqlA: "$a", jsmqlB: "$b" },
+        vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: "$b" },
         in: {
           $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }],
         },
@@ -7816,7 +7717,7 @@ describe("ES2025 Set methods", () => {
     });
   });
   it("a plain array argument reads as a Set", () => {
-    expect(jsmql.expr("new Set($.a).intersection($.b)")).toEqual({ $setIntersection: ["$a", "$b"] });
+    expect(jsmql.expr("new Set($.a).intersection($.b)")).toEqual({ $setIntersection: [{ $ifNull: ["$a", []] }, "$b"] });
   });
 });
 
@@ -8027,7 +7928,7 @@ describe("string padding methods", () => {
   it("a lambda param named 's' is not captured by the internal binding", () => {
     expect(jsmql.expr("$.items.map(s => s.code.padStart(s.width, s.pad))")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "s",
         in: {
           $cond: {
@@ -8073,7 +7974,7 @@ describe("string padding methods", () => {
     const need = { $subtract: ["$$jsmqlPad.width", { $strLenCP: "$$jsmqlPad2" }] };
     expect(jsmql.expr("$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "jsmqlPad",
         in: {
           $cond: {
@@ -8123,7 +8024,7 @@ describe("internal $let bindings never capture a lambda param", () => {
     const need = { $subtract: [3, { $strLenCP: "$$jsmqlPad" }] };
     expect(jsmql.expr("$.items.map(s => s.code.padStart(3, s.pad))")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "s",
         in: {
           $cond: {
@@ -8163,11 +8064,11 @@ describe("internal $let bindings never capture a lambda param", () => {
     // so the needle keeps reading the element.
     expect(jsmql.expr("$.items.map(jsmqlArr => jsmqlArr.list.lastIndexOf(jsmqlArr.needle))")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "jsmqlArr",
         in: {
           $let: {
-            vars: { jsmqlArr2: "$$jsmqlArr.list" },
+            vars: { jsmqlArr2: { $ifNull: ["$$jsmqlArr.list", []] } },
             in: {
               $let: {
                 vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr2" }, "$$jsmqlArr.needle"] } },
@@ -8193,7 +8094,7 @@ describe("internal $let bindings never capture a lambda param", () => {
     const extLen = { $strLenCP: { $ifNull: ["$$jsmqlStr.ext", ""] } };
     expect(jsmql.expr("$.items.map(jsmqlStr => jsmqlStr.name.endsWith(jsmqlStr.ext))")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "jsmqlStr",
         in: {
           $cond: {
@@ -8226,11 +8127,11 @@ describe("internal $let bindings never capture a lambda param", () => {
     // Output stability: the overwhelmingly common case keeps the base name.
     expect(jsmql.expr("$.items.map(x => x.list.lastIndexOf(x.needle))")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         in: {
           $let: {
-            vars: { jsmqlArr: "$$x.list" },
+            vars: { jsmqlArr: { $ifNull: ["$$x.list", []] } },
             in: {
               $let: {
                 vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, "$$x.needle"] } },
@@ -8328,7 +8229,13 @@ describe("Object.groupBy — refused; the receiver form is the one spelling", ()
         $map: {
           input: {
             $setUnion: [
-              { $map: { input: "$items", as: "x", in: { $ifNull: [{ $toString: "$$x.category" }, "null"] } } },
+              {
+                $map: {
+                  input: { $ifNull: ["$items", []] },
+                  as: "x",
+                  in: { $ifNull: [{ $toString: "$$x.category" }, "null"] },
+                },
+              },
               [],
             ],
           },
@@ -8337,7 +8244,7 @@ describe("Object.groupBy — refused; the receiver form is the one spelling", ()
             k: "$$jsmqlKey",
             v: {
               $filter: {
-                input: "$items",
+                input: { $ifNull: ["$items", []] },
                 as: "x",
                 cond: { $eq: [{ $ifNull: [{ $toString: "$$x.category" }, "null"] }, "$$jsmqlKey"] },
               },
@@ -8525,12 +8432,19 @@ describe("1-arg substr", () => {
   });
 });
 
-describe(".slice on strings", () => {
-  it("string literal receiver → $substrCP", () => {
-    expect(jsmql.expr('"hello".slice(1, 3)')).toEqual("el");
+describe("the string forms of a slice: .substring and .substr", () => {
+  // `.slice` reads an array. A proven string is refused, and the refusal names
+  // `.substring(start, end)`. A negative start spells as `.substr(-n)`.
+  it("a proven string refuses .slice and names .substring", () => {
+    expect(() => jsmql.expr('"hello".slice(1, 3)')).toThrow(
+      "'.slice()' is not available on a 'string' — it is defined on 'array', 'stream'. For a part of a string, write '.substring(start, end)'.",
+    );
+    expect(() => jsmql.expr("$.name.toLowerCase().slice(0, 3)")).toThrow(
+      "'.slice()' is not available on a 'string' — it is defined on 'array', 'stream'. For a part of a string, write '.substring(start, end)'.",
+    );
   });
-  it("string-typed receiver (toLowerCase result) → $substrCP", () => {
-    expect(jsmql.expr("$.name.toLowerCase().slice(0, 3)")).toEqual({
+  it("substring on a string-typed receiver (toLowerCase result) → $substrCP", () => {
+    expect(jsmql.expr("$.name.toLowerCase().substring(0, 3)")).toEqual({
       $let: {
         vars: {
           jsmqlRecv: {
@@ -8547,13 +8461,13 @@ describe(".slice on strings", () => {
       },
     });
   });
-  it("1-arg form on string → from start to end", () => {
+  it("substring(start) reads from start to the end", () => {
     // A literal receiver's length is known, so the whole derived length folds.
-    expect(jsmql.expr('"hello".slice(2)')).toEqual("llo");
+    expect(jsmql.expr('"hello".substring(2)')).toEqual("llo");
     // On a runtime receiver the length is derived, and floored: `strLen - start`
-    // goes negative when start runs past the end ("".slice(1)), which $substrCP
+    // goes negative when start runs past the end ("".substring(1)), which $substrCP
     // rejects outright.
-    expect(jsmql.expr("String($.s).slice(2)")).toEqual({
+    expect(jsmql.expr("String($.s).substring(2)")).toEqual({
       $let: {
         vars: { jsmqlRecv: { $toString: "$s" } },
         in: {
@@ -8572,9 +8486,9 @@ describe(".slice on strings", () => {
       },
     });
   });
-  it("negative-literal start on string → folded to strLen - n, floored", () => {
-    expect(jsmql.expr('"hello".slice(-3)')).toEqual("llo");
-    expect(jsmql.expr("String($.s).slice(-3)")).toEqual({
+  it("substr(-n) reads the last n characters: the start is strLen - n, floored", () => {
+    expect(jsmql.expr('"hello".substr(-3)')).toEqual({ $substrCP: ["hello", 2, 5] });
+    expect(jsmql.expr("String($.s).substr(-3)")).toEqual({
       $let: {
         vars: { jsmqlRecv: { $toString: "$s" } },
         in: {
@@ -8585,7 +8499,7 @@ describe(".slice on strings", () => {
               $substrCP: [
                 "$$jsmqlRecv",
                 { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } }, 3] }] },
-                3,
+                { $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } },
               ],
             },
           },
@@ -8593,39 +8507,8 @@ describe(".slice on strings", () => {
       },
     });
   });
-  it("negative end on string → strLen - n", () => {
-    expect(jsmql.expr('"hello".slice(1, -1)')).toEqual("ell");
-    expect(jsmql.expr("String($.s).slice(1, -1)")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $toString: "$s" } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: {
-              $substrCP: [
-                "$$jsmqlRecv",
-                1,
-                {
-                  $max: [
-                    0,
-                    {
-                      $subtract: [
-                        { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } }, 1] }] },
-                        1,
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          },
-        },
-      },
-    });
-  });
-  it("non-literal index on string → runtime $cond normalises sign", () => {
-    expect(jsmql.expr("String($.s).slice($.i)")).toEqual({
+  it("substr with a non-literal start → runtime $cond normalises the sign", () => {
+    expect(jsmql.expr("String($.s).substr($.i)")).toEqual({
       $let: {
         vars: { jsmqlRecv: { $toString: "$s" } },
         in: {
@@ -8642,32 +8525,13 @@ describe(".slice on strings", () => {
                     else: "$i",
                   },
                 },
-                {
-                  $max: [
-                    0,
-                    {
-                      $subtract: [
-                        { $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } },
-                        {
-                          $cond: {
-                            if: { $lt: ["$i", 0] },
-                            then: { $max: [0, { $add: ["$i", { $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } }] }] },
-                            else: "$i",
-                          },
-                        },
-                      ],
-                    },
-                  ],
-                },
+                { $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } },
               ],
             },
           },
         },
       },
     });
-  });
-  it("slice() with no args is identity on string", () => {
-    expect(jsmql.expr('"hello".slice()')).toEqual("hello");
   });
 });
 
@@ -8761,7 +8625,20 @@ describe("in operator RHS validation", () => {
     });
   });
   it("accepts field ref RHS", () => {
-    expect(jsmql.expr("$.x in $.list")).toEqual({ $in: ["$x", "$list"] });
+    // a right side the proof cannot place is an object, and `in` tests its keys
+    expect(jsmql.expr("$.x in $.list")).toEqual({
+      $in: [
+        { $toString: "$x" },
+        { $map: { input: { $objectToArray: { $ifNull: ["$list", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+      ],
+    });
+    expect(jsmql.expr('"k" in $.o')).toEqual({
+      $ne: [{ $type: { $getField: { field: "k", input: "$o" } } }, "missing"],
+    });
+    // a PROVEN array has only indexes for keys, which no query asks for
+    expect(() => jsmql("$.arr = $.tags.uniq(); $.b = 2 in $.arr;")).toThrow(
+      "'in' tests a key of an object, and the value on its right is an array. For membership, write '<array>.has(x)'; for a bound on the count, write '<array>.size() > n'.",
+    );
   });
 });
 
@@ -8841,42 +8718,54 @@ describe("template literals", () => {
   });
 });
 
-describe("array .includes()", () => {
+describe("array .has()", () => {
   it("array literal → $in", () => {
-    expect(jsmql.expr('["a", "b"].includes($.x)')).toEqual({ $in: ["$x", ["a", "b"]] });
+    expect(jsmql.expr('["a", "b"].has($.x)')).toEqual({ $in: ["$x", ["a", "b"]] });
   });
   it("known array (split result) → $in", () => {
-    expect(jsmql.expr('$.csv.split(",").includes("active")')).toEqual({
+    expect(jsmql.expr('$.csv.split(",").has("active")')).toEqual({
+      $in: ["active", { $ifNull: [{ $split: ["$csv", ","] }, []] }],
+    });
+  });
+  it("a proven string (toLowerCase result) takes .includes, and refuses .has", () => {
+    expect(jsmql.expr('$.email.toLowerCase().includes("@")')).toEqual({
       $let: {
-        vars: { jsmqlRecv: { $split: ["$csv", ","] } },
+        vars: {
+          jsmqlRecv: {
+            $cond: { if: { $eq: [{ $ifNull: ["$email", null] }, null] }, then: null, else: { $toLower: "$email" } },
+          },
+        },
         in: {
           $cond: {
             if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
             then: null,
-            else: { $in: ["active", "$$jsmqlRecv"] },
+            else: { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "@"] }, 0] },
           },
         },
       },
     });
+    expect(() => jsmql.expr('$.email.toLowerCase().has("@")')).toThrow(
+      "'.has()' is not available on a 'string' — it is defined on 'array'. For a substring test, write '.includes(x)'.",
+    );
   });
-  it("bare $.field → runtime $cond on $isArray (works for either type)", () => {
-    expect(jsmql.expr("$.field.includes($.x)")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$field" }, ["array"]] }, then: { $in: ["$x", "$field"] } },
-          { case: { $in: [{ $type: "$field" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$field", "$x"] }, 0] } },
-        ],
-        default: null,
+  it("a bare field takes each method's one family, with no runtime dispatch", () => {
+    expect(jsmql.expr("$.tags.has($.x)")).toEqual({ $in: ["$x", { $ifNull: ["$tags", []] }] });
+    expect(jsmql.expr("$.email.includes($.x)")).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$email", null] }, null] },
+        then: null,
+        else: { $gte: [{ $indexOfCP: ["$email", "$x"] }, 0] },
       },
     });
   });
-  // `.includes()` takes a value, not a predicate; a lambda means the user wanted
-  // `.some()`. The error must point there (not the misleading "only valid as
-  // array method argument" — `.includes` IS an array method) and echo the
-  // user's own param name.
+  // `.has()` and `.includes()` take a value, not a predicate; a lambda means the user
+  // wanted `.some()`. The error must point there.
   it("predicate (lambda) arg → actionable error pointing at .some()", () => {
+    expect(() => jsmql.expr("$.senderChain.has(sc => sc.tier === 2)")).toThrow(
+      "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
+    );
     expect(() => jsmql.expr("$.senderChain.includes(sc => sc.tier === 2)")).toThrow(
-      "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
+      "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => …)'.",
     );
   });
   it(".indexOf() with a predicate points at .findIndex()", () => {
@@ -8955,13 +8844,16 @@ describe("optional chaining (?.)", () => {
   it("array spread alone of optional", () => {
     expect(jsmql.expr("[...$.a?.b]")).toEqual({ $ifNull: ["$a.b", []] });
   });
-  it("spread inside .includes() keeps every operand guarded", () => {
-    expect(jsmql.expr("[...$.moderators, ...$.room?.mods, 'root'].includes($.userId)")).toEqual({
-      $in: ["$userId", { $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }],
+  it("spread inside .has() keeps every operand guarded", () => {
+    expect(jsmql.expr("[...$.moderators, ...$.room?.mods, 'root'].has($.userId)")).toEqual({
+      $in: [
+        "$userId",
+        { $concatArrays: [{ $ifNull: ["$moderators", []] }, { $ifNull: ["$room.mods", []] }, ["root"]] },
+      ],
     });
   });
   it("non-optional spread is unchanged", () => {
-    expect(jsmql.expr("[...$.a, 'x']")).toEqual({ $concatArrays: ["$a", ["x"]] });
+    expect(jsmql.expr("[...$.a, 'x']")).toEqual({ $concatArrays: [{ $ifNull: ["$a", []] }, ["x"]] });
   });
 
   // A `?.` with a CALL after it stops the chain: the call does not run and the chain
@@ -8970,98 +8862,66 @@ describe("optional chaining (?.)", () => {
   it(".map on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.map(p => p.id)")).toEqual({
       $cond: {
-        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
         then: null,
-        else: { $map: { input: "$user.posts", as: "p", in: "$$p.id" } },
+        else: { $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } },
       },
     });
     // and one link further the wrap is what keeps `$size` off a null
-    expect(jsmql.expr("$.user?.posts.map(p => p.id).length")).toEqual({
+    expect(jsmql.expr("$.user?.posts.map(p => p.id).size()")).toEqual({
       $cond: {
-        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
         then: null,
-        else: { $size: { $map: { input: "$user.posts", as: "p", in: "$$p.id" } } },
+        else: { $size: { $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } } },
       },
     });
   });
-  it(".at on an optional receiver stops the chain, and dispatches inside it", () => {
+  it(".at on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.at(0)")).toEqual({
       $cond: {
-        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
         then: null,
-        else: {
-          $switch: {
-            branches: [
-              { case: { $in: [{ $type: "$user.posts" }, ["string"]] }, then: { $substrCP: ["$user.posts", 0, 1] } },
-              { case: { $in: [{ $type: "$user.posts" }, ["array"]] }, then: { $arrayElemAt: ["$user.posts", 0] } },
-            ],
-            default: null,
-          },
-        },
+        else: { $arrayElemAt: [{ $ifNull: ["$user.posts", []] }, 0] },
       },
     });
   });
   it(".toReversed on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.toReversed()")).toEqual({
       $cond: {
-        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
         then: null,
-        else: { $reverseArray: "$user.posts" },
+        else: { $reverseArray: { $ifNull: ["$user.posts", []] } },
       },
     });
   });
-  it(".slice on an optional receiver stops the chain, and dispatches inside it", () => {
+  it(".slice on an optional receiver stops the chain", () => {
     // start 0 → the array branch is a 2-arg "first 5" $slice (JS end-exclusive).
     expect(jsmql.expr("$.user?.posts.slice(0, 5)")).toEqual({
       $cond: {
-        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
         then: null,
-        else: {
-          $switch: {
-            branches: [
-              { case: { $in: [{ $type: "$user.posts" }, ["string"]] }, then: { $substrCP: ["$user.posts", 0, 5] } },
-              { case: { $in: [{ $type: "$user.posts" }, ["array"]] }, then: { $slice: ["$user.posts", 5] } },
-            ],
-            default: null,
-          },
-        },
+        else: { $slice: [{ $ifNull: ["$user.posts", []] }, 5] },
       },
     });
   });
 
-  // `.includes` / `.indexOf` / `.concat` dispatch on receiver type. Chain
-  // walking stops at `MethodCall` boundaries — once `.toReversed()` ran (and
-  // its own wrap took effect), the result is guaranteed not-null, so
-  // `.includes` does not add a redundant outer wrap.
-  it(".includes after .toReversed() of optional propagates the inner wrap, no outer wrap", () => {
-    expect(jsmql.expr("$.user?.posts.toReversed().includes('hello')")).toEqual({
+  // Chain walking stops at `MethodCall` boundaries — once `.toReversed()` ran (and
+  // its own wrap took effect), the result is guaranteed not-null, so `.has` does
+  // not add a redundant outer wrap.
+  it(".has after .toReversed() of optional propagates the inner wrap, no outer wrap", () => {
+    expect(jsmql.expr("$.user?.posts.toReversed().has('hello')")).toEqual({
       $cond: {
-        if: { $eq: [{ $ifNull: ["$user.posts", null] }, null] },
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
         then: null,
-        else: { $in: ["hello", { $reverseArray: "$user.posts" }] },
+        else: { $in: ["hello", { $reverseArray: { $ifNull: ["$user.posts", []] } }] },
       },
     });
   });
   it("`?.method()` (the call itself is optional) stops the chain", () => {
-    // `$.tags?.includes(y)` — MethodCall.optional=true. The receiver dispatches on its
-    // own type INSIDE the second branch, which runs only when `tags` is there.
-    expect(jsmql.expr("$.tags?.includes('vip')")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$tags", null] }, null] },
-        then: null,
-        else: {
-          $switch: {
-            branches: [
-              { case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["vip", "$tags"] } },
-              {
-                case: { $in: [{ $type: "$tags" }, ["string"]] },
-                then: { $gte: [{ $indexOfCP: ["$tags", "vip"] }, 0] },
-              },
-            ],
-            default: null,
-          },
-        },
-      },
+    // `$.tags?.has(y)` — MethodCall.optional=true. The `$in` runs inside the second
+    // branch, which runs only when `tags` is there.
+    expect(jsmql.expr("$.tags?.has('vip')")).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$tags", null] }, null] }, then: null, else: { $in: ["vip", "$tags"] } },
     });
   });
 
@@ -9084,34 +8944,36 @@ describe("optional chaining (?.)", () => {
   });
   it(".toUpperCase on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.name.toUpperCase()")).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$user.name", null] }, null] }, then: null, else: { $toUpper: "$user.name" } },
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
+        then: null,
+        else: {
+          $cond: {
+            if: { $eq: [{ $ifNull: ["$user.name", null] }, null] },
+            then: null,
+            else: { $toUpper: "$user.name" },
+          },
+        },
+      },
     });
   });
   it(".split on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.csv.split(',')")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user.csv", null] }, null] },
-        then: null,
-        else: { $split: ["$user.csv", ","] },
-      },
+      $cond: { if: { $eq: [{ $ifNull: ["$user", null] }, null] }, then: null, else: { $split: ["$user.csv", ","] } },
     });
   });
 
-  // `.length` is a MemberAccess, not a MethodCall — its own codegen branch handles it.
-  it(".length on an optional unknown-type receiver stops the chain — a property row computes it", () => {
-    // unknown receiver dispatches to runtime $cond between $size and $strLenCP;
-    // wrap with [] so $isArray succeeds and $size([]) returns 0.
-    expect(jsmql.expr("$.user?.tags.length")).toEqual({
+  it(".length() on an optional receiver stops the chain", () => {
+    // `.length()` reads a string; the `?.` wrap keeps `$strLenCP` off a null.
+    expect(jsmql.expr("$.user?.name.length()")).toEqual({
       $cond: {
-        if: { $eq: [{ $ifNull: ["$user.tags", null] }, null] },
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
         then: null,
         else: {
-          $switch: {
-            branches: [
-              { case: { $in: [{ $type: "$user.tags" }, ["array"]] }, then: { $size: "$user.tags" } },
-              { case: { $in: [{ $type: "$user.tags" }, ["string"]] }, then: { $strLenCP: "$user.tags" } },
-            ],
-            default: null,
+          $cond: {
+            if: { $eq: [{ $ifNull: ["$user.name", null] }, null] },
+            then: null,
+            else: { $strLenCP: "$user.name" },
           },
         },
       },
@@ -9173,11 +9035,7 @@ describe("optional chaining (?.)", () => {
     // `.toReversed()` is known array-producing, so the bracket access uses
     // the compact $arrayElemAt form. The `?.` adds the wrap on the receiver.
     expect(jsmql.expr("$.items.toReversed()?.[0]")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: [{ $reverseArray: "$items" }, null] }, null] },
-        then: null,
-        else: { $arrayElemAt: [{ $reverseArray: "$items" }, 0] },
-      },
+      $arrayElemAt: [{ $ifNull: [{ $reverseArray: { $ifNull: ["$items", []] } }, []] }, 0],
     });
   });
 
@@ -9203,7 +9061,9 @@ describe("optional chaining (?.)", () => {
   // `?.` buried inside a lambda body belongs to the lambda's chain, not the
   // outer `.map()` chain — so the outer .map receiver does NOT get wrapped.
   it("?. inside a lambda body does NOT wrap the outer chain", () => {
-    expect(jsmql.expr("$.items.map(x => x?.tags)")).toEqual({ $map: { input: "$items", as: "x", in: "$$x.tags" } });
+    expect(jsmql.expr("$.items.map(x => x?.tags)")).toEqual({
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: "$$x.tags" },
+    });
   });
 });
 
@@ -9332,7 +9192,7 @@ describe("array .indexOf", () => {
           { case: { $in: [{ $type: "$email" }, ["array"]] }, then: { $indexOfArray: ["$email", "@"] } },
           { case: { $in: [{ $type: "$email" }, ["string"]] }, then: { $indexOfCP: ["$email", "@"] } },
         ],
-        default: null,
+        default: -1,
       },
     });
   });
@@ -9342,41 +9202,22 @@ describe("array .concat", () => {
   it("on array literal → $concatArrays", () => {
     expect(jsmql.expr("[1, 2].concat([3, 4])")).toEqual([1, 2, 3, 4]);
   });
-  // MEASURED: the server folds a run of ADJACENT constant operands inside `$concat` /
-  // `$concatArrays` while it OPTIMISES, and raises there when a folded constant is the
-  // wrong type for that operator — before any `$switch` branch is chosen, so the guard
-  // cannot save it and neither can `$literal`. Each argument is therefore rendered the
-  // way JavaScript renders it for the family that runs.
-  it("renders each argument for the family that runs, so two constants can stand together", () => {
-    expect(jsmql.expr('$.s.concat("!", "?")')).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$s" }, ["array"]] }, then: { $concatArrays: ["$s", ["!"], ["?"]] } },
-          { case: { $in: [{ $type: "$s" }, ["string"]] }, then: { $concat: ["$s", "!", "?"] } },
-        ],
-        default: null,
-      },
+  it("wraps a scalar argument as the one-element array JavaScript's concat reads it as", () => {
+    expect(jsmql.expr('$.parts.concat("!", "?")')).toEqual({
+      $concatArrays: [{ $ifNull: ["$parts", []] }, ["!"], ["?"]],
+    });
+    expect(jsmql.expr("$.a.split(',').concat(2)")).toEqual({
+      $concatArrays: [{ $ifNull: [{ $split: ["$a", ","] }, []] }, [2]],
     });
   });
-  it("a proven scalar is the one-element array it stands for, as JavaScript's concat has it", () => {
-    expect(jsmql.expr("$.a.split(',').concat(2)")).toEqual({ $concatArrays: [{ $split: ["$a", ","] }, [2]] });
-    expect(jsmql.expr("$.s.trim().concat(1, 2)")).toEqual({
-      $concat: [{ $trim: { input: "$s" } }, { $toString: 1 }, { $toString: 2 }],
-    });
+  it("a proven string refuses .concat and names '+'", () => {
+    expect(() => jsmql.expr("$.first.trim().concat($.last)")).toThrow(
+      "'.concat()' is not available on a 'string' — it is defined on 'array', 'stream'. To join strings, write '+' between them: 'a + b'.",
+    );
+    expect(jsmql.expr("$.first.trim() + $.last")).toEqual({ $concat: [{ $trim: { input: "$first" } }, "$last"] });
   });
-  it("on known string → $concat", () => {
-    expect(jsmql.expr("$.first.trim().concat($.last)")).toEqual({ $concat: [{ $trim: { input: "$first" } }, "$last"] });
-  });
-  it("on bare field → runtime $cond on $isArray", () => {
-    expect(jsmql.expr("$.parts.concat($.tail)")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$parts" }, ["array"]] }, then: { $concatArrays: ["$parts", "$tail"] } },
-          { case: { $in: [{ $type: "$parts" }, ["string"]] }, then: { $concat: ["$parts", "$tail"] } },
-        ],
-        default: null,
-      },
-    });
+  it("on a bare field → $concatArrays, with no runtime dispatch", () => {
+    expect(jsmql.expr("$.parts.concat($.tail)")).toEqual({ $concatArrays: [{ $ifNull: ["$parts", []] }, "$tail"] });
   });
 });
 
@@ -9386,90 +9227,78 @@ describe(".join", () => {
   // both JavaScript's answers, and both measured on the server. See `joinedWith`.
   it("default separator (,)", () => {
     expect(jsmql.expr("$.tags.join()")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$tags", null] }, null] },
-        then: null,
-        else: {
-          $ifNull: [
-            {
-              $reduce: {
-                input: "$tags",
-                initialValue: null,
-                in: {
+      $ifNull: [
+        {
+          $reduce: {
+            input: { $ifNull: ["$tags", []] },
+            initialValue: null,
+            in: {
+              $cond: {
+                if: { $eq: ["$$value", null] },
+                then: {
                   $cond: {
-                    if: { $eq: ["$$value", null] },
-                    then: {
+                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                    then: "",
+                    else: { $toString: "$$this" },
+                  },
+                },
+                else: {
+                  $concat: [
+                    "$$value",
+                    ",",
+                    {
                       $cond: {
                         if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
                         then: "",
                         else: { $toString: "$$this" },
                       },
                     },
-                    else: {
-                      $concat: [
-                        "$$value",
-                        ",",
-                        {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                      ],
-                    },
-                  },
+                  ],
                 },
               },
             },
-            "",
-          ],
+          },
         },
-      },
+        "",
+      ],
     });
   });
   it("custom separator", () => {
     expect(jsmql.expr('$.tags.join(" | ")')).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$tags", null] }, null] },
-        then: null,
-        else: {
-          $ifNull: [
-            {
-              $reduce: {
-                input: "$tags",
-                initialValue: null,
-                in: {
+      $ifNull: [
+        {
+          $reduce: {
+            input: { $ifNull: ["$tags", []] },
+            initialValue: null,
+            in: {
+              $cond: {
+                if: { $eq: ["$$value", null] },
+                then: {
                   $cond: {
-                    if: { $eq: ["$$value", null] },
-                    then: {
+                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                    then: "",
+                    else: { $toString: "$$this" },
+                  },
+                },
+                else: {
+                  $concat: [
+                    "$$value",
+                    " | ",
+                    {
                       $cond: {
                         if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
                         then: "",
                         else: { $toString: "$$this" },
                       },
                     },
-                    else: {
-                      $concat: [
-                        "$$value",
-                        " | ",
-                        {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                      ],
-                    },
-                  },
+                  ],
                 },
               },
             },
-            "",
-          ],
+          },
         },
-      },
+        "",
+      ],
     });
   });
 });
@@ -9478,86 +9307,36 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
   // MEASURED on mongod: every array operator answers null for a missing field, and
   // `{ $size: null }`, `{ $in: [x, null] }` and a null `$map` input abort the command.
   it("guards a field that may be missing, through any chain of array methods", () => {
-    expect(jsmql.expr("$.a.map(x => x + 1).length")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $size: "$$jsmqlRecv" },
-          },
-        },
-      },
+    expect(jsmql.expr("$.a.map(x => x + 1).size()")).toEqual({
+      $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } },
     });
     expect(jsmql.expr("$.a.map(x => x).size()")).toEqual({
-      $size: { $ifNull: [{ $map: { input: "$a", as: "x", in: "$$x" } }, []] },
+      $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x" } },
     });
-    expect(jsmql.expr("$.a.map(x => x).includes(3)")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $map: { input: "$a", as: "x", in: "$$x" } } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $in: [3, "$$jsmqlRecv"] },
-          },
-        },
-      },
+    expect(jsmql.expr("$.a.map(x => x).has(3)")).toEqual({
+      $in: [3, { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x" } }],
     });
     expect(jsmql.expr("$.a.filter(x => x > 1).some(x => x > 2)")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $filter: { input: "$a", as: "x", cond: { $gt: ["$$x", 1] } } } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $anyElementTrue: { $map: { input: "$$jsmqlRecv", as: "x", in: { $gt: ["$$x", 2] } } } },
-          },
+      $anyElementTrue: {
+        $map: {
+          input: { $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $gt: ["$$x", 1] } } },
+          as: "x",
+          in: { $gt: ["$$x", 2] },
         },
       },
     });
     // an argument that may be missing makes the whole chain uncertain
-    expect(jsmql.expr("[1, 2].concat($.b).length")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $concatArrays: [[1, 2], "$b"] } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $size: "$$jsmqlRecv" },
-          },
-        },
-      },
+    expect(jsmql.expr("[1, 2].concat($.b).size()")).toEqual({
+      $size: { $ifNull: [{ $concatArrays: [[1, 2], "$b"] }, []] },
     });
-    expect(jsmql.expr("$range(0, $.n).length")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $range: [0, "$n"] } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $size: "$$jsmqlRecv" },
-          },
-        },
-      },
-    });
-    expect(jsmql.expr("Object.keys($.o).length")).toEqual({
-      $let: {
-        vars: { jsmqlRecv: { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } },
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-            then: null,
-            else: { $size: "$$jsmqlRecv" },
-          },
-        },
-      },
+    expect(jsmql.expr("$range(0, $.n).size()")).toEqual({ $size: { $ifNull: [{ $range: [0, "$n"] }, []] } });
+    expect(jsmql.expr("Object.keys($.o).size()")).toEqual({
+      $size: { $ifNull: [{ $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }, []] },
     });
   });
 
   it("counts, searches and iterates a value that is certainly there, as it is", () => {
-    expect(jsmql.expr("Object.keys($).length")).toEqual({
+    expect(jsmql.expr("Object.keys($).size()")).toEqual({
       $size: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
     });
     expect(jsmql.expr("Object.keys($).some(k => k === 'a')")).toEqual({
@@ -9569,10 +9348,10 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
         },
       },
     });
-    expect(jsmql.expr("$range(0, 5).length")).toEqual({ $size: { $range: [0, 5] } });
-    expect(jsmql.expr("[$.a, $.b].length")).toEqual({ $size: [["$a", "$b"]] });
+    expect(jsmql.expr("$range(0, 5).size()")).toEqual({ $size: { $range: [0, 5] } });
+    expect(jsmql.expr("[$.a, $.b].size()")).toEqual({ $size: [["$a", "$b"]] });
     // an optional chain reads a missing receiver as [] — which is there
-    expect(jsmql.expr("$.a?.map(x => x + 1).length")).toEqual({
+    expect(jsmql.expr("$.a?.map(x => x + 1).size()")).toEqual({
       $cond: {
         if: { $eq: [{ $ifNull: ["$a", null] }, null] },
         then: null,
@@ -9580,53 +9359,36 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
       },
     });
     // a `let` of a present value is present; of a field's chain it is not
-    expect(jsmql("const ks = Object.keys($); $.n = ks.length;")).toEqual([
+    expect(jsmql("const ks = Object.keys($); $.n = ks.size();")).toEqual([
       {
         $set: { "__jsmql.var.ks": { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } },
       },
       { $set: { n: { $size: "$__jsmql.var.ks" } } },
       { $unset: "__jsmql" },
     ]);
-    expect(jsmql("const xs = $.a.map(x => x); $.n = xs.length;")).toEqual([
-      { $set: { "__jsmql.var.xs": { $map: { input: "$a", as: "x", in: "$$x" } } } },
-      {
-        $set: {
-          n: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$__jsmql.var.xs", null] }, null] },
-              then: null,
-              else: { $size: "$__jsmql.var.xs" },
-            },
-          },
-        },
-      },
+    expect(jsmql("const xs = $.a.map(x => x); $.n = xs.size();")).toEqual([
+      { $set: { "__jsmql.var.xs": { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x" } } } },
+      { $set: { n: { $size: "$__jsmql.var.xs" } } },
       { $unset: "__jsmql" },
     ]);
   });
 
-  it("the $type test of a runtime dispatch proves the array branch, and the string branch still admits a missing value", () => {
-    expect(jsmql.expr("$.a.length")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $size: "$a" } },
-          { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $strLenCP: "$a" } },
-        ],
-        default: null,
-      },
+  it("an unproven receiver takes the method's one family; a proven wrong family is refused", () => {
+    expect(jsmql.expr("$.a.size()")).toEqual({ $size: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr("$.a.has(3)")).toEqual({ $in: [3, { $ifNull: ["$a", []] }] });
+    expect(jsmql.expr("$.s.length()")).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } },
     });
-    expect(jsmql.expr("$.a.includes(3)")).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $in: [3, "$a"] } },
-          { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$a", 3] }, 0] } },
-        ],
-        default: null,
-      },
-    });
+    expect(() => jsmql.expr("$.a.uniq().length()")).toThrow(
+      "'.length()' is not available on an 'array' — it is defined on 'string'. For the number of elements, write '.size()'.",
+    );
+    expect(() => jsmql.expr("$.s.trim().has(3)")).toThrow(
+      "'.has()' is not available on a 'string' — it is defined on 'array'. For a substring test, write '.includes(x)'.",
+    );
   });
 
   it("a $lookup always writes its array, so a count or a search over it needs no guard", () => {
-    expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).length;")).toEqual([
+    expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).size();")).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $set: { n: { $size: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } } },
       { $unset: "__jsmql" },
@@ -9646,12 +9408,12 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
 describe(".flat / .flatMap", () => {
   it("flat() one level", () => {
     expect(jsmql.expr("$.nested.flat()")).toEqual({
-      $reduce: { input: "$nested", initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } },
+      $reduce: { input: { $ifNull: ["$nested", []] }, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } },
     });
   });
   it("flat(1) explicit depth", () => {
     expect(jsmql.expr("$.nested.flat(1)")).toEqual({
-      $reduce: { input: "$nested", initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } },
+      $reduce: { input: { $ifNull: ["$nested", []] }, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } },
     });
   });
   it("rejects flat(2)", () => {
@@ -9660,7 +9422,7 @@ describe(".flat / .flatMap", () => {
   it("flatMap with lambda", () => {
     expect(jsmql.expr("$.docs.flatMap(d => d.tags)")).toEqual({
       $reduce: {
-        input: { $map: { input: "$docs", as: "d", in: "$$d.tags" } },
+        input: { $map: { input: { $ifNull: ["$docs", []] }, as: "d", in: "$$d.tags" } },
         initialValue: [],
         in: { $concatArrays: ["$$value", "$$this"] },
       },
@@ -9848,11 +9610,13 @@ describe("spread in operator args", () => {
 
 describe("shorthand object properties", () => {
   it("inside lambda body", () => {
-    expect(jsmql.expr("$.items.map(x => ({ x }))")).toEqual({ $map: { input: "$items", as: "x", in: { x: "$$x" } } });
+    expect(jsmql.expr("$.items.map(x => ({ x }))")).toEqual({
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { x: "$$x" } },
+    });
   });
   it("two shorthand props", () => {
     expect(jsmql.expr("$.items.map(x => ({ x, x }))")).toEqual({
-      $map: { input: "$items", as: "x", in: { x: "$$x" } },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { x: "$$x" } },
     });
   });
   it("shorthand outside lambda scope errors", () => {
@@ -9963,7 +9727,7 @@ describe("function overload", () => {
 
   it("handles nested arrows in the body", () => {
     expect(jsmql.expr(({ $ }) => $.items.map((x) => x * 2))).toEqual({
-      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", 2] } },
     });
   });
 
@@ -10354,11 +10118,7 @@ describe("jsmql.compile()", () => {
   describe("scope and shadowing", () => {
     it("lambda parameter shadows a binding of the same name", () => {
       const q = jsmql.compile(({ x }: { x: number }, { $ }) => $.items.map((x) => x * 2));
-      expect(q({ x: 999 })).toEqual({
-        $expr: {
-          $ne: [{ $ifNull: [{ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } }, null] }, null],
-        },
-      });
+      expect(q({ x: 999 })).toEqual({ $expr: true });
     });
 
     it("binding visible alongside other refs translates to a query-doc conjunction", () => {
@@ -11006,7 +10766,7 @@ describe("trailing commas (JS syntax)", () => {
 
   it("method-call args", () => {
     expect(jsmql.expr("$.items.map(x => x * 1.1,)")).toEqual({
-      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 1.1] } },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", 1.1] } },
     });
   });
 
@@ -11068,7 +10828,7 @@ describe("trailing commas (JS syntax)", () => {
 
   it("parenthesised lambda params (incl. trailing comma)", () => {
     expect(jsmql.expr("$.a.reduce((acc, x,) => acc + x, 0)")).toEqual({
-      $reduce: { input: "$a", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
+      $reduce: { input: { $ifNull: ["$a", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
   });
 
@@ -11122,61 +10882,12 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlArr",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlArr",
           in: {
-            $switch: {
-              branches: [
-                {
-                  case: { $in: [{ $type: "$$jsmqlArr.l" }, ["string"]] },
-                  then: {
-                    $substrCP: [
-                      "$$jsmqlArr.l",
-                      {
-                        $cond: {
-                          if: { $lt: ["$$jsmqlArr.i", 0] },
-                          then: {
-                            $max: [0, { $add: ["$$jsmqlArr.i", { $strLenCP: { $ifNull: ["$$jsmqlArr.l", ""] } }] }],
-                          },
-                          else: "$$jsmqlArr.i",
-                        },
-                      },
-                      {
-                        $max: [
-                          0,
-                          {
-                            $subtract: [
-                              { $strLenCP: { $ifNull: ["$$jsmqlArr.l", ""] } },
-                              {
-                                $cond: {
-                                  if: { $lt: ["$$jsmqlArr.i", 0] },
-                                  then: {
-                                    $max: [
-                                      0,
-                                      { $add: ["$$jsmqlArr.i", { $strLenCP: { $ifNull: ["$$jsmqlArr.l", ""] } }] },
-                                    ],
-                                  },
-                                  else: "$$jsmqlArr.i",
-                                },
-                              },
-                            ],
-                          },
-                        ],
-                      },
-                    ],
-                  },
-                },
-                {
-                  case: { $in: [{ $type: "$$jsmqlArr.l" }, ["array"]] },
-                  then: {
-                    $let: {
-                      vars: { jsmqlArr2: "$$jsmqlArr.l" },
-                      in: { $slice: ["$$jsmqlArr2", "$$jsmqlArr.i", { $max: [1, { $size: "$$jsmqlArr2" }] }] },
-                    },
-                  },
-                },
-              ],
-              default: null,
+            $let: {
+              vars: { jsmqlArr2: { $ifNull: ["$$jsmqlArr.l", []] } },
+              in: { $slice: ["$$jsmqlArr2", "$$jsmqlArr.i", { $max: [1, { $size: "$$jsmqlArr2" }] }] },
             },
           },
         },
@@ -11187,104 +10898,38 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlArr",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlArr",
           in: {
-            $switch: {
-              branches: [
-                {
-                  case: { $in: [{ $type: "$$jsmqlArr.l" }, ["string"]] },
-                  then: {
-                    $substrCP: [
-                      "$$jsmqlArr.l",
-                      {
-                        $cond: {
-                          if: { $lt: ["$$jsmqlArr.i", 0] },
-                          then: {
-                            $max: [0, { $add: ["$$jsmqlArr.i", { $strLenCP: { $ifNull: ["$$jsmqlArr.l", ""] } }] }],
-                          },
-                          else: "$$jsmqlArr.i",
-                        },
-                      },
-                      {
-                        $max: [
-                          0,
-                          {
-                            $subtract: [
-                              {
-                                $cond: {
-                                  if: { $lt: ["$$jsmqlArr.j", 0] },
-                                  then: {
-                                    $max: [
-                                      0,
-                                      { $add: ["$$jsmqlArr.j", { $strLenCP: { $ifNull: ["$$jsmqlArr.l", ""] } }] },
-                                    ],
-                                  },
-                                  else: "$$jsmqlArr.j",
-                                },
-                              },
-                              {
-                                $cond: {
-                                  if: { $lt: ["$$jsmqlArr.i", 0] },
-                                  then: {
-                                    $max: [
-                                      0,
-                                      { $add: ["$$jsmqlArr.i", { $strLenCP: { $ifNull: ["$$jsmqlArr.l", ""] } }] },
-                                    ],
-                                  },
-                                  else: "$$jsmqlArr.i",
-                                },
-                              },
-                            ],
-                          },
-                        ],
-                      },
+            $let: {
+              vars: { jsmqlArr2: { $ifNull: ["$$jsmqlArr.l", []] } },
+              in: {
+                $let: {
+                  vars: {
+                    jsmqlK: {
+                      $cond: [
+                        { $lt: ["$$jsmqlArr.i", 0] },
+                        { $max: [{ $add: ["$$jsmqlArr.i", { $size: "$$jsmqlArr2" }] }, 0] },
+                        { $min: ["$$jsmqlArr.i", { $size: "$$jsmqlArr2" }] },
+                      ],
+                    },
+                    jsmqlF: {
+                      $cond: [
+                        { $lt: ["$$jsmqlArr.j", 0] },
+                        { $max: [{ $add: ["$$jsmqlArr.j", { $size: "$$jsmqlArr2" }] }, 0] },
+                        { $min: ["$$jsmqlArr.j", { $size: "$$jsmqlArr2" }] },
+                      ],
+                    },
+                  },
+                  in: {
+                    $cond: [
+                      { $gt: [{ $subtract: ["$$jsmqlF", "$$jsmqlK"] }, 0] },
+                      { $slice: ["$$jsmqlArr2", "$$jsmqlK", { $max: [{ $subtract: ["$$jsmqlF", "$$jsmqlK"] }, 1] }] },
+                      [],
                     ],
                   },
                 },
-                {
-                  case: { $in: [{ $type: "$$jsmqlArr.l" }, ["array"]] },
-                  then: {
-                    $let: {
-                      vars: { jsmqlArr2: "$$jsmqlArr.l" },
-                      in: {
-                        $let: {
-                          vars: {
-                            jsmqlK: {
-                              $cond: [
-                                { $lt: ["$$jsmqlArr.i", 0] },
-                                { $max: [{ $add: ["$$jsmqlArr.i", { $size: "$$jsmqlArr2" }] }, 0] },
-                                { $min: ["$$jsmqlArr.i", { $size: "$$jsmqlArr2" }] },
-                              ],
-                            },
-                            jsmqlF: {
-                              $cond: [
-                                { $lt: ["$$jsmqlArr.j", 0] },
-                                { $max: [{ $add: ["$$jsmqlArr.j", { $size: "$$jsmqlArr2" }] }, 0] },
-                                { $min: ["$$jsmqlArr.j", { $size: "$$jsmqlArr2" }] },
-                              ],
-                            },
-                          },
-                          in: {
-                            $cond: [
-                              { $gt: [{ $subtract: ["$$jsmqlF", "$$jsmqlK"] }, 0] },
-                              {
-                                $slice: [
-                                  "$$jsmqlArr2",
-                                  "$$jsmqlK",
-                                  { $max: [{ $subtract: ["$$jsmqlF", "$$jsmqlK"] }, 1] },
-                                ],
-                              },
-                              [],
-                            ],
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              ],
-              default: null,
+              },
             },
           },
         },
@@ -11295,7 +10940,7 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlPad",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlPad",
           in: {
             $cond: {
@@ -11334,11 +10979,11 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlArr",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlArr",
           in: {
             $let: {
-              vars: { jsmqlArr2: "$$jsmqlArr.l" },
+              vars: { jsmqlArr2: { $ifNull: ["$$jsmqlArr.l", []] } },
               in: {
                 $let: {
                   vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr2" }, "$$jsmqlArr.n"] } },
@@ -11363,11 +11008,11 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlArr",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlArr",
           in: {
             $let: {
-              vars: { jsmqlArr2: "$$jsmqlArr.l" },
+              vars: { jsmqlArr2: { $ifNull: ["$$jsmqlArr.l", []] } },
               in: {
                 $let: {
                   vars: {
@@ -11415,11 +11060,15 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlArr",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlArr",
           in: {
             $let: {
-              vars: { jsmqlArr2: "$$jsmqlArr.l", jsmqlIdx: "$$jsmqlArr.i", jsmqlVal: "$$jsmqlArr.v" },
+              vars: {
+                jsmqlArr2: { $ifNull: ["$$jsmqlArr.l", []] },
+                jsmqlIdx: "$$jsmqlArr.i",
+                jsmqlVal: "$$jsmqlArr.v",
+              },
               in: {
                 $concatArrays: [
                   { $slice: ["$$jsmqlArr2", "$$jsmqlIdx"] },
@@ -11449,11 +11098,11 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlArr",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlArr",
           in: {
             $let: {
-              vars: { jsmqlArr2: "$$jsmqlArr.l" },
+              vars: { jsmqlArr2: { $ifNull: ["$$jsmqlArr.l", []] } },
               in: { $slice: ["$$jsmqlArr2", "$$jsmqlArr.n", { $max: [1, { $size: "$$jsmqlArr2" }] }] },
             },
           },
@@ -11465,11 +11114,11 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlItem",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlItem",
           in: {
             $filter: {
-              input: "$$jsmqlItem.l",
+              input: { $ifNull: ["$$jsmqlItem.l", []] },
               as: "jsmqlItem2",
               cond: { $not: [{ $in: ["$$jsmqlItem2", { $ifNull: ["$$jsmqlItem.o", []] }] }] },
             },
@@ -11482,11 +11131,11 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlItem",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlItem",
           in: {
             $filter: {
-              input: "$$jsmqlItem.l",
+              input: { $ifNull: ["$$jsmqlItem.l", []] },
               as: "jsmqlItem2",
               cond: { $not: [{ $in: ["$$jsmqlItem2", ["$$jsmqlItem.o"]] }] },
             },
@@ -11499,7 +11148,7 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlShuffled",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlShuffled",
           in: {
             $let: {
@@ -11507,7 +11156,11 @@ describe("internal expression-variable names never capture a user param", () => 
                 jsmqlShuffled2: {
                   $sortArray: {
                     input: {
-                      $map: { input: "$$jsmqlShuffled.l", as: "jsmqlItem", in: { k: { $rand: {} }, v: "$$jsmqlItem" } },
+                      $map: {
+                        input: { $ifNull: ["$$jsmqlShuffled.l", []] },
+                        as: "jsmqlItem",
+                        in: { k: { $rand: {} }, v: "$$jsmqlItem" },
+                      },
                     },
                     sortBy: { k: 1 },
                   },
@@ -11530,7 +11183,7 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlOtherKeys",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlOtherKeys",
           in: {
             $let: {
@@ -11539,7 +11192,7 @@ describe("internal expression-variable names never capture a user param", () => 
               },
               in: {
                 $filter: {
-                  input: "$$jsmqlOtherKeys.l",
+                  input: { $ifNull: ["$$jsmqlOtherKeys.l", []] },
                   as: "x",
                   cond: { $not: [{ $in: ["$$x.id", "$$jsmqlOtherKeys2"] }] },
                 },
@@ -11554,7 +11207,7 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlI",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlI",
           in: {
             $arrayToObject: {
@@ -11562,7 +11215,7 @@ describe("internal expression-variable names never capture a user param", () => 
                 input: { $range: [0, { $size: { $ifNull: ["$$jsmqlI.l", []] } }] },
                 as: "jsmqlI2",
                 in: {
-                  k: { $toString: { $arrayElemAt: ["$$jsmqlI.l", "$$jsmqlI2"] } },
+                  k: { $toString: { $arrayElemAt: [{ $ifNull: ["$$jsmqlI.l", []] }, "$$jsmqlI2"] } },
                   v: { $arrayElemAt: ["$$jsmqlI.v", "$$jsmqlI2"] },
                 },
               },
@@ -11576,14 +11229,14 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlKey",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlKey",
           in: {
             $getField: {
               field: "out",
               input: {
                 $reduce: {
-                  input: "$$jsmqlKey.l",
+                  input: { $ifNull: ["$$jsmqlKey.l", []] },
                   initialValue: { seen: [], out: [] },
                   in: {
                     $let: {
@@ -11612,11 +11265,11 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlObj",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlObj",
           in: {
             $let: {
-              vars: { jsmqlObj2: "$$jsmqlObj.o" },
+              vars: { jsmqlObj2: { $ifNull: ["$$jsmqlObj.o", {}] } },
               in: { a: { $getField: { field: "a", input: "$$jsmqlObj2" } } },
             },
           },
@@ -11628,7 +11281,7 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlKv",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlKv",
           in: {
             $arrayToObject: {
@@ -11650,11 +11303,11 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlFi",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlFi",
           in: {
             $let: {
-              vars: { jsmqlArr: "$$jsmqlFi.l" },
+              vars: { jsmqlArr: { $ifNull: ["$$jsmqlFi.l", []] } },
               in: {
                 $let: {
                   vars: {
@@ -11684,14 +11337,16 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlSorted",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlSorted",
           in: {
             $let: {
               vars: {
                 jsmqlSorted2: {
                   $sortArray: {
-                    input: { $map: { input: "$$jsmqlSorted.l", as: "d", in: { k: "$$d.a", v: "$$d" } } },
+                    input: {
+                      $map: { input: { $ifNull: ["$$jsmqlSorted.l", []] }, as: "d", in: { k: "$$d.a", v: "$$d" } },
+                    },
                     sortBy: { k: -1 },
                   },
                 },
@@ -11707,11 +11362,18 @@ describe("internal expression-variable names never capture a user param", () => 
       "jsmqlPair",
       {
         $map: {
-          input: "$r",
+          input: { $ifNull: ["$r", []] },
           as: "jsmqlPair",
           in: {
             $map: {
-              input: { $zip: { inputs: [{ $range: [0, { $size: "$$jsmqlPair.l" }] }, "$$jsmqlPair.l"] } },
+              input: {
+                $zip: {
+                  inputs: [
+                    { $range: [0, { $size: { $ifNull: ["$$jsmqlPair.l", []] } }] },
+                    { $ifNull: ["$$jsmqlPair.l", []] },
+                  ],
+                },
+              },
               as: "jsmqlPair2",
               in: {
                 $let: {
@@ -11732,41 +11394,14 @@ describe("internal expression-variable names never capture a user param", () => 
   }
 
   it("uses the base name without a collision — output stays unchanged for normal code", () => {
-    const start = {
-      $cond: {
-        if: { $lt: ["$$d.i", 0] },
-        then: { $max: [0, { $add: ["$$d.i", { $strLenCP: { $ifNull: ["$$d.l", ""] } }] }] },
-        else: "$$d.i",
-      },
-    };
     expect(jsmql.expr("$.r.map(d => d.l.slice(d.i))")).toEqual({
       $map: {
-        input: "$r",
+        input: { $ifNull: ["$r", []] },
         as: "d",
         in: {
-          $switch: {
-            branches: [
-              {
-                case: { $in: [{ $type: "$$d.l" }, ["string"]] },
-                then: {
-                  $substrCP: [
-                    "$$d.l",
-                    start,
-                    { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$$d.l", ""] } }, start] }] },
-                  ],
-                },
-              },
-              {
-                case: { $in: [{ $type: "$$d.l" }, ["array"]] },
-                then: {
-                  $let: {
-                    vars: { jsmqlArr: "$$d.l" },
-                    in: { $slice: ["$$jsmqlArr", "$$d.i", { $max: [1, { $size: "$$jsmqlArr" }] }] },
-                  },
-                },
-              },
-            ],
-            default: null,
+          $let: {
+            vars: { jsmqlArr: { $ifNull: ["$$d.l", []] } },
+            in: { $slice: ["$$jsmqlArr", "$$d.i", { $max: [1, { $size: "$$jsmqlArr" }] }] },
           },
         },
       },
@@ -11816,11 +11451,11 @@ describe("rejects fractional counts, and never passes them to $slice", () => {
   }
 
   it("compiles a whole-number count", () => {
-    expect(jsmql.expr("$.a.take(2)")).toEqual({ $slice: ["$a", 2] });
+    expect(jsmql.expr("$.a.take(2)")).toEqual({ $slice: [{ $ifNull: ["$a", []] }, 2] });
   });
 
   it("stays silent on a non-literal count", () => {
-    expect(jsmql.expr("$.a.take($.n)")).toEqual({ $slice: ["$a", "$n"] });
+    expect(jsmql.expr("$.a.take($.n)")).toEqual({ $slice: [{ $ifNull: ["$a", []] }, "$n"] });
   });
 });
 

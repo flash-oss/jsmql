@@ -58,24 +58,20 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
     expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
-    expect(filter("$.a in $.list")).toEqual({ $expr: { $in: ["$a", "$list"] } });
-    // `.length` is a LENGTH, which `$size` (arrays only) cannot say for a string
-    expect(filter("$.arr.length > 2")).toEqual({
+    // `in` on a value the proof cannot place is the key test, which has no query form for a computed key
+    expect(filter("$.a in $.list")).toEqual({
       $expr: {
-        $gt: [
-          {
-            $switch: {
-              branches: [
-                { case: { $in: [{ $type: "$arr" }, ["array"]] }, then: { $size: "$arr" } },
-                { case: { $in: [{ $type: "$arr" }, ["string"]] }, then: { $strLenCP: "$arr" } },
-              ],
-              default: null,
-            },
-          },
-          2,
+        $in: [
+          { $toString: "$a" },
+          { $map: { input: { $objectToArray: { $ifNull: ["$list", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
         ],
       },
     });
+    // a literal key on a path is the field's own existence
+    expect(filter('"k" in $.o')).toEqual({ "o.k": { $exists: true } });
+    // `.size()` counts the elements of an array. The query language has no operator for a
+    // count, so the comparison stays under `$expr`; a missing array reads as empty.
+    expect(filter("$.arr.size() > 2")).toEqual({ $expr: { $gt: [{ $size: { $ifNull: ["$arr", []] } }, 2] } });
   });
 });
 
@@ -113,9 +109,13 @@ describe("compiler/emit/filter — && and ||", () => {
   });
 
   // Two clauses on one field fold to the one MongoDB reads off the index.
-  it("folds a chain of .includes on one field into $all", () => {
-    expect(filter('$.tags.includes("a") && $.tags.includes("b")')).toEqual({ tags: { $all: ["a", "b"] } });
-    expect(filter('$.tags.includes("a") && $.other.includes("b")')).toEqual({ tags: "a", other: "b" });
+  it("folds a chain of .has on one field into $all", () => {
+    expect(filter('$.tags.has("a") && $.tags.has("b")')).toEqual({ tags: { $all: ["a", "b"] } });
+    expect(filter('$.tags.has("a") && $.other.has("b")')).toEqual({ tags: "a", other: "b" });
+    // A substring test is a regex, and two regexes on one path stay two clauses.
+    expect(filter('$.s.includes("a") && $.s.includes("b")')).toEqual({
+      $and: [{ s: { $regex: /a/ } }, { s: { $regex: /b/ } }],
+    });
   });
 });
 
@@ -207,11 +207,14 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
 
 describe("compiler/emit/filter — methods and operators", () => {
   it("lowers the boolean methods to their indexable forms", () => {
-    // A query document is read through an INDEX, so `.includes` is MongoDB's own
-    // "equals, or is an array containing". The substring reading a string receiver
-    // has is the expression road's, and `.match(/x/)` the query spelling for it.
-    expect(filter('$.tags.includes("x")')).toEqual({ tags: "x" });
-    expect(filter('["a", "b"].includes($.s)')).toEqual({ s: { $in: ["a", "b"] } });
+    // A query document is read through an INDEX. `.has` is membership in an array:
+    // MongoDB's own "equals, or is an array containing", and `$in` for a constant list.
+    // `.includes` is the substring test of a string, and the query spelling for it is an
+    // escaped `$regex`.
+    expect(filter('$.tags.has("x")')).toEqual({ tags: "x" });
+    expect(filter('["a", "b"].has($.s)')).toEqual({ s: { $in: ["a", "b"] } });
+    expect(filter('$.s.includes("x")')).toEqual({ s: { $regex: /x/ } });
+    expect(filter('$.s.includes("a.b")')).toEqual({ s: { $regex: /a\.b/ } });
     expect(filter('$.s.startsWith("A")')).toEqual({ s: { $regex: /^A/ } });
     // `\z` is the end of the SUBJECT. PCRE's `$` also matches before a final newline,
     // so it accepted "z.\n" where JavaScript's endsWith does not.
@@ -257,13 +260,9 @@ describe("compiler/emit/filter — methods and operators", () => {
     // arrives under `$expr`.
     // A receiver PROVEN to be no string is refused before either: `$abs` returns a number.
     expect(() => filter('$abs($.n).startsWith("A")')).toThrow(/not available on a 'number'/);
-    /** The `.some` / `.every` value lowering over `input`, under its missing-array guard. */
+    /** The `.some` / `.every` value lowering over `input`; a missing array reads as empty (HR5). */
     const overItems = (input: string, op: "$anyElementTrue" | "$allElementsTrue", as: string, body: unknown) => ({
-      $cond: {
-        if: { $eq: [{ $ifNull: [input, null] }, null] },
-        then: null,
-        else: { [op]: { $map: { input, as, in: body } } },
-      },
+      [op]: { $map: { input: { $ifNull: [input, []] }, as, in: body } },
     });
     expect(filter("$.items.every(i => i.q > 2)")).toEqual({
       $expr: overItems("$items", "$allElementsTrue", "i", { $gt: ["$$i.q", 2] }),

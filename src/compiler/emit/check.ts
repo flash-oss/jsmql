@@ -8,7 +8,8 @@
 // server always refuses. Each rule read here is a `BodyRule` field or an
 // `Arity` field the row states.
 
-import type { Arity, ArgType, BodyRule, Expr } from "../../registry/vocabulary.ts";
+import type { Arity, ArgType, BodyRule, Expr, Kind } from "../../registry/vocabulary.ts";
+import { kindFits } from "./select.ts";
 import { CodegenError } from "../../errors.ts";
 import { stringify } from "../../stringify.ts";
 import { didYouMean } from "../../levenshtein.ts";
@@ -112,6 +113,40 @@ const hint = (name: string, expected: ArgType): string => {
   // A stage answers with its OWN smallest correct call: $group's is not $sample's.
   const example = expected === "object" ? bodyExampleOf(name) : undefined;
   return example === undefined ? "" : ` Write the body as a document. For example: '${example}'.`;
+};
+
+/**
+ * A positional operand PROVEN to be a kind the slot can never take: `$.s.indexOf(n)`
+ * with `n` a number the program wrote. The literal check above reads the source; this
+ * one reads the proof, so a value computed three statements earlier is refused too.
+ */
+export function checkSlotKinds(
+  name: string,
+  args: Arity,
+  operands: readonly Expr[],
+  kinds: readonly (Kind | "unknown")[],
+): void {
+  for (const [i, t] of Object.entries(args.slotType ?? {})) {
+    const e = operands[Number(i)];
+    const k = kinds[Number(i)];
+    if (e === undefined || k === undefined || k === "unknown" || kindFits(k, t)) continue;
+    const expected = Array.isArray(t)
+      ? (t as readonly ArgType[]).map((x) => EXPECTS[x].replace(/^expects /, "")).join(" or ")
+      : EXPECTS[t as ArgType].replace(/^expects /, "");
+    throw new CodegenError(`'${spell(name)}' takes ${expected}, but this value is ${KIND_NOUN[k] ?? `a ${k}`}.`, e.pos);
+  }
+}
+
+/** The kind of a PROVEN value, as a noun with its article. */
+const KIND_NOUN: Readonly<Partial<Record<Kind, string>>> = {
+  string: "a string",
+  number: "a number",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  objectId: "an ObjectId",
+  binData: "binary data",
 };
 
 /** A literal of a type the slot can never take. `slot` is the key, or "" for a positional operand. */

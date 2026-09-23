@@ -127,7 +127,7 @@ proof. A raw `$lookup` stage, and each `$facet` key, fold their own `pipeline`
 the same way.
 
 ```js
-const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.includes("x");
+const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.has("x");
 // → [{ $lookup: { from: "orders", pipeline: [{ $match: { status: "a" } }], as: "__jsmql.tmp.0" } }, { $set: { "__jsmql.var.ids": { $setUnion: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.pid" } } } } }, { $set: { hit: { $in: ["x", "$__jsmql.var.ids"] } } }, { $unset: "__jsmql" }]
 $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price ? 1 : 2;   // `price` was not kept: certainly missing
 // → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: 2 } }]
@@ -186,8 +186,13 @@ present; a call is present when its row states `neverNull` and its receiver and
 value arguments are present; an `Injected` value is present unless it is null. A
 `? :` is present when both branches are; a property read carries the object's
 proof; a binding carries what its value proved. `a ?? b` is present exactly when
-`b` is. MEASURED: `{ $size: null }` and `{ $in: [x, null] }` abort the command, so
-a cell guards with `$ifNull` exactly where the proof says `absent`.
+`b` is. An array or object method under a dot is present whatever its receiver:
+HR5 reads a missing receiver as the empty collection (`dispatchOn` in
+[lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()`
+guards `a` once and `.size()` adds nothing. A `?.` on the spine takes that away:
+the chain stops, and the value may be null. MEASURED: `{ $size: null }` and
+`{ $in: [x, null] }` abort the command, so a cell guards with `$ifNull` exactly
+where the proof says `absent`.
 
 ### The document after a stage
 
@@ -230,7 +235,7 @@ after `$ = …` lands on what that stage made.
 ```js
 $group({ _id: $.k, total: $sum($.amount), items: $push($.item) });  $.t = $.total ? 1 : 2;
 // → …, { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } }
-$.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length;
+$.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length();
 // → …, { $replaceWith: "$p" }, { $set: { c: { $strLenCP: "$b" } } }
 ```
 
@@ -266,7 +271,7 @@ inside one BSON type bracket, so `{ a: { $gt: 5 } }` never selects a string.
 | `$ne: <value>`, `$nin`, `$exists`, `$not`, and every other clause | nothing |
 
 ```js
-$match($.tags != null);  $.arr = $.tags.uniq();  $.bool = $.arr.includes("red");
+$match($.tags != null);  $.arr = $.tags.uniq();  $.bool = $.arr.has("red");
 // → [{ $match: { tags: { $ne: null } } }, { $set: { arr: { $setUnion: "$tags" } } }, { $set: { bool: { $in: ["red", "$arr"] } } }]
 $match($.n > 5);  $.x = $.n ? 1 : 2;     // n: a number or an array, present → only the zero test
 // → [{ $match: { n: { $gt: 5 } } }, { $set: { x: { $cond: { if: { $ne: ["$n", 0] }, then: 1, else: 2 } } } }]
@@ -299,17 +304,17 @@ the receiver's proof as a closed `Receiver`:
    the same branches under `$switch` run on every receiver (`switchOver` in
    [mql.ts](../../src/compiler/emit/mql.ts)).
 3. **Refuse at compile time only when no possible kind is accepted.** `$.b.trim()`
-   after `$.b = $.arr.includes("x")` is a compile error. A partial overlap is not:
+   after `$.b = $.arr.has("x")` is a compile error. A partial overlap is not:
    `{string, number}` under `.trim()` runs the string branch and the number falls
    to the null default, because "possible" is not "proven".
 4. **`ANY` on a one-family row is that family**, by the row's claim, as before.
 
 ```js
-$.v = $.flag ? "abc" : [1, 2];  $.len = $.v.length;
-// → …, { $set: { len: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $size: "$v" } }, { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $strLenCP: "$v" } }] } } } }
+$.v = $.flag ? "abc" : [1, 2];  $.i = $.v.indexOf("x");
+// → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }, { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "x"] } }] } } } }
 
-$.v = $.flag ? 5 : [1, 2];  $.len = $.v.length;   // a number has no `.length` form → the default stays
-// → …, { $set: { len: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $size: "$v" } }], default: null } } } }
+$.v = $.flag ? 5 : [1, 2];  $.i = $.v.indexOf("x");   // a number has no `.indexOf` form → the default stays
+// → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }], default: null } } } }
 ```
 
 ### The truthiness rule
@@ -345,7 +350,7 @@ $.u = "x";  $.v = $.u ? 1 : 2;           // u: string, present
 // → …, { $set: { v: { $cond: { if: { $ne: ["$u", ""] }, then: 1, else: 2 } } } }
 $.arr = [1];  $.w = $.arr ? 1 : 2;       // arr: array, present — always true
 // → …, { $set: { w: 1 } }
-$.n = $.a.length;  $.x = $.n ? 1 : 2;    // n: number, maybe absent
+$.n = $.a.length();  $.x = $.n ? 1 : 2;  // n: number, maybe absent
 // → …, { $set: { x: { $cond: { if: "$n", then: 1, else: 2 } } } }
 ```
 

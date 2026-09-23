@@ -1,454 +1,6 @@
-// src/registry/tokens.ts
-var token = (e) => ({ ...e, kind: "token" });
-var TOKENS = {
-  "(": token({ doc: "The `(` token.", token: "LParen", role: "open" }),
-  ")": token({ doc: "The `)` token.", token: "RParen", role: "close", closes: "(" }),
-  "[": token({ doc: "The `[` token.", token: "LBracket", role: "open" }),
-  "]": token({ doc: "The `]` token.", token: "RBracket", role: "close", closes: "[" }),
-  "{": token({
-    doc: "The `{` token.",
-    token: "LBrace",
-    role: "open",
-    // It counts depth, so a template interpolation can tell its OWN closing brace
-    // from the brace of a nested object. `${ {a: 1} }` has two braces, and only
-    // the outer one ends the interpolation.
-    tracksDepth: true
-  }),
-  "}": token({
-    doc: "The `}` token.",
-    token: "RBrace",
-    role: "close",
-    closes: "{",
-    // When its depth agrees with an open interpolation, this brace emits NO token
-    // at all. It ends the interpolation, and template text continues. It is the
-    // one closer whose row makes nothing.
-    resumesTemplateAtDepth: true
-  }),
-  ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
-  ";": token({ doc: "The `;` token.", token: "Semi", role: "separator" }),
-  ":": token({ doc: "The `:` token.", token: "Colon", role: "separator" }),
-  ".": token({ doc: "The `.` token.", token: "Dot", role: "binder", introducesName: true }),
-  "?.": token({ doc: "The `?.` token.", token: "QuestDot", role: "binder", introducesName: true }),
-  "$.": token({ doc: "The `$.` token.", token: "DollarDot", role: "reference", introducesName: true }),
-  $: token({ doc: "The `$` token.", token: "Dollar", role: "reference", introducesName: true }),
-  $$: token({ doc: "The `$$` token.", token: "DoubleDollar", role: "reference" }),
-  $$$: token({ doc: "The `$$$` token.", token: "TripleDollar", role: "reference" }),
-  $$$$: token({
-    doc: "The `$$$$` token.",
-    token: "QuadDollar",
-    role: "reference",
-    maxRun: { limit: 4, tooLong: "Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$')" }
-  }),
-  "...": token({ doc: "The `...` token.", token: "Spread", role: "spread" }),
-  "+": token({ doc: "The `+` token.", token: "Plus", role: "operator" }),
-  "-": token({ doc: "The `-` token.", token: "Minus", role: "operator" }),
-  "*": token({ doc: "The `*` token.", token: "Star", role: "operator" }),
-  "**": token({ doc: "The `**` token.", token: "StarStar", role: "operator" }),
-  "/": token({
-    doc: "Division, or the start of a regex literal. The lexer chooses on the PRECEDING token: `a / b` is division, a leading `/` begins a regex.",
-    token: ["Slash", "RegexLiteral"],
-    role: "operator",
-    chooseBy: { afterValue: "Slash", otherwise: "RegexLiteral" }
-  }),
-  "%": token({ doc: "The `%` token.", token: "Percent", role: "operator" }),
-  "++": token({ doc: "The `++` token.", token: "PlusPlus", role: "operator" }),
-  "--": token({ doc: "The `--` token.", token: "MinusMinus", role: "operator" }),
-  "=": token({ doc: "The `=` token.", token: "Eq", role: "operator" }),
-  "+=": token({ doc: "The `+=` token.", token: "PlusEq", role: "operator" }),
-  "-=": token({ doc: "The `-=` token.", token: "MinusEq", role: "operator" }),
-  "*=": token({ doc: "The `*=` token.", token: "StarEq", role: "operator" }),
-  "/=": token({
-    doc: "Divide-and-assign, or a regex beginning with `=`. Same preceding-token rule as `/`.",
-    token: ["SlashEq", "RegexLiteral"],
-    role: "operator",
-    chooseBy: { afterValue: "SlashEq", otherwise: "RegexLiteral" }
-  }),
-  "==": token({ doc: "The `==` token.", token: "EqEq", role: "operator" }),
-  "===": token({ doc: "The `===` token.", token: "EqEqEq", role: "operator" }),
-  "!=": token({ doc: "The `!=` token.", token: "BangEq", role: "operator" }),
-  "!==": token({ doc: "The `!==` token.", token: "BangEqEq", role: "operator" }),
-  ">": token({ doc: "The `>` token.", token: "Gt", role: "operator" }),
-  ">=": token({ doc: "The `>=` token.", token: "GtEq", role: "operator" }),
-  "<": token({ doc: "The `<` token.", token: "Lt", role: "operator" }),
-  "<=": token({ doc: "The `<=` token.", token: "LtEq", role: "operator" }),
-  "&&": token({ doc: "The `&&` token.", token: "AmpAmp", role: "operator" }),
-  "||": token({ doc: "The `||` token.", token: "PipePipe", role: "operator" }),
-  "!": token({ doc: "The `!` token.", token: "Bang", role: "operator" }),
-  "&": token({ doc: "The `&` token.", token: "Amp", role: "operator" }),
-  "|": token({ doc: "The `|` token.", token: "Pipe", role: "operator" }),
-  "^": token({ doc: "The `^` token.", token: "Caret", role: "operator" }),
-  "~": token({ doc: "The `~` token.", token: "Tilde", role: "operator" }),
-  "??": token({ doc: "The `??` token.", token: "QuestQuest", role: "operator" }),
-  "?": token({ doc: "The `?` token.", token: "Quest", role: "operator" }),
-  "=>": token({ doc: "The `=>` token.", token: "Arrow", role: "arrow" }),
-  number: token({
-    doc: "A numeric literal. `0x` followed by 24 hex digits is re-read as an ObjectId \u2014 see productions.ts.",
-    token: "Number",
-    role: "literal",
-    variable: true
-  }),
-  bigint: token({ doc: "A BigInt literal.", token: "BigInt", role: "literal", variable: true }),
-  string: token({ doc: "A quoted string literal.", token: "String", role: "literal", variable: true }),
-  regex: token({ doc: "A regular-expression literal.", token: "RegexLiteral", role: "literal", variable: true }),
-  "`": token({
-    doc: "Opens and closes a template literal. The lexer classifies it by position \u2014 the opening backtick is TemplateStart, the closing one TemplateEnd \u2014 so it pairs with itself rather than with a separate closer.",
-    token: ["TemplateStart", "TemplateEnd"],
-    role: "delimiter"
-  }),
-  templateText: token({
-    doc: "The literal text between a template literal's delimiters. Free text, including the empty string.",
-    token: "TemplateChars",
-    role: "literal",
-    variable: true
-  }),
-  "${": token({
-    doc: "Opens an interpolation inside a template literal. Nothing closes it: the `}` that ends the interpolation emits no token at all, so this is the one opener with no matching close row.",
-    token: "TemplateExprStart",
-    role: "open"
-  }),
-  identifier: token({
-    doc: "A bare name. What it means is resolved in names.ts.",
-    token: "Ident",
-    role: "name",
-    variable: true
-  }),
-  endOfInput: token({
-    doc: "The end of the source. The lexer appends it so the parser can report 'Expected X but got end of input' rather than reading past the last token.",
-    token: "EOF",
-    role: "delimiter",
-    variable: true
-  })
-};
-var ENDS_A_VALUE = [
-  "Number",
-  "BigInt",
-  "String",
-  "True",
-  "False",
-  "Null",
-  "Undefined",
-  "Ident",
-  "RParen",
-  "RBracket",
-  "TemplateEnd"
-];
-
-// src/registry/keywords.ts
-var keyword = (e) => ({ ...e, kind: "keyword" });
-var KEYWORDS = {
-  return: keyword({ doc: "Yields a block's value.", token: "Return" }),
-  const: keyword({ doc: "Binds a name that cannot be reassigned.", token: "Const" }),
-  let: keyword({ doc: "Binds a name that can be reassigned.", token: "Let" }),
-  in: keyword({ doc: "Tests membership of a value in an array.", token: "In" }),
-  new: keyword({ doc: "Marks a constructor call.", token: "New" }),
-  typeof: keyword({ doc: "Gives the type name of a value.", token: "Typeof" }),
-  delete: keyword({ doc: "Removes a field from the document.", token: "Delete" }),
-  true: keyword({ doc: "The boolean true.", token: "True" }),
-  false: keyword({ doc: "The boolean false.", token: "False" }),
-  null: keyword({ doc: "An explicit null. Distinct from a missing field.", token: "Null" }),
-  undefined: keyword({ doc: "Absence. Compared with `===` it becomes an existence test.", token: "Undefined" })
-};
-
-// src/compiler/lex/token.ts
-var token2 = (type, text, pos) => ({
-  type,
-  text,
-  pos,
-  end: pos + text.length
-});
-var spanned = (type, text, pos, end) => ({ type, text, pos, end });
-
-// src/compiler/lex/scanners.ts
-var LexError = class extends Error {
-  constructor(message, pos) {
-    super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
-    this.name = "LexError";
-    this.pos = pos;
-  }
-};
-var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
-var isHex = (ch) => isDigit(ch) || ch !== void 0 && (ch >= "a" && ch <= "f" || ch >= "A" && ch <= "F");
-var isIdentStart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z]/.test(ch));
-var isIdentPart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z0-9]/.test(ch));
-function digits(src, i, ok4) {
-  if (!ok4(src[i])) return i;
-  i++;
-  while (i < src.length) {
-    if (ok4(src[i])) {
-      i++;
-      continue;
-    }
-    if (src[i] === "_") {
-      if (!ok4(src[i + 1])) throw new LexError("Numeric separator '_' must be between two digits", i);
-      i++;
-      continue;
-    }
-    break;
-  }
-  return i;
-}
-function scanNumber(src, start) {
-  if (src[start] === "0" && (src[start + 1] === "x" || src[start + 1] === "X")) {
-    const from = start + 2;
-    const i2 = digits(src, from, isHex);
-    if (i2 === from) {
-      throw new LexError(`Hexadecimal literal has no digits after '0${src[from - 1]}'`, start);
-    }
-    return { token: spanned("Number", src.slice(start, i2).replace(/_/g, ""), start, i2), next: i2 };
-  }
-  let i = digits(src, start, isDigit);
-  let fraction = false;
-  let exponent = false;
-  if (src[i] === ".") {
-    fraction = true;
-    i = digits(src, i + 1, isDigit);
-  }
-  if (src[i] === "e" || src[i] === "E") {
-    exponent = true;
-    i++;
-    if (src[i] === "+" || src[i] === "-") i++;
-    i = digits(src, i, isDigit);
-  }
-  if (src[i] === "n") {
-    if (fraction || exponent) {
-      throw new LexError("Invalid BigInt literal: the 'n' suffix requires an integer", start);
-    }
-    const raw = src.slice(start, i).replace(/_/g, "");
-    return { token: spanned("BigInt", raw, start, i + 1), next: i + 1 };
-  }
-  return { token: spanned("Number", src.slice(start, i).replace(/_/g, ""), start, i), next: i };
-}
-var ESCAPES = { n: "\n", t: "	", r: "\r", b: "\b", f: "\f", v: "\v", 0: "\0" };
-function decodeEscape(src, i) {
-  const esc = src[i + 1];
-  if (esc === void 0) return { text: "", next: i + 2 };
-  if (esc === "x" && isHex(src[i + 2]) && isHex(src[i + 3])) {
-    return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 4), 16)), next: i + 4 };
-  }
-  if (esc === "u") {
-    if (src[i + 2] === "{") {
-      const close = src.indexOf("}", i + 3);
-      const hex = close === -1 ? "" : src.slice(i + 3, close);
-      if (hex.length > 0 && [...hex].every((c) => isHex(c))) {
-        const point = parseInt(hex, 16);
-        if (point <= 1114111) return { text: String.fromCodePoint(point), next: close + 1 };
-      }
-    } else if ([2, 3, 4, 5].every((k) => isHex(src[i + k]))) {
-      return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 6), 16)), next: i + 6 };
-    }
-  }
-  return { text: ESCAPES[esc] ?? esc, next: i + 2 };
-}
-function scanString(src, start) {
-  const quote = src[start];
-  let i = start + 1;
-  let out = "";
-  while (i < src.length && src[i] !== quote) {
-    if (src[i] === "\\") {
-      const esc = decodeEscape(src, i);
-      out += esc.text;
-      i = esc.next;
-      continue;
-    }
-    out += src[i];
-    i++;
-  }
-  if (i >= src.length) throw new LexError("Unterminated string", start);
-  return { token: spanned("String", out, start, i + 1), next: i + 1 };
-}
-function scanRegex(src, start) {
-  let i = start + 1;
-  let pattern = "";
-  let inClass = false;
-  let closed = false;
-  while (i < src.length) {
-    const ch = src[i];
-    if (ch === "\\") {
-      pattern += ch + (src[i + 1] ?? "");
-      i += 2;
-      continue;
-    }
-    if (ch === "[") inClass = true;
-    else if (ch === "]") inClass = false;
-    else if (ch === "/" && !inClass) {
-      i++;
-      closed = true;
-      break;
-    } else if (ch === "\n") throw new LexError("Unterminated regex literal", start);
-    pattern += ch;
-    i++;
-  }
-  if (!closed) throw new LexError("Unterminated regex literal", start);
-  let flags = "";
-  while (i < src.length && /[gimsuy]/.test(src[i])) {
-    flags += src[i];
-    i++;
-  }
-  return { token: spanned("RegexLiteral", pattern, start, i), flags, next: i };
-}
-function scanIdent(src, start) {
-  let i = start;
-  while (i < src.length && isIdentPart(src[i])) i++;
-  return { token: spanned("Ident", src.slice(start, i), start, i), next: i };
-}
-function skipTrivia(src, i) {
-  for (; ; ) {
-    while (i < src.length && /\s/.test(src[i])) i++;
-    if (src[i] === "/" && src[i + 1] === "/") {
-      while (i < src.length && !/[\n\r\u2028\u2029]/.test(src[i])) i++;
-      continue;
-    }
-    if (src[i] === "/" && src[i + 1] === "*") {
-      const at3 = i;
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      if (i >= src.length) throw new LexError("Unterminated block comment", at3);
-      i += 2;
-      continue;
-    }
-    return i;
-  }
-}
-
-// src/compiler/lex/lexer.ts
-var TEMPLATE_DELIMITER = "`";
-var TEMPLATE_EXPR_OPEN = "${";
-var PUNCTUATORS = Object.entries(TOKENS).filter(([, row2]) => row2.variable !== true).map(([spelling, row2]) => {
-  const punct = {
-    spelling,
-    type: Array.isArray(row2.token) ? null : row2.token,
-    chooseBy: "chooseBy" in row2 && row2.chooseBy !== void 0 ? row2.chooseBy : null,
-    tracksDepth: "tracksDepth" in row2 && row2.tracksDepth === true,
-    resumesTemplateAtDepth: "resumesTemplateAtDepth" in row2 && row2.resumesTemplateAtDepth === true
-  };
-  if (punct.type === null && punct.chooseBy === null && spelling !== TEMPLATE_DELIMITER) {
-    throw new Error(`tokens.ts: '${spelling}' names two token types and no chooseBy rule to pick one`);
-  }
-  return punct;
-}).sort((a, b) => b.spelling.length - a.spelling.length);
-var OTHERWISE_SCANNERS = {
-  RegexLiteral: scanRegex
-};
-var INTRODUCES_NAME = new Set(
-  Object.values(TOKENS).filter((row2) => "introducesName" in row2 && row2.introducesName === true).flatMap((row2) => Array.isArray(row2.token) ? row2.token : [row2.token])
-);
-var MAX_RUN = new Map(
-  Object.entries(TOKENS).filter(([key, row2]) => "maxRun" in row2 && row2.maxRun !== void 0 && /^(.)\1*$/.test(key)).map(([key, row2]) => [key[0], row2.maxRun])
-);
-var RESERVED = new Map(
-  Object.entries(KEYWORDS).map(([word, row2]) => [word, row2.token])
-);
-var VALUE_END = new Set(ENDS_A_VALUE);
-function lex(src) {
-  const out = [];
-  let i = 0;
-  let braceDepth = 0;
-  const templateDepths = [];
-  let last = null;
-  const push = (t) => {
-    out.push(t);
-    last = t.type;
-  };
-  const templateChunk = (from) => {
-    let j = from;
-    let text = "";
-    for (; ; ) {
-      if (j >= src.length) throw new LexError("Unterminated template literal", from);
-      const ch = src[j];
-      if (ch === TEMPLATE_DELIMITER) {
-        push({ type: "TemplateChars", text, pos: from, end: j });
-        push(token2("TemplateEnd", TEMPLATE_DELIMITER, j));
-        return j + 1;
-      }
-      if (ch === "$" && src[j + 1] === "{") {
-        push({ type: "TemplateChars", text, pos: from, end: j });
-        push(token2("TemplateExprStart", TEMPLATE_EXPR_OPEN, j));
-        templateDepths.push(braceDepth);
-        return j + 2;
-      }
-      if (ch === "\\") {
-        const esc = decodeEscape(src, j);
-        text += esc.text;
-        j = esc.next;
-        continue;
-      }
-      text += ch;
-      j++;
-    }
-  };
-  while (i < src.length) {
-    i = skipTrivia(src, i);
-    if (i >= src.length) break;
-    const start = i;
-    const ch = src[i];
-    if (isIdentStart(ch)) {
-      const scan = scanIdent(src, i);
-      const asName = last !== null && INTRODUCES_NAME.has(last);
-      const reserved = asName ? void 0 : RESERVED.get(scan.token.text);
-      push(reserved === void 0 ? scan.token : token2(reserved, scan.token.text, start));
-      i = scan.next;
-      continue;
-    }
-    if (ch >= "0" && ch <= "9") {
-      const scan = scanNumber(src, i);
-      push(scan.token);
-      i = scan.next;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      const scan = scanString(src, i);
-      push(scan.token);
-      i = scan.next;
-      continue;
-    }
-    if (ch === TEMPLATE_DELIMITER) {
-      push(token2("TemplateStart", TEMPLATE_DELIMITER, i));
-      i = templateChunk(i + 1);
-      continue;
-    }
-    const cap = MAX_RUN.get(ch);
-    if (cap !== void 0) {
-      let run = 0;
-      while (src[start + run] === ch) run++;
-      if (run > cap.limit) throw new LexError(cap.tooLong, start);
-    }
-    const hit = PUNCTUATORS.find((p) => src.startsWith(p.spelling, i));
-    if (hit === void 0) throw new LexError(`Unexpected character '${ch}'`, start);
-    if (hit.chooseBy !== null) {
-      const afterValue = last !== null && VALUE_END.has(last);
-      if (!afterValue) {
-        const scanner = OTHERWISE_SCANNERS[hit.chooseBy.otherwise];
-        if (scanner === void 0) {
-          throw new LexError(`'${hit.spelling}' chooses '${hit.chooseBy.otherwise}', which has no scanner`, start);
-        }
-        const scan = scanner(src, i);
-        push({ ...scan.token, flags: scan.flags });
-        i = scan.next;
-        continue;
-      }
-      push(token2(hit.chooseBy.afterValue, hit.spelling, i));
-      i += hit.spelling.length;
-      continue;
-    }
-    if (hit.resumesTemplateAtDepth && templateDepths.length > 0 && templateDepths[templateDepths.length - 1] === braceDepth) {
-      templateDepths.pop();
-      i = templateChunk(i + hit.spelling.length);
-      continue;
-    }
-    if (hit.type === null) throw new LexError(`'${hit.spelling}' has no single token type`, start);
-    push(token2(hit.type, hit.spelling, i));
-    if (hit.tracksDepth) braceDepth++;
-    else if (hit.resumesTemplateAtDepth) braceDepth--;
-    i += hit.spelling.length;
-  }
-  if (templateDepths.length > 0) throw new LexError("Unterminated template literal", src.length);
-  out.push(token2("EOF", "", src.length));
-  return out;
-}
-
 // src/registry/vocabulary.ts
 var GROUP_SLOT = "__jsmqlTmp";
-var LENGTH_SLOT = "__jsmql.length";
+var SIZE_SLOT = "__jsmql.size";
 var shorthand = (test) => {
   const keys = Object.keys(test);
   if (keys.length !== 1 || keys[0] !== "$eq") return test;
@@ -594,21 +146,6 @@ function normaliseSliceIndex(node, lowered, recv) {
   const lit = literalIndexValue(node);
   if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv), -lit));
   return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv)] }), lowered);
-}
-function negativeLiteralValue(node) {
-  const lit = literalIndexValue(node);
-  return lit !== null && lit < 0 ? -lit : null;
-}
-function sliceString(recv, args, value) {
-  if (args.length === 0) return recv;
-  const start = normaliseSliceIndex(args[0], value(args[0]), recv);
-  if (args.length === 1) {
-    const negative = negativeLiteralValue(args[0]);
-    if (negative !== null) return { $substrCP: [recv, start, negative] };
-    return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(strLenOf(recv), start))] };
-  }
-  const end = normaliseSliceIndex(args[1], value(args[1]), recv);
-  return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(end, start))] };
 }
 var strTail = (s, from) => ({ $substrCP: [s, from, strLenOf(s)] });
 var capitalizeExpr = (s) => ({
@@ -2324,7 +1861,7 @@ var NAMES = {
         nonEmpty: {
           1: {
             noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'."
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'."
           }
         }
       },
@@ -6605,7 +6142,7 @@ var NAMES = {
         nonEmpty: {
           0: {
             noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'."
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'."
           }
         }
       },
@@ -6897,10 +6434,12 @@ var NAMES = {
           },
           emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] })
         },
+        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
         string: {
           args: {
             sig: "searchValue",
             exact: 1,
+            slotType: { 0: "string" },
             noCallback: {
               0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
             }
@@ -6908,7 +6447,8 @@ var NAMES = {
           emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] })
         }
       },
-      uncertain: () => null
+      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
+      uncertain: () => -1
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6920,18 +6460,54 @@ var NAMES = {
   includes: name({
     doc: "'.includes()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "string",
+    sibling: { array: "For membership in an array, write '.has(x)'." },
+    returns: "bool",
+    where: ["value", "filter"],
+    // A regex with no anchor — indexable where the planner can use one, and unlike
+    // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
+    // run-time needle cannot go into a pattern.
+    filter: {
+      args: { sig: "searchString", exact: 1 },
+      emit: ({ recv, args, pathOf: pathOf3 }) => {
+        const path = recv === null ? null : pathOf3(recv);
+        const needle = args[0];
+        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
+      }
+    },
+    expr: {
+      args: {
+        sig: "searchString",
+        exact: 1,
+        noCallback: {
+          0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => \u2026)'."
+        }
+      },
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
+    },
+    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'"
+    ),
+    group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+    )
+  }),
+  has: name({
+    doc: "'.has()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    on: "array",
+    sibling: { string: "For a substring test, write '.includes(x)'." },
     returns: "bool",
     where: ["value", "filter"],
     // An INDEX reads a query document, so the query form is the indexable one:
-    // `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
-    // an array containing" — exactly what `.includes` means on an array, and a plain
-    // equality on any other field. `["a","b"].includes($.s)` → { s: { $in: […] } }.
-    // The substring reading that a STRING receiver has belongs to the expression form
-    // below, where no index applies; `.match(/x/)` is the query spelling that asks for it.
+    // `$.tags.has("x")` → { tags: "x" }, MongoDB's "equals, or is an array containing" —
+    // exactly what `.has` means on an array. `["a", "b"].has($.s)` → { s: { $in: […] } }.
     // Anything else keeps the expression fallback.
     filter: {
-      args: { sig: "searchElement", exact: 1 },
+      args: { sig: "value", exact: 1 },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
         if (recv === null) return null;
         const path = pathOf3(recv);
@@ -6953,60 +6529,34 @@ var NAMES = {
       }
     },
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $in: [value(args[0]), r] }))
-        },
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
+      args: {
+        sig: "value",
+        exact: 1,
+        noCallback: {
+          0: "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
         }
       },
-      uncertain: () => null
+      // MEASURED: `$in` aborts on a null list, so a receiver that may be missing is tested first.
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $in: [value(args[0]), r] }))
     },
-    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.has()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'"
+      "'.has()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.has();'"
     ),
-    group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.has()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.has()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   at: name({
     doc: "'.at()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array"],
-    returns: { array: "element", string: "string" },
+    on: "array",
+    sibling: { string: "For one character, write '.charAt(index)'." },
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: { sig: "index", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
-        },
-        string: {
-          args: { sig: "index", exact: 1 },
-          emit: ({ recv, args, value }) => ({
-            $substrCP: [recv, args[0] === void 0 ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1]
-          })
-        }
-      },
-      uncertain: () => null
+      args: { sig: "index", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7018,8 +6568,9 @@ var NAMES = {
   slice: name({
     doc: "'.slice()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array", "stream"],
-    returns: { string: "same", array: "same", stream: "stream" },
+    on: ["array", "stream"],
+    sibling: { string: "For a part of a string, write '.substring(start, end)'." },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7031,14 +6582,8 @@ var NAMES = {
         array: {
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
           emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => sliceArray(r, args, value, bind))
-        },
-        string: {
-          // MEASURED: `$substrCP` / `$indexOfCP` of null or a missing field answer as of ""
-          args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => sliceString(r, args, value))
         }
-      },
-      uncertain: () => null
+      }
     },
     stream: {
       args: {
@@ -7069,8 +6614,9 @@ var NAMES = {
     mergesInto: true,
     doc: "'.concat()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string", "stream"],
-    returns: { array: "array", string: "string", stream: "stream" },
+    on: ["array", "stream"],
+    sibling: { string: "To join strings, write '+' between them: 'a + b'." },
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7097,28 +6643,8 @@ var NAMES = {
               })
             ]
           })
-        },
-        // `String.prototype.concat` STRINGIFIES each argument; `$concat` takes strings
-        // only. The emitter joins an argument PROVEN to be an array element by element, and
-        // any other proven non-string goes through `$toString` — JavaScript's answer in both
-        // cases. An argument that proves nothing stays as written.
-        string: {
-          args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value, kind }) => ({
-            $concat: [
-              recv,
-              ...args.map((a) => {
-                const k = kind(a);
-                if (k === "array") {
-                  return a.type === "ArrayLiteral" && a.packed === true ? joinedWith(value(a), "") : joinedWith(value(a), ",");
-                }
-                return k === "string" || k === "unknown" ? value(a) : { $toString: value(a) };
-              })
-            ]
-          })
         }
-      },
-      uncertain: () => null
+      }
     },
     stream: inCode("src/compiler/emit/union.ts"),
     statement: unsupported(
@@ -8029,7 +7555,7 @@ var NAMES = {
       by: {
         1: "[..._r].map(() => _0)",
         2: "[...[..._r].slice(0, _1), ...[..._r].slice(_1).map(() => _0)]",
-        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).length + [..._r].slice(_1, _2).length)]"
+        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).size() + [..._r].slice(_1, _2).size())]"
       }
     },
     returns: "unknown",
@@ -8052,8 +7578,8 @@ var NAMES = {
     mutatorForm: {
       sig: "target, start[, end]",
       by: {
-        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]",
-        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]"
+        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].size() - [..._r].slice(0, _0).size()), ...[..._r].slice([..._r].slice(0, _0).size() + [..._r].slice(_1).slice(0, [..._r].size() - [..._r].slice(0, _0).size()).size())]",
+        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].size() - [..._r].slice(0, _0).size()), ...[..._r].slice([..._r].slice(0, _0).size() + [..._r].slice(_1, _2).slice(0, [..._r].size() - [..._r].slice(0, _0).size()).size())]"
       }
     },
     returns: "unknown",
@@ -9514,7 +9040,7 @@ var NAMES = {
         const x = bind("x").as;
         const pos = args[0].pos;
         const values = { type: "ArrayLiteral", elements: args, pos };
-        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "includes", [identOf(x, pos)])), pos)) }];
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "has", [identOf(x, pos)])), pos)) }];
       }
     },
     statement: unsupported(
@@ -10000,24 +9526,14 @@ var NAMES = {
   nth: name({
     doc: "'.nth()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array"],
-    returns: { array: "element", string: "string" },
+    on: "array",
+    sibling: { string: "For one character, write '.charAt(index)'." },
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: { sig: "[n=0]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
-        },
-        string: {
-          args: { sig: "[n=0]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({
-            $substrCP: [recv, args[0] === void 0 ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1]
-          })
-        }
-      },
-      uncertain: () => "$$REMOVE"
+      args: { sig: "[n=0]", allowed: [0, 1] },
+      emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10027,28 +9543,47 @@ var NAMES = {
     window: unsupported("'.nth()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   size: name({
-    doc: "'.size()' \u2014 see docs/LANGUAGE.md.",
+    doc: "'.size()' \u2014 the number of elements of an array, or the document count of the stream. See docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "object"],
+    on: ["array", "stream"],
+    sibling: {
+      string: "For the number of characters, write '.length()'.",
+      object: "For the number of fields, write '.keys().size()'."
+    },
     returns: "number",
     where: ["value"],
-    filter: viaFallback,
+    // Per family, because one answer for both states a legality the stream form
+    // does not have: `$.tags.size() < 5` scans, `$$.size() > 1` does not compile
+    // at all. A flat `viaFallback` would promise that the second merely scans.
+    filter: {
+      perFamily: {
+        array: viaFallback,
+        stream: unsupported(
+          "'$$.size()' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.size(); \u2026 }`); it has no meaning in a Filter or in 'jsmql.expr'."
+        )
+      }
+    },
     expr: {
       perFamily: {
-        // lodash's `_.size(undefined)` is 0: this cell guards a receiver that may be missing, as `.length` does.
+        // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
+        // missing is read as the empty array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
-          emit: ({ recv, present: present2 }) => sizeOf(present2 ? recv : arrayOrEmpty(recv))
+          emit: ({ recv, present: present2 }) => Array.isArray(recv) ? { $size: [recv] } : sizeOf(present2 ? recv : arrayOrEmpty(recv))
         },
-        object: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => sizeOf(pairsOfObject(recv, present2)) }
-      },
-      uncertain: () => "$$REMOVE"
+        // `$$.size()` has no inline count: it places a materialiser ahead of the
+        // statement and reads the field it wrote. See docs/specs/stream-size.md.
+        stream: {
+          args: { sig: "", none: true },
+          emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [SIZE_SLOT]: { $count: {} } } } }], SIZE_SLOT)
+        }
+      }
     },
-    stream: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'size' is a value, not a stage. Read it: '$.n = $$.size()'."),
     statement: unsupported(
       "'.size()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.size();'"
     ),
-    group: unsupported("'.size()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    group: unsupported("'.size()' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
     window: unsupported("'.size()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   takeWhile: name({
@@ -11282,7 +10817,7 @@ var NAMES = {
         const x = bind("x").as;
         const other = listOf(args[0]);
         return [
-          { $match: predicate(arrowOf(x, callOf(other, "includes", [identOf(x, other.pos)]), other.pos)) },
+          { $match: predicate(arrowOf(x, callOf(other, "has", [identOf(x, other.pos)]), other.pos)) },
           ...keepFirstPer(element2().ref)
         ];
       }
@@ -11348,9 +10883,7 @@ var NAMES = {
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
         const other = listOf(args[0]);
-        return [
-          { $match: predicate(arrowOf(x, notOf(callOf(other, "includes", [identOf(x, other.pos)])), other.pos)) }
-        ];
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(other, "has", [identOf(x, other.pos)])), other.pos)) }];
       }
     },
     statement: unsupported(
@@ -12272,10 +11805,10 @@ var NAMES = {
     // (HR1), and this row refuses the same document inside a `$match`.
     forbiddenIn: ["$match"],
     placement: {
-      container: `Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.includes("a")' \u2014 and it runs as a query, in a '$match' or a 'find' filter alike.`
+      container: `Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.has("a")' \u2014 and it runs as a query, in a '$match' or a 'find' filter alike.`
     },
     filter: unsupported(
-      `'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.includes("a")' \u2014 and it runs as a query.`
+      `'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.has("a")' \u2014 and it runs as a query.`
     ),
     expr: unsupported(
       "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: \u2026 }'."
@@ -13326,12 +12859,12 @@ var NAMES = {
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
     // value slot gets a refusal — "'$$' (current collection) is statement-only" —
-    // so `expr` is a refusal even though `$$.length` IS a value: that value is
+    // so `expr` is a refusal even though `$$.size()` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
     filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => \u2026)'."),
     expr: unsupported(
-      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'."
+      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.size()'."
     ),
     stream: inCode("src/compiler/emit/statement.ts"),
     statement: inCode("src/compiler/emit/statement.ts"),
@@ -13544,55 +13077,28 @@ var NAMES = {
     window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   length: name({
-    doc: "The number of elements, the number of characters, or the size of the stream.",
-    call: false,
-    on: ["array", "string", "stream"],
+    doc: "'.length()' \u2014 the number of characters of a string. See docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    sibling: {
+      array: "For the number of elements, write '.size()'.",
+      stream: "For the document count, write '$$.size()'."
+    },
     returns: "number",
     where: ["value"],
-    // Per family, because one answer for all three states a legality the stream
-    // form does not have: `$.tags.length < 5` scans, `$$.length > 1` does not
-    // compile at all. A flat `viaFallback` would promise that the third merely scans.
-    filter: {
-      perFamily: {
-        array: viaFallback,
-        string: viaFallback,
-        stream: unsupported(
-          "'$$.length' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.length; \u2026 }`); it has no meaning in a Filter or in 'jsmql.expr'."
-        )
-      }
-    },
+    filter: viaFallback,
+    // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
+    // JavaScript method does, and the cell counts one that is there as it is.
     expr: {
-      perFamily: {
-        // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
-        // → { $size: [["$a", 2]] }. The emitter hands a path or an expression over as it is.
-        array: {
-          args: { sig: "", none: true },
-          // `$size` aborts on null; a receiver that may be missing answers null, as a
-          // JavaScript method does, and the cell counts one that is there as it is.
-          emit: ({ recv, present: present2, bind }) => Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present2, bind, (r) => ({ $size: r }))
-        },
-        string: {
-          args: { sig: "", none: true },
-          emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $strLenCP: r }))
-        },
-        // `$$.length` has no inline size: it places a materialiser ahead of the
-        // statement and reads the field it wrote.
-        stream: {
-          args: { sig: "", none: true },
-          emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT)
-        }
-      },
-      // A receiver that is neither array nor string — null, missing, a number — answers
-      // null, as JavaScript's `undefined` does. A two-way $cond that reads "not an array"
-      // as "string" aborts the whole command.
-      uncertain: () => null
+      args: { sig: "", none: true },
+      emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $strLenCP: r }))
     },
-    stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
+    stream: unsupported("'.length()' is a value, not a stage. Assign it to a field: '$.n = $.<field>.length()'."),
     statement: unsupported(
       "'.length()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.length();'"
     ),
-    group: unsupported("'length' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
-    window: unsupported("'length' is not a window function.")
+    group: unsupported("'.length()' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
+    window: unsupported("'.length()' is not a window function.")
   }),
   now: name({
     doc: "The current time, in milliseconds.",
@@ -13670,6 +13176,10 @@ function pathAndConstant(input) {
 }
 function membershipQuery(input) {
   const [l, r] = input.args;
+  const objPath = input.pathOf(r);
+  if (objPath !== null && l.type === "StringLiteral" && !l.value.includes(".") && !l.value.startsWith("$") && l.value !== "") {
+    return { [`${objPath}.${l.value}`]: { $exists: true } };
+  }
   const path = input.pathOf(l);
   if (path === null) return null;
   const c = input.constant(r);
@@ -15117,8 +14627,24 @@ function mergesIntoOf(name2) {
 function elementOnlyOf(name2) {
   return row(name2)?.elementOnly ?? null;
 }
+function hasStreamValueCell(name2) {
+  const expr = row(name2)?.expr;
+  const cell = expr?.perFamily?.stream;
+  return typeof cell === "object" && cell !== null && typeof cell.emit === "function";
+}
 function neverNullOf(name2) {
   return row(name2)?.neverNull === true;
+}
+function emptyCollectionOf(name2, family) {
+  const own = families(row(name2)?.on);
+  const fams = family !== null ? [family] : own === void 0 || own === "any" ? [] : own.filter((f) => FIELD_FAMILIES.includes(f));
+  if (fams.length === 0) return null;
+  if (fams.every((f) => f === "array" || f === "set")) return [];
+  if (fams.every((f) => f === "object")) return {};
+  return null;
+}
+function siblingOf(name2, family) {
+  return row(name2)?.sibling?.[family] ?? null;
 }
 function restoresDocumentsOf(name2) {
   return row(name2)?.restoresDocuments === true;
@@ -15199,6 +14725,454 @@ function mutatorFormOf(name2) {
 }
 function onlyInsideOf(name2, position) {
   return row(name2)?.onlyInside?.[position];
+}
+
+// src/registry/tokens.ts
+var token = (e) => ({ ...e, kind: "token" });
+var TOKENS = {
+  "(": token({ doc: "The `(` token.", token: "LParen", role: "open" }),
+  ")": token({ doc: "The `)` token.", token: "RParen", role: "close", closes: "(" }),
+  "[": token({ doc: "The `[` token.", token: "LBracket", role: "open" }),
+  "]": token({ doc: "The `]` token.", token: "RBracket", role: "close", closes: "[" }),
+  "{": token({
+    doc: "The `{` token.",
+    token: "LBrace",
+    role: "open",
+    // It counts depth, so a template interpolation can tell its OWN closing brace
+    // from the brace of a nested object. `${ {a: 1} }` has two braces, and only
+    // the outer one ends the interpolation.
+    tracksDepth: true
+  }),
+  "}": token({
+    doc: "The `}` token.",
+    token: "RBrace",
+    role: "close",
+    closes: "{",
+    // When its depth agrees with an open interpolation, this brace emits NO token
+    // at all. It ends the interpolation, and template text continues. It is the
+    // one closer whose row makes nothing.
+    resumesTemplateAtDepth: true
+  }),
+  ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
+  ";": token({ doc: "The `;` token.", token: "Semi", role: "separator" }),
+  ":": token({ doc: "The `:` token.", token: "Colon", role: "separator" }),
+  ".": token({ doc: "The `.` token.", token: "Dot", role: "binder", introducesName: true }),
+  "?.": token({ doc: "The `?.` token.", token: "QuestDot", role: "binder", introducesName: true }),
+  "$.": token({ doc: "The `$.` token.", token: "DollarDot", role: "reference", introducesName: true }),
+  $: token({ doc: "The `$` token.", token: "Dollar", role: "reference", introducesName: true }),
+  $$: token({ doc: "The `$$` token.", token: "DoubleDollar", role: "reference" }),
+  $$$: token({ doc: "The `$$$` token.", token: "TripleDollar", role: "reference" }),
+  $$$$: token({
+    doc: "The `$$$$` token.",
+    token: "QuadDollar",
+    role: "reference",
+    maxRun: { limit: 4, tooLong: "Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$')" }
+  }),
+  "...": token({ doc: "The `...` token.", token: "Spread", role: "spread" }),
+  "+": token({ doc: "The `+` token.", token: "Plus", role: "operator" }),
+  "-": token({ doc: "The `-` token.", token: "Minus", role: "operator" }),
+  "*": token({ doc: "The `*` token.", token: "Star", role: "operator" }),
+  "**": token({ doc: "The `**` token.", token: "StarStar", role: "operator" }),
+  "/": token({
+    doc: "Division, or the start of a regex literal. The lexer chooses on the PRECEDING token: `a / b` is division, a leading `/` begins a regex.",
+    token: ["Slash", "RegexLiteral"],
+    role: "operator",
+    chooseBy: { afterValue: "Slash", otherwise: "RegexLiteral" }
+  }),
+  "%": token({ doc: "The `%` token.", token: "Percent", role: "operator" }),
+  "++": token({ doc: "The `++` token.", token: "PlusPlus", role: "operator" }),
+  "--": token({ doc: "The `--` token.", token: "MinusMinus", role: "operator" }),
+  "=": token({ doc: "The `=` token.", token: "Eq", role: "operator" }),
+  "+=": token({ doc: "The `+=` token.", token: "PlusEq", role: "operator" }),
+  "-=": token({ doc: "The `-=` token.", token: "MinusEq", role: "operator" }),
+  "*=": token({ doc: "The `*=` token.", token: "StarEq", role: "operator" }),
+  "/=": token({
+    doc: "Divide-and-assign, or a regex beginning with `=`. Same preceding-token rule as `/`.",
+    token: ["SlashEq", "RegexLiteral"],
+    role: "operator",
+    chooseBy: { afterValue: "SlashEq", otherwise: "RegexLiteral" }
+  }),
+  "==": token({ doc: "The `==` token.", token: "EqEq", role: "operator" }),
+  "===": token({ doc: "The `===` token.", token: "EqEqEq", role: "operator" }),
+  "!=": token({ doc: "The `!=` token.", token: "BangEq", role: "operator" }),
+  "!==": token({ doc: "The `!==` token.", token: "BangEqEq", role: "operator" }),
+  ">": token({ doc: "The `>` token.", token: "Gt", role: "operator" }),
+  ">=": token({ doc: "The `>=` token.", token: "GtEq", role: "operator" }),
+  "<": token({ doc: "The `<` token.", token: "Lt", role: "operator" }),
+  "<=": token({ doc: "The `<=` token.", token: "LtEq", role: "operator" }),
+  "&&": token({ doc: "The `&&` token.", token: "AmpAmp", role: "operator" }),
+  "||": token({ doc: "The `||` token.", token: "PipePipe", role: "operator" }),
+  "!": token({ doc: "The `!` token.", token: "Bang", role: "operator" }),
+  "&": token({ doc: "The `&` token.", token: "Amp", role: "operator" }),
+  "|": token({ doc: "The `|` token.", token: "Pipe", role: "operator" }),
+  "^": token({ doc: "The `^` token.", token: "Caret", role: "operator" }),
+  "~": token({ doc: "The `~` token.", token: "Tilde", role: "operator" }),
+  "??": token({ doc: "The `??` token.", token: "QuestQuest", role: "operator" }),
+  "?": token({ doc: "The `?` token.", token: "Quest", role: "operator" }),
+  "=>": token({ doc: "The `=>` token.", token: "Arrow", role: "arrow" }),
+  number: token({
+    doc: "A numeric literal. `0x` followed by 24 hex digits is re-read as an ObjectId \u2014 see productions.ts.",
+    token: "Number",
+    role: "literal",
+    variable: true
+  }),
+  bigint: token({ doc: "A BigInt literal.", token: "BigInt", role: "literal", variable: true }),
+  string: token({ doc: "A quoted string literal.", token: "String", role: "literal", variable: true }),
+  regex: token({ doc: "A regular-expression literal.", token: "RegexLiteral", role: "literal", variable: true }),
+  "`": token({
+    doc: "Opens and closes a template literal. The lexer classifies it by position \u2014 the opening backtick is TemplateStart, the closing one TemplateEnd \u2014 so it pairs with itself rather than with a separate closer.",
+    token: ["TemplateStart", "TemplateEnd"],
+    role: "delimiter"
+  }),
+  templateText: token({
+    doc: "The literal text between a template literal's delimiters. Free text, including the empty string.",
+    token: "TemplateChars",
+    role: "literal",
+    variable: true
+  }),
+  "${": token({
+    doc: "Opens an interpolation inside a template literal. Nothing closes it: the `}` that ends the interpolation emits no token at all, so this is the one opener with no matching close row.",
+    token: "TemplateExprStart",
+    role: "open"
+  }),
+  identifier: token({
+    doc: "A bare name. What it means is resolved in names.ts.",
+    token: "Ident",
+    role: "name",
+    variable: true
+  }),
+  endOfInput: token({
+    doc: "The end of the source. The lexer appends it so the parser can report 'Expected X but got end of input' rather than reading past the last token.",
+    token: "EOF",
+    role: "delimiter",
+    variable: true
+  })
+};
+var ENDS_A_VALUE = [
+  "Number",
+  "BigInt",
+  "String",
+  "True",
+  "False",
+  "Null",
+  "Undefined",
+  "Ident",
+  "RParen",
+  "RBracket",
+  "TemplateEnd"
+];
+
+// src/registry/keywords.ts
+var keyword = (e) => ({ ...e, kind: "keyword" });
+var KEYWORDS = {
+  return: keyword({ doc: "Yields a block's value.", token: "Return" }),
+  const: keyword({ doc: "Binds a name that cannot be reassigned.", token: "Const" }),
+  let: keyword({ doc: "Binds a name that can be reassigned.", token: "Let" }),
+  in: keyword({ doc: "Tests membership of a value in an array.", token: "In" }),
+  new: keyword({ doc: "Marks a constructor call.", token: "New" }),
+  typeof: keyword({ doc: "Gives the type name of a value.", token: "Typeof" }),
+  delete: keyword({ doc: "Removes a field from the document.", token: "Delete" }),
+  true: keyword({ doc: "The boolean true.", token: "True" }),
+  false: keyword({ doc: "The boolean false.", token: "False" }),
+  null: keyword({ doc: "An explicit null. Distinct from a missing field.", token: "Null" }),
+  undefined: keyword({ doc: "Absence. Compared with `===` it becomes an existence test.", token: "Undefined" })
+};
+
+// src/compiler/lex/token.ts
+var token2 = (type, text, pos) => ({
+  type,
+  text,
+  pos,
+  end: pos + text.length
+});
+var spanned = (type, text, pos, end) => ({ type, text, pos, end });
+
+// src/compiler/lex/scanners.ts
+var LexError = class extends Error {
+  constructor(message, pos) {
+    super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
+    this.name = "LexError";
+    this.pos = pos;
+  }
+};
+var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
+var isHex = (ch) => isDigit(ch) || ch !== void 0 && (ch >= "a" && ch <= "f" || ch >= "A" && ch <= "F");
+var isIdentStart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z]/.test(ch));
+var isIdentPart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z0-9]/.test(ch));
+function digits(src, i, ok4) {
+  if (!ok4(src[i])) return i;
+  i++;
+  while (i < src.length) {
+    if (ok4(src[i])) {
+      i++;
+      continue;
+    }
+    if (src[i] === "_") {
+      if (!ok4(src[i + 1])) throw new LexError("Numeric separator '_' must be between two digits", i);
+      i++;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+function scanNumber(src, start) {
+  if (src[start] === "0" && (src[start + 1] === "x" || src[start + 1] === "X")) {
+    const from = start + 2;
+    const i2 = digits(src, from, isHex);
+    if (i2 === from) {
+      throw new LexError(`Hexadecimal literal has no digits after '0${src[from - 1]}'`, start);
+    }
+    return { token: spanned("Number", src.slice(start, i2).replace(/_/g, ""), start, i2), next: i2 };
+  }
+  let i = digits(src, start, isDigit);
+  let fraction = false;
+  let exponent = false;
+  if (src[i] === ".") {
+    fraction = true;
+    i = digits(src, i + 1, isDigit);
+  }
+  if (src[i] === "e" || src[i] === "E") {
+    exponent = true;
+    i++;
+    if (src[i] === "+" || src[i] === "-") i++;
+    i = digits(src, i, isDigit);
+  }
+  if (src[i] === "n") {
+    if (fraction || exponent) {
+      throw new LexError("Invalid BigInt literal: the 'n' suffix requires an integer", start);
+    }
+    const raw = src.slice(start, i).replace(/_/g, "");
+    return { token: spanned("BigInt", raw, start, i + 1), next: i + 1 };
+  }
+  return { token: spanned("Number", src.slice(start, i).replace(/_/g, ""), start, i), next: i };
+}
+var ESCAPES = { n: "\n", t: "	", r: "\r", b: "\b", f: "\f", v: "\v", 0: "\0" };
+function decodeEscape(src, i) {
+  const esc = src[i + 1];
+  if (esc === void 0) return { text: "", next: i + 2 };
+  if (esc === "x" && isHex(src[i + 2]) && isHex(src[i + 3])) {
+    return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 4), 16)), next: i + 4 };
+  }
+  if (esc === "u") {
+    if (src[i + 2] === "{") {
+      const close = src.indexOf("}", i + 3);
+      const hex = close === -1 ? "" : src.slice(i + 3, close);
+      if (hex.length > 0 && [...hex].every((c) => isHex(c))) {
+        const point = parseInt(hex, 16);
+        if (point <= 1114111) return { text: String.fromCodePoint(point), next: close + 1 };
+      }
+    } else if ([2, 3, 4, 5].every((k) => isHex(src[i + k]))) {
+      return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 6), 16)), next: i + 6 };
+    }
+  }
+  return { text: ESCAPES[esc] ?? esc, next: i + 2 };
+}
+function scanString(src, start) {
+  const quote = src[start];
+  let i = start + 1;
+  let out = "";
+  while (i < src.length && src[i] !== quote) {
+    if (src[i] === "\\") {
+      const esc = decodeEscape(src, i);
+      out += esc.text;
+      i = esc.next;
+      continue;
+    }
+    out += src[i];
+    i++;
+  }
+  if (i >= src.length) throw new LexError("Unterminated string", start);
+  return { token: spanned("String", out, start, i + 1), next: i + 1 };
+}
+function scanRegex(src, start) {
+  let i = start + 1;
+  let pattern = "";
+  let inClass = false;
+  let closed = false;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "\\") {
+      pattern += ch + (src[i + 1] ?? "");
+      i += 2;
+      continue;
+    }
+    if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) {
+      i++;
+      closed = true;
+      break;
+    } else if (ch === "\n") throw new LexError("Unterminated regex literal", start);
+    pattern += ch;
+    i++;
+  }
+  if (!closed) throw new LexError("Unterminated regex literal", start);
+  let flags = "";
+  while (i < src.length && /[gimsuy]/.test(src[i])) {
+    flags += src[i];
+    i++;
+  }
+  return { token: spanned("RegexLiteral", pattern, start, i), flags, next: i };
+}
+function scanIdent(src, start) {
+  let i = start;
+  while (i < src.length && isIdentPart(src[i])) i++;
+  return { token: spanned("Ident", src.slice(start, i), start, i), next: i };
+}
+function skipTrivia(src, i) {
+  for (; ; ) {
+    while (i < src.length && /\s/.test(src[i])) i++;
+    if (src[i] === "/" && src[i + 1] === "/") {
+      while (i < src.length && !/[\n\r\u2028\u2029]/.test(src[i])) i++;
+      continue;
+    }
+    if (src[i] === "/" && src[i + 1] === "*") {
+      const at3 = i;
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      if (i >= src.length) throw new LexError("Unterminated block comment", at3);
+      i += 2;
+      continue;
+    }
+    return i;
+  }
+}
+
+// src/compiler/lex/lexer.ts
+var TEMPLATE_DELIMITER = "`";
+var TEMPLATE_EXPR_OPEN = "${";
+var PUNCTUATORS = Object.entries(TOKENS).filter(([, row2]) => row2.variable !== true).map(([spelling, row2]) => {
+  const punct = {
+    spelling,
+    type: Array.isArray(row2.token) ? null : row2.token,
+    chooseBy: "chooseBy" in row2 && row2.chooseBy !== void 0 ? row2.chooseBy : null,
+    tracksDepth: "tracksDepth" in row2 && row2.tracksDepth === true,
+    resumesTemplateAtDepth: "resumesTemplateAtDepth" in row2 && row2.resumesTemplateAtDepth === true
+  };
+  if (punct.type === null && punct.chooseBy === null && spelling !== TEMPLATE_DELIMITER) {
+    throw new Error(`tokens.ts: '${spelling}' names two token types and no chooseBy rule to pick one`);
+  }
+  return punct;
+}).sort((a, b) => b.spelling.length - a.spelling.length);
+var OTHERWISE_SCANNERS = {
+  RegexLiteral: scanRegex
+};
+var INTRODUCES_NAME = new Set(
+  Object.values(TOKENS).filter((row2) => "introducesName" in row2 && row2.introducesName === true).flatMap((row2) => Array.isArray(row2.token) ? row2.token : [row2.token])
+);
+var MAX_RUN = new Map(
+  Object.entries(TOKENS).filter(([key, row2]) => "maxRun" in row2 && row2.maxRun !== void 0 && /^(.)\1*$/.test(key)).map(([key, row2]) => [key[0], row2.maxRun])
+);
+var RESERVED = new Map(
+  Object.entries(KEYWORDS).map(([word, row2]) => [word, row2.token])
+);
+var VALUE_END = new Set(ENDS_A_VALUE);
+function lex(src) {
+  const out = [];
+  let i = 0;
+  let braceDepth = 0;
+  const templateDepths = [];
+  let last = null;
+  const push = (t) => {
+    out.push(t);
+    last = t.type;
+  };
+  const templateChunk = (from) => {
+    let j = from;
+    let text = "";
+    for (; ; ) {
+      if (j >= src.length) throw new LexError("Unterminated template literal", from);
+      const ch = src[j];
+      if (ch === TEMPLATE_DELIMITER) {
+        push({ type: "TemplateChars", text, pos: from, end: j });
+        push(token2("TemplateEnd", TEMPLATE_DELIMITER, j));
+        return j + 1;
+      }
+      if (ch === "$" && src[j + 1] === "{") {
+        push({ type: "TemplateChars", text, pos: from, end: j });
+        push(token2("TemplateExprStart", TEMPLATE_EXPR_OPEN, j));
+        templateDepths.push(braceDepth);
+        return j + 2;
+      }
+      if (ch === "\\") {
+        const esc = decodeEscape(src, j);
+        text += esc.text;
+        j = esc.next;
+        continue;
+      }
+      text += ch;
+      j++;
+    }
+  };
+  while (i < src.length) {
+    i = skipTrivia(src, i);
+    if (i >= src.length) break;
+    const start = i;
+    const ch = src[i];
+    if (isIdentStart(ch)) {
+      const scan = scanIdent(src, i);
+      const asName = last !== null && INTRODUCES_NAME.has(last);
+      const reserved = asName ? void 0 : RESERVED.get(scan.token.text);
+      push(reserved === void 0 ? scan.token : token2(reserved, scan.token.text, start));
+      i = scan.next;
+      continue;
+    }
+    if (ch >= "0" && ch <= "9") {
+      const scan = scanNumber(src, i);
+      push(scan.token);
+      i = scan.next;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const scan = scanString(src, i);
+      push(scan.token);
+      i = scan.next;
+      continue;
+    }
+    if (ch === TEMPLATE_DELIMITER) {
+      push(token2("TemplateStart", TEMPLATE_DELIMITER, i));
+      i = templateChunk(i + 1);
+      continue;
+    }
+    const cap = MAX_RUN.get(ch);
+    if (cap !== void 0) {
+      let run = 0;
+      while (src[start + run] === ch) run++;
+      if (run > cap.limit) throw new LexError(cap.tooLong, start);
+    }
+    const hit = PUNCTUATORS.find((p) => src.startsWith(p.spelling, i));
+    if (hit === void 0) throw new LexError(`Unexpected character '${ch}'`, start);
+    if (hit.chooseBy !== null) {
+      const afterValue = last !== null && VALUE_END.has(last);
+      if (!afterValue) {
+        const scanner = OTHERWISE_SCANNERS[hit.chooseBy.otherwise];
+        if (scanner === void 0) {
+          throw new LexError(`'${hit.spelling}' chooses '${hit.chooseBy.otherwise}', which has no scanner`, start);
+        }
+        const scan = scanner(src, i);
+        push({ ...scan.token, flags: scan.flags });
+        i = scan.next;
+        continue;
+      }
+      push(token2(hit.chooseBy.afterValue, hit.spelling, i));
+      i += hit.spelling.length;
+      continue;
+    }
+    if (hit.resumesTemplateAtDepth && templateDepths.length > 0 && templateDepths[templateDepths.length - 1] === braceDepth) {
+      templateDepths.pop();
+      i = templateChunk(i + hit.spelling.length);
+      continue;
+    }
+    if (hit.type === null) throw new LexError(`'${hit.spelling}' has no single token type`, start);
+    push(token2(hit.type, hit.spelling, i));
+    if (hit.tracksDepth) braceDepth++;
+    else if (hit.resumesTemplateAtDepth) braceDepth--;
+    i += hit.spelling.length;
+  }
+  if (templateDepths.length > 0) throw new LexError("Unterminated template literal", src.length);
+  out.push(token2("EOF", "", src.length));
+  return out;
 }
 
 // src/compiler/parse/cursor.ts
@@ -20657,6 +20631,8 @@ function stringMethod(s, name2, args) {
       return typeof a === "string" ? ok2(s.endsWith(a, typeof b === "number" ? b : void 0)) : NO2;
     case "includes":
       return typeof a === "string" ? ok2(s.includes(a)) : NO2;
+    case "length":
+      return ok2(points(s).length);
     case "indexOf": {
       if (typeof a !== "string") return NO2;
       if (b !== void 0 && !isInt32(b)) return NO2;
@@ -20671,14 +20647,6 @@ function stringMethod(s, name2, args) {
     // only searches forward. Folding it would ADD a method to the language.
     case "charAt":
       return isInt32(a) ? ok2(points(s)[a] ?? "") : NO2;
-    case "at": {
-      if (!isInt32(a)) return NO2;
-      const cps = points(s);
-      const i = a < 0 ? cps.length + a : a;
-      return i >= 0 && i < cps.length ? ok2(cps[i]) : NO2;
-    }
-    case "slice":
-      return sliceOf(points(s), a, b, (parts) => parts.join(""));
     case "substring": {
       if (!isInt32(a) || a < 0) return NO2;
       if (b !== void 0 && (!isInt32(b) || b < 0)) return NO2;
@@ -20704,8 +20672,6 @@ function stringMethod(s, name2, args) {
       if (typeof a !== "string" || a === "") return NO2;
       if (b !== void 0 && !isInt32(b)) return NO2;
       return ok2(s.split(a, typeof b === "number" ? b : void 0));
-    case "concat":
-      return args.every((x) => typeof valueOf(x) === "string") ? ok2(s + args.map(valueOf).join("")) : NO2;
     default:
       return lodashString(s, name2, args);
   }
@@ -20746,8 +20712,6 @@ function objectMethod(o, name2, args) {
   const [a] = args.map(valueOf);
   const fn = fnOf(args[0]);
   switch (name2) {
-    case "size":
-      return ok2(Object.keys(o).length);
     case "toPairs":
       return ok2(Object.entries(o));
     case "invert": {
@@ -20927,7 +20891,7 @@ function arrayMethod(xs, name2, args) {
     // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
     // identity would answer false for `[[1]].includes([1])`, where the server
     // answers true, and every literal here is a fresh object.
-    case "includes":
+    case "has":
       return ok2(xs.some((v) => sameValue(v, a)));
     case "indexOf":
       return ok2(xs.findIndex((v) => sameValue(v, a)));
@@ -21395,13 +21359,7 @@ function unary(op, operand) {
   }
 }
 var isPlain = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v) && !isRegExp(v) && v._bsontype === void 0;
-function lengthOf(receiver) {
-  if (Array.isArray(receiver)) return ok3(receiver.length);
-  if (typeof receiver === "string") return ok3([...receiver].length);
-  return NOT_CONSTANT2;
-}
 function property(receiver, name2) {
-  if (name2 === "length") return lengthOf(receiver);
   if (!isPlain(receiver)) return NOT_CONSTANT2;
   const own = Object.prototype.hasOwnProperty.call(receiver, name2);
   return own ? ok3(receiver[name2]) : NOT_CONSTANT2;
@@ -22169,21 +22127,29 @@ var fieldPath = {
     const n2 = node;
     if (n2.type !== "MemberAccess" || n2.name === void 0) return node;
     if (n2.name.startsWith("$") || isFieldProperty(n2.name)) return node;
-    const segments = [n2.name];
-    let optional = n2.optional === true;
+    const members = [
+      { name: n2.name, optional: n2.optional === true }
+    ];
     let base = n2.object;
     while (base.type === "MemberAccess") {
       const name2 = base.name;
       if (name2.startsWith("$")) return node;
-      segments.unshift(name2);
-      optional ||= base.optional === true;
+      members.unshift({ name: name2, optional: base.optional === true });
       base = base.object;
     }
     if (base.type !== "FieldRef") return node;
-    optional ||= base.optional === true;
     const head = base.path === "" ? [] : [base.path];
-    const folded = { type: "FieldRef", path: [...head, ...segments].join("."), pos: base.pos };
-    return optional ? { ...folded, optional: true } : folded;
+    const optional = base.optional === true || members.some((m) => m.optional);
+    let optionalAt;
+    for (let i = members.length - 1; i >= 0; i--) {
+      if (!members[i].optional) continue;
+      const before = [...head, ...members.slice(0, i).map((m) => m.name)].join(".");
+      if (before !== "") optionalAt = before;
+      break;
+    }
+    const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
+    if (!optional) return folded;
+    return optionalAt === void 0 ? { ...folded, optional: true } : { ...folded, optional: true, optionalAt };
   }
 };
 var isNode4 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
@@ -22370,7 +22336,7 @@ function matchTests(param, prefix, entries, pos) {
         tests.push({
           type: "MethodCall",
           object: pathOn(param, path, pos),
-          name: "includes",
+          name: "has",
           args: [e],
           optional: false,
           pos
@@ -22535,7 +22501,7 @@ function bindingSlot(name2) {
 function tmpSlot(n2) {
   return `${JSMQL_NS}.tmp.${n2}`;
 }
-var LENGTH_SLOT2 = `${JSMQL_NS}.length`;
+var SIZE_SLOT2 = `${JSMQL_NS}.size`;
 var GROUP_TMP = `${JSMQL_NS}Tmp`;
 function sanitizeVarSegment(name2) {
   return name2.replace(/[^A-Za-z0-9_]/g, "_");
@@ -23101,7 +23067,8 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const got = sel.got === null ? "a receiver whose type JSMQL cannot prove" : sel.got.split(" or ").map((k) => `${/^[aeiou]/i.test(k) ? "an" : "a"} '${k}'`).join(" or ");
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -23173,6 +23140,10 @@ var looseEqualityNotNull = (op, pos) => new CodegenError(
   `'${op}' is only allowed against null in JSMQL. Use '${op === "==" ? "===" : "!=="}' for JS-like strict equality (no surprising type coercion). To match "null or missing", write '$.x ${op} null'.`,
   pos
 );
+var inOnArray = (pos) => new CodegenError(
+  "'in' tests a key of an object, and the value on its right is an array. For membership, write '<array>.has(x)'; for a bound on the count, write '<array>.size() > n'.",
+  pos
+);
 var scalarInOperand = (pos) => new CodegenError(
   "The right side of 'in' must be an array literal, an object literal, or a field reference, not a scalar value.",
   pos
@@ -23210,11 +23181,11 @@ var rootIsArray = (pos) => new CodegenError(
   pos
 );
 var joinNeedsPipeline = (pos) => new CodegenError(
-  "'$$$.<coll>' (a read of another collection) needs Pipeline mode \u2014 it materialises a '$lookup' stage. Use it inside a pipeline \u2014 for example, `({ $ }) => { $.n = $$$.<coll>.filter(\u2026).length; }`. It has no meaning in a Filter or in 'jsmql.expr'.",
+  "'$$$.<coll>' (a read of another collection) needs Pipeline mode \u2014 it materialises a '$lookup' stage. Use it inside a pipeline \u2014 for example, `({ $ }) => { $.n = $$$.<coll>.filter(\u2026).size(); }`. It has no meaning in a Filter or in 'jsmql.expr'.",
   pos
 );
 var needsPipeline = (name2, pos) => new CodegenError(
-  `'$$.${name2}' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline \u2014 for example, \`({ $ }) => { $.n = $$.${name2}; \u2026 }\`. It has no meaning in a Filter or in 'jsmql.expr'.`,
+  `'$$.${name2}()' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline \u2014 for example, \`({ $ }) => { $.n = $$.${name2}(); \u2026 }\`. It has no meaning in a Filter or in 'jsmql.expr'.`,
   pos
 );
 var spreadInOperatorBody = (pos) => new CodegenError("MQL has no spread in an object. Write Object.assign(a, b) instead.", pos);
@@ -23252,11 +23223,11 @@ var arrayOfArrays = (method, holder, pos) => new CodegenError(
   pos
 );
 var streamHandleAfterReplace = (name2, stage, pos) => new CodegenError(
-  `'${name2}' is the body's own stream. This body runs '${stage}', which changes what its count means. The compiler stamps '${name2}.length' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name2}' from the parameter list.`,
+  `'${name2}' is the body's own stream. This body runs '${stage}', which changes what its count means. The compiler stamps '${name2}.size()' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name2}' from the parameter list.`,
   pos
 );
 var streamHandleAsValue = (name2, pos) => new CodegenError(
-  `'${name2}' is the body's own stream, the callback's third parameter: read its count ('${name2}.length') or chain on it ('${name2}.filter(\u2026)'). It is not a document or a value on its own.`,
+  `'${name2}' is the body's own stream, the callback's third parameter: read its count ('${name2}.size()') or chain on it ('${name2}.filter(\u2026)'). It is not a document or a value on its own.`,
   pos
 );
 var bareContextRef = (ref, pos) => {
@@ -23309,7 +23280,7 @@ var mustBeFirstStage = (name2, pos, why) => new CodegenError(
   pos
 );
 var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
-  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ \u2026 }).<field>" : "$$.length";
+  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ \u2026 }).<field>" : "$$.size()";
   const later = `$match($.<field> === ${value});`;
   return new CodegenError(
     carrier === null ? `'${name2}' has to be the FIRST stage of the pipeline. A value in its body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of '${name2}'. Read that value in a LATER statement instead \u2014 '${name2}({ \u2026 }); ${later}'. Or, when the value is one of the stage's settings, give it a constant or a 'jsmql.compile' parameter: the server reads a setting before it has any documents.` : `'${name2}' only runs in the pipeline's FIRST '${carrier}'. A value in that body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of that '${carrier}'. Keep the '${name2}' test on its own, and make the other one a later stage: '${carrier}(${name2}(\u2026)); ${later}'.`,
@@ -23317,7 +23288,7 @@ var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
   );
 };
 var terminalReadsScratch = (name2, pos) => new CodegenError(
-  `'${name2}' writes the pipeline's output and has to be its LAST stage. JSMQL clears its scratch fields in the stage right before it. So a value this body reads ('$$.length', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first, and read that field: '$.n = $$.length; ${name2}({ \u2026 let: { v: $.n } \u2026 });'.`,
+  `'${name2}' writes the pipeline's output and has to be its LAST stage. JSMQL clears its scratch fields in the stage right before it. So a value this body reads ('$$.size()', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first, and read that field: '$.n = $$.size(); ${name2}({ \u2026 let: { v: $.n } \u2026 });'.`,
   pos
 );
 var twoTerminalStages = (name2, already, pos) => new CodegenError(
@@ -23371,7 +23342,7 @@ var spreadNotADocument = (noun, pos) => new CodegenError(
   pos
 );
 var spreadOfString = (pos) => new CodegenError(
-  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
   pos
 );
 var afterTerminalStage = (already, pos) => new CodegenError(
@@ -23499,7 +23470,7 @@ var rootStreamInForeign = (pos) => new CodegenError(
   pos
 );
 var streamAsValue = (pos) => new CodegenError(
-  "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(\u2026), \u2026 }' (a '$facet'); for its size write '$$.length'; to keep the documents, chain them as a statement: '$$.filter(\u2026);'.",
+  "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(\u2026), \u2026 }' (a '$facet'); for its size write '$$.size()'; to keep the documents, chain them as a statement: '$$.filter(\u2026);'.",
   pos
 );
 var facetMixed = (key, pos) => new CodegenError(
@@ -23778,7 +23749,7 @@ var Chain = class {
     this.proofs = /* @__PURE__ */ new WeakMap();
     /**
      * The field paths a materialiser stamped, that are still FRESH — see
-     * docs/specs/stream-length.md § Compute-once / reuse / recompute. A second
+     * docs/specs/stream-size.md § Compute-once / reuse / recompute. A second
      * read of a stamped path costs no stage. A stage whose row does not state
      * `preservesCount` clears the set, so the next read stamps again.
      */
@@ -24022,6 +23993,202 @@ var Env = class _Env {
   }
 };
 
+// src/compiler/emit/select.ts
+var isObj3 = (v) => typeof v === "object" && v !== null;
+function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
+  if (args.some((a) => a.type === "SpreadElement")) return { kind: "spread" };
+  if (args.length === 0) return { kind: "none" };
+  if (args.length > 1) return { kind: "multiple" };
+  const only = args[0];
+  if (only.type === "ObjectLiteral") {
+    const keys = (only.entries ?? []).map(staticKey).filter((k) => k !== null);
+    return { kind: "object", keys };
+  }
+  const v = evaluate(args[0], constants);
+  return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
+}
+var TYPES = FIELD_FAMILY_TYPES;
+function guardFor(family, also = []) {
+  const types = [...TYPES[family], ...also];
+  return (recv) => ({ $in: [{ $type: recv }, types] });
+}
+var FIELD_FAMILIES2 = Object.keys(TYPES);
+var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
+var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
+var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
+function countOf(name2, args, n2) {
+  const rejected = args.reject?.[n2];
+  if (rejected !== void 0) return { kind: "rejectedCount", name: name2, message: rejected };
+  const ok4 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
+  return ok4 ? null : { kind: "wrongCount", name: name2, got: n2, args };
+}
+function settle(name2, branch, shaped, count, family) {
+  if (isRefusal(branch)) {
+    return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
+  }
+  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
+  if (shaped.kind === "spread") {
+    if (branch.args.spread === true) {
+      internalError(`a spread reached '${name2}'. Its rule reads one array argument, and the desugar pass packs it`);
+    }
+    return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
+  }
+  return countOf(name2, branch.args, count) ?? (family === void 0 ? { kind: "rule", name: name2, rule: branch } : { kind: "rule", name: name2, rule: branch, family });
+}
+function familyOf2(receiver) {
+  switch (receiver.kind) {
+    case "none":
+      return null;
+    case "namespace":
+      return receiver.name;
+    case "stream":
+      return "stream";
+    case "value":
+      return receiver.family;
+    case "opaque":
+      return null;
+  }
+}
+function receiverGate(name2, receiver) {
+  const on = familiesFor(name2);
+  if (on === void 0 || on === "any") return null;
+  if (receiver.kind === "opaque") {
+    if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
+    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
+      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
+    }
+    return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
+  }
+  const family = familyOf2(receiver);
+  if (family !== null && on.includes(family)) return null;
+  return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
+}
+function fromByArgs(name2, byArgs, shaped, count) {
+  const otherwise = byArgs.otherwise;
+  if (!isRefusal(otherwise)) internalError(`the row '${name2}' states a byArgs cell without its 'otherwise'`);
+  const leftover = () => settle(name2, otherwise, shaped, count);
+  switch (shaped.kind) {
+    case "spread":
+      return leftover();
+    case "constant":
+      return byArgs.constant === void 0 ? leftover() : settle(name2, byArgs.constant, shaped, count);
+    default: {
+      const entry = byArgs[shaped.kind];
+      return entry === void 0 ? leftover() : settle(name2, entry, shaped, count);
+    }
+  }
+}
+function kindFits(kind, expected) {
+  if (kind === "unknown") return true;
+  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t));
+  switch (expected) {
+    case "number":
+    case "int":
+    case "int-or-long":
+      return kind === "number";
+    case "number-or-date":
+      return kind === "number" || kind === "date";
+    case "string":
+    case "fieldName":
+    case "fieldPath":
+      return kind === "string";
+    case "bool":
+    case "array":
+    case "object":
+    case "date":
+      return kind === expected;
+    case "timestamp":
+      return false;
+  }
+}
+var argsFit = (rule, kinds) => Object.entries(rule.args.slotType ?? {}).every(([i, t]) => {
+  const k = kinds[Number(i)];
+  return k === void 0 || kindFits(k, t);
+});
+function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kinds) {
+  const on = familiesFor(name2);
+  if (receiver.kind !== "opaque") {
+    const family = familyOf2(receiver);
+    const branch = family === null ? void 0 : branches[family];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
+    return settle(name2, branch, shaped, count, isFieldFamily(family) ? family : void 0);
+  }
+  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
+  const possible = receiver.possible;
+  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
+  if (possible !== void 0 && listed.length === 0) {
+    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
+  }
+  const lowering = listed.filter((f) => !isRefusal(branches[f]));
+  const tests = /* @__PURE__ */ new Set();
+  const fieldFamilies = (lowering.length > 0 ? lowering : listed).filter((family) => {
+    const test = TYPES[family].join(",");
+    if (tests.has(test)) return false;
+    tests.add(test);
+    return true;
+  });
+  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+  const fitting = fieldFamilies.filter((f) => {
+    const b = branches[f];
+    return !isRule(b) || argsFit(b, kinds);
+  });
+  if (fitting.length === 1 && fieldFamilies.length > 1) {
+    const branch = branches[fitting[0]];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+    return settle(name2, branch, shaped, count, fitting[0]);
+  }
+  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
+  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
+    const branch = branches[fieldFamilies[0]];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+    return settle(name2, branch, shaped, count, fieldFamilies[0]);
+  }
+  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
+    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
+  }
+  const out = [];
+  for (const family of fieldFamilies) {
+    const branch = branches[family];
+    if (isRefusal(branch) || branch === void 0) continue;
+    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
+    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
+    if (bad !== null && bad.kind !== "rule") return bad;
+    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
+  }
+  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
+  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
+}
+function select(verdict, receiver, shaped, count, kinds = []) {
+  const name2 = verdict.name;
+  switch (verdict.kind) {
+    case "unknown":
+      return { kind: "unknown", name: name2 };
+    case "refused": {
+      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
+      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
+    }
+    case "fallback":
+      return { kind: "fallback", name: name2 };
+    case "composedOnly":
+      return { kind: "composedOnly", name: name2, owners: verdict.owners };
+    case "noCell":
+      return { kind: "noCell", name: name2 };
+    case "inCode": {
+      const gate = receiverGate(name2, receiver);
+      return gate ?? { kind: "noCell", name: name2 };
+    }
+    case "perFamily":
+      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count, kinds);
+    case "lower": {
+      const gate = receiverGate(name2, receiver);
+      if (gate !== null) return gate;
+      const cell = verdict.cell;
+      if (isObj3(cell) && isObj3(cell.byArgs)) return fromByArgs(name2, cell.byArgs, shaped, count);
+      return settle(name2, cell, shaped, count);
+    }
+  }
+}
+
 // src/stringify.ts
 var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
 var kindOf2 = (v) => Object.prototype.toString.call(v);
@@ -24240,6 +24407,25 @@ var hint = (name2, expected) => {
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   const example = expected === "object" ? bodyExampleOf(name2) : void 0;
   return example === void 0 ? "" : ` Write the body as a document. For example: '${example}'.`;
+};
+function checkSlotKinds(name2, args, operands, kinds) {
+  for (const [i, t] of Object.entries(args.slotType ?? {})) {
+    const e = operands[Number(i)];
+    const k = kinds[Number(i)];
+    if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
+    const expected = Array.isArray(t) ? t.map((x) => EXPECTS[x].replace(/^expects /, "")).join(" or ") : EXPECTS[t].replace(/^expects /, "");
+    throw new CodegenError(`'${spell2(name2)}' takes ${expected}, but this value is ${KIND_NOUN2[k] ?? `a ${k}`}.`, e.pos);
+  }
+}
+var KIND_NOUN2 = {
+  string: "a string",
+  number: "a number",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  objectId: "an ObjectId",
+  binData: "binary data"
 };
 function checkType(name2, slot, e, expected) {
   if (expected === "fieldPath") {
@@ -24701,7 +24887,9 @@ function statedPresence(node, env) {
     case "MethodCall": {
       const name2 = namedRow(node) ?? node.name;
       if (!neverNullOf(name2)) return false;
-      const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : node.optional && soleFieldFamilyOf(name2) !== null || isPresent(node.object, env);
+      const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
+      const wrapped = !spineHasOptional(node) && emptyCollectionOf(name2, family) !== null;
+      const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
       return receiver && node.args.every((a) => argPresent(a, env));
     }
     case "OperatorCall":
@@ -24739,6 +24927,14 @@ function statedPresence(node, env) {
     default:
       return false;
   }
+}
+function spineHasOptional(e) {
+  let cursor = e;
+  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
 }
 function chainHasOptional(e) {
   let cursor = e;
@@ -25707,165 +25903,6 @@ var readsRef = (mql, ref) => {
   return false;
 };
 
-// src/compiler/emit/select.ts
-var isObj3 = (v) => typeof v === "object" && v !== null;
-function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
-  if (args.some((a) => a.type === "SpreadElement")) return { kind: "spread" };
-  if (args.length === 0) return { kind: "none" };
-  if (args.length > 1) return { kind: "multiple" };
-  const only = args[0];
-  if (only.type === "ObjectLiteral") {
-    const keys = (only.entries ?? []).map(staticKey).filter((k) => k !== null);
-    return { kind: "object", keys };
-  }
-  const v = evaluate(args[0], constants);
-  return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
-}
-var TYPES = FIELD_FAMILY_TYPES;
-function guardFor(family, also = []) {
-  const types = [...TYPES[family], ...also];
-  return (recv) => ({ $in: [{ $type: recv }, types] });
-}
-var FIELD_FAMILIES2 = Object.keys(TYPES);
-var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
-var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
-var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
-function countOf(name2, args, n2) {
-  const rejected = args.reject?.[n2];
-  if (rejected !== void 0) return { kind: "rejectedCount", name: name2, message: rejected };
-  const ok4 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
-  return ok4 ? null : { kind: "wrongCount", name: name2, got: n2, args };
-}
-function settle(name2, branch, shaped, count) {
-  if (isRefusal(branch)) {
-    return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
-  }
-  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
-  if (shaped.kind === "spread") {
-    if (branch.args.spread === true) {
-      internalError(`a spread reached '${name2}'. Its rule reads one array argument, and the desugar pass packs it`);
-    }
-    return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
-  }
-  return countOf(name2, branch.args, count) ?? { kind: "rule", name: name2, rule: branch };
-}
-function familyOf2(receiver) {
-  switch (receiver.kind) {
-    case "none":
-      return null;
-    case "namespace":
-      return receiver.name;
-    case "stream":
-      return "stream";
-    case "value":
-      return receiver.family;
-    case "opaque":
-      return null;
-  }
-}
-function receiverGate(name2, receiver) {
-  const on = familiesFor(name2);
-  if (on === void 0 || on === "any") return null;
-  if (receiver.kind === "opaque") {
-    if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
-    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
-      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
-    }
-    return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
-  }
-  const family = familyOf2(receiver);
-  if (family !== null && on.includes(family)) return null;
-  return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
-}
-function fromByArgs(name2, byArgs, shaped, count) {
-  const otherwise = byArgs.otherwise;
-  if (!isRefusal(otherwise)) internalError(`the row '${name2}' states a byArgs cell without its 'otherwise'`);
-  const leftover = () => settle(name2, otherwise, shaped, count);
-  switch (shaped.kind) {
-    case "spread":
-      return leftover();
-    case "constant":
-      return byArgs.constant === void 0 ? leftover() : settle(name2, byArgs.constant, shaped, count);
-    default: {
-      const entry = byArgs[shaped.kind];
-      return entry === void 0 ? leftover() : settle(name2, entry, shaped, count);
-    }
-  }
-}
-function fromPerFamily(name2, branches, uncertain, receiver, shaped, count) {
-  const on = familiesFor(name2);
-  if (receiver.kind !== "opaque") {
-    const family = familyOf2(receiver);
-    const branch = family === null ? void 0 : branches[family];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count);
-  }
-  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
-  const possible = receiver.possible;
-  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
-  if (possible !== void 0 && listed.length === 0) {
-    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
-  }
-  const tests = /* @__PURE__ */ new Set();
-  const fieldFamilies = listed.filter((family) => {
-    const test = TYPES[family].join(",");
-    if (tests.has(test)) return false;
-    tests.add(test);
-    return true;
-  });
-  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
-  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
-    const branch = branches[fieldFamilies[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count);
-  }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
-    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
-  }
-  const out = [];
-  for (const family of fieldFamilies) {
-    const branch = branches[family];
-    if (isRefusal(branch) || branch === void 0) continue;
-    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
-    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
-    if (bad !== null && bad.kind !== "rule") return bad;
-    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
-  }
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
-  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
-}
-function select(verdict, receiver, shaped, count) {
-  const name2 = verdict.name;
-  switch (verdict.kind) {
-    case "unknown":
-      return { kind: "unknown", name: name2 };
-    case "refused": {
-      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
-      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
-    }
-    case "fallback":
-      return { kind: "fallback", name: name2 };
-    case "composedOnly":
-      return { kind: "composedOnly", name: name2, owners: verdict.owners };
-    case "noCell":
-      return { kind: "noCell", name: name2 };
-    case "inCode": {
-      const gate = receiverGate(name2, receiver);
-      return gate ?? { kind: "noCell", name: name2 };
-    }
-    case "perFamily":
-      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count);
-    case "lower": {
-      const gate = receiverGate(name2, receiver);
-      if (gate !== null) return gate;
-      const cell = verdict.cell;
-      if (isObj3(cell) && isObj3(cell.byArgs)) return fromByArgs(name2, cell.byArgs, shaped, count);
-      return settle(name2, cell, shaped, count);
-    }
-  }
-}
-
 // src/compiler/emit/filter.ts
 function lowerFilter(node, env) {
   const q = translate(node, env, false);
@@ -25876,8 +25913,8 @@ var lowerNativeFilter = (node, env) => translate(node, env, true);
 var isExpr = (a) => a.type !== "SpreadElement" && a.type !== "LetDecl" && a.type !== "FuncDecl" && a.type !== "AssignExpr" && a.type !== "DeleteStmt" && a.type !== "UpdateFilter";
 function translate(node, env, nativeOnly) {
   if (node.type === "BinaryExpr" && node.op === "&&") {
-    const all2 = extractIncludesChain(node, env);
-    if (all2 !== null) return includesChain(all2.path, all2.values);
+    const all2 = extractHasChain(node, env);
+    if (all2 !== null) return hasChain(all2.path, all2.values);
     const left = translate(node.left, childEnv(env, node, "left"), nativeOnly);
     const right = translate(node.right, childEnv(env, node, "right"), nativeOnly);
     if (left === null || right === null) return null;
@@ -26089,15 +26126,15 @@ function chainOf(node, op) {
   walk(node);
   return out;
 }
-function includesChain(path, values) {
+function hasChain(path, values) {
   return { [path]: { $all: values } };
 }
-function extractIncludesChain(node, env) {
+function extractHasChain(node, env) {
   const leaves = chainOf(node, "&&");
   let path = null;
   const values = [];
   for (const l of leaves) {
-    if (l.type !== "MethodCall" || l.name !== "includes" || l.args.length !== 1) return null;
+    if (l.type !== "MethodCall" || l.name !== "has" || l.args.length !== 1) return null;
     const p = pathOfIn(l.object, env);
     const a = l.args[0];
     const c = isExpr(a) ? constantIn(a) : null;
@@ -26271,7 +26308,7 @@ function readsParam(node, name2) {
   if (n2.type === "Ident" && n2.name === name2) return true;
   return Object.entries(n2).some(([k, v]) => k !== "type" && readsParam(v, name2));
 }
-function arrayCallback(cb, recv, recvNode, env, read, name2) {
+function arrayCallback(cb, recv, recvNode, env, read, name2, present2 = false) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
@@ -26282,7 +26319,7 @@ function arrayCallback(cb, recv, recvNode, env, read, name2) {
     let bodyEnv2 = bound.env;
     const vars2 = {};
     if (arr !== void 0) {
-      const a = bodyEnv2.param(arr, of("array", true), cb.pos);
+      const a = bodyEnv2.param(arr, of("array", !present2), cb.pos);
       vars2[a.as] = recv;
       bodyEnv2 = a.env;
     }
@@ -26399,7 +26436,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth),
-    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2),
+    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2, present2),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name2),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
     sortSpec: (e, objects) => sortSpecOf(e, name2, objects),
@@ -26795,14 +26832,15 @@ function stoppedChain(node) {
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
-  return cursor.type === "FieldRef" && cursor.optional === true && called ? cursor : null;
+  if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
+  return cursor.optionalAt === void 0 ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
 }
 function withoutOptional(e) {
   if (e.type === "MemberAccess" || e.type === "IndexAccess" || e.type === "MethodCall") {
     return { ...e, optional: false, object: withoutOptional(e.object) };
   }
   if (e.type === "FieldRef" && e.optional === true) {
-    const { optional: _dropped, ...rest } = e;
+    const { optional: _dropped, optionalAt: _at, ...rest } = e;
     return rest;
   }
   return e;
@@ -26854,8 +26892,9 @@ function arrayLiteral(node, elements, env) {
       const t = typeOf(el.argument, inner);
       if (isOnly(t, "string")) throw spreadOfString(el.argument.pos);
       if (cannotBe(t, "array")) throw spreadNotAnArray(nounOfKinds(t), el.argument.pos);
+      const packed = node.packed === true;
       const v = lowerValue(el.argument, inner);
-      operands.push(chainHasOptional(el.argument) ? ifNull(v, []) : v);
+      operands.push(t.absent && !packed ? ifNull(v, []) : v);
     } else if (isExpr2(el)) group.push(lowerValue(el, inner));
   }
   flush();
@@ -27061,9 +27100,13 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
-  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue) throw streamAsValue(node.pos);
+  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name2)) {
+    throw streamAsValue(node.pos);
+  }
   const exprArgs = args.filter(isExpr2);
-  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
+  const argEnv = childEnv(env, node, "args");
+  const kinds = args.map((a) => isExpr2(a) ? kindOf3(a, argEnv) : "unknown");
+  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length, kinds);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
@@ -27073,9 +27116,15 @@ function dispatchOn(node, name2, recvNode, args, env) {
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
     checkSlots(name2, sel.rule.args, exprArgs);
-    const present2 = isPresent(recvNode, recvEnv);
+    checkSlotKinds(name2, sel.rule.args, exprArgs, kinds);
+    const proven = isPresent(recvNode, recvEnv);
+    const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
+    const empty = emptyCollectionOf(name2, family);
+    const inExpression = position === "value" || position === "filter";
+    const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const input = wrap ? ifNull(recv, empty) : recv;
     return sel.rule.emit(
-      exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, present2)
+      exprInputs(name2, input, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, proven || wrap)
     );
   }
   if (sel.kind === "dispatch") {
@@ -27401,16 +27450,30 @@ function membership2(node, env) {
     for (const e of entries) {
       if (e.type === "SpreadElement") {
         flush();
-        const kv = env.fresh("kv");
+        const kv2 = env.fresh("kv");
         operands.push({
-          $map: { input: { $objectToArray: lowerValue(e.argument, env) }, as: kv.as, in: `${kv.ref}.k` }
+          $map: { input: { $objectToArray: lowerValue(e.argument, env) }, as: kv2.as, in: `${kv2.ref}.k` }
         });
       } else group.push(e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, env));
     }
     flush();
     return { $in: [lowerValue(left, env), operands.length === 1 ? operands[0] : { $concatArrays: operands }] };
   }
-  return { $in: [lowerValue(left, env), lowerValue(right, env)] };
+  if (right.type === "ArrayLiteral") return { $in: [lowerValue(left, env), lowerValue(right, env)] };
+  const t = typeOf(right, env);
+  if (isOnly(t, "array")) throw inOnArray(node.pos);
+  const obj = lowerValue(right, env);
+  if (left.type === "StringLiteral") {
+    return { $ne: [{ $type: { $getField: { field: left.value, input: obj } } }, "missing"] };
+  }
+  const key = lowerValue(left, env);
+  const kv = env.fresh("kv");
+  return {
+    $in: [
+      kindOf3(left, env) === "string" ? key : { $toString: key },
+      { $map: { input: { $objectToArray: ifNull(obj, {}) }, as: kv.as, in: `${kv.ref}.k` } }
+    ]
+  };
 }
 function exprBlock(node, env, ret) {
   const seen = /* @__PURE__ */ new Set();
@@ -28322,7 +28385,10 @@ function writeStages(uf, env, first) {
 }
 function refuseUnbuiltSugar(value) {
   const base = chainBase(value);
-  if (base.type === "CollectionRef" && value.type === "MethodCall") throw streamAsValue(value.pos);
+  if (base.type === "CollectionRef" && value.type === "MethodCall") {
+    const direct = value.object.type === "CollectionRef" && hasStreamValueCell(value.name);
+    if (!direct) throw streamAsValue(value.pos);
+  }
 }
 function elementWiseOnDocument(value) {
   const links = [];
@@ -28840,6 +28906,12 @@ function received(program) {
   }
   const stage = shapeOf(program) === "pipeline" ? namedRow(program) : null;
   if (stage !== null) {
+    if (hasStreamValueCell(stage)) {
+      return {
+        what: `'$$.${stage}()', the stream's document count, which materialises a '$setWindowFields' stage`,
+        hint: "jsmql.pipeline()"
+      };
+    }
     const drop = stage === "$match" ? " \u2014 for a Filter, drop the `$match(...)` wrapper and pass its predicate" : "";
     return { what: `a top-level '${stage}' stage call`, hint: `jsmql.pipeline()${drop}` };
   }

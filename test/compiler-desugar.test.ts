@@ -69,7 +69,7 @@ const EQUIVALENT: [string, string][] = [
   // lodash's `_.matches` is a PARTIAL deep match: nested objects are paths, arrays are subsets
   ["$.items.filter({ a: { b: { c: 3 } }, e: 1 })", "$.items.filter(x => x.a.b.c === 3 && x.e === 1)"],
   ["$.items.filter({ qty: { $gt: 5 } })", "$.items.filter(x => x.qty.$gt === 5)"],
-  ['$.items.filter({ tags: ["a", "b"] })', '$.items.filter(x => x.tags.includes("a") && x.tags.includes("b"))'],
+  ['$.items.filter({ tags: ["a", "b"] })', '$.items.filter(x => x.tags.has("a") && x.tags.has("b"))'],
   ["$.items.filter({ a: {} })", "$.items.filter(x => true)"],
   ['$.items.filter(["active", true])', "$.items.filter(x => x.active === true)"],
   ['$.items.filter(["a.b", 1])', "$.items.filter(x => x.a.b === 1)"],
@@ -169,11 +169,11 @@ describe("compiler/passes/desugar — a field path is ONE node", () => {
     expect(pathOf("$.a.map")).toBe("a.map");
   });
 
-  it("leaves `.length` alone, because its row is READ and not called", () => {
-    expect(pathOf("$.a.length")).toBe("MemberAccess");
-    // …but a segment AFTER it makes the whole chain a path again, which is why
-    // the rule collects the chain instead of folding one link at a time.
+  it("folds `.length` as a field, because every computed value is a call", () => {
+    // `length` with no call behind it is the field named `length`; `.length()` is the call.
+    expect(pathOf("$.a.length")).toBe("a.length");
     expect(pathOf("$.a.length.b")).toBe("a.length.b");
+    expect(pathOf("$.a.length()")).toBe("MethodCall");
   });
 
   it("folds nothing that is not rooted in the document", () => {

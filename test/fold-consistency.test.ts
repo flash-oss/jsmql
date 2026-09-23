@@ -38,10 +38,9 @@ for (const v of STRING_SAMPLES) {
     ".trim()",
     ".trimStart()",
     ".trimEnd()",
-    ".slice(1)",
-    ".slice(1, 3)",
-    ".slice(-2)",
+    ".substring(1)",
     ".substring(1, 3)",
+    ".substr(-2)",
     '.split("-")',
     ".charAt(1)",
     '.includes("o")',
@@ -52,7 +51,7 @@ for (const v of STRING_SAMPLES) {
     ".padStart(10)",
     '.padStart(10, "*")',
     ".padEnd(10)",
-    '.concat("!", "?")',
+    ' + "!" + "?"',
     // lodash string family
     ".capitalize()",
     ".upperFirst()",
@@ -112,7 +111,7 @@ for (const v of ARRAY_SAMPLES) {
     ".slice(-3, -1)",
     ".slice(1, 100)",
     ".concat([9, 8])",
-    ".includes(2)",
+    ".has(2)",
     ".indexOf(2)",
     ".lastIndexOf(2)",
     '.join("-")',
@@ -256,7 +255,7 @@ const OBJ_SAMPLES: Record<string, unknown>[] = [{}, { a: 1, b: 2, c: 3 }, { x: 0
 for (const v of OBJ_SAMPLES) {
   const lit = JSON.stringify(v);
   for (const call of [
-    ".size()",
+    ".keys().size()",
     ".toPairs()",
     ".invert()",
     '.pick(["a", "x"])',

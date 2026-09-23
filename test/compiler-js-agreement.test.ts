@@ -52,6 +52,10 @@ const AGREE: readonly string[] = [
   // a `.some` receiver is a path too: an array at its prefix is absent, where `.some` throws
   // `!p` is the COMPLEMENT of p's clause, so a tautology stays one
   "$.a > 1 || !($.a > 1)",
+  // `.includes(x)` is a substring test, and the regex reads an array element-wise as JavaScript's
+  // `.includes` reads the array: both select the string that holds the needle and the array that holds it
+  '$.tags.includes("vip")',
+  '$.tags.includes("a") && $.tags.includes("b")',
 ];
 
 /**
@@ -59,21 +63,20 @@ const AGREE: readonly string[] = [
  * developer writes by hand, and MongoDB's own array semantics then apply.
  */
 const ARRAY_RULE =
-  "MongoDB's query language satisfies a field comparison when ANY ELEMENT of an array value satisfies it, and it TRAVERSES an array in the middle of a path. jsmql emits the query a MongoDB developer writes by hand — `{ a: { $gt: 18 } }` — so the server's own rules apply and the array documents are selected where JavaScript reads one value. Containment has its own spelling (`.includes(x)`), an element test has `.some(e => …)`.";
+  "MongoDB's query language satisfies a field comparison when ANY ELEMENT of an array value satisfies it, and it TRAVERSES an array in the middle of a path. jsmql emits the query a MongoDB developer writes by hand — `{ a: { $gt: 18 } }` — so the server's own rules apply and the array documents are selected where JavaScript reads one value. Containment has its own spelling (`.has(x)`), an element test has `.some(e => …)`.";
 
 /**
- * A query document is read through an INDEX, so `.includes` emits the indexable
- * form and MongoDB's own reading of it applies. The substring reading a string
- * receiver has belongs to the expression road, where no index is at stake, and to
- * `.match(/x/)`, the query spelling that asks for it.
+ * `.has(x)` is the Set spelling of membership, and a JavaScript array has no `.has`:
+ * JavaScript throws, so it selects nothing. A query document is read through an
+ * INDEX, so `.has(x)` emits the indexable form and MongoDB's own reading applies.
  */
-const INDEXABLE_INCLUDES =
-  "A query document is what an index is read through, so `.includes(x)` emits `{ f: x }` \u2014 MongoDB's \"equals, or is an array containing\" \u2014 which selects an array holding the needle and a field equal to it, and not a string that merely CONTAINS it. The substring reading is the expression road's (`jsmql.expr`), and `.match(/x/)` is the query spelling for it.";
+const INDEXABLE_HAS =
+  "`.has(x)` emits `{ f: x }` \u2014 MongoDB's \"equals, or is an array containing\" \u2014 which selects an array holding the needle and a field equal to it. JavaScript's Array has no `.has`, so JavaScript throws on every document and selects none.";
 
 /** Sources JavaScript answers differently, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
-  { src: '$.tags.includes("vip")', why: INDEXABLE_INCLUDES },
-  { src: '$.tags.includes("a") && $.tags.includes("b")', why: INDEXABLE_INCLUDES },
+  { src: '$.tags.has("vip")', why: INDEXABLE_HAS },
+  { src: '$.tags.has("a") && $.tags.has("b")', why: INDEXABLE_HAS },
   { src: "$.a === 1", why: ARRAY_RULE },
   { src: "$.a !== 1", why: ARRAY_RULE },
   { src: "$.a === null", why: ARRAY_RULE },
@@ -109,7 +112,7 @@ const DIVERGE: readonly { src: string; why: string }[] = [
   },
   {
     src: '!($.tags.includes("vip"))',
-    why: "The THROW family again, and only the negation shows it: JavaScript's `.includes` throws on a number, a null and a missing field, so it selects none of them, where the complement of the positive clause selects all three. The positive spelling agrees, because neither reading of `.includes` matches those values.",
+    why: "The THROW family again, and only the negation shows it: JavaScript's `.includes` throws on a number, a null and a missing field, so it selects none of them, where the complement of the positive clause (`{ tags: { $not: /vip/ } }`) selects all three. The positive spelling agrees, because neither reading matches those values.",
   },
   {
     src: "$.a >= 1",

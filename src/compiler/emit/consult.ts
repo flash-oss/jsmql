@@ -171,7 +171,7 @@ export function consult(name: string, position: Position, family?: Family): Verd
  * The refusal to show the user: the row's reason, with the subject the caller
  * supplies when the row left one out.
  *
- * `subject` is how the source SPELLED it — `'.toReversed(...)'`, `'$$.length'`.
+ * `subject` is how the source SPELLED it — `'.toReversed(...)'`, `'$$.size()'`.
  * The caller knows the spelling; the row cannot, because one row answers for
  * every spelling that reaches it.
  */

@@ -77,7 +77,7 @@ Postfix wrapping (`MemberAccess`, `IndexAccess`, optional chains, calls) happens
 
 ```
 $.x = $$
-→ '$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'.
+→ '$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.size()'.
 ```
 
 Postfix wraps recurse into their `object` first. So any chained form (`$$.foo`, `$$$[x]`, `$$$$[a].b.c()`) that no road claims reaches the leaf marker node and is refused there. No wrapper site needs a case of its own.
@@ -108,9 +108,9 @@ Tests use the string form rather than the arrow form, but the arrow form also ty
 
 ## What each reference carries
 
-- **`$$` — the root stream, at every depth.** A chain on it is the stream road (`$$.filter(…);`, [stream-methods.md](stream-methods.md)). `$$ = …` replaces the stream ([replace-stream-stage.md](replace-stream-stage.md)). `$$.push(…)` unions documents in ([union-stage.md](union-stage.md)). `$$.length` is the stream's count ([stream-length.md](stream-length.md)). `$$` also carries the collection-scoped diagnostic sources (`$$.indexStats()`, [system-stages.md](system-stages.md)). `$$` is never a value: the compiler refuses `$.x = $$.filter(…)` and names the `$facet` form, `$$.length`, and the statement form instead. Inside a body over another collection, `$$` is still the ROOT stream — the body's own stream is the callback's third parameter.
+- **`$$` — the root stream, at every depth.** A chain on it is the stream road (`$$.filter(…);`, [stream-methods.md](stream-methods.md)). `$$ = …` replaces the stream ([replace-stream-stage.md](replace-stream-stage.md)). `$$.push(…)` unions documents in ([union-stage.md](union-stage.md)). `$$.size()` is the stream's count ([stream-size.md](stream-size.md)). `$$` also carries the collection-scoped diagnostic sources (`$$.indexStats()`, [system-stages.md](system-stages.md)). `$$` is never a value: the compiler refuses `$.x = $$.filter(…)` and names the `$facet` form, `$$.size()`, and the statement form instead. Inside a body over another collection, `$$` is still the ROOT stream — the body's own stream is the callback's third parameter.
 - **`$$$.<coll>` — a collection of the current database.** A chain on it reads that collection, through the join road ([lookup-stage.md](lookup-stage.md)). As a write target, it names the `$out` destination ([out-stage.md](out-stage.md)). The source writes the name directly, or supplies it as a `jsmql.compile` parameter; the name is never computed.
 - **`$$$$.<db>.<coll>` — a collection of another database.** This is a write target only (`$out` takes a `{ db, coll }` namespace). The compiler refuses a read, because `$lookup` and `$unionWith` reach the current database alone. The `{ db, coll }` form belongs to Atlas Data Federation, and a MongoDB server refuses it there (HR3). `$$$$` also carries the cluster-scoped diagnostic sources (`$$$$.currentOp(…)`).
 - **Types.** `src/globals.ts` declares the three as ambient globals. Each type carries the surface that prefix carries — the stream vocabulary, the chained stage calls, the stream count, and the value terminals on `$$` and `$$$.<coll>`, plus the diagnostic sources on `$$` and `$$$$`. The document stays `any` ([globals-generation.md](globals-generation.md)).
 
-`$$.find(p)` / `$$.filter(p)` as a VALUE — reading the current collection as data — has no lowering. A `$lookup` needs the collection's name, and a pipeline does not carry that name. So the compiler refuses the value form and names the statement form (`$$.filter(p);`), the `$facet` form, and `$$.length` instead.
+`$$.find(p)` / `$$.filter(p)` as a VALUE — reading the current collection as data — has no lowering. A `$lookup` needs the collection's name, and a pipeline does not carry that name. So the compiler refuses the value form and names the statement form (`$$.filter(p);`), the `$facet` form, and `$$.size()` instead.

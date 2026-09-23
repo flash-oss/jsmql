@@ -448,6 +448,11 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       return typeof a === "string" ? ok(s.endsWith(a, typeof b === "number" ? b : undefined)) : NO;
     case "includes":
       return typeof a === "string" ? ok(s.includes(a)) : NO;
+    case "length":
+      // `$strLenCP` counts CODE POINTS. JavaScript's `.length` counts UTF-16 units, and the
+      // two differ for a character outside the basic plane: `"😀".length` is 2 there and 1
+      // here. The fold answers the LANGUAGE's question.
+      return ok(points(s).length);
     case "indexOf": {
       // `$indexOfCP` answers in CODE POINTS. `"😀a".indexOf("a")` is 1 there and
       // 2 in JavaScript, whose index counts UTF-16 units.
@@ -464,16 +469,6 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
     // only searches forward. Folding it would ADD a method to the language.
     case "charAt":
       return isInt32(a) ? ok(points(s)[a] ?? "") : NO;
-    case "at": {
-      if (!isInt32(a)) return NO;
-      const cps = points(s);
-      const i = a < 0 ? cps.length + a : a;
-      // Out of range answers `undefined` in JavaScript and MISSING on the
-      // server, which are not the same thing. It stays a runtime read.
-      return i >= 0 && i < cps.length ? ok(cps[i]) : NO;
-    }
-    case "slice":
-      return sliceOf(points(s), a, b, (parts) => parts.join(""));
     case "substring": {
       // `$substrCP(s, start, length)` with the length clamped at zero. It does
       // NOT swap its arguments the way JavaScript's `substring` does. So
@@ -510,8 +505,6 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       if (typeof a !== "string" || a === "") return NO;
       if (b !== undefined && !isInt32(b)) return NO;
       return ok(s.split(a, typeof b === "number" ? b : undefined));
-    case "concat":
-      return args.every((x) => typeof valueOf(x) === "string") ? ok(s + args.map(valueOf).join("")) : NO;
     default:
       return lodashString(s, name, args);
   }
@@ -562,8 +555,6 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
   const [a] = args.map(valueOf);
   const fn = fnOf(args[0]);
   switch (name) {
-    case "size":
-      return ok(Object.keys(o).length);
     case "toPairs":
       return ok(Object.entries(o));
     case "invert": {
@@ -825,7 +816,7 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
     // identity would answer false for `[[1]].includes([1])`, where the server
     // answers true, and every literal here is a fresh object.
-    case "includes":
+    case "has":
       return ok(xs.some((v) => sameValue(v, a)));
     case "indexOf":
       return ok(xs.findIndex((v) => sameValue(v, a)));

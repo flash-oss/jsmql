@@ -419,7 +419,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $let: {
-              vars: { jsmqlArr: "$ys" },
+              vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
               in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
             },
           },
@@ -437,7 +437,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $let: {
-              vars: { jsmqlArr: "$ys" },
+              vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
               in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
             },
           },
@@ -453,7 +453,10 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         "$.ys = $.xs; $.ys.fill(0);",
         after((ys) => ys.fill(0)),
       ),
-    ).toEqual([{ $set: { ys: "$xs" } }, { $set: { ys: { $map: { input: "$ys", as: "jsmqlUnused", in: 0 } } } }]);
+    ).toEqual([
+      { $set: { ys: "$xs" } },
+      { $set: { ys: { $map: { input: { $ifNull: ["$ys", []] }, as: "jsmqlUnused", in: 0 } } } },
+    ]);
     expect(
       compiled(
         "$.ys = $.xs; $.ys.fill(9, 1);",
@@ -465,12 +468,12 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $concatArrays: [
-              { $slice: ["$ys", 1] },
+              { $slice: [{ $ifNull: ["$ys", []] }, 1] },
               {
                 $map: {
                   input: {
                     $let: {
-                      vars: { jsmqlArr: "$ys" },
+                      vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
                       in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
                     },
                   },
@@ -494,19 +497,29 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $concatArrays: [
-              { $slice: ["$ys", 1] },
-              { $map: { input: { $slice: ["$ys", 1, 1] }, as: "jsmqlUnused", in: 9 } },
+              { $slice: [{ $ifNull: ["$ys", []] }, 1] },
+              { $map: { input: { $slice: [{ $ifNull: ["$ys", []] }, 1, 1] }, as: "jsmqlUnused", in: 9 } },
               {
-                $let: {
-                  vars: { jsmqlArr: "$ys" },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      { $add: [{ $size: { $slice: ["$ys", 1] } }, { $size: { $slice: ["$ys", 1, 1] } }] },
-                      { $max: [1, { $size: "$$jsmqlArr" }] },
-                    ],
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
+                          {
+                            $add: [
+                              { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                              { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1, 1] } },
+                            ],
+                          },
+                          { $max: [1, { $size: "$$jsmqlArr" }] },
+                        ],
+                      },
+                    },
                   },
-                },
+                  [],
+                ],
               },
             ],
           },
@@ -524,19 +537,24 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $concatArrays: [
-              { $slice: ["$ys", 2] },
+              { $slice: [{ $ifNull: ["$ys", []] }, 2] },
               { $map: { input: [], as: "jsmqlUnused", in: 9 } },
               {
-                $let: {
-                  vars: { jsmqlArr: "$ys" },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      { $add: [{ $size: { $slice: ["$ys", 2] } }, { $size: [[]] }] },
-                      { $max: [1, { $size: "$$jsmqlArr" }] },
-                    ],
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
+                          { $add: [{ $size: { $slice: [{ $ifNull: ["$ys", []] }, 2] } }, { $size: [[]] }] },
+                          { $max: [1, { $size: "$$jsmqlArr" }] },
+                        ],
+                      },
+                    },
                   },
-                },
+                  [],
+                ],
               },
             ],
           },
@@ -556,11 +574,11 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
             $concatArrays: [
               {
                 $let: {
-                  vars: { jsmqlArr: "$ys" },
+                  vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
                   in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
                 },
               },
-              { $map: { input: { $slice: ["$ys", -1] }, as: "jsmqlUnused", in: 9 } },
+              { $map: { input: { $slice: [{ $ifNull: ["$ys", []] }, -1] }, as: "jsmqlUnused", in: 9 } },
             ],
           },
         },
@@ -577,120 +595,157 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $concatArrays: [
-              { $slice: ["$ys", 0] },
+              { $slice: [{ $ifNull: ["$ys", []] }, 0] },
               {
-                $let: {
-                  vars: {
-                    jsmqlArr: {
-                      $let: {
-                        vars: { jsmqlArr: "$ys" },
-                        in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: {
+                        jsmqlArr: {
+                          $let: {
+                            vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                            in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+                          },
+                        },
                       },
-                    },
-                  },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      {
-                        $cond: [
-                          { $lt: [{ $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 0] } }] }, 0] },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
                           {
-                            $max: [
+                            $cond: [
                               {
-                                $add: [
-                                  { $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 0] } }] },
+                                $lt: [
+                                  {
+                                    $subtract: [
+                                      { $size: { $ifNull: ["$ys", []] } },
+                                      { $size: { $slice: [{ $ifNull: ["$ys", []] }, 0] } },
+                                    ],
+                                  },
+                                  0,
+                                ],
+                              },
+                              {
+                                $max: [
+                                  {
+                                    $add: [
+                                      {
+                                        $subtract: [
+                                          { $size: { $ifNull: ["$ys", []] } },
+                                          { $size: { $slice: [{ $ifNull: ["$ys", []] }, 0] } },
+                                        ],
+                                      },
+                                      { $size: "$$jsmqlArr" },
+                                    ],
+                                  },
+                                  0,
+                                ],
+                              },
+                              {
+                                $min: [
+                                  {
+                                    $subtract: [
+                                      { $size: { $ifNull: ["$ys", []] } },
+                                      { $size: { $slice: [{ $ifNull: ["$ys", []] }, 0] } },
+                                    ],
+                                  },
                                   { $size: "$$jsmqlArr" },
                                 ],
                               },
-                              0,
-                            ],
-                          },
-                          {
-                            $min: [
-                              { $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 0] } }] },
-                              { $size: "$$jsmqlArr" },
                             ],
                           },
                         ],
                       },
-                    ],
+                    },
                   },
-                },
+                  [],
+                ],
               },
               {
-                $let: {
-                  vars: { jsmqlArr: "$ys" },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      {
-                        $add: [
-                          { $size: { $slice: ["$ys", 0] } },
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
                           {
-                            $let: {
-                              vars: {
-                                jsmqlRecv: {
-                                  $let: {
-                                    vars: {
-                                      jsmqlArr: {
-                                        $let: {
-                                          vars: { jsmqlArr: "$ys" },
-                                          in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
-                                        },
-                                      },
-                                    },
-                                    in: {
-                                      $slice: [
-                                        "$$jsmqlArr",
-                                        {
-                                          $cond: [
-                                            {
-                                              $lt: [
-                                                { $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 0] } }] },
-                                                0,
-                                              ],
+                            $add: [
+                              { $size: { $slice: [{ $ifNull: ["$ys", []] }, 0] } },
+                              {
+                                $size: {
+                                  $ifNull: [
+                                    {
+                                      $let: {
+                                        vars: {
+                                          jsmqlArr: {
+                                            $let: {
+                                              vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                                              in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
                                             },
+                                          },
+                                        },
+                                        in: {
+                                          $slice: [
+                                            "$$jsmqlArr",
                                             {
-                                              $max: [
+                                              $cond: [
                                                 {
-                                                  $add: [
+                                                  $lt: [
                                                     {
-                                                      $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 0] } }],
+                                                      $subtract: [
+                                                        { $size: { $ifNull: ["$ys", []] } },
+                                                        { $size: { $slice: [{ $ifNull: ["$ys", []] }, 0] } },
+                                                      ],
+                                                    },
+                                                    0,
+                                                  ],
+                                                },
+                                                {
+                                                  $max: [
+                                                    {
+                                                      $add: [
+                                                        {
+                                                          $subtract: [
+                                                            { $size: { $ifNull: ["$ys", []] } },
+                                                            { $size: { $slice: [{ $ifNull: ["$ys", []] }, 0] } },
+                                                          ],
+                                                        },
+                                                        { $size: "$$jsmqlArr" },
+                                                      ],
+                                                    },
+                                                    0,
+                                                  ],
+                                                },
+                                                {
+                                                  $min: [
+                                                    {
+                                                      $subtract: [
+                                                        { $size: { $ifNull: ["$ys", []] } },
+                                                        { $size: { $slice: [{ $ifNull: ["$ys", []] }, 0] } },
+                                                      ],
                                                     },
                                                     { $size: "$$jsmqlArr" },
                                                   ],
                                                 },
-                                                0,
-                                              ],
-                                            },
-                                            {
-                                              $min: [
-                                                { $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 0] } }] },
-                                                { $size: "$$jsmqlArr" },
                                               ],
                                             },
                                           ],
                                         },
-                                      ],
+                                      },
                                     },
-                                  },
+                                    [],
+                                  ],
                                 },
                               },
-                              in: {
-                                $cond: {
-                                  if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                                  then: null,
-                                  else: { $size: "$$jsmqlRecv" },
-                                },
-                              },
-                            },
+                            ],
                           },
+                          { $max: [1, { $size: "$$jsmqlArr" }] },
                         ],
                       },
-                      { $max: [1, { $size: "$$jsmqlArr" }] },
-                    ],
+                    },
                   },
-                },
+                  [],
+                ],
               },
             ],
           },
@@ -708,106 +763,143 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $concatArrays: [
-              { $slice: ["$ys", 1] },
+              { $slice: [{ $ifNull: ["$ys", []] }, 1] },
               {
-                $let: {
-                  vars: { jsmqlArr: { $slice: ["$ys", 1] } },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      {
-                        $cond: [
-                          { $lt: [{ $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 1] } }] }, 0] },
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: { jsmqlArr: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
                           {
-                            $max: [
+                            $cond: [
                               {
-                                $add: [
-                                  { $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 1] } }] },
+                                $lt: [
+                                  {
+                                    $subtract: [
+                                      { $size: { $ifNull: ["$ys", []] } },
+                                      { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                                    ],
+                                  },
+                                  0,
+                                ],
+                              },
+                              {
+                                $max: [
+                                  {
+                                    $add: [
+                                      {
+                                        $subtract: [
+                                          { $size: { $ifNull: ["$ys", []] } },
+                                          { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                                        ],
+                                      },
+                                      { $size: "$$jsmqlArr" },
+                                    ],
+                                  },
+                                  0,
+                                ],
+                              },
+                              {
+                                $min: [
+                                  {
+                                    $subtract: [
+                                      { $size: { $ifNull: ["$ys", []] } },
+                                      { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                                    ],
+                                  },
                                   { $size: "$$jsmqlArr" },
                                 ],
                               },
-                              0,
-                            ],
-                          },
-                          {
-                            $min: [
-                              { $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 1] } }] },
-                              { $size: "$$jsmqlArr" },
                             ],
                           },
                         ],
                       },
-                    ],
+                    },
                   },
-                },
+                  [],
+                ],
               },
               {
-                $let: {
-                  vars: { jsmqlArr: "$ys" },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      {
-                        $add: [
-                          { $size: { $slice: ["$ys", 1] } },
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
                           {
-                            $let: {
-                              vars: {
-                                jsmqlRecv: {
-                                  $let: {
-                                    vars: { jsmqlArr: { $slice: ["$ys", 1] } },
-                                    in: {
-                                      $slice: [
-                                        "$$jsmqlArr",
-                                        {
-                                          $cond: [
+                            $add: [
+                              { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                              {
+                                $size: {
+                                  $ifNull: [
+                                    {
+                                      $let: {
+                                        vars: { jsmqlArr: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                                        in: {
+                                          $slice: [
+                                            "$$jsmqlArr",
                                             {
-                                              $lt: [
-                                                { $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 1] } }] },
-                                                0,
-                                              ],
-                                            },
-                                            {
-                                              $max: [
+                                              $cond: [
                                                 {
-                                                  $add: [
+                                                  $lt: [
                                                     {
-                                                      $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 1] } }],
+                                                      $subtract: [
+                                                        { $size: { $ifNull: ["$ys", []] } },
+                                                        { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                                                      ],
+                                                    },
+                                                    0,
+                                                  ],
+                                                },
+                                                {
+                                                  $max: [
+                                                    {
+                                                      $add: [
+                                                        {
+                                                          $subtract: [
+                                                            { $size: { $ifNull: ["$ys", []] } },
+                                                            { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                                                          ],
+                                                        },
+                                                        { $size: "$$jsmqlArr" },
+                                                      ],
+                                                    },
+                                                    0,
+                                                  ],
+                                                },
+                                                {
+                                                  $min: [
+                                                    {
+                                                      $subtract: [
+                                                        { $size: { $ifNull: ["$ys", []] } },
+                                                        { $size: { $slice: [{ $ifNull: ["$ys", []] }, 1] } },
+                                                      ],
                                                     },
                                                     { $size: "$$jsmqlArr" },
                                                   ],
                                                 },
-                                                0,
-                                              ],
-                                            },
-                                            {
-                                              $min: [
-                                                { $subtract: [{ $size: "$ys" }, { $size: { $slice: ["$ys", 1] } }] },
-                                                { $size: "$$jsmqlArr" },
                                               ],
                                             },
                                           ],
                                         },
-                                      ],
+                                      },
                                     },
-                                  },
+                                    [],
+                                  ],
                                 },
                               },
-                              in: {
-                                $cond: {
-                                  if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                                  then: null,
-                                  else: { $size: "$$jsmqlRecv" },
-                                },
-                              },
-                            },
+                            ],
                           },
+                          { $max: [1, { $size: "$$jsmqlArr" }] },
                         ],
                       },
-                      { $max: [1, { $size: "$$jsmqlArr" }] },
-                    ],
+                    },
                   },
-                },
+                  [],
+                ],
               },
             ],
           },
@@ -827,52 +919,80 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
             $concatArrays: [
               {
                 $let: {
-                  vars: { jsmqlArr: "$ys" },
+                  vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
                   in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
                 },
               },
               {
-                $let: {
-                  vars: { jsmqlArr: "$ys" },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      {
-                        $cond: [
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
                           {
-                            $lt: [
+                            $cond: [
                               {
-                                $subtract: [
-                                  { $size: "$ys" },
-                                  {
-                                    $size: {
-                                      $let: {
-                                        vars: { jsmqlArr: "$ys" },
-                                        in: {
-                                          $slice: [
-                                            "$$jsmqlArr",
-                                            { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] },
-                                          ],
-                                        },
-                                      },
-                                    },
-                                  },
-                                ],
-                              },
-                              0,
-                            ],
-                          },
-                          {
-                            $max: [
-                              {
-                                $add: [
+                                $lt: [
                                   {
                                     $subtract: [
-                                      { $size: "$ys" },
+                                      { $size: { $ifNull: ["$ys", []] } },
                                       {
                                         $size: {
                                           $let: {
-                                            vars: { jsmqlArr: "$ys" },
+                                            vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                                            in: {
+                                              $slice: [
+                                                "$$jsmqlArr",
+                                                { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] },
+                                              ],
+                                            },
+                                          },
+                                        },
+                                      },
+                                    ],
+                                  },
+                                  0,
+                                ],
+                              },
+                              {
+                                $max: [
+                                  {
+                                    $add: [
+                                      {
+                                        $subtract: [
+                                          { $size: { $ifNull: ["$ys", []] } },
+                                          {
+                                            $size: {
+                                              $let: {
+                                                vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                                                in: {
+                                                  $slice: [
+                                                    "$$jsmqlArr",
+                                                    { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] },
+                                                  ],
+                                                },
+                                              },
+                                            },
+                                          },
+                                        ],
+                                      },
+                                      { $size: "$$jsmqlArr" },
+                                    ],
+                                  },
+                                  0,
+                                ],
+                              },
+                              {
+                                $min: [
+                                  {
+                                    $subtract: [
+                                      { $size: { $ifNull: ["$ys", []] } },
+                                      {
+                                        $size: {
+                                          $let: {
+                                            vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
                                             in: {
                                               $slice: [
                                                 "$$jsmqlArr",
@@ -887,103 +1007,119 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
                                   { $size: "$$jsmqlArr" },
                                 ],
                               },
-                              0,
-                            ],
-                          },
-                          {
-                            $min: [
-                              {
-                                $subtract: [
-                                  { $size: "$ys" },
-                                  {
-                                    $size: {
-                                      $let: {
-                                        vars: { jsmqlArr: "$ys" },
-                                        in: {
-                                          $slice: [
-                                            "$$jsmqlArr",
-                                            { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] },
-                                          ],
-                                        },
-                                      },
-                                    },
-                                  },
-                                ],
-                              },
-                              { $size: "$$jsmqlArr" },
                             ],
                           },
                         ],
                       },
-                    ],
+                    },
                   },
-                },
+                  [],
+                ],
               },
               {
-                $let: {
-                  vars: { jsmqlArr: "$ys" },
-                  in: {
-                    $slice: [
-                      "$$jsmqlArr",
-                      {
-                        $add: [
+                $ifNull: [
+                  {
+                    $let: {
+                      vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                      in: {
+                        $slice: [
+                          "$$jsmqlArr",
                           {
-                            $size: {
-                              $let: {
-                                vars: { jsmqlArr: "$ys" },
-                                in: {
-                                  $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }],
-                                },
-                              },
-                            },
-                          },
-                          {
-                            $let: {
-                              vars: {
-                                jsmqlRecv: {
+                            $add: [
+                              {
+                                $size: {
                                   $let: {
-                                    vars: { jsmqlArr: "$ys" },
+                                    vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
                                     in: {
                                       $slice: [
                                         "$$jsmqlArr",
-                                        {
-                                          $cond: [
+                                        { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] },
+                                      ],
+                                    },
+                                  },
+                                },
+                              },
+                              {
+                                $size: {
+                                  $ifNull: [
+                                    {
+                                      $let: {
+                                        vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                                        in: {
+                                          $slice: [
+                                            "$$jsmqlArr",
                                             {
-                                              $lt: [
+                                              $cond: [
                                                 {
-                                                  $subtract: [
-                                                    { $size: "$ys" },
-                                                    {
-                                                      $size: {
-                                                        $let: {
-                                                          vars: { jsmqlArr: "$ys" },
-                                                          in: {
-                                                            $slice: [
-                                                              "$$jsmqlArr",
-                                                              {
-                                                                $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0],
-                                                              },
-                                                            ],
-                                                          },
-                                                        },
-                                                      },
-                                                    },
-                                                  ],
-                                                },
-                                                0,
-                                              ],
-                                            },
-                                            {
-                                              $max: [
-                                                {
-                                                  $add: [
+                                                  $lt: [
                                                     {
                                                       $subtract: [
-                                                        { $size: "$ys" },
+                                                        { $size: { $ifNull: ["$ys", []] } },
                                                         {
                                                           $size: {
                                                             $let: {
-                                                              vars: { jsmqlArr: "$ys" },
+                                                              vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                                                              in: {
+                                                                $slice: [
+                                                                  "$$jsmqlArr",
+                                                                  {
+                                                                    $max: [
+                                                                      { $subtract: [{ $size: "$$jsmqlArr" }, 1] },
+                                                                      0,
+                                                                    ],
+                                                                  },
+                                                                ],
+                                                              },
+                                                            },
+                                                          },
+                                                        },
+                                                      ],
+                                                    },
+                                                    0,
+                                                  ],
+                                                },
+                                                {
+                                                  $max: [
+                                                    {
+                                                      $add: [
+                                                        {
+                                                          $subtract: [
+                                                            { $size: { $ifNull: ["$ys", []] } },
+                                                            {
+                                                              $size: {
+                                                                $let: {
+                                                                  vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
+                                                                  in: {
+                                                                    $slice: [
+                                                                      "$$jsmqlArr",
+                                                                      {
+                                                                        $max: [
+                                                                          { $subtract: [{ $size: "$$jsmqlArr" }, 1] },
+                                                                          0,
+                                                                        ],
+                                                                      },
+                                                                    ],
+                                                                  },
+                                                                },
+                                                              },
+                                                            },
+                                                          ],
+                                                        },
+                                                        { $size: "$$jsmqlArr" },
+                                                      ],
+                                                    },
+                                                    0,
+                                                  ],
+                                                },
+                                                {
+                                                  $min: [
+                                                    {
+                                                      $subtract: [
+                                                        { $size: { $ifNull: ["$ys", []] } },
+                                                        {
+                                                          $size: {
+                                                            $let: {
+                                                              vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
                                                               in: {
                                                                 $slice: [
                                                                   "$$jsmqlArr",
@@ -1003,56 +1139,25 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
                                                     { $size: "$$jsmqlArr" },
                                                   ],
                                                 },
-                                                0,
-                                              ],
-                                            },
-                                            {
-                                              $min: [
-                                                {
-                                                  $subtract: [
-                                                    { $size: "$ys" },
-                                                    {
-                                                      $size: {
-                                                        $let: {
-                                                          vars: { jsmqlArr: "$ys" },
-                                                          in: {
-                                                            $slice: [
-                                                              "$$jsmqlArr",
-                                                              {
-                                                                $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0],
-                                                              },
-                                                            ],
-                                                          },
-                                                        },
-                                                      },
-                                                    },
-                                                  ],
-                                                },
-                                                { $size: "$$jsmqlArr" },
                                               ],
                                             },
                                           ],
                                         },
-                                      ],
+                                      },
                                     },
-                                  },
+                                    [],
+                                  ],
                                 },
                               },
-                              in: {
-                                $cond: {
-                                  if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                                  then: null,
-                                  else: { $size: "$$jsmqlRecv" },
-                                },
-                              },
-                            },
+                            ],
                           },
+                          { $max: [1, { $size: "$$jsmqlArr" }] },
                         ],
                       },
-                      { $max: [1, { $size: "$$jsmqlArr" }] },
-                    ],
+                    },
                   },
-                },
+                  [],
+                ],
               },
             ],
           },
@@ -1134,7 +1239,9 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
       "'.sort()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
     // …and a receiver that IS a place still writes it, however deep the path.
-    expect(pipeline("$.o.xs.sort()")).toEqual([{ $set: { "o.xs": { $sortArray: { input: "$o.xs", sortBy: 1 } } } }]);
+    expect(pipeline("$.o.xs.sort()")).toEqual([
+      { $set: { "o.xs": { $sortArray: { input: { $ifNull: ["$o.xs", []] }, sortBy: 1 } } } },
+    ]);
   });
 
   it("Object.assign at statement position writes its target", () => {

@@ -35,9 +35,11 @@ import {
   onlyInsideOf,
   elementsOf,
   soleFieldFamilyOf,
+  hasStreamValueCell,
+  emptyCollectionOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
-import { checkBody, checkSlots } from "./check.ts";
+import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
 import { operandShapeOf, bodyRuleOf } from "../rows.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
@@ -296,8 +298,10 @@ function stoppedChain(node: Expr): Expr | null {
     cursor = cursor.object;
   }
   // `$.user?.name.trim()` — the fold puts the `?.` on the PATH, so the walk above never
-  // meets it. The call still runs after it, and the path is the value it guards.
-  return cursor.type === "FieldRef" && cursor.optional === true && called ? cursor : null;
+  // meets it. The call still runs after it, and the path the `?.` TESTS is the value it
+  // guards: `user` for `$.user?.name`, so that `name` is read as any other path inside.
+  if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
+  return cursor.optionalAt === undefined ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
 }
 
 /** The same chain with every `?.` on its spine cleared — what runs once the test passed. */
@@ -306,7 +310,7 @@ function withoutOptional(e: Expr): Expr {
     return { ...e, optional: false, object: withoutOptional(e.object) };
   }
   if (e.type === "FieldRef" && e.optional === true) {
-    const { optional: _dropped, ...rest } = e;
+    const { optional: _dropped, optionalAt: _at, ...rest } = e;
     return rest;
   }
   return e;
@@ -377,8 +381,15 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       const t = typeOf(el.argument, inner);
       if (isOnly(t, "string")) throw E.spreadOfString(el.argument.pos);
       if (cannotBe(t, "array")) throw E.spreadNotAnArray(E.nounOfKinds(t), el.argument.pos);
+      // HR5 reads a missing collection as the empty one: `[...$.a, 1]` is `[1]` when `a`
+      // is not there. `$concatArrays` answers null for a null operand, and the mutator
+      // templates (`.pop()`, `.fill()`) spread the receiver into a `$size`, which aborts
+      // on a missing value. A value the proof shows present takes no wrap. The list the
+      // desugar PACKS from a call's spread arguments (`$op(...$.a)`) is the operator's own
+      // operand list, raw MQL under HR2, and takes none either.
+      const packed = (node as { packed?: boolean }).packed === true;
       const v = lowerValue(el.argument, inner);
-      operands.push(chainHasOptional(el.argument) ? ifNull(v, []) : v);
+      operands.push(t.absent && !packed ? ifNull(v, []) : v);
     } else if (isExpr(el)) group.push(lowerValue(el, inner));
   }
   flush();
@@ -665,15 +676,22 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   // yet. The receiver's own spelling settles it, BEFORE the receiver is lowered: a
   // stream cell run on a value record has none of the readings it asks for, and the
   // JavaScript error that follows would reach the developer as the whole message.
-  // A property of the stream itself (`$$.length`) is a value of its own and passes.
+  // A value the stream itself answers (`$$.size()`, the document count) is a value of
+  // its own and passes: the row states a stream cell in its VALUE position.
   const chainOnStream =
     recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "CollectionRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw E.streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
-  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue) throw E.streamAsValue(node.pos);
+  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name)) {
+    throw E.streamAsValue(node.pos);
+  }
   const exprArgs = args.filter(isExpr);
-  const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
+  // What each argument PROVABLY is. A branch whose slot cannot take it drops out
+  // of the dispatch, and a rule whose slot cannot take it is refused.
+  const argEnv = childEnv(env, node, "args");
+  const kinds = (args as readonly Expr[]).map((a) => (isExpr(a) ? kindOf(a, argEnv) : "unknown"));
+  const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length, kinds);
   const spelled = spelledMethod(wroteName(node, name), recvNode);
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
@@ -684,11 +702,24 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
     checkSlots(name, sel.rule.args, exprArgs);
-    // A receiver is there when the source says so — or when an optional chain read
-    // a missing one as the family's empty value, which is there too.
-    const present = isPresent(recvNode, recvEnv);
+    checkSlotKinds(name, sel.rule.args, exprArgs, kinds);
+    // HR5: under a dot, a method on a collection that may be null or missing runs on
+    // the EMPTY collection of its family — `[]` for an array method, `{}` for an object
+    // method — so the operator answers what it answers there, and the cell sees a
+    // receiver that is present. A receiver the proof shows present takes no wrap. A
+    // `?.` never reaches here with an absent receiver: the chain stopped above and
+    // proved the path. A string method keeps its receiver, and answers null itself.
+    const proven = isPresent(recvNode, recvEnv);
+    const family = receiver.kind === "value" ? receiver.family : (sel.family ?? soleFieldFamilyOf(name));
+    const empty = emptyCollectionOf(name, family);
+    // Only where the receiver is a VALUE of the document: inside `$group` or a window
+    // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
+    // each document's `a` as it is.
+    const inExpression = position === "value" || position === "filter";
+    const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const input = wrap ? ifNull(recv, empty) : recv;
     return sel.rule.emit(
-      exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, present),
+      exprInputs(name, input, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, proven || wrap),
     );
   }
   if (sel.kind === "dispatch") {
@@ -1151,7 +1182,30 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
     flush();
     return { $in: [lowerValue(left, env), operands.length === 1 ? operands[0] : { $concatArrays: operands }] };
   }
-  return { $in: [lowerValue(left, env), lowerValue(right, env)] };
+  // `x in [ … ]` — a LIST spelled in the source is MongoDB's own `$in`: value membership,
+  // the spelling every query document reads. See docs/LANGUAGE.md § Comparison.
+  if (right.type === "ArrayLiteral") return { $in: [lowerValue(left, env), lowerValue(right, env)] };
+  // `key in obj` — JavaScript's key test. An array VALUE on the right has only its indexes
+  // for keys, which no query asks for, so a PROVEN array is refused and the message names
+  // `.has(x)`. A literal string key reads the field itself: `$getField` answers missing
+  // for a key that is not there, and `null` for one that holds null, as `in` does. Any
+  // other key is searched among the object's keys, which HR5 reads as `{}` when the
+  // object is missing. A right side the proof cannot place is an object, and the
+  // server judges an array.
+  const t = typeOf(right, env);
+  if (isOnly(t, "array")) throw E.inOnArray(node.pos);
+  const obj = lowerValue(right, env);
+  if (left.type === "StringLiteral") {
+    return { $ne: [{ $type: { $getField: { field: left.value, input: obj } } }, "missing"] };
+  }
+  const key = lowerValue(left, env);
+  const kv = env.fresh("kv");
+  return {
+    $in: [
+      kindOf(left, env) === "string" ? key : { $toString: key },
+      { $map: { input: { $objectToArray: ifNull(obj, {}) }, as: kv.as, in: `${kv.ref}.k` } },
+    ],
+  };
 }
 
 // ── blocks ───────────────────────────────────────────────────────────────────

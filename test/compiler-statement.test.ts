@@ -182,25 +182,25 @@ describe("compiler/emit/statement — the writes", () => {
   });
 
   it("places a stage that computes a needed value ahead of the stage that uses it", () => {
-    expect(compiled("$.n = $$.length;")).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $set: { n: "$__jsmql.length" } },
+    expect(compiled("$.n = $$.size();")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $set: { n: "$__jsmql.size" } },
       { $unset: "__jsmql" },
     ]);
     // A `,`-joined run that splits into two `$set`s puts it between them: the count
     // is the one the stage that reads it sees.
-    expect(compiled("$.k = $.tag, $.n = $$.length + $.k;")).toEqual([
+    expect(compiled("$.k = $.tag, $.n = $$.size() + $.k;")).toEqual([
       { $set: { k: "$tag" } },
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $set: { n: { $add: ["$__jsmql.length", "$k"] } } },
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $set: { n: { $add: ["$__jsmql.size", "$k"] } } },
       { $unset: "__jsmql" },
     ]);
     // A chain link is a stage too, so the count is the MATCHED stream's — the same
     // answer the two-statement spelling gives.
-    expect(compiled("$$.$match({ ok: true }).map(d => ({ _id: d._id, n: $$.length }));")).toEqual([
+    expect(compiled("$$.$match({ ok: true }).map(d => ({ _id: d._id, n: $$.size() }));")).toEqual([
       { $match: { ok: true } },
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $replaceWith: { _id: "$_id", n: "$__jsmql.length" } },
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $replaceWith: { _id: "$_id", n: "$__jsmql.size" } },
     ]);
   });
 });
@@ -235,9 +235,9 @@ describe("compiler/emit/statement — the stage calls", () => {
   it("places a stage where its row says it may stand", () => {
     // A stage that writes the output is filed last, so the `__jsmql` cleanup precedes it.
     expect(compiled('$.b = 2; $out("o");')).toEqual([{ $set: { b: 2 } }, { $out: "o" }]);
-    expect(compiled('$.n = $$.length; $out("o");')).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $set: { n: "$__jsmql.length" } },
+    expect(compiled('$.n = $$.size(); $out("o");')).toEqual([
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $set: { n: "$__jsmql.size" } },
       { $unset: "__jsmql" },
       { $out: "o" },
     ]);
@@ -400,7 +400,7 @@ describe("compiler/emit/statement — bindings between stages", () => {
     // nothing has written — silently wrong, and a server rejection when two joins
     // chain. So it ends the run and takes its own stage, exactly as the `;`
     // spelling does.
-    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual([
+    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).size(); $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $lookup: { from: "other", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
@@ -408,8 +408,8 @@ describe("compiler/emit/statement — bindings between stages", () => {
       { $unset: "__jsmql" },
     ]);
     // and the `;` spelling of it is the same document, scratch slots included
-    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual(
-      compiled("let a = $.x; let b = $$$.other.filter(o => o.k === a).length; $.o = b;"),
+    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).size(); $.o = b;")).toEqual(
+      compiled("let a = $.x; let b = $$$.other.filter(o => o.k === a).size(); $.o = b;"),
     );
   });
 
@@ -490,9 +490,9 @@ describe("compiler/emit/statement — bindings between stages", () => {
     // a callback's index and collection parameters have no value on a stream, and say so as parameters
     expect(() => pipeline("$$.map((d, i) => ({ n: i }));")).toThrow(/`i` has no value inside `.map\(\)`/);
     // the collection parameter IS the stream the callback runs over: at the top, `$$`
-    expect(compiled("$$.map((d, i, c) => ({ n: c.length }));")).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $replaceWith: { n: "$__jsmql.length" } },
+    expect(compiled("$$.map((d, i, c) => ({ n: c.size() }));")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $replaceWith: { n: "$__jsmql.size" } },
     ]);
   });
 
@@ -791,7 +791,7 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
 describe("compiler/emit/statement — a root write of a provable array fans out", () => {
   it("an array-returning method on an unproven field is an array, so `$$ = $.items.map(…)` fans out", () => {
     expect(pipeline("$$ = $.items.map(x => ({ v: x }))")).toEqual([
-      { $set: { "__jsmql.tmp.0": { $map: { input: "$items", as: "x", in: { v: "$$x" } } } } },
+      { $set: { "__jsmql.tmp.0": { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { v: "$$x" } } } } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -799,23 +799,12 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
     expect(pipeline("$ = $.items")).toEqual([{ $replaceWith: "$items" }]);
   });
   it("a binding holding an array-returning method's value is typed, so a read dispatches at compile time", () => {
-    expect(pipeline('const ids = $.tags.uniq(); $.y = ids.includes("a")')).toEqual([
-      { $set: { "__jsmql.var.ids": { $setUnion: "$tags" } } },
-      // A reader over a MISSING field answers null, so a value the compiler proved is
-      // an array can still be null at run time — and `$in` refuses that rather than
-      // answer null (MEASURED: "$in requires an array as a second argument, found:
-      // null"). `.includes` is a JavaScript method, so it tests first and answers null.
-      {
-        $set: {
-          y: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$__jsmql.var.ids", null] }, null] },
-              then: null,
-              else: { $in: ["a", "$__jsmql.var.ids"] },
-            },
-          },
-        },
-      },
+    expect(pipeline('const ids = $.tags.uniq(); $.y = ids.has("a")')).toEqual([
+      // `.uniq()` runs on the empty array when `tags` is missing (HR5), so its value is
+      // an array in every document. `$in` refuses a null array (MEASURED: "$in requires
+      // an array as a second argument, found: null"), and the proven value needs no test.
+      { $set: { "__jsmql.var.ids": { $setUnion: { $ifNull: ["$tags", []] } } } },
+      { $set: { y: { $in: ["a", "$__jsmql.var.ids"] } } },
       { $unset: "__jsmql" },
     ]);
   });

@@ -241,17 +241,19 @@ describe("'from the end' array methods are NOT on the stream surface", () => {
 
   it("all four still work in VALUE position on a real array", () => {
     // A stored array carries its own order, so there they mean what JS means.
-    expect(jsmql("$.x = $.items.takeRight(3);")).toEqual([{ $set: { x: { $slice: ["$items", -3] } } }]);
-    expect(jsmql("$.x = $.items.toReversed();")).toEqual([{ $set: { x: { $reverseArray: "$items" } } }]);
+    expect(jsmql("$.x = $.items.takeRight(3);")).toEqual([
+      { $set: { x: { $slice: [{ $ifNull: ["$items", []] }, -3] } } },
+    ]);
+    expect(jsmql("$.x = $.items.toReversed();")).toEqual([
+      { $set: { x: { $reverseArray: { $ifNull: ["$items", []] } } } },
+    ]);
     expect(jsmql("$.x = $.items.initial();")).toEqual([
       {
         $set: {
           x: {
             $let: {
-              vars: { jsmqlArr: "$items" },
-              in: {
-                $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }] }],
-              },
+              vars: { jsmqlArr: { $ifNull: ["$items", []] } },
+              in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] }] },
             },
           },
         },
@@ -262,10 +264,8 @@ describe("'from the end' array methods are NOT on the stream surface", () => {
         $set: {
           x: {
             $let: {
-              vars: { jsmqlArr: "$items" },
-              in: {
-                $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 2] }] }],
-              },
+              vars: { jsmqlArr: { $ifNull: ["$items", []] } },
+              in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 2] }] }] },
             },
           },
         },
@@ -475,7 +475,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
         $set: {
           x: {
             $let: {
-              vars: { jsmqlArr: "$rows" },
+              vars: { jsmqlArr: { $ifNull: ["$rows", []] } },
               in: {
                 $let: {
                   vars: {
@@ -518,7 +518,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
         $set: {
           x: {
             $let: {
-              vars: { jsmqlArr: "$rows" },
+              vars: { jsmqlArr: { $ifNull: ["$rows", []] } },
               in: {
                 $let: {
                   vars: {
@@ -976,21 +976,21 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     expect(jsmql("$$ = $$.map((d, _i) => ({ id: d._id }));")).toEqual([{ $replaceWith: { id: "$_id" } }]);
   });
 
-  // ── 3rd 'collection' param → sub-stream length ──────────────────────────────
-  // `coll.length` (the post-filter sub-stream's document count) materialises a
-  // `$setWindowFields` `$count` (`__jsmql.length`) ahead of the `$replaceWith`.
+  // ── 3rd 'collection' param → sub-stream size ──────────────────────────────
+  // `coll.size()` (the post-filter sub-stream's document count) materialises a
+  // `$setWindowFields` `$count` (`__jsmql.size`) ahead of the `$replaceWith`.
   // Verified end-to-end on a live mongod (counts correct, no `__jsmql` leak).
-  describe(".map((d, _i, coll) => …) — 3rd 'collection' param sub-stream length", () => {
-    it("top-level `$$` stream chain: coll.length → $setWindowFields + read-back", () => {
-      expect(jsmql("$$ = $$.map((d, _i, coll) => ({ id: d._id, n: coll.length }));")).toEqual([
-        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-        { $replaceWith: { id: "$_id", n: "$__jsmql.length" } },
+  describe(".map((d, _i, coll) => …) — 3rd 'collection' param sub-stream size", () => {
+    it("top-level `$$` stream chain: coll.size() → $setWindowFields + read-back", () => {
+      expect(jsmql("$$ = $$.map((d, _i, coll) => ({ id: d._id, n: coll.size() }));")).toEqual([
+        { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+        { $replaceWith: { id: "$_id", n: "$__jsmql.size" } },
       ]);
     });
 
     it("lookup chain: $setWindowFields lands after the filter's $match, inside $lookup.pipeline", () => {
       expect(
-        jsmql("$$ = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, n: coll.length }));"),
+        jsmql("$$ = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, n: coll.size() }));"),
       ).toEqual([
         {
           $lookup: {
@@ -998,8 +998,8 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
             localField: "_id",
             foreignField: "userId",
             pipeline: [
-              { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-              { $replaceWith: { id: "$_id", n: "$__jsmql.length" } },
+              { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+              { $replaceWith: { id: "$_id", n: "$__jsmql.size" } },
               { $unset: "__jsmql" },
             ],
             as: "__jsmql.tmp.0",
@@ -1010,24 +1010,24 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       ]);
     });
 
-    it("coll.length composes inside an operator ($divide)", () => {
-      expect(jsmql("$$ = $$.map((o, _i, coll) => ({ share: o.total / coll.length }));")).toEqual([
-        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-        { $replaceWith: { share: { $divide: ["$total", "$__jsmql.length"] } } },
+    it("coll.size() composes inside an operator ($divide)", () => {
+      expect(jsmql("$$ = $$.map((o, _i, coll) => ({ share: o.total / coll.size() }));")).toEqual([
+        { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+        { $replaceWith: { share: { $divide: ["$total", "$__jsmql.size"] } } },
       ]);
     });
 
-    it("only `.length` is available on the handle — other uses are rejected with a redirect", () => {
+    it("only `.size()` is available on the handle — other uses are rejected with a redirect", () => {
       expect(() => jsmql("$$ = $$.map((o, _i, coll) => ({ first: coll[0] }));")).toThrow(
-        "'coll' is the body's own stream, the callback's third parameter: read its count ('coll.length') or chain on it ('coll.filter(…)'). It is not a document or a value on its own.",
+        "'coll' is the body's own stream, the callback's third parameter: read its count ('coll.size()') or chain on it ('coll.filter(…)'). It is not a document or a value on its own.",
       );
       expect(() => jsmql("$$ = $$.map((o, _i, coll) => ({ all: coll }));")).toThrow(
-        "'coll' is the body's own stream, the callback's third parameter: read its count ('coll.length') or chain on it ('coll.filter(…)'). It is not a document or a value on its own.",
+        "'coll' is the body's own stream, the callback's third parameter: read its count ('coll.size()') or chain on it ('coll.filter(…)'). It is not a document or a value on its own.",
       );
     });
 
     it("a USED index is still rejected even with a 3rd param present", () => {
-      expect(() => jsmql("$$ = $$.map((o, i, coll) => ({ x: i, n: coll.length }));")).toThrow(
+      expect(() => jsmql("$$ = $$.map((o, i, coll) => ({ x: i, n: coll.size() }));")).toThrow(
         "`i` has no value inside `.map()` — a stream has no per-document index; leave the parameter unused.",
       );
     });
@@ -1035,7 +1035,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
 
   // `.map` is a per-document reshape, so its `{ … }` body is JavaScript: bindings
   // plus the `return` whose value becomes each output document. Pipeline stages —
-  // `assert(...)`, `$match(...)`, `<coll>.length` — belong to `.aggregate((o) => { … })`
+  // `assert(...)`, `$match(...)`, `<coll>.size()` — belong to `.aggregate((o) => { … })`
   // against a foreign collection, or to statements on the current stream, with the
   // reshape written as the root-replace `$ = <expr>`. Inside a body over another
   // collection, `$` is the outer document (HR4), and that document is read-only:
@@ -1068,18 +1068,18 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       ]);
     });
 
-    it("current stream: the sub-stream count is `$$.length`", () => {
+    it("current stream: the sub-stream count is `$$.size()`", () => {
       expect(() =>
-        jsmql(`$$ = $$.map((d, _i, coll) => { assert(coll.length > 0, "empty"); return { id: d._id }; });`),
+        jsmql(`$$ = $$.map((d, _i, coll) => { assert(coll.size() > 0, "empty"); return { id: d._id }; });`),
       ).toThrow(/`assert\(\.\.\.\)`( at position \d+)? is a pipeline stage/);
-      expect(jsmql(`assert($$.length > 0, "empty"); $ = { id: $._id };`)).toEqual([
-        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      expect(jsmql(`assert($$.size() > 0, "empty"); $ = { id: $._id };`)).toEqual([
+        { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
         {
           $match: {
             $expr: {
               $convert: {
                 input: true,
-                to: { $cond: [{ $gt: ["$__jsmql.length", 0] }, "bool", "jsmql assertion failed: empty"] },
+                to: { $cond: [{ $gt: ["$__jsmql.size", 0] }, "bool", "jsmql assertion failed: empty"] },
               },
             },
           },
@@ -1357,7 +1357,7 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
       { $unwind: "$ids" },
       { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
     ]);
-    expect(jsmql('$$.flatMap("ids").filter(p => ![1, 2].includes(p));')).toEqual([
+    expect(jsmql('$$.flatMap("ids").filter(p => ![1, 2].has(p));')).toEqual([
       { $unwind: "$ids" },
       { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
     ]);
@@ -1449,8 +1449,8 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
     );
   });
 
-  it("in a join, the same link on whole documents reads the joined array as a value — as before", () => {
-    expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).difference([{ a: 1 }]).length;")).toEqual([
+  it("in a join, the same link on whole documents reads the joined array as a value", () => {
+    expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).difference([{ a: 1 }]).size();")).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       {
         $set: {

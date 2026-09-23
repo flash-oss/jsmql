@@ -44,8 +44,8 @@ describe("compiler/emit/lower — literals and references", () => {
   });
 
   it("groups literal elements around a spread", () => {
-    expect(expr("[1, ...$.a]")).toEqual({ $concatArrays: [[1], "$a"] });
-    expect(expr("[...$.a, ...$.b]")).toEqual({ $concatArrays: ["$a", "$b"] });
+    expect(expr("[1, ...$.a]")).toEqual({ $concatArrays: [[1], { $ifNull: ["$a", []] }] });
+    expect(expr("[...$.a, ...$.b]")).toEqual({ $concatArrays: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] });
     expect(expr("{ a: 1, ...$.o }")).toEqual({ $mergeObjects: [{ a: 1 }, "$o"] });
     expect(expr("{ [$.k]: 1, b: 2 }")).toEqual({
       $arrayToObject: [
@@ -135,22 +135,21 @@ describe("compiler/emit/lower — access", () => {
     expect(() => expr("$.a[-1]")).toThrow(/Negative bracket index/);
   });
 
-  it("dispatches an unprovable `.length` at runtime, and proves a literal's length", () => {
-    expect(expr("[1, 2].length")).toBe(2);
-    expect(expr('"abc".length')).toBe(3);
+  it("reads a count from the method's one family, and proves a literal's count", () => {
+    expect(expr("[1, 2].size()")).toBe(2);
+    expect(expr('"abc".length()')).toBe(3);
     // an array LITERAL receiver is the value, wrapped once — `{ $size: ["$a", 2] }` would be two operands
-    expect(expr("[$.a, 2].length")).toEqual({ $size: [["$a", 2]] });
-    const out = expr("$.x.length");
-    expect(out).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: "$x" } },
-          { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $strLenCP: "$x" } },
-        ],
-        // null, missing, and a receiver of any other type: JavaScript's `undefined`
-        default: null,
-      },
+    expect(expr("[$.a, 2].size()")).toEqual({ $size: [["$a", 2]] });
+    // an unproven receiver takes the method's one family, and the server judges the value:
+    // `.length()` reads a string under a null guard, `.size()` reads a missing array as empty
+    expect(expr("$.x.length()")).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $strLenCP: "$x" } },
     });
+    expect(expr("$.x.size()")).toEqual({ $size: { $ifNull: ["$x", []] } });
+    // a proven array refuses `.length()`, and the refusal names `.size()`
+    expect(() => expr("[$.a, 2].length()")).toThrow(
+      "'.length()' is not available on an 'array' — it is defined on 'string'. For the number of elements, write '.size()'.",
+    );
   });
 
   it("reads a namespace member from its row", () => {
@@ -176,7 +175,9 @@ describe("compiler/emit/lower — calls", () => {
       ],
     });
     expect(expr('$literal(["$a", "$b"])')).toEqual({ $literal: ["$a", "$b"] });
-    expect(expr("$concatArrays([...$.a, [1]])")).toEqual({ $concatArrays: { $concatArrays: ["$a", [[1]]] } });
+    expect(expr("$concatArrays([...$.a, [1]])")).toEqual({
+      $concatArrays: { $concatArrays: [{ $ifNull: ["$a", []] }, [[1]]] },
+    });
     expect(expr("$let({ v_x: 1 }, (v_x) => v_x)")).toEqual({ $let: { vars: { v_v_5fx: 1 }, in: "$$v_v_5fx" } });
     expect(expr('$dateTrunc($.t, "day")')).toEqual({ $dateTrunc: { date: "$t", unit: "day" } });
     expect(expr("$cond($.a, 1, 2)")).toEqual({ $cond: { if: "$a", then: 1, else: 2 } });
@@ -224,7 +225,7 @@ describe("compiler/emit/lower — a path segment that starts with `$`", () => {
     });
     expect(expr("$.items.filter({ qty: { $gt: 5 } })")).toEqual({
       $filter: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         cond: { $eq: [{ $getField: { field: { $literal: "$gt" }, input: "$$x.qty" } }, 5] },
       },

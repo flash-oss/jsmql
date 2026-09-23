@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
 import { consult } from "../src/compiler/emit/consult.ts";
-import { guardFor, select, shapeOf, type Receiver } from "../src/compiler/emit/select.ts";
+import { guardFor, select, shapeOf, type Receiver, kindFits } from "../src/compiler/emit/select.ts";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { NAMES } from "../src/registry/names.ts";
 import type { FieldFamily } from "../src/registry/vocabulary.ts";
@@ -76,23 +76,36 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     select(consult(name, "value"), receiver, n === 0 ? { kind: "none" } : { kind: "dynamic" }, n);
 
   it("runs the branch a proven receiver names", () => {
-    const r = at("length", value("array"));
+    const r = at("length", value("string"));
     expect(r.kind).toBe("rule");
     // a receiver that is not proven `present` is tested first, and answers null when it is not there
     expect((r as { rule: { emit: (i: unknown) => unknown } }).rule.emit({ recv: "$x" })).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $size: "$x" } },
+      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $strLenCP: "$x" } },
     });
   });
 
   it("dispatches an unprovable receiver across field families, with the row's default", () => {
-    const r = at("length", OPAQUE);
+    const r = at("indexOf", OPAQUE, 1);
     expect(r.kind).toBe("dispatch");
     if (r.kind !== "dispatch") return;
     expect(r.branches.map((b) => b.family)).toEqual(["array", "string"]);
-    // no branch admits null or missing: they fall to the row's `uncertain`, which answers null
+    // no branch admits null or missing: they fall to the row's `uncertain`, which answers -1
     expect(r.branches[1].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["string"]] });
     expect(r.branches[0].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["array"]] });
     expect(typeof r.otherwise).toBe("function");
+  });
+
+  it("drops a branch whose slot cannot take a proven argument kind, and runs the one left alone", () => {
+    const pick = (kind: "number" | "string" | "unknown") =>
+      select(consult("indexOf", "value"), OPAQUE, { kind: "dynamic" }, 1, [kind]);
+    // `$indexOfCP` takes a string: a number argument leaves the array branch
+    expect(pick("number").kind).toBe("rule");
+    // a string fits both branches, and so does an argument the proof says nothing about
+    expect(pick("string").kind).toBe("dispatch");
+    expect(pick("unknown").kind).toBe("dispatch");
+    expect(kindFits("number", "string")).toBe(false);
+    expect(kindFits("unknown", "string")).toBe(true);
+    expect(kindFits("date", "number-or-date")).toBe(true);
   });
 
   it("takes the one field family as the receiver's family, without a dispatch", () => {
@@ -105,14 +118,14 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     expect(at("length", { kind: "namespace", name: "Math" })).toMatchObject({
       kind: "wrongReceiver",
       got: "Math",
-      accepts: ["array", "string", "stream"],
+      accepts: ["string"],
     });
     expect(at("length", value("number"))).toMatchObject({ kind: "wrongReceiver", got: "number" });
     expect(at("ceil", value("string"))).toMatchObject({ kind: "wrongReceiver", got: "string" });
   });
 
   it("checks the count against the branch that will run", () => {
-    expect(at("length", value("array"), 1)).toMatchObject({ kind: "wrongCount", got: 1 });
+    expect(at("length", value("string"), 1)).toMatchObject({ kind: "wrongCount", got: 1 });
     // `$abs` takes one operand; two is the count no rule states
     expect(select(consult("$abs", "value"), NONE, { kind: "multiple" }, 2)).toMatchObject({
       kind: "wrongCount",
@@ -137,11 +150,21 @@ describe("compiler/emit/select — the table audits", () => {
       ? []
       : (Array.isArray(row.on) ? row.on : [row.on as string]).filter((f) => FIELD.includes(f));
 
-  it("dispatches an unprovable receiver exactly on the rows with two or more runtime tests", () => {
+  it("dispatches an unprovable receiver exactly on the rows with two or more runtime tests over LOWERING families", () => {
+    // A family the row refuses cannot hold a receiver in a program that compiles, so it
+    // does not count: `.keys()` lists array and object, refuses array, and runs on object.
+    const lowers = (row: Row, f: string): boolean => {
+      const branch = (row.expr as { perFamily: Record<string, unknown> }).perFamily[f];
+      return !(typeof branch === "object" && branch !== null && "unsupported" in branch);
+    };
     // A `$switch` tells apart only what `$type` tells apart: `set` and `array` share
     // one guard, so a row on both families has one runtime test, not two.
     const tests = (row: Row): number =>
-      new Set(fieldFamilies(row).map((f) => JSON.stringify(guardFor(f as FieldFamily)("$$v")))).size;
+      new Set(
+        fieldFamilies(row)
+          .filter((f) => lowers(row, f))
+          .map((f) => JSON.stringify(guardFor(f as FieldFamily)("$$v"))),
+      ).size;
     // Each row is probed with the first argument count it accepts, so a row that
     // takes an argument is audited too, not passed as a count refusal.
     const probes = [
@@ -151,10 +174,13 @@ describe("compiler/emit/select — the table audits", () => {
       { shape: { kind: "multiple" }, n: 3 },
     ] as const;
     const wrong: string[] = [];
+    let rows = 0;
     let audited = 0;
+    let dispatched = 0;
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "name" || !(typeof row.expr === "object" && row.expr !== null && "perFamily" in row.expr))
         continue;
+      rows++;
       const answers = probes.map(({ shape, n }) => select(consult(name, "value"), OPAQUE, shape, n));
       const r = answers.find((a) => a.kind !== "wrongCount" && a.kind !== "rejectedCount");
       if (r === undefined) {
@@ -162,10 +188,15 @@ describe("compiler/emit/select — the table audits", () => {
         continue;
       }
       audited++;
+      if (r.kind === "dispatch") dispatched++;
       if (tests(row) >= 2 !== (r.kind === "dispatch")) wrong.push(`${name}: ${r.kind}`);
     }
     expect(wrong).toEqual([]);
-    expect(audited).toBeGreaterThanOrEqual(20);
+    // Every `perFamily` row reached the audit, and the audit met both answers.
+    expect(audited).toBe(rows);
+    expect(rows).toBeGreaterThanOrEqual(15);
+    expect(dispatched).toBeGreaterThan(0);
+    expect(dispatched).toBeLessThan(rows);
   });
 
   it("holds a guard for every field family — the type keeps the table complete", () => {

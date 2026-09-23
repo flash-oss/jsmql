@@ -6,6 +6,7 @@
 // only turns the caller's input into source and values, and the compiler's
 // errors into `validate()` results. See docs/LANGUAGE.md and
 // docs/specs/strict-shape-entries.md.
+import { hasStreamValueCell } from "./compiler/rows.ts";
 import type { Expr, ParamBinding, Program } from "./registry/ast.ts";
 import { lex, LexError } from "./compiler/lex/lexer.ts";
 import { parse, parseEntry } from "./compiler/parse/parser.ts";
@@ -261,6 +262,13 @@ function received(program: Program): { what: string; hint: string } {
   }
   const stage = shapeOf(program) === "pipeline" ? namedRow(program) : null;
   if (stage !== null) {
+    // `$$.size()` is a VALUE the stream carries, not a stage: it materialises a stage, so it needs a pipeline.
+    if (hasStreamValueCell(stage)) {
+      return {
+        what: `'$$.${stage}()', the stream's document count, which materialises a '$setWindowFields' stage`,
+        hint: "jsmql.pipeline()",
+      };
+    }
     const drop = stage === "$match" ? " — for a Filter, drop the `$match(...)` wrapper and pass its predicate" : "";
     return { what: `a top-level '${stage}' stage call`, hint: `jsmql.pipeline()${drop}` };
   }

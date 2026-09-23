@@ -327,52 +327,42 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
   });
 });
 
-describe("$match translation — .includes() → $in / array-element", () => {
+describe("$match translation — .has() → $in / array-element", () => {
   // Two query-position forms; both index-friendly. The first IS MongoDB's
-  // "field value, or array containing value" — which is what `.includes` asks
-  // on an array; the second is straightforward set-membership. A string that
-  // merely CONTAINS the needle is the expression road's reading, and `.match`
-  // is the query spelling for it.
+  // "field value, or array containing value", which is what `.has` asks on an
+  // array; the second is set-membership over a constant list. `.includes` is the
+  // substring test of a STRING, and the query spelling for it is an escaped `$regex`.
 
-  it("translates `field.includes(<literal>)` to an implicit array-element match", () => {
-    expect(jsmql('[$match($.tags.includes("vip"))]')).toEqual([{ $match: { tags: "vip" } }]);
+  it("translates `field.has(<literal>)` to an implicit array-element match", () => {
+    expect(jsmql('[$match($.tags.has("vip"))]')).toEqual([{ $match: { tags: "vip" } }]);
   });
 
-  it("translates `[lit,lit,…].includes(field)` to `$in`", () => {
-    expect(jsmql('[$match(["active", "trial"].includes($.status))]')).toEqual([
+  it("translates `[lit,lit,…].has(field)` to `$in`", () => {
+    expect(jsmql('[$match(["active", "trial"].has($.status))]')).toEqual([
       { $match: { status: { $in: ["active", "trial"] } } },
     ]);
   });
 
   it("uses dotted paths for nested receivers", () => {
-    expect(jsmql('[$match($.user.roles.includes("admin"))]')).toEqual([{ $match: { "user.roles": "admin" } }]);
+    expect(jsmql('[$match($.user.roles.has("admin"))]')).toEqual([{ $match: { "user.roles": "admin" } }]);
   });
 
   it("falls through to $expr when both sides are field paths", () => {
-    expect(jsmql("[$match($.tags.includes($.target))]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $switch: {
-              branches: [
-                { case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["$target", "$tags"] } },
-                {
-                  case: { $in: [{ $type: "$tags" }, ["string"]] },
-                  then: { $gte: [{ $indexOfCP: ["$tags", "$target"] }, 0] },
-                },
-              ],
-              default: null,
-            },
-          },
-        },
-      },
+    // `$in` needs an array, so a missing `tags` runs the test on the empty array (HR5).
+    expect(jsmql("[$match($.tags.has($.target))]")).toEqual([
+      { $match: { $expr: { $in: ["$target", { $ifNull: ["$tags", []] }] } } },
     ]);
   });
 
   it("falls through to $expr when the array contains a non-literal", () => {
-    expect(jsmql('[$match(["active", $.fallback].includes($.status))]')).toEqual([
+    expect(jsmql('[$match(["active", $.fallback].has($.status))]')).toEqual([
       { $match: { $expr: { $in: ["$status", ["active", "$fallback"]] } } },
     ]);
+  });
+
+  it("translates `field.includes(<literal>)` on a string to an escaped `$regex`", () => {
+    expect(jsmql('[$match($.name.includes("vip"))]')).toEqual([{ $match: { name: { $regex: /vip/ } } }]);
+    expect(jsmql('[$match($.name.includes("a.b"))]')).toEqual([{ $match: { name: { $regex: /a\.b/ } } }]);
   });
 });
 
@@ -435,27 +425,21 @@ describe("$match translation — .some(p) → $elemMatch", () => {
       {
         $match: {
           $expr: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-              then: null,
-              else: {
-                $anyElementTrue: {
-                  $map: {
-                    input: "$items",
-                    as: "it",
-                    in: {
-                      $eq: [
-                        {
-                          $cond: {
-                            if: { $eq: [{ $ifNull: ["$$it.tag", null] }, null] },
-                            then: null,
-                            else: { $toLower: "$$it.tag" },
-                          },
-                        },
-                        "vip",
-                      ],
+            $anyElementTrue: {
+              $map: {
+                input: { $ifNull: ["$items", []] },
+                as: "it",
+                in: {
+                  $eq: [
+                    {
+                      $cond: {
+                        if: { $eq: [{ $ifNull: ["$$it.tag", null] }, null] },
+                        then: null,
+                        else: { $toLower: "$$it.tag" },
+                      },
                     },
-                  },
+                    "vip",
+                  ],
                 },
               },
             },
@@ -472,23 +456,17 @@ describe("$match translation — .some(p) → $elemMatch", () => {
       {
         $match: {
           $expr: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-              then: null,
-              else: {
-                $anyElementTrue: {
-                  $map: {
-                    input: "$items",
-                    as: "it",
-                    in: {
-                      $and: [
-                        { $ne: [{ $ifNull: ["$$it", null] }, null] },
-                        { $ne: ["$$it", false] },
-                        { $ne: ["$$it", ""] },
-                        { $ne: ["$$it", 0] },
-                      ],
-                    },
-                  },
+            $anyElementTrue: {
+              $map: {
+                input: { $ifNull: ["$items", []] },
+                as: "it",
+                in: {
+                  $and: [
+                    { $ne: [{ $ifNull: ["$$it", null] }, null] },
+                    { $ne: ["$$it", false] },
+                    { $ne: ["$$it", ""] },
+                    { $ne: ["$$it", 0] },
+                  ],
                 },
               },
             },
@@ -550,97 +528,75 @@ describe("$match translation — typeof: 'boolean' is refused, 'bool' is the nam
   });
 });
 
-describe("$match translation — .length vs natural number → string-or-array $expr", () => {
-  // `.length` compared against a number is the *length* of a string or an array. It
-  // stays in `$expr`, where a `$switch` on the field's type picks `$size` for an array
-  // and `$strLenCP` for a string. Any other type gives null, so the comparison fails
-  // instead of aborting the query. An array-only `$size` would miss the string.
+describe("$match translation — .size() → a guarded $size under $expr", () => {
+  // `.size()` counts the elements of an array. The query language has no operator for a
+  // count, so the comparison stays under `$expr`. A missing array runs `.size()` on the
+  // empty array (HR5), as lodash's `_.size(undefined)` is 0, so `$size` never aborts.
+  // `.length()` is the length of a STRING: on a bare field it takes `$strLenCP` under a
+  // null guard, with no test of the receiver's type at run time.
 
-  it("translates `$.arr.length === N` to the string-or-array $switch", () => {
-    expect(jsmql("[$match($.items.length === 3)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-              3,
-            ],
-          },
-        },
-      },
+  it("translates `$.arr.size() === N` to a guarded `$size`", () => {
+    expect(jsmql("[$match($.items.size() === 3)]")).toEqual([
+      { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, 3] } } },
     ]);
   });
 
   it("translates `!== N` the same way", () => {
-    expect(jsmql("[$match($.items.length !== 0)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $ne: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-              0,
-            ],
-          },
-        },
-      },
+    expect(jsmql("[$match($.items.size() !== 0)]")).toEqual([
+      { $match: { $expr: { $ne: [{ $size: { $ifNull: ["$items", []] } }, 0] } } },
     ]);
   });
 
   it("accepts the literal on either side", () => {
-    expect(jsmql("[$match(3 === $.items.length)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              3,
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-            ],
-          },
-        },
-      },
+    expect(jsmql("[$match(3 === $.items.size())]")).toEqual([
+      { $match: { $expr: { $eq: [3, { $size: { $ifNull: ["$items", []] } }] } } },
     ]);
   });
 
   it("works on dotted paths", () => {
-    expect(jsmql("[$match($.order.items.length === 1)]")).toEqual([
+    expect(jsmql("[$match($.order.items.size() === 1)]")).toEqual([
+      { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$order.items", []] } }, 1] } } },
+    ]);
+  });
+
+  it("handles ordered comparisons", () => {
+    expect(jsmql("[$match($.items.size() < 20)]")).toEqual([
+      { $match: { $expr: { $lt: [{ $size: { $ifNull: ["$items", []] } }, 20] } } },
+    ]);
+    expect(jsmql("[$match($.items.size() >= 2)]")).toEqual([
+      { $match: { $expr: { $gte: [{ $size: { $ifNull: ["$items", []] } }, 2] } } },
+    ]);
+    expect(jsmql("[$match(0 < $.items.size())]")).toEqual([
+      { $match: { $expr: { $lt: [0, { $size: { $ifNull: ["$items", []] } }] } } },
+    ]);
+  });
+
+  it("compares the count against any literal, natural or not", () => {
+    // A count is a whole number, so `=== 3.5`, `=== "x"` and `=== -1` select nothing; the shape stays the same.
+    expect(jsmql("[$match($.items.size() === 3.5)]")).toEqual([
+      { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, 3.5] } } },
+    ]);
+    expect(jsmql("[$match($.items.size() < 3.5)]")).toEqual([
+      { $match: { $expr: { $lt: [{ $size: { $ifNull: ["$items", []] } }, 3.5] } } },
+    ]);
+    expect(jsmql('[$match($.items.size() === "x")]')).toEqual([
+      { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, "x"] } } },
+    ]);
+    expect(jsmql("[$match($.items.size() === -1)]")).toEqual([
+      { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, -1] } } },
+    ]);
+  });
+
+  it("reads `.length()` on a bare field as a string length: `$strLenCP` under a null guard", () => {
+    expect(jsmql("[$match($.name.length() === 3)]")).toEqual([
       {
         $match: {
           $expr: {
             $eq: [
               {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$order.items" }, ["array"]] }, then: { $size: "$order.items" } },
-                    { case: { $in: [{ $type: "$order.items" }, ["string"]] }, then: { $strLenCP: "$order.items" } },
-                  ],
-                  default: null,
-                },
+                $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $strLenCP: "$name" } },
               },
-              1,
+              3,
             ],
           },
         },
@@ -648,165 +604,15 @@ describe("$match translation — .length vs natural number → string-or-array $
     ]);
   });
 
-  it("handles ordered comparisons (the bug: no more `items.length` dotted-key collapse)", () => {
-    expect(jsmql("[$match($.items.length < 20)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $lt: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-              20,
-            ],
-          },
-        },
-      },
-    ]);
-    expect(jsmql("[$match($.items.length >= 2)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $gte: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-              2,
-            ],
-          },
-        },
-      },
-    ]);
-    expect(jsmql("[$match(0 < $.items.length)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $lt: [
-              0,
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-            ],
-          },
-        },
-      },
-    ]);
-  });
-
-  it("reads `.length` as a literal field path when the RHS is NOT a natural number", () => {
-    // A length cannot equal 3.5 / "x" — so the user meant a field named `length`.
-    expect(jsmql("[$match($.items.length === 3.5)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-              3.5,
-            ],
-          },
-        },
-      },
-    ]);
-    expect(jsmql("[$match($.items.length < 3.5)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $lt: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-              3.5,
-            ],
-          },
-        },
-      },
-    ]);
-    expect(jsmql('[$match($.items.length === "x")]')).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-              "x",
-            ],
-          },
-        },
-      },
-    ]);
-  });
-
-  it('`["length"]` is RAW access — never folded to a length (only dot .length is)', () => {
-    // Bracket access reads a property called "length", so it cannot be a $size
-    // peephole; "length" is a string key (never a numeric index) → $getField.
+  it('`["length"]` is RAW access — a property named "length", never a count', () => {
+    // Bracket access reads a property called "length"; "length" is a string key (never a
+    // numeric index), so it lowers to $getField.
     expect(jsmql('[$match($.items["length"] === 3)]')).toEqual([
       { $match: { $expr: { $eq: [{ $getField: { field: "length", input: "$items" } }, 3] } } },
     ]);
     // A string-literal key on the bare root is a plain field reference.
     expect(jsmql('[$match($["cart.field.length"] === 5)]')).toEqual([
       { $match: { $expr: { $eq: ["$cart.field.length", 5] } } },
-    ]);
-  });
-
-  it("falls through to $expr for negative integer RHS (unary minus is not a natural-number literal)", () => {
-    expect(jsmql("[$match($.items.length === -1)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
-                    { case: { $in: [{ $type: "$items" }, ["string"]] }, then: { $strLenCP: "$items" } },
-                  ],
-                  default: null,
-                },
-              },
-              -1,
-            ],
-          },
-        },
-      },
     ]);
   });
 });
@@ -833,30 +639,26 @@ describe("$match translation — % N === M → $mod", () => {
   });
 });
 
-describe("$match translation — $all folding from .includes && .includes", () => {
-  it("folds two `.includes` on the same field into `$all`", () => {
-    expect(jsmql('[$match($.tags.includes("a") && $.tags.includes("b"))]')).toEqual([
-      { $match: { tags: { $all: ["a", "b"] } } },
-    ]);
+describe("$match translation — $all folding from .has && .has", () => {
+  it("folds two `.has` on the same field into `$all`", () => {
+    expect(jsmql('[$match($.tags.has("a") && $.tags.has("b"))]')).toEqual([{ $match: { tags: { $all: ["a", "b"] } } }]);
   });
 
-  it("folds three-or-more includes", () => {
-    expect(jsmql('[$match($.tags.includes("a") && $.tags.includes("b") && $.tags.includes("c"))]')).toEqual([
+  it("folds three-or-more `.has`", () => {
+    expect(jsmql('[$match($.tags.has("a") && $.tags.has("b") && $.tags.has("c"))]')).toEqual([
       { $match: { tags: { $all: ["a", "b", "c"] } } },
     ]);
   });
 
-  it("does NOT fold when fields differ — each .includes lands as its own clause", () => {
-    expect(jsmql('[$match($.tags.includes("a") && $.colors.includes("red"))]')).toEqual([
+  it("does NOT fold when fields differ — each .has lands as its own clause", () => {
+    expect(jsmql('[$match($.tags.has("a") && $.colors.has("red"))]')).toEqual([
       { $match: { tags: "a", colors: "red" } },
     ]);
   });
 
-  it("does NOT fold mixed chains (.includes + other predicates)", () => {
+  it("does NOT fold mixed chains (.has + other predicates)", () => {
     // The user can reorder to enable the fold; the un-folded form has
     // identical semantics on array-valued fields, so this is not a pitfall.
-    expect(jsmql('[$match($.tags.includes("a") && $.age > 18)]')).toEqual([
-      { $match: { tags: "a", age: { $gt: 18 } } },
-    ]);
+    expect(jsmql('[$match($.tags.has("a") && $.age > 18)]')).toEqual([{ $match: { tags: "a", age: { $gt: 18 } } }]);
   });
 });

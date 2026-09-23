@@ -68,7 +68,10 @@ describe("update filters: compound assignment (+=, -=, *=, /=)", () => {
       {
         $set: {
           total: {
-            $add: ["$total", { $reduce: { input: "$items", initialValue: 0, in: { $add: ["$$value", "$$this"] } } }],
+            $add: [
+              "$total",
+              { $reduce: { input: { $ifNull: ["$items", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } } },
+            ],
           },
         },
       },
@@ -539,7 +542,7 @@ describe("update filters: lex regression checks", () => {
 
   it("=> still parses as arrow", () => {
     expect(jsmql.expr("$.list.map(x => x + 1)")).toEqual({
-      $map: { input: "$list", as: "x", in: { $add: ["$$x", 1] } },
+      $map: { input: { $ifNull: ["$list", []] }, as: "x", in: { $add: ["$$x", 1] } },
     });
   });
 

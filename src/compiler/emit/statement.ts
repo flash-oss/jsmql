@@ -36,6 +36,7 @@ import {
   pipelineOverOf,
   mergesIntoOf,
   unionsOf,
+  hasStreamValueCell,
 } from "../rows.ts";
 import { consult, everyName, listedIn } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
@@ -303,7 +304,7 @@ function declStages(run: readonly (LetDecl | FuncDecl)[], env: Env): (Step & { c
     // The lowering is speculative for every declarator after the first.
     // One that hoists a prologue must go back, and the compiler lowers it
     // again as its own statement. This checks both chains, because
-    // `$$.length` materialises on the ROOT one.
+    // `$$.size()` materialises on the ROOT one.
     const mark = env.chain.mark();
     const rootMark = env.rootChain.mark();
     const step = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
@@ -512,7 +513,7 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
   // A value in this stage's own body can hoist a stage of its own, which
   // then stands AHEAD of it. So the stage is no longer first, whatever
   // `first` said before the compiler lowered the body. The hoist applies
-  // to this chain only: a `$$.length` read inside a sub-pipeline stamps
+  // to this chain only: a `$$.size()` read inside a sub-pipeline stamps
   // the ROOT pipeline, and it leaves this pipeline's order alone.
   const hoisted = env.chain.hoisted[0];
   const noPlacement = (held: string): never => {
@@ -568,7 +569,7 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
     // The `__jsmql` cleanup is the stage BEFORE the one that writes the
     // output. Nothing may run after that one. So a body reading a
     // scratch field reads one that is already gone. MEASURED:
-    // `$merge({ let: { v: $$.length } })` answered "Use of undefined
+    // `$merge({ let: { v: $$.size() } })` answered "Use of undefined
     // variable: v".
     if (readsScratch(stage)) throw E.terminalReadsScratch(name, pos);
     env.chain.terminal = stage;
@@ -1086,8 +1087,12 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
  */
 function refuseUnbuiltSugar(value: Expr): void {
   const base = chainBase(value) as { type: string };
-  // `$$.length` is a VALUE the stream carries; a chain on the stream is documents, not a value.
-  if (base.type === "CollectionRef" && value.type === "MethodCall") throw E.streamAsValue(value.pos);
+  // `$$.size()` is a VALUE the stream carries — its row states a stream cell in the value
+  // position — where a chain on the stream is documents, not a value.
+  if (base.type === "CollectionRef" && value.type === "MethodCall") {
+    const direct = value.object.type === "CollectionRef" && hasStreamValueCell(value.name);
+    if (!direct) throw E.streamAsValue(value.pos);
+  }
 }
 
 // ── the stream road ──────────────────────────────────────────────────────────
