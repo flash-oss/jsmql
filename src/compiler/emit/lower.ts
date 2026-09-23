@@ -35,6 +35,7 @@ import {
   onlyInsideOf,
   elementsOf,
   soleFieldFamilyOf,
+  hasStreamValueCell,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
@@ -665,13 +666,16 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   // yet. The receiver's own spelling settles it, BEFORE the receiver is lowered: a
   // stream cell run on a value record has none of the readings it asks for, and the
   // JavaScript error that follows would reach the developer as the whole message.
-  // A property of the stream itself (`$$.length`) is a value of its own and passes.
+  // A value the stream itself answers (`$$.size()`, the document count) is a value of
+  // its own and passes: the row states a stream cell in its VALUE position.
   const chainOnStream =
     recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "CollectionRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw E.streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
-  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue) throw E.streamAsValue(node.pos);
+  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name)) {
+    throw E.streamAsValue(node.pos);
+  }
   const exprArgs = args.filter(isExpr);
   // What each argument PROVABLY is. A branch whose slot cannot take it drops out
   // of the dispatch, and a rule whose slot cannot take it is refused.

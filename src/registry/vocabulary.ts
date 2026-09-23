@@ -40,13 +40,13 @@ export const GROUP_SLOT = "__jsmqlTmp";
 
 /**
  * The reserved field that holds the document count of the stream. A reader gets
- * it back as `"$" + LENGTH_SLOT`. It is reserved, so it cannot collide with a
+ * it back as `"$" + SIZE_SLOT`. It is reserved, so it cannot collide with a
  * binding of the user (`let length` takes `__jsmql.var.length`). The twin of
- * `LENGTH_SLOT` in
+ * `SIZE_SLOT` in
  * `src/namespace.ts`, held equal by the same test as `GROUP_SLOT` (`test/registry-agrees.test.ts`).
- * See docs/specs/stream-length.md.
+ * See docs/specs/stream-size.md.
  */
-export const LENGTH_SLOT = "__jsmql.length";
+export const SIZE_SLOT = "__jsmql.size";
 
 /**
  * A query document writes `{ $eq: v }` as `v` — the spelling that every MongoDB
@@ -1139,8 +1139,8 @@ export type ExprIn = {
   /**
    * Put stages BEFORE the statement that holds this expression, and read back the
    * field they wrote. This serves a value that has no inline form:
-   *   $.n = $$.length  →  [{ $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-   *                        { $set: { n: "$__jsmql.length" } }]
+   *   $.n = $$.size()  →  [{ $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+   *                        { $set: { n: "$__jsmql.size" } }]
    */
   hoist: (stages: readonly Stage[], reads: string) => string;
   /** A new `__jsmql.tmp.<n>` scratch field path. */
@@ -1502,7 +1502,7 @@ export type Cell<
  *   `.length` in filter position
  *     $.tags.length < 5    → {$expr:{$cond:…}}     works, cannot use an index
  *     $.s.length < 5       → {$expr:{$cond:…}}     the same
- *     $$.length > 1        → REFUSED, "'$$.length' … needs Pipeline mode —
+ *     $$.size() > 1        → REFUSED, "'$$.size()' … needs Pipeline mode —
  *                            it materialises a '$setWindowFields' stage."
  *   One `viaFallback` for all three promises that the stream form only scans.
  *   In fact the stream form does not compile at all.

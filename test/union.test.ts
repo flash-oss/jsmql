@@ -115,8 +115,8 @@ describe("$$.push / $$ = [ … ] — a written document holds only what the prog
     const outer = /'\$unionWith' has no 'let': its body cannot read the outer document/;
     expect(() => jsmql("$$.push({ n: $.a });")).toThrow(outer);
     expect(() => jsmql("$$ = [{ n: $.a }];")).toThrow(outer);
-    expect(() => jsmql("$$.push({ n: $$.length });")).toThrow(outer);
-    expect(() => jsmql("$$ = [{ n: $$.length }];")).toThrow(outer);
+    expect(() => jsmql("$$.push({ n: $$.size() });")).toThrow(outer);
+    expect(() => jsmql("$$ = [{ n: $$.size() }];")).toThrow(outer);
   });
 
   it("refuses a value that needs a stage of its own, in either spelling", () => {
@@ -225,7 +225,7 @@ describe("$$.push — error cases", () => {
 
   it("push used as RHS / value → reject with statement-only message", () => {
     expect(() => jsmql("$.x = $$.push(...$$$.coll)")).toThrow(
-      "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.length'; to keep the documents, chain them as a statement: '$$.filter(…);'.",
+      "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.size()'; to keep the documents, chain them as a statement: '$$.filter(…);'.",
     );
   });
 

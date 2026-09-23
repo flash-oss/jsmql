@@ -85,7 +85,7 @@ compiler reads it as one.
 ## Keys
 
 The printer writes a key bare (`age`) when it is a plain JavaScript identifier,
-and quotes every other key (`"$gt"`, `"__jsmql.length"`). `__proto__` is the
+and quotes every other key (`"$gt"`, `"__jsmql.size"`). `__proto__` is the
 one name a quoted key cannot carry: in an object literal, `{"__proto__": 1}`
 sets the prototype and creates no own property. So the field would vanish the
 moment the text was pasted back — MEASURED in mongosh and in Node alike. The

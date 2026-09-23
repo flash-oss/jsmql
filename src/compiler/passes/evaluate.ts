@@ -417,20 +417,6 @@ const isPlain = (v: unknown): v is Record<string, unknown> =>
   (v as { _bsontype?: unknown })._bsontype === undefined;
 
 /**
- * `.length` — on a STRING, this is the code-point count, not JavaScript's.
- *
- * JSMQL lowers a string's `.length` to `$strLenCP`, so the language means code
- * points. JavaScript's `.length` counts UTF-16 units, and the two differ the
- * moment a character sits outside the basic plane: `"😀".length` is 2 there,
- * and 1 here. The fold answers the LANGUAGE's question.
- */
-/** `.length` counts the characters of a string. An array has `.size()`, and the registry refuses `.length` on it. */
-function lengthOf(receiver: unknown): Evaluation {
-  if (typeof receiver === "string") return ok([...receiver].length);
-  return NOT_CONSTANT;
-}
-
-/**
  * `o.name` on a constant object.
  *
  * An ABSENT property does not fold. JavaScript answers `undefined`, and
@@ -438,7 +424,6 @@ function lengthOf(receiver: unknown): Evaluation {
  * missing field disappears from a document, while an explicit `undefined` does not.
  */
 function property(receiver: unknown, name: string): Evaluation {
-  if (name === "length") return lengthOf(receiver);
   if (!isPlain(receiver)) return NOT_CONSTANT;
   const own = Object.prototype.hasOwnProperty.call(receiver, name);
   return own ? ok(receiver[name]) : NOT_CONSTANT;

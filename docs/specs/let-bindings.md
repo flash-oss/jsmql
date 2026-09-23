@@ -138,12 +138,12 @@ would put a stage on the wrong side of the shared `$set`.
 - **One whose lowering is not a plain `$set`** — for example a `$lookup` a
   foreign read writes into a binding's slot.
 - **One whose value HOISTS a stage of its own.** A foreign read in a VALUE
-  position (`let n = $$$.orders.filter(o => o.k === a).length`) leaves a
+  position (`let n = $$$.orders.filter(o => o.k === a).size()`) leaves a
   `$set` behind and puts its `$lookup` on the chain's prologue, which the
   chain flushes AHEAD of every stage the statement returns. Shared with the
   sibling it correlates on, that `$lookup` would run before the `$set` that
   binds the sibling, and it would correlate on a field nothing has written
-  yet. Measured: `let a = $.x, b = $$$.c.filter(o => o.x === a).length + 1;`
+  yet. Measured: `let a = $.x, b = $$$.c.filter(o => o.x === a).size() + 1;`
   answered `1` for every document, where the `;` spelling answered the real
   counts, and the server REJECTED two chained joins. So the compiler takes
   the declarator back (`Chain.rewind`) and lowers it again as its own
@@ -301,7 +301,7 @@ that uses both still emits exactly one `$unset` stage at the end.
 
 ## Lookup as a `let` RHS
 
-`let os = $$$.c.filter(p);` uses the binding's own slot as the `$lookup`'s `as` — one stage, no `$set` — and types the binding as the array (`.filter`, `.aggregate`) or the document (`.find`) the chain yields. A chain that goes on (`let n = $$$.c.filter(p).length`, `let s = $$$.tx.filter(p).reduce(fn, init)`) is a VALUE: the compiler hoists the `$lookup` into a scratch slot ahead of the `let`, and the slot holds the rest of the chain as a value — see [lookup-stage.md § The join road](lookup-stage.md). `const` refuses reassignment on both routes.
+`let os = $$$.c.filter(p);` uses the binding's own slot as the `$lookup`'s `as` — one stage, no `$set` — and types the binding as the array (`.filter`, `.aggregate`) or the document (`.find`) the chain yields. A chain that goes on (`let n = $$$.c.filter(p).size()`, `let s = $$$.tx.filter(p).reduce(fn, init)`) is a VALUE: the compiler hoists the `$lookup` into a scratch slot ahead of the `let`, and the slot holds the rest of the chain as a value — see [lookup-stage.md § The join road](lookup-stage.md). `const` refuses reassignment on both routes.
 
 ## Deferred
 

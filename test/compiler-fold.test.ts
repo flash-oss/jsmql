@@ -236,7 +236,7 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
   });
 
   it("counts a string in code points, which is what `$strLenCP` does", () => {
-    expect(valueOf('"😀ab".length')).toBe(3);
+    expect(valueOf('"😀ab".length()')).toBe(3);
     expect(valueOf('"😀ab"[0]')).toBe("😀");
   });
 

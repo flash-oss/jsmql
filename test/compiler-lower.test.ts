@@ -135,18 +135,18 @@ describe("compiler/emit/lower — access", () => {
 
   it("reads a count from the method's one family, and proves a literal's count", () => {
     expect(expr("[1, 2].size()")).toBe(2);
-    expect(expr('"abc".length')).toBe(3);
+    expect(expr('"abc".length()')).toBe(3);
     // an array LITERAL receiver is the value, wrapped once — `{ $size: ["$a", 2] }` would be two operands
     expect(expr("[$.a, 2].size()")).toEqual({ $size: [["$a", 2]] });
     // an unproven receiver takes the method's one family, and the server judges the value:
-    // `.length` reads a string under a null guard, `.size()` reads a missing array as empty
-    expect(expr("$.x.length")).toEqual({
+    // `.length()` reads a string under a null guard, `.size()` reads a missing array as empty
+    expect(expr("$.x.length()")).toEqual({
       $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $strLenCP: "$x" } },
     });
     expect(expr("$.x.size()")).toEqual({ $size: { $ifNull: ["$x", []] } });
-    // a proven array refuses `.length`, and the refusal names `.size()`
-    expect(() => expr("[$.a, 2].length")).toThrow(
-      "'.length' is not available on an 'array' — it is defined on 'string', 'stream'. For the number of elements, write '.size()'.",
+    // a proven array refuses `.length()`, and the refusal names `.size()`
+    expect(() => expr("[$.a, 2].length()")).toThrow(
+      "'.length()' is not available on an 'array' — it is defined on 'string'. For the number of elements, write '.size()'.",
     );
   });
 

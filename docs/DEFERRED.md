@@ -203,7 +203,7 @@ JavaScript spreads a string into one element per character. `[..."abc"]` is `["a
 
 Emitting the string unchanged is worse than a refusal. `[..."abc"]` would silently answer the bare string `"abc"`, with no error at compile time or run time. Where a sibling element follows, the server instead refuses the emitted `{ "$concatArrays": ["abc", ["d"]] }`. This is the same wrong shape, found later.
 
-So the compiler refuses the spread wherever the operand is PROVABLY a string: a string literal, or an expression whose row measures a string return. A field path proves nothing, so `[...$.s]` still compiles. The compiler cannot know the type there, so the server answers instead. The refusal names the spelling that does produce the characters: `$range(0, <string>.length).map(i => <string>.charAt(i))`. This reads one code point at a time, so it agrees with JavaScript on a multi-byte character.
+So the compiler refuses the spread wherever the operand is PROVABLY a string: a string literal, or an expression whose row measures a string return. A field path proves nothing, so `[...$.s]` still compiles. The compiler cannot know the type there, so the server answers instead. The refusal names the spelling that does produce the characters: `$range(0, <string>.length()).map(i => <string>.charAt(i))`. This reads one code point at a time, so it agrees with JavaScript on a multi-byte character.
 
 Reconsider only if MongoDB gains a string-to-array operator.
 

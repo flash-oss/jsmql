@@ -427,8 +427,8 @@ function extractHasChain(node: Expr, env: Env): { path: string; values: unknown[
 // ── the two readings a query cell needs ──────────────────────────────────────
 
 /**
- * The field path an expression names, or null. A `.length` is a property row,
- * not a path segment. Inside a `.some` callback the element parameter is the
+ * The field path an expression names, or null. A call (`.length()`) is not a
+ * path segment. Inside a `.some` callback the element parameter is the
  * root, so `i.q` names "q".
  */
 export function pathOfIn(e: Expr, env: Env): string | null {

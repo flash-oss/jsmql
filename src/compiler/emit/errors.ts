@@ -138,7 +138,7 @@ export function refusalFor(
                   : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
                     ? ` A stream is not an array. Chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
                     : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString
-                      ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
+                      ? ` A string is not a list. For one element per character, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
                       : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
                         ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.`
                         : sel.got === "bool"
@@ -333,7 +333,7 @@ export const joinNeedsPipeline = (pos: number): CodegenError =>
 /** A value that materialises a STAGE, read where there is no pipeline to place it in. */
 export const needsPipeline = (name: string, pos: number): CodegenError =>
   new CodegenError(
-    `'$$.${name}' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline — for example, \`({ $ }) => { $.n = $$.${name}; … }\`. It has no meaning in a Filter or in 'jsmql.expr'.`,
+    `'$$.${name}()' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline — for example, \`({ $ }) => { $.n = $$.${name}(); … }\`. It has no meaning in a Filter or in 'jsmql.expr'.`,
     pos,
   );
 
@@ -407,14 +407,14 @@ export const arrayOfArrays = (method: string, holder: string, pos: number): Code
  */
 export const streamHandleAfterReplace = (name: string, stage: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${name}' is the body's own stream. This body runs '${stage}', which changes what its count means. The compiler stamps '${name}.length' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name}' from the parameter list.`,
+    `'${name}' is the body's own stream. This body runs '${stage}', which changes what its count means. The compiler stamps '${name}.size()' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name}' from the parameter list.`,
     pos,
   );
 
 /** The callback's third parameter — the body's own stream — read as a value. */
 export const streamHandleAsValue = (name: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${name}' is the body's own stream, the callback's third parameter: read its count ('${name}.length') or chain on it ('${name}.filter(…)'). It is not a document or a value on its own.`,
+    `'${name}' is the body's own stream, the callback's third parameter: read its count ('${name}.size()') or chain on it ('${name}.filter(…)'). It is not a document or a value on its own.`,
     pos,
   );
 
@@ -510,7 +510,7 @@ export const mustBeFirstStage = (name: string, pos: number, why?: string): Codeg
 
 /**
  * A stage that has to be FIRST whose own body reads a value that materialises a
- * stage — `$geoNear({ …, query: { n: $$.length } })`. The hoisted stage has to run
+ * stage — `$geoNear({ …, query: { n: $$.size() } })`. The hoisted stage has to run
  * before the read. Nothing may run before a first-only stage, so there is no
  * placement at all. MEASURED: mongod answered "$geoNear was not the first stage in
  * the pipeline after optimization".
@@ -523,7 +523,7 @@ export const firstStageNeedsHoist = (
   carrier: string | null,
 ): CodegenError => {
   // The value the reader has to move is named after the stage jsmql had to make for it.
-  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ … }).<field>" : "$$.length";
+  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ … }).<field>" : "$$.size()";
   const later = `$match($.<field> === ${value});`;
   return new CodegenError(
     carrier === null
@@ -534,14 +534,14 @@ export const firstStageNeedsHoist = (
 };
 
 /**
- * `$merge({ into: "c", let: { v: $$.length } })` — the stage that writes the output,
+ * `$merge({ into: "c", let: { v: $$.size() } })` — the stage that writes the output,
  * reading a value jsmql materialised into a scratch field. The `__jsmql` cleanup is
  * the stage before it, and nothing may follow it. So the field is gone by then.
  * MEASURED: "Use of undefined variable: v".
  */
 export const terminalReadsScratch = (name: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${name}' writes the pipeline's output and has to be its LAST stage. JSMQL clears its scratch fields in the stage right before it. So a value this body reads ('$$.length', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first, and read that field: '$.n = $$.length; ${name}({ … let: { v: $.n } … });'.`,
+    `'${name}' writes the pipeline's output and has to be its LAST stage. JSMQL clears its scratch fields in the stage right before it. So a value this body reads ('$$.size()', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first, and read that field: '$.n = $$.size(); ${name}({ … let: { v: $.n } … });'.`,
     pos,
   );
 
@@ -625,7 +625,7 @@ export const spreadNotADocument = (noun: string, pos: number): CodegenError =>
 
 export const spreadOfString = (pos: number): CodegenError =>
   new CodegenError(
-    "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+    "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
     pos,
   );
 
@@ -882,7 +882,7 @@ export const rootStreamInForeign = (pos: number): CodegenError =>
 /** `$.k = $$.filter(…)` — a stream chain has no value; the root replace makes it a `$facet`. */
 export const streamAsValue = (pos: number): CodegenError =>
   new CodegenError(
-    "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.length'; to keep the documents, chain them as a statement: '$$.filter(…);'.",
+    "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.size()'; to keep the documents, chain them as a statement: '$$.filter(…);'.",
     pos,
   );
 

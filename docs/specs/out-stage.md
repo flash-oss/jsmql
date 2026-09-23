@@ -140,7 +140,7 @@ The target's shape is unambiguous against its neighbours. `$ = …` has the bare
 | `$$$.<coll> = …` inside `jsmql.update(…)` | `A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.` |
 
 | `$merge({ into: "c", whenMatched: [$sort({ a: 1 })] })` — a stage an update spec does not run | `'$sort' cannot stand inside '$merge': that body is an UPDATE, not a pipeline, and the server runs only '$addFields', '$set', '$project', '$unset', '$replaceRoot', '$replaceWith' and '$fill' there. …` |
-| `$merge({ into: "c", let: { v: $$.length } })` — the stage that writes the output reading a materialised value | `'$merge' writes the pipeline's output and has to be its LAST stage, and jsmql clears its scratch fields in the stage right before it … Put the value in a field of the document first and read that field: '$.n = $$.length; $merge({ … let: { v: $.n } … });'` |
+| `$merge({ into: "c", let: { v: $$.size() } })` — the stage that writes the output reading a materialised value | `'$merge' writes the pipeline's output and has to be its LAST stage, and jsmql clears its scratch fields in the stage right before it … Put the value in a field of the document first and read that field: '$.n = $$.size(); $merge({ … let: { v: $.n } … });'` |
 
 **`whenMatched` is an UPDATE, not a pipeline.** MEASURED on mongod: `$addFields`,
 `$set`, `$project`, `$unset`, `$replaceRoot`, `$replaceWith` and `$fill` run

@@ -604,7 +604,7 @@ describe("array spread", () => {
   // and answering the bare string "abc" for `[..."abc"]` would be wrong. See docs/DEFERRED.md § B.
   it("refuses to spread a PROVABLE string, in an array literal and in an object literal", () => {
     const message =
-      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
+      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
     expect(() => jsmql.expr('[..."abc"]')).toThrow(message);
     expect(() => jsmql.expr('[..."abc", "d"]')).toThrow(message);
     expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(message);
@@ -2288,9 +2288,9 @@ describe("string methods", () => {
     });
   });
   it("length on string-producing expression → $strLenCP", () => {
-    // Coerced: $strLenCP aborts the query on a missing field, so `.length` of an
-    // absent string is 0 rather than an executor error.
-    expect(jsmql.expr("$.name.trim().length")).toEqual({
+    // `$strLenCP` aborts on a missing field, so `.length()` of an absent string
+    // answers null instead of an executor error.
+    expect(jsmql.expr("$.name.trim().length()")).toEqual({
       $let: {
         vars: { jsmqlRecv: { $trim: { input: "$name" } } },
         in: {
@@ -2313,17 +2313,17 @@ describe("string methods", () => {
   });
   it("length on an unknown field reads a string; size reads an array", () => {
     // Each method has one family. An unproven receiver takes that family's operator,
-    // and the server judges the value. `.length` guards a null receiver; `.size()`
+    // and the server judges the value. `.length()` guards a null receiver; `.size()`
     // reads a missing array as empty.
-    expect(jsmql.expr("$.name.length")).toEqual({
+    expect(jsmql.expr("$.name.length()")).toEqual({
       $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $strLenCP: "$name" } },
     });
     expect(jsmql.expr("$.items.size()")).toEqual({ $size: { $ifNull: ["$items", []] } });
-    expect(() => jsmql.expr("$.items.uniq().length")).toThrow(
-      "'.length' is not available on an 'array' — it is defined on 'string', 'stream'. For the number of elements, write '.size()'.",
+    expect(() => jsmql.expr("$.items.uniq().length()")).toThrow(
+      "'.length()' is not available on an 'array' — it is defined on 'string'. For the number of elements, write '.size()'.",
     );
   });
-  it('["length"] is RAW access, NOT the length operator (only dot .length is interpreted)', () => {
+  it('["length"] is RAW access — a property named "length", never a count', () => {
     // Bracket access never folds to $size/$strLenCP — it reads a property called
     // "length" like any other key. "length" is a string literal, so it cannot be
     // a numeric array index → $getField directly (no $isArray dispatch).
@@ -2500,12 +2500,12 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   // and MongoDB has no operator that splits a string into its characters (HR3).
   it(".split() refuses an empty separator on both roads, and names a spelling that works", () => {
     const message =
-      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.";
+      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.";
     expect(() => jsmql.expr('$.s.split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('"abc".split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('$split($.s, "")')).toThrow(`'$split' ${message}`);
     // the spelling the refusal names does compile, and answers per code point
-    expect(jsmql.expr("$range(0, $.s.length).map(i => $.s.charAt(i))")).toMatchObject({ $map: {} });
+    expect(jsmql.expr("$range(0, $.s.length()).map(i => $.s.charAt(i))")).toMatchObject({ $map: {} });
     expect(() => jsmql.expr('$.s.replace("a")')).toThrow(
       "'.replace(find, replacement)' requires exactly 2 arguments, got 1",
     );
@@ -3030,8 +3030,8 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
         },
       },
     });
-    // After `a = $.name` the binding is unproven, so `.length` takes its string family.
-    const q = jsmql.pipeline(`let a = $.tags.uniq(); a = $.name; $set({ len: a.length });`);
+    // After `a = $.name` the binding is unproven, so `.length()` takes its string family.
+    const q = jsmql.pipeline(`let a = $.tags.uniq(); a = $.name; $set({ len: a.length() });`);
     expect(setOf(q, 2)).toEqual({
       len: {
         $cond: {
@@ -6010,15 +6010,15 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       "'.map()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
   });
-  it("rejects a wrong-family method after .length or .size(), whose type is invariant", () => {
-    expect(() => jsmql.expr("$.s.length.map(x => x)")).toThrow(
+  it("rejects a wrong-family method after .length() or .size(), whose type is invariant", () => {
+    expect(() => jsmql.expr("$.s.length().map(x => x)")).toThrow(
       "'.map()' is not available on a 'number' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql.expr("$.items.size().trim()")).toThrow(
       "'.trim()' is not available on a 'number' — it is defined on 'string'. Render the number as a string first: '.toString()'.",
     );
     // Number methods on it still compile.
-    expect(() => jsmql.expr("$.s.length.clamp(0, 10)")).not.toThrow();
+    expect(() => jsmql.expr("$.s.length().clamp(0, 10)")).not.toThrow();
   });
   it("treats .pick / .omit as object-returning — a non-object method is a compile error", () => {
     // `returns` is stated PER FAMILY: the stream form is a `$project`, and the value
@@ -6270,13 +6270,13 @@ describe("lodash positional / slicing methods (per-doc value vocabulary)", () =>
   });
   it(".size() counts array elements; a missing receiver counts as empty", () => {
     expect(jsmql.expr("$.a.size()")).toEqual({ $size: { $ifNull: ["$a", []] } });
-    // `.size()` has one family, array. A proven object counts its fields through
-    // `.keys().size()`; a proven string counts its characters through `.length`.
+    // `.size()` counts an array or the stream. A proven object counts its fields through
+    // `.keys().size()`; a proven string counts its characters through `.length()`.
     expect(() => jsmql.expr('$.o.pick(["a"]).size()')).toThrow(
-      "'.size()' is not available on an 'object' — it is defined on 'array'. For the number of fields, write '.keys().size()'.",
+      "'.size()' is not available on an 'object' — it is defined on 'array', 'stream'. For the number of fields, write '.keys().size()'.",
     );
     expect(() => jsmql.expr("$.s.trim().size()")).toThrow(
-      "'.size()' is not available on a 'string' — it is defined on 'array'. For the number of characters, write '.length()'.",
+      "'.size()' is not available on a 'string' — it is defined on 'array', 'stream'. For the number of characters, write '.length()'.",
     );
   });
   it(".take / .takeRight / .drop reject a negative count with a mirror-method hint", () => {
@@ -7954,10 +7954,9 @@ describe("optional chaining (?.)", () => {
     });
   });
 
-  // `.length` is a MemberAccess, not a MethodCall — its own codegen branch handles it.
-  it(".length on an optional receiver stops the chain — a property row computes it", () => {
-    // `.length` reads a string; the `?.` wrap keeps `$strLenCP` off a null.
-    expect(jsmql.expr("$.user?.name.length")).toEqual({
+  it(".length() on an optional receiver stops the chain", () => {
+    // `.length()` reads a string; the `?.` wrap keeps `$strLenCP` off a null.
+    expect(jsmql.expr("$.user?.name.length()")).toEqual({
       $cond: { if: { $eq: [{ $ifNull: ["$user.name", null] }, null] }, then: null, else: { $strLenCP: "$user.name" } },
     });
   });
@@ -8382,11 +8381,11 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
     expect(jsmql.expr("$.a.has(3)")).toEqual({
       $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $in: [3, "$a"] } },
     });
-    expect(jsmql.expr("$.s.length")).toEqual({
+    expect(jsmql.expr("$.s.length()")).toEqual({
       $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } },
     });
-    expect(() => jsmql.expr("$.a.uniq().length")).toThrow(
-      "'.length' is not available on an 'array' — it is defined on 'string', 'stream'. For the number of elements, write '.size()'.",
+    expect(() => jsmql.expr("$.a.uniq().length()")).toThrow(
+      "'.length()' is not available on an 'array' — it is defined on 'string'. For the number of elements, write '.size()'.",
     );
     expect(() => jsmql.expr("$.s.trim().has(3)")).toThrow(
       "'.has()' is not available on a 'string' — it is defined on 'array'. For a substring test, write '.includes(x)'.",

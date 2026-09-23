@@ -475,7 +475,7 @@ JSMQL threads the root-document read through `$lookup.let` for you; see
 
 ### Bracket Access
 
-> **JSMQL interprets dot access; it reads bracket access raw.** A `.member` access can carry compiler meaning — most notably `.length`, which folds to the string-or-array length operator. Square brackets never do: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. JSMQL does not interpret what sits inside the brackets — whatever you write is the property you get. So when you mean "the data at this key, exactly as written" (including a field literally named `length`), use brackets.
+> **JSMQL interprets dot access; it reads bracket access raw.** A `.member` access is a field read, and a `.method()` call after it is a JSMQL method: `$.x.length` is the field named `length` inside `x`, and `$.x.length()` is the character count of `x`. Square brackets never carry compiler meaning: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. JSMQL does not interpret what sits inside the brackets — whatever you write is the property you get. So when you mean "the data at this key, exactly as written" (including a field literally named `length`), use brackets.
 
 Use square brackets for computed index/key access. The compiled MQL depends on the receiver type:
 
@@ -573,11 +573,11 @@ The same element-type inference applies across `.filter`/`.find`/`.some`/`.every
 
 If you want compact output for a *numeric* index, pin the type — bind the value to a `const` with a type-revealing initialiser, or chain a type-fixing method (`.map(x => x)`, `.toReversed()`, …).
 
-**Callback `(element, index, array)`.** Array-method callbacks (`.map` / `.filter` / `.find` / `.some` / `.every` / `.flatMap` / …) accept all three JS parameters. The third — the array being iterated — is the method's input, so `arr.length` is the count of that array (`$size`): `$.items.map((el, i, arr) => el / arr.length)`. Strict-JS semantics: in a `.filter(...).map((el, i, arr) => …)` chain, `arr` is the post-filter array (it's `map`'s input). The `index` is lazy — JSMQL only emits the `$zip`/`$range` index machinery when `i` is *actually used*; `(el, i, arr) => arr.length` (where `i` is only there positionally to reach `arr`) compiles to a plain `$map`/`$filter`.
+**Callback `(element, index, array)`.** Array-method callbacks (`.map` / `.filter` / `.find` / `.some` / `.every` / `.flatMap` / …) accept all three JS parameters. The third — the array being iterated — is the method's input, so `arr.size()` is the count of that array (`$size`): `$.items.map((el, i, arr) => el / arr.size())`. Strict-JS semantics: in a `.filter(...).map((el, i, arr) => …)` chain, `arr` is the post-filter array (it's `map`'s input). The `index` is lazy — JSMQL only emits the `$zip`/`$range` index machinery when `i` is *actually used*; `(el, i, arr) => arr.size()` (where `i` is only there positionally to reach `arr`) compiles to a plain `$map`/`$filter`.
 
-On a **`$$$.<coll>` lookup chain** (`$$$.orders.filter(p).map((o, _i, coll) => …)`) the third param is the *foreign sub-stream*, and `coll.length` is its document count — how many documents matched the filter — materialised by a `$setWindowFields` `$count` inside the `$lookup.pipeline`. A stream has no materialised array, so **only `.length`** is available on this handle (no indexing or iteration), and the **index** param is never available (MongoDB streams have no per-doc index; it may be present, unused, only to reach the 3rd param). Example: `$.byOrder = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, share: o.total / coll.length }))`.
+On a **`$$$.<coll>` lookup chain** (`$$$.orders.filter(p).map((o, _i, coll) => …)`) the third param is the *foreign sub-stream*, and `coll.size()` is its document count — how many documents matched the filter — materialised by a `$setWindowFields` `$count` inside the `$lookup.pipeline`. A stream has no materialised array, so **only `.size()`** is available on this handle (no indexing or iteration), and the **index** param is never available (MongoDB streams have no per-doc index; it may be present, unused, only to reach the 3rd param). Example: `$.byOrder = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, share: o.total / coll.size() }))`.
 
-The **bare root** `$` is the simplest case: the root document is always an object and never an array, so there is nothing to dispatch on for *any* key. A string-literal key lowers to a plain field reference — `$["x"]` is just `$.x` — and a computed key lowers straight to `$getField`. This is how you name a field that is not a bare identifier — a name containing a dot, dash, space, etc. — and how you read a nested `length` field without `.length` folding to the string-or-array length operator:
+The **bare root** `$` is the simplest case: the root document is always an object and never an array, so there is nothing to dispatch on for *any* key. A string-literal key lowers to a plain field reference — `$["x"]` is just `$.x` — and a computed key lowers straight to `$getField`. This is how you name a field that is not a bare identifier — a name containing a dot, dash, space, etc. — and a nested `length` field is a plain `.length` read, because JSMQL computes no property:
 
 ```js
 $["cart.field.length"]              // → "$cart.field.length"   — the nested `length` field, raw
@@ -595,9 +595,9 @@ $[$.fieldName]                      // → { $getField: { field: "$fieldName", i
 **A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists:
 
 ```js
-$.s?.trim().length   // a call runs after the ?. — the chain stops, and answers null
+$.s?.trim().length() // a call runs after the ?. — the chain stops, and answers null
 // → { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: { $trim: { input: "$s" } } } } }
-$.s.trim().length    // no ?. — but `.length` is a JavaScript method, and its receiver may be null, so it too answers null
+$.s.trim().length()  // no ?. — but `.length()` is a JavaScript method, and its receiver may be null, so it too answers null
 // → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
 ```
 
@@ -610,7 +610,7 @@ $.s.trim().length    // no ?. — but `.length` is a JavaScript method, and its 
 | Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user.name", null] }, null] }, then: null, else: { $trim: { input: "$user.name" } } } }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
-| `.length` of optional — a computed property, so it counts as a call | nothing; the chain stops | `$.user?.tags.length` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user.tags", null] }, null] }, then: null, else: { $switch: { branches: [{ case: { $in: [{ $type: "$user.tags" }, ["array"]] }, then: { $size: "$user.tags" } }, { case: { $in: [{ $type: "$user.tags" }, ["string"]] }, then: { $strLenCP: "$user.tags" } }], default: null } } } }` |
+| `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user.tags", null] }, null] }, then: null, else: { $size: "$user.tags" } } }` |
 | Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
 | Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
 
@@ -797,21 +797,21 @@ $.topRegions = $$$.orders.sort({ createdAt: -1 }).take(1000)
 
 `.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept, but the index is positional-only. It is the pipeline-oriented spelling — reshape, roll up, or paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. `.aggregate` also works on the current stream (`$$.aggregate((o) => { … })`), where the block's statements are simply the chain's stages — the same thing writing them directly, or chaining them (`$$.$sort({ … }).$limit(10)`), does. It earns its keep there in a [`$facet` branch](#facet-via----key--chain--), which *is* a sub-pipeline, so it has no "write them directly" alternative.
 
-**The sub-stream count (`(o, _i, coll) => …`).** The 3rd param names the **sub-stream** the pipeline has produced so far; `coll.length` is how many documents are in it, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Use it as an in-pipeline guard:
+**The sub-stream count (`(o, _i, coll) => …`).** The 3rd param names the **sub-stream** the pipeline has produced so far; `coll.size()` is how many documents are in it, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Use it as an in-pipeline guard:
 
 ```js
 $.orders = $$$.orders.aggregate((o, _i, coll) => {
   $match(o.userId === $._id);
-  assert(coll.length > 0, "User without orders is impossible");
+  assert(coll.size() > 0, "User without orders is impossible");
 });
 ```
 
-Only `coll.length` is available, because a stream has no array to index or iterate. The index (2nd) param may be present but JSMQL never *uses* it, because there is no per-doc stream index. **Caveat — empty sub-stream:** an in-pipeline `assert(coll.length > 0, …)` runs *inside* the lookup pipeline, so when a user has **zero** matching orders there is no document for it to reject — the result is just `orders: []`, and the assert does not fire. To *guarantee* a non-empty result, assert on the materialised array at the outer level instead: `$.orders = $$$.orders.filter(o => o.userId === $._id); assert($.orders.length > 0, "…");`.
+Only `coll.size()` is available, because a stream has no array to index or iterate. The index (2nd) param may be present but JSMQL never *uses* it, because there is no per-doc stream index. **Caveat — empty sub-stream:** an in-pipeline `assert(coll.size() > 0, …)` runs *inside* the lookup pipeline, so when a user has **zero** matching orders there is no document for it to reject — the result is just `orders: []`, and the assert does not fire. To *guarantee* a non-empty result, assert on the materialised array at the outer level instead: `$.orders = $$$.orders.filter(o => o.userId === $._id); assert($.orders.size() > 0, "…");`.
 
-**Chained terminals.** A lookup call is a first-class value. Chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and JSMQL materialises the lookup into an internal `__jsmql.tmp.<N>` slot and reads the rest of the chain as a value over that slot. The same pipeline-scoped `let` that cleans up `__jsmql` clears the slot at the end:
+**Chained terminals.** A lookup call is a first-class value. Chain `.size()` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and JSMQL materialises the lookup into an internal `__jsmql.tmp.<N>` slot and reads the rest of the chain as a value over that slot. The same pipeline-scoped `let` that cleans up `__jsmql` clears the slot at the end:
 
 ```js
-let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
+let nOrders = $$$.orders.filter(o => o.userId === $._id).size();
 $.n = nOrders;
 // → [
 //     { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
@@ -831,7 +831,7 @@ let name = $$$.users.find(u => u._id === $.userId).name;
 **The materialised `$lookup` runs beside the stage that reads it.** A join written inside a callback reads the document that callback's *stage* receives, so JSMQL places the `$lookup` directly ahead of that stage — never at the front of the statement. The callback parameter of a chain link names what the previous link produced, and the join follows it:
 
 ```js
-$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length }));
+$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).size() }));
 // → [{ $sortByCount: "$tag" },
 //    { $lookup: { from: "orders", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
 //    { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } }]
@@ -847,10 +847,10 @@ $.names = $.items.map(x => $$$.products.find({ _id: x.pid }).name);
 //   '$lookup' STAGE …
 
 $$ = $.items; $.name = $$$.products.find({ _id: $.pid }).name;     // ✅ each element is a document
-let ps = $$$.products.filter(p => p.ok); $.n = $.items.map(x => ps.length);  // ✅ joined once, outside
+let ps = $$$.products.filter(p => p.ok); $.n = $.items.map(x => ps.size());  // ✅ joined once, outside
 ```
 
-A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter`. JSMQL rejects a bare `$$$.coll.reduce(...)`, because it would be a Cartesian product over the whole foreign collection. JSMQL also rejects `.length` and `.reduce` on a `.find()` result, with a targeted message: `.find` returns scalar-or-null (after `$set $first`), so an array reduction over it is not meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
+A chained terminal (`.size()`, `.reduce`, `.map`) requires a preceding `.find/.filter`. JSMQL rejects a bare `$$$.coll.reduce(...)`, because it would be a Cartesian product over the whole foreign collection. JSMQL also rejects `.size()` and `.reduce` on a `.find()` result, with a targeted message: `.find` returns scalar-or-null (after `$set $first`), so an array reduction over it is not meaningful. To count matches, use `.filter(pred).size()`; to read a property of the matched doc, chain `.find(pred).<field>`.
 
 **Stream-method chains push into the `$lookup.pipeline` body.** A sequence of registered stream methods (the stream-method vocabulary in [src/registry/names.ts](../src/registry/names.ts) — for example `.map`, `.toSorted`, `.slice`) chained on a `$$$.<coll>` receiver becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array, with no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
 
@@ -905,9 +905,9 @@ $.productIds = $$$.orders.filter(o => o.userId === $._id).map("productIds").flat
 // → $lookup (pipeline: [$match]) + $set { productIds: uniq(flatten($map(result, "productIds"))) }
 ```
 
-The existing `.length` / `.reduce` / member-access terminals still take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised, transformed slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith`, and a following `.take` etc. lowers to `$limit` there. A `.map(x => { … ; return ({ … }) })` block that returns one does the same. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
+The `.size()` / `.reduce` / member-access terminals take precedence — `.filter(p).map(...).size()` emits `$size` against the materialised, transformed slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith`, and a following `.take` etc. lowers to `$limit` there. A `.map(x => { … ; return ({ … }) })` block that returns one does the same. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
 
-**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript, and JSMQL rejects a stage inside it. To run stages *and* reshape, use `.aggregate` and write the reshape as `<param> = <expr>`, which replaces the body's own document — the same `$replaceWith` a `.map` emits. `$` is the OUTER document at every depth, so JSMQL refuses `$ = …` inside a body and names the parameter. The block has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.length`, and nested `$$$.<coll>` lookups:
+**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript, and JSMQL rejects a stage inside it. To run stages *and* reshape, use `.aggregate` and write the reshape as `<param> = <expr>`, which replaces the body's own document — the same `$replaceWith` a `.map` emits. `$` is the OUTER document at every depth, so JSMQL refuses `$ = …` inside a body and names the parameter. The block has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.size()`, and nested `$$$.<coll>` lookups:
 
 ```js
 $.orders = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
@@ -924,8 +924,8 @@ As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$
 **Why does `.find()` keep JS-faithful cardinality?** MongoDB's `$lookup` always returns an array. JSMQL adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off is one extra in-place `$set` stage. Even when the predicate matches several foreign docs, the row count stays stable, unlike the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out.
 
 **Caveats:**
-- **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. A reference to the enclosing-foreign param (`o.x`) auto-lets into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); u.orders = $$$.orders.filter(o => o.userId === u._id); })`.
-  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope needs one capture, at the level it belongs to. This applies to the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param, computed on that ancestor's own pipeline rather than the one reading it), and an outer-pipeline `let`/`const` declared before the lookup. JSMQL captures each **once** into the `$lookup.let` of its own level (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings), and every deeper level reads it back through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream). Each resolves to its own var with no collision, and each takes its value from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`). A bare `$$ = $$$.<coll>.aggregate(…)`, with no filter, is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream, so it cannot read the outer doc, count, or `let` inside it — only `coll.length` is available there.
+- **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. A reference to the enclosing-foreign param (`o.x`) auto-lets into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).size() > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); u.orders = $$$.orders.filter(o => o.userId === u._id); })`.
+  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope needs one capture, at the level it belongs to. This applies to the root stream count (`$$.size()`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.size()`, the 3rd `.aggregate` param, computed on that ancestor's own pipeline rather than the one reading it), and an outer-pipeline `let`/`const` declared before the lookup. JSMQL captures each **once** into the `$lookup.let` of its own level (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings), and every deeper level reads it back through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.size()` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.size()` (the sub-stream). Each resolves to its own var with no collision, and each takes its value from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`). A bare `$$ = $$$.<coll>.aggregate(…)`, with no filter, is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream, so it cannot read the outer doc, count, or `let` inside it — only `coll.size()` is available there.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema or driver `[DEF-013]` — see [DEFERRED.md](DEFERRED.md).
 - **`.find()` multi-match.** `$first` picks the first matching doc, and the ordering follows MongoDB's storage order. For deterministic single-doc selection, use `.aggregate((o) => { …; $sort({ … }); $limit(1); }).at(0)`.
 - **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — JSMQL inlines its value into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot become the compile-time `from` field, so JSMQL rejects it with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
@@ -1092,59 +1092,59 @@ read of the result, with a hint that points at the statement form. `jsmql.filter
 `jsmql.expr` reject it wholesale, because it is Pipeline-only; `jsmql.update`
 rejects it too, because an update document is made of writes.
 
-### `$$.length`: count the current stream
+### `$$.size()`: count the current stream
 
-`$$` is the current stream; `$$.length` is its document count **at the point you
-use it** — the JS array-length idiom. It is a value you can use anywhere an
+`$$` is the current stream; `$$.size()` is its document count **at the point you
+use it** — `.size()`, as `Set.size` names a count. It is a value you can use anywhere an
 expression goes: a field, arithmetic, an `assert` condition, a stage body.
 
 ```js
 // Annotate every doc with the size of the (filtered) stream.
-jsmql(`$match($.status === "active"); $.activeCount = $$.length;`);
+jsmql(`$match($.status === "active"); $.activeCount = $$.size();`);
 // → [
 //     { $match: { status: "active" } },
-//     { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-//     { $set: { activeCount: "$__jsmql.length" } },
+//     { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+//     { $set: { activeCount: "$__jsmql.size" } },
 //     { $unset: "__jsmql" }
 //   ]
 
 // Reuse is free; the count is RECOMPUTED after a stage that changes it.
-jsmql(`$.before = $$.length; $match($.keep); $.after = $$.length;`);
+jsmql(`$.before = $$.size(); $match($.keep); $.after = $$.size();`);
 // → before = pre-match count, after = post-match count (two $setWindowFields)
 
 // The conditional-error use — "at most one match":
-jsmql(`$match($.email === "me@x.com"); assert($$.length <= 1, "expected ≤ 1 user");`);
+jsmql(`$match($.email === "me@x.com"); assert($$.size() <= 1, "expected ≤ 1 user");`);
 ```
 
 **How it works.** MongoDB has no inline "stream count" operator, so JSMQL
 materialises one. A `$setWindowFields` `$count` stamps the count onto every
-document, under `__jsmql.length`, cleaned up by the trailing `$unset`, and
-`$$.length` reads it back. JSMQL emits the materialiser **once**, before the first
+document, under `__jsmql.size`, cleaned up by the trailing `$unset`, and
+`$$.size()` reads it back. JSMQL emits the materialiser **once**, before the first
 use, **reuses** it while it stays valid, and **recomputes** it after any stage that
 changes the count or drops the field (`$match`, `$group`, `$unwind`, `$project`,
 …). This needs **MongoDB 5.0+** (`$setWindowFields`), and it buffers the stream
 (100 MB / `allowDiskUse`), like any window or group stage.
 
 **`$$` is always the ROOT stream — at any nesting depth.** Mirroring `$` (the
-root document), `$$` is the top-level stream even when you read `$$.length`
+root document), `$$` is the top-level stream even when you read `$$.size()`
 *inside* a `$lookup` sub-pipeline. There JSMQL materialises the root count at the
 top and passes it into the lookup automatically — as the `localField` when the
 predicate is one equality, and as a `$lookup.let` correlation variable
-(`jsmql_s0_length`) otherwise — so it reads back correctly:
+(`jsmql_s0_size`) otherwise — so it reads back correctly:
 
 ```js
 // "this user's recent-order count vs the total recent-user count"
-jsmql(`$.peers = $$$.users.filter(u => u.orderCount === $$.length);`);
+jsmql(`$.peers = $$$.users.filter(u => u.orderCount === $$.size());`);
 // → [
-//     { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-//     { $lookup: { from: "users", localField: "__jsmql.length", foreignField: "orderCount", as: "peers" } },
+//     { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+//     { $lookup: { from: "users", localField: "__jsmql.size", foreignField: "orderCount", as: "peers" } },
 //     { $unset: "__jsmql" }
 //   ]
 ```
 
 To count an **inner** sub-stream instead of the root, use the 3rd callback param —
-`$$$.orders.filter(p).map((o, _i, coll) => coll.length)` (see *Cross-collection
-lookups* above). `$$.length` counts the root; `coll.length` counts that sub-stream.
+`$$$.orders.filter(p).map((o, _i, coll) => coll.size())` (see *Cross-collection
+lookups* above). `$$.size()` counts the root; `coll.size()` counts that sub-stream.
 
 Each handle counts **the stream the callback that bound it runs over**, at any depth.
 A body nested inside another can read both its own count and every ancestor's at
@@ -1155,13 +1155,13 @@ it passes:
 ```js
 $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, _i, ordersColl) => {
   o.items = $$$.items.filter({ orderId: o._id }).aggregate((t, _k, itemsColl) => {
-    t = { id: t._id, inThisOrder: itemsColl.length, ordersForUser: ordersColl.length };
+    t = { id: t._id, inThisOrder: itemsColl.size(), ordersForUser: ordersColl.size() };
   });
 });
 ```
 
 **Scope.** Pipeline-only — a Filter / `jsmql.expr` has no stream to count.
-`$$.length` is the root count at every depth: a `$lookup` body (predicate,
+`$$.size()` is the root count at every depth: a `$lookup` body (predicate,
 `.aggregate` block, or `.map` chain) reads it through the `$lookup.let` capture
 above, and a `$facet` branch and a declared function body read the stamped field
 directly. The one place it cannot reach is a `$$.push(…)` (`$unionWith`) body,
@@ -1607,7 +1607,7 @@ $.name.substr(-3)                  // the last three characters — a negative s
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
                                    // has no split-into-characters form. For one character per element
-                                   // write `$range(0, $.csv.length).map(i => $.csv.charAt(i))`.
+                                   // write `$range(0, $.csv.length()).map(i => $.csv.charAt(i))`.
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
@@ -1650,16 +1650,13 @@ from the end. `.substring()` clamps to 0. `.charAt()` returns `""`; JSMQL never 
 that would return the *first* character instead. A start or length past the end of the string is safe.
 It yields `""`, as in JS.
 
-**A missing field behaves like `""`, never an error.** MongoDB's `$strLenCP` aborts the query when
-its input is missing or null, and every derived length needs `$strLenCP`. `$indexOfCP` and `$substrCP`
-instead return `null` or `""` for a missing input. Left alone, this would make `.endsWith()` abort a
-query on a document with no such field, while `.startsWith()` on the same field simply returned
-`false`. So JSMQL coerces the receiver of every length it derives. The whole string surface agrees:
-on an absent field, `.length` is `0`, `.padStart(5, "0")` is `"00000"`, `.capitalize()` is `""`, and
-`.endsWith(…)` is `false`. Plain JS would throw a `TypeError` on `undefined`. Matching MQL's
-null-tolerance is more useful over a mixed collection, and it matches what the already-safe methods
-already did. A *type* mismatch is still an error: an array or a number where a string is expected
-fails the same way it always has.
+**A missing field never aborts a query.** MongoDB's `$strLenCP` aborts the query when its input is
+missing or null, and every derived length needs `$strLenCP`. So JSMQL coerces the receiver of every
+length it derives — `.endsWith()` binds `{ $ifNull: ["$file", ""] }` above — and a string method on a
+receiver it cannot prove is there is tested first and answers `null`, the JavaScript-method rule of
+[Type-aware dispatch](#type-aware-dispatch): on an absent field, `.length()`, `.padStart(5, "0")` and
+`.endsWith(…)` are all `null`. A *type* mismatch is still an error: an array or a number where a string
+is expected fails as the server reports it.
 
 Note: the emitted length of a **literal** folds at compile time. It counts **code points**, the way
 `$strLenCP` does, not JS's UTF-16 units. So `"a👍b"` is 3, not 4.
@@ -1686,13 +1683,10 @@ $.s.truncate({ length: 24, omission: "…" })
 
 ```js
 // Property access — DOT access is interpreted, BRACKET access is raw
-$.name.trim().length                // { $strLenCP: ... }       — known string → $strLenCP
-$.csv.split(",").length             // { $size: ... }           — known array  → $size
-$.field.length                      // { $cond: { if: { $isArray: "$field" }, then: { $size: ... }, else: { $strLenCP: ... } } }
-                                    //                          — unknown type → runtime dispatch
-$.field["length"]                   // { $getField: { field: "length", input: "$field" } }
-                                    //   RAW access — a property called "length", NOT the length operator;
-                                    //   a string key → $getField (only dot .length is interpreted; see Bracket Access)
+$.name.trim().length()              // { $strLenCP: ... } under a null test — the character count
+$.csv.split(",").size()             // { $size: ... }           — the element count
+$.field.length                      // "$field.length"          — a FIELD named `length`; JSMQL computes no property
+$.field["length"]                   // { $getField: { field: "length", input: "$field" } } — the same field, bracket access
 
 // Chaining
 $.name.trim().toLowerCase()         // { $toLower: { $trim: { input: "$name" } } }
@@ -1743,7 +1737,7 @@ $.csv.split(",").concat(2, 3)
 [1, 2, 3].has($.x)         // { $in: ["$x", [1, 2, 3]] }            — membership; a string tests a substring with `.includes()`
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
 $.items.lastIndexOf($.x)   // last index of $.x, or -1 (array-only — strings rejected)
-$.items.size()             // { $size: { $ifNull: ["$items", []] } } — the element count; a string has `.length`
+$.items.size()             // { $size: { $ifNull: ["$items", []] } } — the element count; a string has `.length()`
 $.tags.join(", ")          // builds a separated string via $reduce/$concat, reading each
                            //   element as JavaScript does: a null or missing element is
                            //   written as "" rather than dropped (`[1, null, 2].join(",")`
@@ -1758,11 +1752,11 @@ $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 
 #### Type-aware dispatch
 
-**Each method reads one kind of value, and its name says which.** `.length` counts the characters of a string, `.size()` the elements of an array. `.includes(x)` tests a substring of a string, `.has(x)` membership in an array. `.slice()`, `.at()`, `.nth()` and `.concat()` read an array; a string has `.substring()`, `.substr()`, `.charAt()` and `+`. On a bare field JSMQL emits the method's own operator, and the server judges the value. On a field the compiler has proven, a method of the other kind is a compile-time error, and the message names the method to write:
+**Each method reads one kind of value, and its name says which.** `.length()` counts the characters of a string, `.size()` the elements of an array. `.includes(x)` tests a substring of a string, `.has(x)` membership in an array. `.slice()`, `.at()`, `.nth()` and `.concat()` read an array; a string has `.substring()`, `.substr()`, `.charAt()` and `+`. On a bare field JSMQL emits the method's own operator, and the server judges the value. On a field the compiler has proven, a method of the other kind is a compile-time error, and the message names the method to write:
 
 ```js
-$.arr = $.tags.uniq(); $.n = $.arr.length;
-// ✗ '.length' is not available on an 'array' — it is defined on 'string', 'stream'. For the number of elements, write '.size()'.
+$.arr = $.tags.uniq(); $.n = $.arr.length();
+// ✗ '.length()' is not available on an 'array' — it is defined on 'string'. For the number of elements, write '.size()'.
 $.s = $.name.trim(); $.b = $.s.has("re");
 // ✗ '.has()' is not available on a 'string' — it is defined on 'array'. For a substring test, write '.includes(x)'.
 ```
@@ -1788,7 +1782,7 @@ $.result = $.bool ? "R" : "OTHER";
 **A JavaScript method on a receiver that is null or missing answers `null`.** JavaScript throws there — `undefined.trim()` is a TypeError — but MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds. No other answer works: `$size` and `$strLenCP` ABORT the whole command on null, and `$toUpper`, `$substrCP`, `$regexMatch`, and `$indexOfCP` each answer a *value* instead — `""`, `false`, `-1` — that hides the missing field. So JSMQL tests first any receiver it cannot prove is there, and runs the method only when the test passes. A receiver that is certainly there takes no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result (`$$$.<coll>…`), a field the `$type` test above already proved, a path a `?.` on the way in already tested, and any method over one of those. A **lodash** method does not follow this rule, and the lodash rows do not yet share one answer of their own: `.size()` answers `0`, `.pick([…])` answers `{}`, `.chunk(n)` answers `[]`, and `.uniq()` answers `null`. [DEF-037] tracks which single answer they should give — `null`, as a JavaScript method, or lodash's own:
 
 ```js
-$.s.trim().length                 // `s` may be missing → the method is tested first, and answers null
+$.s.trim().length()               // `s` may be missing → the method is tested first, and answers null
 // → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
 
 $.a.map(x => x + 1).size()        // lodash — `_.size(undefined)` is 0, so a missing array counts as empty
@@ -1913,7 +1907,7 @@ $.numbers.reduceRight((acc, x) => acc + x, 0)
 
 ### Callback parameters `(element, index, array)`
 
-JavaScript array-method callbacks receive `(element, index, array)`, and JSMQL accepts all three. The third parameter binds the method's own input through a `$let`, so `arr.length` inside the callback gives the receiver's size. Naming the index changes what is iterated, because JSMQL then zips the input with `$range`; it emits this machinery only where a parameter is actually read. `.reduce` and `.reduceRight` take a leading `acc` parameter and allow at most three parameters. See [Optional Chaining](#optional-chaining) for the fuller treatment.
+JavaScript array-method callbacks receive `(element, index, array)`, and JSMQL accepts all three. The third parameter binds the method's own input through a `$let`, so `arr.size()` inside the callback gives the receiver's size. Naming the index changes what is iterated, because JSMQL then zips the input with `$range`; it emits this machinery only where a parameter is actually read. `.reduce` and `.reduceRight` take a leading `acc` parameter and allow at most three parameters. See [Optional Chaining](#optional-chaining) for the fuller treatment.
 
 ```js
 // Index-aware map: pair each element with its position
@@ -2100,7 +2094,7 @@ $.xs.head()  / .first()                      // first element  ($first)
 $.xs.last()                                  // last element   ($last)
 $.xs.tail()  / .initial()                    // all but the first / all but the last element
 $.xs.nth(2)  / .nth(-1)                       // lodash spelling of `.at(i)` (n defaults to 0)
-$.xs.size()                                  // the element count — a string has `.length`, an object `.keys().size()`
+$.xs.size()                                  // the element count — a string has `.length()`, an object `.keys().size()`
 ```
 
 > `take`/`drop`/`takeRight`/`dropRight` reject a **negative** count; the error message points at the opposite-end method. An `n` past the array length is fine: you get the whole array or an empty one, matching lodash. `head`/`first`/`last` on an empty array yield `null`, MongoDB's missing-value marker.
@@ -3436,7 +3430,7 @@ jsmql(`$$ = $$$.transactions.filter(t => t.client === 156 && t.createdAt >= new 
 
 The lambda parameter IS the document being matched: write `t.client`, not `$.client`. This follows the same convention as the facet form. JSMQL rejects `$.<field>` inside the predicate of a flat (non-correlated) source-switch, with a "use the lambda parameter" hint. A block-body predicate (`o => { $sort(...); $limit(...); }`) works in the source-switch form, just as it does in a lookup.
 
-A flat source-switch *replaces* the stream: it is a `$unionWith` with no `let:`. So inside the switched-in pipeline, the outer document, the root `$$.length`, and any outer `let` or `const` are **gone** — only the new collection's own fields (through the lambda parameter) and its own `coll.length` are available. A reference to the outer context there is an error that points you at the correlated form. For example, an outer `const k` read inside `$$ = $$$.orders.map(o => ({ v: k }))` reports that `k` "isn't available inside `$.<field>` … correlate with a `.filter` instead", and a `$.<field>` read explains that the original root is gone. To keep the outer context, add a correlating `.filter` (below); that lowers to `$lookup` and threads it in.
+A flat source-switch *replaces* the stream: it is a `$unionWith` with no `let:`. So inside the switched-in pipeline, the outer document, the root `$$.size()`, and any outer `let` or `const` are **gone** — only the new collection's own fields (through the lambda parameter) and its own `coll.size()` are available. A reference to the outer context there is an error that points you at the correlated form. For example, an outer `const k` read inside `$$ = $$$.orders.map(o => ({ v: k }))` reports that `k` "isn't available inside `$.<field>` … correlate with a `.filter` instead", and a `$.<field>` read explains that the original root is gone. To keep the outer context, add a correlating `.filter` (below); that lowers to `$lookup` and threads it in.
 
 **Correlated source-switch — per-outer-document pivot via `$lookup`.** When the predicate *does* reference an outer-document field (`$.<field>`), JSMQL auto-rewrites the chain to `$lookup` + `$unwind` + `$replaceWith`. The result is a stream of foreign documents *correlated* to each input: one row per (outer × matching-foreign) pair, with the foreign document as the new root. MongoDB's `$unionWith` has no `let:` slot to thread outer-document context into its sub-pipeline, so this is the only way to express a "per-outer-document source switch" in MQL. JSMQL picks the right lowering family automatically, based on the predicate shape:
 
@@ -3488,7 +3482,7 @@ A mixed predicate works too. A `$.<field>` reference and an outer-`let` referenc
 ```js
 jsmql(`
   $$.filter({ email: "me@example.com" });
-  assert($$.length === 1, "More than one user with such email found");
+  assert($$.size() === 1, "More than one user with such email found");
   $$ = $$$.orders
     .filter({ userId: $._id })
     .toSorted({ placedAt: -1 })
@@ -3496,9 +3490,9 @@ jsmql(`
 `);
 // → [
 //   { $match: { email: "me@example.com" } },
-//   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+//   { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
 //   { $match: { $expr: { $convert: { input: true, to: { $cond: [
-//       { $eq: ["$__jsmql.length", 1] }, "bool",
+//       { $eq: ["$__jsmql.size", 1] }, "bool",
 //       "jsmql assertion failed: More than one user with such email found" ] } } } } },
 //   { $lookup: {
 //       from: "orders",
@@ -3515,7 +3509,7 @@ jsmql(`
 // ]
 ```
 
-Note the contrast with hand-written MQL. `$unionWith` has no `let:` slot, so a source-switch cannot carry the user's `_id` forward on its own; only `$lookup` can. JSMQL picks the right shape automatically when the foreign predicate references an outer name (here `$._id`, captured as the correlation variable `$$jsmql_f0__id`). The `assert` is a stream-count guard: `$$.length` materialises through `$setWindowFields`, and a `$convert`-to-bool that errors on the message aborts the run unless exactly one user matched. Each statement stays self-contained and means what JS says it means, and the lowering composes them into one correlated `$lookup`-pivot pipeline. (The final `$replaceWith` drops the whole document, so the scratch `__jsmql` fields need no trailing `$unset`.)
+Note the contrast with hand-written MQL. `$unionWith` has no `let:` slot, so a source-switch cannot carry the user's `_id` forward on its own; only `$lookup` can. JSMQL picks the right shape automatically when the foreign predicate references an outer name (here `$._id`, captured as the correlation variable `$$jsmql_f0__id`). The `assert` is a stream-count guard: `$$.size()` materialises through `$setWindowFields`, and a `$convert`-to-bool that errors on the message aborts the run unless exactly one user matched. Each statement stays self-contained and means what JS says it means, and the lowering composes them into one correlated `$lookup`-pivot pipeline. (The final `$replaceWith` drops the whole document, so the scratch `__jsmql` fields need no trailing `$unset`.)
 
 **Empty the stream.** `$$ = []` drops every document. It lowers to `[{ $match: { $expr: false } }]`, a never-matching `$match`. MongoDB rejects `$limit: 0` ("the limit must be positive"), so JSMQL emits the never-matching `$match` instead. The explicit-stage spelling is `$match(false)`.
 
@@ -3594,7 +3588,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | **Predicate** — `.find` `.filter` `.reject` (and `.map`'s iteratee) | `o => o.cat === "a"` · `{ cat: "a" }` · `["cat", "a"]` · `"active"` (truthy test) | match on `cat` |
 
 ```js
-$.n = $$$.orders.filter({ userId: $._id }).length;   // ≡ .filter(o => o.userId === $._id)
+$.n = $$$.orders.filter({ userId: $._id }).size();   // ≡ .filter(o => o.userId === $._id)
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
 //    { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }]  — the same $lookup either way
 ```
@@ -3679,7 +3673,7 @@ In a join, the same link on a stream of whole documents is not a stream link. It
 
 The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stream still carries one order per line, with `items` holding that line. To make the elements the documents, say so: `.map(item => item)` is `{ $replaceWith: "$items" }`. From that stage on, the document is the element again, as it is after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and changes nothing else: a callback after it still receives the whole document.
 
-In a **value** position the chain is JavaScript's value. `$$$.orders.flatMap("items")` is the items themselves: the `$lookup` holds one order per line, and the value reads the line off each. So `.length` counts lines (`{ $size: "$<the joined array>" }`, one joined document per line, so nothing is picked out first), `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
+In a **value** position the chain is JavaScript's value. `$$$.orders.flatMap("items")` is the items themselves: the `$lookup` holds one order per line, and the value reads the line off each. So `.size()` counts lines (`{ $size: "$<the joined array>" }`, one joined document per line, so nothing is picked out first), `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
 
 On three methods, an object means something richer than a matcher, so JSMQL reads it that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 
@@ -4761,7 +4755,7 @@ to end. Where a stream genuinely *is* an array, it reads as one:
 import "@koresar/jsmql/globals";
 
 jsmql(({ $ }) => {
-  $set({ orderCount: $$$.orders.filter((o) => o.userId === $._id).length });
+  $set({ orderCount: $$$.orders.filter((o) => o.userId === $._id).size() });
   //                     ╰── autocomplete: find, filter, aggregate, map, sortBy, $match, $group, …
   //                                                                  ╰── typed `number`
   $$.filter((d) => d.orderCount > 0).$sort({ orderCount: -1 }).take(3);
@@ -5318,7 +5312,7 @@ null        = "null"
 ## FAQ
 
 **Q: How do I get an array's length?**
-A: Use `.size()` for an array and `.length` for a string. `$.items.size()` is `{ $size: { $ifNull: ["$items", []] } }`, and a missing array counts as empty. The `$size()` escape hatch is also there: `$size($.items)`.
+A: Use `.size()` for an array and `.length()` for a string. `$.items.size()` is `{ $size: { $ifNull: ["$items", []] } }`, and a missing array counts as empty. The `$size()` escape hatch is also there: `$size($.items)`.
 
 **Q: Is `$.field.includes(x)` a `$in` or a string-substring match?**
 A: A substring match, always: `.includes(x)` is a string method. Membership in an array is `.has(x)`, which emits `$in` in an expression and `{ field: x }` in a query document (see [Type-aware dispatch](#type-aware-dispatch)). On a field the compiler has proven to be an array, `.includes` is a compile-time error that names `.has(x)`. The operator forms are also there: `$in(x, $.items)`, the needle first, as MongoDB spells it.

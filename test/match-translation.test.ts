@@ -555,7 +555,7 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
   // `.size()` counts the elements of an array. The query language has no operator for a
   // count, so the comparison stays under `$expr`. A missing array reads as empty, as
   // lodash's `_.size(undefined)` is 0, so the `$ifNull` guard keeps `$size` from an abort.
-  // `.length` is the length of a STRING: on a bare field it takes `$strLenCP` under a
+  // `.length()` is the length of a STRING: on a bare field it takes `$strLenCP` under a
   // null guard, with no test of the receiver's type at run time.
 
   it("translates `$.arr.size() === N` to a guarded `$size`", () => {
@@ -610,8 +610,8 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
     ]);
   });
 
-  it("reads `.length` on a bare field as a string length: `$strLenCP` under a null guard", () => {
-    expect(jsmql("[$match($.name.length === 3)]")).toEqual([
+  it("reads `.length()` on a bare field as a string length: `$strLenCP` under a null guard", () => {
+    expect(jsmql("[$match($.name.length() === 3)]")).toEqual([
       {
         $match: {
           $expr: {

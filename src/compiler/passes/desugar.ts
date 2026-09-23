@@ -198,16 +198,15 @@ const bareReturnBlock: Rule = {
  * way too. Every reader downstream then asks ONE question ("is this a
  * FieldRef?"), instead of walking a chain to find out.
  *
- * `.length` is the exception, and the registry states so: its row is the only
- * one that is READ rather than called on something a field can hold. So the
- * name decides, and the rule stays blind to the spelling:
+ * A member of a NAMESPACE (`Math.PI`) is the one read that is not a field, and the
+ * registry states so (`call: false` on a row whose `on` is the namespace). Every
+ * `.name` on a value is a field, and every computation is a call:
  *   $.a.b         → FieldRef("a.b")
- *   $.a.length    → the size of `a`, left alone
- *   $.a.length.b  → FieldRef("a.length.b")   ← a field really called `length`
+ *   $.a.length    → FieldRef("a.length")   ← a field really called `length`
+ *   $.a.length()  → the character count of `a`, a MethodCall left alone
  *
- * The third case is why the rule collects the WHOLE chain from where it stands,
- * instead of folding one link: `.length` declines while it is the last segment,
- * and the `.b` above it then folds straight past it.
+ * The rule collects the WHOLE chain from where it stands, instead of folding one
+ * link, so a path of any depth becomes one FieldRef.
  */
 const fieldPath: Rule = {
   name: "memberAccess",

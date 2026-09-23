@@ -439,6 +439,8 @@ const VALUE_METHOD_SKIP = {
     "repeat",
     "indexOf",
     "includes",
+    // `.length()` reads the native `length` property; the call form is typed through `$`
+    "length",
   ]),
   // Native `Date.prototype`: the accessors plus `.getTime()` and `.toISOString()`,
   // which lib.d.ts already types. The single source of truth is `nativeDateMethodNames()`

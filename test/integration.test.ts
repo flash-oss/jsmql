@@ -95,7 +95,7 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
   it("expr: string methods on short / null / missing receivers match JS semantics", async () => {
     const rows = (await aggregate(
       "users",
-      `$ = { name: $.name, tail: $.email.substr(-13), len: $.email.length };`,
+      `$ = { name: $.name, tail: $.email.substr(-13), len: $.email.length() };`,
     )) as { name: string; tail: string; len: number }[];
     const byName = Object.fromEntries(rows.map((r) => [r.name, { tail: r.tail, len: r.len }]));
     expect(byName["Joan Clarke"]).toEqual({ tail: "@bletchley.uk", len: 17 }); // longer than 13
@@ -368,7 +368,7 @@ $sort({ _id: 1 });`,
     expect(Number((rows[0] as { latest: unknown }).latest)).toBe(new Date("2026-01-15T00:00:00.000Z").getTime());
   });
 
-  // ── the quirkiest shapes: nested $lookup, assert(), $$.length ──────────────
+  // ── the quirkiest shapes: nested $lookup, assert(), $$.size() ──────────────
 
   // Nested $lookup in a block-body predicate: users → their recent orders →
   // each order's shipments. The inner predicate correlates on TWO levels —
@@ -477,17 +477,17 @@ $project({ name: 1, recentOrders: 1 });`,
     );
   });
 
-  // $$.length — the current stream's document count as a value — materialised
+  // $$.size() — the current stream's document count as a value — materialised
   // once through $setWindowFields and reused across two $set fields AND an assert,
   // with the scratch field $unset at the end. (realistic.test.ts "tag each
   // in-stock product with the category total + size guard".)
-  it("pipeline: $$.length reused across fields + assert guard", async () => {
+  it("pipeline: $$.size() reused across fields + assert guard", async () => {
     const rows = await aggregate(
       "products",
       `$match($.inStock === true);
-$.totalInStock = $$.length;
-$.sharePct = 100 / $$.length;
-assert($$.length <= 1000, "too many in-stock products to render");`,
+$.totalInStock = $$.size();
+$.sharePct = 100 / $$.size();
+assert($$.size() <= 1000, "too many in-stock products to render");`,
     );
     expect(rows).toHaveLength(8); // 8 of 10 products are in stock
     expect(rows.every((r) => (r as { totalInStock: number }).totalInStock === 8)).toBe(true);
@@ -771,7 +771,7 @@ $ = { lines };`,
       "users",
       `const userId = 0x6500000000000000000000a2;
 $$.filter({ _id: userId });
-assert($$.length === 1, "User not found");
+assert($$.size() === 1, "User not found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
@@ -892,7 +892,7 @@ $ = { n: $.n, m: $.m, lines: $.lines };`,
       "users",
       `const userId = 0x6500000000000000000000a2;
 $$.filter({ _id: userId });
-assert($$.length === 1, "User not found");
+assert($$.size() === 1, "User not found");
 
 const myProductIds = $$$.orders
   .filter({ userId })

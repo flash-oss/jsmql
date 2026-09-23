@@ -518,6 +518,13 @@ export function elementOnlyOf(name: string): { when: "always" | "bare"; why: str
   return (row(name) as { elementOnly?: { when: "always" | "bare"; why: string } } | undefined)?.elementOnly ?? null;
 }
 
+/** Does the row lower this name as a VALUE on the stream itself — `$$.size()`, the document count — rather than as a chain link? */
+export function hasStreamValueCell(name: string): boolean {
+  const expr = (row(name) as { expr?: { perFamily?: Record<string, unknown> } } | undefined)?.expr;
+  const cell = expr?.perFamily?.stream;
+  return typeof cell === "object" && cell !== null && typeof (cell as { emit?: unknown }).emit === "function";
+}
+
 /** Does the value cell answer null only for a null or missing input — never for an input that is there? */
 export function neverNullOf(name: string): boolean {
   return (row(name) as { neverNull?: true } | undefined)?.neverNull === true;

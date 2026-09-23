@@ -13,7 +13,7 @@
 //                          counter is the Env's, in src/compiler/emit/env.ts,
 //                          and it builds its path here)
 //   __jsmql.<reserved>   — named system values                (for example, the
-//                          stream length `__jsmql.length`)
+//                          stream size `__jsmql.size`)
 //
 // THE ONE EXCEPTION: `$group` / `$bucket` accumulator OUTPUT keys may not
 // contain dots, so scratch produced *inside* a group cannot live under the
@@ -35,13 +35,13 @@ export function tmpSlot(n: number): string {
 }
 
 /**
- * Reserved named system value: the current stream length (`$$.length`).
+ * Reserved named system value: the current stream size (`$$.size()`).
  * A `$setWindowFields` `$count` materialises this value per document, and the
- * field path `"$" + LENGTH_SLOT` reads it back. It is a reserved key, so it
+ * field path `"$" + SIZE_SLOT` reads it back. It is a reserved key, so it
  * cannot collide with a user binding (`let length` → `__jsmql.var.length`).
- * See docs/specs/stream-length.md.
+ * See docs/specs/stream-size.md.
  */
-export const LENGTH_SLOT = `${JSMQL_NS}.length`;
+export const SIZE_SLOT = `${JSMQL_NS}.size`;
 
 /**
  * Flat reserved scratch name for `$group` / `$bucket` accumulator output.
@@ -66,7 +66,7 @@ export const GROUP_TMP = `${JSMQL_NS}Tmp`;
 // lookup body, …) and `kind` is one of:
 //   f — a document field        (`$._id` → `jsmql_f0__id`, `o.createdAt` → `jsmql_f1_createdAt`)
 //   v — a `let`/`const` binding  (`const startDate = …` at depth 1 → `jsmql_v1_startDate`)
-//   s — a system value          (`$$.length` → `jsmql_s0_length`, `ordersColl.length` → `jsmql_s1_length`)
+//   s — a system value          (`$$.size()` → `jsmql_s0_size`, `ordersColl.size()` → `jsmql_s1_size`)
 // The connector after the depth is always a single `_`, so a field that itself
 // starts with `_` (like `_id`) reads as `jsmql_f0__id` (doubled), by design.
 

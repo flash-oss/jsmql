@@ -149,7 +149,7 @@ export class Chain {
 
   /**
    * The field paths a materialiser stamped, that are still FRESH — see
-   * docs/specs/stream-length.md § Compute-once / reuse / recompute. A second
+   * docs/specs/stream-size.md § Compute-once / reuse / recompute. A second
    * read of a stamped path costs no stage. A stage whose row does not state
    * `preservesCount` clears the set, so the next read stamps again.
    */

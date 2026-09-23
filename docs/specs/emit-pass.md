@@ -48,8 +48,8 @@ row's claim. On a row with two or more families, the compiler dispatches it at
 run time over the families the receiver can be. `.indexOf()` and `.lastIndexOf()`
 are the two such rows among the JavaScript methods: every other method reads one
 family, and its row states a `sibling` sentence per family it refuses, which the
-refusal (`errors.ts`) puts after its head — `'.length' is not available on an
-'array' — it is defined on 'string', 'stream'. For the number of elements, write
+refusal (`errors.ts`) puts after its head — `'.length()' is not available on an
+'array' — it is defined on 'string'. For the number of elements, write
 '.size()'.` A branch whose `slotType` cannot take a PROVEN argument kind drops
 out of the dispatch (`argsFit` in `select.ts`), and one branch left runs alone;
 `checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven
@@ -324,7 +324,7 @@ modulo test, the null test, a field against a constant — in that order), and
 and null is the `FilterOut` contract for "wrap my value form". A row with no
 value form (a query-only operator) has nothing to wrap. So inside an
 `$elemMatch` boundary — where the server refuses it — the leaf throws a worded
-refusal before the cell runs. `FilterIn` hands a cell `pathOf` (a `.length` is
+refusal before the cell runs. `FilterIn` hands a cell `pathOf` (a `.length()` call is
 never a path segment; inside a `.some` callback the INNERMOST element is the
 root, and only its fields are paths — an outer callback's parameter read
 inside a nested one has no query form and takes the `$expr` road; the
@@ -403,7 +403,7 @@ the outer chain and silently leaves the body — measured: a `$out` inside a
 empty.
 
 **A first-only row reads a hoist, not just a position.** A value in a stage's
-own body can need a stage of its own — `$$.length` needs a `$setWindowFields`,
+own body can need a stage of its own — `$$.size()` needs a `$setWindowFields`,
 a `$$$.<coll>` read needs a `$lookup` — and the compiler places that stage
 directly ahead of the one that reads it
 ([lookup-stage.md § Where a hoisted stage lands](lookup-stage.md)). So "is
@@ -412,7 +412,7 @@ chain's PENDING hoist, which by then holds whatever this stage's body made.
 A first-only stage with one pending hoist has no placement at all — the
 materialiser cannot follow the read, and nothing may precede the stage. So
 the compiler refuses it and names the later-statement rewrite. The chain it
-asks is `env.chain`, never the root one: a `$$.length` read inside a
+asks is `env.chain`, never the root one: a `$$.size()` read inside a
 sub-pipeline stamps OUTSIDE it and leaves that body's own first stage first
 (measured, the server runs it). The compiler judges a name the BODY holds the
 same way, unless the row files its slot as a sub-pipeline — a stage there is
@@ -484,7 +484,7 @@ in a predicate and `"$x"` in a reshape, and the bare `d` is `"$$ROOT"`. `$.x`
 inside the callback names the same document — the root — as HR4 says it does
 everywhere. The compiler binds the index and collection parameters lodash
 allows, and a READ of either says what to write instead (a stream has no
-per-document index; `$$.length` is its size).
+per-document index; `$$.size()` is its size).
 
 A stream cell receives its arguments as SOURCE and asks for the reading it
 wants: `predicate(cb)` a query document (total — a body with no native form
@@ -606,7 +606,7 @@ let cutoff = $.minTotal; $.big = $$$.orders.filter(o => o.userId === $._id && o.
 $.first = $$$.orders.find(o => o.userId === $._id);
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", pipeline: [{ $limit: 1 }], as: "first" } },
 //    { $set: { first: { $first: "$first" } } }]   — absent when nothing matched
-$.n = $$$.orders.filter(o => o.userId === $._id).length;
+$.n = $$$.orders.filter(o => o.userId === $._id).size();
 // → the $lookup HOISTED into "__jsmql.tmp.0", { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }
 ```
 
@@ -614,7 +614,7 @@ $.n = $$$.orders.filter(o => o.userId === $._id).length;
 `stream` cell that accepts it — `filter`/`reject`, the sort spellings,
 `take`, `aggregate`, a stage link, a `.map` whose body is a provable document
 (the row states `streamBody: "document"`). The first link that is not such a
-link ends the body. It and everything after it — `.length`, `.total`, `[0]`,
+link ends the body. It and everything after it — `.size()`, `.total`, `[0]`,
 a value `.map` — read the materialised array as a VALUE. A row that states
 `elementOnly` (`.difference`, `.compact`, the bare `.sortBy()`, …) is such a
 link only while the body's element is an unwound field; on a stream of whole
@@ -623,12 +623,12 @@ documents it ends the body the same way. `.find` is the one special head
 unwrapped by `$first`. A link that folds the stream into one document
 (`collapses` on the row: `countBy`, `keyBy`, `groupBy` with a field name) is
 unwrapped too, to `{}` when nothing matched, as lodash answers for an empty
-array. The slot is a typed binding, so `.length` on it is `$size` with no
+array. The slot is a typed binding, so `.size()` on it is `$size` with no
 run-time guard, and `.total` after `.find` is a path. When the body ends
 with its element in an unwound field (`Lookup.element`, set by a `.flatMap`
 no later stage replaced), the value is the elements and not their carriers:
 the compiler rebases the rest of the chain onto `<slot>.map(x => x.<element>)`
-(or onto the slot itself when the whole value is a COUNT — `.length` /
+(or onto the slot itself when the whole value is a COUNT — `.size()` /
 `.size()` — since one document holds one element; or `<slot>.<element>`
 after `.find`). The `$ =` road replaces with `$<slot>.<element>`, and the
 direct-to-`as` shortcut declines so the value road runs.
@@ -663,10 +663,10 @@ refuses a read of the outer document inside it, and names the way out.
 **Inside the body.** The callback's parameter IS the body's document: `o.x`
 reads it, `o.x = …` / `delete o.x` write it (`$set` / `$unset`), `o = { … }`
 replaces it. The callback's THIRD parameter is the body's own stream:
-`coll.filter(…)` is a `$match` there, and `coll.length` its count (a
+`coll.filter(…)` is a `$match` there, and `coll.size()` its count (a
 `$setWindowFields` inside the body). `$.` is the OUTER document and `$$` the
 ROOT stream at every depth (HR4): `$.x` is read-only from inside — the
-compiler refuses `$.x = …`, naming `o.x = …` — `$$.length` is the root
+compiler refuses `$.x = …`, naming `o.x = …` — `$$.size()` is the root
 count, materialised on the root pipeline and carried in by `let`, and the
 compiler refuses `$$.filter(…)` inside a body, naming `coll`. A nested
 `$$$.items.filter(…)` inside a predicate is hoisted inside the body's own

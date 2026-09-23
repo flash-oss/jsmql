@@ -118,7 +118,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     expect(at("length", { kind: "namespace", name: "Math" })).toMatchObject({
       kind: "wrongReceiver",
       got: "Math",
-      accepts: ["string", "stream"],
+      accepts: ["string"],
     });
     expect(at("length", value("number"))).toMatchObject({ kind: "wrongReceiver", got: "number" });
     expect(at("ceil", value("string"))).toMatchObject({ kind: "wrongReceiver", got: "string" });

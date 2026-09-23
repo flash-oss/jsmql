@@ -122,7 +122,7 @@ error, worded from the row's `sig`.
 $.a.pop();          → $.a = $.a.slice(0, -1);
 $.a.shift();        → $.a = $.a.slice(1);
 $.a.fill(0);        → $.a = $.a.map(() => 0);
-$.a.fill(9, 1, 2);  → $.a = [...$.a.slice(0, 1), ...$.a.slice(1, 2).map(() => 9), ...$.a.slice($.a.slice(0, 1).length + $.a.slice(1, 2).length)];
+$.a.fill(9, 1, 2);  → $.a = [...$.a.slice(0, 1), ...$.a.slice(1, 2).map(() => 9), ...$.a.slice($.a.slice(0, 1).size() + $.a.slice(1, 2).size())];
 ```
 
 **A name that writes one of its arguments in place** (`mutatesArgumentAt`) is, as

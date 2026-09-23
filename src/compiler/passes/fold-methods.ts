@@ -448,6 +448,11 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       return typeof a === "string" ? ok(s.endsWith(a, typeof b === "number" ? b : undefined)) : NO;
     case "includes":
       return typeof a === "string" ? ok(s.includes(a)) : NO;
+    case "length":
+      // `$strLenCP` counts CODE POINTS. JavaScript's `.length` counts UTF-16 units, and the
+      // two differ for a character outside the basic plane: `"😀".length` is 2 there and 1
+      // here. The fold answers the LANGUAGE's question.
+      return ok(points(s).length);
     case "indexOf": {
       // `$indexOfCP` answers in CODE POINTS. `"😀a".indexOf("a")` is 1 there and
       // 2 in JavaScript, whose index counts UTF-16 units.

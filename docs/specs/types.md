@@ -230,7 +230,7 @@ after `$ = …` lands on what that stage made.
 ```js
 $group({ _id: $.k, total: $sum($.amount), items: $push($.item) });  $.t = $.total ? 1 : 2;
 // → …, { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } }
-$.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length;
+$.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length();
 // → …, { $replaceWith: "$p" }, { $set: { c: { $strLenCP: "$b" } } }
 ```
 
@@ -345,7 +345,7 @@ $.u = "x";  $.v = $.u ? 1 : 2;           // u: string, present
 // → …, { $set: { v: { $cond: { if: { $ne: ["$u", ""] }, then: 1, else: 2 } } } }
 $.arr = [1];  $.w = $.arr ? 1 : 2;       // arr: array, present — always true
 // → …, { $set: { w: 1 } }
-$.n = $.a.length;  $.x = $.n ? 1 : 2;    // n: number, maybe absent
+$.n = $.a.length();  $.x = $.n ? 1 : 2;  // n: number, maybe absent
 // → …, { $set: { x: { $cond: { if: "$n", then: 1, else: 2 } } } }
 ```
 

@@ -28,7 +28,7 @@ declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?:
 // query, in a handful of lines of JavaScript. It is the playground's default
 // example because it composes almost the whole language at once:
 //   1) narrow `users` to the logged-in user (`$$.filter({ … })` → $match) and
-//      assert exactly one matched — `$$.length` is the stream count
+//      assert exactly one matched — `$$.size()` is the stream count
 //      ($setWindowFields), guarded by a $convert-error $match.
 //   2) that user's distinct, recently-bought product ids (correlated $lookup,
 //      then value-mode .map/.flatten/.uniq).
@@ -56,7 +56,7 @@ describe("recommended products (collaborative filtering)", { features: ["Pipelin
         jsmql`
 const userId = 0x507f1f77bcf86cd799439011;
 $$.filter({ _id: userId }); // limit the whole pipeline down to one pass
-assert($$.length === 1, "User not found");
+assert($$.size() === 1, "User not found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
@@ -94,13 +94,13 @@ $$ = candidateProductIds
       `,
       ).toEqual([
         { $match: { _id: new ObjectId("507f1f77bcf86cd799439011") } },
-        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
         {
           $match: {
             $expr: {
               $convert: {
                 input: true,
-                to: { $cond: [{ $eq: ["$__jsmql.length", 1] }, "bool", "jsmql assertion failed: User not found"] },
+                to: { $cond: [{ $eq: ["$__jsmql.size", 1] }, "bool", "jsmql assertion failed: User not found"] },
               },
             },
           },
@@ -281,7 +281,7 @@ describe(
         // The "look up the logged-in user, then fetch their recent orders"
         // shape that shows up in every web app. Three jsmql statements compose:
         //   1) narrow the users stream to the matching doc(s) ($match)
-        //   2) assert exactly one matched — `$$.length` is the stream count
+        //   2) assert exactly one matched — `$$.size()` is the stream count
         //      ($setWindowFields), guarded by a $convert-error $match
         //   3) pivot the stream onto that user's orders, newest-first, top 5
         // The correlated `{ userId: $._id }` makes the root user's `_id` a
@@ -292,7 +292,7 @@ describe(
         expect(
           jsmql`
 $$.filter({ email: "me@example.com" });
-assert($$.length === 1, "More than one user with such email found");
+assert($$.size() === 1, "More than one user with such email found");
 $$ = $$$.orders
   .filter({ userId: $._id })
   .toSorted({ placedAt: -1 })
@@ -300,7 +300,7 @@ $$ = $$$.orders
           `,
         ).toEqual([
           { $match: { email: "me@example.com" } },
-          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+          { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
           {
             $match: {
               $expr: {
@@ -308,7 +308,7 @@ $$ = $$$.orders
                   input: true,
                   to: {
                     $cond: [
-                      { $eq: ["$__jsmql.length", 1] },
+                      { $eq: ["$__jsmql.size", 1] },
                       "bool",
                       "jsmql assertion failed: More than one user with such email found",
                     ],
@@ -1286,11 +1286,11 @@ describe(
       { kind: "expression", usage: "db.shapes.aggregate([{ $addFields: { area: jsmql.expr(...) } }])" },
       () => {
         // A doc like `{ cart: { field: { length: 10, width: 5 } } }` — `cart.field.length`
-        // is a genuine numeric dimension, NOT an array/string length. Dot `.length`
-        // would fold to the length operator, so reach the field with RAW bracket
-        // access: jsmql interprets nothing inside the brackets — whatever the user
-        // spells is the property they get. `$["cart.field.length"]` on the bare root
-        // is a plain field reference (the root is never an array).
+        // is a genuine numeric dimension, NOT an array/string length. JSMQL computes
+        // no property: every count is a call (`.size()`, `.length()`), so a dot `.length`
+        // is a plain field read. RAW bracket access spells the same field as one path:
+        // jsmql interprets nothing inside the brackets — whatever the user spells is
+        // the property they get.
         expect(jsmql.expr(`$["cart.field.length"] * $.cart.field.width`)).toEqual({
           $multiply: ["$cart.field.length", "$cart.field.width"],
         });
@@ -1319,7 +1319,7 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { value: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.active && $.role.toLowerCase().includes("admin") && $.name.trim().length > 0`)).toEqual({
+      expect(jsmql.expr(`$.active && $.role.toLowerCase().includes("admin") && $.name.trim().length() > 0`)).toEqual({
         $cond: {
           if: {
             $and: [
@@ -2784,7 +2784,7 @@ $.revenue = $.qty * $.unitPrice;
 });
 
 describe(
-  "tag each in-stock product with the category total + size guard (`$$.length` + `assert`)",
+  "tag each in-stock product with the category total + size guard (`$$.size()` + `assert`)",
   { features: ["Pipelines"] },
   () => {
     it(
@@ -2794,22 +2794,22 @@ describe(
         // Category page: after narrowing to in-stock products, every doc carries
         // the total in-stock count (a "showing N products" header) and its share
         // of the total, and the whole aggregate aborts if the category is too big
-        // to render in one page. `$$.length` materialises ONE `$setWindowFields`
+        // to render in one page. `$$.size()` materialises ONE `$setWindowFields`
         // `$count`; both `$set`s and the `assert` reuse it (no extra count stages,
         // since `$set` is freshness-preserving). The trailing `$unset` keeps the
         // scratch field out of the result.
         expect(
           jsmql`
 $$.filter({ inStock: true });
-$.totalInStock = $$.length;
-$.sharePct = 100 / $$.length;
-assert($$.length <= 1000, "too many in-stock products to render");
+$.totalInStock = $$.size();
+$.sharePct = 100 / $$.size();
+assert($$.size() <= 1000, "too many in-stock products to render");
         `,
         ).toEqual([
           { $match: { inStock: true } },
-          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-          { $set: { totalInStock: "$__jsmql.length" } },
-          { $set: { sharePct: { $divide: [100, "$__jsmql.length"] } } },
+          { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+          { $set: { totalInStock: "$__jsmql.size" } },
+          { $set: { sharePct: { $divide: [100, "$__jsmql.size"] } } },
           {
             $match: {
               $expr: {
@@ -2817,7 +2817,7 @@ assert($$.length <= 1000, "too many in-stock products to render");
                   input: true,
                   to: {
                     $cond: [
-                      { $lte: ["$__jsmql.length", 1000] },
+                      { $lte: ["$__jsmql.size", 1000] },
                       "bool",
                       "jsmql assertion failed: too many in-stock products to render",
                     ],
@@ -3421,36 +3421,36 @@ describe("Per-user order report with counts at three nesting levels", { features
     // For each recent user, explode their orders and annotate each with three
     // different counts: this order's shipment count (a nested lookup), this
     // user's order count (the 3rd-arg `ordersColl` sub-stream handle), and the
-    // total recent-user count (`$$.length` — the ROOT stream, captured into the
-    // orders $lookup.let as `v0_length`). Verified end-to-end on a live mongod.
+    // total recent-user count (`$$.size()` — the ROOT stream, captured into the
+    // orders $lookup.let as `jsmql_s0_size`). Verified end-to-end on a live mongod.
     expect(
       jsmql(`
 $match($.createdAt >= new Date(2026, 1, 1));
 $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
   return {
     totalShipments: $$$.shipments.filter({ orderId: o._id }).size(),
-    totalOrders: ordersColl.length,
-    totalUsers: $$.length,
+    totalOrders: ordersColl.size(),
+    totalUsers: $$.size(),
   };
 });
           `),
     ).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       {
         $lookup: {
           from: "orders",
           localField: "_id",
           foreignField: "userId",
-          let: { jsmql_s0_length: "$__jsmql.length" },
+          let: { jsmql_s0_size: "$__jsmql.size" },
           pipeline: [
             { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.0" } },
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
             {
               $replaceWith: {
                 totalShipments: { $size: "$__jsmql.tmp.0" },
-                totalOrders: "$__jsmql.length",
-                totalUsers: "$$jsmql_s0_length",
+                totalOrders: "$__jsmql.size",
+                totalUsers: "$$jsmql_s0_size",
               },
             },
             { $unset: "__jsmql" },
@@ -3543,14 +3543,14 @@ describe("Cross-level references across three nested lookup levels", { features:
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // The hardest cross-level case: an `.aggregate` sub-pipeline nested inside
     // another, whose asserts reach across THREE scopes —
-    //   • `shpmntsColl.length` — this shipment sub-stream (own 3rd-arg handle)
-    //   • `ordersColl.length`  — the parent order sub-stream (an ANCESTOR handle)
+    //   • `shpmntsColl.size()` — this shipment sub-stream (own 3rd-arg handle)
+    //   • `ordersColl.size()`  — the parent order sub-stream (an ANCESTOR handle)
     //   • `o._id`              — the parent order doc (an enclosing foreign param)
     //   • `$._id`              — the ROOT user doc (two lookup levels up)
     // Each is captured into the correct `$lookup.let` (foreign/system vars
     // `jsmql_f<d>_…` / `jsmql_s<d>_…`) and read deeper through `$$` propagation. The
-    // two counts are DIFFERENT documents — `$__jsmql.length` is stamped on the
-    // shipments sub-stream, `$$jsmql_s1_length` carries the orders one down — so
+    // two counts are DIFFERENT documents — `$__jsmql.size` is stamped on the
+    // shipments sub-stream, `$$jsmql_s1_size` carries the orders one down — so
     // the second assert compares two numbers and not one with itself.
     // Verified end-to-end on a live mongod (per-user → per-order → per-shipment
     // data correct; `userId: $._id` resolves to the root user at every order).
@@ -3558,8 +3558,8 @@ describe("Cross-level references across three nested lookup levels", { features:
       jsmql(`
 $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
   const shipments = $$$.shipments.filter({ orderId: o._id }).aggregate((s, k, shpmntsColl) => {
-    assert(shpmntsColl.length > 2, \`order \${o._id} for user \${$._id} has too few shipments\`);
-    assert(shpmntsColl.length < ordersColl.length, "fewer shipments than orders");
+    assert(shpmntsColl.size() > 2, \`order \${o._id} for user \${$._id} has too few shipments\`);
+    assert(shpmntsColl.size() < ordersColl.size(), "fewer shipments than orders");
     s = { id: s._id, weight: s.weight };
   });
   o = { orderId: o._id, shipments };
@@ -3573,15 +3573,15 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
           foreignField: "userId",
           let: { jsmql_f0__id: "$_id" },
           pipeline: [
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
             {
               $lookup: {
                 from: "shipments",
                 localField: "_id",
                 foreignField: "orderId",
-                let: { jsmql_f1__id: "$_id", jsmql_s1_length: "$__jsmql.length" },
+                let: { jsmql_f1__id: "$_id", jsmql_s1_size: "$__jsmql.size" },
                 pipeline: [
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+                  { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
                   {
                     $match: {
                       $expr: {
@@ -3589,7 +3589,7 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                           input: true,
                           to: {
                             $cond: [
-                              { $gt: ["$__jsmql.length", 2] },
+                              { $gt: ["$__jsmql.size", 2] },
                               "bool",
                               {
                                 $concat: [
@@ -3613,7 +3613,7 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                       },
                     },
                   },
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+                  { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
                   {
                     $match: {
                       $expr: {
@@ -3621,7 +3621,7 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                           input: true,
                           to: {
                             $cond: [
-                              { $lt: ["$__jsmql.length", "$$jsmql_s1_length"] },
+                              { $lt: ["$__jsmql.size", "$$jsmql_s1_size"] },
                               "bool",
                               "jsmql assertion failed: fewer shipments than orders",
                             ],

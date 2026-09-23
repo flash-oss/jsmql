@@ -103,7 +103,7 @@ import {
   escapeForRegex,
   GROUP_SLOT,
   isDate,
-  LENGTH_SLOT,
+  SIZE_SLOT,
   objectBody,
   queryOwnValue,
   inCode,
@@ -2417,7 +2417,7 @@ export const NAMES = {
           1: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.",
           },
         },
       },
@@ -6888,7 +6888,7 @@ export const NAMES = {
           0: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.",
           },
         },
       },
@@ -10456,28 +10456,48 @@ export const NAMES = {
   }),
 
   size: name({
-    doc: "'.size()' — see docs/LANGUAGE.md.",
+    doc: "'.size()' — the number of elements of an array, or the document count of the stream. See docs/LANGUAGE.md.",
     call: true,
-    on: "array",
+    on: ["array", "stream"],
     sibling: {
       string: "For the number of characters, write '.length()'.",
       object: "For the number of fields, write '.keys().size()'.",
     },
     returns: "number",
     where: ["value"],
-    filter: viaFallback,
-    expr: {
-      // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
-      // missing is read as the empty array. An array LITERAL is the value, not an operand list.
-      args: { sig: "", none: true },
-      emit: ({ recv, present }) =>
-        Array.isArray(recv) ? { $size: [recv] } : sizeOf(present ? recv : arrayOrEmpty(recv)),
+    // Per family, because one answer for both states a legality the stream form
+    // does not have: `$.tags.size() < 5` scans, `$$.size() > 1` does not compile
+    // at all. A flat `viaFallback` would promise that the second merely scans.
+    filter: {
+      perFamily: {
+        array: viaFallback,
+        stream: unsupported(
+          "'$$.size()' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.size(); … }`); it has no meaning in a Filter or in 'jsmql.expr'.",
+        ),
+      },
     },
-    stream: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
+        // missing is read as the empty array. An array LITERAL is the value, not an operand list.
+        array: {
+          args: { sig: "", none: true },
+          emit: ({ recv, present }) =>
+            Array.isArray(recv) ? { $size: [recv] } : sizeOf(present ? recv : arrayOrEmpty(recv)),
+        },
+        // `$$.size()` has no inline count: it places a materialiser ahead of the
+        // statement and reads the field it wrote. See docs/specs/stream-size.md.
+        stream: {
+          args: { sig: "", none: true },
+          emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [SIZE_SLOT]: { $count: {} } } } }], SIZE_SLOT),
+        },
+      },
+    },
+    stream: unsupported("'size' is a value, not a stage. Read it: '$.n = $$.size()'."),
     statement: unsupported(
       "'.size()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.size();'",
     ),
-    group: unsupported("'.size()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    group: unsupported("'.size()' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
     window: unsupported("'.size()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
@@ -13912,12 +13932,12 @@ export const NAMES = {
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
     // value slot gets a refusal — "'$$' (current collection) is statement-only" —
-    // so `expr` is a refusal even though `$$.length` IS a value: that value is
+    // so `expr` is a refusal even though `$$.size()` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
     filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => …)'."),
     expr: unsupported(
-      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'.",
+      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.size()'.",
     ),
     stream: inCode("src/compiler/emit/statement.ts"),
     statement: inCode("src/compiler/emit/statement.ts"),
@@ -14148,46 +14168,28 @@ export const NAMES = {
   }),
 
   length: name({
-    doc: "The number of characters of a string, or the size of the stream.",
-    call: false,
-    on: ["string", "stream"],
-    sibling: { array: "For the number of elements, write '.size()'." },
+    doc: "'.length()' — the number of characters of a string. See docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    sibling: {
+      array: "For the number of elements, write '.size()'.",
+      stream: "For the document count, write '$$.size()'.",
+    },
     returns: "number",
     where: ["value"],
-    // Per family, because one answer for all three states a legality the stream
-    // form does not have: `$.tags.length < 5` scans, `$$.length > 1` does not
-    // compile at all. A flat `viaFallback` would promise that the third merely scans.
-    filter: {
-      perFamily: {
-        string: viaFallback,
-        stream: unsupported(
-          "'$$.length' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.length; … }`); it has no meaning in a Filter or in 'jsmql.expr'.",
-        ),
-      },
-    },
+    filter: viaFallback,
+    // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
+    // JavaScript method does, and the cell counts one that is there as it is.
     expr: {
-      perFamily: {
-        // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
-        // JavaScript method does, and the cell counts one that is there as it is.
-        string: {
-          args: { sig: "", none: true },
-          emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $strLenCP: r })),
-        },
-        // `$$.length` has no inline size: it places a materialiser ahead of the
-        // statement and reads the field it wrote.
-        stream: {
-          args: { sig: "", none: true },
-          emit: ({ hoist }) =>
-            hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT),
-        },
-      },
+      args: { sig: "", none: true },
+      emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $strLenCP: r })),
     },
-    stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
+    stream: unsupported("'.length()' is a value, not a stage. Assign it to a field: '$.n = $.<field>.length()'."),
     statement: unsupported(
       "'.length()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.length();'",
     ),
-    group: unsupported("'length' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
-    window: unsupported("'length' is not a window function."),
+    group: unsupported("'.length()' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
+    window: unsupported("'.length()' is not a window function."),
   }),
 
   now: name({

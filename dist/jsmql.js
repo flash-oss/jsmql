@@ -1,454 +1,6 @@
-// src/registry/tokens.ts
-var token = (e) => ({ ...e, kind: "token" });
-var TOKENS = {
-  "(": token({ doc: "The `(` token.", token: "LParen", role: "open" }),
-  ")": token({ doc: "The `)` token.", token: "RParen", role: "close", closes: "(" }),
-  "[": token({ doc: "The `[` token.", token: "LBracket", role: "open" }),
-  "]": token({ doc: "The `]` token.", token: "RBracket", role: "close", closes: "[" }),
-  "{": token({
-    doc: "The `{` token.",
-    token: "LBrace",
-    role: "open",
-    // It counts depth, so a template interpolation can tell its OWN closing brace
-    // from the brace of a nested object. `${ {a: 1} }` has two braces, and only
-    // the outer one ends the interpolation.
-    tracksDepth: true
-  }),
-  "}": token({
-    doc: "The `}` token.",
-    token: "RBrace",
-    role: "close",
-    closes: "{",
-    // When its depth agrees with an open interpolation, this brace emits NO token
-    // at all. It ends the interpolation, and template text continues. It is the
-    // one closer whose row makes nothing.
-    resumesTemplateAtDepth: true
-  }),
-  ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
-  ";": token({ doc: "The `;` token.", token: "Semi", role: "separator" }),
-  ":": token({ doc: "The `:` token.", token: "Colon", role: "separator" }),
-  ".": token({ doc: "The `.` token.", token: "Dot", role: "binder", introducesName: true }),
-  "?.": token({ doc: "The `?.` token.", token: "QuestDot", role: "binder", introducesName: true }),
-  "$.": token({ doc: "The `$.` token.", token: "DollarDot", role: "reference", introducesName: true }),
-  $: token({ doc: "The `$` token.", token: "Dollar", role: "reference", introducesName: true }),
-  $$: token({ doc: "The `$$` token.", token: "DoubleDollar", role: "reference" }),
-  $$$: token({ doc: "The `$$$` token.", token: "TripleDollar", role: "reference" }),
-  $$$$: token({
-    doc: "The `$$$$` token.",
-    token: "QuadDollar",
-    role: "reference",
-    maxRun: { limit: 4, tooLong: "Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$')" }
-  }),
-  "...": token({ doc: "The `...` token.", token: "Spread", role: "spread" }),
-  "+": token({ doc: "The `+` token.", token: "Plus", role: "operator" }),
-  "-": token({ doc: "The `-` token.", token: "Minus", role: "operator" }),
-  "*": token({ doc: "The `*` token.", token: "Star", role: "operator" }),
-  "**": token({ doc: "The `**` token.", token: "StarStar", role: "operator" }),
-  "/": token({
-    doc: "Division, or the start of a regex literal. The lexer chooses on the PRECEDING token: `a / b` is division, a leading `/` begins a regex.",
-    token: ["Slash", "RegexLiteral"],
-    role: "operator",
-    chooseBy: { afterValue: "Slash", otherwise: "RegexLiteral" }
-  }),
-  "%": token({ doc: "The `%` token.", token: "Percent", role: "operator" }),
-  "++": token({ doc: "The `++` token.", token: "PlusPlus", role: "operator" }),
-  "--": token({ doc: "The `--` token.", token: "MinusMinus", role: "operator" }),
-  "=": token({ doc: "The `=` token.", token: "Eq", role: "operator" }),
-  "+=": token({ doc: "The `+=` token.", token: "PlusEq", role: "operator" }),
-  "-=": token({ doc: "The `-=` token.", token: "MinusEq", role: "operator" }),
-  "*=": token({ doc: "The `*=` token.", token: "StarEq", role: "operator" }),
-  "/=": token({
-    doc: "Divide-and-assign, or a regex beginning with `=`. Same preceding-token rule as `/`.",
-    token: ["SlashEq", "RegexLiteral"],
-    role: "operator",
-    chooseBy: { afterValue: "SlashEq", otherwise: "RegexLiteral" }
-  }),
-  "==": token({ doc: "The `==` token.", token: "EqEq", role: "operator" }),
-  "===": token({ doc: "The `===` token.", token: "EqEqEq", role: "operator" }),
-  "!=": token({ doc: "The `!=` token.", token: "BangEq", role: "operator" }),
-  "!==": token({ doc: "The `!==` token.", token: "BangEqEq", role: "operator" }),
-  ">": token({ doc: "The `>` token.", token: "Gt", role: "operator" }),
-  ">=": token({ doc: "The `>=` token.", token: "GtEq", role: "operator" }),
-  "<": token({ doc: "The `<` token.", token: "Lt", role: "operator" }),
-  "<=": token({ doc: "The `<=` token.", token: "LtEq", role: "operator" }),
-  "&&": token({ doc: "The `&&` token.", token: "AmpAmp", role: "operator" }),
-  "||": token({ doc: "The `||` token.", token: "PipePipe", role: "operator" }),
-  "!": token({ doc: "The `!` token.", token: "Bang", role: "operator" }),
-  "&": token({ doc: "The `&` token.", token: "Amp", role: "operator" }),
-  "|": token({ doc: "The `|` token.", token: "Pipe", role: "operator" }),
-  "^": token({ doc: "The `^` token.", token: "Caret", role: "operator" }),
-  "~": token({ doc: "The `~` token.", token: "Tilde", role: "operator" }),
-  "??": token({ doc: "The `??` token.", token: "QuestQuest", role: "operator" }),
-  "?": token({ doc: "The `?` token.", token: "Quest", role: "operator" }),
-  "=>": token({ doc: "The `=>` token.", token: "Arrow", role: "arrow" }),
-  number: token({
-    doc: "A numeric literal. `0x` followed by 24 hex digits is re-read as an ObjectId \u2014 see productions.ts.",
-    token: "Number",
-    role: "literal",
-    variable: true
-  }),
-  bigint: token({ doc: "A BigInt literal.", token: "BigInt", role: "literal", variable: true }),
-  string: token({ doc: "A quoted string literal.", token: "String", role: "literal", variable: true }),
-  regex: token({ doc: "A regular-expression literal.", token: "RegexLiteral", role: "literal", variable: true }),
-  "`": token({
-    doc: "Opens and closes a template literal. The lexer classifies it by position \u2014 the opening backtick is TemplateStart, the closing one TemplateEnd \u2014 so it pairs with itself rather than with a separate closer.",
-    token: ["TemplateStart", "TemplateEnd"],
-    role: "delimiter"
-  }),
-  templateText: token({
-    doc: "The literal text between a template literal's delimiters. Free text, including the empty string.",
-    token: "TemplateChars",
-    role: "literal",
-    variable: true
-  }),
-  "${": token({
-    doc: "Opens an interpolation inside a template literal. Nothing closes it: the `}` that ends the interpolation emits no token at all, so this is the one opener with no matching close row.",
-    token: "TemplateExprStart",
-    role: "open"
-  }),
-  identifier: token({
-    doc: "A bare name. What it means is resolved in names.ts.",
-    token: "Ident",
-    role: "name",
-    variable: true
-  }),
-  endOfInput: token({
-    doc: "The end of the source. The lexer appends it so the parser can report 'Expected X but got end of input' rather than reading past the last token.",
-    token: "EOF",
-    role: "delimiter",
-    variable: true
-  })
-};
-var ENDS_A_VALUE = [
-  "Number",
-  "BigInt",
-  "String",
-  "True",
-  "False",
-  "Null",
-  "Undefined",
-  "Ident",
-  "RParen",
-  "RBracket",
-  "TemplateEnd"
-];
-
-// src/registry/keywords.ts
-var keyword = (e) => ({ ...e, kind: "keyword" });
-var KEYWORDS = {
-  return: keyword({ doc: "Yields a block's value.", token: "Return" }),
-  const: keyword({ doc: "Binds a name that cannot be reassigned.", token: "Const" }),
-  let: keyword({ doc: "Binds a name that can be reassigned.", token: "Let" }),
-  in: keyword({ doc: "Tests membership of a value in an array.", token: "In" }),
-  new: keyword({ doc: "Marks a constructor call.", token: "New" }),
-  typeof: keyword({ doc: "Gives the type name of a value.", token: "Typeof" }),
-  delete: keyword({ doc: "Removes a field from the document.", token: "Delete" }),
-  true: keyword({ doc: "The boolean true.", token: "True" }),
-  false: keyword({ doc: "The boolean false.", token: "False" }),
-  null: keyword({ doc: "An explicit null. Distinct from a missing field.", token: "Null" }),
-  undefined: keyword({ doc: "Absence. Compared with `===` it becomes an existence test.", token: "Undefined" })
-};
-
-// src/compiler/lex/token.ts
-var token2 = (type, text, pos) => ({
-  type,
-  text,
-  pos,
-  end: pos + text.length
-});
-var spanned = (type, text, pos, end) => ({ type, text, pos, end });
-
-// src/compiler/lex/scanners.ts
-var LexError = class extends Error {
-  constructor(message, pos) {
-    super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
-    this.name = "LexError";
-    this.pos = pos;
-  }
-};
-var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
-var isHex = (ch) => isDigit(ch) || ch !== void 0 && (ch >= "a" && ch <= "f" || ch >= "A" && ch <= "F");
-var isIdentStart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z]/.test(ch));
-var isIdentPart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z0-9]/.test(ch));
-function digits(src, i, ok4) {
-  if (!ok4(src[i])) return i;
-  i++;
-  while (i < src.length) {
-    if (ok4(src[i])) {
-      i++;
-      continue;
-    }
-    if (src[i] === "_") {
-      if (!ok4(src[i + 1])) throw new LexError("Numeric separator '_' must be between two digits", i);
-      i++;
-      continue;
-    }
-    break;
-  }
-  return i;
-}
-function scanNumber(src, start) {
-  if (src[start] === "0" && (src[start + 1] === "x" || src[start + 1] === "X")) {
-    const from = start + 2;
-    const i2 = digits(src, from, isHex);
-    if (i2 === from) {
-      throw new LexError(`Hexadecimal literal has no digits after '0${src[from - 1]}'`, start);
-    }
-    return { token: spanned("Number", src.slice(start, i2).replace(/_/g, ""), start, i2), next: i2 };
-  }
-  let i = digits(src, start, isDigit);
-  let fraction = false;
-  let exponent = false;
-  if (src[i] === ".") {
-    fraction = true;
-    i = digits(src, i + 1, isDigit);
-  }
-  if (src[i] === "e" || src[i] === "E") {
-    exponent = true;
-    i++;
-    if (src[i] === "+" || src[i] === "-") i++;
-    i = digits(src, i, isDigit);
-  }
-  if (src[i] === "n") {
-    if (fraction || exponent) {
-      throw new LexError("Invalid BigInt literal: the 'n' suffix requires an integer", start);
-    }
-    const raw = src.slice(start, i).replace(/_/g, "");
-    return { token: spanned("BigInt", raw, start, i + 1), next: i + 1 };
-  }
-  return { token: spanned("Number", src.slice(start, i).replace(/_/g, ""), start, i), next: i };
-}
-var ESCAPES = { n: "\n", t: "	", r: "\r", b: "\b", f: "\f", v: "\v", 0: "\0" };
-function decodeEscape(src, i) {
-  const esc = src[i + 1];
-  if (esc === void 0) return { text: "", next: i + 2 };
-  if (esc === "x" && isHex(src[i + 2]) && isHex(src[i + 3])) {
-    return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 4), 16)), next: i + 4 };
-  }
-  if (esc === "u") {
-    if (src[i + 2] === "{") {
-      const close = src.indexOf("}", i + 3);
-      const hex = close === -1 ? "" : src.slice(i + 3, close);
-      if (hex.length > 0 && [...hex].every((c) => isHex(c))) {
-        const point = parseInt(hex, 16);
-        if (point <= 1114111) return { text: String.fromCodePoint(point), next: close + 1 };
-      }
-    } else if ([2, 3, 4, 5].every((k) => isHex(src[i + k]))) {
-      return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 6), 16)), next: i + 6 };
-    }
-  }
-  return { text: ESCAPES[esc] ?? esc, next: i + 2 };
-}
-function scanString(src, start) {
-  const quote = src[start];
-  let i = start + 1;
-  let out = "";
-  while (i < src.length && src[i] !== quote) {
-    if (src[i] === "\\") {
-      const esc = decodeEscape(src, i);
-      out += esc.text;
-      i = esc.next;
-      continue;
-    }
-    out += src[i];
-    i++;
-  }
-  if (i >= src.length) throw new LexError("Unterminated string", start);
-  return { token: spanned("String", out, start, i + 1), next: i + 1 };
-}
-function scanRegex(src, start) {
-  let i = start + 1;
-  let pattern = "";
-  let inClass = false;
-  let closed = false;
-  while (i < src.length) {
-    const ch = src[i];
-    if (ch === "\\") {
-      pattern += ch + (src[i + 1] ?? "");
-      i += 2;
-      continue;
-    }
-    if (ch === "[") inClass = true;
-    else if (ch === "]") inClass = false;
-    else if (ch === "/" && !inClass) {
-      i++;
-      closed = true;
-      break;
-    } else if (ch === "\n") throw new LexError("Unterminated regex literal", start);
-    pattern += ch;
-    i++;
-  }
-  if (!closed) throw new LexError("Unterminated regex literal", start);
-  let flags = "";
-  while (i < src.length && /[gimsuy]/.test(src[i])) {
-    flags += src[i];
-    i++;
-  }
-  return { token: spanned("RegexLiteral", pattern, start, i), flags, next: i };
-}
-function scanIdent(src, start) {
-  let i = start;
-  while (i < src.length && isIdentPart(src[i])) i++;
-  return { token: spanned("Ident", src.slice(start, i), start, i), next: i };
-}
-function skipTrivia(src, i) {
-  for (; ; ) {
-    while (i < src.length && /\s/.test(src[i])) i++;
-    if (src[i] === "/" && src[i + 1] === "/") {
-      while (i < src.length && !/[\n\r\u2028\u2029]/.test(src[i])) i++;
-      continue;
-    }
-    if (src[i] === "/" && src[i + 1] === "*") {
-      const at3 = i;
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      if (i >= src.length) throw new LexError("Unterminated block comment", at3);
-      i += 2;
-      continue;
-    }
-    return i;
-  }
-}
-
-// src/compiler/lex/lexer.ts
-var TEMPLATE_DELIMITER = "`";
-var TEMPLATE_EXPR_OPEN = "${";
-var PUNCTUATORS = Object.entries(TOKENS).filter(([, row2]) => row2.variable !== true).map(([spelling, row2]) => {
-  const punct = {
-    spelling,
-    type: Array.isArray(row2.token) ? null : row2.token,
-    chooseBy: "chooseBy" in row2 && row2.chooseBy !== void 0 ? row2.chooseBy : null,
-    tracksDepth: "tracksDepth" in row2 && row2.tracksDepth === true,
-    resumesTemplateAtDepth: "resumesTemplateAtDepth" in row2 && row2.resumesTemplateAtDepth === true
-  };
-  if (punct.type === null && punct.chooseBy === null && spelling !== TEMPLATE_DELIMITER) {
-    throw new Error(`tokens.ts: '${spelling}' names two token types and no chooseBy rule to pick one`);
-  }
-  return punct;
-}).sort((a, b) => b.spelling.length - a.spelling.length);
-var OTHERWISE_SCANNERS = {
-  RegexLiteral: scanRegex
-};
-var INTRODUCES_NAME = new Set(
-  Object.values(TOKENS).filter((row2) => "introducesName" in row2 && row2.introducesName === true).flatMap((row2) => Array.isArray(row2.token) ? row2.token : [row2.token])
-);
-var MAX_RUN = new Map(
-  Object.entries(TOKENS).filter(([key, row2]) => "maxRun" in row2 && row2.maxRun !== void 0 && /^(.)\1*$/.test(key)).map(([key, row2]) => [key[0], row2.maxRun])
-);
-var RESERVED = new Map(
-  Object.entries(KEYWORDS).map(([word, row2]) => [word, row2.token])
-);
-var VALUE_END = new Set(ENDS_A_VALUE);
-function lex(src) {
-  const out = [];
-  let i = 0;
-  let braceDepth = 0;
-  const templateDepths = [];
-  let last = null;
-  const push = (t) => {
-    out.push(t);
-    last = t.type;
-  };
-  const templateChunk = (from) => {
-    let j = from;
-    let text = "";
-    for (; ; ) {
-      if (j >= src.length) throw new LexError("Unterminated template literal", from);
-      const ch = src[j];
-      if (ch === TEMPLATE_DELIMITER) {
-        push({ type: "TemplateChars", text, pos: from, end: j });
-        push(token2("TemplateEnd", TEMPLATE_DELIMITER, j));
-        return j + 1;
-      }
-      if (ch === "$" && src[j + 1] === "{") {
-        push({ type: "TemplateChars", text, pos: from, end: j });
-        push(token2("TemplateExprStart", TEMPLATE_EXPR_OPEN, j));
-        templateDepths.push(braceDepth);
-        return j + 2;
-      }
-      if (ch === "\\") {
-        const esc = decodeEscape(src, j);
-        text += esc.text;
-        j = esc.next;
-        continue;
-      }
-      text += ch;
-      j++;
-    }
-  };
-  while (i < src.length) {
-    i = skipTrivia(src, i);
-    if (i >= src.length) break;
-    const start = i;
-    const ch = src[i];
-    if (isIdentStart(ch)) {
-      const scan = scanIdent(src, i);
-      const asName = last !== null && INTRODUCES_NAME.has(last);
-      const reserved = asName ? void 0 : RESERVED.get(scan.token.text);
-      push(reserved === void 0 ? scan.token : token2(reserved, scan.token.text, start));
-      i = scan.next;
-      continue;
-    }
-    if (ch >= "0" && ch <= "9") {
-      const scan = scanNumber(src, i);
-      push(scan.token);
-      i = scan.next;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      const scan = scanString(src, i);
-      push(scan.token);
-      i = scan.next;
-      continue;
-    }
-    if (ch === TEMPLATE_DELIMITER) {
-      push(token2("TemplateStart", TEMPLATE_DELIMITER, i));
-      i = templateChunk(i + 1);
-      continue;
-    }
-    const cap = MAX_RUN.get(ch);
-    if (cap !== void 0) {
-      let run = 0;
-      while (src[start + run] === ch) run++;
-      if (run > cap.limit) throw new LexError(cap.tooLong, start);
-    }
-    const hit = PUNCTUATORS.find((p) => src.startsWith(p.spelling, i));
-    if (hit === void 0) throw new LexError(`Unexpected character '${ch}'`, start);
-    if (hit.chooseBy !== null) {
-      const afterValue = last !== null && VALUE_END.has(last);
-      if (!afterValue) {
-        const scanner = OTHERWISE_SCANNERS[hit.chooseBy.otherwise];
-        if (scanner === void 0) {
-          throw new LexError(`'${hit.spelling}' chooses '${hit.chooseBy.otherwise}', which has no scanner`, start);
-        }
-        const scan = scanner(src, i);
-        push({ ...scan.token, flags: scan.flags });
-        i = scan.next;
-        continue;
-      }
-      push(token2(hit.chooseBy.afterValue, hit.spelling, i));
-      i += hit.spelling.length;
-      continue;
-    }
-    if (hit.resumesTemplateAtDepth && templateDepths.length > 0 && templateDepths[templateDepths.length - 1] === braceDepth) {
-      templateDepths.pop();
-      i = templateChunk(i + hit.spelling.length);
-      continue;
-    }
-    if (hit.type === null) throw new LexError(`'${hit.spelling}' has no single token type`, start);
-    push(token2(hit.type, hit.spelling, i));
-    if (hit.tracksDepth) braceDepth++;
-    else if (hit.resumesTemplateAtDepth) braceDepth--;
-    i += hit.spelling.length;
-  }
-  if (templateDepths.length > 0) throw new LexError("Unterminated template literal", src.length);
-  out.push(token2("EOF", "", src.length));
-  return out;
-}
-
 // src/registry/vocabulary.ts
 var GROUP_SLOT = "__jsmqlTmp";
-var LENGTH_SLOT = "__jsmql.length";
+var SIZE_SLOT = "__jsmql.size";
 var shorthand = (test) => {
   const keys = Object.keys(test);
   if (keys.length !== 1 || keys[0] !== "$eq") return test;
@@ -2309,7 +1861,7 @@ var NAMES = {
         nonEmpty: {
           1: {
             noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'."
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'."
           }
         }
       },
@@ -6590,7 +6142,7 @@ var NAMES = {
         nonEmpty: {
           0: {
             noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'."
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'."
           }
         }
       },
@@ -9990,27 +9542,47 @@ var NAMES = {
     window: unsupported("'.nth()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   size: name({
-    doc: "'.size()' \u2014 see docs/LANGUAGE.md.",
+    doc: "'.size()' \u2014 the number of elements of an array, or the document count of the stream. See docs/LANGUAGE.md.",
     call: true,
-    on: "array",
+    on: ["array", "stream"],
     sibling: {
       string: "For the number of characters, write '.length()'.",
       object: "For the number of fields, write '.keys().size()'."
     },
     returns: "number",
     where: ["value"],
-    filter: viaFallback,
-    expr: {
-      // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
-      // missing is read as the empty array. An array LITERAL is the value, not an operand list.
-      args: { sig: "", none: true },
-      emit: ({ recv, present: present2 }) => Array.isArray(recv) ? { $size: [recv] } : sizeOf(present2 ? recv : arrayOrEmpty(recv))
+    // Per family, because one answer for both states a legality the stream form
+    // does not have: `$.tags.size() < 5` scans, `$$.size() > 1` does not compile
+    // at all. A flat `viaFallback` would promise that the second merely scans.
+    filter: {
+      perFamily: {
+        array: viaFallback,
+        stream: unsupported(
+          "'$$.size()' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.size(); \u2026 }`); it has no meaning in a Filter or in 'jsmql.expr'."
+        )
+      }
     },
-    stream: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
+        // missing is read as the empty array. An array LITERAL is the value, not an operand list.
+        array: {
+          args: { sig: "", none: true },
+          emit: ({ recv, present: present2 }) => Array.isArray(recv) ? { $size: [recv] } : sizeOf(present2 ? recv : arrayOrEmpty(recv))
+        },
+        // `$$.size()` has no inline count: it places a materialiser ahead of the
+        // statement and reads the field it wrote. See docs/specs/stream-size.md.
+        stream: {
+          args: { sig: "", none: true },
+          emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [SIZE_SLOT]: { $count: {} } } } }], SIZE_SLOT)
+        }
+      }
+    },
+    stream: unsupported("'size' is a value, not a stage. Read it: '$.n = $$.size()'."),
     statement: unsupported(
       "'.size()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.size();'"
     ),
-    group: unsupported("'.size()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    group: unsupported("'.size()' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
     window: unsupported("'.size()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   takeWhile: name({
@@ -13286,12 +12858,12 @@ var NAMES = {
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
     // value slot gets a refusal — "'$$' (current collection) is statement-only" —
-    // so `expr` is a refusal even though `$$.length` IS a value: that value is
+    // so `expr` is a refusal even though `$$.size()` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
     filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => \u2026)'."),
     expr: unsupported(
-      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'."
+      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.size()'."
     ),
     stream: inCode("src/compiler/emit/statement.ts"),
     statement: inCode("src/compiler/emit/statement.ts"),
@@ -13504,45 +13076,28 @@ var NAMES = {
     window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   length: name({
-    doc: "The number of characters of a string, or the size of the stream.",
-    call: false,
-    on: ["string", "stream"],
-    sibling: { array: "For the number of elements, write '.size()'." },
+    doc: "'.length()' \u2014 the number of characters of a string. See docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    sibling: {
+      array: "For the number of elements, write '.size()'.",
+      stream: "For the document count, write '$$.size()'."
+    },
     returns: "number",
     where: ["value"],
-    // Per family, because one answer for all three states a legality the stream
-    // form does not have: `$.tags.length < 5` scans, `$$.length > 1` does not
-    // compile at all. A flat `viaFallback` would promise that the third merely scans.
-    filter: {
-      perFamily: {
-        string: viaFallback,
-        stream: unsupported(
-          "'$$.length' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.length; \u2026 }`); it has no meaning in a Filter or in 'jsmql.expr'."
-        )
-      }
-    },
+    filter: viaFallback,
+    // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
+    // JavaScript method does, and the cell counts one that is there as it is.
     expr: {
-      perFamily: {
-        // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
-        // JavaScript method does, and the cell counts one that is there as it is.
-        string: {
-          args: { sig: "", none: true },
-          emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $strLenCP: r }))
-        },
-        // `$$.length` has no inline size: it places a materialiser ahead of the
-        // statement and reads the field it wrote.
-        stream: {
-          args: { sig: "", none: true },
-          emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT)
-        }
-      }
+      args: { sig: "", none: true },
+      emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $strLenCP: r }))
     },
-    stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
+    stream: unsupported("'.length()' is a value, not a stage. Assign it to a field: '$.n = $.<field>.length()'."),
     statement: unsupported(
       "'.length()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.length();'"
     ),
-    group: unsupported("'length' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
-    window: unsupported("'length' is not a window function.")
+    group: unsupported("'.length()' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
+    window: unsupported("'.length()' is not a window function.")
   }),
   now: name({
     doc: "The current time, in milliseconds.",
@@ -15067,6 +14622,11 @@ function mergesIntoOf(name2) {
 function elementOnlyOf(name2) {
   return row(name2)?.elementOnly ?? null;
 }
+function hasStreamValueCell(name2) {
+  const expr = row(name2)?.expr;
+  const cell = expr?.perFamily?.stream;
+  return typeof cell === "object" && cell !== null && typeof cell.emit === "function";
+}
 function neverNullOf(name2) {
   return row(name2)?.neverNull === true;
 }
@@ -15152,6 +14712,454 @@ function mutatorFormOf(name2) {
 }
 function onlyInsideOf(name2, position) {
   return row(name2)?.onlyInside?.[position];
+}
+
+// src/registry/tokens.ts
+var token = (e) => ({ ...e, kind: "token" });
+var TOKENS = {
+  "(": token({ doc: "The `(` token.", token: "LParen", role: "open" }),
+  ")": token({ doc: "The `)` token.", token: "RParen", role: "close", closes: "(" }),
+  "[": token({ doc: "The `[` token.", token: "LBracket", role: "open" }),
+  "]": token({ doc: "The `]` token.", token: "RBracket", role: "close", closes: "[" }),
+  "{": token({
+    doc: "The `{` token.",
+    token: "LBrace",
+    role: "open",
+    // It counts depth, so a template interpolation can tell its OWN closing brace
+    // from the brace of a nested object. `${ {a: 1} }` has two braces, and only
+    // the outer one ends the interpolation.
+    tracksDepth: true
+  }),
+  "}": token({
+    doc: "The `}` token.",
+    token: "RBrace",
+    role: "close",
+    closes: "{",
+    // When its depth agrees with an open interpolation, this brace emits NO token
+    // at all. It ends the interpolation, and template text continues. It is the
+    // one closer whose row makes nothing.
+    resumesTemplateAtDepth: true
+  }),
+  ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
+  ";": token({ doc: "The `;` token.", token: "Semi", role: "separator" }),
+  ":": token({ doc: "The `:` token.", token: "Colon", role: "separator" }),
+  ".": token({ doc: "The `.` token.", token: "Dot", role: "binder", introducesName: true }),
+  "?.": token({ doc: "The `?.` token.", token: "QuestDot", role: "binder", introducesName: true }),
+  "$.": token({ doc: "The `$.` token.", token: "DollarDot", role: "reference", introducesName: true }),
+  $: token({ doc: "The `$` token.", token: "Dollar", role: "reference", introducesName: true }),
+  $$: token({ doc: "The `$$` token.", token: "DoubleDollar", role: "reference" }),
+  $$$: token({ doc: "The `$$$` token.", token: "TripleDollar", role: "reference" }),
+  $$$$: token({
+    doc: "The `$$$$` token.",
+    token: "QuadDollar",
+    role: "reference",
+    maxRun: { limit: 4, tooLong: "Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$')" }
+  }),
+  "...": token({ doc: "The `...` token.", token: "Spread", role: "spread" }),
+  "+": token({ doc: "The `+` token.", token: "Plus", role: "operator" }),
+  "-": token({ doc: "The `-` token.", token: "Minus", role: "operator" }),
+  "*": token({ doc: "The `*` token.", token: "Star", role: "operator" }),
+  "**": token({ doc: "The `**` token.", token: "StarStar", role: "operator" }),
+  "/": token({
+    doc: "Division, or the start of a regex literal. The lexer chooses on the PRECEDING token: `a / b` is division, a leading `/` begins a regex.",
+    token: ["Slash", "RegexLiteral"],
+    role: "operator",
+    chooseBy: { afterValue: "Slash", otherwise: "RegexLiteral" }
+  }),
+  "%": token({ doc: "The `%` token.", token: "Percent", role: "operator" }),
+  "++": token({ doc: "The `++` token.", token: "PlusPlus", role: "operator" }),
+  "--": token({ doc: "The `--` token.", token: "MinusMinus", role: "operator" }),
+  "=": token({ doc: "The `=` token.", token: "Eq", role: "operator" }),
+  "+=": token({ doc: "The `+=` token.", token: "PlusEq", role: "operator" }),
+  "-=": token({ doc: "The `-=` token.", token: "MinusEq", role: "operator" }),
+  "*=": token({ doc: "The `*=` token.", token: "StarEq", role: "operator" }),
+  "/=": token({
+    doc: "Divide-and-assign, or a regex beginning with `=`. Same preceding-token rule as `/`.",
+    token: ["SlashEq", "RegexLiteral"],
+    role: "operator",
+    chooseBy: { afterValue: "SlashEq", otherwise: "RegexLiteral" }
+  }),
+  "==": token({ doc: "The `==` token.", token: "EqEq", role: "operator" }),
+  "===": token({ doc: "The `===` token.", token: "EqEqEq", role: "operator" }),
+  "!=": token({ doc: "The `!=` token.", token: "BangEq", role: "operator" }),
+  "!==": token({ doc: "The `!==` token.", token: "BangEqEq", role: "operator" }),
+  ">": token({ doc: "The `>` token.", token: "Gt", role: "operator" }),
+  ">=": token({ doc: "The `>=` token.", token: "GtEq", role: "operator" }),
+  "<": token({ doc: "The `<` token.", token: "Lt", role: "operator" }),
+  "<=": token({ doc: "The `<=` token.", token: "LtEq", role: "operator" }),
+  "&&": token({ doc: "The `&&` token.", token: "AmpAmp", role: "operator" }),
+  "||": token({ doc: "The `||` token.", token: "PipePipe", role: "operator" }),
+  "!": token({ doc: "The `!` token.", token: "Bang", role: "operator" }),
+  "&": token({ doc: "The `&` token.", token: "Amp", role: "operator" }),
+  "|": token({ doc: "The `|` token.", token: "Pipe", role: "operator" }),
+  "^": token({ doc: "The `^` token.", token: "Caret", role: "operator" }),
+  "~": token({ doc: "The `~` token.", token: "Tilde", role: "operator" }),
+  "??": token({ doc: "The `??` token.", token: "QuestQuest", role: "operator" }),
+  "?": token({ doc: "The `?` token.", token: "Quest", role: "operator" }),
+  "=>": token({ doc: "The `=>` token.", token: "Arrow", role: "arrow" }),
+  number: token({
+    doc: "A numeric literal. `0x` followed by 24 hex digits is re-read as an ObjectId \u2014 see productions.ts.",
+    token: "Number",
+    role: "literal",
+    variable: true
+  }),
+  bigint: token({ doc: "A BigInt literal.", token: "BigInt", role: "literal", variable: true }),
+  string: token({ doc: "A quoted string literal.", token: "String", role: "literal", variable: true }),
+  regex: token({ doc: "A regular-expression literal.", token: "RegexLiteral", role: "literal", variable: true }),
+  "`": token({
+    doc: "Opens and closes a template literal. The lexer classifies it by position \u2014 the opening backtick is TemplateStart, the closing one TemplateEnd \u2014 so it pairs with itself rather than with a separate closer.",
+    token: ["TemplateStart", "TemplateEnd"],
+    role: "delimiter"
+  }),
+  templateText: token({
+    doc: "The literal text between a template literal's delimiters. Free text, including the empty string.",
+    token: "TemplateChars",
+    role: "literal",
+    variable: true
+  }),
+  "${": token({
+    doc: "Opens an interpolation inside a template literal. Nothing closes it: the `}` that ends the interpolation emits no token at all, so this is the one opener with no matching close row.",
+    token: "TemplateExprStart",
+    role: "open"
+  }),
+  identifier: token({
+    doc: "A bare name. What it means is resolved in names.ts.",
+    token: "Ident",
+    role: "name",
+    variable: true
+  }),
+  endOfInput: token({
+    doc: "The end of the source. The lexer appends it so the parser can report 'Expected X but got end of input' rather than reading past the last token.",
+    token: "EOF",
+    role: "delimiter",
+    variable: true
+  })
+};
+var ENDS_A_VALUE = [
+  "Number",
+  "BigInt",
+  "String",
+  "True",
+  "False",
+  "Null",
+  "Undefined",
+  "Ident",
+  "RParen",
+  "RBracket",
+  "TemplateEnd"
+];
+
+// src/registry/keywords.ts
+var keyword = (e) => ({ ...e, kind: "keyword" });
+var KEYWORDS = {
+  return: keyword({ doc: "Yields a block's value.", token: "Return" }),
+  const: keyword({ doc: "Binds a name that cannot be reassigned.", token: "Const" }),
+  let: keyword({ doc: "Binds a name that can be reassigned.", token: "Let" }),
+  in: keyword({ doc: "Tests membership of a value in an array.", token: "In" }),
+  new: keyword({ doc: "Marks a constructor call.", token: "New" }),
+  typeof: keyword({ doc: "Gives the type name of a value.", token: "Typeof" }),
+  delete: keyword({ doc: "Removes a field from the document.", token: "Delete" }),
+  true: keyword({ doc: "The boolean true.", token: "True" }),
+  false: keyword({ doc: "The boolean false.", token: "False" }),
+  null: keyword({ doc: "An explicit null. Distinct from a missing field.", token: "Null" }),
+  undefined: keyword({ doc: "Absence. Compared with `===` it becomes an existence test.", token: "Undefined" })
+};
+
+// src/compiler/lex/token.ts
+var token2 = (type, text, pos) => ({
+  type,
+  text,
+  pos,
+  end: pos + text.length
+});
+var spanned = (type, text, pos, end) => ({ type, text, pos, end });
+
+// src/compiler/lex/scanners.ts
+var LexError = class extends Error {
+  constructor(message, pos) {
+    super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
+    this.name = "LexError";
+    this.pos = pos;
+  }
+};
+var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
+var isHex = (ch) => isDigit(ch) || ch !== void 0 && (ch >= "a" && ch <= "f" || ch >= "A" && ch <= "F");
+var isIdentStart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z]/.test(ch));
+var isIdentPart = (ch) => ch !== void 0 && (ch === "_" || /[A-Za-z0-9]/.test(ch));
+function digits(src, i, ok4) {
+  if (!ok4(src[i])) return i;
+  i++;
+  while (i < src.length) {
+    if (ok4(src[i])) {
+      i++;
+      continue;
+    }
+    if (src[i] === "_") {
+      if (!ok4(src[i + 1])) throw new LexError("Numeric separator '_' must be between two digits", i);
+      i++;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+function scanNumber(src, start) {
+  if (src[start] === "0" && (src[start + 1] === "x" || src[start + 1] === "X")) {
+    const from = start + 2;
+    const i2 = digits(src, from, isHex);
+    if (i2 === from) {
+      throw new LexError(`Hexadecimal literal has no digits after '0${src[from - 1]}'`, start);
+    }
+    return { token: spanned("Number", src.slice(start, i2).replace(/_/g, ""), start, i2), next: i2 };
+  }
+  let i = digits(src, start, isDigit);
+  let fraction = false;
+  let exponent = false;
+  if (src[i] === ".") {
+    fraction = true;
+    i = digits(src, i + 1, isDigit);
+  }
+  if (src[i] === "e" || src[i] === "E") {
+    exponent = true;
+    i++;
+    if (src[i] === "+" || src[i] === "-") i++;
+    i = digits(src, i, isDigit);
+  }
+  if (src[i] === "n") {
+    if (fraction || exponent) {
+      throw new LexError("Invalid BigInt literal: the 'n' suffix requires an integer", start);
+    }
+    const raw = src.slice(start, i).replace(/_/g, "");
+    return { token: spanned("BigInt", raw, start, i + 1), next: i + 1 };
+  }
+  return { token: spanned("Number", src.slice(start, i).replace(/_/g, ""), start, i), next: i };
+}
+var ESCAPES = { n: "\n", t: "	", r: "\r", b: "\b", f: "\f", v: "\v", 0: "\0" };
+function decodeEscape(src, i) {
+  const esc = src[i + 1];
+  if (esc === void 0) return { text: "", next: i + 2 };
+  if (esc === "x" && isHex(src[i + 2]) && isHex(src[i + 3])) {
+    return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 4), 16)), next: i + 4 };
+  }
+  if (esc === "u") {
+    if (src[i + 2] === "{") {
+      const close = src.indexOf("}", i + 3);
+      const hex = close === -1 ? "" : src.slice(i + 3, close);
+      if (hex.length > 0 && [...hex].every((c) => isHex(c))) {
+        const point = parseInt(hex, 16);
+        if (point <= 1114111) return { text: String.fromCodePoint(point), next: close + 1 };
+      }
+    } else if ([2, 3, 4, 5].every((k) => isHex(src[i + k]))) {
+      return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 6), 16)), next: i + 6 };
+    }
+  }
+  return { text: ESCAPES[esc] ?? esc, next: i + 2 };
+}
+function scanString(src, start) {
+  const quote = src[start];
+  let i = start + 1;
+  let out = "";
+  while (i < src.length && src[i] !== quote) {
+    if (src[i] === "\\") {
+      const esc = decodeEscape(src, i);
+      out += esc.text;
+      i = esc.next;
+      continue;
+    }
+    out += src[i];
+    i++;
+  }
+  if (i >= src.length) throw new LexError("Unterminated string", start);
+  return { token: spanned("String", out, start, i + 1), next: i + 1 };
+}
+function scanRegex(src, start) {
+  let i = start + 1;
+  let pattern = "";
+  let inClass = false;
+  let closed = false;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "\\") {
+      pattern += ch + (src[i + 1] ?? "");
+      i += 2;
+      continue;
+    }
+    if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) {
+      i++;
+      closed = true;
+      break;
+    } else if (ch === "\n") throw new LexError("Unterminated regex literal", start);
+    pattern += ch;
+    i++;
+  }
+  if (!closed) throw new LexError("Unterminated regex literal", start);
+  let flags = "";
+  while (i < src.length && /[gimsuy]/.test(src[i])) {
+    flags += src[i];
+    i++;
+  }
+  return { token: spanned("RegexLiteral", pattern, start, i), flags, next: i };
+}
+function scanIdent(src, start) {
+  let i = start;
+  while (i < src.length && isIdentPart(src[i])) i++;
+  return { token: spanned("Ident", src.slice(start, i), start, i), next: i };
+}
+function skipTrivia(src, i) {
+  for (; ; ) {
+    while (i < src.length && /\s/.test(src[i])) i++;
+    if (src[i] === "/" && src[i + 1] === "/") {
+      while (i < src.length && !/[\n\r\u2028\u2029]/.test(src[i])) i++;
+      continue;
+    }
+    if (src[i] === "/" && src[i + 1] === "*") {
+      const at3 = i;
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      if (i >= src.length) throw new LexError("Unterminated block comment", at3);
+      i += 2;
+      continue;
+    }
+    return i;
+  }
+}
+
+// src/compiler/lex/lexer.ts
+var TEMPLATE_DELIMITER = "`";
+var TEMPLATE_EXPR_OPEN = "${";
+var PUNCTUATORS = Object.entries(TOKENS).filter(([, row2]) => row2.variable !== true).map(([spelling, row2]) => {
+  const punct = {
+    spelling,
+    type: Array.isArray(row2.token) ? null : row2.token,
+    chooseBy: "chooseBy" in row2 && row2.chooseBy !== void 0 ? row2.chooseBy : null,
+    tracksDepth: "tracksDepth" in row2 && row2.tracksDepth === true,
+    resumesTemplateAtDepth: "resumesTemplateAtDepth" in row2 && row2.resumesTemplateAtDepth === true
+  };
+  if (punct.type === null && punct.chooseBy === null && spelling !== TEMPLATE_DELIMITER) {
+    throw new Error(`tokens.ts: '${spelling}' names two token types and no chooseBy rule to pick one`);
+  }
+  return punct;
+}).sort((a, b) => b.spelling.length - a.spelling.length);
+var OTHERWISE_SCANNERS = {
+  RegexLiteral: scanRegex
+};
+var INTRODUCES_NAME = new Set(
+  Object.values(TOKENS).filter((row2) => "introducesName" in row2 && row2.introducesName === true).flatMap((row2) => Array.isArray(row2.token) ? row2.token : [row2.token])
+);
+var MAX_RUN = new Map(
+  Object.entries(TOKENS).filter(([key, row2]) => "maxRun" in row2 && row2.maxRun !== void 0 && /^(.)\1*$/.test(key)).map(([key, row2]) => [key[0], row2.maxRun])
+);
+var RESERVED = new Map(
+  Object.entries(KEYWORDS).map(([word, row2]) => [word, row2.token])
+);
+var VALUE_END = new Set(ENDS_A_VALUE);
+function lex(src) {
+  const out = [];
+  let i = 0;
+  let braceDepth = 0;
+  const templateDepths = [];
+  let last = null;
+  const push = (t) => {
+    out.push(t);
+    last = t.type;
+  };
+  const templateChunk = (from) => {
+    let j = from;
+    let text = "";
+    for (; ; ) {
+      if (j >= src.length) throw new LexError("Unterminated template literal", from);
+      const ch = src[j];
+      if (ch === TEMPLATE_DELIMITER) {
+        push({ type: "TemplateChars", text, pos: from, end: j });
+        push(token2("TemplateEnd", TEMPLATE_DELIMITER, j));
+        return j + 1;
+      }
+      if (ch === "$" && src[j + 1] === "{") {
+        push({ type: "TemplateChars", text, pos: from, end: j });
+        push(token2("TemplateExprStart", TEMPLATE_EXPR_OPEN, j));
+        templateDepths.push(braceDepth);
+        return j + 2;
+      }
+      if (ch === "\\") {
+        const esc = decodeEscape(src, j);
+        text += esc.text;
+        j = esc.next;
+        continue;
+      }
+      text += ch;
+      j++;
+    }
+  };
+  while (i < src.length) {
+    i = skipTrivia(src, i);
+    if (i >= src.length) break;
+    const start = i;
+    const ch = src[i];
+    if (isIdentStart(ch)) {
+      const scan = scanIdent(src, i);
+      const asName = last !== null && INTRODUCES_NAME.has(last);
+      const reserved = asName ? void 0 : RESERVED.get(scan.token.text);
+      push(reserved === void 0 ? scan.token : token2(reserved, scan.token.text, start));
+      i = scan.next;
+      continue;
+    }
+    if (ch >= "0" && ch <= "9") {
+      const scan = scanNumber(src, i);
+      push(scan.token);
+      i = scan.next;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const scan = scanString(src, i);
+      push(scan.token);
+      i = scan.next;
+      continue;
+    }
+    if (ch === TEMPLATE_DELIMITER) {
+      push(token2("TemplateStart", TEMPLATE_DELIMITER, i));
+      i = templateChunk(i + 1);
+      continue;
+    }
+    const cap = MAX_RUN.get(ch);
+    if (cap !== void 0) {
+      let run = 0;
+      while (src[start + run] === ch) run++;
+      if (run > cap.limit) throw new LexError(cap.tooLong, start);
+    }
+    const hit = PUNCTUATORS.find((p) => src.startsWith(p.spelling, i));
+    if (hit === void 0) throw new LexError(`Unexpected character '${ch}'`, start);
+    if (hit.chooseBy !== null) {
+      const afterValue = last !== null && VALUE_END.has(last);
+      if (!afterValue) {
+        const scanner = OTHERWISE_SCANNERS[hit.chooseBy.otherwise];
+        if (scanner === void 0) {
+          throw new LexError(`'${hit.spelling}' chooses '${hit.chooseBy.otherwise}', which has no scanner`, start);
+        }
+        const scan = scanner(src, i);
+        push({ ...scan.token, flags: scan.flags });
+        i = scan.next;
+        continue;
+      }
+      push(token2(hit.chooseBy.afterValue, hit.spelling, i));
+      i += hit.spelling.length;
+      continue;
+    }
+    if (hit.resumesTemplateAtDepth && templateDepths.length > 0 && templateDepths[templateDepths.length - 1] === braceDepth) {
+      templateDepths.pop();
+      i = templateChunk(i + hit.spelling.length);
+      continue;
+    }
+    if (hit.type === null) throw new LexError(`'${hit.spelling}' has no single token type`, start);
+    push(token2(hit.type, hit.spelling, i));
+    if (hit.tracksDepth) braceDepth++;
+    else if (hit.resumesTemplateAtDepth) braceDepth--;
+    i += hit.spelling.length;
+  }
+  if (templateDepths.length > 0) throw new LexError("Unterminated template literal", src.length);
+  out.push(token2("EOF", "", src.length));
+  return out;
 }
 
 // src/compiler/parse/cursor.ts
@@ -20610,6 +20618,8 @@ function stringMethod(s, name2, args) {
       return typeof a === "string" ? ok2(s.endsWith(a, typeof b === "number" ? b : void 0)) : NO2;
     case "includes":
       return typeof a === "string" ? ok2(s.includes(a)) : NO2;
+    case "length":
+      return ok2(points(s).length);
     case "indexOf": {
       if (typeof a !== "string") return NO2;
       if (b !== void 0 && !isInt32(b)) return NO2;
@@ -21336,12 +21346,7 @@ function unary(op, operand) {
   }
 }
 var isPlain = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v) && !isRegExp(v) && v._bsontype === void 0;
-function lengthOf(receiver) {
-  if (typeof receiver === "string") return ok3([...receiver].length);
-  return NOT_CONSTANT2;
-}
 function property(receiver, name2) {
-  if (name2 === "length") return lengthOf(receiver);
   if (!isPlain(receiver)) return NOT_CONSTANT2;
   const own = Object.prototype.hasOwnProperty.call(receiver, name2);
   return own ? ok3(receiver[name2]) : NOT_CONSTANT2;
@@ -22475,7 +22480,7 @@ function bindingSlot(name2) {
 function tmpSlot(n2) {
   return `${JSMQL_NS}.tmp.${n2}`;
 }
-var LENGTH_SLOT2 = `${JSMQL_NS}.length`;
+var SIZE_SLOT2 = `${JSMQL_NS}.size`;
 var GROUP_TMP = `${JSMQL_NS}Tmp`;
 function sanitizeVarSegment(name2) {
   return name2.replace(/[^A-Za-z0-9_]/g, "_");
@@ -23042,7 +23047,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
       const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -23155,7 +23160,7 @@ var joinNeedsPipeline = (pos) => new CodegenError(
   pos
 );
 var needsPipeline = (name2, pos) => new CodegenError(
-  `'$$.${name2}' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline \u2014 for example, \`({ $ }) => { $.n = $$.${name2}; \u2026 }\`. It has no meaning in a Filter or in 'jsmql.expr'.`,
+  `'$$.${name2}()' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline \u2014 for example, \`({ $ }) => { $.n = $$.${name2}(); \u2026 }\`. It has no meaning in a Filter or in 'jsmql.expr'.`,
   pos
 );
 var spreadInOperatorBody = (pos) => new CodegenError("MQL has no spread in an object. Write Object.assign(a, b) instead.", pos);
@@ -23193,11 +23198,11 @@ var arrayOfArrays = (method, holder, pos) => new CodegenError(
   pos
 );
 var streamHandleAfterReplace = (name2, stage, pos) => new CodegenError(
-  `'${name2}' is the body's own stream. This body runs '${stage}', which changes what its count means. The compiler stamps '${name2}.length' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name2}' from the parameter list.`,
+  `'${name2}' is the body's own stream. This body runs '${stage}', which changes what its count means. The compiler stamps '${name2}.size()' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name2}' from the parameter list.`,
   pos
 );
 var streamHandleAsValue = (name2, pos) => new CodegenError(
-  `'${name2}' is the body's own stream, the callback's third parameter: read its count ('${name2}.length') or chain on it ('${name2}.filter(\u2026)'). It is not a document or a value on its own.`,
+  `'${name2}' is the body's own stream, the callback's third parameter: read its count ('${name2}.size()') or chain on it ('${name2}.filter(\u2026)'). It is not a document or a value on its own.`,
   pos
 );
 var bareContextRef = (ref, pos) => {
@@ -23250,7 +23255,7 @@ var mustBeFirstStage = (name2, pos, why) => new CodegenError(
   pos
 );
 var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
-  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ \u2026 }).<field>" : "$$.length";
+  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ \u2026 }).<field>" : "$$.size()";
   const later = `$match($.<field> === ${value});`;
   return new CodegenError(
     carrier === null ? `'${name2}' has to be the FIRST stage of the pipeline. A value in its body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of '${name2}'. Read that value in a LATER statement instead \u2014 '${name2}({ \u2026 }); ${later}'. Or, when the value is one of the stage's settings, give it a constant or a 'jsmql.compile' parameter: the server reads a setting before it has any documents.` : `'${name2}' only runs in the pipeline's FIRST '${carrier}'. A value in that body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of that '${carrier}'. Keep the '${name2}' test on its own, and make the other one a later stage: '${carrier}(${name2}(\u2026)); ${later}'.`,
@@ -23258,7 +23263,7 @@ var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
   );
 };
 var terminalReadsScratch = (name2, pos) => new CodegenError(
-  `'${name2}' writes the pipeline's output and has to be its LAST stage. JSMQL clears its scratch fields in the stage right before it. So a value this body reads ('$$.length', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first, and read that field: '$.n = $$.length; ${name2}({ \u2026 let: { v: $.n } \u2026 });'.`,
+  `'${name2}' writes the pipeline's output and has to be its LAST stage. JSMQL clears its scratch fields in the stage right before it. So a value this body reads ('$$.size()', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first, and read that field: '$.n = $$.size(); ${name2}({ \u2026 let: { v: $.n } \u2026 });'.`,
   pos
 );
 var twoTerminalStages = (name2, already, pos) => new CodegenError(
@@ -23312,7 +23317,7 @@ var spreadNotADocument = (noun, pos) => new CodegenError(
   pos
 );
 var spreadOfString = (pos) => new CodegenError(
-  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
   pos
 );
 var afterTerminalStage = (already, pos) => new CodegenError(
@@ -23440,7 +23445,7 @@ var rootStreamInForeign = (pos) => new CodegenError(
   pos
 );
 var streamAsValue = (pos) => new CodegenError(
-  "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(\u2026), \u2026 }' (a '$facet'); for its size write '$$.length'; to keep the documents, chain them as a statement: '$$.filter(\u2026);'.",
+  "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(\u2026), \u2026 }' (a '$facet'); for its size write '$$.size()'; to keep the documents, chain them as a statement: '$$.filter(\u2026);'.",
   pos
 );
 var facetMixed = (key, pos) => new CodegenError(
@@ -23719,7 +23724,7 @@ var Chain = class {
     this.proofs = /* @__PURE__ */ new WeakMap();
     /**
      * The field paths a materialiser stamped, that are still FRESH — see
-     * docs/specs/stream-length.md § Compute-once / reuse / recompute. A second
+     * docs/specs/stream-size.md § Compute-once / reuse / recompute. A second
      * read of a stamped path costs no stage. A stage whose row does not state
      * `preservesCount` clears the set, so the next read stamps again.
      */
@@ -27057,7 +27062,9 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
-  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue) throw streamAsValue(node.pos);
+  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name2)) {
+    throw streamAsValue(node.pos);
+  }
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
   const kinds = args.map((a) => isExpr2(a) ? kindOf3(a, argEnv) : "unknown");
@@ -28321,7 +28328,10 @@ function writeStages(uf, env, first) {
 }
 function refuseUnbuiltSugar(value) {
   const base = chainBase(value);
-  if (base.type === "CollectionRef" && value.type === "MethodCall") throw streamAsValue(value.pos);
+  if (base.type === "CollectionRef" && value.type === "MethodCall") {
+    const direct = value.object.type === "CollectionRef" && hasStreamValueCell(value.name);
+    if (!direct) throw streamAsValue(value.pos);
+  }
 }
 function elementWiseOnDocument(value) {
   const links = [];
@@ -28839,6 +28849,12 @@ function received(program) {
   }
   const stage = shapeOf(program) === "pipeline" ? namedRow(program) : null;
   if (stage !== null) {
+    if (hasStreamValueCell(stage)) {
+      return {
+        what: `'$$.${stage}()', the stream's document count, which materialises a '$setWindowFields' stage`,
+        hint: "jsmql.pipeline()"
+      };
+    }
     const drop = stage === "$match" ? " \u2014 for a Filter, drop the `$match(...)` wrapper and pass its predicate" : "";
     return { what: `a top-level '${stage}' stage call`, hint: `jsmql.pipeline()${drop}` };
   }

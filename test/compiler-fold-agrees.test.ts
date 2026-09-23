@@ -65,7 +65,7 @@ const EXPRESSIONS: readonly string[] = [
   "[10, 20, 30][1]",
   '"abc"[1]',
   "({ a: 5 }).a",
-  '"abcd".length',
+  '"abcd".length()',
   // Math — only the exactly-specified ones fold, and those must agree
   "Math.sqrt(16)",
   "Math.abs(-5)",

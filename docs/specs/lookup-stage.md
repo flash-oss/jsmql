@@ -8,7 +8,7 @@ This file covers:
 
 - detection of the `$$$.<coll>` same-database shape (the compiler detects a `$$$$.<db>.<coll>` cross-database **read** only to refuse it — see § Cross-database reads are refused)
 - predicate translation (the basic form, the pipeline form, and auto-`let` extraction)
-- the chained-terminal materialisation (`.length`, `.reduce`, member access)
+- the chained-terminal materialisation (`.size()`, `.reduce`, member access)
 - the slot-allocation contract for internal `__jsmql.tmp.<N>` slots
 - the place of a materialised `$lookup` in the pipeline (§ Where a hoisted stage lands)
 - the mode-gate behaviour
@@ -55,13 +55,13 @@ A body that opens with a correlated equality is the `localField` / `foreignField
 
 **`lookupOf(node, env)`** turns the chain into a `$lookup`. It peels the links from the collection outwards. For each link, it asks the link's row for the stages it means on a stream — the same `stream` cell a top-level `$$.<link>` uses ([stream-methods.md](stream-methods.md)) — and it appends them to the sub-pipeline: `.filter(p)` → `$match`, `.sortBy(k)` → `$sort`, `.take(n)` → `$limit`, a stage link `.$group(…)` → the stage, `.aggregate(block)` → the block's stages.
 
-`.find(p)` gives the first match as ONE document: `$match` + `$limit: 1`, and the destination unwraps the array with `$first`. The peel stops at the first link that makes a VALUE of the documents (`.length`, `.map(o => o.total)`, `.sum()`, a field read after `.find`). What follows is `rest`, and `complete` is false.
+`.find(p)` gives the first match as ONE document: `$match` + `$limit: 1`, and the destination unwraps the array with `$first`. The peel stops at the first link that makes a VALUE of the documents (`.size()`, `.map(o => o.total)`, `.sum()`, a field read after `.find`). What follows is `rest`, and `complete` is false.
 
-**The body's Env.** The sub-pipeline is lowered one level deeper. `env.enter` crosses a `$lookup` boundary with a fresh `Capture`. So every read of the OUTER document inside the body is interned into the stage's `let`, and read back as a `$$` variable: `$.userId` → `let: { jsmql_f0_userId: "$userId" }`, a pipeline `let` binding → `jsmql_v0_<name>`, the root count `$$.length` → `jsmql_s0_length` ([stream-length.md](stream-length.md)).
+**The body's Env.** The sub-pipeline is lowered one level deeper. `env.enter` crosses a `$lookup` boundary with a fresh `Capture`. So every read of the OUTER document inside the body is interned into the stage's `let`, and read back as a `$$` variable: `$.userId` → `let: { jsmql_f0_userId: "$userId" }`, a pipeline `let` binding → `jsmql_v0_<name>`, the root count `$$.size()` → `jsmql_s0_size` ([stream-size.md](stream-size.md)).
 
 The number is the level the read comes FROM. So a nested body captures an ancestor under a distinct name, and MQL's lexical `$$` scoping never shadows it.
 
-The callback's first parameter is the foreign document (`o.total` → `"$total"`). The compiler refuses the second parameter as a read, because a stream has no index. The third parameter is the joined stream itself (`coll.length`, `coll.filter(…)`). `$.` is the outer document at every depth (HR4). A write inside the body goes through the parameter (`o.x = …`).
+The callback's first parameter is the foreign document (`o.total` → `"$total"`). The compiler refuses the second parameter as a read, because a stream has no index. The third parameter is the joined stream itself (`coll.size()`, `coll.filter(…)`). `$.` is the outer document at every depth (HR4). A write inside the body goes through the parameter (`o.x = …`).
 
 **A value terminal gives ONE DOCUMENT.** The `$lookup.as` array holds the foreign collection's documents. So the binding for the slot states `elements: "object"`. A method whose row answers `returns: "element"` — `.head()`, `.first()`, `.last()`, `.at(i)`, `.nth(i)`, `.find(p)`, `.findLast(p)`, `.min()`, `.max()`, `.minBy(k)`, `.maxBy(k)` — is typed `"object"` over it. The compiler then refuses every array method on that document, and it names the field read as the way out.
 
@@ -69,25 +69,25 @@ The proof belongs to the binding, and it travels no further. A link that REPLACE
 
 Before this rule stated the elements, `$$$.c.head().map(f)` emitted `$map` over a document. mongod refuses this at execution time on a non-empty collection, and it silently answers null on an empty one.
 
-**The callback's third parameter** (`(o, _i, c) => …`) is the body's own stream. `c.length` is its count, and a chain on it (`c.filter(…)`) gives its stages. When the source reads it as a value on its own (`c.total`, `c`), the compiler refuses it by name, because it is neither a document nor a value.
+**The callback's third parameter** (`(o, _i, c) => …`) is the body's own stream. `c.size()` is its count, and a chain on it (`c.filter(…)`) gives its stages. When the source reads it as a value on its own (`c.total`, `c`), the compiler refuses it by name, because it is neither a document nor a value.
 
 **Four destinations**, by the statement the chain stands in:
 
 | Statement | Lowering | Function |
 |---|---|---|
 | `$.o = $$$.c.<chain>` with nothing after the peel | the target IS `as`; `.find` adds `$set: { o: { $first: "$o" } }` | `joinWrite` |
-| any VALUE position (`$.n = <chain>.length`, `let t = <chain>.reduce(…)`, a stage body) | the compiler hoists the `$lookup` ahead of the stage that reads it (§ Where a hoisted stage lands), into a scratch slot `__jsmql.tmp.<N>` bound as a typed name (an array for `.filter`, a document for `.find`); it then lowers the rest of the chain as a value over the slot — `.length` → `$size`, `.map(f).sum()` → `$sum: { $map: … }`, `.name` → a path | `joinValue` |
+| any VALUE position (`$.n = <chain>.size()`, `let t = <chain>.reduce(…)`, a stage body) | the compiler hoists the `$lookup` ahead of the stage that reads it (§ Where a hoisted stage lands), into a scratch slot `__jsmql.tmp.<N>` bound as a typed name (an array for `.filter`, a document for `.find`); it then lowers the rest of the chain as a value over the slot — `.size()` → `$size`, `.map(f).sum()` → `$sum: { $map: … }`, `.name` → a path | `joinValue` |
 | `$ = $$$.c.find(p)` | `$lookup` into a slot, `$unwind`, `$replaceWith`: each document becomes the one it found, and a document that found nothing leaves the stream (`$unwind` of an empty slot drops it — by design) | `joinRoot` |
 | `$$ = $$$.c.<chain>` | correlated (the body read the outer document): a `$lookup` per outer document, `$unwind`, `$replaceWith`; uncorrelated: the compiler drops the current stream and unions in the other collection's pipeline (`$unionWith`) | `joinStream` |
 
-The compiler lowers a write whose chain goes on after the peel (`$.o = $$$.c.filter(p).map(f)`) twice. It lowers the write once to learn it is not complete, then once more on the value road. The first attempt takes back what it hoisted, so a `$$.length` stamp lands once.
+The compiler lowers a write whose chain goes on after the peel (`$.o = $$$.c.filter(p).map(f)`) twice. It lowers the write once to learn it is not complete, then once more on the value road. The first attempt takes back what it hoisted, so a `$$.size()` stamp lands once.
 
 A `let` whose value is a complete chain uses its own slot `__jsmql.var.<name>` as `as` ([let-bindings.md](let-bindings.md)). The scratch slots live under `__jsmql`. The chain's single trailing `{ $unset: "__jsmql" }` removes them. Inside a sub-pipeline, the cleanup belongs to the sub-pipeline itself.
 
 **Nested reads.** A `$$$.<coll2>` read inside a body is a `$lookup` inside the sub-pipeline. The compiler hoists it ahead of the stage that reads it, with its own `let` at its own level:
 
 ```js
-$.a = $$$.b.filter(x => x.n > $.m && $$$.c.filter(y => y.k === x.k).length > 0)
+$.a = $$$.b.filter(x => x.n > $.m && $$$.c.filter(y => y.k === x.k).size() > 0)
 // → [{ $lookup: { from: "b", let: { jsmql_f0_m: "$m" }, pipeline: [
 //        { $lookup: { from: "c", localField: "k", foreignField: "k", as: "__jsmql.tmp.0" } },
 //        { $match: { $expr: { $and: [{ $gt: ["$n", "$$jsmql_f0_m"] }, { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] }] } } },
@@ -103,7 +103,7 @@ the front of the statement. A callback's parameter names the document ITS stage
 receives, so that is the document the `$lookup` has to read.
 
 ```js
-$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length }));
+$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).size() }));
 // → [{ $sortByCount: "$tag" },
 //    { $lookup: { from: "orders", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
 //    { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } }]
@@ -171,15 +171,15 @@ Every refusal is a `CodegenError` with the offending node's `pos`, so `validate(
 | Trigger | Message (paraphrased) |
 |---|---|
 | `$$$.orders.filter(p);` — a read with no destination | "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = …'), bind it ('let x = …'), or make it the stream ('$$ = …')." |
-| `$$ = $$$.c.filter(p).length` — a value where documents are needed | "… makes a value …" |
+| `$$ = $$$.c.filter(p).size()` — a value where documents are needed | "… makes a value …" |
 | `$$ = $$$.c.find(p)` — one document where a stream is needed | ".find gives ONE document, and a stream is many" |
 | `$ = $$$.c.filter(p)` — many where the root needs one | "… the root needs one document …" |
 | `$$$.orders.fnid(o => …)` | "Unknown method '.fnid()' at position N. Did you mean '.find()'?" |
 | `$$$.orders.find()` | "'.find(predicate)' requires exactly 1 argument, got 0" |
-| `$$$.orders.find(p).length` | "'.length' is not available on a 'object' — it is defined on 'array', 'string', 'stream'." |
+| `$$$.orders.find(p).size()` | "'.size()' is not available on an 'object' — it is defined on 'array', 'stream'. For the number of fields, write '.keys().size()'." |
 | `$$$.orders.filter(p)` in a filter / `jsmql.expr` | the pipeline-mode refusal above |
 | `$$$[$.name]` / `$$$[""]` | "named when the pipeline is written" / "names no collection" |
 | `$$$$.<db>.<coll>.filter(p)` | the cross-database refusal above |
 | `$$.push($$$.c.filter(x => x.n > $.m))` — an outer read in a `$unionWith` body | "'$unionWith' has no 'let': its body cannot read the outer document …" ([union-stage.md](union-stage.md)) |
-| `$geoNear({ …, query: { n: $$.length } })` — a first-only stage whose body needs a hoisted stage | "'$geoNear' has to be the FIRST stage of the pipeline, and a value in its body needs a '$setWindowFields' stage of its own to run BEFORE it …" ([emit-pass.md](emit-pass.md) § Placement) |
+| `$geoNear({ …, query: { n: $$.size() } })` — a first-only stage whose body needs a hoisted stage | "'$geoNear' has to be the FIRST stage of the pipeline, and a value in its body needs a '$setWindowFields' stage of its own to run BEFORE it …" ([emit-pass.md](emit-pass.md) § Placement) |
 | `$.n = $.items.map(x => $$$.c.find({ _id: x.k }))` — a join reading a variable an enclosing callback binds | "'x' is bound by an enclosing callback, and a read of another collection is a '$lookup' STAGE … Make the elements documents first ('$$ = $.<array>;') … or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);')" |

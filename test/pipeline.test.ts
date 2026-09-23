@@ -770,9 +770,9 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   // Outer context referenced INSIDE a source-switch's chain body (vs the prior
   // test, which references it in a later top-level stage). A bare
   // `$$ = $$$.<coll>.map(…)` is a `$unionWith` that REPLACES the stream, so the
-  // outer document / root `$$.length` / outer `let`s are not carried in — the
+  // outer document / root `$$.size()` / outer `let`s are not carried in — the
   // error must say so and point at the correlated `.filter` form (which DOES
-  // thread them; see stream-length.test.ts "four kinds of length").
+  // thread them; see stream-size.test.ts "the root count, the doc field, the const, and the handle count").
   it("outer `let` read inside a source-switch `.map` body → 'correlate with a .filter' error", () => {
     expect(jsmql(`const k = $.min + 1; $$ = $$$.orders.map(o => ({ v: k }));`)).toEqual([
       { $set: { "__jsmql.var.k": { $add: ["$min", 1] } } },
@@ -1404,41 +1404,41 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
     );
   });
 
-  // A value in the stage's own body may need a STAGE of its own — `$$.length` a
+  // A value in the stage's own body may need a STAGE of its own — `$$.size()` a
   // `$setWindowFields`, a `$$$.<coll>` read a `$lookup` — and jsmql places that
   // stage directly ahead of the one that reads it. Ahead of a first-only stage
   // there is no room, and the server says so: MEASURED, "$geoNear was not the
   // first stage in the pipeline after optimization".
   it("rejects a first-only stage whose body needs a stage of its own ahead of it", () => {
-    expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.length } });')).toThrow(
-      /'\$geoNear' has to be the FIRST stage of the pipeline\. A value in its body needs a '\$setWindowFields' stage of its own to run BEFORE it\..*\$geoNear\(\{ … \}\); \$match\(\$\.<field> === \$\$\.length\);/s,
+    expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.size() } });')).toThrow(
+      /'\$geoNear' has to be the FIRST stage of the pipeline\. A value in its body needs a '\$setWindowFields' stage of its own to run BEFORE it\..*\$geoNear\(\{ … \}\); \$match\(\$\.<field> === \$\$\.size\(\)\);/s,
     );
     // the message names the stage jsmql actually had to make, and the value that makes it
     expect(() =>
       jsmql('$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$$.p.find({ _id: $.pid }).n } });'),
     ).toThrow(/needs a '\$lookup' stage of its own.*\$\$\$\.<coll>\.find\(\{ … \}\)\.<field>/s);
     // a SETTING has no later-statement form at all, so the message names the other way out
-    expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", maxDistance: $$.length });')).toThrow(
+    expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", maxDistance: $$.size() });')).toThrow(
       /give it a constant or a 'jsmql\.compile' parameter/,
     );
     // the same for a source stage, and for the array-reducer road, whose `$match` is
     // placed after its predicate is lowered
-    expect(() => jsmql("$documents([{ n: $$.length }]);")).toThrow(/'\$documents' has to be the FIRST stage/);
+    expect(() => jsmql("$documents([{ n: $$.size() }]);")).toThrow(/'\$documents' has to be the FIRST stage/);
     expect(() =>
-      jsmql('$$.reduce((acc, d) => $text({ $search: "x" }) && d.n === $$.length ? acc.concat(d) : acc, []);'),
+      jsmql('$$.reduce((acc, d) => $text({ $search: "x" }) && d.n === $$.size() ? acc.concat(d) : acc, []);'),
     ).toThrow(/needs a '\$setWindowFields' stage of its own/);
   });
 
   // The rule can belong to an OPERATOR the body holds rather than to the stage.
   it("rejects a first-only OPERATOR whose $match body needs a stage of its own", () => {
-    expect(() => jsmql('$match({ $text: { $search: "x" }, n: $$.length });')).toThrow(
-      /'\$text' only runs in the pipeline's FIRST '\$match'.*\$match\(\$text\(…\)\); \$match\(\$\.<field> === \$\$\.length\);/s,
+    expect(() => jsmql('$match({ $text: { $search: "x" }, n: $$.size() });')).toThrow(
+      /'\$text' only runs in the pipeline's FIRST '\$match'.*\$match\(\$text\(…\)\); \$match\(\$\.<field> === \$\$\.size\(\)\);/s,
     );
     // the alternative the message names does compile
-    expect(jsmql('$match($text({ $search: "x" })); $match($.n === $$.length);')).toEqual([
+    expect(jsmql('$match($text({ $search: "x" })); $match($.n === $$.size());')).toEqual([
       { $match: { $text: { $search: "x" } } },
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $match: { $expr: { $eq: ["$n", "$__jsmql.length"] } } },
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $match: { $expr: { $eq: ["$n", "$__jsmql.size"] } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -1448,31 +1448,31 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   it("keeps a first-only stage in a sub-pipeline when the OUTER chain hoists", () => {
     expect(
       jsmql(
-        '$lookup({ from: "p", as: "o", pipeline: [$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.length } })] });',
+        '$lookup({ from: "p", as: "o", pipeline: [$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.size() } })] });',
       ),
     ).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       {
         $lookup: {
           from: "p",
           as: "o",
           pipeline: [
-            { $geoNear: { near: [1, 2], distanceField: "d", query: { $expr: { $eq: ["$n", "$$jsmql_s0_length"] } } } },
+            { $geoNear: { near: [1, 2], distanceField: "d", query: { $expr: { $eq: ["$n", "$$jsmql_s0_size"] } } } },
           ],
-          let: { jsmql_s0_length: "$__jsmql.length" },
+          let: { jsmql_s0_size: "$__jsmql.size" },
         },
       },
       { $unset: "__jsmql" },
     ]);
     // the join-chain spelling of the same lowering answers the same document
-    expect(jsmql('$.o = $$$.p.$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.length } });')).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+    expect(jsmql('$.o = $$$.p.$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.size() } });')).toEqual([
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       {
         $lookup: {
           from: "p",
-          let: { jsmql_s0_length: "$__jsmql.length" },
+          let: { jsmql_s0_size: "$__jsmql.size" },
           pipeline: [
-            { $geoNear: { near: [1, 2], distanceField: "d", query: { $expr: { $eq: ["$n", "$$jsmql_s0_length"] } } } },
+            { $geoNear: { near: [1, 2], distanceField: "d", query: { $expr: { $eq: ["$n", "$$jsmql_s0_size"] } } } },
           ],
           as: "o",
         },
@@ -1485,15 +1485,15 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   // output, and nothing may follow that one — so a body reading a scratch field
   // reads one already gone. MEASURED: "Use of undefined variable: v".
   it("rejects a terminal stage whose body reads a materialised value", () => {
-    expect(() => jsmql('$merge({ into: "c", let: { v: $$.length }, whenMatched: [$set({ z: "$$v" })] });')).toThrow(
-      /'\$merge' writes the pipeline's output and has to be its LAST stage.*\$\.n = \$\$\.length; \$merge\(/s,
+    expect(() => jsmql('$merge({ into: "c", let: { v: $$.size() }, whenMatched: [$set({ z: "$$v" })] });')).toThrow(
+      /'\$merge' writes the pipeline's output and has to be its LAST stage.*\$\.n = \$\$\.size\(\); \$merge\(/s,
     );
     // the alternative the message names does compile
     expect(
-      jsmql('$.n = $$.length; $merge({ into: "c", let: { v: $.n }, whenMatched: [$set({ z: "$$v" })] });'),
+      jsmql('$.n = $$.size(); $merge({ into: "c", let: { v: $.n }, whenMatched: [$set({ z: "$$v" })] });'),
     ).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $set: { n: "$__jsmql.length" } },
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $set: { n: "$__jsmql.size" } },
       { $unset: "__jsmql" },
       { $merge: { into: "c", let: { v: "$n" }, whenMatched: [{ $set: { z: "$$v" } }] } },
     ]);

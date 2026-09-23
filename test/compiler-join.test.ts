@@ -274,7 +274,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
   });
 
   it("reads what follows the body as a value over the joined array", () => {
-    // `.length` is `$size` — the slot is KNOWN to be an array, so no runtime guard
+    // `.size()` is `$size` — the slot is KNOWN to be an array, so no runtime guard
     expect(
       compiled("$.n = $$$.orders.filter(o => o.userId === $._id).size();", [
         { _id: 1, n: 2 },
@@ -408,13 +408,13 @@ describe("compiler/emit/join — inside the body", () => {
     expect(() => pipeline("$.o = $$$.orders.aggregate(o => { $$.filter(d => d.a > 1); });")).toThrow(
       /'\$\$' is the root stream/,
     );
-    // `coll.length` counts the body's stream where it stands; `$$.length` counts the ROOT stream,
+    // `coll.size()` counts the body's stream where it stands; `$$.size()` counts the ROOT stream,
     // materialised on the root pipeline and carried in through `let`
     expect(() =>
-      pipeline("$.o = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); o.n = coll.length; });"),
+      pipeline("$.o = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); o.n = coll.size(); });"),
     ).toThrow(/'coll' is the body's own stream\. This body runs '\$match', which changes what its count means/);
     expect(
-      compiled("$.o = $$$.orders.aggregate(o => { $match(o.userId === $._id); o.n = $$.length; });", [
+      compiled("$.o = $$$.orders.aggregate(o => { $match(o.userId === $._id); o.n = $$.size(); });", [
         {
           _id: 1,
           o: [
@@ -427,13 +427,13 @@ describe("compiler/emit/join — inside the body", () => {
         { _id: 4, o: [] },
       ]),
     ).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       {
         $lookup: {
           from: "orders",
           ...COMPACT,
-          let: { jsmql_s0_length: "$__jsmql.length" },
-          pipeline: [{ $set: { n: "$$jsmql_s0_length" } }],
+          let: { jsmql_s0_size: "$__jsmql.size" },
+          pipeline: [{ $set: { n: "$$jsmql_s0_size" } }],
           as: "o",
         },
       },
@@ -744,18 +744,18 @@ describe("compiler/emit/join — a join inside an expression that binds its own 
 });
 
 describe("compiler/emit/join — a stream handle counts the body that BOUND it", () => {
-  // `coll.length` is the count of the sub-stream the callback's THIRD parameter
+  // `coll.size()` is the count of the sub-stream the callback's THIRD parameter
   // names, and a deeper body reads an ancestor's handle through each `$lookup.let`
   // on the way down — the same hop an outer field takes. Stamped on the reading
   // body's chain instead, the two counts become one field and answer the same
-  // number: MEASURED, `{ $set: { a: "$__jsmql.length", b: "$__jsmql.length" } }`,
+  // number: MEASURED, `{ $set: { a: "$__jsmql.size", b: "$__jsmql.size" } }`,
   // which the server accepts and answers wrongly without a word.
   it("carries an ancestor sub-stream's count down, distinct from the body's own", () => {
     expect(
       compiled(
         `$$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
   const its = $$$.items.filter({ orderId: o._id }).aggregate((t, k, itemsColl) => {
-    t = { id: t._id, items: itemsColl.length, orders: ordersColl.length };
+    t = { id: t._id, items: itemsColl.size(), orders: ordersColl.size() };
   });
   o = { orderId: o._id, its };
 });`,
@@ -777,16 +777,16 @@ describe("compiler/emit/join — a stream handle counts the body that BOUND it",
           from: "orders",
           ...COMPACT,
           pipeline: [
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
             {
               $lookup: {
                 from: "items",
                 localField: "_id",
                 foreignField: "orderId",
-                let: { jsmql_s1_length: "$__jsmql.length" },
+                let: { jsmql_s1_size: "$__jsmql.size" },
                 pipeline: [
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-                  { $replaceWith: { id: "$_id", items: "$__jsmql.length", orders: "$$jsmql_s1_length" } },
+                  { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+                  { $replaceWith: { id: "$_id", items: "$__jsmql.size", orders: "$$jsmql_s1_size" } },
                 ],
                 as: "__jsmql.var.its",
               },
@@ -965,9 +965,9 @@ describe("compiler/emit/join — the pair is answered from the foreign index", (
 describe("compiler/emit/join — hoists of a lowering that is taken back", () => {
   it("stamps the root count once when the chain goes on after the join", () => {
     const out = pipeline(
-      "$.o = $$$.orders.filter(o => o.i < $$.length).map((o, i, coll) => o.i + coll.size())",
+      "$.o = $$$.orders.filter(o => o.i < $$.size()).map((o, i, coll) => o.i + coll.size())",
     ) as Record<string, unknown>[];
     expect(out.filter((s) => "$setWindowFields" in s)).toHaveLength(1);
-    expect(out[1]).toMatchObject({ $lookup: { let: { jsmql_s0_length: "$__jsmql.length" } } });
+    expect(out[1]).toMatchObject({ $lookup: { let: { jsmql_s0_size: "$__jsmql.size" } } });
   });
 });

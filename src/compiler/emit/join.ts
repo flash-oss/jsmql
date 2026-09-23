@@ -359,7 +359,7 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
  * `$lookup` — the value road then materialises it.
  */
 export function joinWrite(node: Expr, path: string, env: Env, S: JoinServices): { stages: Stage[]; type: Type } | null {
-  // The body's lowering may hoist onto the outer chains (`$$.length` stamps
+  // The body's lowering may hoist onto the outer chains (`$$.size()` stamps
   // the root stream). When the chain goes on, the value road lowers the body
   // again, so the compiler takes back what this attempt hoisted — otherwise
   // the stamp lands twice.

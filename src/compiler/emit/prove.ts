@@ -134,7 +134,7 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       return key !== undefined && neverNullOf(key) && isPresent(node.left, env) && isPresent(node.right, env);
     }
     case "MemberAccess":
-      // A property row (`.length`, `Math.PI`) answers like a call: its row's `neverNull`
+      // A property row (`Math.PI`) answers like a call: its row's `neverNull`
       // over a present receiver. A field read carries the object's proof.
       if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
         return neverNullOf(node.name) && (sourceFamily(node.object) !== null || isPresent(node.object, env));
@@ -404,7 +404,7 @@ function kindsOf(node: Expr, env: Env): Type {
     case "CollectionRef":
       return of("stream");
     case "MemberAccess": {
-      // A property row (`.length`, `Math.PI`) states its result; a field read is the object's property.
+      // A property row (`Math.PI`) states its result; a field read is the object's property.
       if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
         return callOn(node.name, typeOf(node.object, env), receiverFamilyOf(node.object, env), [], env);
       }

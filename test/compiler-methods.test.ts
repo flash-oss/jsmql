@@ -554,7 +554,7 @@ describe("compiler/emit — array methods", () => {
     // a receiver proven to be the other family: the refusal names that family's spelling
     expect(() => expr('$.csv.split(",").includes("b")')).toThrow("For membership in an array, write '.has(x)'.");
     expect(() => expr('$.s.trim().has("x")')).toThrow("For a substring test, write '.includes(x)'.");
-    expect(() => expr('$.csv.split(",").length')).toThrow("For the number of elements, write '.size()'.");
+    expect(() => expr('$.csv.split(",").length()')).toThrow("For the number of elements, write '.size()'.");
     expect(() => expr("$.s.trim().size()")).toThrow("For the number of characters, write '.length()'.");
     expect(() => expr('$.o.pick(["a"]).size()')).toThrow("For the number of fields, write '.keys().size()'.");
     expect(() => expr("$.s.trim().at(0)")).toThrow("For one character, write '.charAt(index)'.");
@@ -886,7 +886,7 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o?.values()", null],
   ["$.o?.entries()", null],
   ["$.o?.keys().size()", null],
-  ["$.s?.trim().length", null],
+  ["$.s?.trim().length()", null],
   ["$.a?.map(x => x).size()", null],
   // a NAMESPACE call has no receiver to carry the `?.`, so the row reads it off the
   // argument — and there is no call AFTER the `?.` to stop, so `{}` still applies

@@ -340,7 +340,7 @@ function fromPerFamily(
   }
   // Does the row take EVERY kind the value can be? Only then can a lone branch run
   // with no test, and only then can a dispatch drop its default. A possible kind
-  // the row has no branch for — a number under `.length` — falls to the default.
+  // the row has no branch for — a number under `.indexOf` — falls to the default.
   const covered = possible !== undefined && receiver.exact === true && possible.every((f) => listed.includes(f));
   // One family left, and the value can be nothing else: the rule runs directly. So does
   // a row with ONE field family and no `uncertain`: the call is on that family, or the

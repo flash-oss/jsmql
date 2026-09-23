@@ -52,7 +52,7 @@ The parser reads an arrow's body shape: an expression body (`({ $ }) => <expr>`)
 - **`$expr` in filters is legal.** MongoDB accepts `{ $expr: <aggExpr> }` at the top level of a filter, so the residual wrapping is always safe.
 - **Source `$`-strings pass through; no automatic `$literal` (HR1).** A `"$y"` typed in source is the field path `$y` everywhere — in a query slot (`$.x === "$y"` → `{ x: "$y" }`, which the server compares as a string, as any query value) and in the `$expr` residual (`$concat($.a, "$b") === $.c` → `{ $expr: { $eq: [{ $concat: ["$a", "$b"] }, "$c"] } }`). The one wrap is HR1's gate for a value that arrives at run time — a `jsmql.compile` parameter, a template `${…}` — which `injectedNeedsLiteral` in [src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) wraps in `$literal` wherever the server would evaluate it, and leaves as written in a query slot.
 - **`new Date(<constant args>)` is folded** in a query slot: `$.createdAt >= new Date("2026-01-01")` lowers to `{ createdAt: { $gte: <Date> } }`, never `{ $gte: { $toDate: … } }` — the query language would read that as a literal sub-document and match nothing.
-- **`$.tags.length < 5` is an `$expr`.** `.length` has no query form: it is a value (`$size` on an array, `$strLenCP` on a string — the dual-receiver `$switch`), so the comparison rides in `$expr`.
+- **`$.tags.size() < 5` is an `$expr`.** `.size()` has no query form: it is a value (`$size`), so the comparison rides in `$expr`.
 - **A write is a pipeline.** `$.x = …` and `delete $.x` are statements by the table above; `jsmql()` returns the `$set` / `$unset` pipeline, `jsmql.update()` the update document ([update-filter.md](update-filter.md)).
 
 ## Compile and validate

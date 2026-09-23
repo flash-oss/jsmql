@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-24 — feat!: every value JSMQL computes is a call; the stream count is `$$.size()`
+
+`.length` was the one property JSMQL computed, and `$$.length` its stream twin. A
+developer whose documents hold a field named `length` could not reach it with a
+dot, and a reader of `$.a.length` could not tell a field from a computation. No
+dot property is computed any more: `$.a.length` reads the field `a.length`, and
+`$.s.length()` counts the characters of `s`. `.length()` is a string method, so
+the stream's document count moves to `.size()`, the array method, as `Set.size`
+and `Map.size` name it: `$$.size()` stamps `__jsmql.size` through
+`$setWindowFields` (`SIZE_SLOT`), a `$lookup.let` carries it as `jsmql_s0_size`,
+and a stream callback's third parameter counts its own stream with `.size()` too.
+
+The `size` row holds the stream cell the `length` row held. A method call on `$$`
+in a value slot passes when its row states a stream cell in the value position
+(`hasStreamValueCell`); every other chain on the stream there is still the
+`$facet` road and is refused. The ambient globals skip `length`, because
+TypeScript's own `String` declares the property. The spec is
+`docs/specs/stream-size.md`, the suite `test/stream-size.test.ts`.
+
+---
+
 ## 2026-09-23 — feat!: each method reads one kind of value, and its name says which
 
 `.length` counted the characters of a string and the elements of an array,

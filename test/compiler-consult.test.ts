@@ -114,11 +114,14 @@ describe("compiler/emit/consult — the other verdicts", () => {
   });
 
   it("resolves a per-family cell when the family is known, and reports the branches when it is not", () => {
-    // `.length` is the worked case: the string family merely scans, the stream does
+    // `.size()` is the worked case: the array family merely scans, the stream does
     // not compile at all, and one answer for both would claim the wrong thing.
+    expect(consult("size", "filter", "array").kind).toBe("fallback");
+    expect(consult("size", "filter", "stream").kind).toBe("refused");
+    expect(consult("size", "filter").kind).toBe("perFamily");
+    // `.length()` has one family, so its filter cell is flat, and a family does not change it
+    expect(consult("length", "filter").kind).toBe("fallback");
     expect(consult("length", "filter", "string").kind).toBe("fallback");
-    expect(consult("length", "filter", "stream").kind).toBe("refused");
-    expect(consult("length", "filter").kind).toBe("perFamily");
   });
 
   it("reads a CONSTRUCT as well as a name", () => {
