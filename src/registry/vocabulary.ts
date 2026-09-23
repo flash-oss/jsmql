@@ -79,6 +79,9 @@ export const escapeForRegex = (needle: string): string => needle.replace(/[.*+?^
  * for containment, and `.some(e => …)` for a test on an element.
  */
 export function queryOwnValue(path: string, test: Readonly<Record<string, unknown>>): QueryDoc {
+  // The path "" is the ELEMENT itself, inside an `$elemMatch` body: the test stands alone,
+  // in operator form — `{ $elemMatch: "red" }` is not a query, `{ $elemMatch: { $eq: "red" } }` is.
+  if (path === "") return test as QueryDoc;
   return { [path]: shorthand(test) };
 }
 export type Stage = Record<string, unknown>;

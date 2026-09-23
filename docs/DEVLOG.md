@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-24 — fix: `.some(t => …)` over the element itself has a query form
+
+`$.tags.some(t => t === "red")` took the `$expr` road, because the element `t`
+had no query path: only a field of the element (`i.q > 2`) became an
+`$elemMatch` clause. Inside an `$elemMatch` body a test with no field name tests
+the element itself, so the innermost element is now the path `""`, and
+`queryOwnValue` writes a test on that path as the bare operator document:
+`{ tags: { $elemMatch: { $eq: "red" } } }`, `{ nums: { $elemMatch: { $gt: 1, $lt: 5 } } }`,
+`{ tags: { $elemMatch: { $regex: /^re/ } } }`. MEASURED: the server refuses `$and`,
+`$or` and `$nor` over operator-only clauses inside `$elemMatch`, and a field
+beside an operator, so the `some` cell hands those bodies to the expression
+road. `"k" in r` on the element and the `$all` fold follow the same path rule.
+
+---
+
 ## 2026-09-24 — fix: `key in obj` tests a key of the object, as JavaScript's `in` does
 
 `"k" in $.o` emitted `{ $in: ["k", "$o"] }`, MongoDB's array membership, and the
