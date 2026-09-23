@@ -114,7 +114,13 @@ describe("reusable functions — call sites in various contexts", () => {
     expect(jsmql("const double = (x) => x * 2; $ = { ys: $.xs.map(n => double(n)) };")).toEqual([
       {
         $replaceWith: {
-          ys: { $map: { input: "$xs", as: "n", in: { $let: { vars: { x: "$$n" }, in: { $multiply: ["$$x", 2] } } } } },
+          ys: {
+            $map: {
+              input: { $ifNull: ["$xs", []] },
+              as: "n",
+              in: { $let: { vars: { x: "$$n" }, in: { $multiply: ["$$x", 2] } } },
+            },
+          },
         },
       },
     ]);
@@ -191,7 +197,13 @@ describe("reusable functions — rejections (actionable errors)", () => {
     expect(jsmql("const double = (x) => x * 2; $.a = $.xs.map((x) => double(x));")).toEqual([
       {
         $set: {
-          a: { $map: { input: "$xs", as: "x", in: { $let: { vars: { x: "$$x" }, in: { $multiply: ["$$x", 2] } } } } },
+          a: {
+            $map: {
+              input: { $ifNull: ["$xs", []] },
+              as: "x",
+              in: { $let: { vars: { x: "$$x" }, in: { $multiply: ["$$x", 2] } } },
+            },
+          },
         },
       },
     ]);
@@ -342,14 +354,14 @@ describe("`function` keyword — parity with the arrow form", () => {
   it("an anonymous `function` expression works as an inline `.map` callback", () => {
     const arrow = jsmql.expr("$.items.map((x) => x * 2)");
     expect(jsmql.expr("$.items.map(function (x) { return x * 2 })")).toEqual({
-      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", 2] } },
     });
   });
 
   it("a NAMED `function` expression callback ignores the name", () => {
     const anon = jsmql.expr("$.items.map(function (x) { return x * 2 })");
     expect(jsmql.expr("$.items.map(function scale(x) { return x * 2 })")).toEqual({
-      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", 2] } },
     });
   });
 
@@ -357,7 +369,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     const arrow = jsmql.expr("$.items.map((x) => { const y = x + 1; return y * 2 })");
     expect(jsmql.expr("$.items.map(function (x) { const y = x + 1; return y * 2 })")).toEqual({
       $map: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         in: { $let: { vars: { y: { $add: ["$$x", 1] } }, in: { $multiply: ["$$y", 2] } } },
       },
@@ -493,7 +505,11 @@ describe("compile params resolve inside every higher-order callback", () => {
   it("resolves a param inside .reduce", () => {
     const build = jsmql.expr.compile<{ rate: number }>(({ rate }, { $ }) => $.items.reduce((a, x) => a + x * rate, 0));
     expect(build({ rate: 1.1 })).toEqual({
-      $reduce: { input: "$items", initialValue: 0, in: { $add: ["$$value", { $multiply: ["$$this", 1.1] }] } },
+      $reduce: {
+        input: { $ifNull: ["$items", []] },
+        initialValue: 0,
+        in: { $add: ["$$value", { $multiply: ["$$this", 1.1] }] },
+      },
     });
   });
 

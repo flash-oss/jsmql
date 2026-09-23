@@ -72,66 +72,264 @@ describe("compiler/emit — string methods", () => {
     expect(compiled("$.s.trim()", (d) => d.s.trim())).toEqual({ $trim: { input: "$s" } });
     expect(compiled("$.s.trimStart()", (d) => d.s.trimStart())).toEqual({ $ltrim: { input: "$s" } });
     expect(compiled("$.s.trimEnd()", (d) => d.s.trimEnd())).toEqual({ $rtrim: { input: "$s" } });
-    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual(nullOr("$s", { $toLower: "$s" }));
-    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual(nullOr("$s", { $toUpper: "$s" }));
+    expect(compiled("$.s.toLowerCase()", (d) => d.s.toLowerCase())).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $toLower: "$s" } },
+    });
+    expect(compiled("$.s.toUpperCase()", (d) => d.s.toUpperCase())).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $toUpper: "$s" } },
+    });
     expect(compiled('$.csv.split(",")', (d) => d.csv.split(","))).toEqual({ $split: ["$csv", ","] });
-    expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual(nullOr("$csv", { $substrCP: ["$csv", 0, 1] }));
+    expect(compiled("$.csv.charAt(0)", (d) => d.csv.charAt(0))).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$csv", null] }, null] }, then: null, else: { $substrCP: ["$csv", 0, 1] } },
+    });
     expect(compiled("$.csv.charAt(-1)", (d) => d.csv.charAt(-1))).toBe("");
-    expect(compiled('$.csv.startsWith("a")', (d) => d.csv.startsWith("a"))).toEqual(
-      nullOr("$csv", { $eq: [{ $indexOfCP: ["$csv", "a"] }, 0] }),
-    );
-    expect(compiled('$.csv.endsWith("c")', (d) => d.csv.endsWith("c"))).toEqual(
-      nullOr("$csv", {
-        $let: {
-          vars: { jsmqlStr: "$csv" },
-          in: {
-            $eq: [
-              { $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 1] }] }, 1] },
-              "c",
-            ],
+    expect(compiled('$.csv.startsWith("a")', (d) => d.csv.startsWith("a"))).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
+        then: null,
+        else: { $eq: [{ $indexOfCP: ["$csv", "a"] }, 0] },
+      },
+    });
+    expect(compiled('$.csv.endsWith("c")', (d) => d.csv.endsWith("c"))).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
+        then: null,
+        else: {
+          $let: {
+            vars: { jsmqlStr: "$csv" },
+            in: {
+              $eq: [
+                { $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 1] }] }, 1] },
+                "c",
+              ],
+            },
           },
         },
-      }),
-    );
-    expect(compiled("$.csv.search(/b/)", (d) => d.csv.search(/b/))).toEqual(
-      nullOr("$csv", {
-        $ifNull: [{ $getField: { field: "idx", input: { $regexFind: { input: "$csv", regex: "b" } } } }, -1],
-      }),
-    );
+      },
+    });
+    expect(compiled("$.csv.search(/b/)", (d) => d.csv.search(/b/))).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
+        then: null,
+        else: { $ifNull: [{ $getField: { field: "idx", input: { $regexFind: { input: "$csv", regex: "b" } } } }, -1] },
+      },
+    });
     expect(compiled('$.csv.padStart(7, "-")', (d) => d.csv.padStart(7, "-"))).toMatchObject({
-      $cond: { else: { $let: {} } },
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
+        then: null,
+        else: {
+          $let: {
+            vars: { jsmqlPad: "$csv" },
+            in: {
+              $concat: [
+                {
+                  $reduce: {
+                    input: { $range: [0, { $subtract: [7, { $strLenCP: "$$jsmqlPad" }] }] },
+                    initialValue: "",
+                    in: { $concat: ["$$value", "-"] },
+                  },
+                },
+                "$$jsmqlPad",
+              ],
+            },
+          },
+        },
+      },
     });
     expect(compiled('$.csv.padEnd(6, "xy")', (d) => d.csv.padEnd(6, "xy"))).toMatchObject({
-      $cond: { else: { $let: {} } },
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
+        then: null,
+        else: {
+          $let: {
+            vars: { jsmqlPad: "$csv" },
+            in: {
+              $concat: [
+                "$$jsmqlPad",
+                {
+                  $substrCP: [
+                    {
+                      $reduce: {
+                        input: { $range: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
+                        initialValue: "",
+                        in: { $concat: ["$$value", "xy"] },
+                      },
+                    },
+                    0,
+                    { $max: [0, { $subtract: [6, { $strLenCP: "$$jsmqlPad" }] }] },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
     });
     expect(compiled("$.csv.repeat(2)", (d) => d.csv.repeat(2))).toEqual({
       $reduce: { input: { $range: [0, 2] }, initialValue: "", in: { $concat: ["$$value", "$csv"] } },
     });
-    expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual(
-      nullOr("$csv", { $substrCP: ["$csv", 2, 2] }),
-    );
-    expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual(
-      nullOr("$csv", { $substrCP: ["$csv", 1, 2] }),
-    );
+    expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$csv", null] }, null] }, then: null, else: { $substrCP: ["$csv", 2, 2] } },
+    });
+    expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$csv", null] }, null] }, then: null, else: { $substrCP: ["$csv", 1, 2] } },
+    });
     expect(compiled('$.csv.replace(",", ";")', (d) => d.csv.replace(",", ";"))).toEqual({
       $replaceOne: { input: "$csv", find: ",", replacement: ";" },
     });
     expect(compiled('$.csv.replaceAll(",", ";")', (d) => d.csv.replaceAll(",", ";"))).toEqual({
       $replaceAll: { input: "$csv", find: ",", replacement: ";" },
     });
-    expect(compiled("$.csv.match(/B/i)", (d) => /B/i.test(d.csv))).toEqual(
-      nullOr("$csv", { $regexMatch: { input: "$csv", regex: "B", options: "i" } }),
-    );
-    expect(compiled("$.csv.truncate({ length: 3 })", () => "...")).toMatchObject({ $let: {} });
+    expect(compiled("$.csv.match(/B/i)", (d) => /B/i.test(d.csv))).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
+        then: null,
+        else: { $regexMatch: { input: "$csv", regex: "B", options: "i" } },
+      },
+    });
+    expect(compiled("$.csv.truncate({ length: 3 })", () => "...")).toMatchObject({
+      $let: {
+        vars: { jsmqlStr: { $ifNull: ["$csv", ""] } },
+        in: {
+          $cond: [
+            { $gt: [{ $strLenCP: "$$jsmqlStr" }, 3] },
+            { $concat: [{ $substrCP: ["$$jsmqlStr", 0, 0] }, "..."] },
+            "$$jsmqlStr",
+          ],
+        },
+      },
+    });
     // lodash
-    expect(compiled("$.w.capitalize()", () => "Foobar baz-qux")).toMatchObject({ $concat: [{ $toUpper: {} }, {}] });
+    expect(compiled("$.w.capitalize()", () => "Foobar baz-qux")).toMatchObject({
+      $concat: [
+        { $toUpper: { $substrCP: ["$w", 0, 1] } },
+        { $toLower: { $substrCP: ["$w", 1, { $strLenCP: { $ifNull: ["$w", ""] } }] } },
+      ],
+    });
     expect(compiled("$.w.upperFirst()", () => "FooBar baz-qux")).toHaveProperty("$concat");
-    expect(compiled("$.w.words()", () => ["foo", "Bar", "baz", "qux"])).toMatchObject({ $map: {} });
-    expect(compiled("$.w.kebabCase()", () => "foo-bar-baz-qux")).toMatchObject({ $toLower: {} });
-    expect(compiled("$.w.snakeCase()", () => "foo_bar_baz_qux")).toMatchObject({ $toLower: {} });
-    expect(compiled("$.w.startCase()", () => "Foo Bar Baz Qux")).toMatchObject({ $reduce: {} });
-    expect(compiled("$.w.camelCase()", () => "fooBarBazQux")).toMatchObject({ $let: {} });
-    expect(compiled("$.h.escape()", () => "&lt;a &amp; b&gt;")).toMatchObject({ $replaceAll: {} });
+    expect(compiled("$.w.words()", () => ["foo", "Bar", "baz", "qux"])).toMatchObject({
+      $map: {
+        input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+        as: "jsmqlWord",
+        in: "$$jsmqlWord.match",
+      },
+    });
+    expect(compiled("$.w.kebabCase()", () => "foo-bar-baz-qux")).toMatchObject({
+      $toLower: {
+        $reduce: {
+          input: {
+            $map: {
+              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              as: "jsmqlWord",
+              in: "$$jsmqlWord.match",
+            },
+          },
+          initialValue: "",
+          in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", "-", "$$this"] }] },
+        },
+      },
+    });
+    expect(compiled("$.w.snakeCase()", () => "foo_bar_baz_qux")).toMatchObject({
+      $toLower: {
+        $reduce: {
+          input: {
+            $map: {
+              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              as: "jsmqlWord",
+              in: "$$jsmqlWord.match",
+            },
+          },
+          initialValue: "",
+          in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", "_", "$$this"] }] },
+        },
+      },
+    });
+    expect(compiled("$.w.startCase()", () => "Foo Bar Baz Qux")).toMatchObject({
+      $reduce: {
+        input: {
+          $map: {
+            input: {
+              $map: {
+                input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+                as: "jsmqlWord",
+                in: "$$jsmqlWord.match",
+              },
+            },
+            as: "jsmqlW",
+            in: {
+              $concat: [
+                { $toUpper: { $substrCP: ["$$jsmqlW", 0, 1] } },
+                { $toLower: { $substrCP: ["$$jsmqlW", 1, { $strLenCP: { $ifNull: ["$$jsmqlW", ""] } }] } },
+              ],
+            },
+          },
+        },
+        initialValue: "",
+        in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }] },
+      },
+    });
+    expect(compiled("$.w.camelCase()", () => "fooBarBazQux")).toMatchObject({
+      $let: {
+        vars: {
+          jsmqlPascal: {
+            $reduce: {
+              input: {
+                $map: {
+                  input: {
+                    $map: {
+                      input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+                      as: "jsmqlWord",
+                      in: "$$jsmqlWord.match",
+                    },
+                  },
+                  as: "jsmqlW",
+                  in: {
+                    $concat: [
+                      { $toUpper: { $substrCP: ["$$jsmqlW", 0, 1] } },
+                      { $toLower: { $substrCP: ["$$jsmqlW", 1, { $strLenCP: { $ifNull: ["$$jsmqlW", ""] } }] } },
+                    ],
+                  },
+                },
+              },
+              initialValue: "",
+              in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", "", "$$this"] }] },
+            },
+          },
+        },
+        in: {
+          $concat: [
+            { $toLower: { $substrCP: ["$$jsmqlPascal", 0, 1] } },
+            { $substrCP: ["$$jsmqlPascal", 1, { $strLenCP: { $ifNull: ["$$jsmqlPascal", ""] } }] },
+          ],
+        },
+      },
+    });
+    expect(compiled("$.h.escape()", () => "&lt;a &amp; b&gt;")).toMatchObject({
+      $replaceAll: {
+        input: {
+          $replaceAll: {
+            input: {
+              $replaceAll: {
+                input: {
+                  $replaceAll: {
+                    input: { $replaceAll: { input: "$h", find: "&", replacement: "&amp;" } },
+                    find: "<",
+                    replacement: "&lt;",
+                  },
+                },
+                find: ">",
+                replacement: "&gt;",
+              },
+            },
+            find: '"',
+            replacement: "&quot;",
+          },
+        },
+        find: "'",
+        replacement: "&#39;",
+      },
+    });
     expect(compiled("$.n.inRange(2, 10)", (d) => d.n >= 2 && d.n < 10)).toHaveProperty("$and");
   });
 
@@ -200,7 +398,22 @@ describe("compiler/emit — date methods", () => {
         "$.d.set({ hour: 0, minute: 0, second: 0, millisecond: 0 })",
         () => new Date("2026-03-15T00:00:00.000Z"),
       ),
-    ).toMatchObject({ $let: { vars: { jsmqlParts: { $dateToParts: { date: "$d" } } } } });
+    ).toMatchObject({
+      $let: {
+        vars: { jsmqlParts: { $dateToParts: { date: "$d" } } },
+        in: {
+          $dateFromParts: {
+            year: "$$jsmqlParts.year",
+            month: "$$jsmqlParts.month",
+            day: "$$jsmqlParts.day",
+            hour: 0,
+            minute: 0,
+            second: 0,
+            millisecond: 0,
+          },
+        },
+      },
+    });
   });
 
   it("refuses a unit, a format or a part the server refuses", () => {
@@ -227,16 +440,67 @@ describe("compiler/emit — object methods", () => {
       },
     });
     expect(compiled("$.o.mapKeys((v, k) => k.toUpperCase())", () => ({ A: 1, B: 2, _C: 3 }))).toMatchObject({
-      $arrayToObject: { $map: { as: "jsmqlKv" } },
+      $arrayToObject: {
+        $map: {
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
+          as: "jsmqlKv",
+          in: {
+            k: {
+              $toString: {
+                $let: {
+                  vars: { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" },
+                  in: {
+                    $cond: { if: { $eq: [{ $ifNull: ["$$k", null] }, null] }, then: null, else: { $toUpper: "$$k" } },
+                  },
+                },
+              },
+            },
+            v: "$$jsmqlKv.v",
+          },
+        },
+      },
     });
     expect(compiled("$.o.pickBy(v => v > 1)", () => ({ b: 2, _c: 3 }))).toMatchObject({
-      $arrayToObject: { $filter: {} },
+      $arrayToObject: {
+        $filter: {
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
+          as: "jsmqlKv",
+          cond: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $gt: ["$$v", 1] } } },
+        },
+      },
     });
     expect(compiled('$.o.omitBy((v, k) => k.startsWith("_"))', () => ({ a: 1, b: 2 }))).toMatchObject({
-      $arrayToObject: { $filter: {} },
+      $arrayToObject: {
+        $filter: {
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
+          as: "jsmqlKv",
+          cond: {
+            $not: [
+              {
+                $let: {
+                  vars: { v: "$$jsmqlKv.v", k: "$$jsmqlKv.k" },
+                  in: {
+                    $cond: {
+                      if: { $eq: [{ $ifNull: ["$$k", null] }, null] },
+                      then: null,
+                      else: { $eq: [{ $indexOfCP: ["$$k", "_"] }, 0] },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
     });
     expect(compiled("$.o.invert()", () => ({ "1": "a", "2": "b", "3": "_c" }))).toMatchObject({
-      $arrayToObject: { $map: {} },
+      $arrayToObject: {
+        $map: {
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
+          as: "jsmqlKv",
+          in: { k: { $toString: "$$jsmqlKv.v" }, v: "$$jsmqlKv.k" },
+        },
+      },
     });
     expect(
       compiled("$.o.toPairs()", () => [
@@ -244,17 +508,27 @@ describe("compiler/emit — object methods", () => {
         ["b", 2],
         ["_c", 3],
       ]),
-    ).toMatchObject({ $map: {} });
+    ).toMatchObject({
+      $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+    });
     expect(compiled('$.o.pick(["a", "b"])', () => ({ a: 1, b: 2 }))).toEqual({
       $let: {
-        vars: { jsmqlObj: "$o" },
+        vars: { jsmqlObj: { $ifNull: ["$o", {}] } },
         in: {
           a: { $getField: { field: "a", input: "$$jsmqlObj" } },
           b: { $getField: { field: "b", input: "$$jsmqlObj" } },
         },
       },
     });
-    expect(compiled('$.o.omit(["_c"])', () => ({ a: 1, b: 2 }))).toMatchObject({ $arrayToObject: { $filter: {} } });
+    expect(compiled('$.o.omit(["_c"])', () => ({ a: 1, b: 2 }))).toMatchObject({
+      $arrayToObject: {
+        $filter: {
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
+          as: "jsmqlKv",
+          cond: { $not: [{ $in: ["$$jsmqlKv.k", ["_c"]] }] },
+        },
+      },
+    });
     // A key list the source does not SPELL — a field path, or an element read at run
     // time — is one only the server knows, so both read the object's own keys instead.
     expect(
@@ -295,7 +569,13 @@ describe("compiler/emit — object methods", () => {
     // A missing key list picks nothing and omits nothing, as lodash does — `$in` would
     // otherwise ABORT the command on a second operand that is not an array.
     expect(compiled("$.o.pick($.nope)", () => ({}))).toMatchObject({
-      $arrayToObject: { $filter: { cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$nope", []] }] } } },
+      $arrayToObject: {
+        $filter: {
+          input: { $objectToArray: { $ifNull: ["$o", {}] } },
+          as: "jsmqlKv",
+          cond: { $in: ["$$jsmqlKv.k", { $ifNull: ["$nope", []] }] },
+        },
+      },
     });
     expect(() => expr('$.o.pick(["$a"])')).toThrow(/starts with '\$'/);
   });
@@ -312,10 +592,65 @@ describe("compiler/emit — object methods", () => {
     });
     const others = Object.keys(DOC).filter((k) => k !== "s" && k !== "w");
     expect(compiled(`$.omit(${JSON.stringify(others)})`, (d) => ({ s: d.s, w: d.w }))).toMatchObject({
-      $arrayToObject: { $filter: { input: { $objectToArray: "$$ROOT" } } },
+      $arrayToObject: {
+        $filter: {
+          input: { $objectToArray: "$$ROOT" },
+          as: "jsmqlKv",
+          cond: {
+            $not: [
+              {
+                $in: [
+                  "$$jsmqlKv.k",
+                  [
+                    "_id",
+                    "csv",
+                    "n",
+                    "neg",
+                    "d",
+                    "e",
+                    "o",
+                    "keys",
+                    "kname",
+                    "h",
+                    "a",
+                    "b",
+                    "docs",
+                    "nested",
+                    "pairs",
+                    "mixed",
+                  ],
+                ],
+              },
+            ],
+          },
+        },
+      },
     });
     expect(compiled('$.pick(["o"]).o.mapValues(v => v * 2)', () => ({ a: 2, b: 4, _c: 6 }))).toMatchObject({
-      $arrayToObject: { $map: {} },
+      $arrayToObject: {
+        $map: {
+          input: {
+            $objectToArray: {
+              $ifNull: [
+                {
+                  $getField: {
+                    field: "o",
+                    input: {
+                      $let: {
+                        vars: { jsmqlObj: "$$ROOT" },
+                        in: { o: { $getField: { field: "o", input: "$$jsmqlObj" } } },
+                      },
+                    },
+                  },
+                },
+                {},
+              ],
+            },
+          },
+          as: "jsmqlKv",
+          in: { k: "$$jsmqlKv.k", v: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $multiply: ["$$v", 2] } } } },
+        },
+      },
     });
     // A method of another family is refused as it is on any document.
     expect(() => expr("$.trim()")).toThrow(/'\.trim\(\)' is not available on an 'object' — it is defined on 'string'/);
@@ -327,12 +662,12 @@ describe("compiler/emit — object methods", () => {
 describe("compiler/emit — array methods", () => {
   it("iterates with a callback, with or without its index", () => {
     expect(compiled("$.a.map(x => x * 2)", (d) => d.a.map((x) => x * 2))).toEqual({
-      $map: { input: "$a", as: "x", in: { $multiply: ["$$x", 2] } },
+      $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $multiply: ["$$x", 2] } },
     });
     // an index READ makes the input the `[i, x]` pairs
     expect(compiled("$.a.map((x, i) => x + i)", (d) => d.a.map((x, i) => x + i))).toEqual({
       $map: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: "$a" }] }, "$a"] } },
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$a", []] } }] }, { $ifNull: ["$a", []] }] } },
         as: "jsmqlPair",
         in: {
           $let: {
@@ -343,75 +678,162 @@ describe("compiler/emit — array methods", () => {
       },
     });
     expect(compiled("$.a.filter(x => x > 1)", (d) => d.a.filter((x) => x > 1))).toEqual({
-      $filter: { input: "$a", as: "x", cond: { $gt: ["$$x", 1] } },
+      $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $gt: ["$$x", 1] } },
     });
     expect(compiled("$.a.filter((x, i) => i > 0)", (d) => d.a.filter((_x, i) => i > 0))).toMatchObject({
-      $map: { as: "jsmqlPair" },
+      $map: {
+        input: {
+          $filter: {
+            input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$a", []] } }] }, { $ifNull: ["$a", []] }] } },
+            as: "jsmqlPair",
+            cond: {
+              $let: {
+                vars: { x: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
+                in: { $gt: ["$$i", 0] },
+              },
+            },
+          },
+        },
+        as: "jsmqlPair",
+        in: { $arrayElemAt: ["$$jsmqlPair", 1] },
+      },
     });
     expect(compiled("$.a.find(x => x > 1)", (d) => d.a.find((x) => x > 1))).toEqual({
-      $arrayElemAt: [{ $filter: { input: "$a", as: "x", cond: { $gt: ["$$x", 1] } } }, 0],
+      $arrayElemAt: [{ $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $gt: ["$$x", 1] } } }, 0],
     });
     expect(compiled("$.a.findLast(x => x > 1)", (d) => d.a.findLast((x) => x > 1))).toMatchObject({
-      $arrayElemAt: [{}, -1],
+      $arrayElemAt: [{ $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $gt: ["$$x", 1] } } }, -1],
     });
-    expect(compiled("$.a.some(x => x > 2)", (d) => d.a.some((x) => x > 2))).toEqual(
-      nullOr("$a", { $anyElementTrue: { $map: { input: "$a", as: "x", in: { $gt: ["$$x", 2] } } } }),
-    );
+    expect(compiled("$.a.some(x => x > 2)", (d) => d.a.some((x) => x > 2))).toEqual({
+      $anyElementTrue: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $gt: ["$$x", 2] } } },
+    });
     expect(compiled("$.a.every(x => x > 0)", (d) => d.a.every((x) => x > 0))).toMatchObject({
-      $cond: { else: { $allElementsTrue: {} } },
+      $allElementsTrue: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $gt: ["$$x", 0] } } },
     });
-    expect(compiled("$.nested.flatMap(x => x)", (d) => d.nested.flatMap((x) => x))).toMatchObject({ $reduce: {} });
+    expect(compiled("$.nested.flatMap(x => x)", (d) => d.nested.flatMap((x) => x))).toMatchObject({
+      $reduce: {
+        input: { $map: { input: { $ifNull: ["$nested", []] }, as: "x", in: "$$x" } },
+        initialValue: [],
+        in: { $concatArrays: ["$$value", "$$this"] },
+      },
+    });
     expect(
       compiled("$.docs.map((x, i, arr) => arr.size())", (d) => d.docs.map((_x, _i, arr) => arr.length)),
-    ).toMatchObject({ $map: { in: { $let: { vars: { arr: "$docs" } } } } });
+    ).toMatchObject({
+      $map: {
+        input: { $ifNull: ["$docs", []] },
+        as: "x",
+        in: { $let: { vars: { arr: { $ifNull: ["$docs", []] } }, in: { $size: "$$arr" } } },
+      },
+    });
   });
 
   it("slices and reshapes", () => {
-    expect(compiled("$.a.take(2)", (d) => d.a.slice(0, 2))).toEqual({ $slice: ["$a", 2] });
-    expect(compiled("$.a.takeRight(2)", (d) => d.a.slice(-2))).toEqual({ $slice: ["$a", -2] });
-    expect(compiled("$.a.drop(1)", (d) => d.a.slice(1))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.dropRight(1)", (d) => d.a.slice(0, -1))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.tail()", (d) => d.a.slice(1))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.initial()", (d) => d.a.slice(0, -1))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.head()", (d) => d.a[0])).toEqual({ $first: "$a" });
-    expect(compiled("$.a.last()", (d) => d.a[2])).toEqual({ $last: "$a" });
-    expect(compiled("$.a.chunk(2)", () => [[3, 1], [2]])).toMatchObject({ $map: {} });
-    expect(compiled("$.nested.flat()", (d) => d.nested.flat())).toMatchObject({ $reduce: {} });
+    expect(compiled("$.a.take(2)", (d) => d.a.slice(0, 2))).toEqual({ $slice: [{ $ifNull: ["$a", []] }, 2] });
+    expect(compiled("$.a.takeRight(2)", (d) => d.a.slice(-2))).toEqual({ $slice: [{ $ifNull: ["$a", []] }, -2] });
+    expect(compiled("$.a.drop(1)", (d) => d.a.slice(1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+      },
+    });
+    expect(compiled("$.a.dropRight(1)", (d) => d.a.slice(0, -1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] }] },
+      },
+    });
+    expect(compiled("$.a.tail()", (d) => d.a.slice(1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+      },
+    });
+    expect(compiled("$.a.initial()", (d) => d.a.slice(0, -1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: "$$jsmqlArr" }, 1] }] }] },
+      },
+    });
+    expect(compiled("$.a.head()", (d) => d.a[0])).toEqual({ $first: { $ifNull: ["$a", []] } });
+    expect(compiled("$.a.last()", (d) => d.a[2])).toEqual({ $last: { $ifNull: ["$a", []] } });
+    expect(compiled("$.a.chunk(2)", () => [[3, 1], [2]])).toMatchObject({
+      $map: {
+        input: { $range: [0, { $size: { $ifNull: ["$a", []] } }, 2] },
+        as: "jsmqlI",
+        in: { $slice: [{ $ifNull: ["$a", []] }, "$$jsmqlI", 2] },
+      },
+    });
+    expect(compiled("$.nested.flat()", (d) => d.nested.flat())).toMatchObject({
+      $reduce: { input: { $ifNull: ["$nested", []] }, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } },
+    });
     expect(
       compiled("$.a.zip($.b)", () => [
         [3, 2],
         [1, 5],
         [2, null],
       ]),
-    ).toEqual({ $zip: { inputs: ["$a", "$b"], useLongestLength: true } });
+    ).toEqual({ $zip: { inputs: [{ $ifNull: ["$a", []] }, "$b"], useLongestLength: true } });
     expect(
       compiled("$.nested.unzip()", () => [
         [1, 3],
         [2, null],
       ]),
-    ).toMatchObject({ $let: {} });
-    expect(compiled('["k1", "k2"].zipObject($.b)', () => ({ k1: 2, k2: 5 }))).toMatchObject({ $arrayToObject: {} });
-    expect(compiled("$.pairs.fromPairs()", () => ({ k: 1 }))).toMatchObject({ $arrayToObject: {} });
-    expect(compiled("$.a.toReversed()", (d) => d.a.toReversed())).toEqual({ $reverseArray: "$a" });
-    expect(compiled("$.a.toSorted()", (d) => d.a.toSorted())).toEqual({ $sortArray: { input: "$a", sortBy: 1 } });
+    ).toMatchObject({
+      $let: {
+        vars: { jsmqlT: { $ifNull: ["$nested", []] } },
+        in: {
+          $map: {
+            input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: ["$$jsmqlT", 0] }, []] } }] },
+            as: "jsmqlJ",
+            in: { $map: { input: "$$jsmqlT", as: "jsmqlRow", in: { $arrayElemAt: ["$$jsmqlRow", "$$jsmqlJ"] } } },
+          },
+        },
+      },
+    });
+    expect(compiled('["k1", "k2"].zipObject($.b)', () => ({ k1: 2, k2: 5 }))).toMatchObject({
+      $arrayToObject: {
+        $map: {
+          input: { $range: [0, { $size: [["k1", "k2"]] }] },
+          as: "jsmqlI",
+          in: {
+            k: { $toString: { $arrayElemAt: [["k1", "k2"], "$$jsmqlI"] } },
+            v: { $arrayElemAt: ["$b", "$$jsmqlI"] },
+          },
+        },
+      },
+    });
+    expect(compiled("$.pairs.fromPairs()", () => ({ k: 1 }))).toMatchObject({
+      $arrayToObject: {
+        $map: {
+          input: { $ifNull: ["$pairs", []] },
+          as: "jsmqlP",
+          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+        },
+      },
+    });
+    expect(compiled("$.a.toReversed()", (d) => d.a.toReversed())).toEqual({ $reverseArray: { $ifNull: ["$a", []] } });
+    expect(compiled("$.a.toSorted()", (d) => d.a.toSorted())).toEqual({
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: 1 },
+    });
     // `(a, b) => a - b` names no field, so the elements themselves are the key
     expect(compiled("$.a.toSorted((a, b) => a - b)", (d) => d.a.toSorted((a, b) => a - b))).toEqual({
-      $sortArray: { input: "$a", sortBy: 1 },
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: 1 },
     });
     expect(compiled("$.a.toSorted((a, b) => b - a)", (d) => d.a.toSorted((a, b) => b - a))).toEqual({
-      $sortArray: { input: "$a", sortBy: -1 },
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: -1 },
     });
     expect(compiled("$.a.sortBy((a, b) => a - b)", (d) => d.a.toSorted((a, b) => a - b))).toEqual({
-      $sortArray: { input: "$a", sortBy: 1 },
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: 1 },
     });
     expect(compiled("$.a.orderBy((a, b) => a - b, -1)", (d) => d.a.toSorted((a, b) => b - a))).toEqual({
-      $sortArray: { input: "$a", sortBy: -1 },
+      $sortArray: { input: { $ifNull: ["$a", []] }, sortBy: -1 },
     });
     expect(compiled("$.docs.toSorted({ v: -1 })", (d) => d.docs.toSorted((p, q) => q.v - p.v))).toEqual({
-      $sortArray: { input: "$docs", sortBy: { v: -1 } },
+      $sortArray: { input: { $ifNull: ["$docs", []] }, sortBy: { v: -1 } },
     });
     expect(compiled("$.docs.sortBy(x => x.v)", (d) => d.docs.toSorted((p, q) => p.v - q.v))).toEqual({
-      $sortArray: { input: "$docs", sortBy: { v: 1 } },
+      $sortArray: { input: { $ifNull: ["$docs", []] }, sortBy: { v: 1 } },
     });
     // a computed key sorts `{ k, v }` pairs and takes the values back
     expect(
@@ -420,114 +842,869 @@ describe("compiler/emit — array methods", () => {
         { k: "y", v: 1 },
         { k: "x", v: 3 },
       ]),
-    ).toMatchObject({ $map: { input: { $sortArray: { sortBy: { k: 1 } } } } });
-    expect(compiled('$.docs.orderBy(["v"], [-1])', (d) => d.docs.toSorted((p, q) => q.v - p.v))).toEqual({
-      $sortArray: { input: "$docs", sortBy: { v: -1 } },
+    ).toMatchObject({
+      $map: {
+        input: {
+          $sortArray: {
+            input: {
+              $map: { input: { $ifNull: ["$docs", []] }, as: "x", in: { k: { $mod: ["$$x.v", 2] }, v: "$$x" } },
+            },
+            sortBy: { k: 1 },
+          },
+        },
+        as: "jsmqlP",
+        in: "$$jsmqlP.v",
+      },
     });
-    expect(compiled("$.a.toSpliced(1, 1, 9)", (d) => d.a.toSpliced(1, 1, 9))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.with(0, 9)", (d) => d.a.with(0, 9))).toMatchObject({ $let: {} });
+    expect(compiled('$.docs.orderBy(["v"], [-1])', (d) => d.docs.toSorted((p, q) => q.v - p.v))).toEqual({
+      $sortArray: { input: { $ifNull: ["$docs", []] }, sortBy: { v: -1 } },
+    });
+    expect(compiled("$.a.toSpliced(1, 1, 9)", (d) => d.a.toSpliced(1, 1, 9))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $min: [1, { $size: "$$jsmqlArr" }] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 1] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [9],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.with(0, 9)", (d) => d.a.with(0, 9))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] }, jsmqlIdx: 0, jsmqlVal: 9 },
+        in: {
+          $concatArrays: [
+            { $slice: ["$$jsmqlArr", "$$jsmqlIdx"] },
+            ["$$jsmqlVal"],
+            {
+              $cond: [
+                { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] }, 0] },
+                {
+                  $slice: [
+                    "$$jsmqlArr",
+                    { $add: ["$$jsmqlIdx", 1] },
+                    { $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] },
+                  ],
+                },
+                [],
+              ],
+            },
+          ],
+        },
+      },
+    });
     // measured: a three-argument `$slice` refuses a count of 0, which the first and last index reach
-    expect(compiled("$.a.with(2, 9)", (d) => d.a.with(2, 9))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.toSpliced(3, 0, 4)", (d) => d.a.toSpliced(3, 0, 4))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.toSpliced(0, 3)", (d) => d.a.toSpliced(0, 3))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.with(2, 9)", (d) => d.a.with(2, 9))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] }, jsmqlIdx: 2, jsmqlVal: 9 },
+        in: {
+          $concatArrays: [
+            { $slice: ["$$jsmqlArr", "$$jsmqlIdx"] },
+            ["$$jsmqlVal"],
+            {
+              $cond: [
+                { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] }, 0] },
+                {
+                  $slice: [
+                    "$$jsmqlArr",
+                    { $add: ["$$jsmqlIdx", 1] },
+                    { $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] },
+                  ],
+                },
+                [],
+              ],
+            },
+          ],
+        },
+      },
+    });
+    expect(compiled("$.a.toSpliced(3, 0, 4)", (d) => d.a.toSpliced(3, 0, 4))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $min: [3, { $size: "$$jsmqlArr" }] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 0] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [4],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.toSpliced(0, 3)", (d) => d.a.toSpliced(0, 3))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: 0 },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 3] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
     // a start counted from the end, and the two ends JavaScript clamps
-    expect(compiled("$.a.toSpliced(-1, 1)", (d) => d.a.toSpliced(-1, 1))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.toSpliced(-2, 1, 9)", (d) => d.a.toSpliced(-2, 1, 9))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.toSpliced(-10, 1)", (d) => d.a.toSpliced(-10, 1))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.toSpliced(-1, 0)", (d) => d.a.toSpliced(-1, 0))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.toSpliced(10, 1)", (d) => d.a.toSpliced(10, 1))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced(-1, 1)", (d) => d.a.toSpliced(-1, 1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 1] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.toSpliced(-2, 1, 9)", (d) => d.a.toSpliced(-2, 1, 9))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 2] }, 0] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 1] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [9],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.toSpliced(-10, 1)", (d) => d.a.toSpliced(-10, 1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 10] }, 0] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 1] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.toSpliced(-1, 0)", (d) => d.a.toSpliced(-1, 0))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 0] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.toSpliced(10, 1)", (d) => d.a.toSpliced(10, 1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $min: [10, { $size: "$$jsmqlArr" }] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 1] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
     // the count left out removes everything from the start on
-    expect(compiled("$.a.toSpliced(2)", (d) => d.a.toSpliced(2))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.toSpliced(0)", (d) => d.a.toSpliced(0))).toMatchObject({ $let: {} });
-    expect(compiled("$.a.toSpliced(-1)", (d) => d.a.toSpliced(-1))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced(2)", (d) => d.a.toSpliced(2))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $min: [2, { $size: "$$jsmqlArr" }] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $size: "$$jsmqlArr" } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.toSpliced(0)", (d) => d.a.toSpliced(0))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: 0 },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $size: "$$jsmqlArr" } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.toSpliced(-1)", (d) => d.a.toSpliced(-1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $size: "$$jsmqlArr" } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
     // a start read at run time: the sign is not known until the server sees it
-    expect(compiled("$.a.toSpliced($.neg, 1)", (d) => d.a.toSpliced(d.neg, 1))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced($.neg, 1)", (d) => d.a.toSpliced(d.neg, 1))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: {
+              jsmqlStart: {
+                $cond: [
+                  { $lt: ["$neg", 0] },
+                  { $max: [{ $add: ["$neg", { $size: "$$jsmqlArr" }] }, 0] },
+                  { $min: ["$neg", { $size: "$$jsmqlArr" }] },
+                ],
+              },
+            },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 1] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   it("dispatches `.indexOf` on the receiver's type at run time, unless the argument settles it", () => {
     // `.indexOf` is the one method of two families. A string argument leaves both open, so
     // a bare receiver takes a `$switch`; an argument proven not to be a string picks the
     // array form alone, and a receiver the row proves runs its one family with no test.
-    expect(compiled('$.csv.indexOf("b")', (d) => d.csv.indexOf("b"))).toMatchObject({ $switch: {} });
-    expect(compiled('$.a.indexOf("x")', (d) => d.a.indexOf("x"))).toMatchObject({ $switch: {} });
-    expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toEqual({ $indexOfArray: ["$a", 1] });
+    expect(compiled('$.csv.indexOf("b")', (d) => d.csv.indexOf("b"))).toMatchObject({
+      $switch: {
+        branches: [
+          { case: { $in: [{ $type: "$csv" }, ["array"]] }, then: { $indexOfArray: ["$csv", "b"] } },
+          { case: { $in: [{ $type: "$csv" }, ["string"]] }, then: { $indexOfCP: ["$csv", "b"] } },
+        ],
+        default: -1,
+      },
+    });
+    expect(compiled('$.a.indexOf("x")', (d) => d.a.indexOf("x"))).toMatchObject({
+      $switch: {
+        branches: [
+          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $indexOfArray: ["$a", "x"] } },
+          { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $indexOfCP: ["$a", "x"] } },
+        ],
+        default: -1,
+      },
+    });
+    expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, 1] });
     expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
-      $indexOfArray: [{ $split: ["$csv", ","] }, "b"],
+      $indexOfArray: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, "b"],
     });
     // `.lastIndexOf` states one emitting family — the string form is refused — so it
     // answers the array reading outright rather than testing the receiver's type.
-    expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 2] } },
+            in: {
+              $cond: {
+                if: { $eq: ["$$jsmqlRevIdx", -1] },
+                then: -1,
+                else: { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }, "$$jsmqlRevIdx"] },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   it("lowers each method of one family to that family's operator on a bare receiver", () => {
     // Membership is `.has` on an array; the substring test is `.includes` on a string.
-    expect(compiled("$.a.has(2)", (d) => d.a.includes(2))).toEqual(nullOr("$a", { $in: [2, "$a"] }));
-    expect(compiled('$.csv.includes("b")', (d) => d.csv.includes("b"))).toEqual(
-      nullOr("$csv", { $gte: [{ $indexOfCP: ["$csv", "b"] }, 0] }),
-    );
-    expect(compiled("$.a.at(-1)", (d) => d.a.at(-1))).toEqual({ $arrayElemAt: ["$a", -1] });
-    expect(compiled("$.a.slice(1, 3)", (d) => d.a.slice(1, 3))).toEqual(nullOr("$a", { $slice: ["$a", 1, 2] }));
+    expect(compiled("$.a.has(2)", (d) => d.a.includes(2))).toEqual({ $in: [2, { $ifNull: ["$a", []] }] });
+    expect(compiled('$.csv.includes("b")', (d) => d.csv.includes("b"))).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
+        then: null,
+        else: { $gte: [{ $indexOfCP: ["$csv", "b"] }, 0] },
+      },
+    });
+    expect(compiled("$.a.at(-1)", (d) => d.a.at(-1))).toEqual({ $arrayElemAt: [{ $ifNull: ["$a", []] }, -1] });
+    expect(compiled("$.a.slice(1, 3)", (d) => d.a.slice(1, 3))).toEqual({ $slice: [{ $ifNull: ["$a", []] }, 1, 2] });
     expect(compiled("$.csv.substring(2)", (d) => d.csv.substring(2))).toMatchObject({
-      $cond: { else: { $substrCP: {} } },
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$csv", null] }, null] },
+        then: null,
+        else: { $substrCP: ["$csv", 2, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$csv", ""] } }, 2] }] }] },
+      },
     });
     // `$concatArrays` takes arrays only, so a scalar argument becomes the one-element
     // array it stands for, as JavaScript's `Array.prototype.concat` reads it.
-    expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toEqual({ $concatArrays: ["$a", "$b"] });
-    expect(compiled('$.a.concat("!", "?")', (d) => d.a.concat("!", "?"))).toEqual({
-      $concatArrays: ["$a", ["!"], ["?"]],
+    expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toEqual({
+      $concatArrays: [{ $ifNull: ["$a", []] }, "$b"],
     });
-    expect(compiled("$.a.concat([9], [8])", (d) => d.a.concat([9], [8]))).toEqual({ $concatArrays: ["$a", [9], [8]] });
-    expect(compiled("$.a.concat(2, 3)", (d) => d.a.concat(2, 3))).toEqual({ $concatArrays: ["$a", [2], [3]] });
+    expect(compiled('$.a.concat("!", "?")', (d) => d.a.concat("!", "?"))).toEqual({
+      $concatArrays: [{ $ifNull: ["$a", []] }, ["!"], ["?"]],
+    });
+    expect(compiled("$.a.concat([9], [8])", (d) => d.a.concat([9], [8]))).toEqual({
+      $concatArrays: [{ $ifNull: ["$a", []] }, [9], [8]],
+    });
+    expect(compiled("$.a.concat(2, 3)", (d) => d.a.concat(2, 3))).toEqual({
+      $concatArrays: [{ $ifNull: ["$a", []] }, [2], [3]],
+    });
     expect(compiled('$.a.concat($.b, "!", "?")', (d) => d.a.concat(d.b, "!", "?"))).toEqual({
-      $concatArrays: ["$a", "$b", ["!"], ["?"]],
+      $concatArrays: [{ $ifNull: ["$a", []] }, "$b", ["!"], ["?"]],
     });
     expect(compiled('$.csv.split(",").concat("!", "?")', (d) => d.csv.split(",").concat("!", "?"))).toEqual({
-      $concatArrays: [{ $split: ["$csv", ","] }, ["!"], ["?"]],
+      $concatArrays: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, ["!"], ["?"]],
     });
     // Strings join with `+`.
     expect(compiled('$.csv + "!" + "?"', (d) => d.csv + "!" + "?")).toEqual({ $concat: ["$csv", "!", "?"] });
     // `.size()` counts the elements of an array, and a missing array counts as empty; the
     // number of fields of an object is the size of its keys.
     expect(compiled("$.a.size()", (d) => d.a.length)).toEqual({ $size: { $ifNull: ["$a", []] } });
-    expect(compiled("$.o.keys().size()", (d) => Object.keys(d.o).length)).toMatchObject({ $size: {} });
-    expect(compiled("$.a.toString()", (d) => d.a.toString())).toMatchObject({ $let: {} });
-    expect(compiled("$.n.toString()", (d) => d.n.toString())).toMatchObject({ $let: {} });
+    expect(compiled("$.o.keys().size()", (d) => Object.keys(d.o).length)).toMatchObject({
+      $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+    });
+    expect(compiled("$.a.toString()", (d) => d.a.toString())).toMatchObject({
+      $let: {
+        vars: { jsmqlV: "$a" },
+        in: {
+          $cond: {
+            if: { $isArray: "$$jsmqlV" },
+            then: {
+              $ifNull: [
+                {
+                  $reduce: {
+                    input: "$$jsmqlV",
+                    initialValue: null,
+                    in: {
+                      $cond: {
+                        if: { $eq: ["$$value", null] },
+                        then: {
+                          $cond: {
+                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                            then: "",
+                            else: { $toString: "$$this" },
+                          },
+                        },
+                        else: {
+                          $concat: [
+                            "$$value",
+                            ",",
+                            {
+                              $cond: {
+                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                                then: "",
+                                else: { $toString: "$$this" },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+                "",
+              ],
+            },
+            else: { $toString: "$$jsmqlV" },
+          },
+        },
+      },
+    });
+    expect(compiled("$.n.toString()", (d) => d.n.toString())).toMatchObject({
+      $let: {
+        vars: { jsmqlV: "$n" },
+        in: {
+          $cond: {
+            if: { $isArray: "$$jsmqlV" },
+            then: {
+              $ifNull: [
+                {
+                  $reduce: {
+                    input: "$$jsmqlV",
+                    initialValue: null,
+                    in: {
+                      $cond: {
+                        if: { $eq: ["$$value", null] },
+                        then: {
+                          $cond: {
+                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                            then: "",
+                            else: { $toString: "$$this" },
+                          },
+                        },
+                        else: {
+                          $concat: [
+                            "$$value",
+                            ",",
+                            {
+                              $cond: {
+                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                                then: "",
+                                else: { $toString: "$$this" },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+                "",
+              ],
+            },
+            else: { $toString: "$$jsmqlV" },
+          },
+        },
+      },
+    });
     // Inside the null test, `$ifNull` wraps the reduce so an EMPTY array answers "" rather
     // than the reduce's own `null` seed — the seed is `null` so a leading "" element keeps its separator.
     expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toMatchObject({
-      $cond: { else: { $ifNull: [{ $reduce: {} }, ""] } },
+      $ifNull: [
+        {
+          $reduce: {
+            input: { $ifNull: ["$a", []] },
+            initialValue: null,
+            in: {
+              $cond: {
+                if: { $eq: ["$$value", null] },
+                then: {
+                  $cond: {
+                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                    then: "",
+                    else: { $toString: "$$this" },
+                  },
+                },
+                else: {
+                  $concat: [
+                    "$$value",
+                    "-",
+                    {
+                      $cond: {
+                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                        then: "",
+                        else: { $toString: "$$this" },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+        "",
+      ],
     });
     expect(compiled('$.mixed.join(",")', (d) => d.mixed.join(","))).toMatchObject({
-      $cond: { else: { $ifNull: [{ $reduce: {} }, ""] } },
+      $ifNull: [
+        {
+          $reduce: {
+            input: { $ifNull: ["$mixed", []] },
+            initialValue: null,
+            in: {
+              $cond: {
+                if: { $eq: ["$$value", null] },
+                then: {
+                  $cond: {
+                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                    then: "",
+                    else: { $toString: "$$this" },
+                  },
+                },
+                else: {
+                  $concat: [
+                    "$$value",
+                    ",",
+                    {
+                      $cond: {
+                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                        then: "",
+                        else: { $toString: "$$this" },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+        "",
+      ],
     });
     expect(compiled("$.n.clamp(0, 5)", () => 5)).toEqual({ $min: [{ $max: ["$n", 0] }, 5] });
   });
 
   it("folds, sets and groups as lodash does", () => {
-    expect(compiled("$.a.sum()", (d) => 6)).toEqual({ $sum: "$a" });
-    expect(compiled("$.a.mean()", (d) => 2)).toEqual({ $avg: "$a" });
-    expect(compiled("$.a.max()", (d) => 3)).toEqual({ $max: "$a" });
+    expect(compiled("$.a.sum()", (d) => 6)).toEqual({ $sum: { $ifNull: ["$a", []] } });
+    expect(compiled("$.a.mean()", (d) => 2)).toEqual({ $avg: { $ifNull: ["$a", []] } });
+    expect(compiled("$.a.max()", (d) => 3)).toEqual({ $max: { $ifNull: ["$a", []] } });
     expect(compiled("$.docs.sumBy(x => x.v)", () => 6)).toEqual({
-      $sum: { $map: { input: "$docs", as: "x", in: "$$x.v" } },
+      $sum: { $map: { input: { $ifNull: ["$docs", []] }, as: "x", in: "$$x.v" } },
     });
-    expect(compiled('$.docs.maxBy("v")', () => ({ k: "x", v: 3 }))).toMatchObject({ $let: {} });
-    expect(compiled("$.docs.minBy(x => x.v)", () => ({ k: "y", v: 1 }))).toMatchObject({ $let: {} });
-    expect(unordered("$.mixed.uniq()", () => [0, 1, "", "a", null, false, true])).toEqual({ $setUnion: "$mixed" });
+    expect(compiled('$.docs.maxBy("v")', () => ({ k: "x", v: 3 }))).toMatchObject({
+      $let: {
+        vars: {
+          jsmqlSorted: {
+            $sortArray: {
+              input: { $map: { input: { $ifNull: ["$docs", []] }, as: "x", in: { k: "$$x.v", v: "$$x" } } },
+              sortBy: { k: -1 },
+            },
+          },
+        },
+        in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", 0] } } },
+      },
+    });
+    expect(compiled("$.docs.minBy(x => x.v)", () => ({ k: "y", v: 1 }))).toMatchObject({
+      $let: {
+        vars: {
+          jsmqlSorted: {
+            $sortArray: {
+              input: { $map: { input: { $ifNull: ["$docs", []] }, as: "x", in: { k: "$$x.v", v: "$$x" } } },
+              sortBy: { k: 1 },
+            },
+          },
+        },
+        in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", 0] } } },
+      },
+    });
+    expect(unordered("$.mixed.uniq()", () => [0, 1, "", "a", null, false, true])).toEqual({
+      $setUnion: { $ifNull: ["$mixed", []] },
+    });
     expect(
       compiled('$.docs.uniqBy("k")', () => [
         { k: "x", v: 2 },
         { k: "y", v: 1 },
       ]),
-    ).toMatchObject({ $getField: { field: "out" } });
-    expect(compiled("$.mixed.compact()", (d) => d.mixed.filter(Boolean))).toMatchObject({ $filter: {} });
-    expect(compiled("$.nested.flatten()", (d) => d.nested.flat())).toMatchObject({ $reduce: {} });
-    expect(unordered("$.a.intersection($.b)", () => [2])).toEqual({ $setIntersection: ["$a", "$b"] });
-    expect(compiled("$.a.difference($.b)", () => [3, 1])).toMatchObject({ $filter: {} });
-    expect(unordered("$.a.union($.b)", () => [3, 1, 2, 5])).toEqual({ $setUnion: ["$a", "$b"] });
-    expect(compiled("$.a.without(1)", () => [3, 2])).toMatchObject({ $filter: {} });
+    ).toMatchObject({
+      $getField: {
+        field: "out",
+        input: {
+          $reduce: {
+            input: { $ifNull: ["$docs", []] },
+            initialValue: { seen: [], out: [] },
+            in: {
+              $let: {
+                vars: { jsmqlKey: { $let: { vars: { x: "$$this" }, in: "$$x.k" } } },
+                in: {
+                  $cond: [
+                    { $in: ["$$jsmqlKey", "$$value.seen"] },
+                    "$$value",
+                    {
+                      seen: { $concatArrays: ["$$value.seen", ["$$jsmqlKey"]] },
+                      out: { $concatArrays: ["$$value.out", ["$$this"]] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled("$.mixed.compact()", (d) => d.mixed.filter(Boolean))).toMatchObject({
+      $filter: {
+        input: { $ifNull: ["$mixed", []] },
+        as: "jsmqlItem",
+        cond: {
+          $and: [
+            { $ne: [{ $ifNull: ["$$jsmqlItem", null] }, null] },
+            { $ne: ["$$jsmqlItem", false] },
+            { $ne: ["$$jsmqlItem", ""] },
+            { $ne: ["$$jsmqlItem", 0] },
+          ],
+        },
+      },
+    });
+    expect(compiled("$.nested.flatten()", (d) => d.nested.flat())).toMatchObject({
+      $reduce: {
+        input: { $ifNull: ["$nested", []] },
+        initialValue: [],
+        in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+      },
+    });
+    expect(unordered("$.a.intersection($.b)", () => [2])).toEqual({
+      $setIntersection: [{ $ifNull: ["$a", []] }, "$b"],
+    });
+    expect(compiled("$.a.difference($.b)", () => [3, 1])).toMatchObject({
+      $filter: {
+        input: { $ifNull: ["$a", []] },
+        as: "jsmqlItem",
+        cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
+      },
+    });
+    expect(unordered("$.a.union($.b)", () => [3, 1, 2, 5])).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, "$b"] });
+    expect(compiled("$.a.without(1)", () => [3, 2])).toMatchObject({
+      $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [1]] }] } },
+    });
     expect(unordered("$.a.xor($.b)", () => [3, 1, 5])).toHaveProperty("$setUnion");
     expect(compiled('$.docs.keyBy("k")', () => ({ x: { k: "x", v: 3 }, y: { k: "y", v: 1 } }))).toMatchObject({
-      $arrayToObject: {},
+      $arrayToObject: {
+        $map: {
+          input: { $ifNull: ["$docs", []] },
+          as: "x",
+          in: { k: { $ifNull: [{ $toString: "$$x.k" }, "null"] }, v: "$$x" },
+        },
+      },
     });
     expect(
       compiled('$.docs.groupBy("k")', () => ({
@@ -537,12 +1714,100 @@ describe("compiler/emit — array methods", () => {
         ],
         y: [{ k: "y", v: 1 }],
       })),
-    ).toMatchObject({ $arrayToObject: {} });
-    expect(compiled('$.docs.countBy("k")', () => ({ x: 2, y: 1 }))).toMatchObject({ $arrayToObject: {} });
+    ).toMatchObject({
+      $arrayToObject: {
+        $map: {
+          input: {
+            $setUnion: [
+              {
+                $map: { input: { $ifNull: ["$docs", []] }, as: "x", in: { $ifNull: [{ $toString: "$$x.k" }, "null"] } },
+              },
+              [],
+            ],
+          },
+          as: "jsmqlKey",
+          in: {
+            k: "$$jsmqlKey",
+            v: {
+              $filter: {
+                input: { $ifNull: ["$docs", []] },
+                as: "x",
+                cond: { $eq: [{ $ifNull: [{ $toString: "$$x.k" }, "null"] }, "$$jsmqlKey"] },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(compiled('$.docs.countBy("k")', () => ({ x: 2, y: 1 }))).toMatchObject({
+      $arrayToObject: {
+        $map: {
+          input: {
+            $setUnion: [
+              {
+                $map: { input: { $ifNull: ["$docs", []] }, as: "x", in: { $ifNull: [{ $toString: "$$x.k" }, "null"] } },
+              },
+              [],
+            ],
+          },
+          as: "jsmqlKey",
+          in: {
+            k: "$$jsmqlKey",
+            v: {
+              $size: {
+                $filter: {
+                  input: { $ifNull: ["$docs", []] },
+                  as: "x",
+                  cond: { $eq: [{ $ifNull: [{ $toString: "$$x.k" }, "null"] }, "$$jsmqlKey"] },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
     expect(compiled("$.a.partition(x => x > 1)", () => [[3, 2], [1]])).toHaveLength(2);
-    expect(compiled("$.a.reject(x => x > 1)", () => [1])).toMatchObject({ $filter: {} });
-    expect(compiled("$.a.takeWhile(x => x > 1)", () => [3])).toMatchObject({ $let: {} });
-    expect(compiled("$.a.dropWhile(x => x > 1)", () => [1, 2])).toMatchObject({ $let: {} });
+    expect(compiled("$.a.reject(x => x > 1)", () => [1])).toMatchObject({
+      $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $not: [{ $gt: ["$$x", 1] }] } },
+    });
+    expect(compiled("$.a.takeWhile(x => x > 1)", () => [3])).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: {
+              jsmqlFi: {
+                $indexOfArray: [
+                  { $map: { input: "$$jsmqlArr", as: "x", in: { $cond: [{ $gt: ["$$x", 1] }, true, false] } } },
+                  false,
+                ],
+              },
+            },
+            in: { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", "$$jsmqlFi"] }] },
+          },
+        },
+      },
+    });
+    expect(compiled("$.a.dropWhile(x => x > 1)", () => [1, 2])).toMatchObject({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: {
+          $let: {
+            vars: {
+              jsmqlFi: {
+                $indexOfArray: [
+                  { $map: { input: "$$jsmqlArr", as: "x", in: { $cond: [{ $gt: ["$$x", 1] }, true, false] } } },
+                  false,
+                ],
+              },
+            },
+            in: {
+              $cond: [{ $eq: ["$$jsmqlFi", -1] }, [], { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] }],
+            },
+          },
+        },
+      },
+    });
   });
 
   it("refuses what the server or JavaScript would", () => {
@@ -643,7 +1908,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
 
   it("applies a bare callable global to each element", () => {
     expect(compiled("$.a.map(String)", () => DOC.a.map(String))).toEqual({
-      $map: { input: "$a", as: "x", in: { $toString: "$$x" } },
+      $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $toString: "$$x" } },
     });
     expect(compiled("$.mixed.filter(Boolean)", () => DOC.mixed.filter(Boolean))).toBeDefined();
     expect(compiled("[$.neg, $.n].map(Math.abs)", () => [DOC.neg, DOC.n].map(Math.abs))).toEqual({
@@ -666,37 +1931,35 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("lowers the index searches, the reducers and zipWith", () => {
-    expect(compiled("$.a.findIndex(x => x < 3)", () => DOC.a.findIndex((x) => x < 3))).toEqual(
-      nullOr("$a", {
-        $reduce: {
-          input: { $zip: { inputs: [{ $range: [0, { $size: "$a" }] }, "$a"] } },
-          initialValue: -1,
-          in: {
-            $cond: [
-              {
-                $and: [
-                  { $eq: ["$$value", -1] },
-                  { $let: { vars: { x: { $arrayElemAt: ["$$this", 1] } }, in: { $lt: ["$$x", 3] } } },
-                ],
-              },
-              { $arrayElemAt: ["$$this", 0] },
-              "$$value",
-            ],
-          },
+    expect(compiled("$.a.findIndex(x => x < 3)", () => DOC.a.findIndex((x) => x < 3))).toEqual({
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$a", []] } }] }, { $ifNull: ["$a", []] }] } },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$$value", -1] },
+                { $let: { vars: { x: { $arrayElemAt: ["$$this", 1] } }, in: { $lt: ["$$x", 3] } } },
+              ],
+            },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
         },
-      }),
-    );
+      },
+    });
     expect(compiled("$.a.findIndex((x, i) => x + i > 3)", () => DOC.a.findIndex((x, i) => x + i > 3))).toBeDefined();
     expect(compiled("$.a.findIndex(x => x > 9)", () => DOC.a.findIndex((x) => x > 9))).toBeDefined();
     expect(compiled("$.a.findLastIndex(x => x > 1)", () => DOC.a.findLastIndex((x) => x > 1))).toBeDefined();
     expect(compiled("$.a.reduce((acc, x) => acc + x, 0)", () => DOC.a.reduce((acc, x) => acc + x, 0))).toEqual({
-      $reduce: { input: "$a", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
+      $reduce: { input: { $ifNull: ["$a", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
     expect(
       compiled("$.a.reduce((acc, x, i) => acc + x * i, 0)", () => DOC.a.reduce((acc, x, i) => acc + x * i, 0)),
     ).toEqual({
       $reduce: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: "$a" }] }, "$a"] } },
+        input: { $zip: { inputs: [{ $range: [0, { $size: { $ifNull: ["$a", []] } }] }, { $ifNull: ["$a", []] }] } },
         initialValue: 0,
         in: {
           $let: {
@@ -713,17 +1976,21 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       ),
     ).toEqual({
       $reduce: {
-        input: { $reverseArray: "$a" },
+        input: { $reverseArray: { $ifNull: ["$a", []] } },
         initialValue: [],
-        in: { $let: { vars: { acc: "$$value", x: "$$this" }, in: { $concatArrays: ["$$acc", ["$$x"]] } } },
+        in: {
+          $let: { vars: { acc: "$$value", x: "$$this" }, in: { $concatArrays: [{ $ifNull: ["$$acc", []] }, ["$$x"]] } },
+        },
       },
     });
     expect(
       compiled("$.docs.reduce((acc, d) => acc + d.v, 0)", () => DOC.docs.reduce((acc, d) => acc + d.v, 0)),
-    ).toEqual({ $reduce: { input: "$docs", initialValue: 0, in: { $add: ["$$value", "$$this.v"] } } });
+    ).toEqual({
+      $reduce: { input: { $ifNull: ["$docs", []] }, initialValue: 0, in: { $add: ["$$value", "$$this.v"] } },
+    });
     expect(compiled("$.a.zipWith($.a, (x, y) => x * y)", () => DOC.a.map((x, i) => x * DOC.a[i]))).toEqual({
       $map: {
-        input: { $zip: { inputs: ["$a", "$a"], useLongestLength: true } },
+        input: { $zip: { inputs: [{ $ifNull: ["$a", []] }, "$a"], useLongestLength: true } },
         as: "jsmqlPair",
         in: {
           $let: {
@@ -742,32 +2009,32 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     // array, where every $setUnion/$setDifference sibling answers null. The RECEIVER is a
     // JavaScript method's and answers null when it is not there; a missing ARGUMENT list
     // reads as the empty set. A literal is already an array and takes neither.
-    expect(compiled("new Set($.a).isSubsetOf(new Set($.b))", () => new Set(DOC.a).isSubsetOf(new Set(DOC.b)))).toEqual(
-      nullOr("$a", { $setIsSubset: ["$a", { $ifNull: ["$b", []] }] }),
-    );
+    expect(compiled("new Set($.a).isSubsetOf(new Set($.b))", () => new Set(DOC.a).isSubsetOf(new Set(DOC.b)))).toEqual({
+      $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    });
     expect(compiled("new Set([2]).isSubsetOf(new Set($.b))", () => new Set([2]).isSubsetOf(new Set(DOC.b)))).toEqual({
       $setIsSubset: [[2], { $ifNull: ["$b", []] }],
     });
     expect(
       compiled("new Set($.b).isSupersetOf(new Set([5]))", () => new Set(DOC.b).isSupersetOf(new Set([5]))),
-    ).toEqual(nullOr("$b", { $setIsSubset: [[5], "$b"] }));
+    ).toEqual({ $setIsSubset: [[5], { $ifNull: ["$b", []] }] });
     expect(
       compiled("new Set($.a).isDisjointFrom(new Set($.b))", () => new Set(DOC.a).isDisjointFrom(new Set(DOC.b))),
-    ).toEqual(nullOr("$a", { $eq: [{ $size: { $setIntersection: ["$a", { $ifNull: ["$b", []] }] } }, 0] }));
+    ).toEqual({ $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0] });
     expect(
       unordered("new Set($.a).symmetricDifference(new Set($.b))", () => [
         ...new Set(DOC.a).symmetricDifference(new Set(DOC.b)),
       ]),
     ).toEqual({
       $let: {
-        vars: { jsmqlA: "$a", jsmqlB: "$b" },
+        vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: "$b" },
         in: {
           $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }],
         },
       },
     });
     expect(unordered("new Set($.a).union(new Set($.b))", () => [...new Set(DOC.a).union(new Set(DOC.b))])).toEqual({
-      $setUnion: ["$a", "$b"],
+      $setUnion: [{ $ifNull: ["$a", []] }, "$b"],
     });
   });
 
@@ -820,30 +2087,29 @@ const canonical = (v: unknown): string =>
 /**
  * The list operands that ABORT the whole command when they are not an array.
  *
- * MEASURED, and the reason these rows guard with `$ifNull` where their siblings do
- * not: `$in`'s second operand, both of `$setIsSubset`'s and `$size`'s one refuse a
+ * MEASURED: `$in`'s second operand, both of `$setIsSubset`'s and `$size`'s one refuse a
  * null or missing value, where `$map`, `$filter`, `$slice`, `$setUnion` and the rest
- * answer null in turn. A document that simply lacks the field would take the query
- * down with it, so each of these reads its list as the empty list — lodash's reading
- * of a missing list, and the empty set for the three predicates.
+ * answer null in turn. A document that lacks the field would take the query down with
+ * it, so each of these reads its list as the empty list — the list ARGUMENT through
+ * the cell's own guard, the RECEIVER through HR5, which runs an array method on `[]`.
  *
  * Each row: the source, what it answers over an EMPTY document, and what it answers
  * when only the LIST is missing. `undefined` means the row wrote no field at all.
  */
 const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
-  ["$.a.difference($.b)", null, [1, 2]],
-  ['$.a.differenceBy($.b, "id")', null, [1, 2]],
-  ['$.a.intersectionBy($.b, "id")', null, []],
-  ['$.a.xorBy($.b, "id")', null, [1, 2]],
-  // the RECEIVER is a JavaScript method's: null when it is not there
-  ["$.a.isSubsetOf($.b)", null, false],
-  ["$.a.isSupersetOf($.b)", null, true],
-  ["$.a.isDisjointFrom($.b)", null, true],
+  ["$.a.difference($.b)", [], [1, 2]],
+  ['$.a.differenceBy($.b, "id")', [], [1, 2]],
+  ['$.a.intersectionBy($.b, "id")', [], []],
+  ['$.a.xorBy($.b, "id")', [], [1, 2]],
+  // the RECEIVER is the empty set when it is not there: `new Set(undefined)` is empty in JavaScript
+  ["$.a.isSubsetOf($.b)", true, false],
+  ["$.a.isSupersetOf($.b)", true, true],
+  ["$.a.isDisjointFrom($.b)", true, true],
   ["$.a.chunk(2)", [], [[1, 2]]],
   ["$.a.zipObject($.b)", {}, { 1: null, 2: null }],
-  ["$.a.lastIndexOf(1)", null, 0],
-  ["$.a.dropRight(1)", null, [1]],
-  ["$.a.initial()", null, [1]],
+  ["$.a.lastIndexOf(1)", -1, 0],
+  ["$.a.dropRight(1)", [], [1]],
+  ["$.a.initial()", [], [1]],
   ["$.o.pick($.b)", {}, {}],
   ["$.o.omit($.b)", {}, { x: 1 }],
 ];
@@ -852,14 +2118,13 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
  * Every reader of an object, over a document that lacks the field.
  *
  * `$objectToArray` answers null for a missing field and `$arrayToObject` passes that
- * null on. Two answers come out of that, and which one a spelling gets is the source's
- * own choice, never a guess:
+ * null on. HR5 decides the answer by the accessor the source spells:
  *
- *   - a LODASH method answers `{}`, or `[]` where it answers an array, because
- *     `_.pick(undefined, …)` does. Nothing else is on offer: lodash has no other reading.
- *   - a JAVASCRIPT reader answers null, because `Object.keys(undefined)` is a TypeError
- *     and null is the nearest thing MongoDB has to raising one. A `?.` answers null too,
- *     and for a second reason: a `?.` with a call after it STOPS the chain.
+ *   - a method under a DOT runs on `{}`, so it answers `{}`, or `[]` where it answers an
+ *     array — `_.pick(undefined, …)` is `{}`, `Object.keys({})` is `[]`.
+ *   - an `Object` static has no receiver to wrap, and `Object.keys(undefined)` is a
+ *     TypeError in JavaScript, so it answers null, the nearest thing MongoDB has.
+ *   - a `?.` with a call after it STOPS the chain, so the chain answers null.
  *
  * Each row: the source, and what it answers when the receiver is missing.
  */
@@ -874,10 +2139,10 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o.omitBy(v => v == null)", {}],
   ["$.o.invert()", {}],
   ["$.o.toPairs()", []],
-  // JavaScript — null on a plain read
-  ["$.o.keys()", null],
-  ["$.o.values()", null],
-  ["$.o.entries()", null],
+  // an object method under a dot runs on `{}` (HR5); the `Object` statics have no receiver to wrap
+  ["$.o.keys()", []],
+  ["$.o.values()", []],
+  ["$.o.entries()", []],
   ["Object.keys($.o)", null],
   ["Object.values($.o)", null],
   ["Object.entries($.o)", null],
@@ -925,11 +2190,12 @@ describe("compiler/emit — a missing list is the empty list, never an aborted c
       }
     }
     expect(problems, problems.join("\n")).toEqual([]);
-    // `.sample()` picks at random, so it is the one row whose answer is a membership.
+    // `.sample()` picks at random, so it is the one row whose answer is a membership. An
+    // element of `[]` is MISSING on the server, so a missing `a` writes no field at all.
     const picked = await guarded
       .aggregate([{ $addFields: { __v: expr("$.a.sample()") } }, { $sort: { _id: 1 } }])
       .toArray();
-    expect(picked[0].__v).toBeNull();
+    expect(picked[0]).not.toHaveProperty("__v");
     expect([1, 2]).toContain(picked[1].__v);
   });
 

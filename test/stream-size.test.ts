@@ -137,7 +137,13 @@ describe("$$.size() — call forms", () => {
   it("works inside a top-level .map lambda (same document)", () => {
     expect(jsmql("$.scaled = $.items.map(i => i * $$.size())")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
-      { $set: { scaled: { $map: { input: "$items", as: "i", in: { $multiply: ["$$i", "$__jsmql.size"] } } } } },
+      {
+        $set: {
+          scaled: {
+            $map: { input: { $ifNull: ["$items", []] }, as: "i", in: { $multiply: ["$$i", "$__jsmql.size"] } },
+          },
+        },
+      },
       { $unset: "__jsmql" },
     ]);
   });

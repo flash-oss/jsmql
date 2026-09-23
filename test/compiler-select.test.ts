@@ -89,7 +89,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     expect(r.kind).toBe("dispatch");
     if (r.kind !== "dispatch") return;
     expect(r.branches.map((b) => b.family)).toEqual(["array", "string"]);
-    // no branch admits null or missing: they fall to the row's `uncertain`, which answers null
+    // no branch admits null or missing: they fall to the row's `uncertain`, which answers -1
     expect(r.branches[1].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["string"]] });
     expect(r.branches[0].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["array"]] });
     expect(typeof r.otherwise).toBe("function");
@@ -150,13 +150,19 @@ describe("compiler/emit/select — the table audits", () => {
       ? []
       : (Array.isArray(row.on) ? row.on : [row.on as string]).filter((f) => FIELD.includes(f));
 
-  it("dispatches an unprovable receiver exactly on the rows with two or more field families", () => {
+  it("dispatches an unprovable receiver exactly on the rows with two or more LOWERING field families", () => {
+    // A family the row refuses cannot hold a receiver in a program that compiles, so it
+    // does not count: `.keys()` lists array and object, refuses array, and runs on object.
+    const lowers = (row: Row, f: string): boolean => {
+      const branch = (row.expr as { perFamily: Record<string, unknown> }).perFamily[f];
+      return !(typeof branch === "object" && branch !== null && "unsupported" in branch);
+    };
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "name" || !(typeof row.expr === "object" && row.expr !== null && "perFamily" in row.expr))
         continue;
       const r = select(consult(name, "value"), OPAQUE, { kind: "none" }, 0);
-      const expectDispatch = fieldFamilies(row).length >= 2;
+      const expectDispatch = fieldFamilies(row).filter((f) => lowers(row, f)).length >= 2;
       const isDispatch = r.kind === "dispatch";
       // a count refusal is a legitimate non-dispatch answer for a zero-argument probe
       if (expectDispatch !== isDispatch && r.kind !== "wrongCount" && r.kind !== "rejectedCount") {

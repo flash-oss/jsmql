@@ -108,7 +108,8 @@ export type Branch = {
 
 /** The one answer. Every variant is final, except `rule` and `dispatch`, which name what to run. */
 export type Selected =
-  | { readonly kind: "rule"; readonly name: string; readonly rule: AnyRule }
+  /** `family` is the FIELD family the rule runs on, when a per-family cell chose it: the receiver's proof, or the one branch left. */
+  | { readonly kind: "rule"; readonly name: string; readonly rule: AnyRule; readonly family?: FieldFamily }
   /**
    * Two or more field families could hold the receiver: one `$switch`, with the
    * row's `uncertain` as the default. `complete` says the branches cover every
@@ -183,7 +184,7 @@ function countOf(name: string, args: Arity, n: number): Selected | null {
 }
 
 /** A resolved branch — a rule or a refusal — checked against the argument list. */
-function settle(name: string, branch: unknown, shaped: Shaped, count: number): Selected {
+function settle(name: string, branch: unknown, shaped: Shaped, count: number, family?: FieldFamily): Selected {
   if (isRefusal(branch)) {
     return { kind: "refused", name, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
   }
@@ -194,7 +195,10 @@ function settle(name: string, branch: unknown, shaped: Shaped, count: number): S
     }
     return { kind: "spreadRefused", name, sig: branch.args.sig };
   }
-  return countOf(name, branch.args, count) ?? { kind: "rule", name, rule: branch };
+  return (
+    countOf(name, branch.args, count) ??
+    (family === undefined ? { kind: "rule", name, rule: branch } : { kind: "rule", name, rule: branch, family })
+  );
 }
 
 /** The family a receiver names for a per-family cell. Null for a bare call. */
@@ -297,7 +301,7 @@ function fromPerFamily(
     const family = familyOf(receiver);
     const branch = family === null ? undefined : branches[family];
     if (branch === undefined) return { kind: "wrongReceiver", name, got: family, accepts: on ?? "any" };
-    return settle(name, branch, shaped, count);
+    return settle(name, branch, shaped, count, isFieldFamily(family as string) ? (family as FieldFamily) : undefined);
   }
   // An unprovable receiver. With one field family in `on`, the receiver IS that
   // family. With two or more, the compiler runs the runtime dispatch, in the row's
@@ -316,8 +320,12 @@ function fromPerFamily(
   // one test, so no branch can choose between them. The row's declaration order gives its
   // precedence, so the first family with a given test answers. The family that loses
   // is reached through its PROVEN receiver above (`new Set(…)` is proven at the source).
+  // A family the row REFUSES cannot be the family of a receiver in a program that
+  // compiles, so `.keys()` on an unproven field is a call on an object. The refused
+  // families stay only when nothing else is left, so that the refusal is what answers.
+  const lowering = listed.filter((f) => !isRefusal(branches[f]));
   const tests = new Set<string>();
-  const fieldFamilies = listed.filter((family) => {
+  const fieldFamilies = (lowering.length > 0 ? lowering : listed).filter((family) => {
     const test = TYPES[family].join(",");
     if (tests.has(test)) return false;
     tests.add(test);
@@ -336,7 +344,7 @@ function fromPerFamily(
   if (fitting.length === 1 && fieldFamilies.length > 1) {
     const branch = branches[fitting[0]];
     if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
-    return settle(name, branch, shaped, count);
+    return settle(name, branch, shaped, count, fitting[0]);
   }
   // Does the row take EVERY kind the value can be? Only then can a lone branch run
   // with no test, and only then can a dispatch drop its default. A possible kind
@@ -348,7 +356,7 @@ function fromPerFamily(
   if (fieldFamilies.length === 1 && (possible === undefined || covered || uncertain === undefined)) {
     const branch = branches[fieldFamilies[0]];
     if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
-    return settle(name, branch, shaped, count);
+    return settle(name, branch, shaped, count, fieldFamilies[0]);
   }
   if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
     internalError(`the row '${name}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);

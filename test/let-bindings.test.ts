@@ -64,7 +64,11 @@ describe("let bindings — basic shape", () => {
       {
         $project: {
           totals: {
-            $map: { input: "$items", as: "x", in: { $multiply: ["$$x.price", { $add: [1, "$__jsmql.var.tax"] }] } },
+            $map: {
+              input: { $ifNull: ["$items", []] },
+              as: "x",
+              in: { $multiply: ["$$x.price", { $add: [1, "$__jsmql.var.tax"] }] },
+            },
           },
         },
       },
@@ -80,7 +84,7 @@ describe("let bindings — basic shape", () => {
       { $set: { "__jsmql.var.total": "$grand" } },
       {
         $project: {
-          doubled: { $map: { input: "$items", as: "total", in: { $multiply: ["$$total", 2] } } },
+          doubled: { $map: { input: { $ifNull: ["$items", []] }, as: "total", in: { $multiply: ["$$total", 2] } } },
           grand: "$__jsmql.var.total",
         },
       },
@@ -187,7 +191,7 @@ describe("let bindings — declaration lists", () => {
         $set: {
           o: {
             $map: {
-              input: "$i",
+              input: { $ifNull: ["$i", []] },
               as: "v",
               in: {
                 $let: { vars: { d: { $multiply: ["$$v", 2] }, e: { $add: ["$$v", 1] } }, in: { $add: ["$$d", "$$e"] } },
@@ -202,7 +206,7 @@ describe("let bindings — declaration lists", () => {
         $set: {
           o: {
             $map: {
-              input: "$i",
+              input: { $ifNull: ["$i", []] },
               as: "v",
               in: {
                 $let: {
@@ -729,7 +733,13 @@ describe("let bindings — lambda interaction", () => {
     // Runtime RHS keeps it a `$set` binding (a constant would fold).
     expect(jsmql("let mult = $.rate; $project({ adj: $.items.map(x => x * mult) })")).toEqual([
       { $set: { "__jsmql.var.mult": "$rate" } },
-      { $project: { adj: { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", "$__jsmql.var.mult"] } } } } },
+      {
+        $project: {
+          adj: {
+            $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", "$__jsmql.var.mult"] } },
+          },
+        },
+      },
       { $unset: "__jsmql" },
     ]);
   });
@@ -743,7 +753,13 @@ describe("let bindings — lambda interaction", () => {
         $project: {
           big: {
             $reduce: {
-              input: { $filter: { input: "$scores", as: "s", cond: { $gt: ["$$s", "$__jsmql.var.cutoff"] } } },
+              input: {
+                $filter: {
+                  input: { $ifNull: ["$scores", []] },
+                  as: "s",
+                  cond: { $gt: ["$$s", "$__jsmql.var.cutoff"] },
+                },
+              },
               initialValue: 0,
               in: { $add: ["$$value", "$$this"] },
             },
@@ -758,7 +774,12 @@ describe("let bindings — lambda interaction", () => {
     // Runtime RHS keeps it a `$set` binding (a constant would fold).
     expect(jsmql("let i = $.start; $project({ a: $.xs.map(i => i + 1), b: i })")).toEqual([
       { $set: { "__jsmql.var.i": "$start" } },
-      { $project: { a: { $map: { input: "$xs", as: "i", in: { $add: ["$$i", 1] } } }, b: "$__jsmql.var.i" } },
+      {
+        $project: {
+          a: { $map: { input: { $ifNull: ["$xs", []] }, as: "i", in: { $add: ["$$i", 1] } } },
+          b: "$__jsmql.var.i",
+        },
+      },
       { $unset: "__jsmql" },
     ]);
   });
@@ -1119,7 +1140,11 @@ describe("a let tombstone survives every lambda depth", () => {
           from: "orders",
           let: { jsmql_v0_k: "$__jsmql.var.k" },
           pipeline: [
-            { $replaceWith: { t: { $map: { input: "$items", as: "v", in: { $add: ["$$v", "$$jsmql_v0_k"] } } } } },
+            {
+              $replaceWith: {
+                t: { $map: { input: { $ifNull: ["$items", []] }, as: "v", in: { $add: ["$$v", "$$jsmql_v0_k"] } } },
+              },
+            },
           ],
           as: "__jsmql.tmp.0",
         },

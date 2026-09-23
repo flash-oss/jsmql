@@ -2338,7 +2338,7 @@ describe("$$$.coll — where the hoisted $lookup lands", () => {
     ]);
     expect(jsmql("let ps = $$$.products.filter(p => p.ok === true); $.n = $.items.map(x => ps.size());")).toEqual([
       { $lookup: { from: "products", pipeline: [{ $match: { ok: true } }], as: "__jsmql.var.ps" } },
-      { $set: { n: { $map: { input: "$items", as: "x", in: { $size: "$__jsmql.var.ps" } } } } },
+      { $set: { n: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $size: "$__jsmql.var.ps" } } } } },
       { $unset: "__jsmql" },
     ]);
   });

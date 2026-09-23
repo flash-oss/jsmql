@@ -42,8 +42,8 @@ describe("compiler/emit/lower — literals and references", () => {
   });
 
   it("groups literal elements around a spread", () => {
-    expect(expr("[1, ...$.a]")).toEqual({ $concatArrays: [[1], "$a"] });
-    expect(expr("[...$.a, ...$.b]")).toEqual({ $concatArrays: ["$a", "$b"] });
+    expect(expr("[1, ...$.a]")).toEqual({ $concatArrays: [[1], { $ifNull: ["$a", []] }] });
+    expect(expr("[...$.a, ...$.b]")).toEqual({ $concatArrays: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] });
     expect(expr("{ a: 1, ...$.o }")).toEqual({ $mergeObjects: [{ a: 1 }, "$o"] });
     expect(expr("{ [$.k]: 1, b: 2 }")).toEqual({
       $arrayToObject: [
@@ -173,7 +173,9 @@ describe("compiler/emit/lower — calls", () => {
       ],
     });
     expect(expr('$literal(["$a", "$b"])')).toEqual({ $literal: ["$a", "$b"] });
-    expect(expr("$concatArrays([...$.a, [1]])")).toEqual({ $concatArrays: { $concatArrays: ["$a", [[1]]] } });
+    expect(expr("$concatArrays([...$.a, [1]])")).toEqual({
+      $concatArrays: { $concatArrays: [{ $ifNull: ["$a", []] }, [[1]]] },
+    });
     expect(expr("$let({ v_x: 1 }, (v_x) => v_x)")).toEqual({ $let: { vars: { v_v_5fx: 1 }, in: "$$v_v_5fx" } });
     expect(expr('$dateTrunc($.t, "day")')).toEqual({ $dateTrunc: { date: "$t", unit: "day" } });
     expect(expr("$cond($.a, 1, 2)")).toEqual({ $cond: { if: "$a", then: 1, else: 2 } });
@@ -221,7 +223,7 @@ describe("compiler/emit/lower — a path segment that starts with `$`", () => {
     });
     expect(expr("$.items.filter({ qty: { $gt: 5 } })")).toEqual({
       $filter: {
-        input: "$items",
+        input: { $ifNull: ["$items", []] },
         as: "x",
         cond: { $eq: [{ $getField: { field: { $literal: "$gt" }, input: "$$x.qty" } }, 5] },
       },

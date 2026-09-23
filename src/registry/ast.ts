@@ -151,7 +151,18 @@ export type Expr =
    * as its empty value, as JavaScript's `?.` short-circuits. The fold keeps the
    * flag, because the path spelling cannot carry it.
    */
-  | { type: "FieldRef"; path: string; optional?: true; pos: number }
+  | {
+      type: "FieldRef";
+      path: string;
+      optional?: true;
+      /**
+       * The path the LAST `?.` of a folded chain tests — `$.a?.b.c` tests `a`, so a
+       * call after it stops the chain on `a` alone, and `a.b.c` is read as any other
+       * path when `a` is there. Absent when the `?.` sits on the root.
+       */
+      optionalAt?: string;
+      pos: number;
+    }
   /**
    * `$$` — the current collection, as a stream of documents.
    *

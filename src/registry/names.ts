@@ -930,14 +930,14 @@ const logicalList = ({ name, args, query }: FilterIn): QueryDoc | null => {
 const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement";
 
 /**
- * An array operand that ABORTS the command when it is null, given the `[]` neutral.
+ * An array operand read as the `[]` it is when missing — a list ARGUMENT, above all.
  *
  * A reader over a missing field answers null, not `[]` — MEASURED, `$map`, `$filter`,
- * `$setUnion`, `$slice`, `$sortArray` and `$reduce` all do — so a value the compiler
- * proved is an array can still be null at run time. Most operators accept
- * this and answer null in turn. `$in` and `$size` are the two that refuse ("$in
- * requires an array as a second argument, found: null"), and they take the neutral.
- * A literal is already an array, so the emitter passes it through unchanged.
+ * `$setUnion`, `$slice`, `$sortArray` and `$reduce` all do — and `$in` and `$size`
+ * refuse it ("$in requires an array as a second argument, found: null"). HR5 wraps a
+ * RECEIVER before a cell sees it (`dispatchOn` in src/compiler/emit/lower.ts); a cell
+ * calls this for a list its arguments carry. A literal is already an array, so the
+ * emitter passes it through unchanged.
  */
 const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
 
@@ -970,18 +970,15 @@ const lastIndexOfArray = ({ recv, args, value, bind }: ExprIn): unknown => {
 };
 
 /**
- * An object read as its `{ k, v }` pairs, given the `{}` neutral.
+ * An object read as its `{ k, v }` pairs, given the `{}` neutral where the receiver is
+ * not proven present.
  *
  * A reader over a missing field answers null — MEASURED, `$objectToArray` does — and
- * `$arrayToObject` passes that null on. But `_.pick(undefined, …)`,
- * `_.mapValues(undefined, …)` and their kin answer `{}`, so the LODASH spellings read
- * their receiver through `$ifNull`.
- *
- * The JavaScript ones do not, and share no row with these: `Object.keys(undefined)` is
- * a TypeError in JavaScript, MongoDB has no error to raise inside an expression, and
- * null is the nearest thing to "no answer" it has. `.keys()` / `.values()` / `.entries()`
- * are that row, which is why `.toPairs()` — lodash's spelling of the same reading —
- * answers `[]` where `.entries()` answers null.
+ * `$arrayToObject` passes that null on. HR5 reads a missing object as `{}` under a dot,
+ * so `_.pick(undefined, …)`, `_.mapValues(undefined, …)` and `Object.keys({})` answer
+ * what they answer on the empty object. The compiler wraps the receiver (`dispatchOn`
+ * in src/compiler/emit/lower.ts) and hands the cell `present`; the guard here covers a
+ * cell that reads the object as an ARGUMENT.
  */
 const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
   $objectToArray: present ? recv : { $ifNull: [recv, {}] },
@@ -994,15 +991,12 @@ const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
  * ONE body for all three cells of a row — the object family, the `Object` namespace and
  * a receiver of unproven family must answer the SAME MQL, and three copies of it drift.
  *
- * No neutral unless the source asks for one. `$.o.keys()` is a plain read and answers
- * what MongoDB answers for a missing `o`, which is null — `Object.keys(undefined)` is a
- * TypeError in JavaScript, and null is the nearest thing MongoDB has to raising one.
- * `$.o?.keys()` is the developer saying the field may not be there, and answers `[]`.
- *
- * A RECEIVER gets that neutral from the compiler, which wraps it before this cell sees
- * it (`withOptional` in src/compiler/emit/lower.ts). The `Object` statics have none —
- * their receiver is the namespace — so they pass `optional` themselves, and
- * `Object.keys($.user?.profile)` answers what `$.user?.profile?.keys()` answers.
+ * A RECEIVER takes HR5's `{}` from the compiler, which wraps it before this cell sees it
+ * (`dispatchOn` in src/compiler/emit/lower.ts), so `$.o.keys()` answers `[]` for a
+ * missing `o`. The `Object` statics have no receiver to wrap — theirs is the namespace —
+ * and `Object.keys(undefined)` is a TypeError in JavaScript, so `Object.keys($.o)`
+ * answers null for a missing `o`, and takes the `{}` only where the argument carries a
+ * `?.`: `Object.keys($.user?.profile)`.
  */
 const pairsRead = (
   obj: unknown,
@@ -1017,21 +1011,20 @@ const pairsRead = (
 };
 
 /**
- * A JAVASCRIPT method on a receiver that is null or missing answers null.
+ * A STRING method on a receiver that is null or missing answers null (HR5).
  *
  * JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to
  * raise inside an expression, and null is the nearest thing it holds. Nothing else is
- * acceptable: `$strLenCP` and `$size` ABORT the command on null, and `$toUpper`,
- * `$substrCP`, `$regexMatch` and `$indexOfCP` answer a VALUE for it — "", false, -1 —
- * that hides the missing field. MEASURED on every row that calls this.
+ * acceptable: `$strLenCP` ABORTS the command on null, and `$toUpper`, `$substrCP`,
+ * `$regexMatch` and `$indexOfCP` answer a VALUE for it — "", false, -1 — that hides
+ * the missing field. MEASURED on every row that calls this.
  *
  * `body` runs on a receiver that the test proved, so it needs no guard of its own. A
  * path is cheap to read twice, and this function binds anything else once. A receiver
- * that is `present` skips the test — a literal, `$range(…)`, a `$lookup`'s array, or a
- * path that an earlier `?.` test proved.
- *
- * A LODASH method does not call this. The lodash rows answer a missing receiver each in
- * their own way today; see docs/DEFERRED.md for the one answer they are to share.
+ * that is `present` skips the test — a literal, a `$lookup`'s array, a path that an
+ * earlier `?.` test proved, or an array or object receiver the compiler read as its
+ * empty collection (`dispatchOn` in src/compiler/emit/lower.ts), which is why an
+ * array cell that calls this never emits the test under a dot.
  */
 const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r: unknown) => unknown): unknown => {
   if (present) return body(recv);
@@ -7214,7 +7207,8 @@ export const NAMES = {
           emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] }),
         },
       },
-      uncertain: () => null,
+      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
+      uncertain: () => -1,
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(

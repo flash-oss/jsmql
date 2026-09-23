@@ -349,19 +349,9 @@ describe("$match translation — .has() → $in / array-element", () => {
   });
 
   it("falls through to $expr when both sides are field paths", () => {
-    // `$in` aborts on a null array, so the expression form keeps the null guard.
+    // `$in` needs an array, so a missing `tags` runs the test on the empty array (HR5).
     expect(jsmql("[$match($.tags.has($.target))]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$tags", null] }, null] },
-              then: null,
-              else: { $in: ["$target", "$tags"] },
-            },
-          },
-        },
-      },
+      { $match: { $expr: { $in: ["$target", { $ifNull: ["$tags", []] }] } } },
     ]);
   });
 
@@ -436,27 +426,21 @@ describe("$match translation — .some(p) → $elemMatch", () => {
       {
         $match: {
           $expr: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-              then: null,
-              else: {
-                $anyElementTrue: {
-                  $map: {
-                    input: "$items",
-                    as: "it",
-                    in: {
-                      $eq: [
-                        {
-                          $cond: {
-                            if: { $eq: [{ $ifNull: ["$$it.tag", null] }, null] },
-                            then: null,
-                            else: { $toLower: "$$it.tag" },
-                          },
-                        },
-                        "vip",
-                      ],
+            $anyElementTrue: {
+              $map: {
+                input: { $ifNull: ["$items", []] },
+                as: "it",
+                in: {
+                  $eq: [
+                    {
+                      $cond: {
+                        if: { $eq: [{ $ifNull: ["$$it.tag", null] }, null] },
+                        then: null,
+                        else: { $toLower: "$$it.tag" },
+                      },
                     },
-                  },
+                    "vip",
+                  ],
                 },
               },
             },
@@ -473,23 +457,17 @@ describe("$match translation — .some(p) → $elemMatch", () => {
       {
         $match: {
           $expr: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$items", null] }, null] },
-              then: null,
-              else: {
-                $anyElementTrue: {
-                  $map: {
-                    input: "$items",
-                    as: "it",
-                    in: {
-                      $and: [
-                        { $ne: [{ $ifNull: ["$$it", null] }, null] },
-                        { $ne: ["$$it", false] },
-                        { $ne: ["$$it", ""] },
-                        { $ne: ["$$it", 0] },
-                      ],
-                    },
-                  },
+            $anyElementTrue: {
+              $map: {
+                input: { $ifNull: ["$items", []] },
+                as: "it",
+                in: {
+                  $and: [
+                    { $ne: [{ $ifNull: ["$$it", null] }, null] },
+                    { $ne: ["$$it", false] },
+                    { $ne: ["$$it", ""] },
+                    { $ne: ["$$it", 0] },
+                  ],
                 },
               },
             },
@@ -553,8 +531,8 @@ describe("$match translation — typeof: 'boolean' → 'bool' mapping", () => {
 
 describe("$match translation — .size() → a guarded $size under $expr", () => {
   // `.size()` counts the elements of an array. The query language has no operator for a
-  // count, so the comparison stays under `$expr`. A missing array reads as empty, as
-  // lodash's `_.size(undefined)` is 0, so the `$ifNull` guard keeps `$size` from an abort.
+  // count, so the comparison stays under `$expr`. A missing array runs `.size()` on the
+  // empty array (HR5), as lodash's `_.size(undefined)` is 0, so `$size` never aborts.
   // `.length()` is the length of a STRING: on a bare field it takes `$strLenCP` under a
   // null guard, with no test of the receiver's type at run time.
 

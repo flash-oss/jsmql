@@ -186,8 +186,13 @@ present; a call is present when its row states `neverNull` and its receiver and
 value arguments are present; an `Injected` value is present unless it is null. A
 `? :` is present when both branches are; a property read carries the object's
 proof; a binding carries what its value proved. `a ?? b` is present exactly when
-`b` is. MEASURED: `{ $size: null }` and `{ $in: [x, null] }` abort the command, so
-a cell guards with `$ifNull` exactly where the proof says `absent`.
+`b` is. An array or object method under a dot is present whatever its receiver:
+HR5 reads a missing receiver as the empty collection (`dispatchOn` in
+[lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()`
+guards `a` once and `.size()` adds nothing. A `?.` on the spine takes that away:
+the chain stops, and the value may be null. MEASURED: `{ $size: null }` and
+`{ $in: [x, null] }` abort the command, so a cell guards with `$ifNull` exactly
+where the proof says `absent`.
 
 ### The document after a stage
 

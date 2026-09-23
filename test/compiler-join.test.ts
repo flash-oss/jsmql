@@ -737,7 +737,7 @@ describe("compiler/emit/join — a join inside an expression that binds its own 
     // a callback that binds an element but never reads it inside the join is fine
     expect(compiled("$.n = $.ids.map(x => $$$.orders.filter(o => o.userId === $._id).size());")).toEqual([
       { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
-      { $set: { n: { $map: { input: "$ids", as: "x", in: { $size: "$__jsmql.tmp.0" } } } } },
+      { $set: { n: { $map: { input: { $ifNull: ["$ids", []] }, as: "x", in: { $size: "$__jsmql.tmp.0" } } } } },
       { $unset: "__jsmql" },
     ]);
   });

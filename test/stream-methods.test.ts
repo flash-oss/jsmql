@@ -227,8 +227,12 @@ describe("'from the end' array methods are NOT on the stream surface", () => {
 
   it("all four still work in VALUE position on a real array", () => {
     // A stored array carries its own order, so there they mean what JS means.
-    expect(jsmql("$.x = $.items.takeRight(3);")).toEqual([{ $set: { x: { $slice: ["$items", -3] } } }]);
-    expect(jsmql("$.x = $.items.toReversed();")).toEqual([{ $set: { x: { $reverseArray: "$items" } } }]);
+    expect(jsmql("$.x = $.items.takeRight(3);")).toEqual([
+      { $set: { x: { $slice: [{ $ifNull: ["$items", []] }, -3] } } },
+    ]);
+    expect(jsmql("$.x = $.items.toReversed();")).toEqual([
+      { $set: { x: { $reverseArray: { $ifNull: ["$items", []] } } } },
+    ]);
     expect(jsmql("$.x = $.items.initial();")).toBeDefined();
     expect(jsmql("$.x = $.items.dropRight(2);")).toBeDefined();
   });

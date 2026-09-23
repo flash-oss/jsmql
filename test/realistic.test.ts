@@ -495,7 +495,13 @@ describe(
             $map: {
               input: {
                 $setUnion: [
-                  { $map: { input: "$ratings", as: "x", in: { $ifNull: [{ $toString: "$$x" }, "null"] } } },
+                  {
+                    $map: {
+                      input: { $ifNull: ["$ratings", []] },
+                      as: "x",
+                      in: { $ifNull: [{ $toString: "$$x" }, "null"] },
+                    },
+                  },
                   [],
                 ],
               },
@@ -505,7 +511,7 @@ describe(
                 v: {
                   $size: {
                     $filter: {
-                      input: "$ratings",
+                      input: { $ifNull: ["$ratings", []] },
                       as: "x",
                       cond: { $eq: [{ $ifNull: [{ $toString: "$$x" }, "null"] }, "$$jsmqlKey"] },
                     },
@@ -673,14 +679,8 @@ $.bool = $.arr.has("red");
 $.result = $.bool ? "R" : "OTHER";
       `,
     ).toEqual([
-      { $set: { arr: { $setUnion: "$tags" } } },
-      {
-        $set: {
-          bool: {
-            $cond: { if: { $eq: [{ $ifNull: ["$arr", null] }, null] }, then: null, else: { $in: ["red", "$arr"] } },
-          },
-        },
-      },
+      { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } },
+      { $set: { bool: { $in: ["red", "$arr"] } } },
       { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } },
     ]);
   });
@@ -871,7 +871,7 @@ $$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.
         $set: {
           "__jsmql.tmp.0": {
             $map: {
-              input: "$lineItems",
+              input: { $ifNull: ["$lineItems", []] },
               as: "li",
               in: { orderId: "$_id", sku: "$$li.sku", revenue: { $multiply: ["$$li.qty", "$$li.price"] } },
             },
@@ -1018,7 +1018,7 @@ $.events.sort("timestamp");
 $.events = $.events.takeRight(10);
       `,
       ).toEqual([
-        { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } },
+        { $set: { events: { $concatArrays: [{ $ifNull: ["$events", []] }, ["$newEvent"]] } } },
         { $set: { events: { $sortArray: { input: "$events", sortBy: { timestamp: 1 } } } } },
         { $set: { events: { $slice: ["$events", -10] } } },
       ]);
@@ -1046,7 +1046,12 @@ describe("race podium through lodash .orderBy + .take", { features: ["Update fil
     expect(jsmql(`$.podium = $.results.orderBy(["score", "finishSeconds"], ["desc", "asc"]).take(3);`)).toEqual([
       {
         $set: {
-          podium: { $slice: [{ $sortArray: { input: "$results", sortBy: { score: -1, finishSeconds: 1 } } }, 3] },
+          podium: {
+            $slice: [
+              { $sortArray: { input: { $ifNull: ["$results", []] }, sortBy: { score: -1, finishSeconds: 1 } } },
+              3,
+            ],
+          },
         },
       },
     ]);
@@ -1609,7 +1614,7 @@ describe("email domain through .split().at().toLowerCase()", { features: ["Strin
     () => {
       expect(jsmql.expr(`$.email.split("@").at(1).toLowerCase()`)).toEqual({
         $let: {
-          vars: { jsmqlRecv: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] } },
+          vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } },
           in: {
             $cond: {
               if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
@@ -1725,7 +1730,7 @@ $.sessions
           $map: {
             input: {
               $reduce: {
-                input: { $map: { input: "$sessions", as: "x", in: "$$x.events" } },
+                input: { $map: { input: { $ifNull: ["$sessions", []] }, as: "x", in: "$$x.events" } },
                 initialValue: [],
                 in: { $concatArrays: ["$$value", "$$this"] },
               },
@@ -1745,7 +1750,9 @@ describe("cart subtotal through .sumBy", { features: ["Array methods"] }, () => 
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { subtotal: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.items.sumBy(item => item.qty * item.price)`)).toEqual({
-        $sum: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } } },
+        $sum: {
+          $map: { input: { $ifNull: ["$items", []] }, as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } },
+        },
       });
     },
   );
@@ -1900,59 +1907,46 @@ describe("tag aggregation through .map.flat.join", { features: ["Array methods"]
     { kind: "expression", usage: "db.posts.aggregate([{ $addFields: { tagsCSV: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.posts.map("tags").flat().join(", ")`)).toEqual({
-        $let: {
-          vars: {
-            jsmqlRecv: {
-              $reduce: {
-                input: { $map: { input: "$posts", as: "x", in: "$$x.tags" } },
-                initialValue: [],
-                in: { $concatArrays: ["$$value", "$$this"] },
+        $ifNull: [
+          {
+            $reduce: {
+              input: {
+                $reduce: {
+                  input: { $map: { input: { $ifNull: ["$posts", []] }, as: "x", in: "$$x.tags" } },
+                  initialValue: [],
+                  in: { $concatArrays: ["$$value", "$$this"] },
+                },
               },
-            },
-          },
-          in: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-              then: null,
-              else: {
-                $ifNull: [
-                  {
-                    $reduce: {
-                      input: "$$jsmqlRecv",
-                      initialValue: null,
-                      in: {
-                        $cond: {
-                          if: { $eq: ["$$value", null] },
-                          then: {
-                            $cond: {
-                              if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                              then: "",
-                              else: { $toString: "$$this" },
-                            },
-                          },
-                          else: {
-                            $concat: [
-                              "$$value",
-                              ", ",
-                              {
-                                $cond: {
-                                  if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                  then: "",
-                                  else: { $toString: "$$this" },
-                                },
-                              },
-                            ],
-                          },
-                        },
-                      },
+              initialValue: null,
+              in: {
+                $cond: {
+                  if: { $eq: ["$$value", null] },
+                  then: {
+                    $cond: {
+                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                      then: "",
+                      else: { $toString: "$$this" },
                     },
                   },
-                  "",
-                ],
+                  else: {
+                    $concat: [
+                      "$$value",
+                      ", ",
+                      {
+                        $cond: {
+                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                          then: "",
+                          else: { $toString: "$$this" },
+                        },
+                      },
+                    ],
+                  },
+                },
               },
             },
           },
-        },
+          "",
+        ],
       });
     },
   );
@@ -1973,7 +1967,7 @@ describe("immutable replace and indexed map through .with / (x, i)", { features:
       ).toEqual({
         lineup: {
           $let: {
-            vars: { jsmqlArr: "$roster", jsmqlIdx: "$swap.slot", jsmqlVal: "$swap.in" },
+            vars: { jsmqlArr: { $ifNull: ["$roster", []] }, jsmqlIdx: "$swap.slot", jsmqlVal: "$swap.in" },
             in: {
               $concatArrays: [
                 { $slice: ["$$jsmqlArr", "$$jsmqlIdx"] },
@@ -1997,7 +1991,11 @@ describe("immutable replace and indexed map through .with / (x, i)", { features:
         },
         labelled: {
           $map: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$roster" }] }, "$roster"] } },
+            input: {
+              $zip: {
+                inputs: [{ $range: [0, { $size: { $ifNull: ["$roster", []] } }] }, { $ifNull: ["$roster", []] }],
+              },
+            },
             as: "jsmqlPair",
             in: {
               $let: {
@@ -2075,7 +2073,12 @@ $.file.size <= 25_000_000
 describe("chat moderation with ?. inside an array spread", { features: ["Optional chaining"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.chatRooms.find(jsmql(...))" }, () => {
     expect(jsmql(`[...$.moderators, ...$.room?.mods, "root"].has($.userId)`)).toEqual({
-      $expr: { $in: ["$userId", { $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }] },
+      $expr: {
+        $in: [
+          "$userId",
+          { $concatArrays: [{ $ifNull: ["$moderators", []] }, { $ifNull: ["$room.mods", []] }, ["root"]] },
+        ],
+      },
     });
   });
 });
@@ -2110,7 +2113,7 @@ describe("full name with three-step ?? fallback chain", { features: ["Nullish co
       // judges the value at query time. For one character of a string, write
       // `.charAt(index)`.
       expect(jsmql.expr(`$.firstName ?? $.aliases.at(0) ?? "anonymous"`)).toEqual({
-        $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],
+        $ifNull: ["$firstName", { $arrayElemAt: [{ $ifNull: ["$aliases", []] }, 0] }, "anonymous"],
       });
     },
   );
@@ -2141,7 +2144,12 @@ $dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
 describe("moderator membership check through [...a, ...b]", { features: ["Array spread"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.threads.find(jsmql(...))" }, () => {
     expect(jsmql(`[...$.moderators, ...$.room.mods, "root"].has($.userId)`)).toEqual({
-      $expr: { $in: ["$userId", { $concatArrays: ["$moderators", "$room.mods", ["root"]] }] },
+      $expr: {
+        $in: [
+          "$userId",
+          { $concatArrays: [{ $ifNull: ["$moderators", []] }, { $ifNull: ["$room.mods", []] }, ["root"]] },
+        ],
+      },
     });
   });
 });
@@ -2169,7 +2177,7 @@ describe("dynamic pivot row with computed key + shorthand property", { features:
     () => {
       expect(jsmql.expr(`$.products.map(p => ({ [p.category]: p.price, p }))`)).toEqual({
         $map: {
-          input: "$products",
+          input: { $ifNull: ["$products", []] },
           as: "p",
           in: {
             $arrayToObject: [
@@ -2193,7 +2201,7 @@ describe("pivot table row through Object.fromEntries(.map(...))", { features: ["
       expect(jsmql.expr(`Object.fromEntries($.metrics.map(m => [m.name, m.value]))`)).toEqual({
         $arrayToObject: {
           $map: {
-            input: { $map: { input: "$metrics", as: "m", in: ["$$m.name", "$$m.value"] } },
+            input: { $map: { input: { $ifNull: ["$metrics", []] }, as: "m", in: ["$$m.name", "$$m.value"] } },
             as: "jsmqlP",
             in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
           },
@@ -2209,7 +2217,14 @@ describe("shopping cart total with 10_000 cap", { features: ["Numeric separators
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { total: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Math.min(10_000, $.lines.sumBy(l => l.qty * l.price))`)).toEqual({
-        $min: [10000, { $sum: { $map: { input: "$lines", as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } } } }],
+        $min: [
+          10000,
+          {
+            $sum: {
+              $map: { input: { $ifNull: ["$lines", []] }, as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } },
+            },
+          },
+        ],
       });
     },
   );
@@ -3486,17 +3501,7 @@ $.recentCoPurchaseOrders = $$$.orders
           pipeline: [
             { $sort: { createdAt: -1 } },
             { $limit: 200 },
-            {
-              $match: {
-                $expr: {
-                  $cond: {
-                    if: { $eq: [{ $ifNull: ["$productIds", null] }, null] },
-                    then: null,
-                    else: { $in: ["$$jsmql_f0__id", "$productIds"] },
-                  },
-                },
-              },
-            },
+            { $match: { $expr: { $in: ["$$jsmql_f0__id", { $ifNull: ["$productIds", []] }] } } },
           ],
           as: "recentCoPurchaseOrders",
         },

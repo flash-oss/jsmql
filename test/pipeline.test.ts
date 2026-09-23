@@ -422,7 +422,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("fans out a spread field (`$$ = [...$.items]`)", () => {
     expect(jsmql("[ $$ = [...$.items] ]")).toEqual([
-      { $set: { "__jsmql.tmp.0": "$items" } },
+      { $set: { "__jsmql.tmp.0": { $ifNull: ["$items", []] } } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -430,7 +430,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("fans out a provably-array expression (`.map`)", () => {
     expect(jsmql("[ $$ = $.items.map(x => ({ sku: x.sku })) ]")).toEqual([
-      { $set: { "__jsmql.tmp.0": { $map: { input: "$items", as: "x", in: { sku: "$$x.sku" } } } } },
+      { $set: { "__jsmql.tmp.0": { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { sku: "$$x.sku" } } } } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -451,7 +451,10 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
           "__jsmql.tmp.0": {
             $map: {
               input: {
-                $map: { input: { $objectToArray: "$scores" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+                $ifNull: [
+                  { $map: { input: { $objectToArray: "$scores" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
+                  [],
+                ],
               },
               as: "v",
               in: { value: "$$v" },
@@ -476,7 +479,11 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     // is spelled; a literal list (`$$ = [{ … }]`) is `$documents` and replaces the
     // whole stream instead.
     expect(jsmql("[ $$ = $.items.filter(x => x.qty > 0) ]")).toEqual([
-      { $set: { "__jsmql.tmp.0": { $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.qty", 0] } } } } },
+      {
+        $set: {
+          "__jsmql.tmp.0": { $filter: { input: { $ifNull: ["$items", []] }, as: "x", cond: { $gt: ["$$x.qty", 0] } } },
+        },
+      },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -903,7 +910,14 @@ describe("replace stream (`$$ = <expr>`) — single statement without a trailing
     expect(noSemi.valid).toBe(false);
     expect(noSemi.errors[0].message).toMatch(MSG);
     expect(noSemi.errors[0].pos).toBe(5);
-    expect(noSemi.errors).toEqual([{ message: MSG, pos: 5, code: "CODEGEN_ERROR" }]);
+    expect(noSemi.errors).toEqual([
+      {
+        message:
+          "'$$ = …' replaces the STREAM, so the right side has to be MANY documents — a number is one value. Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').",
+        pos: 5,
+        code: "CODEGEN_ERROR",
+      },
+    ]);
   });
 
   it("never reaches the internal-error path", () => {

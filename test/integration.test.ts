@@ -826,11 +826,10 @@ $$ = candidateProductIds
   });
 
   // A missing array field answers through any chain of array methods, where an
-  // unguarded `$size` / `$in` / `$map` input would abort the command. `.size()`
-  // counts it as empty — `_.size(undefined)` is 0 — and a JavaScript method such as
-  // `.has()` or `.some()` answers null. The guard goes only where the array is
-  // certainly there: here, the root's keys.
-  it("expr: a JavaScript method on a missing array answers null through a chain; .size() counts it as empty", async () => {
+  // unguarded `$size` / `$in` / `$map` input would abort the command. Each method
+  // runs on the empty array (HR5): `.size()` counts 0, `.has()` and `.some()` answer
+  // false. No wrap goes where the array is certainly there: here, the root's keys.
+  it("expr: a method on a missing array runs on the empty array through a chain; .size() counts 0", async () => {
     const rows = await aggregate(
       "users",
       `$match($._id === 0x6500000000000000000000a1);
@@ -838,7 +837,7 @@ $ = { s: $.noSuchField.map(x => x).size(),
       has: $.noSuchField.map(x => x).has(1), any: $.noSuchField.filter(x => x).some(x => x),
       keys: Object.keys($).size() > 3 };`,
     );
-    expect(rows).toEqual([{ s: 0, has: null, any: null, keys: true }]);
+    expect(rows).toEqual([{ s: 0, has: false, any: false, keys: true }]);
   });
 
   // The set methods on an unwound element inside a real pipeline: `.differenceBy`

@@ -24,16 +24,8 @@ describe("types — a written field carries what its value proved", () => {
         $.result = $.bool ? "R" : "OTHER";
       `),
     ).toEqual([
-      { $set: { arr: { $setUnion: "$tags" } } },
-      // `tags` may be missing, so `arr` may be null, and `$in` aborts on null: the guard stays.
-      {
-        $set: {
-          bool: {
-            $cond: { if: { $eq: [{ $ifNull: ["$arr", null] }, null] }, then: null, else: { $in: ["red", "$arr"] } },
-          },
-        },
-      },
-      // MongoDB reads null and missing as false, so a boolean needs no other test.
+      { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } },
+      { $set: { bool: { $in: ["red", "$arr"] } } },
       { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } },
     ]);
   });
@@ -110,7 +102,7 @@ describe("types — a written field carries what its value proved", () => {
                 { case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "b"] } },
                 { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "b"] } },
               ],
-              default: null,
+              default: -1,
             },
           },
         },
@@ -142,7 +134,7 @@ describe("types — a value of several possible kinds dispatches over those kind
         i: {
           $switch: {
             branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "b"] } }],
-            default: null,
+            default: -1,
           },
         },
       },
@@ -210,7 +202,7 @@ describe.skipIf(up === null)("types — the server agrees", () => {
       ])
       .toArray();
     expect(out.map((d) => d.result)).toEqual(["R", "OTHER", "OTHER"]);
-    expect(out.map((d) => d.bool)).toEqual([true, false, null]);
+    expect(out.map((d) => d.bool)).toEqual([true, false, false]);
   });
 
   it("a default-less `$switch` over two present kinds runs on both", async () => {
@@ -344,9 +336,7 @@ describe("types — the document after a stage, read off the stage itself", () =
       ),
     ).toEqual([
       { $group: { _id: "$k", total: { $sum: "$amount" }, items: { $push: "$item" } } },
-      // a number is its own truth
       { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } },
-      // an array the accumulator always writes: `$size`, with no guard
       { $set: { n: { $size: "$items" } } },
     ]);
   });
@@ -373,7 +363,6 @@ describe("types — the document after a stage, read off the stage itself", () =
       { $set: { b: 1 } },
       { $project: { a: 1, _id: 0 } },
       { $set: { n: { $strLenCP: "$a" } } },
-      // `b` is gone: certainly missing, so the condition is false and the `$cond` folds
       { $set: { m: 2 } },
     ]);
     expect(jsmql('$.a = "x"; $project({ a: 0 }); $.n = $.a ? 1 : 2;')[2]).toEqual({ $set: { n: 2 } });
@@ -462,11 +451,7 @@ describe("types — a call's result follows its row's `returns` term", () => {
   it("`.pick()` keeps the named properties and nothing else", () => {
     expect(
       jsmql('$.o = { a: "x", b: 1 }; $.p = $.o.pick(["a"]); $.n = $.p.a.length(); $.m = $.p.b ? 1 : 2;').slice(2),
-    ).toEqual([
-      { $set: { n: { $strLenCP: "$p.a" } } },
-      // `b` was not picked: certainly missing, so the condition folds to its `else`
-      { $set: { m: 2 } },
-    ]);
+    ).toEqual([{ $set: { n: { $strLenCP: "$p.a" } } }, { $set: { m: 2 } }]);
   });
 
   it("`.filter(p)` keeps the elements; `.head()` may find nothing, so a property of it may be missing", () => {
@@ -703,8 +688,8 @@ describe("types — a join carries the shape its body made", () => {
     // `$map` over a null `a` never runs the body, and each part of a `.split()` is a string that is there.
     expect(jsmql('$.a = $.s.split(","); $.n = $.a.map(p => p.length()); $.ids = $.a.map(ObjectId);')).toEqual([
       { $set: { a: { $split: ["$s", ","] } } },
-      { $set: { n: { $map: { input: "$a", as: "p", in: { $strLenCP: "$$p" } } } } },
-      { $set: { ids: { $map: { input: "$a", as: "x", in: { $toObjectId: "$$x" } } } } },
+      { $set: { n: { $map: { input: { $ifNull: ["$a", []] }, as: "p", in: { $strLenCP: "$$p" } } } } },
+      { $set: { ids: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $toObjectId: "$$x" } } } } },
     ]);
   });
 

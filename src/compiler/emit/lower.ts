@@ -36,6 +36,7 @@ import {
   elementsOf,
   soleFieldFamilyOf,
   hasStreamValueCell,
+  emptyCollectionOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
@@ -297,8 +298,10 @@ function stoppedChain(node: Expr): Expr | null {
     cursor = cursor.object;
   }
   // `$.user?.name.trim()` — the fold puts the `?.` on the PATH, so the walk above never
-  // meets it. The call still runs after it, and the path is the value it guards.
-  return cursor.type === "FieldRef" && cursor.optional === true && called ? cursor : null;
+  // meets it. The call still runs after it, and the path the `?.` TESTS is the value it
+  // guards: `user` for `$.user?.name`, so that `name` is read as any other path inside.
+  if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
+  return cursor.optionalAt === undefined ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
 }
 
 /** The same chain with every `?.` on its spine cleared — what runs once the test passed. */
@@ -307,7 +310,7 @@ function withoutOptional(e: Expr): Expr {
     return { ...e, optional: false, object: withoutOptional(e.object) };
   }
   if (e.type === "FieldRef" && e.optional === true) {
-    const { optional: _dropped, ...rest } = e;
+    const { optional: _dropped, optionalAt: _at, ...rest } = e;
     return rest;
   }
   return e;
@@ -378,8 +381,15 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       const t = typeOf(el.argument, inner);
       if (isOnly(t, "string")) throw E.spreadOfString(el.argument.pos);
       if (cannotBe(t, "array")) throw E.spreadNotAnArray(E.nounOfKinds(t), el.argument.pos);
+      // HR5 reads a missing collection as the empty one: `[...$.a, 1]` is `[1]` when `a`
+      // is not there. `$concatArrays` answers null for a null operand, and the mutator
+      // templates (`.pop()`, `.fill()`) spread the receiver into a `$size`, which aborts
+      // on a missing value. A value the proof shows present takes no wrap. The list the
+      // desugar PACKS from a call's spread arguments (`$op(...$.a)`) is the operator's own
+      // operand list, raw MQL under HR2, and takes none either.
+      const packed = (node as { packed?: boolean }).packed === true;
       const v = lowerValue(el.argument, inner);
-      operands.push(chainHasOptional(el.argument) ? ifNull(v, []) : v);
+      operands.push(t.absent && !packed ? ifNull(v, []) : v);
     } else if (isExpr(el)) group.push(lowerValue(el, inner));
   }
   flush();
@@ -693,11 +703,23 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     }
     checkSlots(name, sel.rule.args, exprArgs);
     checkSlotKinds(name, sel.rule.args, exprArgs, kinds);
-    // A receiver is there when the source says so — or when an optional chain read
-    // a missing one as the family's empty value, which is there too.
-    const present = isPresent(recvNode, recvEnv);
+    // HR5: under a dot, a method on a collection that may be null or missing runs on
+    // the EMPTY collection of its family — `[]` for an array method, `{}` for an object
+    // method — so the operator answers what it answers there, and the cell sees a
+    // receiver that is present. A receiver the proof shows present takes no wrap. A
+    // `?.` never reaches here with an absent receiver: the chain stopped above and
+    // proved the path. A string method keeps its receiver, and answers null itself.
+    const proven = isPresent(recvNode, recvEnv);
+    const family = receiver.kind === "value" ? receiver.family : (sel.family ?? soleFieldFamilyOf(name));
+    const empty = emptyCollectionOf(name, family);
+    // Only where the receiver is a VALUE of the document: inside `$group` or a window
+    // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
+    // each document's `a` as it is.
+    const inExpression = position === "value" || position === "filter";
+    const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const input = wrap ? ifNull(recv, empty) : recv;
     return sel.rule.emit(
-      exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, present),
+      exprInputs(name, input, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, proven || wrap),
     );
   }
   if (sel.kind === "dispatch") {

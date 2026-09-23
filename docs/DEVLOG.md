@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-24 — feat!: HR5 — a dot runs the method on an empty collection, a `?.` gives null
+
+A method on a receiver that is null or missing answered four different things:
+`.uniq()` null, `.chunk(2)` `[]`, `.sum()` `0`, `.pick([...])` `{}`. A developer
+could not predict the next one, and an analytics column such as
+`$.b = $.tags.has("red")` came out as boolean-or-null. DEF-037 asked for one
+rule. HR5 is that rule, and the fifth HARD RULE in docs/LANG_RULES.md. Under a
+dot, an array or object method runs on the empty collection of its family: the
+compiler wraps a receiver it cannot prove present in `{ $ifNull: [recv, []] }` or
+`{ $ifNull: [recv, {}] }` (`dispatchOn` in `lower.ts`), and the operator answers
+what it answers there — `[]`, `0`, `false`, `true`, `{}`, or missing for an
+element that is not there. No table of neutrals: the empty collection IS the
+neutral. A string method keeps `null`, the nearest value MongoDB has to the
+TypeError JavaScript raises. Under `?.` the chain stops and answers `null`, and
+each `?.` tests only the value in front of it: the fold records the path the last
+`?.` tests (`FieldRef.optionalAt`), so `$.a?.b.uniq()` is null for a missing `a`
+and `[]` for a missing `b`.
+
+A wrapped call is present, so a chain pays once at its head and the third callback
+parameter binds a present array. A family a row refuses is never an unproven
+receiver's family, so `.keys()` on a field is a call on an object and takes the
+`{}`. `.indexOf` on an unproven receiver keeps its runtime dispatch, with `-1`
+where neither branch matched. The developer chose this over a per-method table
+(three lodash cells differ, all worse: `_.concat(undefined, [1])` is
+`[undefined, 1]`, `_.mean(undefined)` is `NaN`) and over forcing `null` for an
+element read (`.at(0)` on `[]` is missing on the server, as `undefined` is in
+JavaScript). DEF-037 is closed.
+
+---
+
 ## 2026-09-24 — feat!: every value JSMQL computes is a call; the stream count is `$$.size()`
 
 `.length` was the one property JSMQL computed, and `$$.length` its stream twin. A

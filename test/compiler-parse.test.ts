@@ -538,7 +538,7 @@ describe("compiler/parse — a destructured parameter is one parameter, its name
 
   it("a parenthesised list or object that is not followed by an arrow is the expression it looks like", () => {
     expect(jsmql.expr("([1, 2])")).toEqual([1, 2]);
-    expect(jsmql.expr("([...$.a, 1])")).toEqual({ $concatArrays: ["$a", [1]] });
+    expect(jsmql.expr("([...$.a, 1])")).toEqual({ $concatArrays: [{ $ifNull: ["$a", []] }, [1]] });
     expect(jsmql.expr("({ a: 1 })")).toEqual({ a: 1 });
   });
 });

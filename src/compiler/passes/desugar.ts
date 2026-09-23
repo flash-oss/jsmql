@@ -216,8 +216,10 @@ const fieldPath: Rule = {
     // A `$`-led segment is not a path segment: MQL paths cannot hold one, and
     // the spelling belongs to the chained stage call (`.$match(…)`).
     if (n.name.startsWith("$") || isFieldProperty(n.name)) return node;
-    const segments: string[] = [n.name];
-    let optional = (n as { optional?: boolean }).optional === true;
+    // Each member with its own `?.` flag: `a?.b` is the member `b` whose accessor tests `a`.
+    const members: { name: string; optional: boolean }[] = [
+      { name: n.name, optional: (n as { optional?: boolean }).optional === true },
+    ];
     let base = n.object as {
       type: string;
       object?: object;
@@ -229,16 +231,27 @@ const fieldPath: Rule = {
     while (base.type === "MemberAccess") {
       const name = base.name as string;
       if (name.startsWith("$")) return node;
-      segments.unshift(name);
-      optional ||= base.optional === true;
+      members.unshift({ name, optional: base.optional === true });
       base = base.object as typeof base;
     }
     if (base.type !== "FieldRef") return node;
-    optional ||= base.optional === true;
     // The bare `$` has an empty path, so it contributes no leading segment.
     const head = base.path === "" ? [] : [base.path as string];
-    const folded = { type: "FieldRef", path: [...head, ...segments].join("."), pos: base.pos };
-    return (optional ? { ...folded, optional: true } : folded) as object;
+    const optional = base.optional === true || members.some((m) => m.optional);
+    // The path the LAST `?.` tests: the segments before that member. A `?.` on the
+    // root tests the document, which is always there, and records no path.
+    let optionalAt: string | undefined;
+    for (let i = members.length - 1; i >= 0; i--) {
+      if (!members[i].optional) continue;
+      const before = [...head, ...members.slice(0, i).map((m) => m.name)].join(".");
+      if (before !== "") optionalAt = before;
+      break;
+    }
+    const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
+    if (!optional) return folded as object;
+    return (
+      optionalAt === undefined ? { ...folded, optional: true } : { ...folded, optional: true, optionalAt }
+    ) as object;
   },
 };
 

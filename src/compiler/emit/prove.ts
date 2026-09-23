@@ -30,6 +30,7 @@ import {
   productionForOperator,
   returnsOf,
   soleFieldFamilyOf,
+  emptyCollectionOf,
 } from "../rows.ts";
 import { bsonTagOf, BSON_KIND, isDate, isPlainObject, isRegExp } from "../../bson.ts";
 import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
@@ -105,12 +106,16 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       const name = namedRow(node) ?? node.name;
       if (!neverNullOf(name)) return false;
       // A namespace (`Object.keys(o)`) is not a value; its arguments carry the answer.
-      // An optional chain (`$.a?.map(f)`) reads a missing receiver as the family's
-      // empty value, which is there — where the row names the one family that has one.
+      // HR5: under a dot, an array or object method runs on the EMPTY collection when
+      // its receiver is null or missing (`lower.ts` wraps it), so its receiver counts as
+      // there. A `?.` anywhere on the spine below stops the chain instead, and the value
+      // is then null when the tested link is.
+      const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name);
+      const wrapped = !spineHasOptional(node) && emptyCollectionOf(name, family) !== null;
       const receiver =
         node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES.has(node.object.name)
           ? true
-          : (node.optional && soleFieldFamilyOf(name) !== null) || isPresent(node.object, env);
+          : wrapped || isPresent(node.object, env);
       return receiver && node.args.every((a) => argPresent(a, env));
     }
     case "OperatorCall":
@@ -152,6 +157,16 @@ function statedPresence(node: Expr, env: Env): boolean | null {
     default:
       return false;
   }
+}
+
+/** Does this chain carry a `?.` anywhere on its spine — a call, an index, a member or the folded path? */
+function spineHasOptional(e: Expr): boolean {
+  let cursor: Expr = e;
+  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
 }
 
 /** Does this access chain carry a `?.` anywhere on the way to its base — a folded path included? */

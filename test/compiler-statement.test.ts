@@ -778,7 +778,7 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
 describe("compiler/emit/statement — a root write of a provable array fans out", () => {
   it("an array-returning method on an unproven field is an array, so `$$ = $.items.map(…)` fans out", () => {
     expect(pipeline("$$ = $.items.map(x => ({ v: x }))")).toEqual([
-      { $set: { "__jsmql.tmp.0": { $map: { input: "$items", as: "x", in: { v: "$$x" } } } } },
+      { $set: { "__jsmql.tmp.0": { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { v: "$$x" } } } } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -787,22 +787,11 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
   });
   it("a binding holding an array-returning method's value is typed, so a read dispatches at compile time", () => {
     expect(pipeline('const ids = $.tags.uniq(); $.y = ids.has("a")')).toEqual([
-      { $set: { "__jsmql.var.ids": { $setUnion: "$tags" } } },
-      // A reader over a MISSING field answers null, so a value the compiler proved is
-      // an array can still be null at run time — and `$in` refuses that rather than
-      // answer null (MEASURED: "$in requires an array as a second argument, found:
-      // null"). `.includes` is a JavaScript method, so it tests first and answers null.
-      {
-        $set: {
-          y: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$__jsmql.var.ids", null] }, null] },
-              then: null,
-              else: { $in: ["a", "$__jsmql.var.ids"] },
-            },
-          },
-        },
-      },
+      // `.uniq()` runs on the empty array when `tags` is missing (HR5), so its value is
+      // an array in every document. `$in` refuses a null array (MEASURED: "$in requires
+      // an array as a second argument, found: null"), and the proven value needs no test.
+      { $set: { "__jsmql.var.ids": { $setUnion: { $ifNull: ["$tags", []] } } } },
+      { $set: { y: { $in: ["a", "$__jsmql.var.ids"] } } },
       { $unset: "__jsmql" },
     ]);
   });

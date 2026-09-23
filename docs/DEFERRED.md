@@ -115,37 +115,6 @@ This file exists so the project does not forget an open item. Every "not yet sup
 - **Status.** open
 - **Effort.** M
 
-### DEF-037 — One answer for a lodash method on an array that is null or missing
-
-- **What is blocked.** A JavaScript method on a receiver that is null or missing answers `null`. This is one rule for every method. The lodash methods have no such rule. MEASURED over a document with no `a` field and no `o` field:
-
-  | source | JSMQL today | lodash on `undefined` |
-  |---|---|---|
-  | `$.a.uniq()`, `.compact()`, `.flatten()`, `.take(1)`, `.sortBy("k")`, `.union($.b)` | `null` | `[]` |
-  | `$.a.chunk(2)` | `[]` | `[]` |
-  | `$.a.sum()`, `.sumBy("x")` | `0` | `0` |
-  | `$.a.size()` | `0` | `0` |
-  | `$.a.nth(0)` | `null` | `undefined` |
-  | `$.a.first()`, `.last()`, `.min()`, `.sample()` | `null` | `undefined` |
-  | `$.a.partition(f)` | `[null, null]` | `[[], []]` |
-  | `$.a.countBy()`, `.groupBy("k")`, `.keyBy("k")` | `null` | `{}` |
-  | `$.o.pick(["a"])`, `.mapValues(f)`, `.invert()` | `{}` | `{}` |
-  | `$.o.toPairs()` | `[]` | `[]` |
-
-  Four different answers for one condition. A developer cannot predict the next one. The object methods already give lodash's answer. The array methods give MongoDB's answer instead.
-- **Target lowering.** One of two rules applies. The choice belongs to the developer:
-  - **Rule A — `null`, the same as a JavaScript method.** `$.a.uniq()` stays `{ $setUnion: "$a" }` and answers `null`. One rule covers the whole language, and the MQL stays as small as possible. The cost: `_.uniq(undefined)` is `[]` in lodash, so a developer who knows lodash gets a different value here. The object methods would change back from `{}` to `null`.
-  - **Rule B — lodash's own answer.** `$.a.uniq()` becomes `{ $setUnion: { $ifNull: ["$a", []] } }`. MEASURED: it answers `[]` for a missing `a`, where the bare form answers `null`. Each row states its own neutral value: `[]` for a method that answers an array, `0` for `.sum()` and `.size()`, `{}` for a method that answers an object, and no value for `.first()` and similar methods. The cost: one `$ifNull` on every lodash method whose receiver JSMQL cannot prove is present, plus a neutral value stated on every lodash row.
-- **Why blocked.** This is a product decision, not a technical one. Both rules are one afternoon of work. The wrong rule is a breaking change to every lodash spelling, so it must be made once.
-- **Attempted approaches.** None. On 2026-09-17 the object methods took Rule B, before the project saw the whole question.
-- **Success criteria.** `docs/LANGUAGE.md` § Type-aware dispatch states one rule for a lodash method on a missing receiver. Every lodash row gives that answer on a live mongod, and the table in [test/compiler-methods.test.ts](../test/compiler-methods.test.ts) holds one case per row.
-- **Rejection site(s).** None. JSMQL emits valid MQL for every spelling. The live `[DEF-037]` tags are in [docs/LANGUAGE.md](LANGUAGE.md) § Type-aware dispatch and [docs/specs/emit-pass.md](specs/emit-pass.md), on the sentences that describe today's behaviour.
-- **Spec.** [docs/specs/emit-pass.md](specs/emit-pass.md) § A JavaScript method on a receiver that may be missing; `docs/LANGUAGE.md` § Type-aware dispatch.
-- **Status.** design-only
-- **Effort.** S (Rule A) / M (Rule B)
-
----
-
 ### DEF-038 — A `document` layout for the stages whose output fields are not their body's keys
 
 - **What is blocked.** After `$bucket`, `$bucketAuto` or `$sortByCount` the compiler knows nothing about the document: the three rows state `document: "unknown"`. Their output fields — `_id` and the `output` keys of a bucket, `_id` and `count` of `$sortByCount` — are real and typed, but they are not the keys of the stage's body, so `documentAfter` (`src/compiler/emit/prove.ts`) cannot read them the way it reads a `$group` body. A read after one of them takes the runtime dispatch and the null guard it would take on a field nothing wrote.

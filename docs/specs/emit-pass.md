@@ -57,30 +57,39 @@ kind.
 
 ```js
 $.x.indexOf("a")
-// → { $switch: { branches: [{ case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $indexOfArray: ["$x", "a"] } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $indexOfCP: ["$x", "a"] } }], default: null } }
+// → { $switch: { branches: [ { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $indexOfArray: ["$x", "a"] } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $indexOfCP: ["$x", "a"] } } ], default: -1 } }
 $.x.indexOf(1)
-// → { $indexOfArray: ["$x", 1] }
+// → { $indexOfArray: [{ $ifNull: ["$x", []] }, 1] }
 ```
 
-**A JavaScript method on a receiver that may be missing answers null.** `nullOr`
+**HR5 — a dot runs an array or object method on the empty collection.**
+`dispatchOn` (`emit/lower.ts`) wraps a receiver the proof does not show present
+in `{ $ifNull: [<recv>, []] }` for an array rule and `{ $ifNull: [<recv>, {}] }`
+for an object rule, before the cell runs, and hands the cell `present: true`.
+The family is the receiver's proven family, else the family the selected rule
+runs on (`Selected.family`, from a per-family cell), else the row's one field
+family. The operator then answers what it answers on the empty collection —
+`[]`, `0`, `false`, `true`, missing — and every array or object method under a
+dot answers a value that is there. `statedPresence` (`emit/prove.ts`) says so:
+such a call is present when no `?.` sits on its spine, so a chain pays the one
+`$ifNull` at its head, and `.size()` after `.uniq()` adds nothing. The third
+callback parameter binds the wrapped input, and is present with it.
+
+**A string method on a receiver that may be missing answers null.** `nullOr`
 in `src/registry/names.ts` is the one shape: `{ $cond: [{ $eq: [{ $ifNull: [r, null] }, null] },
 null, <body over r>] }`, with the receiver bound by `$let` unless it is a path.
-A cell calls it where its operator would otherwise ABORT on null (`$size`,
-`$strLenCP`, `$setIsSubset`, `$in`'s list) or would answer a VALUE for it
-(`$toUpper` → "", `$substrCP` → "", `$regexMatch` → false, `$indexOfCP` → -1) —
-each case measured per row. The body runs on a proven receiver, so it carries
-no `$ifNull` of its own. A row that dispatches on the receiver's type lets null
-and missing fall to its `uncertain` default, which answers null. No branch
-admits them through `alsoTypes` any more. The compiler skips the test when the
-receiver is PRESENT (`ExprIn.present`): proven from the source by `isPresent`
-(`emit/prove.ts` — a literal, the root document, a `$lookup`'s array, a `let`
-of a present value through the binding's proof, a `neverNull` row over
-present operands, a written field whose value was present, or a path a `?.`
-proved through `Env.proving`), or proven at run time by the
-`$type` test of the dispatch branch the cell runs under. A LODASH cell never
-calls `nullOr`. The lodash rows do not yet share one answer for a missing
-receiver — `.size()` answers 0, `.pick()` answers `{}`, `.uniq()` answers null
-— and [DEF-037] tracks which one they should share. The `neverNull` fact is
+A cell calls it where its operator would otherwise ABORT on null (`$strLenCP`)
+or would answer a VALUE for it (`$toUpper` → "", `$substrCP` → "", `$regexMatch`
+→ false, `$indexOfCP` → -1) — each case measured per row. The body runs on a
+proven receiver, so it carries no `$ifNull` of its own. The compiler skips the
+test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
+`isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
+array, a `let` of a present value through the binding's proof, a `neverNull`
+row over present operands, a written field whose value was present, a path a
+`?.` proved through `Env.proving`, or a wrapped collection receiver), or proven
+at run time by the `$type` test of the dispatch branch the cell runs under. A
+row that dispatches on the receiver's type (`.indexOf`) lets null and missing
+fall to its `uncertain` default, which answers `-1`. The `neverNull` fact is
 stated per row: `.map`, `.filter`, `.slice` and `Object.keys` answer null only
 for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.
@@ -90,8 +99,10 @@ for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `IndexAccess` / `MethodCall` down to its base. When a call runs after the
 `?.`, it answers the value the `?.` guards. `lowerValue` then emits `{ $cond:
 [<that value is null or missing>, null, <the chain with every `?.` on its
-spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH, so the
-walk also checks the base `FieldRef`. A `?.` with no call after it answers
+spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH and records
+the path the LAST `?.` tests (`FieldRef.optionalAt`), so the walk also checks the
+base `FieldRef`, and the guard tests `a` alone for `$.a?.b.uniq()`: `a.b` inside
+follows the dot rule. A `?.` with no call after it answers
 null anyway, because a path through a missing field is missing. So the
 compiler emits no test there, and the consumer's neutral still describes it.
 
@@ -101,16 +112,12 @@ it. This is what keeps the cell from putting its own `$ifNull` back on the
 same field. `Env.dropFields` does not carry the set: a stage that replaced the
 document invalidates every path a test proved.
 
-**The optional chain's neutral reaches a row that dispatches too.**
-`withOptional` wraps the receiver in the family's empty value before any cell
-sees it. The family is the receiver's family when proven, otherwise the ONE
-field family the row lowers (`soleFieldFamilyOf`: a namespace is not a field
-family, and neither is a family the row REFUSES, because a receiver of that
-family is not a program that compiles). The wrap happens above the
-rule/dispatch split, so `$.o?.keys()` takes `{}` although `.keys()` resolves
-through a `$switch`. The dispatch reads such a wrapper once per guard rather
-than binding it, because a row with one family left collapses to a single
-branch anyway.
+**A family the row refuses is never the receiver's family.** `fromPerFamily`
+(`emit/select.ts`) drops a refused branch from the families an unproven receiver
+can be, because a receiver of that family is not a program that compiles. So
+`.keys()` on an unproven field is a call on an object, and takes the `{}`. The
+refused branches return only when nothing else is left, so that the refusal is
+what answers.
 
 A cell has to know two more things about the proof. First, a value the row
 guards may arrive as an ARGUMENT rather than as the receiver — a namespace
@@ -148,7 +155,7 @@ $eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex o
 $setUnion($.a)          // refused: a list operator with one scalar (the server refuses it too)
 $and([])                // → {$and:[]}                    an explicit empty list passes where the row states `emptyList`
 $divide([])             // refused: nothing was written, and `$divide` states no empty list
-$concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:["$a",[[1]]]}}  a list with a spread is one array-valued expression
+$concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:[{$ifNull:["$a",[]]},[[1]]]}}  a list with a spread is one array-valued expression
 $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto the first positional key
 $size([$.a])            // → {$size:["$a"]}               a 1-operand operator: one element is the operand list as written
 $size([$.a, 2])         // → {$size:[["$a",2]]}           two or more can only be the array VALUE — wrapped once

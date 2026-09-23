@@ -413,7 +413,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $let: {
-              vars: { jsmqlArr: "$ys" },
+              vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
               in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
             },
           },
@@ -431,7 +431,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         $set: {
           ys: {
             $let: {
-              vars: { jsmqlArr: "$ys" },
+              vars: { jsmqlArr: { $ifNull: ["$ys", []] } },
               in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
             },
           },
@@ -447,7 +447,10 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         "$.ys = $.xs; $.ys.fill(0);",
         after((ys) => ys.fill(0)),
       ),
-    ).toEqual([{ $set: { ys: "$xs" } }, { $set: { ys: { $map: { input: "$ys", as: "jsmqlUnused", in: 0 } } } }]);
+    ).toEqual([
+      { $set: { ys: "$xs" } },
+      { $set: { ys: { $map: { input: { $ifNull: ["$ys", []] }, as: "jsmqlUnused", in: 0 } } } },
+    ]);
     compiled(
       "$.ys = $.xs; $.ys.fill(9, 1);",
       after((ys) => ys.fill(9, 1)),
@@ -521,7 +524,9 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
       "'.sort()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
     // …and a receiver that IS a place still writes it, however deep the path.
-    expect(pipeline("$.o.xs.sort()")).toEqual([{ $set: { "o.xs": { $sortArray: { input: "$o.xs", sortBy: 1 } } } }]);
+    expect(pipeline("$.o.xs.sort()")).toEqual([
+      { $set: { "o.xs": { $sortArray: { input: { $ifNull: ["$o.xs", []] }, sortBy: 1 } } } },
+    ]);
   });
 
   it("Object.assign at statement position writes its target", () => {

@@ -6447,7 +6447,8 @@ var NAMES = {
           emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] })
         }
       },
-      uncertain: () => null
+      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
+      uncertain: () => -1
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -14630,6 +14631,14 @@ function hasStreamValueCell(name2) {
 function neverNullOf(name2) {
   return row(name2)?.neverNull === true;
 }
+function emptyCollectionOf(name2, family) {
+  const own = families(row(name2)?.on);
+  const fams = family !== null ? [family] : own === void 0 || own === "any" ? [] : own.filter((f) => FIELD_FAMILIES.includes(f));
+  if (fams.length === 0) return null;
+  if (fams.every((f) => f === "array" || f === "set")) return [];
+  if (fams.every((f) => f === "object")) return {};
+  return null;
+}
 function siblingOf(name2, family) {
   return row(name2)?.sibling?.[family] ?? null;
 }
@@ -22114,21 +22123,29 @@ var fieldPath = {
     const n2 = node;
     if (n2.type !== "MemberAccess" || n2.name === void 0) return node;
     if (n2.name.startsWith("$") || isFieldProperty(n2.name)) return node;
-    const segments = [n2.name];
-    let optional = n2.optional === true;
+    const members = [
+      { name: n2.name, optional: n2.optional === true }
+    ];
     let base = n2.object;
     while (base.type === "MemberAccess") {
       const name2 = base.name;
       if (name2.startsWith("$")) return node;
-      segments.unshift(name2);
-      optional ||= base.optional === true;
+      members.unshift({ name: name2, optional: base.optional === true });
       base = base.object;
     }
     if (base.type !== "FieldRef") return node;
-    optional ||= base.optional === true;
     const head = base.path === "" ? [] : [base.path];
-    const folded = { type: "FieldRef", path: [...head, ...segments].join("."), pos: base.pos };
-    return optional ? { ...folded, optional: true } : folded;
+    const optional = base.optional === true || members.some((m) => m.optional);
+    let optionalAt;
+    for (let i = members.length - 1; i >= 0; i--) {
+      if (!members[i].optional) continue;
+      const before = [...head, ...members.slice(0, i).map((m) => m.name)].join(".");
+      if (before !== "") optionalAt = before;
+      break;
+    }
+    const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
+    if (!optional) return folded;
+    return optionalAt === void 0 ? { ...folded, optional: true } : { ...folded, optional: true, optionalAt };
   }
 };
 var isNode4 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
@@ -23997,7 +24014,7 @@ function countOf(name2, args, n2) {
   const ok4 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
   return ok4 ? null : { kind: "wrongCount", name: name2, got: n2, args };
 }
-function settle(name2, branch, shaped, count) {
+function settle(name2, branch, shaped, count, family) {
   if (isRefusal(branch)) {
     return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
   }
@@ -24008,7 +24025,7 @@ function settle(name2, branch, shaped, count) {
     }
     return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
   }
-  return countOf(name2, branch.args, count) ?? { kind: "rule", name: name2, rule: branch };
+  return countOf(name2, branch.args, count) ?? (family === void 0 ? { kind: "rule", name: name2, rule: branch } : { kind: "rule", name: name2, rule: branch, family });
 }
 function familyOf2(receiver) {
   switch (receiver.kind) {
@@ -24086,7 +24103,7 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
     const family = familyOf2(receiver);
     const branch = family === null ? void 0 : branches[family];
     if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count);
+    return settle(name2, branch, shaped, count, isFieldFamily(family) ? family : void 0);
   }
   const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
   const possible = receiver.possible;
@@ -24094,8 +24111,9 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
   if (possible !== void 0 && listed.length === 0) {
     return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
   }
+  const lowering = listed.filter((f) => !isRefusal(branches[f]));
   const tests = /* @__PURE__ */ new Set();
-  const fieldFamilies = listed.filter((family) => {
+  const fieldFamilies = (lowering.length > 0 ? lowering : listed).filter((family) => {
     const test = TYPES[family].join(",");
     if (tests.has(test)) return false;
     tests.add(test);
@@ -24109,13 +24127,13 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
   if (fitting.length === 1 && fieldFamilies.length > 1) {
     const branch = branches[fitting[0]];
     if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count);
+    return settle(name2, branch, shaped, count, fitting[0]);
   }
   const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
   if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
     const branch = branches[fieldFamilies[0]];
     if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count);
+    return settle(name2, branch, shaped, count, fieldFamilies[0]);
   }
   if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
     internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
@@ -24861,7 +24879,9 @@ function statedPresence(node, env) {
     case "MethodCall": {
       const name2 = namedRow(node) ?? node.name;
       if (!neverNullOf(name2)) return false;
-      const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : node.optional && soleFieldFamilyOf(name2) !== null || isPresent(node.object, env);
+      const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
+      const wrapped = !spineHasOptional(node) && emptyCollectionOf(name2, family) !== null;
+      const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
       return receiver && node.args.every((a) => argPresent(a, env));
     }
     case "OperatorCall":
@@ -24899,6 +24919,14 @@ function statedPresence(node, env) {
     default:
       return false;
   }
+}
+function spineHasOptional(e) {
+  let cursor = e;
+  while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
 }
 function chainHasOptional(e) {
   let cursor = e;
@@ -26272,7 +26300,7 @@ function readsParam(node, name2) {
   if (n2.type === "Ident" && n2.name === name2) return true;
   return Object.entries(n2).some(([k, v]) => k !== "type" && readsParam(v, name2));
 }
-function arrayCallback(cb, recv, recvNode, env, read, name2) {
+function arrayCallback(cb, recv, recvNode, env, read, name2, present2 = false) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
@@ -26283,7 +26311,7 @@ function arrayCallback(cb, recv, recvNode, env, read, name2) {
     let bodyEnv2 = bound.env;
     const vars2 = {};
     if (arr !== void 0) {
-      const a = bodyEnv2.param(arr, of("array", true), cb.pos);
+      const a = bodyEnv2.param(arr, of("array", !present2), cb.pos);
       vars2[a.as] = recv;
       bodyEnv2 = a.env;
     }
@@ -26400,7 +26428,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth),
-    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2),
+    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2, present2),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name2),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
     sortSpec: (e, objects) => sortSpecOf(e, name2, objects),
@@ -26796,14 +26824,15 @@ function stoppedChain(node) {
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
-  return cursor.type === "FieldRef" && cursor.optional === true && called ? cursor : null;
+  if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
+  return cursor.optionalAt === void 0 ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
 }
 function withoutOptional(e) {
   if (e.type === "MemberAccess" || e.type === "IndexAccess" || e.type === "MethodCall") {
     return { ...e, optional: false, object: withoutOptional(e.object) };
   }
   if (e.type === "FieldRef" && e.optional === true) {
-    const { optional: _dropped, ...rest } = e;
+    const { optional: _dropped, optionalAt: _at, ...rest } = e;
     return rest;
   }
   return e;
@@ -26855,8 +26884,9 @@ function arrayLiteral(node, elements, env) {
       const t = typeOf(el.argument, inner);
       if (isOnly(t, "string")) throw spreadOfString(el.argument.pos);
       if (cannotBe(t, "array")) throw spreadNotAnArray(nounOfKinds(t), el.argument.pos);
+      const packed = node.packed === true;
       const v = lowerValue(el.argument, inner);
-      operands.push(chainHasOptional(el.argument) ? ifNull(v, []) : v);
+      operands.push(t.absent && !packed ? ifNull(v, []) : v);
     } else if (isExpr2(el)) group.push(lowerValue(el, inner));
   }
   flush();
@@ -27079,9 +27109,14 @@ function dispatchOn(node, name2, recvNode, args, env) {
     }
     checkSlots(name2, sel.rule.args, exprArgs);
     checkSlotKinds(name2, sel.rule.args, exprArgs, kinds);
-    const present2 = isPresent(recvNode, recvEnv);
+    const proven = isPresent(recvNode, recvEnv);
+    const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
+    const empty = emptyCollectionOf(name2, family);
+    const inExpression = position === "value" || position === "filter";
+    const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const input = wrap ? ifNull(recv, empty) : recv;
     return sel.rule.emit(
-      exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, present2)
+      exprInputs(name2, input, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, proven || wrap)
     );
   }
   if (sel.kind === "dispatch") {

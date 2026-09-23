@@ -23,7 +23,7 @@ jsmql("$.age > 18 && $.status === 'active'");
 // Method calls aren't expressible in the query language, so the whole thing
 // falls into `$expr` (still a legal Filter operator).
 jsmql("$.email.split('@').at(1).toLowerCase() === 'gmail.com'");
-// → { $expr: { $eq: [{ $let: { vars: { jsmqlRecv: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $toLower: "$$jsmqlRecv" } } } } }, "gmail.com"] } }
+// → { $expr: { $eq: [ { $let: { vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $toLower: "$$jsmqlRecv" } } } } }, "gmail.com" ] } }
 
 // Any `;` flips to Pipeline mode — even one stage with a trailing `;`.
 jsmql("$match($.age > 18); $sort({ age: 1 });");
@@ -592,13 +592,17 @@ $[$.fieldName]                      // → { $getField: { field: "$fieldName", i
 
 `?.` is accepted everywhere `.` is, and it does what JavaScript's `?.` does.
 
-**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists:
+**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists. Each `?.` tests only the value in front of it; a dot after it follows the dot rule of [HR5](LANG_RULES.md): an array or object method runs on the empty collection when its receiver is missing.
 
 ```js
 $.s?.trim().length() // a call runs after the ?. — the chain stops, and answers null
 // → { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: { $trim: { input: "$s" } } } } }
-$.s.trim().length()  // no ?. — but `.length()` is a JavaScript method, and its receiver may be null, so it too answers null
+$.s.trim().length()  // no ?. — but `.length()` is a string method, and its receiver may be null, so it too answers null
 // → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
+$.a?.b.uniq()        // the ?. tests `a` alone; `a.b` inside follows the dot rule
+// → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setUnion: { $ifNull: ["$a.b", []] } } } }
+$.a.uniq()           // no ?. — an array method on a field that may be missing runs on []
+// → { $setUnion: { $ifNull: ["$a", []] } }
 ```
 
 **A `?.` with no call after it changes nothing.** There is nothing to stop: the chain's value is the field, and a path through a missing field already answers missing. So the consumer supplies its own empty value, as the table below shows. That table covers every `?.` EXCEPT a chain that calls something.
@@ -606,7 +610,7 @@ $.s.trim().length()  // no ?. — but `.length()` is a JavaScript method, and it
 | Consumer category | Wrapped with | Example |
 |---|---|---|
 | Bare read | nothing (sugar only) | `$.user?.name` → `"$user.name"` |
-| Array spread | `[]` | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
+| Array spread | `[]` — under `.` as well: a missing collection spreads as the empty one (HR5) | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
 | Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user.name", null] }, null] }, then: null, else: { $trim: { input: "$user.name" } } } }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
@@ -614,7 +618,7 @@ $.s.trim().length()  // no ?. — but `.length()` is a JavaScript method, and it
 | Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
 | Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
 
-A reader of a whole object follows the same rule. `$.o.keys()` is a plain read and answers `null` for a missing `o`, because `Object.keys(undefined)` raises a **TypeError** in JavaScript, and `null` is the nearest thing MongoDB has to that. `$.o?.keys()` has a call after the `?.`, so the chain stops and also answers `null`. A lodash object method answers its own empty value either way — `_.pick(undefined, …)` is `{}`, and lodash has no other reading. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument instead: `Object.keys($.user?.profile)` takes `{}`, exactly as `Object.keys($.user.profile)` does.
+A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so the chain stops and answers `null`. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument: `Object.keys($.user?.profile)` takes `{}` for a missing profile.
 
 These cases produce the same MQL whether you use `.` or `?.`:
 
@@ -1765,9 +1769,9 @@ $.s = $.name.trim(); $.b = $.s.has("re");
 
 ```js
 $.a.indexOf(1)
-// → { $indexOfArray: ["$a", 1] }
+// → { $indexOfArray: [{ $ifNull: ["$a", []] }, 1] }
 $.a.indexOf("x")
-// → { $switch: { branches: [{ case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $indexOfArray: ["$a", "x"] } }, { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $indexOfCP: ["$a", "x"] } }], default: null } }
+// → { $switch: { branches: [ { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $indexOfArray: ["$a", "x"] } }, { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $indexOfCP: ["$a", "x"] } } ], default: -1 } }
 ```
 
 **A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();` the compiler knows `arr` is an array, or null when `tags` is missing, so `$.arr.has("red")` takes the array form with only the null guard. After `$.bool = $.arr.has("red");` it knows `bool` is a boolean, so `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows a method's result too: `$.tags.map(t => t.trim())` is an array of strings, `{ ...$.address, done: true }` and `$.address.assign({ done: true })` are objects whose `done` is a boolean, `$.o.pick(["a"])` holds `a` and nothing else, and `.filter(p).head()` is one element that may be missing. It follows every write — a whole field, a dotted path such as `$.address.full = …`, a `let` and each value it is assigned again — and every stage: after `$group({ _id: $.k, total: $sum($.amount) })` the compiler knows `total` is a number, after `$ = $.p` it knows the shape it recorded for `p`, after `.flatMap("items")` it knows `items` is one element, and after `$ = $.pick([...])` it knows exactly which fields remain. A join carries the shape its body made: after `const ids = $$$.orders.filter(p).map("pid").uniq()` the compiler knows `ids` is an array that is there, so `ids.has(x)` takes the array form with no guard, and after `$.p = $$$.products.filter(p).pick(["_id", "name"])` it knows each element holds exactly those two fields. A `$match` narrows too: after `$match($.tags != null)` the field is present and needs no null guard, after `$match(typeof $.b === "string")` or `$$.filter({ status: "a" })` the field has that kind, and after `$match($.n > 5)` it is a number, because the query language compares inside one type. A query clause reads an array field element by element, so each of these also allows an array; an `||` proves nothing. A method on a field proven to hold a kind it has no form for is a compile-time error that names what the method takes, so `$.bool.trim()` fails before it runs. A value that can be one of several kinds (`c ? "abc" : [1, 2]`) dispatches over those kinds alone, and drops the `default` when every kind has a branch and the value is there. See [docs/specs/types.md](specs/types.md).
@@ -1776,17 +1780,20 @@ $.a.indexOf("x")
 $.arr = $.tags.uniq();
 $.bool = $.arr.has("red");
 $.result = $.bool ? "R" : "OTHER";
-// → [{ $set: { arr: { $setUnion: "$tags" } } }, { $set: { bool: { $cond: { if: { $eq: [{ $ifNull: ["$arr", null] }, null] }, then: null, else: { $in: ["red", "$arr"] } } } } }, { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } }]
+// → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } } ]
 ```
 
-**A JavaScript method on a receiver that is null or missing answers `null`.** JavaScript throws there — `undefined.trim()` is a TypeError — but MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds. No other answer works: `$size` and `$strLenCP` ABORT the whole command on null, and `$toUpper`, `$substrCP`, `$regexMatch`, and `$indexOfCP` each answer a *value* instead — `""`, `false`, `-1` — that hides the missing field. So JSMQL tests first any receiver it cannot prove is there, and runs the method only when the test passes. A receiver that is certainly there takes no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result (`$$$.<coll>…`), a field the `$type` test above already proved, a path a `?.` on the way in already tested, and any method over one of those. A **lodash** method does not follow this rule, and the lodash rows do not yet share one answer of their own: `.size()` answers `0`, `.pick([…])` answers `{}`, `.chunk(n)` answers `[]`, and `.uniq()` answers `null`. [DEF-037] tracks which single answer they should give — `null`, as a JavaScript method, or lodash's own:
+**A method on a receiver that is null or missing answers what its family's empty collection answers.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]` and an object method on `{}`: the compiler wraps the receiver in `$ifNull`, and the operator gives the answer — `[]` for `.uniq()`, `0` for `.sum()` and `.size()`, `false` for `.has(x)`, `true` for `.every(p)`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. A string method answers `null`: JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds; `$strLenCP` and `$toUpper` would abort or answer `""`, so the receiver is tested first. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
 
 ```js
-$.s.trim().length()               // `s` may be missing → the method is tested first, and answers null
+$.s.trim().length()               // a STRING method: `s` may be missing → tested first, and answers null
 // → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
 
-$.a.map(x => x + 1).size()        // lodash — `_.size(undefined)` is 0, so a missing array counts as empty
-// → { $size: { $ifNull: [{ $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } }, []] } }
+$.a.map(x => x + 1).size()        // an ARRAY method: a missing `a` is [], so the count is 0, and `.size()` adds no guard of its own
+// → { $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } } }
+
+$.a.uniq().sortBy("k")            // one wrap at the head of the chain: `.uniq()` under a dot never answers null
+// → { $sortArray: { input: { $setUnion: { $ifNull: ["$a", []] } }, sortBy: { k: 1 } } }
 
 Object.keys($).size()             // the root document is always there
 // → { $size: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } }
@@ -1798,28 +1805,28 @@ $.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).size();   // a $loo
 // → …, { $set: { n: { $size: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } } }, …
 ```
 
-**The same rule applies to a list ARGUMENT, because JSMQL can never prove it is there.** A method that
-compares the receiver against a second list reaches `$in` or `$setIsSubset` with that
-list. So the list takes the same guard, and a missing list then means "the empty list" —
-the same reading lodash gives a missing list. JSMQL hands a list spelled in the source
-straight through, because it is already an array:
+**A list ARGUMENT takes the same empty-list reading.** A method that compares the receiver
+against a second list reaches `$in` or `$setIsSubset` with that list, and both abort on
+null. So the cell guards the list the way HR5 guards the receiver, and a missing list
+means "the empty list" — the reading lodash gives a missing list. JSMQL hands a list
+spelled in the source straight through, because it is already an array:
 
 ```js
-$.a.difference($.b)               // `b` may be missing → $in would abort
-// → { $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } } }
+$.a.difference($.b)               // `a` and `b` may be missing → both read as []
+// → { $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } } }
 
 $.a.difference([1, 2])            // spelled in the source — an array, always
-// → { $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [1, 2]] }] } } }
+// → { $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [1, 2]] }] } } }
 
-$.a.isSubsetOf($.b)               // the RECEIVER is tested; a missing ARGUMENT is the empty set
-// → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setIsSubset: ["$a", { $ifNull: ["$b", []] }] } } }
+$.a.isSubsetOf($.b)               // a missing set, on either side, is the empty set
+// → { $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
 ```
 
 So the three set PREDICATES — `.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()` —
-read a missing operand as the **empty set** and answer a real boolean. Their
-array-returning siblings — `.union()`, `.intersection()`, `.symmetricDifference()`,
-`.xor()` — answer `null` instead. `$setUnion` and its kin tolerate null and pass it on,
-so no guard is needed and JSMQL adds none.
+read a missing operand as the **empty set** and answer a real boolean: `true`, `true` and
+`true` over a document that holds neither field. Their array-returning siblings —
+`.union()`, `.intersection()`, `.symmetricDifference()`, `.xor()` — answer the other list,
+or `[]`.
 
 If you know the type of an `.indexOf()` receiver at design time and want compact output, you have three options. Bind the value to a `const` with a type-revealing initialiser. Or chain a type-fixing method first — `$.tags.toLowerCase().indexOf(...)` pins a string. Or use the explicit `$indexOfArray` / `$indexOfCP` operator forms.
 
@@ -1851,7 +1858,7 @@ absent element stays absent, and `$.aliases.at(0) ?? "anonymous"` reaches its fa
 string reads one character with `.charAt(i)`, and its last characters with `.substr(-n)`:
 
 ```js
-$.tags.uniq().at(-1)                // → { $arrayElemAt: [{ $setUnion: "$tags" }, -1] }
+$.tags.uniq().at(-1)                // → { $arrayElemAt: [{ $setUnion: { $ifNull: ["$tags", []] } }, -1] }
 $.name.substr(-1)                   // the last character of a string
 ```
 
@@ -1931,14 +1938,13 @@ $.events.sort(e => e.timestamp);
 // → { $set: { events: { $sortArray: { input: "$events", sortBy: { timestamp: 1 } } } } }
 
 $.events.push($.newEvent);
-// → { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } }
+// → { $set: { events: { $concatArrays: [{ $ifNull: ["$events", []] }, ["$newEvent"]] } } }
 
 $.events.pop();
-// → { $set: { events: { $let: { vars: { jsmqlArr: "$events" }, in:
-//       { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] } } } }
+// → { $set: { events: { $let: { vars: { jsmqlArr: { $ifNull: ["$events", []] } }, in: { $slice: [ "$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] } ] } } } } }
 
 $.events.reverse();
-// → { $set: { events: { $reverseArray: "$events" } } }
+// → { $set: { events: { $reverseArray: { $ifNull: ["$events", []] } } } }
 ```
 
 Chained mutators on the same field interact with the `$set` coalescer exactly the same way an explicit `$.events = …` assignment does: a read-after-write splits into separate stages:
@@ -2109,7 +2115,7 @@ $.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, mis
 // (see "Truthy and falsy" above)
 
 $.scores.map(Number)            // coerce strings to numbers
-// → { $map: { input: "$scores", as: "x", in: { $toDouble: "$$x" } } }
+// → { $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $toDouble: "$$x" } } }
 
 Object.keys($.counts).map(ObjectId)   // object keys are strings — cast them back
 // → { $map: { input: { … }, as: "v", in: { $toObjectId: "$$v" } } }
@@ -2144,11 +2150,9 @@ The first three pass a null operand straight through and answer null. `$setIsSub
 
 ```js
 new Set($.a).symmetricDifference(new Set($.b))
-// → { $let: { vars: { jsmqlA: "$a", jsmqlB: "$b" }, in:
-//       { $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] },
-//                          { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }] } } }
+// → { $let: { vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: "$b" }, in: { $setDifference: [ { $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] } ] } } }
 new Set($.a).isDisjointFrom(new Set($.b))
-// → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $eq: [{ $size: { $setIntersection: ["$a", { $ifNull: ["$b", []] }] } }, 0] } } }
+// → { $eq: [ { $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0 ] }
 ```
 
 The last two have no single MongoDB operator, so JSMQL composes them. Each operand is bound once, so a field is read once however the composition uses it. The set-method argument must itself be a `new Set(...)` literal, so that the JS reads consistently.
@@ -2196,18 +2200,18 @@ $.o.values()                          // same MQL as Object.values($.o)
 $.o.entries()                         // same MQL as Object.entries($.o)
 $.o.assign($.p, $.q)                  // { $mergeObjects: ["$o", "$p", "$q"] } — a NEW object, like .pick()
 $.pairs.fromEntries()                 // same MQL as Object.fromEntries($.pairs) — and as $.pairs.fromPairs()
-$.user?.profile?.keys()               // `?.` takes the {} neutral: { $objectToArray: { $ifNull: ["$user.profile", {}] } }
+$.user?.profile?.keys()               // `?.` stops the chain: null when `user.profile` is missing (see Optional Chaining)
 ```
 
 > `.keys()` / `.values()` / `.entries()` read the object when the receiver's type is not known at compile time. JSMQL refuses them on a receiver it can PROVE is an array, because JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. `$.xs.map(x => x).keys()` names `$op($range, 0, $op($size, arr))` instead.
 
 > `pick` uses flat field names only; a deep path such as `"a.b"` has no support here — use `$op($getField, …)` instead. `mapKeys`/`invert` **stringify** the produced key, using `$toString`, and the last one wins on a collision, like lodash. A live mongod verified every shape here.
 
-> **A missing object is `{}` for a lodash method, but only under `?.` for a JavaScript reader.** `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on, so you must ask for the empty answer. A LODASH method always asks for it — `_.pick(undefined, …)` is `{}`, and lodash has no other reading — so every lodash spelling in this section guards its receiver and answers `{}`, or `[]` where it answers an array. A JAVASCRIPT reader does not: `Object.keys(undefined)` is a **TypeError**, but MongoDB has no error to raise inside an expression, and `null` is the nearest value it has. Write `?.` to say the field may not be there; that is exactly the right question, so the neutral answer applies:
+> **A missing object is `{}` under a dot, and `null` under `?.`** — [HR5](LANG_RULES.md). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on, so the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`: `_.pick(undefined, …)` is `{}`, `Object.keys({})` is `[]`, and that is what each method answers. Write `?.` and the chain stops instead, with `null`:
 >
 > ```js
-> $.o.keys()             // → { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
-> $.o?.keys()            // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+> $.o.keys()             // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+> $.o?.keys()            // → { $cond: { if: { $eq: [{ $ifNull: ["$o", null] }, null] }, then: null, else: { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } } }
 > $.o.toPairs()          // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
 > ```
 >

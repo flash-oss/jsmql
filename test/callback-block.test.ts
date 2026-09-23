@@ -164,7 +164,11 @@ describe("in-document array callbacks are untouched", () => {
       {
         $set: {
           r: {
-            $map: { input: "$items", as: "d", in: { $let: { vars: { a: { $multiply: ["$$d", 2] } }, in: "$$a" } } },
+            $map: {
+              input: { $ifNull: ["$items", []] },
+              as: "d",
+              in: { $let: { vars: { a: { $multiply: ["$$d", 2] } }, in: "$$a" } },
+            },
           },
         },
       },
@@ -173,7 +177,7 @@ describe("in-document array callbacks are untouched", () => {
 
   it("`{ return <expr> }` collapses to the bare expression", () => {
     expect(jsmql(`$.r = $.items.filter(d => { return d > 1; });`)).toEqual([
-      { $set: { r: { $filter: { input: "$items", as: "d", cond: { $gt: ["$$d", 1] } } } } },
+      { $set: { r: { $filter: { input: { $ifNull: ["$items", []] }, as: "d", cond: { $gt: ["$$d", 1] } } } } },
     ]);
   });
 });
