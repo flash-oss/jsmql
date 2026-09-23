@@ -13024,6 +13024,7 @@ export const NAMES = {
     returns: "stream",
     where: ["stream"],
     filter: unsupported("'.shuffle()' reorders a stream; it is not a filter predicate."),
+    // [DEF-039] `.shuffle()` on an ARRAY value is not yet supported; `.sampleSize(n)` covers the sampled read.
     expr: unsupported(
       "'.shuffle()' reorders a stream of documents, which is not a value. To shuffle an array use '.sampleSize(n)'.",
     ),

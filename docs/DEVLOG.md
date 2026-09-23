@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-24 — docs: DEF-039 records `.shuffle()` on an array value
+
+`.shuffle()` is a stream link. On an array value — `$.a.shuffle()`, lodash's
+`_.shuffle(array)` — the row states no value cell, and the call is refused with
+`.sampleSize(n)` named as the way out. The developer asked for the value form
+to be tracked: DEF-039 holds the target lowering (the `.sampleSize()` cell with
+no `$slice`), and the `expr` refusal of the `shuffle` row carries the tag.
+
+---
+
 ## 2026-09-24 — fix: `.some(t => …)` over the element itself has a query form
 
 `$.tags.some(t => t === "red")` took the `$expr` road, because the element `t`

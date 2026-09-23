@@ -127,6 +127,18 @@ This file exists so the project does not forget an open item. Every "not yet sup
 - **Status.** design-only
 - **Effort.** S
 
+### DEF-039 — `.shuffle()` on an ARRAY value
+
+- **What is blocked.** `.shuffle()` is a stream link: `$$.shuffle();` stamps a `$rand` key, sorts on it and drops it. On an array value — `$.a.shuffle()`, lodash's `_.shuffle(array)` — the row states no value cell, so the call is refused, and the message names `.sampleSize(n)`, which shuffles and then takes `n`.
+- **Target lowering.** The `.sampleSize()` cell without the `$slice`: `{ $map: { input: { $sortArray: { input: { $map: { input: <arr>, as: "x", in: { k: { $rand: {} }, v: "$$x" } } }, sortBy: { k: 1 } } }, as: "x", in: "$$x.v" } }`. HR5 reads a missing array as `[]`.
+- **Why blocked.** The value form is a small cell, and the developer wants it, but it has not been asked for by a program yet; the stream form covers the sampled read through `.sampleSize(n)`.
+- **Attempted approaches.** None.
+- **Success criteria.** `$.a.shuffle()` compiles to the lowering above; a case in [test/compiler-methods.test.ts](../test/compiler-methods.test.ts) runs it on the fixture and checks that the answer holds the same elements.
+- **Rejection site(s).** The `expr` cell of the `shuffle` row in [src/registry/names.ts](../src/registry/names.ts), tagged `[DEF-039]`.
+- **Spec.** [docs/specs/emit-pass.md](specs/emit-pass.md) § The method cells.
+- **Status.** design-only
+- **Effort.** S
+
 ---
 
 ## §B. Decisions — will not implement (rejected as bad DX or unnecessary)
