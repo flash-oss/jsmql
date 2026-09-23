@@ -235,7 +235,7 @@ describe("$$.push — error cases", () => {
     );
   });
 
-  it("push inside a sub-pipeline ([...] form) → reject with hoist hint", () => {
+  it("push inside a sub-pipeline ([...] form) → a $unionWith stage in that sub-pipeline", () => {
     // Construct a sub-pipeline through $facet's `*` slot — every value is a pipeline.
     expect(jsmql("[{ $facet: { archive: [$$.push(...$$$.archive)] } }]")).toEqual([
       { $facet: { archive: [{ $unionWith: "archive" }] } },
@@ -284,19 +284,15 @@ describe("$$.push — error positions", () => {
 // An error must never recommend syntax that does not work at the position the
 // user is writing in. Two ways a `$$` chain can get that wrong.
 describe("chain errors only ever name syntax that works here", () => {
-  it("never suggests the exact name the user typed", () => {
-    const msg = (() => {
-      try {
-        jsmql("$ = { k: $$.push({ a: 1 }) };");
-        return "";
-      } catch (e) {
-        return (e as Error).message;
-      }
-    })();
-    expect(msg).not.toMatch(/Did you mean '\.push'/);
+  // The chain-method suggestions leave out '.push', so a near-miss of it gets no
+  // suggestion at all.
+  it("names no method for a near-miss of '.push' on the stream", () => {
+    expect(() => jsmql("$$ = $$.pushh({ a: 1 });")).toThrow(
+      "'.pushh()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
+    );
   });
 
-  it("points a chained .push at .concat, which emits the same $unionWith", () => {
+  it("writes a chained .push as .concat writes it: one $unionWith", () => {
     expect(jsmql("$$ = $$.push({ a: 1 });")).toEqual([{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]);
     expect(jsmql("$$ = $$.concat({ a: 1 });")).toEqual([{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]);
   });
@@ -304,7 +300,6 @@ describe("chain errors only ever name syntax that works here", () => {
   // A `$facet` branch has no statement position, so the statement form must not
   // be offered there — but it must still be offered where it does work.
   it("offers the statement form only where a statement position exists", () => {
-    expect(jsmql("$$ = $$.push({ a: 1 });")).toEqual([{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]);
     // A facet branch is the one container that bans the stage a written list makes,
     // at any depth — MEASURED: "$documents inside of $unionWith is not allowed to be
     // used within a $facet stage". A branch that appends a COLLECTION is fine.
@@ -332,8 +327,9 @@ describe("$$.push detection reaches every lambda body form", () => {
   ];
   for (const [name, src] of cases) {
     it(`rejects a buried push — ${name}`, () => {
-      // an update document holds constants; a stream union buried in a value is refused as one
-      expect(() => jsmql.update(src)).toThrow(/takes constants|is made of writes/);
+      expect(() => jsmql(src)).toThrow(
+        "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.length'; to keep the documents, chain them as a statement: '$$.filter(…);'.",
+      );
     });
   }
 });

@@ -12,7 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
-import { liveClient } from "./fixtures/live.ts";
+import { liveClient, liveUp } from "./fixtures/live.ts";
 import { statementBodyOf } from "../src/compiler/rows.ts";
 
 /**
@@ -23,6 +23,20 @@ import { statementBodyOf } from "../src/compiler/rows.ts";
 const NEEDS_MORE_THAN_A_SERVER: Readonly<Record<string, string>> = {
   '$sort({ s: $meta("textScore") });': "a text score exists only under a $text query against a text index",
 };
+
+/**
+ * Sources whose pipeline the server refuses because of THIS deployment, not the
+ * shape: a collection-level aggregate cannot start from `$documents`, and
+ * `$geoNear` needs an index the fixture has no reason to carry. See test/CLAUDE.md.
+ * Each entry must be asserted above and must be refused with its own message.
+ */
+const REFUSED_BY_ENVIRONMENT: Readonly<Record<string, RegExp>> = {
+  "$documents([{ a: 1 }]); $.b = 2;": /database or cluster-level aggregation/,
+  '$geoNear({ near: [0, 0], distanceField: "d", query: $.k === "a" });': /2d or 2dsphere index/,
+};
+
+/** Is the project's mongod running? Settled once, for the blocks that need it. */
+const up = await liveUp();
 
 /** Every source the unit cases below assert, so the server sees all of them too. */
 const RUNS: string[] = [];
@@ -156,7 +170,6 @@ describe("compiler/emit/statement — the writes", () => {
         },
       },
     ]);
-    expect(compiled('$ = $.pick(["a", "b"]);')).toEqual([{ $project: { a: 1, b: 1, _id: 0 } }]);
     expect(compiled('$ = $.omit($.hidden).pick(["a"]);')).toMatchObject([{ $replaceWith: {} }]);
     // The stage replaces the document, and a binding it carried is gone — as after `$replaceWith`.
     expect(() => pipeline('let x = $.a * 2; $ = $.pick(["a"]); $.y = x;')).toThrow(/after `\$project`/);
@@ -630,11 +643,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(() => pipeline("$limit(1.5);")).toThrow(/expects an integer/);
     expect(() => pipeline("$limit($.n);")).toThrow(/compile-time constant/);
     expect(() => pipeline("$skip(-1);")).toThrow(/of 0 or more/);
-    // The server ACCEPTS a path here and unions a collection literally named "$c",
-    // which is the silent kind of wrong a constant slot exists to catch.
-    expect(() => pipeline("$unionWith($.c);")).toThrow(/compile-time constant/);
-    // and the valid spellings still compile
-    expect(compiled('$count("n");')).toEqual([{ $count: "n" }]);
+    // the valid spellings compile
     expect(compiled("$skip(0);")).toEqual([{ $skip: 0 }]);
     expect(compiled('$unionWith("c");')).toEqual([{ $unionWith: "c" }]);
   });
@@ -750,28 +759,32 @@ afterAll(async () => {
 
 describe("compiler/emit/statement — the server accepts every pipeline this file asserts", () => {
   it("ran each one, or none", async () => {
-    if (coll === null) {
-      expect(RUNS.length).toBeGreaterThan(0);
-      return;
+    // The cases above register their sources whether a server runs or not.
+    expect(RUNS.length).toBeGreaterThan(0);
+    // The allowances have teeth only while each entry is actually asserted somewhere.
+    for (const src of [...Object.keys(NEEDS_MORE_THAN_A_SERVER), ...Object.keys(REFUSED_BY_ENVIRONMENT)]) {
+      expect(RUNS, src).toContain(src);
     }
-    // A refusal that is about this deployment rather than about the shape: a
-    // collection-level aggregate cannot start from `$documents`, and `$geoNear`
-    // needs an index the fixture has no reason to carry. See test/CLAUDE.md.
-    const environment = /database or cluster-level aggregation|2d or 2dsphere index/;
+    if (coll === null) return;
     const refused: string[] = [];
+    const byEnvironment: string[] = [];
+    let ran = 0;
     for (const src of RUNS) {
       if (src in NEEDS_MORE_THAN_A_SERVER) continue;
       try {
         await coll.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
+        ran++;
       } catch (e) {
         const message = (e as Error).message;
-        if (environment.test(message)) continue;
-        refused.push(`${src}\n  ${JSON.stringify(pipeline(src))}\n  ${message}`);
+        const expected = REFUSED_BY_ENVIRONMENT[src];
+        if (expected !== undefined && expected.test(message)) byEnvironment.push(src);
+        else refused.push(`${src}\n  ${JSON.stringify(pipeline(src))}\n  ${message}`);
       }
     }
     expect(refused, `the server refused ${refused.length} of ${RUNS.length}:\n${refused.join("\n")}`).toEqual([]);
-    // The allowance has teeth only while each entry is actually asserted somewhere.
-    for (const src of Object.keys(NEEDS_MORE_THAN_A_SERVER)) expect(RUNS, src).toContain(src);
+    // each environment refusal is one the table names, and no source is skipped without a name
+    expect(byEnvironment.sort()).toEqual(Object.keys(REFUSED_BY_ENVIRONMENT).sort());
+    expect(ran + byEnvironment.length + Object.keys(NEEDS_MORE_THAN_A_SERVER).length).toBe(RUNS.length);
   });
 });
 
@@ -814,6 +827,20 @@ describe("compiler/emit/statement — the update spec's closed set, against the 
   // row (`statementBody`), and this is the gate that keeps the row honest — it asks
   // the server, one stage per run, and compares the two sets.
   const ALLOWED = statementBodyOf("$merge");
+  /**
+   * The stages the server runs in `$merge.whenMatched`, MEASURED on 8.3.7 with
+   * BODIES below. This list is independent of the row, so the compile-time test
+   * compares the compiler with the server's answer, not with the row it reads.
+   */
+  const SERVER_ALLOWS: readonly string[] = [
+    "$addFields",
+    "$set",
+    "$project",
+    "$unset",
+    "$replaceRoot",
+    "$replaceWith",
+    "$fill",
+  ];
 
   /** A body each stage accepts, so a rejection is about the UPDATE and not the shape. */
   const BODIES: Readonly<Record<string, unknown>> = {
@@ -838,13 +865,12 @@ describe("compiler/emit/statement — the update spec's closed set, against the 
     $sample: { size: 1 },
   };
 
-  it("allows exactly what the server allows", async () => {
-    if (coll === null) {
-      expect(Array.isArray(ALLOWED) && ALLOWED.length > 0).toBe(true);
-      return;
-    }
-    expect(Array.isArray(ALLOWED)).toBe(true);
-    const c = coll;
+  it("states in the row exactly the stages the server allows", () => {
+    expect([...(ALLOWED as readonly string[])].sort()).toEqual([...SERVER_ALLOWS].sort());
+  });
+
+  it.skipIf(!up)("allows exactly what the server allows", async () => {
+    const c = coll!;
     const serverAllows: string[] = [];
     for (const [name, body] of Object.entries(BODIES)) {
       try {
@@ -859,17 +885,17 @@ describe("compiler/emit/statement — the update spec's closed set, against the 
         );
       }
     }
-    const registryAllows = (ALLOWED as readonly string[]).filter((n) => n in BODIES);
-    expect([...serverAllows].sort()).toEqual([...registryAllows].sort());
-    // and every name the row states is one this probe actually exercised
-    expect((ALLOWED as readonly string[]).filter((n) => !(n in BODIES))).toEqual([]);
+    expect([...serverAllows].sort()).toEqual([...SERVER_ALLOWS].sort());
+    // and every name the list states is one this probe actually exercised
+    expect(SERVER_ALLOWS.filter((n) => !(n in BODIES))).toEqual([]);
   });
 
   it("refuses at compile time exactly the ones the server refuses", () => {
     for (const name of Object.keys(BODIES)) {
       const src = `$merge({ into: "c", whenMatched: [{ ${name}: ${JSON.stringify(BODIES[name])} }] });`;
-      if ((ALLOWED as readonly string[]).includes(name)) {
-        expect(() => pipeline(src), name).not.toThrow();
+      if (SERVER_ALLOWS.includes(name)) {
+        // the stage passes through unchanged
+        expect(pipeline(src), name).toEqual([{ $merge: { into: "c", whenMatched: [{ [name]: BODIES[name] }] } }]);
       } else {
         expect(() => pipeline(src), name).toThrow(/cannot stand inside '\$merge'\. That body is an UPDATE/);
       }

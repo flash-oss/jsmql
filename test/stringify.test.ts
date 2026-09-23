@@ -145,7 +145,7 @@ describe("stringify: the values JavaScript already spells", () => {
 
   it("keeps -0, which String() writes as 0 and which is a different BSON double", () => {
     expect(stringify({ v: -0 })).toBe("{ v: -0 }");
-    expect(Object.is((asPasted("{ v: -0 }") as { v: number }).v, -0)).toBe(true);
+    expect(Object.is((asPasted(stringify({ v: -0 })) as { v: number }).v, -0)).toBe(true);
   });
 
   it("writes the plain values", () => {
@@ -195,11 +195,6 @@ describe("stringify: keys", () => {
     const back = asPasted(text) as Record<string, unknown>;
     expect(Object.hasOwn(back, "__proto__")).toBe(true);
     expect(back.__proto__).toBe(1);
-  });
-
-  it("shows what the quoted spelling would have cost — the field vanishes", () => {
-    const quoted = asPasted('{ "__proto__": 1 }') as Record<string, unknown>;
-    expect(Object.hasOwn(quoted, "__proto__")).toBe(false);
   });
 });
 

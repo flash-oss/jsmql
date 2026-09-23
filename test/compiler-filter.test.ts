@@ -60,7 +60,22 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
     expect(filter("$.a in $.list")).toEqual({ $expr: { $in: ["$a", "$list"] } });
     // `.length` is a LENGTH, which `$size` (arrays only) cannot say for a string
-    expect(filter("$.arr.length > 2")).toMatchObject({ $expr: { $gt: [expect.anything(), 2] } });
+    expect(filter("$.arr.length > 2")).toEqual({
+      $expr: {
+        $gt: [
+          {
+            $switch: {
+              branches: [
+                { case: { $in: [{ $type: "$arr" }, ["array"]] }, then: { $size: "$arr" } },
+                { case: { $in: [{ $type: "$arr" }, ["string"]] }, then: { $strLenCP: "$arr" } },
+              ],
+              default: null,
+            },
+          },
+          2,
+        ],
+      },
+    });
   });
 });
 
@@ -227,9 +242,14 @@ describe("compiler/emit/filter — methods and operators", () => {
       t: { $gte: new Date("2024-01-01T00:00:00.000Z"), $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
     // a bound read at run time cannot order here, and keeps the $min/$max expression
-    expect(filter("$.n.inRange($.lo, $.hi)")).toHaveProperty("$expr");
+    expect(filter("$.n.inRange($.lo, $.hi)")).toEqual({
+      $expr: { $and: [{ $gte: ["$n", { $min: ["$lo", "$hi"] }] }, { $lt: ["$n", { $max: ["$lo", "$hi"] }] }] },
+    });
     // a number against a date does not compare, so the pair keeps the expression form too
-    expect(filter('$.t.inRange(new Date("2024-01-01"))')).toHaveProperty("$expr");
+    const d = new Date("2024-01-01T00:00:00.000Z");
+    expect(filter('$.t.inRange(new Date("2024-01-01"))')).toEqual({
+      $expr: { $and: [{ $gte: ["$t", { $min: [0, d] }] }, { $lt: ["$t", { $max: [0, d] }] }] },
+    });
   });
 
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
@@ -237,12 +257,28 @@ describe("compiler/emit/filter — methods and operators", () => {
     // arrives under `$expr`.
     // A receiver PROVEN to be no string is refused before either: `$abs` returns a number.
     expect(() => filter('$abs($.n).startsWith("A")')).toThrow(/not available on a 'number'/);
-    expect(filter("$.items.every(i => i.q > 2)")).toHaveProperty("$expr");
-    expect(filter("$.items.some(i => i.q > $.min)")).toHaveProperty("$expr");
+    /** The `.some` / `.every` value lowering over `input`, under its missing-array guard. */
+    const overItems = (input: string, op: "$anyElementTrue" | "$allElementsTrue", as: string, body: unknown) => ({
+      $cond: {
+        if: { $eq: [{ $ifNull: [input, null] }, null] },
+        then: null,
+        else: { [op]: { $map: { input, as, in: body } } },
+      },
+    });
+    expect(filter("$.items.every(i => i.q > 2)")).toEqual({
+      $expr: overItems("$items", "$allElementsTrue", "i", { $gt: ["$$i.q", 2] }),
+    });
+    expect(filter("$.items.some(i => i.q > $.min)")).toEqual({
+      $expr: overItems("$items", "$anyElementTrue", "i", { $gt: ["$$i.q", "$min"] }),
+    });
     // inside $elemMatch the OUTER document has no path: `$.flag` must not become the element's `flag`
-    expect(filter("$.items.some(i => i.q > 2 && $.flag === true)")).toHaveProperty("$expr");
+    expect(filter("$.items.some(i => i.q > 2 && $.flag === true)")).toEqual({
+      $expr: overItems("$items", "$anyElementTrue", "i", { $and: [{ $gt: ["$$i.q", 2] }, { $eq: ["$flag", true] }] }),
+    });
     // and an OUTER element's fields are not the inner element's
-    expect(filter("$.a.some(i => i.b.some(j => i.c === 1))")).toHaveProperty("$expr");
+    expect(filter("$.a.some(i => i.b.some(j => i.c === 1))")).toEqual({
+      $expr: overItems("$a", "$anyElementTrue", "i", overItems("$$i.b", "$anyElementTrue", "j", { $eq: ["$$i.c", 1] })),
+    });
     expect(filter("$.a.some(i => i.b.some(j => j.c === 1))")).toEqual({
       a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } },
     });
@@ -329,23 +365,23 @@ describe("compiler/emit/filter — a read inside a raw query value has no query 
     );
   });
 
-  it("raw MQL with no read passes through, byte for byte", () => {
-    for (const src of [
-      "{ a: 1 }",
-      "{ a: [1, 2] }",
-      "{ a: { $gt: 1 } }",
-      "{ a: { $size: 2 } }",
-      "{ a: { $exists: true } }",
-      "{ a: { $type: 'string' } }",
-      "{ a: { $mod: [4, 0] } }",
-      "{ a: { $not: 1 } }",
-      "{ a: { $all: [1, 2] } }",
-      "{ a: { $elemMatch: { x: 2 } } }",
-      "{ a: $gt(1) }",
-      '{ x: $gt("$y") }',
-    ]) {
-      expect(() => filter(src)).not.toThrow();
-      expect(JSON.stringify(filter(src))).not.toContain("$expr");
-    }
+  it("raw MQL with no read passes through, as written", () => {
+    const cases: [string, unknown][] = [
+      ["{ a: 1 }", { a: 1 }],
+      ["{ a: [1, 2] }", { a: [1, 2] }],
+      ["{ a: { $gt: 1 } }", { a: { $gt: 1 } }],
+      ["{ a: { $size: 2 } }", { a: { $size: 2 } }],
+      ["{ a: { $exists: true } }", { a: { $exists: true } }],
+      ["{ a: { $type: 'string' } }", { a: { $type: "string" } }],
+      ["{ a: { $mod: [4, 0] } }", { a: { $mod: [4, 0] } }],
+      // the developer's own MQL (HR1), kept as written; the server refuses it:
+      // "$not argument must be a regex or an object"
+      ["{ a: { $not: 1 } }", { a: { $not: 1 } }],
+      ["{ a: { $all: [1, 2] } }", { a: { $all: [1, 2] } }],
+      ["{ a: { $elemMatch: { x: 2 } } }", { a: { $elemMatch: { x: 2 } } }],
+      ["{ a: $gt(1) }", { a: { $gt: 1 } }],
+      ['{ x: $gt("$y") }', { x: { $gt: "$y" } }],
+    ];
+    for (const [src, mql] of cases) expect(filter(src), src).toEqual(mql);
   });
 });

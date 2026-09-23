@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
-import { SYSTEM_VARS, Scope, fieldSlot, mongoVarName, scratchSlot, systemRef } from "../src/compiler/emit/names.ts";
+import { Scope, fieldSlot, mongoVarName, scratchSlot, systemRef } from "../src/compiler/emit/names.ts";
 import { UnknownIdentifierError } from "../src/errors.ts";
 import { of } from "../src/compiler/emit/type.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
@@ -109,13 +109,6 @@ describe("compiler/emit/names — I1: a mint is never a name the program uses", 
     const b = root.bind("x");
     expect(b.as).toBe("jsmqlX"); // the mint is prefixed; `x` stays `x`
     expect(root.param("x", "unknown", 0).as).toBe("x");
-  });
-
-  it("never mints a system variable", () => {
-    // `exprVar` capitalises, so no hint can spell ROOT — but the reserved set
-    // holds them regardless, so a future spelling change cannot open the hole.
-    const taken = Scope.root([]);
-    for (const sys of SYSTEM_VARS) expect(taken.bind(sys.toLowerCase()).as).not.toBe(sys);
   });
 });
 

@@ -198,11 +198,11 @@ describe("implicit pipeline — block-body arrow input", () => {
     ]);
   });
 
-  it("single statement block body without `;` stays object-shaped", () => {
+  it("a one-statement block body is a one-stage pipeline", () => {
     const result = jsmql(({ $ }) => {
       $.a = 1;
     });
-    // One statement with a trailing `;` ⇒ pipeline (one stage).
+    // A write is a statement, so a block body that holds one is a pipeline.
     expect(result).toEqual([{ $set: { a: 1 } }]);
   });
 

@@ -184,9 +184,10 @@ const BY_HAND: Readonly<Record<string, Call>> = {
 };
 
 /**
- * Operators the SERVER cannot be asked about, with the reason. Not a filter — the
- * suite asserts this set is exactly the set it failed to measure, so an operator
- * that silently stops running shows up as a new name here.
+ * Operators the SERVER cannot be asked about, with the reason. Not a filter: the
+ * last test sends each one the call in PROBE and fails when the server answers,
+ * so an entry that goes stale shows up at once. An operator that the first test
+ * cannot measure and that this table does not name fails that test.
  */
 const CANNOT_MEASURE: Readonly<Record<string, string>> = {
   $encStrContains:
@@ -196,6 +197,16 @@ const CANNOT_MEASURE: Readonly<Record<string, string>> = {
   $encStrStartsWith: "Queryable Encryption, as above",
   $meta: "needs $search metadata, which a non-Atlas server does not produce",
   $case: "not an operator on its own — a branch key inside $switch",
+};
+
+/** The call the last test sends for each CANNOT_MEASURE name. Each one was measured to fail. */
+const PROBE: Readonly<Record<string, { slot: Slot; call: unknown }>> = {
+  $encStrContains: { slot: "value", call: { $encStrContains: { input: "$str", substring: "a" } } },
+  $encStrEndsWith: { slot: "value", call: { $encStrEndsWith: { input: "$str", suffix: "c" } } },
+  $encStrNormalizedEq: { slot: "value", call: { $encStrNormalizedEq: { input: "$str", string: "abc" } } },
+  $encStrStartsWith: { slot: "value", call: { $encStrStartsWith: { input: "$str", prefix: "a" } } },
+  $meta: { slot: "value", call: { $meta: "searchScore" } },
+  $case: { slot: "value", call: { $case: { case: true, then: "$int" } } },
 };
 
 /**
@@ -448,6 +459,8 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     // invariant is the more dangerous of the two — it makes the type check reject
     // valid code. So each pair decides what its row must say.
     const wrong: string[] = [];
+    const refused: string[] = [];
+    let measured = 0;
     for (const [name, pair] of Object.entries(VARIES_BY_OPERAND)) {
       const row = (NAMES as Record<string, Row>)[name];
       expect(row, `${name} has a varying-operand pair but no row`).toBeDefined();
@@ -455,7 +468,11 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       const b = await kindsOf(pair.b, pair.slot);
       // An operand the server refuses is itself proof the type is constrained,
       // and says nothing about whether the accepted one varies.
-      if (!a.ok || !b.ok) continue;
+      if (!a.ok || !b.ok) {
+        refused.push(`${name}: ${(a as { why?: string }).why ?? ""} ${(b as { why?: string }).why ?? ""}`);
+        continue;
+      }
+      measured++;
       const varies = a.kinds.join("/") !== b.kinds.join("/");
       if (varies && stated(row) !== "unknown") {
         wrong.push(`${name}: answers ${a.kinds.join("/")} and ${b.kinds.join("/")}, but the row says ${stated(row)}`);
@@ -465,6 +482,9 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       }
     }
     expect(wrong).toEqual([]);
+    // A pair that the server refuses proves nothing, so every pair must reach it.
+    expect(refused).toEqual([]);
+    expect(measured).toBe(Object.keys(VARIES_BY_OPERAND).length);
   });
 
   it("proves or names every `unknown` row", async () => {
@@ -482,17 +502,18 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   it("cannot measure exactly the operators it says it cannot", async () => {
     // The names in CANNOT_MEASURE are claims about the SERVER. If one starts
     // working, the entry is stale and the row should be measured like the rest.
+    expect(Object.keys(PROBE).sort()).toEqual(Object.keys(CANNOT_MEASURE).sort());
     const nowWorking: string[] = [];
+    let tried = 0;
     for (const [name, reason] of Object.entries(CANNOT_MEASURE)) {
       const row = (NAMES as Record<string, Row>)[name];
       expect(row, `${name} is named unmeasurable but has no row`).toBeDefined();
-      const hand = BY_HAND[name];
-      if (hand === undefined) continue; // no call to try — nothing can start working
-      for (const [slot, expr] of Object.entries(hand) as [Slot, unknown][]) {
-        const r = await kindsOf(expr, slot);
-        if (r.ok) nowWorking.push(`${name} now answers ${r.kinds.join("/")} — drop it (${reason})`);
-      }
+      const { slot, call } = PROBE[name];
+      const r = await kindsOf(call, slot);
+      tried++;
+      if (r.ok) nowWorking.push(`${name} answers ${r.kinds.join("/")}, so the entry is stale — remove it (${reason})`);
     }
+    expect(tried).toBe(Object.keys(CANNOT_MEASURE).length);
     expect(nowWorking).toEqual([]);
   });
 });

@@ -489,7 +489,6 @@ describe(
         // tally by the element itself — lodash `_.countBy([5,4,5,3,5])` gives
         // `{ "5": 3, "4": 1, "3": 1 }` — a one-liner histogram over the array.
         // A live mongod confirms this shape.
-        const idKey = { $ifNull: [{ $toString: "$$jsmqlItem" }, "null"] };
         expect(jsmql.expr(`$.ratings.countBy()`)).toEqual({
           $arrayToObject: {
             $map: {
@@ -1235,7 +1234,11 @@ describe("top-level posts (no parent) that are published", { features: ["Filters
 
 describe("parameterised lookup through the template tag", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.users.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.tier === "gold" && $.country === "AU"`)).toEqual({ tier: "gold", country: "AU" });
+    // Find the users of one tier in one country. The request gives both values;
+    // the template tag puts each one into the query as a value, never as source text.
+    const tier = "gold";
+    const country = "AU";
+    expect(jsmql`$.tier === ${tier} && $.country === ${country}`).toEqual({ tier: "gold", country: "AU" });
   });
 });
 
@@ -2470,10 +2473,15 @@ describe("$toLower wrapping a string-context +", { features: ["Escape hatch"] },
 
 describe("parameterised threshold query", { features: ["Template tag"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.students.find(jsmql(...))" }, () => {
+    // Find the students who passed. The pass mark and the passing grades come
+    // from the caller's config; the template tag puts each one into the query
+    // as a value, never as source text.
+    const passMark = 75;
+    const passingGrades = ["A", "B"];
     expect(
       jsmql`
-$.score >= 75 &&
-$.grade in ["A", "B"] &&
+$.score >= ${passMark} &&
+$.grade in ${passingGrades} &&
 $.submitted === true
       `,
     ).toEqual({ score: { $gte: 75 }, grade: { $in: ["A", "B"] }, submitted: true });
@@ -3211,14 +3219,17 @@ describe("invalid reduce on $$ — validate() catches the wrap-pattern omission"
       // work" the way `arr.reduce(...)` does in JS — but assigning the
       // scalar result to `$$` would break the "stream is always an array of
       // docs" invariant. `validate()` surfaces the rejection with a real
-      // `.pos` and an actionable message pointing at the three wrap shapes.
+      // `.pos` (the '.' of `.reduce`) and an actionable message that names the
+      // three shapes that work: reshape with `acc.concat`, filter with a ternary,
+      // and wrap a total in a one-document stream.
       const r = jsmql.validate(`$$.reduce((acc, o) => acc + o.total, 0);`);
       expect(r.valid).toBe(false);
       expect(r.errors).toHaveLength(1);
       expect(r.errors[0].code).toBe("CODEGEN_ERROR");
-      expect(r.errors[0].pos).toBeGreaterThan(0);
-      expect(r.errors[0].message).toMatch(/wrap form/);
-      expect(r.errors[0].message).toMatch(/wrap form/);
+      expect(r.errors[0].pos).toBe(2);
+      expect(r.errors[0].message).toBe(
+        "'$$.reduce((acc, d) => …, [])' keeps documents: it appends them. Write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
+      );
     },
   );
 });
@@ -3228,15 +3239,16 @@ describe(
   { features: ["Pipelines"] },
   () => {
     it(
-      "the .filter/.toSorted/.slice build the $lookup body; the terminal .map reshapes the result",
+      "the .filter/.toSorted/.take/.map chain builds the $lookup body, the terminal .map as its $replaceWith",
       { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
       () => {
         // `$.<field> = $$$.<coll>.filter(p).<chain>` is a single-statement way
         // to embed a *filtered, sorted, capped* slice of a foreign collection
-        // into each input doc. `.filter`/`.toSorted`/`.take` push into the
-        // `$lookup.pipeline` body; the **terminal `.map`** is peeled off and runs
-        // as a value-mode `$map` over the result array in the `$set` (a
-        // `$replaceWith` inside the pipeline would be invalid MQL for a scalar map).
+        // into each input doc. `.filter` is the `localField` / `foreignField` pair,
+        // and `.toSorted`/`.take` push into the `$lookup.pipeline` body. The
+        // **terminal `.map`** returns a document, so it goes into the body too, as a
+        // `$replaceWith`. (A map to a scalar runs as a value-mode `$map` over the
+        // result array instead, because a scalar root is invalid MQL.)
         expect(
           jsmql`
 $.recentOrders = $$$.orders
@@ -3377,8 +3389,11 @@ describe("invalid stage placement — validate() catches a misplaced $merge", { 
     expect(r.valid).toBe(false);
     expect(r.errors).toHaveLength(1);
     expect(r.errors[0].code).toBe("CODEGEN_ERROR");
-    expect(r.errors[0].pos).toBeGreaterThan(0);
-    expect(r.errors[0].message).toMatch(/Nothing can follow '\$merge'/);
+    // The position is the `$sort` statement that follows `$merge`.
+    expect(r.errors[0].pos).toBe(107);
+    expect(r.errors[0].message).toBe(
+      "Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+    );
   });
 });
 

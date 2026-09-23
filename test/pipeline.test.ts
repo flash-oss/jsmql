@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { truthy } from "./truthy.ts";
 
 /** `$$ = …` takes many documents; the refusal names every right side that gives them. */
 const WAYS =
@@ -155,6 +154,7 @@ describe("pipeline — mixed forms", () => {
     const a = jsmql("[$match($.age > 18)]");
     const b = jsmql("[{ $match: $.age > 18 }]");
     expect(a).toEqual([{ $match: { age: { $gt: 18 } } }]);
+    expect(b).toEqual(a);
   });
 });
 
@@ -203,7 +203,7 @@ describe("pipeline — sub-pipelines", () => {
     ).toEqual([{ $facet: { byCount: [{ $count: "n" }], topThree: [{ $sort: { score: -1 } }, { $limit: 3 }] } }]);
   });
 
-  it("$unionWith recurses into pipeline:", () => {
+  it("a `$.<field>` read in a raw $unionWith pipeline is refused: the stage has no 'let'", () => {
     expect(() => jsmql(`[{ $unionWith: { coll: "archive", pipeline: [{ $match: $.year < 2020 }] } }]`)).toThrow(
       "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value.",
     );
@@ -359,12 +359,11 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
   it("single-statement `$ = { … }` (no `;`) lowers to `$replaceWith`, not `$set: { '': … }`", () => {
     expect(jsmql("$ = { a: 1 }")).toEqual([{ $replaceWith: { a: 1 } }]);
     // …byte-identical to the `;`-form and the bracketed form.
-    expect(jsmql("$ = { a: 1 }")).toEqual([{ $replaceWith: { a: 1 } }]);
-    expect(jsmql("$ = { a: 1 }")).toEqual([{ $replaceWith: { a: 1 } }]);
+    expect(jsmql("$ = { a: 1 };")).toEqual([{ $replaceWith: { a: 1 } }]);
+    expect(jsmql("[ $ = { a: 1 } ]")).toEqual([{ $replaceWith: { a: 1 } }]);
   });
 
   it("single-statement `$ = <expr>` (no `;`) reroutes across every Pipeline entry", () => {
-    const expected = [{ $replaceWith: "$profile" }];
     expect(jsmql("$ = $.profile")).toEqual([{ $replaceWith: "$profile" }]);
     expect(jsmql.pipeline("$ = $.profile")).toEqual([{ $replaceWith: "$profile" }]);
   });
@@ -809,7 +808,6 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   it("a top-level `$$.map` keeps the plain 'use the param' hint (not a source-switch)", () => {
     // No source-switch here, so the source-switch guidance must NOT leak in.
     expect(jsmql(`$$ = $$.map(o => ({ v: $.x }));`)).toEqual([{ $replaceWith: { v: "$x" } }]);
-    expect(() => jsmql(`$$ = $$.map(o => ({ v: $.x }));`)).not.toThrow(/source-switch|correlate with/);
   });
 
   it("`$$ = []` lowers to `$match: { $expr: false }` (drop all docs)", () => {
@@ -846,7 +844,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     expect(jsmql(`$$ = $$.map(t => ({ x: t.x }));`)).toEqual([{ $replaceWith: { x: "$x" } }]);
   });
 
-  it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {
+  it("`$.<field>` inside a `$$.filter` predicate reads the stream document (HR4), as the parameter does", () => {
     expect(jsmql(`$$ = $$.filter(t => $.x > 5);`)).toEqual([{ $match: { x: { $gt: 5 } } }]);
   });
 
@@ -871,7 +869,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 describe("replace stream (`$$ = <expr>`) — single statement without a trailing `;`", () => {
   it("`$$ = $$.filter(p)` lowers to `$match`, same as the `;` form", () => {
     expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual([{ $match: { a: 1 } }]);
-    expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual([{ $match: { a: 1 } }]);
+    expect(jsmql(`$$ = $$.filter({ a: 1 });`)).toEqual([{ $match: { a: 1 } }]);
   });
 
   it("every stream-method head reaches its stage — not just `.filter`", () => {
@@ -907,10 +905,11 @@ describe("replace stream (`$$ = <expr>`) — single statement without a trailing
   });
 
   it("never reaches the internal-error path", () => {
-    for (const src of [`$$ = $$.filter({ a: 1 })`, `$$ = $$.map(x => x.a)`, `$$ = []`, `$$ = 5`, `$$ = $$$.t`]) {
-      const r = jsmql.validate(src);
-      for (const e of r.errors) expect(e.message).not.toMatch(/internal error/);
-    }
+    const sources = [`$$ = $$.filter({ a: 1 })`, `$$ = $$.map(x => x.a)`, `$$ = []`, `$$ = 5`, `$$ = $$$.t`];
+    const errors = sources.flatMap((src) => jsmql.validate(src).errors);
+    // Only `$$ = 5` is refused. The guard keeps the loop below from asserting nothing.
+    expect(errors).toHaveLength(1);
+    for (const e of errors) expect(e.message).not.toMatch(/internal error/);
   });
 });
 
@@ -1056,50 +1055,282 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
   it("the value-position rule covers every value terminal (head/last/nth/size/every/some/partition + aggregates)", () => {
     // NB `keyBy`/`countBy`/`groupBy` are NOT here: they collapse to an object but DO
     // have a stream lowering, so they're valid as a `$$ =` pivot too (asserted below).
-    for (const term of [
-      "head()",
-      "last()",
-      "nth(1)",
-      "size()",
-      "every(o => o.paid)",
-      "partition(o => o.vip)",
-      // Aggregates collapse the stream to one scalar → same value-position rule.
-      "sum()",
-      'sumBy("total")',
-      "max()",
-      'minBy("total")',
-    ]) {
-      expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).${term};`)).toThrow(
-        /makes a value|returns a single value/,
-      );
-      // …but the same chain in a value position compiles.
-      expect(() => jsmql(`$.f = $$$.orders.filter(o => o.userId === $._id).${term};`)).not.toThrow();
+    // Each row: the terminal, the `$$ =` refusal, and the MQL of the same chain in a
+    // value position. The aggregates collapse the stream to one scalar, so the same
+    // rule applies to them.
+    const TERMINALS: [string, string, unknown][] = [
+      [
+        "head()",
+        "'.head()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….head()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          { $set: { f: { $first: "$__jsmql.tmp.0" } } },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        "last()",
+        "'.last()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….last()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          { $set: { f: { $last: "$__jsmql.tmp.0" } } },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        "nth(1)",
+        "'.nth()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….nth()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          { $set: { f: { $arrayElemAt: ["$__jsmql.tmp.0", 1] } } },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        "size()",
+        "'.size()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….size()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          { $set: { f: { $size: "$__jsmql.tmp.0" } } },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        "every(o => o.paid)",
+        "'.every()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….every()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          {
+            $set: {
+              f: {
+                $allElementsTrue: {
+                  $map: {
+                    input: "$__jsmql.tmp.0",
+                    as: "o",
+                    in: {
+                      $and: [
+                        { $ne: [{ $ifNull: ["$$o.paid", null] }, null] },
+                        { $ne: ["$$o.paid", false] },
+                        { $ne: ["$$o.paid", ""] },
+                        { $ne: ["$$o.paid", 0] },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        "partition(o => o.vip)",
+        "'.partition()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….partition()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          {
+            $set: {
+              f: [
+                {
+                  $filter: {
+                    input: "$__jsmql.tmp.0",
+                    as: "o",
+                    cond: {
+                      $and: [
+                        { $ne: [{ $ifNull: ["$$o.vip", null] }, null] },
+                        { $ne: ["$$o.vip", false] },
+                        { $ne: ["$$o.vip", ""] },
+                        { $ne: ["$$o.vip", 0] },
+                      ],
+                    },
+                  },
+                },
+                {
+                  $filter: {
+                    input: "$__jsmql.tmp.0",
+                    as: "o",
+                    cond: {
+                      $not: [
+                        {
+                          $and: [
+                            { $ne: [{ $ifNull: ["$$o.vip", null] }, null] },
+                            { $ne: ["$$o.vip", false] },
+                            { $ne: ["$$o.vip", ""] },
+                            { $ne: ["$$o.vip", 0] },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        "sum()",
+        "'.sum()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….sum()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          { $set: { f: { $sum: "$__jsmql.tmp.0" } } },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        'sumBy("total")',
+        "'.sumBy()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….sumBy()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          { $set: { f: { $sum: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.total" } } } } },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        "max()",
+        "'.max()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….max()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          { $set: { f: { $max: "$__jsmql.tmp.0" } } },
+          { $unset: "__jsmql" },
+        ],
+      ],
+      [
+        'minBy("total")',
+        "'.minBy()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….minBy()'.",
+        [
+          { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+          {
+            $set: {
+              f: {
+                $let: {
+                  vars: {
+                    jsmqlSorted: {
+                      $sortArray: {
+                        input: { $map: { input: "$__jsmql.tmp.0", as: "x", in: { k: "$$x.total", v: "$$x" } } },
+                        sortBy: { k: 1 },
+                      },
+                    },
+                  },
+                  in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", 0] } } },
+                },
+              },
+            },
+          },
+          { $unset: "__jsmql" },
+        ],
+      ],
+    ];
+    for (const [term, refusal, valueMql] of TERMINALS) {
+      expect(() => jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).${term};`), term).toThrow(refusal);
+      expect(jsmql(`$.f = $$$.orders.filter(o => o.userId === $._id).${term};`), term).toEqual(valueMql);
     }
   });
 
   it("keyBy/countBy/groupBy collapse to a lodash object and are valid as a `$$ =` pivot", () => {
     // All three collapse to the lodash object and work as a stream pivot, matching
     // their value-position meaning. Each ends in `$replaceWith: { $arrayToObject }`.
-    for (const term of ['keyBy("sku")', 'countBy("sku")', 'groupBy("sku")']) {
-      const stages = jsmql(`$$ = $$.${term};`) as Record<string, unknown>[];
-      expect(stages.at(-1)).toHaveProperty("$replaceWith");
-    }
+    expect(jsmql('$$ = $$.keyBy("sku");')).toEqual([
+      { $group: { _id: "$sku", __jsmqlTmp: { $last: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql('$$ = $$.countBy("sku");')).toEqual([
+      { $group: { _id: "$sku", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql('$$ = $$.groupBy("sku");')).toEqual([
+      { $group: { _id: "$sku", __jsmqlTmp: { $push: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
   });
 
   it("value-position .filter(pred).countBy(...) unwraps the collapsed one-doc result with $first", () => {
     // The sub-pipeline collapses to one object doc, but $lookup.as is always an
     // array → the slot holds [obj]. The trailing $set unwraps it to the object
     // ($ifNull → {} on an empty foreign match, lodash-faithful). Verified on mongod.
-    const stages = jsmql(`$.byStatus = $$$.orders.filter(o => o.userId === $._id).countBy("status");`) as Record<
-      string,
-      unknown
-    >[];
-    expect(JSON.stringify(stages)).toContain("$arrayToObject");
+    expect(jsmql(`$.byStatus = $$$.orders.filter(o => o.userId === $._id).countBy("status");`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [
+            { $group: { _id: "$status", __jsmqlTmp: { $sum: 1 } } },
+            {
+              $group: {
+                _id: null,
+                __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+              },
+            },
+            { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+          ],
+          as: "byStatus",
+        },
+      },
+      { $set: { byStatus: { $ifNull: [{ $first: "$byStatus" }, {}] } } },
+    ]);
     // keyBy and the bare-key groupBy collapse the same way.
-    for (const term of ['keyBy("status")', 'groupBy("status")']) {
-      const s = jsmql(`$.g = $$$.orders.filter(o => o.userId === $._id).${term};`) as Record<string, unknown>[];
-      expect(JSON.stringify(s)).toContain("$arrayToObject");
-    }
+    expect(jsmql(`$.g = $$$.orders.filter(o => o.userId === $._id).keyBy("status");`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [
+            { $group: { _id: "$status", __jsmqlTmp: { $last: "$$ROOT" } } },
+            {
+              $group: {
+                _id: null,
+                __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+              },
+            },
+            { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+          ],
+          as: "g",
+        },
+      },
+      { $set: { g: { $ifNull: [{ $first: "$g" }, {}] } } },
+    ]);
+    expect(jsmql(`$.g = $$$.orders.filter(o => o.userId === $._id).groupBy("status");`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [
+            { $group: { _id: "$status", __jsmqlTmp: { $push: "$$ROOT" } } },
+            {
+              $group: {
+                _id: null,
+                __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+              },
+            },
+            { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+          ],
+          as: "g",
+        },
+      },
+      { $set: { g: { $ifNull: [{ $first: "$g" }, {}] } } },
+    ]);
   });
 
   it("rejects an array/string/number method chained on a `.find()` lookup (a single document)", () => {
@@ -1111,8 +1342,43 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'.",
     );
     // …but object methods and field reads ARE valid on the matched document.
-    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).pick(["total"]);`)).not.toThrow();
-    expect(() => jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).total;`)).not.toThrow();
+    expect(jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).pick(["total"]);`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      {
+        $set: {
+          out: {
+            $let: {
+              vars: { jsmqlObj: "$__jsmql.tmp.0" },
+              in: { total: { $getField: { field: "total", input: "$$jsmqlObj" } } },
+            },
+          },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql(`$.out = $$$.orders.find(o => o.userId === $._id).total;`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { out: "$__jsmql.tmp.0.total" } },
+      { $unset: "__jsmql" },
+    ]);
   });
 
   it("non-correlated predicate keeps using $unionWith (no regression)", () => {
@@ -1554,14 +1820,13 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
     ]);
   });
 
-  // .validate() carries a meaningful position.
+  // .validate() carries a meaningful position: the offset of the refused stage.
   it("surfaces a structural violation through validate() with a meaningful pos", () => {
     const src = "[ { $facet: { a: [ { $out: 'x' } ] } } ]";
     const result = jsmql.validate(src);
     expect(result.valid).toBe(false);
     expect(result.errors[0].code).toBe("CODEGEN_ERROR");
-    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
-    expect(result.errors[0].pos).toBeLessThanOrEqual(src.length);
+    expect(result.errors[0].pos).toBe(src.indexOf("{ $out"));
   });
 });
 
@@ -1584,6 +1849,7 @@ describe("chained stage calls on the current stream", () => {
     const chained = jsmql("$$.$match({ status: 'shipped' }).$sort({ total: -1 }).$limit(5);");
     const statements = jsmql("$match({ status: 'shipped' }); $sort({ total: -1 }); $limit(5);");
     expect(chained).toEqual([{ $match: { status: "shipped" } }, { $sort: { total: -1 } }, { $limit: 5 }]);
+    expect(statements).toEqual(chained);
   });
 
   it("reaches stages that have no JavaScript spelling", () => {
@@ -1784,45 +2050,53 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
     }
   });
 
-  // `$.<field>` is rejected in a local predicate (the param already IS the document).
-  // A shorthand has only the gate's synthetic param, which must never be named back
-  // at the user as if it were writable ("use `jsmqlItem.b`" is unwritable advice).
-  it("rejects `$.<field>` without leaking the synthetic shorthand param", () => {
-    for (const [, source] of CONTAINERS) {
-      expect(() => jsmql(source("$$.filter({ a: $.b })"))).not.toThrow();
-      expect(() => jsmql(source("$$.filter({ a: $.b })"))).not.toThrow(/jsmqlItem/);
+  // In a local predicate, `$` is the document the predicate runs over (HR4), so a
+  // `$.<field>` value reads a field of the same document. A shorthand has only the
+  // gate's synthetic param, and the emitted MQL never names it.
+  it("reads a `$.<field>` matcher value as a field of the same document, in every container", () => {
+    for (const [container, source, expected] of CONTAINERS) {
+      expect(jsmql(source("$$.filter({ a: $.b })")), container).toEqual(
+        expected({ $match: { $expr: { $eq: ["$a", "$b"] } } }),
+      );
     }
   });
 });
 
-// A predicate error names the receiver the developer wrote. The `$$ = $$$.<coll>.…`
-// source switch lowers its `.filter`/`.reject` through the same helpers the local
-// `$$` chain uses, so the message must not fall back to `$$.filter` for a
-// `$$$.<coll>.filter` call. That is not only cosmetic: the arity message tells the
-// developer what to write, and `$$.filter(o => …)` reads the CURRENT stream, so
-// following the wrong advice changes which collection the query reads.
-describe("a predicate error names the receiver as written", () => {
-  const RECEIVERS: [string, string][] = [
-    ["$$", "$$"],
-    ["$$$.orders", "$$$.orders"],
-    ["$$$$.shop.orders", "$$$$.shop.orders"],
-  ];
-  for (const [label, receiver] of RECEIVERS) {
-    it(`${label}: the vocabulary message names it`, () => {
-      expect(() => jsmql(`$$ = ${receiver}.filter(123);`)).toThrow(/takes a predicate|another DATABASE/);
+// A predicate error never advises a spelling on a different receiver. The
+// `$$ = $$$.<coll>.…` source switch lowers its `.filter`/`.reject` through the same
+// helpers the local `$$` chain uses, so the message must not fall back to
+// `$$.filter` for a `$$$.<coll>.filter` call. That is not only cosmetic:
+// `$$.filter(o => …)` reads the CURRENT stream, so following the wrong advice
+// changes which collection the query reads. Each message below names the method
+// only, so it is correct for every receiver.
+describe("a predicate error never advises a different receiver", () => {
+  const VOCABULARY = (m: string) =>
+    `'.${m}()' takes a predicate here — an arrow ('d => …'), a field name ('"status"'), a matcher object ('{ status: "paid" }'), or a '[field, value]' pair ('["status", "paid"]'). Got a number.`;
+  const INDEX = "`b` has no value inside `.filter()` — a stream has no per-document index; leave the parameter unused.";
+  for (const receiver of ["$$", "$$$.orders"]) {
+    it(`${receiver}: the vocabulary message names the method only`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.filter(123);`)).toThrow(VOCABULARY("filter"));
     });
 
-    it(`${label}: the arity message advises a spelling that keeps the same source`, () => {
-      expect(() => jsmql(`$$ = ${receiver}.filter((a, b) => a > b);`)).toThrow(/has no value inside|another DATABASE/);
+    it(`${receiver}: the index-parameter message names the method only`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.filter((a, b) => a > b);`)).toThrow(INDEX);
     });
 
-    it(`${label}: .reject keeps step with .filter`, () => {
-      expect(() => jsmql(`$$ = ${receiver}.reject(123);`)).toThrow(/takes a predicate|another DATABASE/);
+    it(`${receiver}: .reject keeps step with .filter`, () => {
+      expect(() => jsmql(`$$ = ${receiver}.reject(123);`)).toThrow(VOCABULARY("reject"));
     });
   }
 
+  it("$$$$.shop.orders: the cross-database refusal comes first, for each predicate error", () => {
+    const CROSS_DB =
+      "A read of another DATABASE is not supported. '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.";
+    expect(() => jsmql("$$ = $$$$.shop.orders.filter(123);")).toThrow(CROSS_DB);
+    expect(() => jsmql("$$ = $$$$.shop.orders.filter((a, b) => a > b);")).toThrow(CROSS_DB);
+    expect(() => jsmql("$$ = $$$$.shop.orders.reject(123);")).toThrow(CROSS_DB);
+  });
+
   // A non-head `.filter` reaches the argument-count message rather than the gate.
-  it("names the receiver in the argument-count message too", () => {
+  it("the argument-count message names the method only", () => {
     expect(() => jsmql("$$ = $$$.orders.take(2).filter(o => o.a, 2);")).toThrow(
       "'.filter(predicate)' requires exactly 1 argument, got 2 — JavaScript's trailing 'thisArg' has no meaning in MQL; drop it",
     );
@@ -1842,17 +2116,18 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
   });
 
   it("rejects `$$ = …` and names $match", () => {
-    expect(() => jsmql(wrap("$$ = $$.filter(d => d.a > 1)"))).toThrow(/\$match/);
+    expect(() => jsmql(wrap("$$ = $$.filter(d => d.a > 1)"))).toThrow(
+      "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'.",
+    );
   });
 
   it("rejects a collection write without an internal error", () => {
     expect(() => jsmql(wrap("$$$.arch = $$"))).toThrow(
       "'$out' cannot stand inside '$lookup' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
-    expect(() => jsmql(wrap("$$$.arch = $$"))).not.toThrow(/internal error/);
   });
 
-  it("still lowers an ordinary field assignment", () => {
+  it("refuses an ordinary field assignment: the outer document is read-only there (HR4)", () => {
     expect(() => jsmql(wrap("$.a = 1"))).toThrow(
       "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.",
     );
@@ -1860,17 +2135,17 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
 });
 
 describe("a lookup inside a literal sub-pipeline array", () => {
-  // Hoisting is what makes it wrong: the `$lookup` would land in the outer pipeline while
-  // the reference to its result stayed inside, where the stream is a different collection
-  // whose documents never carry the outer scratch slot. The field would read as missing, on
-  // every document, silently.
-  const NAMES = /isn't available inside a literal sub-pipeline array|cannot be written|no destination|has no 'let'/;
-  it("is rejected in every sub-pipeline container", () => {
+  // A hoist out of a sub-pipeline would be wrong: the `$lookup` would land in the outer
+  // pipeline while the reference to its result stayed inside, where the stream is a
+  // different collection whose documents never carry the outer scratch slot.
+  const OUTER_WRITE =
+    "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.";
+  it("is refused in a $unionWith or $lookup body (an outer write), and runs inside a $facet branch", () => {
     expect(() => jsmql('$unionWith({ coll: "c", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });')).toThrow(
-      NAMES,
+      OUTER_WRITE,
     );
     expect(() => jsmql('$lookup({ from: "o", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: "o" });')).toThrow(
-      NAMES,
+      OUTER_WRITE,
     );
     expect(jsmql("$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });")).toEqual([
       {
@@ -1884,8 +2159,8 @@ describe("a lookup inside a literal sub-pipeline array", () => {
     ]);
   });
 
-  it("still hoists out of an ORDINARY stage body", () => {
-    // The fix is about a sub-pipeline being another pipeline's scope, not about hoisting.
+  it("hoists out of an ORDINARY stage body", () => {
+    // The rule is about a sub-pipeline as the scope of another pipeline, not about hoisting.
     expect(jsmql("$project({ o: $$$.orders.find(o => o.uid === 1) });")).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }, { $limit: 1 }], as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
@@ -1901,10 +2176,6 @@ describe("jsmql() and jsmql.pipeline() agree on the lookup form", () => {
   // must stay on its reroute list. The same source then compiles through `jsmql()` and
   // through `jsmql.pipeline()` alike.
   const SRC = "$.o = $$$.orders.find(o => o.uid === 1)";
-  const EXPECTED = [
-    { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "o" } },
-    { $set: { o: { $first: "$o" } } },
-  ];
   it("compiles identically through both entries", () => {
     expect(jsmql(SRC)).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }, { $limit: 1 }], as: "o" } },

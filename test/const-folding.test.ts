@@ -281,7 +281,18 @@ describe("const folding — native method calls", () => {
     const out = jsmql("const arr = [1, 2, 3]; $.out = arr.slice($.start)");
     // `arr` inlines (it is constant), but the runtime `$.start` index keeps the
     // `.slice` itself un-folded → the general $slice lowering, not a literal.
-    expect(JSON.stringify(out)).toContain("$slice");
+    expect(out).toEqual([
+      {
+        $set: {
+          out: {
+            $let: {
+              vars: { jsmqlArr: [1, 2, 3] },
+              in: { $slice: ["$$jsmqlArr", "$start", { $max: [1, { $size: "$$jsmqlArr" }] }] },
+            },
+          },
+        },
+      },
+    ]);
   });
 
   it("a callback that reads $ makes the whole call non-constant → runtime binding", () => {

@@ -214,18 +214,52 @@ describe("registry — a stage is one construct with two spellings", () => {
   });
 
   it("renders the same document in both", () => {
+    // Each cell has its own `emit` closure, so the test runs both on the same probe
+    // bodies and compares what they render. Every service of the context answers
+    // with a marker that names the service and its arguments, so a different use of
+    // a service shows as a different output. `args` compares by value.
+    type Emit = (ctx: unknown) => unknown;
+    const BODIES = [
+      { type: "ObjectLiteral", entries: [], pos: 0 },
+      { type: "NumberLiteral", value: 5, pos: 0 },
+      { type: "StringLiteral", value: "$x", pos: 0 },
+    ];
+    const render = (name: string, emit: Emit, body: unknown): string => {
+      const ctx = new Proxy(
+        {},
+        {
+          get: (_, p) =>
+            p === "name"
+              ? name
+              : p === "args"
+                ? [body]
+                : p === "pos"
+                  ? 0
+                  : (...a: unknown[]) => `<${String(p)}:${JSON.stringify(a)}>`,
+        },
+      );
+      try {
+        return JSON.stringify(emit(ctx));
+      } catch (e) {
+        return `refused: ${(e as Error).message}`;
+      }
+    };
     const differ: string[] = [];
+    let rendered = 0;
     for (const [name] of stageRows()) {
       const stream = consult(name, "stream");
       const statement = consult(name, "statement");
       if (stream.kind !== statement.kind) differ.push(`${name}: ${stream.kind} vs ${statement.kind}`);
       else if (stream.kind === "lower" && statement.kind === "lower") {
-        // The same emitter, not merely an equivalent one: one construct, one
-        // rendering, so the two cannot drift apart later.
-        if (JSON.stringify(stream.cell) !== JSON.stringify(statement.cell)) differ.push(`${name}: cells differ`);
+        const a = BODIES.map((b) => render(name, (stream.cell as { emit: Emit }).emit, b));
+        const b = BODIES.map((b) => render(name, (statement.cell as { emit: Emit }).emit, b));
+        if (a.some((x) => !x.startsWith("refused:"))) rendered += 1;
+        if (JSON.stringify(a) !== JSON.stringify(b)) differ.push(`${name}: ${a[0]} vs ${b[0]}`);
       }
     }
     expect(differ).toEqual([]);
+    // every stage row renders at least one probe body, so the comparison is not of two refusals
+    expect(rendered).toBe(stageRows().length);
   });
 });
 

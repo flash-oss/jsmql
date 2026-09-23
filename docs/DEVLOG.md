@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-23 — test: every test can fail, and says what it checks
+
+A sweep of the unit suites found tests that could not fail, or that checked
+the code against itself. The worst was `compiler-fold-agrees`: `jsmql.expr`
+folds the constant before it reaches the server, so 283 of its 285 cases
+compared the fold with itself. Its server side now lowers each expression with
+the first operand moved into a `$documents` field, and a guard asserts which
+cases still reach the server as a constant. The sweep found one real
+disagreement there (`Object.entries` folds to `{ k, v }` pairs), which a
+`DISAGREE` table holds.
+
+The other fixes follow one rule: a test that claims two spellings agree
+compares both, a guard counts what it ran, and a weak check (`toBeDefined`,
+a bare `.toThrow()`, a `{ $let: {} }` stub, `.pos >= 0`) becomes the exact
+MQL, message or position. Each new expected shape ran on the `:27018` mongod.
+About 60 titles that stated the opposite of their assertion now state what
+the test checks. The ones where a documented rule and the compiler disagree
+are left as they are, for a decision. `fixtureReady()` now skips the
+integration suite only when no server answers; a refused login or a stale
+dataset fails it, and `live-suites.test.ts` also scans `test/fixtures/`. The
+smoke suite skips its dist cases when `dist/` is older than `src/`.
+
+---
+
 ## 2026-09-23 — fix: an update refusal quotes the field the user wrote
 
 `readInUpdateDocument` always said "the server reads '$b' there", whatever the

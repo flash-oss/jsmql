@@ -234,7 +234,9 @@ describe("stage body validation — $setWindowFields / $fill", () => {
   });
   it("requires sortBy when a $fill method is linear; locf runs without one", () => {
     // MEASURED on mongod: locf without sortBy is accepted; linear is refused ("$linearFill must be specified with a top level sortBy")
-    expect(() => jsmql("[ $fill({ output: { x: { method: 'locf' } } }) ]")).not.toThrow();
+    expect(jsmql("[ $fill({ output: { x: { method: 'locf' } } }) ]")).toEqual([
+      { $fill: { output: { x: { method: "locf" } } } },
+    ]);
     expect(() => jsmql("[ $fill({ output: { x: { method: 'linear' } } }) ]")).toThrow(/needs 'sortBy'/);
   });
 });
@@ -341,6 +343,9 @@ describe("a pipeline stage name used where a value is expected", () => {
     expect(() => jsmql("$.x = $match($.a);")).toThrow(/use '\$filter\(…\)'/);
     // Most stages reshape a document STREAM, which no expression can do — those stop
     // at "write it as a statement" rather than inventing an alternative.
+    expect(() => jsmql("$.x = $unwind($.a);")).toThrow(
+      "'$unwind' is a pipeline stage, not an expression — MongoDB has no '$unwind' expression operator, so '{ $unwind: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$unwind(…);') or as a chain link ('$$.$unwind(…)').",
+    );
     expect(() => jsmql("$.x = $unwind($.a);")).not.toThrow(/value-position equivalent/);
   });
 

@@ -13,34 +13,29 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+/**
+ * The fields a type declares, read from its source in src/registry/vocabulary.ts:
+ * every `  name:` or `  name?:` line at the top level of `export type <T> = { … };`.
+ * The list is read, not copied, so a new field on the type joins the check.
+ */
+function fieldsOf(type: string): string[] {
+  const voc = readFileSync(join(ROOT, "src/registry/vocabulary.ts"), "utf8");
+  const start = voc.indexOf(`export type ${type} = {`);
+  expect(start, `type ${type} exists`).toBeGreaterThanOrEqual(0);
+  const body = voc.slice(start, voc.indexOf("\n};", start));
+  return [...body.matchAll(/^ {2}(?:readonly )?([A-Za-z]+)\??:/gm)].map((m) => m[1]);
+}
+
 describe("registry — every stated rule field has a reader in the compiler", () => {
-  const ARITY = [
-    "sig",
-    "exact",
-    "allowed",
-    "atLeast",
-    "none",
-    "spread",
-    "reject",
-    "constant",
-    "slotType",
-    "slotEnums",
-    "elementType",
-    "emptyList",
-    "nullRefused",
-  ];
-  const BODY = [
-    "required",
-    "optional",
-    "closed",
-    "enums",
-    "charSets",
-    "caseInsensitiveKeys",
-    "keyTypes",
-    "constantKeys",
-    "exactlyOneOf",
-    "positional",
-  ];
+  const ARITY = fieldsOf("Arity");
+  const BODY = fieldsOf("BodyRule");
+
+  it("reads the field lists off the two types", () => {
+    expect(ARITY.length).toBeGreaterThanOrEqual(15);
+    expect(BODY.length).toBeGreaterThanOrEqual(15);
+    expect(ARITY).toContain("sig");
+    expect(BODY).toContain("required");
+  });
 
   const sources = (dir: string): string =>
     readdirSync(join(ROOT, dir), { withFileTypes: true })
@@ -52,13 +47,16 @@ describe("registry — every stated rule field has a reader in the compiler", ()
             : [],
       )
       .join("\n");
-  const compiler = sources("src/compiler");
+  // The code alone: a field name in a comment is prose, not a read. The strip is
+  // crude — a `//` inside a string also cuts the line — but it can only hide a read,
+  // so it can make the gate fail, never pass.
+  const compiler = sources("src/compiler")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:\\"'`])\/\/.*$/gm, "$1");
 
   it.each([...ARITY, ...BODY])("reads %s somewhere in src/compiler", (field) => {
-    // Read as a property (`args.slotType`, `rule.enums`) or destructured — either spelling is a read.
-    expect(
-      new RegExp(String.raw`[.{,\s]${field}\b(?!\s*:)`).test(compiler) ||
-        new RegExp(String.raw`\.${field}\b`).test(compiler),
-    ).toBe(true);
+    // A property read: `args.slotType`, `rule?.enums`, `x[0].exact`. The receiver
+    // before the dot excludes a spread (`...spread`).
+    expect(new RegExp(String.raw`[\w$\])]\??\.${field}\b`).test(compiler)).toBe(true);
   });
 });

@@ -115,8 +115,8 @@ describe("compiler/passes/desugar — the guards run BEFORE the rewrite", () => 
   }
 
   it("still allows the same operators on a field of the document", () => {
-    expect(() => desugar(parse("$.n += 1;"))).not.toThrow();
-    expect(() => desugar(parse("$.n++;"))).not.toThrow();
+    expect(shape("$.n += 1;")).toBe(shape("$.n = $.n + 1;"));
+    expect(shape("$.n++;")).toBe(shape("$.n = $.n + 1;"));
   });
 });
 
@@ -133,8 +133,10 @@ describe("compiler/passes/desugar — the driver", () => {
   });
 
   it("reaches a fixpoint on every input in the equivalence table", () => {
+    // A fixpoint is a tree that one more round leaves unchanged.
     for (const [sugar] of EQUIVALENT) {
-      expect(() => desugarVerbose(parse(sugar)), sugar).not.toThrow();
+      const settled = desugarVerbose(parse(sugar)).program;
+      expect(desugarVerbose(settled).rounds, sugar).toBe(1);
     }
   });
 });

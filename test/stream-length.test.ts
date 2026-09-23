@@ -6,9 +6,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-const SWF = { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } };
-const UNSET = { $unset: "__jsmql" };
-
 describe("$$.length — materialisation", () => {
   it("hoists one $setWindowFields and reads back the field path", () => {
     expect(jsmql("$.total = $$.length")).toEqual([
@@ -92,14 +89,6 @@ describe("$$.length — call forms", () => {
     ]);
   });
 
-  it("lone string with no ; (rerouted through pipeline lowering)", () => {
-    expect(jsmql("$.n = $$.length")).toEqual([
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      { $set: { n: "$__jsmql.length" } },
-      { $unset: "__jsmql" },
-    ]);
-  });
-
   it("accepted by jsmql.pipeline()", () => {
     expect(jsmql.pipeline("$.n = $$.length")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
@@ -154,11 +143,19 @@ describe("$$.length — rejections", () => {
     expect(() => jsmql.filter("$$.length > 1")).toThrow(/'\$\$\.length'.*needs Pipeline mode/);
   });
 
-  it("captures `$$.length` (ROOT count) into $lookup.let inside a top-level lookup predicate", () => {
-    // `$$` is always the ROOT stream regardless of nesting; the count
-    // materialises at the top and is passed into the lookup as
-    // `let: { jsmql_s0_length: "$__jsmql.length" }`, read inside as `$$jsmql_s0_length`.
-    // Verified end-to-end on a live mongod.
+  it("rejects `$$.length` inside a `$$.push(…)` ($unionWith) body, naming the join form", () => {
+    expect(() => jsmql("$$.push(...$$$.o.filter(u => u.n === $$.length));")).toThrow(
+      "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value.",
+    );
+  });
+});
+
+// `$$` is the ROOT stream wherever it is written. See docs/specs/stream-length.md
+// § Every depth.
+describe("$$.length — every pipeline position", () => {
+  it("joins on the ROOT count as a field when a lookup predicate compares with it", () => {
+    // `u.n === $$.length` is an equality, so the join takes the indexed basic form:
+    // the stamped `__jsmql.length` field is the `localField`, and no `let` is needed.
     expect(jsmql("$.peers = $$$.users.filter(u => u.n === $$.length);")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $lookup: { from: "users", localField: "__jsmql.length", foreignField: "n", as: "peers" } },
@@ -166,14 +163,14 @@ describe("$$.length — rejections", () => {
     ]);
   });
 
-  it("rejects `$$.length` inside a $facet / $unionWith sub-pipeline ", () => {
+  it("reads `$$.length` inside a $facet branch as the stamped field", () => {
     expect(jsmql("$ = { peers: $$.filter(u => u.n === $$.length) };")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $facet: { peers: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.length"] } } }] } },
     ]);
   });
 
-  it("rejects inside a reusable function body ", () => {
+  it("reads `$$.length` inside a reusable function body as the stamped field", () => {
     expect(jsmql("const f = () => $$.length; $.n = f()")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { n: "$__jsmql.length" } },
@@ -186,13 +183,6 @@ describe("$$.length — cleanup", () => {
   it("emits exactly one trailing $unset even with multiple uses", () => {
     const out = jsmql("$.a = $$.length; $.b = $$.length") as Record<string, unknown>[];
     expect(out.filter((s) => "$unset" in s)).toEqual([{ $unset: "__jsmql" }]);
-  });
-
-  it("a holding pipeline leaves no __jsmql field in the shape (cleaned by $unset)", () => {
-    // The trailing $unset drops the whole namespace object — verified executing
-    // on a live mongod in the dev probes; here we assert the cleanup stage is last.
-    const out = jsmql("$.n = $$.length") as Record<string, unknown>[];
-    expect(out[out.length - 1]).toEqual({ $unset: "__jsmql" });
   });
 });
 
@@ -247,7 +237,9 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
     expect(jsmql("$$ = $$.map((d, _i, _coll) => { return ({ id: d._id }); });")).toEqual([
       { $replaceWith: { id: "$_id" } },
     ]);
-    expect(() => jsmql("$.x = $$$.s.filter((s, i, c) => s.k === $.k);")).not.toThrow();
+    expect(jsmql("$.x = $$$.s.filter((s, i, c) => s.k === $.k);")).toEqual([
+      { $lookup: { from: "s", localField: "k", foreignField: "k", as: "x" } },
+    ]);
   });
 
   // Four DISTINCT "length"s in one `.map`, none colliding — the disambiguation

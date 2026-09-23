@@ -261,18 +261,19 @@ describe("@koresar/jsmql/mongoose — subclass propagation", () => {
 
 describe("@koresar/jsmql/mongoose — idempotence", () => {
   it("a second registration is a no-op (no double-lowering)", () => {
-    // Without the `__jsmqlPatched` guard, the second `jsmqlMongoose(mongoose)`
-    // call would wrap each already-wrapped static one more time. On the next
-    // `Model.find("$.x > 0")`, the outer wrapper would lower the string to a
-    // Filter document (a plain object), then the inner wrapper would see the
-    // *object* and pass it through to the original — accidentally working —
-    // but a second `Model.find(jsmql.filter("$match(...)"))` path would feed
-    // the strict lowerer's output back into itself and explode. Easier to
-    // make the second call a no-op than to reason about that.
+    // A second wrap is hard to see in the output: the outer wrapper lowers the
+    // string, and the inner one passes the lowered object through. So the test
+    // reads the statics themselves. The second call must keep every patched
+    // static as it is, and must not add a second wrapper around it.
     const { mongoose, Model, recorded } = buildMockMongoose();
     jsmqlMongoose(mongoose);
+    const patched = { find: Model.find, updateOne: Model.updateOne, aggregate: Model.aggregate };
     jsmqlMongoose(mongoose);
+    expect(Model.find).toBe(patched.find);
+    expect(Model.updateOne).toBe(patched.updateOne);
+    expect(Model.aggregate).toBe(patched.aggregate);
     Model.find("$.age > 18");
+    expect(recorded).toHaveLength(1);
     expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
   });
 });

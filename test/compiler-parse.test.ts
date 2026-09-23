@@ -5,6 +5,7 @@
 // jsmql program is valid JavaScript syntax.
 
 import { readdirSync, readFileSync } from "node:fs";
+import { Script } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { parse, parseEntry, parseExpression } from "../src/compiler/parse/parser.ts";
@@ -37,29 +38,62 @@ const only = (src: string): { type: string } & Record<string, unknown> => {
   return n.type === "Pipeline" && n.stmts?.length === 1 ? (n.stmts[0] as typeof n) : n;
 };
 
-describe("compiler/parse — parses every source the suite compiles", () => {
-  it("has no input the compiler accepts and the parser cannot read", () => {
-    const failures: string[] = [];
-    for (const src of harvestInputs()) {
-      let oldOk = true;
+describe("compiler/parse — every source the compiler accepts is JavaScript syntax", () => {
+  /**
+   * Sources the compiler accepts that `node --check` refuses. Each one breaks the
+   * strict-subset rule (CLAUDE.md § #2), and each row names its reason. The test
+   * asserts that each row still compiles AND still fails to parse as JavaScript, so a
+   * repair removes a row instead of passing silently.
+   */
+  const NOT_JS: Readonly<Record<string, string>> = {
+    "$.a = 1,": "a trailing comma ends an expression statement",
+    "$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1, ": "a trailing comma ends an expression statement",
+    "({ $ }) => { $.a = 1, $.b = 2, }": "a trailing comma ends an expression statement in a block",
+    "[let x = $.a + 1, $match(x > 5)]": "a declaration is not an array element",
+    "[let x = $.a, let y = x + 1, $match(y > 5)]": "a declaration is not an array element",
+    "[ const x = $.foo, $match($.parent === x) ]": "a declaration is not an array element",
+    "[ const double = (x) => x * 2, $set({ a: double($.price) }) ]": "a declaration is not an array element",
+    "[const double = (x) => x * 2, $set({ y: double($.x) })]": "a declaration is not an array element",
+    "[$match($.x > 0), let y = $.x * 2, $.flag = true, $sort({ y: 1 })]": "a declaration is not an array element",
+    "[ let x = $.a, x = x + 1, $project({ x }) ]": "a declaration is not an array element",
+    "[ let r = {}, Object.assign(r, { a: $.foo }), $ = r ]": "a declaration is not an array element",
+    "$.items.map(x => { const x = 99; return x })": "a `const` in an arrow body declares the parameter's name again",
+  };
+
+  /** Does JavaScript parse the source, as a script or as one parenthesised expression? */
+  const isJs = (src: string): boolean => {
+    for (const text of [src, `(${src}\n)`]) {
       try {
-        jsmql(src);
+        new Script(text);
+        return true;
       } catch {
-        oldOk = false;
-      }
-      if (!oldOk) continue;
-      try {
-        parse(src);
-      } catch (e) {
-        // an entry form (`({ $ }) => …`) is a program the ENTRY parser reads
-        try {
-          parseEntry(src);
-        } catch {
-          failures.push(`${JSON.stringify(src)} — ${(e as Error).message}`);
-        }
+        // try the other reading
       }
     }
+    return false;
+  };
+  const compiles = (src: string): boolean => {
+    try {
+      jsmql(src);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("parses every string source the suites compile as JavaScript", () => {
+    const accepted = harvestInputs().filter(compiles);
+    // The harvest reads every suite in test/. A regex that stops matching reads nothing.
+    expect(accepted.length).toBeGreaterThan(1000);
+    const failures = accepted.filter((src) => !isJs(src) && !(src in NOT_JS));
     expect(failures).toEqual([]);
+  });
+
+  it("still compiles each source of the NOT_JS table, and JavaScript still refuses it", () => {
+    for (const src of Object.keys(NOT_JS)) {
+      expect(compiles(src), src).toBe(true);
+      expect(isJs(src), src).toBe(false);
+    }
   });
 });
 
@@ -81,10 +115,42 @@ describe("compiler/parse — the forms JavaScript itself refuses", () => {
     });
   }
 
-  it("still accepts each of them when parenthesised", () => {
-    expect(() => parseExpression("($.a ?? $.b) || $.c")).not.toThrow();
-    expect(() => parseExpression("(typeof $.a) ** $.b")).not.toThrow();
-    expect(() => parse("$.a.b = 1")).not.toThrow();
+  /** A parse tree as a compact S-expression, so a test states the exact grouping. */
+  const sx = (n: unknown): string => {
+    const t = n as Record<string, unknown> & { type: string };
+    switch (t.type) {
+      case "FieldRef":
+        return `$.${t.path as string}`;
+      case "NumberLiteral":
+        return String(t.value);
+      case "MemberAccess":
+        return `${sx(t.object)}.${t.name as string}`;
+      case "UnaryExpr":
+        return `(${t.op as string} ${sx(t.argument)})`;
+      case "BinaryExpr":
+        return `(${t.op as string} ${sx(t.left)} ${sx(t.right)})`;
+      case "UpdateFilter":
+        return (t.ops as { target: unknown; op: string; value: unknown }[])
+          .map((o) => `(${o.op} ${sx(o.target)} ${sx(o.value)})`)
+          .join(" ");
+      default:
+        return t.type;
+    }
+  };
+
+  it("accepts each of them when parenthesised, grouped as the parentheses say", () => {
+    const grouped: [string, string][] = [
+      ["($.a ?? $.b) || $.c", "(|| (?? $.a $.b) $.c)"],
+      ["($.a || $.b) ?? $.c", "(?? (|| $.a $.b) $.c)"],
+      ["($.a ?? $.b) && $.c", "(&& (?? $.a $.b) $.c)"],
+      ["(typeof $.a) ** $.b", "(** (typeof $.a) $.b)"],
+      ["(!$.a) ** $.b", "(** (! $.a) $.b)"],
+      ["(~$.a) ** $.b", "(** (~ $.a) $.b)"],
+    ];
+    for (const [src, tree] of grouped) expect(sx(parseExpression(src)), src).toBe(tree);
+    // the `?.` forms without the `?.` are a write to a path
+    expect(sx(parse("$.a.b = 1"))).toBe("(= $.a.b 1)");
+    expect(sx(parse("$.a.b += 1"))).toBe("(+= $.a.b 1)");
   });
 });
 
@@ -380,11 +446,6 @@ describe("compiler/parse — the `**` restriction is one-sided, as JavaScript st
     expect(() => parseExpression("2 ** -1")).not.toThrow();
     expect(() => parseExpression("2 ** typeof $.a")).not.toThrow();
     expect(() => parseExpression("(-2) ** 2")).not.toThrow();
-  });
-
-  it("keeps `??` symmetric", () => {
-    expect(() => parseExpression("$.a ?? $.b || $.c")).toThrow(/without parentheses/);
-    expect(() => parseExpression("$.a || $.b ?? $.c")).toThrow(/without parentheses/);
   });
 });
 

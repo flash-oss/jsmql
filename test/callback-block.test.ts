@@ -8,9 +8,10 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
 // Every position a stream-rooted callback reaches, so the rule cannot hold in one
-// container and leak in another. `$$$.<coll>` receivers are pointed at `.aggregate`;
-// `$$` (current-stream) receivers at the chained-stage spelling, which is what works
-// in all of ITS containers.
+// container and leak in another. The refusal names both fixes on every receiver:
+// the `.aggregate` block, and the chained-stage link `$$.$<stage>(…)`.
+const NAMES_BOTH_FIXES = /is a pipeline stage.*'\.aggregate\(\(o\) => \{ \$\w+\(\.\.\.\); … \}\)'.*'\$\$\.\$\w+\(…\)'/s;
+
 describe("a pipeline stage in a JavaScript callback is rejected", () => {
   const foreign: [string, string][] = [
     ["lookup head .filter", `$.r = $$$.orders.filter(o => { $match(o.userId === $._id); $limit(5); });`],
@@ -28,8 +29,8 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     ["foreign chain .flatMap", `$.r = $$$.orders.filter(o => o.a === 1).flatMap(o => { $match(o.a === 1); });`],
   ];
   for (const [label, src] of foreign) {
-    it(`${label} → points at .aggregate on the same collection`, () => {
-      expect(() => jsmql(src)).toThrow(/is a pipeline stage/);
+    it(`${label} → names .aggregate and the chained-stage link`, () => {
+      expect(() => jsmql(src)).toThrow(NAMES_BOTH_FIXES);
     });
   }
 
@@ -44,8 +45,8 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     ["$$ = .flatMap", `$$ = $$.flatMap(o => { $match(o.a === 1); });`],
   ];
   for (const [label, src] of stream) {
-    it(`${label} → points at the chained-stage spelling`, () => {
-      expect(() => jsmql(src)).toThrow(/is a pipeline stage/);
+    it(`${label} → names .aggregate and the chained-stage link`, () => {
+      expect(() => jsmql(src)).toThrow(NAMES_BOTH_FIXES);
     });
   }
 
@@ -84,7 +85,15 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     expect(() => jsmql(`$.r = $$$.o.filter(x => { const g = z => z; return g(x.a) > 1; });`)).toThrow(
       /declares a reusable function\. A pipeline declares a reusable function at its top level/,
     );
-    expect(() => jsmql(`const g = z => z; $.r = $$$.o.filter(x => g(x.a) > 1);`)).not.toThrow();
+    expect(jsmql(`const g = z => z; $.r = $$$.o.filter(x => g(x.a) > 1);`)).toEqual([
+      {
+        $lookup: {
+          from: "o",
+          pipeline: [{ $match: { $expr: { $gt: [{ $let: { vars: { z: "$a" }, in: "$$z" } }, 1] } } }],
+          as: "r",
+        },
+      },
+    ]);
   });
 
   it("carries the offending statement's position, not the call's", () => {
@@ -94,9 +103,9 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
     expect(errors[0].pos).toBe(src.indexOf("$match"));
   });
 
-  it("a value-position callback names the value position, where no stage can run at all", () => {
+  it("a `.map` block with a stage and a `return` names both positions and both fixes", () => {
     expect(() => jsmql(`$.r = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });`)).toThrow(
-      /is a pipeline stage/,
+      "`$sort(...)` at position 28 is a pipeline stage. The 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })'. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
   });
 });
@@ -106,9 +115,9 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
 describe("a stage-free callback block is the JavaScript value form", () => {
   it("`{ return <pred> }` is the predicate — same MQL as the expression body", () => {
     const block = jsmql(`$.r = $$$.orders.filter(o => { return o.userId === $._id; });`);
+    // The indexed basic form, not a dropped predicate.
     expect(block).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "r" } }]);
-    // …and it really is the indexed basic form, not a dropped predicate.
-    expect(block).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "r" } }]);
+    expect(block).toEqual(jsmql(`$.r = $$$.orders.filter(o => o.userId === $._id);`));
   });
 
   it("`{ return <pred> }` on `.find` keeps the scalar-or-null unwrap", () => {
@@ -126,12 +135,38 @@ describe("a stage-free callback block is the JavaScript value form", () => {
     // The three take the same shape: `d => { return d.items; }` compiles exactly as
     // the identical JavaScript `d => d.items` does. A method that rejected the block
     // form would make one spelling an error and its twin legal.
-    for (const [block, expr] of [
-      [`$$ = $$.toSorted("t").takeWhile(d => { return d.a > 1; });`, `$$ = $$.toSorted("t").takeWhile(d => d.a > 1);`],
-      [`$$ = $$.toSorted("t").dropWhile(d => { return d.a > 1; });`, `$$ = $$.toSorted("t").dropWhile(d => d.a > 1);`],
-      [`$$ = $$.flatMap(d => { return d.items; });`, `$$ = $$.flatMap(d => d.items);`],
-    ]) {
-      expect(jsmql(block)).toEqual(jsmql(expr));
+    // A window over the documents so far: `__jsmql.tmp.0` is 1 once one of them fails the predicate.
+    const run = (keep: 0 | 1) => [
+      { $sort: { t: 1 } },
+      {
+        $setWindowFields: {
+          sortBy: { t: 1 },
+          output: {
+            "__jsmql.tmp.0": {
+              $max: { $cond: [{ $gt: ["$a", 1] }, 0, 1] },
+              window: { documents: ["unbounded", "current"] },
+            },
+          },
+        },
+      },
+      { $match: { "__jsmql.tmp.0": keep } },
+      { $unset: "__jsmql" },
+    ];
+    for (const [block, expr, mql] of [
+      [
+        `$$ = $$.toSorted("t").takeWhile(d => { return d.a > 1; });`,
+        `$$ = $$.toSorted("t").takeWhile(d => d.a > 1);`,
+        run(0),
+      ],
+      [
+        `$$ = $$.toSorted("t").dropWhile(d => { return d.a > 1; });`,
+        `$$ = $$.toSorted("t").dropWhile(d => d.a > 1);`,
+        run(1),
+      ],
+      [`$$ = $$.flatMap(d => { return d.items; });`, `$$ = $$.flatMap(d => d.items);`, [{ $unwind: "$items" }]],
+    ] as const) {
+      expect(jsmql(block)).toEqual(mql);
+      expect(jsmql(expr)).toEqual(mql);
     }
   });
 
@@ -306,8 +341,10 @@ describe("`const`/`let` bindings work in every predicate position", () => {
     ]);
   });
 
-  it("a container with no `let` slot still rejects a `$.<field>` read", () => {
-    // The binding is fine; reading the OUTER document from a `$facet` branch is not.
+  it("a `$facet` branch reads a `$.<field>` in the block from the same document", () => {
+    // A `$facet` branch runs over the SAME documents, so `$.total` needs no `let`: it
+    // is the field of the document the branch reads. See docs/specs/let-bindings.md
+    // § Blocks and sub-pipelines.
     expect(jsmql(`$ = { big: $$.filter(d => { const t = $.total; return t > 5; }) };`)).toEqual([
       { $facet: { big: [{ $match: { $expr: { $let: { vars: { t: "$total" }, in: { $gt: ["$$t", 5] } } } } }] } },
     ]);

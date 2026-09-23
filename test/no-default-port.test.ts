@@ -20,6 +20,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
 import { SCRATCH_DBS } from "./fixtures/config.ts";
+import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -105,12 +106,10 @@ describe("the default mongod port is never used", () => {
  * suites' own databases would fight the suites, which vitest runs in parallel.
  * It skips (green) only when the instance is down, like every other live suite.
  */
-describe("the scratch identity holds what a live suite needs", () => {
+describe.skipIf(!(await liveUp()))("the scratch identity holds what a live suite needs", () => {
   it("has readWrite, dbAdmin and indexStats on every scratch database", async () => {
     const { SCRATCH_DBS } = await import("./fixtures/config.ts");
-    const { liveClient } = await import("./fixtures/live.ts");
-    const client = await liveClient();
-    if (client === null) return; // the instance is down — `npm run fixture:up` starts it
+    const client = await liveClientNow();
     let status: Record<string, unknown>;
     try {
       status = await client.db("admin").command({ connectionStatus: 1, showPrivileges: true });

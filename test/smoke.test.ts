@@ -15,7 +15,8 @@
  *      MQL. Vitest tests resolve `src/index.ts` directly, never the built
  *      output, so a broken `tsconfig` or `exports` field can ship despite a
  *      green `npm test`. Skipped when `dist/` is absent (the default during
- *      local development); active in CI / `npm run smoke:dist` after a build.
+ *      local development) or older than `src/` (a build that tests old code
+ *      proves nothing); active in CI / `npm run smoke:dist` after a build.
  *
  *   3. The built `dist/cjs/index.cjs` loads through `require()` and produces the
  *      same MQL across all three call shapes. This is the `require` half of
@@ -26,11 +27,59 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Every `.ts` file under `dir`. */
+const tsFiles = (dir: string, out: string[] = []): string[] => {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) tsFiles(full, out);
+    else if (name.endsWith(".ts")) out.push(full);
+  }
+  return out;
+};
+
+/**
+ * Why the build in `dist/` cannot stand for `src/`, or null when it can.
+ *
+ * Each `src/<x>.ts` must have its `dist/<x>.js`, and that output must be newer than
+ * the source. The bundles under `dist/cjs/` must be newer than every source file.
+ * `src/globals.ts` has no mtime rule: `pretest` writes it on every run. The registry
+ * files it comes from carry the rule instead.
+ */
+function distProblem(bundles: readonly string[]): string | null {
+  if (!existsSync(resolve(ROOT, "dist/index.js"))) return "absent";
+  let newest = 0;
+  for (const src of tsFiles(resolve(ROOT, "src"))) {
+    const rel = relative(resolve(ROOT, "src"), src);
+    const out = resolve(ROOT, "dist", rel.replace(/\.ts$/, ".js"));
+    if (!existsSync(out)) return `dist/${relative(resolve(ROOT, "dist"), out)} is missing`;
+    if (rel === "globals.ts") continue;
+    const at = statSync(src).mtimeMs;
+    newest = Math.max(newest, at);
+    if (statSync(out).mtimeMs < at) return `src/${rel} is newer than its build`;
+  }
+  for (const b of bundles) {
+    if (existsSync(b) && statSync(b).mtimeMs < newest) return `${relative(ROOT, b)} is older than src/`;
+  }
+  return null;
+}
+
+const DIST_PROBLEM = distProblem(
+  ["dist/cjs/index.cjs", "dist/cjs/cli.cjs", "dist/cjs/mongoose.cjs"].map((p) => resolve(ROOT, p)),
+);
+if (DIST_PROBLEM !== null && DIST_PROBLEM !== "absent") {
+  console.warn(
+    `\n[smoke] dist/ is stale (${DIST_PROBLEM}) — the built-dist cases are SKIPPED.` +
+      "\n[smoke] Run `npm run smoke:dist` to build and run them.\n",
+  );
+}
+/** The built-dist cases run only against a build of the current source. */
+const DIST_FRESH = DIST_PROBLEM === null;
 
 describe("smoke: strippable-TS invariant", () => {
   it("`node src/index.ts` runs without errors", () => {
@@ -62,8 +111,10 @@ describe("smoke: built dist", () => {
   const distPath = resolve(ROOT, "dist/index.js");
   const distUrl = "file://" + distPath;
 
-  it.skipIf(!existsSync(distPath))("dist/index.js loads through an ESM import and produces correct MQL", () => {
-    const script = `
+  it.skipIf(!DIST_FRESH || !existsSync(distPath))(
+    "dist/index.js loads through an ESM import and produces correct MQL",
+    () => {
+      const script = `
         import { jsmql } from ${JSON.stringify(distUrl)};
         const out = jsmql("$.age > 18");
         if (JSON.stringify(out) !== '{"age":{"$gt":18}}') {
@@ -79,20 +130,26 @@ describe("smoke: built dist", () => {
           throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
         }
       `;
-    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: ROOT, encoding: "utf8" });
-    expect(result.status, result.stderr).toBe(0);
-  });
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        cwd: ROOT,
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
 
   const cjsPath = resolve(ROOT, "dist/cjs/index.cjs");
 
-  it.skipIf(!existsSync(cjsPath))("dist/cjs/index.cjs loads through require() and produces correct MQL", () => {
-    // Mirrors the ESM case above but exercises the CommonJS bundle that
-    // ships under the `require` condition of `package.json#exports`.
-    // This targets `node14`. The script stays syntax-conservative (no
-    // template literals besides the wrapping one, no optional chaining),
-    // so the same script can also run on the lowest engine this project
-    // supports.
-    const script = `
+  it.skipIf(!DIST_FRESH || !existsSync(cjsPath))(
+    "dist/cjs/index.cjs loads through require() and produces correct MQL",
+    () => {
+      // Mirrors the ESM case above but exercises the CommonJS bundle that
+      // ships under the `require` condition of `package.json#exports`.
+      // This targets `node14`. The script stays syntax-conservative (no
+      // template literals besides the wrapping one, no optional chaining),
+      // so the same script can also run on the lowest engine this project
+      // supports.
+      const script = `
         const { jsmql } = require(${JSON.stringify(cjsPath)});
         const out = jsmql("$.age > 18");
         if (JSON.stringify(out) !== '{"age":{"$gt":18}}') {
@@ -108,34 +165,38 @@ describe("smoke: built dist", () => {
           throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
         }
       `;
-    const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {
-      cwd: ROOT,
-      encoding: "utf8",
-    });
-    expect(result.status, result.stderr).toBe(0);
-  });
+      const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {
+        cwd: ROOT,
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
 
   const cliCjs = resolve(ROOT, "dist/cjs/cli.cjs");
 
-  it.skipIf(!existsSync(cliCjs))("dist/cjs/cli.cjs runs as the jsmql bin (stdin → MQL) and reports its version", () => {
-    // Exercises the built executable end-to-end: the esbuild bundle, the
-    // preserved shebang, and the version `define`. spawnSync drives `node
-    // dist/cjs/cli.cjs` (rather than the bare path) so the test is independent
-    // of the file's exec bit.
-    const compiled = spawnSync(process.execPath, [cliCjs], { cwd: ROOT, input: "$.age > 18\n", encoding: "utf8" });
-    expect(compiled.status, compiled.stderr).toBe(0);
-    // The bin writes JAVASCRIPT, so the output is read the way a developer reads it —
-    // by evaluating it. Parsing it as JSON is what the printer exists to stop.
-    expect(compiled.stdout.trim()).toBe("{ age: { $gt: 18 } }");
+  it.skipIf(!DIST_FRESH || !existsSync(cliCjs))(
+    "dist/cjs/cli.cjs runs as the jsmql bin (stdin → MQL) and reports its version",
+    () => {
+      // Exercises the built executable end-to-end: the esbuild bundle, the
+      // preserved shebang, and the version `define`. spawnSync drives `node
+      // dist/cjs/cli.cjs` (rather than the bare path) so the test is independent
+      // of the file's exec bit.
+      const compiled = spawnSync(process.execPath, [cliCjs], { cwd: ROOT, input: "$.age > 18\n", encoding: "utf8" });
+      expect(compiled.status, compiled.stderr).toBe(0);
+      // The bin writes JAVASCRIPT, so the output is read the way a developer reads it —
+      // by evaluating it. Parsing it as JSON is what the printer exists to stop.
+      expect(compiled.stdout.trim()).toBe("{ age: { $gt: 18 } }");
 
-    const version = spawnSync(process.execPath, [cliCjs, "--version"], { cwd: ROOT, encoding: "utf8" });
-    expect(version.status, version.stderr).toBe(0);
-    const pkgVersion = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")).version;
-    expect(version.stdout.trim()).toBe(pkgVersion);
+      const version = spawnSync(process.execPath, [cliCjs, "--version"], { cwd: ROOT, encoding: "utf8" });
+      expect(version.status, version.stderr).toBe(0);
+      const pkgVersion = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")).version;
+      expect(version.stdout.trim()).toBe(pkgVersion);
 
-    // The first bytes must be the shebang so the file is directly runnable.
-    expect(readFileSync(cliCjs, "utf8").startsWith("#!/usr/bin/env node")).toBe(true);
-  });
+      // The first bytes must be the shebang so the file is directly runnable.
+      expect(readFileSync(cliCjs, "utf8").startsWith("#!/usr/bin/env node")).toBe(true);
+    },
+  );
 
   const mongoosePkg = resolve(ROOT, "node_modules/mongoose/package.json");
 
@@ -184,8 +245,10 @@ describe("smoke: built dist", () => {
 
   const mongooseEsm = resolve(ROOT, "dist/mongoose.js");
 
-  it.skipIf(!existsSync(mongooseEsm))("dist/mongoose.js loads through an ESM import and patches Model.find", () => {
-    const script = `
+  it.skipIf(!DIST_FRESH || !existsSync(mongooseEsm))(
+    "dist/mongoose.js loads through an ESM import and patches Model.find",
+    () => {
+      const script = `
         import jsmqlMongoose from ${JSON.stringify("file://" + mongooseEsm)};
         let captured;
         class Model { static find(filter) { captured = filter; } }
@@ -195,19 +258,25 @@ describe("smoke: built dist", () => {
           throw new Error("mongoose patch (ESM) output mismatch: " + JSON.stringify(captured));
         }
       `;
-    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: ROOT, encoding: "utf8" });
-    expect(result.status, result.stderr).toBe(0);
-  });
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        cwd: ROOT,
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
 
   const mongooseCjs = resolve(ROOT, "dist/cjs/mongoose.cjs");
 
-  it.skipIf(!existsSync(mongooseCjs))("dist/cjs/mongoose.cjs is callable as require('…')(mongoose)", () => {
-    // The `require(...)` form is the primary documented call shape, so the
-    // CJS bundle must promote esbuild's default-export shape to
-    // `module.exports = fn`. Without the post-build fixup in
-    // `scripts/build-cjs.mjs`, this test fails with "module.exports is not a
-    // function".
-    const script = `
+  it.skipIf(!DIST_FRESH || !existsSync(mongooseCjs))(
+    "dist/cjs/mongoose.cjs is callable as require('…')(mongoose)",
+    () => {
+      // The `require(...)` form is the primary documented call shape, so the
+      // CJS bundle must promote esbuild's default-export shape to
+      // `module.exports = fn`. Without the post-build fixup in
+      // `scripts/build-cjs.mjs`, this test fails with "module.exports is not a
+      // function".
+      const script = `
         const jsmqlMongoose = require(${JSON.stringify(mongooseCjs)});
         if (typeof jsmqlMongoose !== "function") {
           throw new Error("expected require(mongoose.cjs) to return a function, got " + typeof jsmqlMongoose);
@@ -221,32 +290,36 @@ describe("smoke: built dist", () => {
           throw new Error("mongoose patch (CJS) output mismatch: " + JSON.stringify(captured));
         }
       `;
-    const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {
-      cwd: ROOT,
-      encoding: "utf8",
-    });
-    expect(result.status, result.stderr).toBe(0);
-  });
+      const result = spawnSync(process.execPath, ["--input-type=commonjs", "-e", script], {
+        cwd: ROOT,
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
 
   const opsJs = resolve(ROOT, "dist/globals.js");
   const opsDts = resolve(ROOT, "dist/globals.d.ts");
 
-  it.skipIf(!existsSync(distPath))("dist/globals.{js,d.ts} are emitted with stage and operator declarations", () => {
-    // `@koresar/jsmql/globals` is a pure-types module — the runtime globals.js is essentially
-    // empty (`export {};`), but it must exist so accidental non-type imports
-    // resolve. The .d.ts is the artifact users actually consume.
-    if (!existsSync(opsJs)) {
-      throw new Error(`expected dist/globals.js to exist after build; rebuild with \`npm run build\``);
-    }
-    if (!existsSync(opsDts)) {
-      throw new Error(`expected dist/globals.d.ts to exist after build; rebuild with \`npm run build\``);
-    }
-    const dts = readFileSync(opsDts, "utf8");
-    // Spot-check that the declaration block is intact and includes both a
-    // canonical stage and a canonical expression operator. If the generator
-    // silently emitted an empty file (for example specs not vendored), this fails.
-    expect(dts).toMatch(/declare global/);
-    expect(dts).toMatch(/function \$match\(/);
-    expect(dts).toMatch(/function \$dateAdd\(/);
-  });
+  it.skipIf(!DIST_FRESH || !existsSync(distPath))(
+    "dist/globals.{js,d.ts} are emitted with stage and operator declarations",
+    () => {
+      // `@koresar/jsmql/globals` is a pure-types module — the runtime globals.js is essentially
+      // empty (`export {};`), but it must exist so accidental non-type imports
+      // resolve. The .d.ts is the artifact users actually consume.
+      if (!existsSync(opsJs)) {
+        throw new Error(`expected dist/globals.js to exist after build; rebuild with \`npm run build\``);
+      }
+      if (!existsSync(opsDts)) {
+        throw new Error(`expected dist/globals.d.ts to exist after build; rebuild with \`npm run build\``);
+      }
+      const dts = readFileSync(opsDts, "utf8");
+      // Spot-check that the declaration block is intact and includes both a
+      // canonical stage and a canonical expression operator. If the generator
+      // silently emitted an empty file (for example specs not vendored), this fails.
+      expect(dts).toMatch(/declare global/);
+      expect(dts).toMatch(/function \$match\(/);
+      expect(dts).toMatch(/function \$dateAdd\(/);
+    },
+  );
 });

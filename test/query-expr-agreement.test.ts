@@ -75,9 +75,8 @@ const AGREE: readonly string[] = [
   '$.s.endsWith("o")',
   // A needle carrying regex metacharacters must be escaped, not interpreted.
   '$.s.startsWith("h.")',
-  // RegexMatch
+  // RegexMatch — a `$regex` clause as a query, `$regexMatch` as an expression.
   "$.s.match(/^he/)",
-  "/^he/.test($.s)",
   "$.s.match(/HE/i)",
   // JS-only regex flags. The expression side strips them (`mongoRegexOptions`); the query
   // side hands the pattern to `new RegExp` and lets the driver serialise it. MongoDB itself
@@ -94,19 +93,29 @@ const AGREE: readonly string[] = [
   "$.a !== undefined",
   "$.n === undefined",
   "$.n !== undefined",
-  // `.length` — the runtime three-way dispatch. Its receiver is unknown here, so both
-  // targets take the same `$cond`; the doc set has strings and a missing field.
-  "$.s.length === 5",
-  "$.s.length > 2",
-  // Quantify — `$elemMatch` as a query, `$anyElementTrue`/`$allElementsTrue` as an
-  // expression. The doc set has no `items` field at all. In that case the expression form
-  // must not abort, and the query form must answer correctly.
+  // Quantify — `$elemMatch` as a query, `$anyElementTrue` as an expression. Most
+  // documents have no `items` field. The expression form must not abort there, and
+  // the query form must answer correctly.
   "$.items.some(i => i.q > 3)",
-  "$.items.every(i => i.q > 3)",
   // Logical
   "$.a > 0 && $.s === 'hello'",
   "$.a > 0 || $.t === false",
   "!($.a > 0)",
+];
+
+/**
+ * Predicates with no query clause. The Filter road wraps the expression road's own
+ * document in `$expr`, so both sides run one query, and a server comparison proves
+ * nothing. The test asserts that identity instead. A source that gains a query form
+ * fails here, and moves to AGREE or DIVERGE.
+ */
+const SAME_QUERY: readonly string[] = [
+  "/^he/.test($.s)",
+  // `.length` on a receiver of unknown type is a runtime `$switch` on both roads.
+  "$.s.length === 5",
+  "$.s.length > 2",
+  // `.every` has no query clause: `$elemMatch` tests SOME element.
+  "$.items.every(i => i.q > 3)",
 ];
 
 /**
@@ -160,6 +169,21 @@ async function bothSides(src: string): Promise<{ query: number[]; expr: number[]
   const rows = await coll.aggregate([{ $addFields: { __v: jsmql.expr(src) } }, { $match: { __v: true } }]).toArray();
   return { query, expr: ids(rows) };
 }
+
+/** True when the Filter is the expression road's document under `$expr`. */
+const sameQuery = (src: string): boolean => JSON.stringify(jsmql(src)) === JSON.stringify({ $expr: jsmql.expr(src) });
+
+describe("every compared predicate has two different queries", () => {
+  // A row whose two lowerings emit one query compares the server with itself.
+  it("no AGREE or DIVERGE row emits the same query on both sides", () => {
+    const same = [...AGREE, ...DIVERGE.map((d) => d.src)].filter(sameQuery);
+    expect(same, "move these rows to SAME_QUERY").toEqual([]);
+  });
+
+  it.each(SAME_QUERY)("%s emits one query on both sides", (src) => {
+    expect(jsmql(src)).toEqual({ $expr: jsmql.expr(src) });
+  });
+});
 
 describe("the Query and Expr targets select the same documents", () => {
   let compared = 0;

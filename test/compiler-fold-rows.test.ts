@@ -61,18 +61,41 @@ describe("compiler/passes/fold — every case label is a callable row on that fa
     });
   }
 
-  it("folds a namespace call only on a namespace the registry provides", () => {
-    // `Math.max`, `Object.keys` — the switch is keyed by namespace then name.
+  it("folds a namespace call only for a name the registry lists on that namespace", () => {
+    // `Math.max`, `Object.keys` — `foldNamespaceCall` opens one `if (namespace === "X")`
+    // block per namespace. A block reads its names from `case` labels, from a
+    // `name === "…"` test, or (for `Math`) from the MATH table.
     const src = source("fold-methods.ts");
-    const namespaces = [...casesIn(src, "foldNamespaceCall")];
-    const stray = namespaces.filter((n) => {
-      const row = ROWS[n];
-      // A namespace is a root/global row that `provides`; a method under it is a
-      // name row whose `on` lists that namespace.
-      const isNamespace = row !== undefined && (row.kind === "root" || row.kind === "global");
-      const isMethod = row !== undefined && row.kind === "name" && row.call !== false;
-      return !isNamespace && !isMethod;
-    });
-    expect(stray).toEqual([]);
+    const start = src.indexOf("function foldNamespaceCall(");
+    const body = src.slice(start, start + 1 + src.slice(start + 1).search(/\n(?:export )?(?:function|const) /));
+    const blocks = body.split(/if \(namespace === "/).slice(1);
+    const math = src.slice(src.indexOf("const MATH"), src.indexOf("\n};", src.indexOf("const MATH")));
+    const mathNames = [...math.matchAll(/^ {2}([A-Za-z]+): /gm)].map((m) => m[1]);
+    expect(mathNames.length, "the MATH table has rows").toBeGreaterThan(5);
+
+    const pairs: [namespace: string, name: string][] = [];
+    for (const block of blocks) {
+      const ns = block.slice(0, block.indexOf('"'));
+      const names = [
+        ...[...block.matchAll(/case "([A-Za-z_]+)":/g)].map((m) => m[1]),
+        ...[...block.matchAll(/name === "([A-Za-z_]+)"/g)].map((m) => m[1]),
+        ...(block.includes("MATH[name]") ? mathNames : []),
+      ];
+      expect(names.length, `the ${ns} block folds some name`).toBeGreaterThan(0);
+      for (const name of names) pairs.push([ns, name]);
+    }
+    expect([...new Set(pairs.map(([ns]) => ns))].sort()).toEqual(["Date", "Math", "Number", "Object"]);
+
+    const wrong: string[] = [];
+    for (const [ns, name] of pairs) {
+      const home = ROWS[ns];
+      if (home === undefined || (home.kind !== "root" && home.kind !== "global")) wrong.push(`${ns}: no namespace row`);
+      const row = ROWS[name];
+      if (row === undefined) wrong.push(`${ns}.${name}: no row`);
+      else if (row.kind !== "name" || row.call === false) wrong.push(`${ns}.${name}: not a callable name row`);
+      else if (!familiesOf(row).includes(ns))
+        wrong.push(`${ns}.${name}: the row is not on ${ns} (${familiesOf(row).join("/")})`);
+    }
+    expect(wrong).toEqual([]);
   });
 });

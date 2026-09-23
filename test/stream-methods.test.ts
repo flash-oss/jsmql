@@ -7,14 +7,6 @@
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { requiredReceiverFamily, valueMethodNames } from "../src/compiler/rows.ts";
-import {
-  STREAM_HANDLED_ELSEWHERE,
-  STREAM_UNSUPPORTED,
-  VALUE_TERMINAL_METHODS,
-  streamMethodNames,
-} from "../src/compiler/rows.ts";
-import { truthy, truthyAnd } from "./truthy.ts";
 
 describe(".slice(start, end?) — on $$ (top-level stream)", () => {
   it("two-arg slice lowers to $skip + $limit", () => {
@@ -29,7 +21,7 @@ describe(".slice(start, end?) — on $$ (top-level stream)", () => {
     expect(jsmql("$$ = $$.slice(5);")).toEqual([{ $skip: 5 }]);
   });
 
-  it("slice(0) is a no-op — emits zero stages", () => {
+  it("slice(0) alone produces no stages, so the program is refused", () => {
     expect(() => jsmql("$$ = $$.slice(0);")).toThrow(
       "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
     );
@@ -174,7 +166,7 @@ describe(".drop(n) → $skip — lodash all-but-first-n", () => {
     expect(jsmql("$$ = $$.drop(5);")).toEqual([{ $skip: 5 }]);
   });
 
-  it("drop(0) is identity — emits zero stages", () => {
+  it("drop(0) alone produces no stages, so the program is refused", () => {
     expect(() => jsmql("$$ = $$.drop(0);")).toThrow(
       "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
     );
@@ -188,7 +180,6 @@ describe(".drop(n) → $skip — lodash all-but-first-n", () => {
 describe(".tail() → $skip: 1 — lodash all-but-first", () => {
   it("lowers to $skip: 1 (the stream analogue of .drop(1))", () => {
     expect(jsmql("$$ = $$.tail();")).toEqual([{ $skip: 1 }]);
-    expect(jsmql("$$ = $$.tail();")).toEqual([{ $skip: 1 }]);
   });
   it("rejects arguments", () => {
     expect(() => jsmql("$$ = $$.tail(2);")).toThrow(/takes no arguments/);
@@ -201,17 +192,40 @@ describe("'from the end' array methods are NOT on the stream surface", () => {
   // `$sort` gives it. Faking them means rewriting the preceding `$sort`, which makes
   // them position-dependent in a way the JS methods never are — and with no `$sort` in
   // front they would silently order by `_id` instead of erroring.
-  const REMOVED = ["takeRight(3)", "dropRight(2)", "initial()", "toReversed()"];
-  const CONTEXTS = [
-    ["$$ = pivot", (c: string) => `$$ = $$.${c};`],
-    ["bare statement", (c: string) => `$$.${c};`],
-    ["after a sort", (c: string) => `$$ = $$.toSorted({ age: 1 }).${c};`],
-    ["foreign pivot", (c: string) => `$$ = $$$.orders.${c};`],
+  // Each row: the call, the refusal on the current stream, and the refusal on a
+  // foreign pivot (there the method reads as a value, and a value is not a stream).
+  const REMOVED = [
+    [
+      "takeRight(3)",
+      "'.takeRight()' isn't available on '$$' — counts from the END, which needs the whole stream buffered. Sort by the opposite key and use '.take(n)'.",
+      "'.takeRight()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….takeRight()'.",
+    ],
+    [
+      "dropRight(2)",
+      "'.dropRight()' isn't available on '$$' — counts from the END. Sort by the opposite key and use '.drop(n)'.",
+      "'.dropRight()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….dropRight()'.",
+    ],
+    [
+      "initial()",
+      "'.initial()' isn't available on '$$' — drops the LAST element, which needs the whole stream buffered. Sort by the opposite key and use '.drop(1)'.",
+      "'.initial()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….initial()'.",
+    ],
+    [
+      "toReversed()",
+      "'.toReversed()' isn't available on '$$' — reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want.",
+      "'.toReversed()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….toReversed()'.",
+    ],
   ] as const;
-  for (const call of REMOVED) {
-    for (const [label, build] of CONTEXTS) {
+  const CONTEXTS = [
+    ["$$ = pivot", (c: string) => `$$ = $$.${c};`, "stream"],
+    ["bare statement", (c: string) => `$$.${c};`, "stream"],
+    ["after a sort", (c: string) => `$$ = $$.toSorted({ age: 1 }).${c};`, "stream"],
+    ["foreign pivot", (c: string) => `$$ = $$$.orders.${c};`, "pivot"],
+  ] as const;
+  for (const [call, onStream, onPivot] of REMOVED) {
+    for (const [label, build, kind] of CONTEXTS) {
       it(`.${call} is rejected in the ${label} context`, () => {
-        expect(() => jsmql(build(call)), build(call)).toThrow(/isn't available on '|makes a value/);
+        expect(() => jsmql(build(call)), build(call)).toThrow(kind === "stream" ? onStream : onPivot);
       });
     }
   }
@@ -229,8 +243,34 @@ describe("'from the end' array methods are NOT on the stream surface", () => {
     // A stored array carries its own order, so there they mean what JS means.
     expect(jsmql("$.x = $.items.takeRight(3);")).toEqual([{ $set: { x: { $slice: ["$items", -3] } } }]);
     expect(jsmql("$.x = $.items.toReversed();")).toEqual([{ $set: { x: { $reverseArray: "$items" } } }]);
-    expect(jsmql("$.x = $.items.initial();")).toBeDefined();
-    expect(jsmql("$.x = $.items.dropRight(2);")).toBeDefined();
+    expect(jsmql("$.x = $.items.initial();")).toEqual([
+      {
+        $set: {
+          x: {
+            $let: {
+              vars: { jsmqlArr: "$items" },
+              in: {
+                $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }] }],
+              },
+            },
+          },
+        },
+      },
+    ]);
+    expect(jsmql("$.x = $.items.dropRight(2);")).toEqual([
+      {
+        $set: {
+          x: {
+            $let: {
+              vars: { jsmqlArr: "$items" },
+              in: {
+                $slice: ["$$jsmqlArr", { $max: [0, { $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 2] }] }],
+              },
+            },
+          },
+        },
+      },
+    ]);
   });
 });
 
@@ -278,13 +318,6 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
   // document?"; the two methods are exact complements, differing only in the
   // `$match` polarity. Verified on a live mongod with data where the predicate
   // FAILS then RECOVERS — the case where `.filter()` would give a different answer.
-  const FLAG = {
-    $setWindowFields: {
-      sortBy: { t: 1 },
-      output: { "__jsmql.tmp.1": { $max: { $cond: ["$ok", 0, 1] }, window: { documents: ["unbounded", "current"] } } },
-    },
-  };
-
   it("takeWhile keeps the leading run; dropWhile keeps the complement", () => {
     expect(jsmql("$$.toSorted({ t: 1 }).takeWhile(o => o.ok);")).toEqual([
       { $sort: { t: 1 } },
@@ -361,7 +394,8 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
 
   it("takes the same predicate spellings .filter does", () => {
     const arrow = jsmql('$$.sortBy("t").takeWhile(o => o.ok === true);');
-    expect(jsmql('$$.sortBy("t").takeWhile({ ok: true });')).toEqual([
+    expect(jsmql('$$.sortBy("t").takeWhile({ ok: true });')).toEqual(arrow);
+    expect(arrow).toEqual([
       { $sort: { t: 1 } },
       {
         $setWindowFields: {
@@ -403,12 +437,131 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
       expect(() => jsmql(`$$.${m}(o => o.ok);`), m).toThrow(/toSorted/);
     }
     // A non-sort stage in between is fine — the last $sort still defines the order.
-    expect(() => jsmql('$$.sortBy("t").take(9).takeWhile(o => o.ok);')).not.toThrow();
+    expect(jsmql('$$.sortBy("t").take(9).takeWhile(o => o.ok);')).toEqual([
+      { $sort: { t: 1 } },
+      { $limit: 9 },
+      {
+        $setWindowFields: {
+          sortBy: { t: 1 },
+          output: {
+            "__jsmql.tmp.0": {
+              $max: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: [{ $ifNull: ["$ok", null] }, null] },
+                      { $ne: ["$ok", false] },
+                      { $ne: ["$ok", ""] },
+                      { $ne: ["$ok", 0] },
+                    ],
+                  },
+                  0,
+                  1,
+                ],
+              },
+              window: { documents: ["unbounded", "current"] },
+            },
+          },
+        },
+      },
+      { $match: { "__jsmql.tmp.0": 0 } },
+      { $unset: "__jsmql" },
+    ]);
   });
 
   it("value-mode on a real array is unaffected", () => {
-    expect(jsmql("$.x = $.rows.takeWhile(o => o.ok);")).toBeDefined();
-    expect(jsmql("$.x = $.rows.dropWhile(o => o.ok);")).toBeDefined();
+    expect(jsmql("$.x = $.rows.takeWhile(o => o.ok);")).toEqual([
+      {
+        $set: {
+          x: {
+            $let: {
+              vars: { jsmqlArr: "$rows" },
+              in: {
+                $let: {
+                  vars: {
+                    jsmqlFi: {
+                      $indexOfArray: [
+                        {
+                          $map: {
+                            input: "$$jsmqlArr",
+                            as: "o",
+                            in: {
+                              $cond: [
+                                {
+                                  $and: [
+                                    { $ne: [{ $ifNull: ["$$o.ok", null] }, null] },
+                                    { $ne: ["$$o.ok", false] },
+                                    { $ne: ["$$o.ok", ""] },
+                                    { $ne: ["$$o.ok", 0] },
+                                  ],
+                                },
+                                true,
+                                false,
+                              ],
+                            },
+                          },
+                        },
+                        false,
+                      ],
+                    },
+                  },
+                  in: { $cond: [{ $eq: ["$$jsmqlFi", -1] }, "$$jsmqlArr", { $slice: ["$$jsmqlArr", "$$jsmqlFi"] }] },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    expect(jsmql("$.x = $.rows.dropWhile(o => o.ok);")).toEqual([
+      {
+        $set: {
+          x: {
+            $let: {
+              vars: { jsmqlArr: "$rows" },
+              in: {
+                $let: {
+                  vars: {
+                    jsmqlFi: {
+                      $indexOfArray: [
+                        {
+                          $map: {
+                            input: "$$jsmqlArr",
+                            as: "o",
+                            in: {
+                              $cond: [
+                                {
+                                  $and: [
+                                    { $ne: [{ $ifNull: ["$$o.ok", null] }, null] },
+                                    { $ne: ["$$o.ok", false] },
+                                    { $ne: ["$$o.ok", ""] },
+                                    { $ne: ["$$o.ok", 0] },
+                                  ],
+                                },
+                                true,
+                                false,
+                              ],
+                            },
+                          },
+                        },
+                        false,
+                      ],
+                    },
+                  },
+                  in: {
+                    $cond: [
+                      { $eq: ["$$jsmqlFi", -1] },
+                      [],
+                      { $slice: ["$$jsmqlArr", "$$jsmqlFi", { $size: "$$jsmqlArr" }] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
   });
 });
 
@@ -426,7 +579,6 @@ describe(".sampleSize(n) → $sample", () => {
 
 describe(".sample() → $sample: { size: 1 } — one random document", () => {
   it("zero-arg → sampleSize(1)", () => {
-    expect(jsmql("$$ = $$.sample();")).toEqual([{ $sample: { size: 1 } }]);
     expect(jsmql("$$ = $$.sample();")).toEqual([{ $sample: { size: 1 } }]);
   });
 
@@ -661,7 +813,6 @@ describe("lodash iteratee shorthands on stream methods", () => {
     // field here; a scalar field (for example an ObjectId `userId`) is accepted at compile
     // time (its type is unknown) but errors at runtime — verified against mongod.
     expect(jsmql('$$ = $$.map("address");')).toEqual([{ $replaceWith: "$address" }]);
-    expect(jsmql('$$ = $$.map("address");')).toEqual([{ $replaceWith: "$address" }]);
   });
 
   it("rejects a .map body that provably is not a document ($replaceWith needs an object root)", () => {
@@ -886,11 +1037,11 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
   // plus the `return` whose value becomes each output document. Pipeline stages —
   // `assert(...)`, `$match(...)`, `<coll>.length` — belong to `.aggregate((o) => { … })`
   // against a foreign collection, or to statements on the current stream, with the
-  // reshape written as the root-replace `$ = <expr>`. That is the same lowering the
-  // block form had, so each pair below emits identical MQL (all verified on a live
-  // mongod); the `.map` half of each pair is now rejected.
+  // reshape written as the root-replace `$ = <expr>`. Inside a body over another
+  // collection, `$` is the outer document (HR4), and that document is read-only:
+  // the body writes its own document through the callback parameter.
   describe("a pipeline stage in a `.map` block is rejected, and where it goes instead", () => {
-    it("foreign chain: `.aggregate` runs the guard + reshape inside $lookup.pipeline", () => {
+    it("foreign chain: the `.map` block refuses the stage, and `.aggregate` refuses a write to the outer `$`", () => {
       expect(() =>
         jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {
           assert(o.total > 0, "bad order");
@@ -949,9 +1100,45 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       expect(jsmql(`$$ = $$.map(d => { return { n: $.name }; });`)).toEqual([{ $replaceWith: { n: "$name" } }]);
     });
 
-    it("inside a lookup pivot, a `$.<field>` (root) read in an `.aggregate` block IS captured into the $lookup.let", () => {
-      // The orders lookup correlates on `$._id`; the `.aggregate` block's `$.minTotal`
-      // (the root user doc) is hoisted into the SAME `$lookup.let` as `jsmql_f0_minTotal`.
+    it("inside a lookup pivot, an `.aggregate` block captures a `$.<field>` read into the $lookup.let, and refuses a `$ = …` write", () => {
+      // `$.minTotal` is the outer user document (HR4). A read of it is carried
+      // through the stage's `let`; a write to it is refused, because that document
+      // is read-only inside a body over another collection.
+      expect(
+        jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
+          assert(o.total > $.minTotal, "below min");
+        });`),
+      ).toEqual([
+        {
+          $lookup: {
+            from: "orders",
+            localField: "_id",
+            foreignField: "userId",
+            let: { jsmql_f0_minTotal: "$minTotal" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $convert: {
+                      input: true,
+                      to: {
+                        $cond: [
+                          { $gt: ["$total", "$$jsmql_f0_minTotal"] },
+                          "bool",
+                          "jsmql assertion failed: below min",
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+            as: "__jsmql.tmp.0",
+          },
+        },
+        { $unwind: "$__jsmql.tmp.0" },
+        { $replaceWith: "$__jsmql.tmp.0" },
+      ]);
       expect(() =>
         jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
           assert(o.total > $.minTotal, "below min");
@@ -1115,7 +1302,7 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
     );
   });
 
-  it("one-param arrow is rejected with a 'two-parameter' hint", () => {
+  it("a one-parameter arrow is a key function → ascending $sort", () => {
     expect(jsmql("$$ = $$.toSorted(x => x.age);")).toEqual([{ $sort: { age: 1 } }]);
   });
 
@@ -1160,10 +1347,8 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
   // MEASURED on the project's mongod over ids: [3, 1, 2, null, 0, 2] — lodash's answers:
   // .difference([1, 2]) keeps 3, null, 0; .intersection([1, 2, 9]) keeps one 1 and one 2;
   // .compact().sortBy() answers 1, 2, 2, 3.
-  const UNIQ_IDS = [{ $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } }, { $replaceWith: "$__jsmqlTmp" }];
 
   it(".difference(list) / .without(...values) drop the values, through the filter road — the same MQL as the .filter spelling", () => {
-    const dropped = [{ $unwind: "$ids" }, { $match: { $nor: [{ ids: { $in: [1, 2] } }] } }];
     expect(jsmql('$$.flatMap("ids").difference([1, 2]);')).toEqual([
       { $unwind: "$ids" },
       { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
@@ -1387,13 +1572,13 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
     );
   });
 
-  it("zero-arg body is rejected (no path → not derivable)", () => {
+  it("a constant body is rejected: it names no array field", () => {
     expect(() => jsmql("$$ = $$.flatMap(d => 5);")).toThrow(
       "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind'. This stage takes a field path and nothing else.",
     );
   });
 
-  it("two-param arrow is rejected", () => {
+  it("an unused index parameter is allowed: `(d, i) => d.items` → $unwind", () => {
     expect(jsmql("$$ = $$.flatMap((d, i) => d.items);")).toEqual([{ $unwind: "$items" }]);
   });
 });
@@ -1761,7 +1946,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
     );
   });
 
-  it("`$.<field>` inside the condition is rejected — must use the lambda parameter", () => {
+  it("`$.<field>` inside the condition reads the stream document (HR4), as the parameter does", () => {
     expect(jsmql("$$ = $$.reduce((acc, d) => ($.active ? acc.concat(d.contactDetails) : acc), []);")).toEqual([
       {
         $match: {
@@ -1801,16 +1986,6 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
   });
 
   it("the key-less .countBy() / .groupBy() / .keyBy() key on the element itself, as lodash's identity default does", () => {
-    const collapse = (acc: Record<string, unknown>) => [
-      { $group: { _id: "$$ROOT", __jsmqlTmp: acc } },
-      {
-        $group: {
-          _id: null,
-          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
-        },
-      },
-      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
-    ];
     expect(jsmql("$$.countBy();")).toEqual([
       { $group: { _id: "$$ROOT", __jsmqlTmp: { $sum: 1 } } },
       {
@@ -1925,7 +2100,6 @@ describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<c
     const chained = jsmql("$$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));");
     const split = jsmql("$$.filter(o => o.tier === 'gold'); $$.map(d => ({ id: d._id }));");
     const assigned = jsmql("$$ = $$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));");
-    const expected = [{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }];
     expect(chained).toEqual([{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }]);
     expect(split).toEqual([{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }]);
     expect(assigned).toEqual([{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }]);
@@ -1934,7 +2108,6 @@ describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<c
   it("a descending sort is written directly, not as sort-then-reverse", () => {
     // `.toReversed()` is gone from streams, so the descending comparator IS the
     // spelling — and it was always the shorter one for the same single `$sort`.
-    const expected = [{ $sort: { age: -1 } }];
     expect(jsmql("$$.toSorted((a, b) => b.age - a.age);")).toEqual([{ $sort: { age: -1 } }]);
     expect(jsmql("$$ = $$.toSorted({ age: -1 });")).toEqual([{ $sort: { age: -1 } }]);
     expect(jsmql('$$.orderBy("age", -1);')).toEqual([{ $sort: { age: -1 } }]);
@@ -1970,11 +2143,28 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     });
   }
 
-  it(".groupBy(<arrow>) still gets the collapsing $first unwrap the string form gets", () => {
+  it(".groupBy(<arrow>) gets the same collapse and $first unwrap as the string form", () => {
     // `.groupBy`'s stream cell is the same collapse whichever spelling names the key
     // (src/registry/names.ts), so the arrow form gathers into one object like the string one.
-    const stages = jsmql(`$.o = $$$.orders.groupBy(d => d.cat);`) as object[];
-    expect(JSON.stringify(stages)).toContain("$arrayToObject");
+    expect(jsmql(`$.o = $$$.orders.groupBy(d => d.cat);`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [
+            { $group: { _id: "$cat", __jsmqlTmp: { $push: "$$ROOT" } } },
+            {
+              $group: {
+                _id: null,
+                __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+              },
+            },
+            { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+          ],
+          as: "o",
+        },
+      },
+      { $set: { o: { $ifNull: [{ $first: "$o" }, {}] } } },
+    ]);
   });
 
   it(".groupBy({ _id, … }) stays the $group-body form, NOT a matches-shorthand key", () => {
@@ -2043,21 +2233,111 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     ]);
   });
 
-  it("a plain field key still emits byte-identically after the computed-key change", () => {
-    // A plain field key reads straight to its path, so expression support for the
-    // key cannot perturb the overwhelmingly common spelling.
-    for (const m of ["groupBy", "countBy", "keyBy", "uniqBy"]) {
-      expect(JSON.stringify(jsmql(`$$ = $$.${m}("cat");`)), m).toContain(`"_id":"$cat"`);
-    }
+  it("a plain field key reads straight to its path in $group._id", () => {
+    // Expression support for the key does not change the common spelling.
+    expect(jsmql(`$$ = $$.groupBy("cat");`)).toEqual([
+      { $group: { _id: "$cat", __jsmqlTmp: { $push: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql(`$$ = $$.countBy("cat");`)).toEqual([
+      { $group: { _id: "$cat", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql(`$$ = $$.keyBy("cat");`)).toEqual([
+      { $group: { _id: "$cat", __jsmqlTmp: { $last: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(jsmql(`$$ = $$.uniqBy("cat");`)).toEqual([
+      { $group: { _id: "$cat", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+    ]);
   });
 
-  it(".groupBy(<computed>) still collapses — the unwrap follows the key FORM, not its spelling", () => {
+  it(".groupBy(<computed>) collapses too — the unwrap follows the key FORM, not its spelling", () => {
     // The collapse is the row's `collapses` fact (src/registry/names.ts), which every
     // key spelling shares; only the raw `$group`-body form `{ _id: … }` keeps a stream.
-    // So a new key spelling collapses like the ones before it.
-    for (const key of [`"cat"`, `d => d.cat`, `d => d.cat.toLowerCase()`]) {
-      expect(JSON.stringify(jsmql(`$.o = $$$.orders.groupBy(${key});`)), key).toContain("$arrayToObject");
-    }
+    expect(jsmql(`$.o = $$$.orders.groupBy("cat");`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [
+            { $group: { _id: "$cat", __jsmqlTmp: { $push: "$$ROOT" } } },
+            {
+              $group: {
+                _id: null,
+                __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+              },
+            },
+            { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+          ],
+          as: "o",
+        },
+      },
+      { $set: { o: { $ifNull: [{ $first: "$o" }, {}] } } },
+    ]);
+    expect(jsmql(`$.o = $$$.orders.groupBy(d => d.cat);`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [
+            { $group: { _id: "$cat", __jsmqlTmp: { $push: "$$ROOT" } } },
+            {
+              $group: {
+                _id: null,
+                __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+              },
+            },
+            { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+          ],
+          as: "o",
+        },
+      },
+      { $set: { o: { $ifNull: [{ $first: "$o" }, {}] } } },
+    ]);
+    expect(jsmql(`$.o = $$$.orders.groupBy(d => d.cat.toLowerCase());`)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [
+            {
+              $group: {
+                _id: {
+                  $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
+                },
+                __jsmqlTmp: { $push: "$$ROOT" },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+              },
+            },
+            { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+          ],
+          as: "o",
+        },
+      },
+      { $set: { o: { $ifNull: [{ $first: "$o" }, {}] } } },
+    ]);
     expect(jsmql(`$$ = $$.groupBy({ _id: "$cat" });`)).toEqual([{ $group: { _id: "$cat" } }]);
   });
 

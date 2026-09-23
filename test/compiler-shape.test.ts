@@ -1,14 +1,12 @@
 // Phase 4 of src/compiler/ — which document a program becomes.
 //
-// This pass asks the ROW rather than stacking auto-wrap special cases. The second
-// suite below holds it to the emitted document. It compares every input the test
-// suite feeds the compiler with the document it returns.
+// This pass asks the ROW rather than stacking auto-wrap special cases. Each case
+// below states the shape by hand. The entries of src/index.ts pick their output
+// with this same pass, so a comparison with `jsmql(src)` would check the pass
+// against itself.
 
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
-import { jsmql } from "../src/index.ts";
 import { parse } from "../src/compiler/parse/parser.ts";
-import { desugar } from "../src/compiler/passes/desugar.ts";
 import { shapeOf } from "../src/compiler/passes/shape.ts";
 
 // The shape is read off the PARSED program: an entry picks the desugar root from it, and the
@@ -95,61 +93,5 @@ describe("compiler/passes/shape — a bracketed literal is decided by its first 
     // One of the two readings has to win before the rest can be checked: the
     // compiler refuses `$match` here for not being an expression.
     expect(shape("[1, $match($.a > 1)]")).toBe("filter");
-  });
-});
-
-// ── the whole-corpus check ───────────────────────────────────────────────────
-
-/** Every source the test suite feeds the compiler. */
-function corpus(): string[] {
-  const found = new Set<string>();
-  const dir = new URL(".", import.meta.url).pathname;
-  for (const file of readdirSync(dir).filter((f) => f.endsWith(".test.ts"))) {
-    const src = readFileSync(dir + file, "utf8");
-    for (const m of src.matchAll(
-      /\b(?:jsmql(?:\.\w+)?|expr|filter|pipeline|update|compiled|applied|unordered)\(\s*(["'])((?:\\.|(?!\1)[^\\])*)\1/g,
-    )) {
-      const s = m[2].replace(/\\(['"\\])/g, "$1").replace(/\\n/g, "\n");
-      if (s.length > 0 && s.length < 400) found.add(s);
-    }
-  }
-  return [...found];
-}
-
-/**
- * A program that STARTS with a binding, which folding may remove before the
- * emitted document is decided.
- *
- * `const a = 1; $.x === a` compiles to `{ "x": 1 }`: the value is a compile-time
- * constant, so it is inlined and one expression is left. `let` folds too — it is
- * the VALUE that has to be constant, not the keyword. This pass runs BEFORE any
- * folding, so it answers pipeline, and a binding that does not fold really is
- * one: `let a = $.n; $.x === a` is a pipeline either way, which is why it never
- * reaches this list.
- */
-const startsWithABinding = (src: string): boolean => /^\s*(?:const|let)\s/.test(src) && src.includes(";");
-
-describe("compiler/passes/shape — agrees with the document the compiler returns", () => {
-  it("gives the same answer for every input the suite compiles", () => {
-    const differ: string[] = [];
-    let compared = 0;
-    for (const src of corpus()) {
-      let actual: string;
-      try {
-        actual = Array.isArray(jsmql(src)) ? "pipeline" : "filter";
-      } catch {
-        continue; // an input the compiler refuses says nothing about shape
-      }
-      let mine: string;
-      try {
-        mine = shape(src);
-      } catch {
-        continue; // an input the parser refuses is the parser suite's business
-      }
-      compared++;
-      if (mine !== actual && !startsWithABinding(src)) differ.push(`${mine} vs ${actual}: ${src.slice(0, 70)}`);
-    }
-    expect(compared).toBeGreaterThan(400);
-    expect(differ).toEqual([]);
   });
 });

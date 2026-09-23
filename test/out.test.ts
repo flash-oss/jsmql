@@ -167,7 +167,7 @@ describe("$out — RHS shape errors", () => {
     );
   });
 
-  it("`$.<field>` inside a $$.filter on the RHS is rejected with a 'use the lambda param' hint", () => {
+  it("`$.<field>` inside a $$.filter on the RHS reads the same document as the lambda param", () => {
     expect(jsmql("$$$.coll = $$.filter(o => o.x === $.threshold);")).toEqual([
       { $match: { $expr: { $eq: ["$x", "$threshold"] } } },
       { $out: "coll" },
@@ -222,7 +222,7 @@ describe("$out — .reject is .filter negated", () => {
 
   it("emits exactly what the same .reject emits in a `$$ =` chain", () => {
     expect(jsmql("$$$.live = $$.reject({ archived: true });")).toEqual([
-      { $match: { $nor: [{ archived: true }] } },
+      ...(jsmql("$$ = $$.reject({ archived: true });") as unknown[]),
       { $out: "live" },
     ]);
   });
@@ -329,11 +329,9 @@ describe("$out RHS accepts chained stage calls", () => {
 
   // Same stages, whichever way they are written.
   it("is identical to writing the stages as statements before the write", () => {
-    expect(jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });')).toEqual([
-      { $match: { s: "x" } },
-      { $sort: { a: -1 } },
-      { $out: "archive" },
-    ]);
+    const chain = jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });');
+    expect(chain).toEqual([{ $match: { s: "x" } }, { $sort: { a: -1 } }, { $out: "archive" }]);
+    expect(chain).toEqual(jsmql('$match({ s: "x" }); $sort({ a: -1 }); $$$.archive = $$;'));
   });
 
   it("carries the cross-database write destination", () => {

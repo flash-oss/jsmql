@@ -137,20 +137,35 @@ describe("compiler/emit/select — the table audits", () => {
       ? []
       : (Array.isArray(row.on) ? row.on : [row.on as string]).filter((f) => FIELD.includes(f));
 
-  it("dispatches an unprovable receiver exactly on the rows with two or more field families", () => {
+  it("dispatches an unprovable receiver exactly on the rows with two or more runtime tests", () => {
+    // A `$switch` tells apart only what `$type` tells apart: `set` and `array` share
+    // one guard, so a row on both families has one runtime test, not two.
+    const tests = (row: Row): number =>
+      new Set(fieldFamilies(row).map((f) => JSON.stringify(guardFor(f as FieldFamily)("$$v")))).size;
+    // Each row is probed with the first argument count it accepts, so a row that
+    // takes an argument is audited too, not passed as a count refusal.
+    const probes = [
+      { shape: { kind: "none" }, n: 0 },
+      { shape: { kind: "dynamic" }, n: 1 },
+      { shape: { kind: "multiple" }, n: 2 },
+      { shape: { kind: "multiple" }, n: 3 },
+    ] as const;
     const wrong: string[] = [];
+    let audited = 0;
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "name" || !(typeof row.expr === "object" && row.expr !== null && "perFamily" in row.expr))
         continue;
-      const r = select(consult(name, "value"), OPAQUE, { kind: "none" }, 0);
-      const expectDispatch = fieldFamilies(row).length >= 2;
-      const isDispatch = r.kind === "dispatch";
-      // a count refusal is a legitimate non-dispatch answer for a zero-argument probe
-      if (expectDispatch !== isDispatch && r.kind !== "wrongCount" && r.kind !== "rejectedCount") {
-        wrong.push(`${name}: ${r.kind}`);
+      const answers = probes.map(({ shape, n }) => select(consult(name, "value"), OPAQUE, shape, n));
+      const r = answers.find((a) => a.kind !== "wrongCount" && a.kind !== "rejectedCount");
+      if (r === undefined) {
+        wrong.push(`${name}: refuses every argument count from 0 to 3`);
+        continue;
       }
+      audited++;
+      if (tests(row) >= 2 !== (r.kind === "dispatch")) wrong.push(`${name}: ${r.kind}`);
     }
     expect(wrong).toEqual([]);
+    expect(audited).toBeGreaterThanOrEqual(20);
   });
 
   it("holds a guard for every field family — the type keeps the table complete", () => {

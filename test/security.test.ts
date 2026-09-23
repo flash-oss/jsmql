@@ -80,7 +80,7 @@ describe("recursion depth limits", () => {
   });
   it("typical-depth expressions still compile", () => {
     const src = "(".repeat(40) + "$.a > 1" + ")".repeat(40);
-    expect(() => jsmql(src)).not.toThrow();
+    expect(jsmql(src)).toEqual({ a: { $gt: 1 } });
   });
 });
 

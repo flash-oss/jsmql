@@ -17,7 +17,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection, type Db } from "mongodb";
 import { expr, pipeline } from "../src/compiler/index.ts";
-import { liveClient } from "./fixtures/live.ts";
+import { liveClient, liveUp } from "./fixtures/live.ts";
+
+/** Is the project's mongod running? Settled once, for the blocks that need it. */
+const up = await liveUp();
 
 const USERS = [
   { _id: 1, tag: "x", ids: [101, 103], minTotal: 6, wants: [2, 9] },
@@ -111,17 +114,6 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
           as: "o",
         },
       },
-    ]);
-    // the equality has to OPEN the body: after a sort and a cut it is a `$match` in place
-    expect(
-      compiled('$.top = $$$.orders.toSorted("total").take(2).filter(o => o.userId === $._id);', [
-        { _id: 1, top: [] },
-        { _id: 2, top: [103] },
-        { _id: 3, top: [] },
-        { _id: 4, top: [] },
-      ]),
-    ).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [{ $sort: { total: 1 } }, { $limit: 2 }, byUser], as: "top" } },
     ]);
   });
 
@@ -248,7 +240,8 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
 describe("compiler/emit/join — the chain peels into the body, the rest reads the value", () => {
   it("puts stream links inside the `$lookup.pipeline`, in source order", () => {
     expect(
-      // the two cheapest orders are 103 and 104, and only then is the owner tested
+      // the two cheapest orders are 103 and 104, and only then is the owner tested: the
+      // equality does not OPEN the body, so it is a `$match` in place and not the pair
       compiled('$.top = $$$.orders.toSorted("total").take(2).filter(o => o.userId === $._id);', [
         { _id: 1, top: [] },
         { _id: 2, top: [103] },
@@ -886,27 +879,22 @@ afterAll(async () => {
 
 /**
  * A result document with its joined values reduced to ids, so expectations stay
- * readable: a top-level document keeps its `_id` and the fields the pipeline
- * added; a joined document is its id alone unless the body added fields to it.
+ * readable: a document keeps its `_id` and every field that differs from the
+ * fixture document with that `_id` (a field the pipeline added or wrote); a
+ * joined document is its id alone when no field differs.
  */
-const FIXTURE_KEYS = new Set([
-  "userId",
-  "total",
-  "status",
-  "tag",
-  "nul",
-  "orderId",
-  "q",
-  "ids",
-  "minTotal",
-  "wants",
-  "productIds",
-]);
+const FIXTURE = new Map<unknown, Record<string, unknown>>(
+  [...USERS, ...ORDERS, ...ITEMS, { _id: 9, userId: 1 }].map((d) => [d._id, d]),
+);
+const asFixture = (d: Record<string, unknown>, k: string): boolean => {
+  const f = FIXTURE.get(d._id);
+  return f !== undefined && k in f && JSON.stringify(f[k]) === JSON.stringify(d[k]);
+};
 const idsOf = (v: unknown, top: boolean): unknown => {
   if (Array.isArray(v)) return v.map((x) => idsOf(x, false));
   if (v !== null && typeof v === "object" && "_id" in v) {
     const d = v as Record<string, unknown>;
-    const added = Object.entries(d).filter(([k]) => k !== "_id" && !FIXTURE_KEYS.has(k));
+    const added = Object.entries(d).filter(([k]) => k !== "_id" && !asFixture(d, k));
     if (!top && added.length === 0) return d._id;
     return { _id: d._id, ...Object.fromEntries(added.map(([k, x]) => [k, idsOf(x, false)])) };
   }
@@ -923,10 +911,9 @@ const canonical = (v: unknown): string =>
 
 describe("compiler/emit/join — the server runs every pipeline this file asserts, and answers as JavaScript would", () => {
   it("ran each one, or none", async () => {
-    if (coll === null) {
-      expect(RUNS.length).toBeGreaterThan(0);
-      return;
-    }
+    // The cases above register their sources whether a server runs or not.
+    expect(RUNS.length).toBeGreaterThan(0);
+    if (coll === null) return;
     const problems: string[] = [];
     for (const { src, expected } of RUNS) {
       let docs: Record<string, unknown>[];
@@ -946,13 +933,12 @@ describe("compiler/emit/join — the server runs every pipeline this file assert
   });
 });
 
-describe("compiler/emit/join — the pair is answered from the foreign index", () => {
+describe.skipIf(!up)("compiler/emit/join — the pair is answered from the foreign index", () => {
   it("answers the pair from the multikey index when either side is an array", async () => {
-    if (coll === null) return;
     const stages = pipeline(
       "const ids = $.wants; $.o = $$$.orders.filter({ productIds: ids }).toSorted({ total: -1 }).take(100);",
     ) as Record<string, unknown>[];
-    const plan = await coll.aggregate(stages).explain("executionStats");
+    const plan = await coll!.aggregate(stages).explain("executionStats");
     const lookup = (plan.stages as Record<string, unknown>[]).find((s) => "$lookup" in s) as {
       indexesUsed: string[];
       collectionScans: number;

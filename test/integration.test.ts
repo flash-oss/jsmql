@@ -8,9 +8,11 @@
 // the dataset implies. The expected values were derived from a live run, not
 // guessed (see HR3 in docs/LANG_RULES.md and test/fixtures/CLAUDE.md).
 //
-// The suite skips itself unless the fixture instance is up and seeded with the
-// current dataset, so `npm test` stays green for contributors who have not run
-// `npm run fixture:up`. To run it: `npm run fixture:up && npm test`.
+// The suite skips itself only when no server answers on the fixture port, so
+// `npm test` stays green for contributors who have not run `npm run fixture:up`.
+// A server that refuses the read-only user, or holds a stale dataset, fails the
+// file instead (see fixtureReady() in test/fixtures/client.ts).
+// To run it: `npm run fixture:up && npm test`.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
@@ -21,7 +23,7 @@ import { assertIntegrity, connectReadOnly, fixtureReady } from "./fixtures/clien
 const ready = await fixtureReady();
 if (!ready) {
   console.warn(
-    "\n[integration] fixture instance not reachable/seeded — skipping integration tests." +
+    "\n[integration] fixture instance not reachable — skipping integration tests." +
       '\n[integration] Run "npm run fixture:up" to start the dedicated :27018 mongod and seed it.\n',
   );
 }

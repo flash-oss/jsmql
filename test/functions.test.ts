@@ -35,7 +35,7 @@ describe("reusable functions — declaration + call", () => {
     ]);
   });
 
-  it("zero-param function lowers to an empty-vars $let (server-valid, like a 0-arg IIFE)", () => {
+  it("a zero-param function binds nothing, so no $let wraps its body", () => {
     expect(jsmql("const pi = () => 3.14; $ = { x: pi() };")).toEqual([{ $replaceWith: { x: 3.14 } }]);
   });
 
@@ -138,7 +138,7 @@ describe("reusable functions — output stability", () => {
     // Byte-identical to the same pipeline without the declaration: a function
     // declaration is erased unless called.
     expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual([{ $set: { y: { $add: ["$z", 1] } } }]);
-    expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual([{ $set: { y: { $add: ["$z", 1] } } }]);
+    expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual(jsmql("$.y = $.z + 1;"));
   });
 
   it("works as a bracketed-pipeline element", () => {
@@ -277,18 +277,6 @@ describe("reusable functions — review-driven hardening", () => {
     ]);
   });
 
-  it("a `function`-keyword declaration lowers identically to the `const = arrow` form (DEF-030 success criteria)", () => {
-    const fnForm = jsmql("function double(x) { return x * 2 } $ = { a: double($.price) };");
-    const arrowForm = jsmql("const double = (x) => x * 2; $ = { a: double($.price) };");
-    expect(fnForm).toEqual([
-      { $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } },
-    ]);
-    // …and the self-terminating form (no `;` after `}`) is valid too.
-    expect(jsmql("function double(x) { return x * 2 } $ = { a: double($.price) }")).toEqual([
-      { $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } },
-    ]);
-  });
-
   it("a reusable function passed as a bare array-method callback names it and suggests the wrap", () => {
     expect(() => jsmql("const double = (x) => x * 2; $ = { a: $.items.map(double) };")).toThrow(
       "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
@@ -309,9 +297,9 @@ describe("reusable functions — review-driven hardening", () => {
 describe("`function` keyword — parity with the arrow form", () => {
   it("declaration form lowers identically to `const f = (x) => …`", () => {
     const arrow = jsmql("const double = (x) => x * 2; $ = { a: double($.price) };");
-    expect(jsmql("function double(x) { return x * 2 } $ = { a: double($.price) };")).toEqual([
-      { $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } },
-    ]);
+    const fn = jsmql("function double(x) { return x * 2 } $ = { a: double($.price) };");
+    expect(fn).toEqual([{ $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } }]);
+    expect(fn).toEqual(arrow);
   });
 
   it("is self-terminating — no `;` needed after the closing `}`", () => {
@@ -320,6 +308,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(noSemi).toEqual([
       { $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } },
     ]);
+    expect(noSemi).toEqual(withSemi);
   });
 
   it("a self-terminating chain of declarations composes", () => {
@@ -337,42 +326,48 @@ describe("`function` keyword — parity with the arrow form", () => {
         },
       },
     ]);
+    expect(fn).toEqual(arrow);
   });
 
   it("an anonymous `function` expression works as an inline `.map` callback", () => {
     const arrow = jsmql.expr("$.items.map((x) => x * 2)");
-    expect(jsmql.expr("$.items.map(function (x) { return x * 2 })")).toEqual({
-      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
-    });
+    const fn = jsmql.expr("$.items.map(function (x) { return x * 2 })");
+    expect(fn).toEqual({ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } });
+    expect(fn).toEqual(arrow);
   });
 
   it("a NAMED `function` expression callback ignores the name", () => {
     const anon = jsmql.expr("$.items.map(function (x) { return x * 2 })");
-    expect(jsmql.expr("$.items.map(function scale(x) { return x * 2 })")).toEqual({
-      $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } },
-    });
+    const named = jsmql.expr("$.items.map(function scale(x) { return x * 2 })");
+    expect(named).toEqual({ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } });
+    expect(named).toEqual(anon);
   });
 
   it("a `function` body with local `const`/`let` lowers to nested `$let` (≡ block-body arrow)", () => {
     const arrow = jsmql.expr("$.items.map((x) => { const y = x + 1; return y * 2 })");
-    expect(jsmql.expr("$.items.map(function (x) { const y = x + 1; return y * 2 })")).toEqual({
+    const fn = jsmql.expr("$.items.map(function (x) { const y = x + 1; return y * 2 })");
+    expect(fn).toEqual({
       $map: {
         input: "$items",
         as: "x",
         in: { $let: { vars: { y: { $add: ["$$x", 1] } }, in: { $multiply: ["$$y", 2] } } },
       },
     });
+    expect(fn).toEqual(arrow);
   });
 
-  it("a parenthesised `function` IIFE lowers to `$let` (≡ the arrow IIFE)", () => {
+  it("a parenthesised `function` IIFE over a constant folds to the value the arrow IIFE folds to", () => {
     const arrow = jsmql.expr("((x) => x * 2)(5)");
-    expect(jsmql.expr("(function (x) { return x * 2 })(5)")).toEqual(10);
+    const fn = jsmql.expr("(function (x) { return x * 2 })(5)");
+    expect(fn).toEqual(10);
+    expect(fn).toEqual(arrow);
   });
 
   it("`function` declaration works as a bracketed-pipeline element", () => {
     const fn = jsmql("[ function double(x) { return x * 2 }, $set({ a: double($.price) }) ]");
     const arrow = jsmql("[ const double = (x) => x * 2, $set({ a: double($.price) }) ]");
     expect(fn).toEqual([{ $set: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } }]);
+    expect(fn).toEqual(arrow);
   });
 
   it("works inside a `$$$.<coll>.find` predicate (expression body) like an arrow", () => {
@@ -403,14 +398,15 @@ describe("`function` keyword — parity with the arrow form", () => {
       { $set: { "__jsmql.var.tags": { $first: "$__jsmql.var.tags" } } },
       { $replaceWith: { tags: "$__jsmql.var.tags" } },
     ]);
+    expect(fn).toEqual(arrow);
   });
 
   it("entry form `jsmql(function ({ $ }) { return … })` lowers like the arrow entry", () => {
-    expect(
-      jsmql(function ({ $ }) {
-        return $.age >= 18;
-      }),
-    ).toEqual({ age: { $gte: 18 } });
+    const fn = jsmql(function ({ $ }) {
+      return $.age >= 18;
+    });
+    expect(fn).toEqual({ age: { $gte: 18 } });
+    expect(fn).toEqual(jsmql(({ $ }) => $.age >= 18));
   });
 
   it("`jsmql.compile(function (params, { $ }) { return … })` lowers like the arrow compile form", () => {
@@ -419,6 +415,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     });
     const arrow = jsmql.compile(({ min }, { $ }) => $.age >= min);
     expect(fn({ min: 21 })).toEqual({ age: { $gte: 21 } });
+    expect(fn({ min: 21 })).toEqual(arrow({ min: 21 }));
   });
 
   // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). Every
@@ -474,7 +471,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(() => jsmql("async function f(x) { return x } $.a = f($.n);")).toThrow(
       /jsmql does not support async functions/,
     );
-    expect(() => jsmql("let async = 1; $.a = async;")).not.toThrow();
+    expect(jsmql("let async = 1; $.a = async;")).toEqual([{ $set: { a: 1 } }]);
   });
 
   it("`function` is not a reserved keyword — object keys and field paths keep working", () => {
@@ -499,6 +496,39 @@ describe("compile params resolve inside every higher-order callback", () => {
 
   it("resolves a param inside .groupBy", () => {
     const build = jsmql.expr.compile<{ k: string }>(({ k }, { $ }) => $.items.groupBy((x) => x[k]));
-    expect(JSON.stringify(build({ k: "t" }))).toContain('"t"');
+    expect(build({ k: "t" })).toEqual({
+      $arrayToObject: {
+        $map: {
+          input: {
+            $setUnion: [
+              {
+                $map: {
+                  input: "$items",
+                  as: "x",
+                  in: { $ifNull: [{ $toString: { $getField: { field: "t", input: "$$x" } } }, "null"] },
+                },
+              },
+              [],
+            ],
+          },
+          as: "jsmqlKey",
+          in: {
+            k: "$$jsmqlKey",
+            v: {
+              $filter: {
+                input: "$items",
+                as: "x",
+                cond: {
+                  $eq: [
+                    { $ifNull: [{ $toString: { $getField: { field: "t", input: "$$x" } } }, "null"] },
+                    "$$jsmqlKey",
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 });
