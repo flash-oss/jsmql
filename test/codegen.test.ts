@@ -7631,7 +7631,20 @@ describe("in operator RHS validation", () => {
     });
   });
   it("accepts field ref RHS", () => {
-    expect(jsmql.expr("$.x in $.list")).toEqual({ $in: ["$x", "$list"] });
+    // a right side the proof cannot place is an object, and `in` tests its keys
+    expect(jsmql.expr("$.x in $.list")).toEqual({
+      $in: [
+        { $toString: "$x" },
+        { $map: { input: { $objectToArray: { $ifNull: ["$list", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+      ],
+    });
+    expect(jsmql.expr('"k" in $.o')).toEqual({
+      $ne: [{ $type: { $getField: { field: "k", input: "$o" } } }, "missing"],
+    });
+    // a PROVEN array has only indexes for keys, which no query asks for
+    expect(() => jsmql("$.arr = $.tags.uniq(); $.b = 2 in $.arr;")).toThrow(
+      "'in' tests a key of an object, and the value on its right is an array. For membership, write '<array>.has(x)'; for a bound on the count, write '<array>.size() > n'.",
+    );
   });
 });
 

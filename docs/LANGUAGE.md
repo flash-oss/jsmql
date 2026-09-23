@@ -1505,10 +1505,10 @@ The error for non-null `==`:
 The `$match` column reads the field's **own** value (see [No semicolons → Filter](#no-semicolons--filter)). An equality excludes an array field. A negation (`!==`, `!= null`) is a two-branch `$or`, because an array field is *not equal* to the literal in JavaScript and must match.
 
 **`in` operator semantics:**
-- Array on the right → value membership: `$.x in [1, 2, 3]` is true when `$.x` equals 1, 2, or 3. *(JavaScript itself tests index existence here. JSMQL uses value membership instead, because that is what a MongoDB query needs.)*
-- Object literal on the right → property existence (JS-faithful): `$.x in { a, b }` is true when `$.x` equals `"a"` or `"b"`. JSMQL supports computed keys and `...spread`. It reads spread keys at run time through `$objectToArray`.
-- Field reference on the right → array membership against the field's value (JSMQL assumes the field holds an array at query time).
-- Scalar literal on the right → codegen error (JSMQL has no useful reading for this).
+- A list spelled in the source on the right → value membership, MongoDB's own `$in`: `$.x in [1, 2, 3]` is true when `$.x` equals 1, 2, or 3, and in a filter it is `{ x: { $in: [1, 2, 3] } }`. *(JavaScript itself tests index existence here.)*
+- An object literal on the right → key existence, as in JavaScript: `$.x in { a, b }` is true when `$.x` equals `"a"` or `"b"`. JSMQL supports computed keys and `...spread`, and reads spread keys at run time through `$objectToArray`.
+- Any other value on the right → the key test on an object. `"k" in $.o` reads the field: `{ $ne: [{ $type: { $getField: { field: "k", input: "$o" } } }, "missing"] }`, and in a filter `{ "o.k": { $exists: true } }`. A computed key is searched among the object's keys, and a missing object has none (HR5). A value the compiler has PROVEN to be an array is refused, because an array's keys are its indexes: for membership write `.has(x)`, for a bound on the count `.size() > n`.
+- A scalar literal on the right → a compile-time error (JSMQL has no useful reading for this).
 
 ### Logical
 

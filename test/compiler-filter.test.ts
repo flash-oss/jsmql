@@ -58,7 +58,17 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
     expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
-    expect(filter("$.a in $.list")).toEqual({ $expr: { $in: ["$a", "$list"] } });
+    // `in` on a value the proof cannot place is the key test, which has no query form for a computed key
+    expect(filter("$.a in $.list")).toEqual({
+      $expr: {
+        $in: [
+          { $toString: "$a" },
+          { $map: { input: { $objectToArray: { $ifNull: ["$list", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+        ],
+      },
+    });
+    // a literal key on a path is the field's own existence
+    expect(filter('"k" in $.o')).toEqual({ "o.k": { $exists: true } });
     // `.size()` counts the elements of an array. The query language has no operator for a
     // count, so the comparison stays under `$expr`; a missing array reads as empty.
     expect(filter("$.arr.size() > 2")).toEqual({ $expr: { $gt: [{ $size: { $ifNull: ["$arr", []] } }, 2] } });

@@ -915,7 +915,7 @@ const candidateProductIdCounts = $$$.orders
 const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
 
 const candidateProducts = $$$.products
-  .filter(pr => pr._id in candidateProductIds)
+  .filter(pr => candidateProductIds.has(pr._id))
   .$limit(500);
 
 $$ = candidateProductIds

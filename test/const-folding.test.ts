@@ -285,7 +285,7 @@ describe("const folding — native method calls", () => {
   });
 
   it("a callback that reads $ makes the whole call non-constant → runtime binding", () => {
-    expect(jsmql("const m = [1, 2, 3].map(x => x + $.offset); $match($.v in m)")).toEqual([
+    expect(jsmql("const m = [1, 2, 3].map(x => x + $.offset); $match(m.has($.v))")).toEqual([
       { $set: { "__jsmql.var.m": { $map: { input: [1, 2, 3], as: "x", in: { $add: ["$$x", "$offset"] } } } } },
       { $match: { $expr: { $in: ["$v", "$__jsmql.var.m"] } } },
       { $unset: "__jsmql" },

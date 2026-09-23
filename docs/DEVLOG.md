@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-24 — fix: `key in obj` tests a key of the object, as JavaScript's `in` does
+
+`"k" in $.o` emitted `{ $in: ["k", "$o"] }`, MongoDB's array membership, and the
+server aborted on an object ("$in requires an array as a second argument"). The
+right side of `in` is now read for what it is. A list spelled in the source keeps
+MongoDB's `$in`, the spelling every query document uses: `$.x in [1, 2, 3]` is
+`{ x: { $in: [1, 2, 3] } }`. An object literal keeps its key list. Every other value
+is an object, and `in` tests its keys: a literal key reads the field itself
+(`$getField` answers missing for a key that is not there, and the filter road writes
+`{ "o.k": { $exists: true } }`), and a computed key is searched among the object's
+keys, which HR5 reads as `{}` when the object is missing. A value the tracker has
+proven to be an array is refused, because an array's keys are its indexes and no
+query asks for those; the message names `.has(x)` and `.size() > n`.
+
+---
+
 ## 2026-09-24 — feat!: HR5 — a dot runs the method on an empty collection, a `?.` gives null
 
 A method on a receiver that is null or missing answered four different things:

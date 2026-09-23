@@ -1182,7 +1182,30 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
     flush();
     return { $in: [lowerValue(left, env), operands.length === 1 ? operands[0] : { $concatArrays: operands }] };
   }
-  return { $in: [lowerValue(left, env), lowerValue(right, env)] };
+  // `x in [ … ]` — a LIST spelled in the source is MongoDB's own `$in`: value membership,
+  // the spelling every query document reads. See docs/LANGUAGE.md § Comparison.
+  if (right.type === "ArrayLiteral") return { $in: [lowerValue(left, env), lowerValue(right, env)] };
+  // `key in obj` — JavaScript's key test. An array VALUE on the right has only its indexes
+  // for keys, which no query asks for, so a PROVEN array is refused and the message names
+  // `.has(x)`. A literal string key reads the field itself: `$getField` answers missing
+  // for a key that is not there, and `null` for one that holds null, as `in` does. Any
+  // other key is searched among the object's keys, which HR5 reads as `{}` when the
+  // object is missing. A right side the proof cannot place is an object, and the
+  // server judges an array.
+  const t = typeOf(right, env);
+  if (isOnly(t, "array")) throw E.inOnArray(node.pos);
+  const obj = lowerValue(right, env);
+  if (left.type === "StringLiteral") {
+    return { $ne: [{ $type: { $getField: { field: left.value, input: obj } } }, "missing"] };
+  }
+  const key = lowerValue(left, env);
+  const kv = env.fresh("kv");
+  return {
+    $in: [
+      kindOf(left, env) === "string" ? key : { $toString: key },
+      { $map: { input: { $objectToArray: ifNull(obj, {}) }, as: kv.as, in: `${kv.ref}.k` } },
+    ],
+  };
 }
 
 // ── blocks ───────────────────────────────────────────────────────────────────
