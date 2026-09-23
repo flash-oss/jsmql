@@ -127,7 +127,7 @@ proof. A raw `$lookup` stage, and each `$facet` key, fold their own `pipeline`
 the same way.
 
 ```js
-const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.includes("x");
+const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.has("x");
 // → [{ $lookup: { from: "orders", pipeline: [{ $match: { status: "a" } }], as: "__jsmql.tmp.0" } }, { $set: { "__jsmql.var.ids": { $setUnion: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.pid" } } } } }, { $set: { hit: { $in: ["x", "$__jsmql.var.ids"] } } }, { $unset: "__jsmql" }]
 $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price ? 1 : 2;   // `price` was not kept: certainly missing
 // → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: 2 } }]
@@ -266,7 +266,7 @@ inside one BSON type bracket, so `{ a: { $gt: 5 } }` never selects a string.
 | `$ne: <value>`, `$nin`, `$exists`, `$not`, and every other clause | nothing |
 
 ```js
-$match($.tags != null);  $.arr = $.tags.uniq();  $.bool = $.arr.includes("red");
+$match($.tags != null);  $.arr = $.tags.uniq();  $.bool = $.arr.has("red");
 // → [{ $match: { tags: { $ne: null } } }, { $set: { arr: { $setUnion: "$tags" } } }, { $set: { bool: { $in: ["red", "$arr"] } } }]
 $match($.n > 5);  $.x = $.n ? 1 : 2;     // n: a number or an array, present → only the zero test
 // → [{ $match: { n: { $gt: 5 } } }, { $set: { x: { $cond: { if: { $ne: ["$n", 0] }, then: 1, else: 2 } } } }]
@@ -299,17 +299,17 @@ the receiver's proof as a closed `Receiver`:
    the same branches under `$switch` run on every receiver (`switchOver` in
    [mql.ts](../../src/compiler/emit/mql.ts)).
 3. **Refuse at compile time only when no possible kind is accepted.** `$.b.trim()`
-   after `$.b = $.arr.includes("x")` is a compile error. A partial overlap is not:
+   after `$.b = $.arr.has("x")` is a compile error. A partial overlap is not:
    `{string, number}` under `.trim()` runs the string branch and the number falls
    to the null default, because "possible" is not "proven".
 4. **`ANY` on a one-family row is that family**, by the row's claim, as before.
 
 ```js
-$.v = $.flag ? "abc" : [1, 2];  $.len = $.v.length;
-// → …, { $set: { len: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $size: "$v" } }, { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $strLenCP: "$v" } }] } } } }
+$.v = $.flag ? "abc" : [1, 2];  $.i = $.v.indexOf("x");
+// → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }, { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "x"] } }] } } } }
 
-$.v = $.flag ? 5 : [1, 2];  $.len = $.v.length;   // a number has no `.length` form → the default stays
-// → …, { $set: { len: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $size: "$v" } }], default: null } } } }
+$.v = $.flag ? 5 : [1, 2];  $.i = $.v.indexOf("x");   // a number has no `.indexOf` form → the default stays
+// → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }], default: null } } } }
 ```
 
 ### The truthiness rule

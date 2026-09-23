@@ -198,7 +198,7 @@ describe("$$.length — cleanup", () => {
 
 describe("nested length usage — sub-stream handles + `$$.length` (root) at every level", () => {
   // The composite case: a per-user orders pivot whose `.map` reads three
-  // different counts — a nested lookup `.length` (this order's shipments), the
+  // different counts — a nested lookup `.size()` (this order's shipments), the
   // 3rd-arg handle `ordersColl.length` (this user's orders sub-stream), and
   // `$$.length` (the ROOT users stream, captured into the orders $lookup.let as
   // v0_length). Verified end-to-end on a live mongod: per-order shipment counts,
@@ -208,7 +208,7 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
       jsmql(`
         $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {
           return {
-            totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length,
+            totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).size(),
             totalOrders: ordersColl.length,
             totalUsers: $$.length,
           };

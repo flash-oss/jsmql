@@ -11,7 +11,14 @@ import type { Arity, Kind, Position, SlotForm, Type } from "../../registry/vocab
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
-import { callbackParamsOf, diagnosticOf, isFieldProperty, spreadAlternativeOf, stageBodyRuleOf } from "../rows.ts";
+import {
+  callbackParamsOf,
+  diagnosticOf,
+  isFieldProperty,
+  siblingOf,
+  spreadAlternativeOf,
+  stageBodyRuleOf,
+} from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
 
@@ -115,24 +122,28 @@ export function refusalFor(
         position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1
           ? RUNS_ON[sel.accepts[0]]
           : undefined;
+      // The row's own sentence for this family wins over the generic hint below.
+      const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
       const hint =
         oneRef !== undefined
           ? ` Write '${oneRef.sigil}${bare}()' — ${oneRef.place}.`
-          : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array")
-            ? ` Map over the array first — '.map(x => x${bare}(…))' — or take one element ('[0]').`
-            : sel.got === "date" && takesString
-              ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.`
-              : sel.got === "number" && takesString
-                ? ` Render the number as a string first: '.toString()'.`
-                : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
-                  ? ` A stream is not an array. Chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
-                  : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString
-                    ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
-                    : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
-                      ? ` A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.`
-                      : sel.got === "bool"
-                        ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').`
-                        : "";
+          : sibling !== null
+            ? ` ${sibling}`
+            : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array")
+              ? ` Map over the array first — '.map(x => x${bare}(…))' — or take one element ('[0]').`
+              : sel.got === "date" && takesString
+                ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.`
+                : sel.got === "number" && takesString
+                  ? ` Render the number as a string first: '.toString()'.`
+                  : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
+                    ? ` A stream is not an array. Chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
+                    : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString
+                      ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
+                      : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
+                        ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.`
+                        : sel.got === "bool"
+                          ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').`
+                          : "";
       // a property (`.length`) is spelled without the call parentheses
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);
@@ -315,7 +326,7 @@ export const rootIsArray = (pos: number): CodegenError =>
 /** A read of another collection where there is no pipeline to place its `$lookup` in. */
 export const joinNeedsPipeline = (pos: number): CodegenError =>
   new CodegenError(
-    "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline — for example, `({ $ }) => { $.n = $$$.<coll>.filter(…).length; }`. It has no meaning in a Filter or in 'jsmql.expr'.",
+    "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline — for example, `({ $ }) => { $.n = $$$.<coll>.filter(…).size(); }`. It has no meaning in a Filter or in 'jsmql.expr'.",
     pos,
   );
 

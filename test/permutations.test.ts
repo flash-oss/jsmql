@@ -64,7 +64,7 @@ const NUM_TERMINALS = [
   "size()",
   "every(x => x > 0)",
   "some(x => x > 5)",
-  "includes(3)",
+  "has(3)",
   "sample()",
   "chunk(2)",
 ];

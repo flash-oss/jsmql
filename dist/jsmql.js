@@ -595,21 +595,6 @@ function normaliseSliceIndex(node, lowered, recv) {
   if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv), -lit));
   return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv)] }), lowered);
 }
-function negativeLiteralValue(node) {
-  const lit = literalIndexValue(node);
-  return lit !== null && lit < 0 ? -lit : null;
-}
-function sliceString(recv, args, value) {
-  if (args.length === 0) return recv;
-  const start = normaliseSliceIndex(args[0], value(args[0]), recv);
-  if (args.length === 1) {
-    const negative = negativeLiteralValue(args[0]);
-    if (negative !== null) return { $substrCP: [recv, start, negative] };
-    return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(strLenOf(recv), start))] };
-  }
-  const end = normaliseSliceIndex(args[1], value(args[1]), recv);
-  return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(end, start))] };
-}
 var strTail = (s, from) => ({ $substrCP: [s, from, strLenOf(s)] });
 var capitalizeExpr = (s) => ({
   $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }]
@@ -6897,10 +6882,12 @@ var NAMES = {
           },
           emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] })
         },
+        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
         string: {
           args: {
             sig: "searchValue",
             exact: 1,
+            slotType: { 0: "string" },
             noCallback: {
               0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
             }
@@ -6920,18 +6907,54 @@ var NAMES = {
   includes: name({
     doc: "'.includes()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "string",
+    sibling: { array: "For membership in an array, write '.has(x)'." },
+    returns: "bool",
+    where: ["value", "filter"],
+    // A regex with no anchor — indexable where the planner can use one, and unlike
+    // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
+    // run-time needle cannot go into a pattern.
+    filter: {
+      args: { sig: "searchString", exact: 1 },
+      emit: ({ recv, args, pathOf: pathOf3 }) => {
+        const path = recv === null ? null : pathOf3(recv);
+        const needle = args[0];
+        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
+      }
+    },
+    expr: {
+      args: {
+        sig: "searchString",
+        exact: 1,
+        noCallback: {
+          0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => \u2026)'."
+        }
+      },
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
+    },
+    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'"
+    ),
+    group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+    )
+  }),
+  has: name({
+    doc: "'.has()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    on: "array",
+    sibling: { string: "For a substring test, write '.includes(x)'." },
     returns: "bool",
     where: ["value", "filter"],
     // An INDEX reads a query document, so the query form is the indexable one:
-    // `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
-    // an array containing" — exactly what `.includes` means on an array, and a plain
-    // equality on any other field. `["a","b"].includes($.s)` → { s: { $in: […] } }.
-    // The substring reading that a STRING receiver has belongs to the expression form
-    // below, where no index applies; `.match(/x/)` is the query spelling that asks for it.
+    // `$.tags.has("x")` → { tags: "x" }, MongoDB's "equals, or is an array containing" —
+    // exactly what `.has` means on an array. `["a", "b"].has($.s)` → { s: { $in: […] } }.
     // Anything else keeps the expression fallback.
     filter: {
-      args: { sig: "searchElement", exact: 1 },
+      args: { sig: "value", exact: 1 },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
         if (recv === null) return null;
         const path = pathOf3(recv);
@@ -6953,60 +6976,34 @@ var NAMES = {
       }
     },
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $in: [value(args[0]), r] }))
-        },
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
+      args: {
+        sig: "value",
+        exact: 1,
+        noCallback: {
+          0: "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
         }
       },
-      uncertain: () => null
+      // MEASURED: `$in` aborts on a null list, so a receiver that may be missing is tested first.
+      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $in: [value(args[0]), r] }))
     },
-    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.has()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'"
+      "'.has()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.has();'"
     ),
-    group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.has()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.has()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   at: name({
     doc: "'.at()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array"],
-    returns: { array: "element", string: "string" },
+    on: "array",
+    sibling: { string: "For one character, write '.charAt(index)'." },
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: { sig: "index", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
-        },
-        string: {
-          args: { sig: "index", exact: 1 },
-          emit: ({ recv, args, value }) => ({
-            $substrCP: [recv, args[0] === void 0 ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1]
-          })
-        }
-      },
-      uncertain: () => null
+      args: { sig: "index", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7018,8 +7015,9 @@ var NAMES = {
   slice: name({
     doc: "'.slice()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array", "stream"],
-    returns: { string: "same", array: "same", stream: "stream" },
+    on: ["array", "stream"],
+    sibling: { string: "For a part of a string, write '.substring(start, end)'." },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7031,14 +7029,8 @@ var NAMES = {
         array: {
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
           emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => sliceArray(r, args, value, bind))
-        },
-        string: {
-          // MEASURED: `$substrCP` / `$indexOfCP` of null or a missing field answer as of ""
-          args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => sliceString(r, args, value))
         }
-      },
-      uncertain: () => null
+      }
     },
     stream: {
       args: {
@@ -7069,8 +7061,9 @@ var NAMES = {
     mergesInto: true,
     doc: "'.concat()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string", "stream"],
-    returns: { array: "array", string: "string", stream: "stream" },
+    on: ["array", "stream"],
+    sibling: { string: "To join strings, write '+' between them: 'a + b'." },
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7097,28 +7090,8 @@ var NAMES = {
               })
             ]
           })
-        },
-        // `String.prototype.concat` STRINGIFIES each argument; `$concat` takes strings
-        // only. The emitter joins an argument PROVEN to be an array element by element, and
-        // any other proven non-string goes through `$toString` — JavaScript's answer in both
-        // cases. An argument that proves nothing stays as written.
-        string: {
-          args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value, kind }) => ({
-            $concat: [
-              recv,
-              ...args.map((a) => {
-                const k = kind(a);
-                if (k === "array") {
-                  return a.type === "ArrayLiteral" && a.packed === true ? joinedWith(value(a), "") : joinedWith(value(a), ",");
-                }
-                return k === "string" || k === "unknown" ? value(a) : { $toString: value(a) };
-              })
-            ]
-          })
         }
-      },
-      uncertain: () => null
+      }
     },
     stream: inCode("src/compiler/emit/union.ts"),
     statement: unsupported(
@@ -8029,7 +8002,7 @@ var NAMES = {
       by: {
         1: "[..._r].map(() => _0)",
         2: "[...[..._r].slice(0, _1), ...[..._r].slice(_1).map(() => _0)]",
-        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).length + [..._r].slice(_1, _2).length)]"
+        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).size() + [..._r].slice(_1, _2).size())]"
       }
     },
     returns: "unknown",
@@ -8052,8 +8025,8 @@ var NAMES = {
     mutatorForm: {
       sig: "target, start[, end]",
       by: {
-        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]",
-        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]"
+        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].size() - [..._r].slice(0, _0).size()), ...[..._r].slice([..._r].slice(0, _0).size() + [..._r].slice(_1).slice(0, [..._r].size() - [..._r].slice(0, _0).size()).size())]",
+        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].size() - [..._r].slice(0, _0).size()), ...[..._r].slice([..._r].slice(0, _0).size() + [..._r].slice(_1, _2).slice(0, [..._r].size() - [..._r].slice(0, _0).size()).size())]"
       }
     },
     returns: "unknown",
@@ -9514,7 +9487,7 @@ var NAMES = {
         const x = bind("x").as;
         const pos = args[0].pos;
         const values = { type: "ArrayLiteral", elements: args, pos };
-        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "includes", [identOf(x, pos)])), pos)) }];
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "has", [identOf(x, pos)])), pos)) }];
       }
     },
     statement: unsupported(
@@ -10000,24 +9973,14 @@ var NAMES = {
   nth: name({
     doc: "'.nth()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array"],
-    returns: { array: "element", string: "string" },
+    on: "array",
+    sibling: { string: "For one character, write '.charAt(index)'." },
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: { sig: "[n=0]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
-        },
-        string: {
-          args: { sig: "[n=0]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({
-            $substrCP: [recv, args[0] === void 0 ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1]
-          })
-        }
-      },
-      uncertain: () => "$$REMOVE"
+      args: { sig: "[n=0]", allowed: [0, 1] },
+      emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10029,20 +9992,19 @@ var NAMES = {
   size: name({
     doc: "'.size()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "object"],
+    on: "array",
+    sibling: {
+      string: "For the number of characters, write '.length()'.",
+      object: "For the number of fields, write '.keys().size()'."
+    },
     returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        // lodash's `_.size(undefined)` is 0: this cell guards a receiver that may be missing, as `.length` does.
-        array: {
-          args: { sig: "", none: true },
-          emit: ({ recv, present: present2 }) => sizeOf(present2 ? recv : arrayOrEmpty(recv))
-        },
-        object: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => sizeOf(pairsOfObject(recv, present2)) }
-      },
-      uncertain: () => "$$REMOVE"
+      // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
+      // missing is read as the empty array. An array LITERAL is the value, not an operand list.
+      args: { sig: "", none: true },
+      emit: ({ recv, present: present2 }) => Array.isArray(recv) ? { $size: [recv] } : sizeOf(present2 ? recv : arrayOrEmpty(recv))
     },
     stream: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -11282,7 +11244,7 @@ var NAMES = {
         const x = bind("x").as;
         const other = listOf(args[0]);
         return [
-          { $match: predicate(arrowOf(x, callOf(other, "includes", [identOf(x, other.pos)]), other.pos)) },
+          { $match: predicate(arrowOf(x, callOf(other, "has", [identOf(x, other.pos)]), other.pos)) },
           ...keepFirstPer(element2().ref)
         ];
       }
@@ -11348,9 +11310,7 @@ var NAMES = {
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
         const other = listOf(args[0]);
-        return [
-          { $match: predicate(arrowOf(x, notOf(callOf(other, "includes", [identOf(x, other.pos)])), other.pos)) }
-        ];
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(other, "has", [identOf(x, other.pos)])), other.pos)) }];
       }
     },
     statement: unsupported(
@@ -12272,10 +12232,10 @@ var NAMES = {
     // (HR1), and this row refuses the same document inside a `$match`.
     forbiddenIn: ["$match"],
     placement: {
-      container: `Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.includes("a")' \u2014 and it runs as a query, in a '$match' or a 'find' filter alike.`
+      container: `Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.has("a")' \u2014 and it runs as a query, in a '$match' or a 'find' filter alike.`
     },
     filter: unsupported(
-      `'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.includes("a")' \u2014 and it runs as a query.`
+      `'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.has("a")' \u2014 and it runs as a query.`
     ),
     expr: unsupported(
       "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: \u2026 }'."
@@ -13544,9 +13504,10 @@ var NAMES = {
     window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   length: name({
-    doc: "The number of elements, the number of characters, or the size of the stream.",
+    doc: "The number of characters of a string, or the size of the stream.",
     call: false,
-    on: ["array", "string", "stream"],
+    on: ["string", "stream"],
+    sibling: { array: "For the number of elements, write '.size()'." },
     returns: "number",
     where: ["value"],
     // Per family, because one answer for all three states a legality the stream
@@ -13554,7 +13515,6 @@ var NAMES = {
     // compile at all. A flat `viaFallback` would promise that the third merely scans.
     filter: {
       perFamily: {
-        array: viaFallback,
         string: viaFallback,
         stream: unsupported(
           "'$$.length' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.length; \u2026 }`); it has no meaning in a Filter or in 'jsmql.expr'."
@@ -13563,14 +13523,8 @@ var NAMES = {
     },
     expr: {
       perFamily: {
-        // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
-        // → { $size: [["$a", 2]] }. The emitter hands a path or an expression over as it is.
-        array: {
-          args: { sig: "", none: true },
-          // `$size` aborts on null; a receiver that may be missing answers null, as a
-          // JavaScript method does, and the cell counts one that is there as it is.
-          emit: ({ recv, present: present2, bind }) => Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present2, bind, (r) => ({ $size: r }))
-        },
+        // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
+        // JavaScript method does, and the cell counts one that is there as it is.
         string: {
           args: { sig: "", none: true },
           emit: ({ recv, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $strLenCP: r }))
@@ -13581,11 +13535,7 @@ var NAMES = {
           args: { sig: "", none: true },
           emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT)
         }
-      },
-      // A receiver that is neither array nor string — null, missing, a number — answers
-      // null, as JavaScript's `undefined` does. A two-way $cond that reads "not an array"
-      // as "string" aborts the whole command.
-      uncertain: () => null
+      }
     },
     stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
     statement: unsupported(
@@ -15119,6 +15069,9 @@ function elementOnlyOf(name2) {
 }
 function neverNullOf(name2) {
   return row(name2)?.neverNull === true;
+}
+function siblingOf(name2, family) {
+  return row(name2)?.sibling?.[family] ?? null;
 }
 function restoresDocumentsOf(name2) {
   return row(name2)?.restoresDocuments === true;
@@ -20671,14 +20624,6 @@ function stringMethod(s, name2, args) {
     // only searches forward. Folding it would ADD a method to the language.
     case "charAt":
       return isInt32(a) ? ok2(points(s)[a] ?? "") : NO2;
-    case "at": {
-      if (!isInt32(a)) return NO2;
-      const cps = points(s);
-      const i = a < 0 ? cps.length + a : a;
-      return i >= 0 && i < cps.length ? ok2(cps[i]) : NO2;
-    }
-    case "slice":
-      return sliceOf(points(s), a, b, (parts) => parts.join(""));
     case "substring": {
       if (!isInt32(a) || a < 0) return NO2;
       if (b !== void 0 && (!isInt32(b) || b < 0)) return NO2;
@@ -20704,8 +20649,6 @@ function stringMethod(s, name2, args) {
       if (typeof a !== "string" || a === "") return NO2;
       if (b !== void 0 && !isInt32(b)) return NO2;
       return ok2(s.split(a, typeof b === "number" ? b : void 0));
-    case "concat":
-      return args.every((x) => typeof valueOf(x) === "string") ? ok2(s + args.map(valueOf).join("")) : NO2;
     default:
       return lodashString(s, name2, args);
   }
@@ -20746,8 +20689,6 @@ function objectMethod(o, name2, args) {
   const [a] = args.map(valueOf);
   const fn = fnOf(args[0]);
   switch (name2) {
-    case "size":
-      return ok2(Object.keys(o).length);
     case "toPairs":
       return ok2(Object.entries(o));
     case "invert": {
@@ -20927,7 +20868,7 @@ function arrayMethod(xs, name2, args) {
     // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
     // identity would answer false for `[[1]].includes([1])`, where the server
     // answers true, and every literal here is a fresh object.
-    case "includes":
+    case "has":
       return ok2(xs.some((v) => sameValue(v, a)));
     case "indexOf":
       return ok2(xs.findIndex((v) => sameValue(v, a)));
@@ -21396,7 +21337,6 @@ function unary(op, operand) {
 }
 var isPlain = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v) && !isRegExp(v) && v._bsontype === void 0;
 function lengthOf(receiver) {
-  if (Array.isArray(receiver)) return ok3(receiver.length);
   if (typeof receiver === "string") return ok3([...receiver].length);
   return NOT_CONSTANT2;
 }
@@ -22370,7 +22310,7 @@ function matchTests(param, prefix, entries, pos) {
         tests.push({
           type: "MethodCall",
           object: pathOn(param, path, pos),
-          name: "includes",
+          name: "has",
           args: [e],
           optional: false,
           pos
@@ -23101,7 +23041,8 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const got = sel.got === null ? "a receiver whose type JSMQL cannot prove" : sel.got.split(" or ").map((k) => `${/^[aeiou]/i.test(k) ? "an" : "a"} '${k}'`).join(" or ");
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().length'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -23210,7 +23151,7 @@ var rootIsArray = (pos) => new CodegenError(
   pos
 );
 var joinNeedsPipeline = (pos) => new CodegenError(
-  "'$$$.<coll>' (a read of another collection) needs Pipeline mode \u2014 it materialises a '$lookup' stage. Use it inside a pipeline \u2014 for example, `({ $ }) => { $.n = $$$.<coll>.filter(\u2026).length; }`. It has no meaning in a Filter or in 'jsmql.expr'.",
+  "'$$$.<coll>' (a read of another collection) needs Pipeline mode \u2014 it materialises a '$lookup' stage. Use it inside a pipeline \u2014 for example, `({ $ }) => { $.n = $$$.<coll>.filter(\u2026).size(); }`. It has no meaning in a Filter or in 'jsmql.expr'.",
   pos
 );
 var needsPipeline = (name2, pos) => new CodegenError(
@@ -24022,6 +23963,201 @@ var Env = class _Env {
   }
 };
 
+// src/compiler/emit/select.ts
+var isObj3 = (v) => typeof v === "object" && v !== null;
+function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
+  if (args.some((a) => a.type === "SpreadElement")) return { kind: "spread" };
+  if (args.length === 0) return { kind: "none" };
+  if (args.length > 1) return { kind: "multiple" };
+  const only = args[0];
+  if (only.type === "ObjectLiteral") {
+    const keys = (only.entries ?? []).map(staticKey).filter((k) => k !== null);
+    return { kind: "object", keys };
+  }
+  const v = evaluate(args[0], constants);
+  return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
+}
+var TYPES = FIELD_FAMILY_TYPES;
+function guardFor(family, also = []) {
+  const types = [...TYPES[family], ...also];
+  return (recv) => ({ $in: [{ $type: recv }, types] });
+}
+var FIELD_FAMILIES2 = Object.keys(TYPES);
+var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
+var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
+var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
+function countOf(name2, args, n2) {
+  const rejected = args.reject?.[n2];
+  if (rejected !== void 0) return { kind: "rejectedCount", name: name2, message: rejected };
+  const ok4 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
+  return ok4 ? null : { kind: "wrongCount", name: name2, got: n2, args };
+}
+function settle(name2, branch, shaped, count) {
+  if (isRefusal(branch)) {
+    return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
+  }
+  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
+  if (shaped.kind === "spread") {
+    if (branch.args.spread === true) {
+      internalError(`a spread reached '${name2}'. Its rule reads one array argument, and the desugar pass packs it`);
+    }
+    return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
+  }
+  return countOf(name2, branch.args, count) ?? { kind: "rule", name: name2, rule: branch };
+}
+function familyOf2(receiver) {
+  switch (receiver.kind) {
+    case "none":
+      return null;
+    case "namespace":
+      return receiver.name;
+    case "stream":
+      return "stream";
+    case "value":
+      return receiver.family;
+    case "opaque":
+      return null;
+  }
+}
+function receiverGate(name2, receiver) {
+  const on = familiesFor(name2);
+  if (on === void 0 || on === "any") return null;
+  if (receiver.kind === "opaque") {
+    if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
+    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
+      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
+    }
+    return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
+  }
+  const family = familyOf2(receiver);
+  if (family !== null && on.includes(family)) return null;
+  return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
+}
+function fromByArgs(name2, byArgs, shaped, count) {
+  const otherwise = byArgs.otherwise;
+  if (!isRefusal(otherwise)) internalError(`the row '${name2}' states a byArgs cell without its 'otherwise'`);
+  const leftover = () => settle(name2, otherwise, shaped, count);
+  switch (shaped.kind) {
+    case "spread":
+      return leftover();
+    case "constant":
+      return byArgs.constant === void 0 ? leftover() : settle(name2, byArgs.constant, shaped, count);
+    default: {
+      const entry = byArgs[shaped.kind];
+      return entry === void 0 ? leftover() : settle(name2, entry, shaped, count);
+    }
+  }
+}
+function kindFits(kind, expected) {
+  if (kind === "unknown") return true;
+  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t));
+  switch (expected) {
+    case "number":
+    case "int":
+    case "int-or-long":
+      return kind === "number";
+    case "number-or-date":
+      return kind === "number" || kind === "date";
+    case "string":
+    case "fieldName":
+    case "fieldPath":
+      return kind === "string";
+    case "bool":
+    case "array":
+    case "object":
+    case "date":
+      return kind === expected;
+    case "timestamp":
+      return false;
+  }
+}
+var argsFit = (rule, kinds) => Object.entries(rule.args.slotType ?? {}).every(([i, t]) => {
+  const k = kinds[Number(i)];
+  return k === void 0 || kindFits(k, t);
+});
+function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kinds) {
+  const on = familiesFor(name2);
+  if (receiver.kind !== "opaque") {
+    const family = familyOf2(receiver);
+    const branch = family === null ? void 0 : branches[family];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
+    return settle(name2, branch, shaped, count);
+  }
+  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
+  const possible = receiver.possible;
+  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
+  if (possible !== void 0 && listed.length === 0) {
+    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
+  }
+  const tests = /* @__PURE__ */ new Set();
+  const fieldFamilies = listed.filter((family) => {
+    const test = TYPES[family].join(",");
+    if (tests.has(test)) return false;
+    tests.add(test);
+    return true;
+  });
+  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+  const fitting = fieldFamilies.filter((f) => {
+    const b = branches[f];
+    return !isRule(b) || argsFit(b, kinds);
+  });
+  if (fitting.length === 1 && fieldFamilies.length > 1) {
+    const branch = branches[fitting[0]];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+    return settle(name2, branch, shaped, count);
+  }
+  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
+  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
+    const branch = branches[fieldFamilies[0]];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+    return settle(name2, branch, shaped, count);
+  }
+  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
+    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
+  }
+  const out = [];
+  for (const family of fieldFamilies) {
+    const branch = branches[family];
+    if (isRefusal(branch) || branch === void 0) continue;
+    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
+    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
+    if (bad !== null && bad.kind !== "rule") return bad;
+    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
+  }
+  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
+  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
+}
+function select(verdict, receiver, shaped, count, kinds = []) {
+  const name2 = verdict.name;
+  switch (verdict.kind) {
+    case "unknown":
+      return { kind: "unknown", name: name2 };
+    case "refused": {
+      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
+      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
+    }
+    case "fallback":
+      return { kind: "fallback", name: name2 };
+    case "composedOnly":
+      return { kind: "composedOnly", name: name2, owners: verdict.owners };
+    case "noCell":
+      return { kind: "noCell", name: name2 };
+    case "inCode": {
+      const gate = receiverGate(name2, receiver);
+      return gate ?? { kind: "noCell", name: name2 };
+    }
+    case "perFamily":
+      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count, kinds);
+    case "lower": {
+      const gate = receiverGate(name2, receiver);
+      if (gate !== null) return gate;
+      const cell = verdict.cell;
+      if (isObj3(cell) && isObj3(cell.byArgs)) return fromByArgs(name2, cell.byArgs, shaped, count);
+      return settle(name2, cell, shaped, count);
+    }
+  }
+}
+
 // src/stringify.ts
 var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
 var kindOf2 = (v) => Object.prototype.toString.call(v);
@@ -24240,6 +24376,25 @@ var hint = (name2, expected) => {
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   const example = expected === "object" ? bodyExampleOf(name2) : void 0;
   return example === void 0 ? "" : ` Write the body as a document. For example: '${example}'.`;
+};
+function checkSlotKinds(name2, args, operands, kinds) {
+  for (const [i, t] of Object.entries(args.slotType ?? {})) {
+    const e = operands[Number(i)];
+    const k = kinds[Number(i)];
+    if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
+    const expected = Array.isArray(t) ? t.map((x) => EXPECTS[x].replace(/^expects /, "")).join(" or ") : EXPECTS[t].replace(/^expects /, "");
+    throw new CodegenError(`'${spell2(name2)}' takes ${expected}, but this value is ${KIND_NOUN2[k] ?? `a ${k}`}.`, e.pos);
+  }
+}
+var KIND_NOUN2 = {
+  string: "a string",
+  number: "a number",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  objectId: "an ObjectId",
+  binData: "binary data"
 };
 function checkType(name2, slot, e, expected) {
   if (expected === "fieldPath") {
@@ -25707,165 +25862,6 @@ var readsRef = (mql, ref) => {
   return false;
 };
 
-// src/compiler/emit/select.ts
-var isObj3 = (v) => typeof v === "object" && v !== null;
-function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
-  if (args.some((a) => a.type === "SpreadElement")) return { kind: "spread" };
-  if (args.length === 0) return { kind: "none" };
-  if (args.length > 1) return { kind: "multiple" };
-  const only = args[0];
-  if (only.type === "ObjectLiteral") {
-    const keys = (only.entries ?? []).map(staticKey).filter((k) => k !== null);
-    return { kind: "object", keys };
-  }
-  const v = evaluate(args[0], constants);
-  return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
-}
-var TYPES = FIELD_FAMILY_TYPES;
-function guardFor(family, also = []) {
-  const types = [...TYPES[family], ...also];
-  return (recv) => ({ $in: [{ $type: recv }, types] });
-}
-var FIELD_FAMILIES2 = Object.keys(TYPES);
-var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
-var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
-var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
-function countOf(name2, args, n2) {
-  const rejected = args.reject?.[n2];
-  if (rejected !== void 0) return { kind: "rejectedCount", name: name2, message: rejected };
-  const ok4 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
-  return ok4 ? null : { kind: "wrongCount", name: name2, got: n2, args };
-}
-function settle(name2, branch, shaped, count) {
-  if (isRefusal(branch)) {
-    return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
-  }
-  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
-  if (shaped.kind === "spread") {
-    if (branch.args.spread === true) {
-      internalError(`a spread reached '${name2}'. Its rule reads one array argument, and the desugar pass packs it`);
-    }
-    return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
-  }
-  return countOf(name2, branch.args, count) ?? { kind: "rule", name: name2, rule: branch };
-}
-function familyOf2(receiver) {
-  switch (receiver.kind) {
-    case "none":
-      return null;
-    case "namespace":
-      return receiver.name;
-    case "stream":
-      return "stream";
-    case "value":
-      return receiver.family;
-    case "opaque":
-      return null;
-  }
-}
-function receiverGate(name2, receiver) {
-  const on = familiesFor(name2);
-  if (on === void 0 || on === "any") return null;
-  if (receiver.kind === "opaque") {
-    if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
-    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
-      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
-    }
-    return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
-  }
-  const family = familyOf2(receiver);
-  if (family !== null && on.includes(family)) return null;
-  return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
-}
-function fromByArgs(name2, byArgs, shaped, count) {
-  const otherwise = byArgs.otherwise;
-  if (!isRefusal(otherwise)) internalError(`the row '${name2}' states a byArgs cell without its 'otherwise'`);
-  const leftover = () => settle(name2, otherwise, shaped, count);
-  switch (shaped.kind) {
-    case "spread":
-      return leftover();
-    case "constant":
-      return byArgs.constant === void 0 ? leftover() : settle(name2, byArgs.constant, shaped, count);
-    default: {
-      const entry = byArgs[shaped.kind];
-      return entry === void 0 ? leftover() : settle(name2, entry, shaped, count);
-    }
-  }
-}
-function fromPerFamily(name2, branches, uncertain, receiver, shaped, count) {
-  const on = familiesFor(name2);
-  if (receiver.kind !== "opaque") {
-    const family = familyOf2(receiver);
-    const branch = family === null ? void 0 : branches[family];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count);
-  }
-  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
-  const possible = receiver.possible;
-  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
-  if (possible !== void 0 && listed.length === 0) {
-    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
-  }
-  const tests = /* @__PURE__ */ new Set();
-  const fieldFamilies = listed.filter((family) => {
-    const test = TYPES[family].join(",");
-    if (tests.has(test)) return false;
-    tests.add(test);
-    return true;
-  });
-  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
-  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
-    const branch = branches[fieldFamilies[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count);
-  }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
-    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
-  }
-  const out = [];
-  for (const family of fieldFamilies) {
-    const branch = branches[family];
-    if (isRefusal(branch) || branch === void 0) continue;
-    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
-    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
-    if (bad !== null && bad.kind !== "rule") return bad;
-    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
-  }
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
-  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
-}
-function select(verdict, receiver, shaped, count) {
-  const name2 = verdict.name;
-  switch (verdict.kind) {
-    case "unknown":
-      return { kind: "unknown", name: name2 };
-    case "refused": {
-      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
-      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
-    }
-    case "fallback":
-      return { kind: "fallback", name: name2 };
-    case "composedOnly":
-      return { kind: "composedOnly", name: name2, owners: verdict.owners };
-    case "noCell":
-      return { kind: "noCell", name: name2 };
-    case "inCode": {
-      const gate = receiverGate(name2, receiver);
-      return gate ?? { kind: "noCell", name: name2 };
-    }
-    case "perFamily":
-      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count);
-    case "lower": {
-      const gate = receiverGate(name2, receiver);
-      if (gate !== null) return gate;
-      const cell = verdict.cell;
-      if (isObj3(cell) && isObj3(cell.byArgs)) return fromByArgs(name2, cell.byArgs, shaped, count);
-      return settle(name2, cell, shaped, count);
-    }
-  }
-}
-
 // src/compiler/emit/filter.ts
 function lowerFilter(node, env) {
   const q = translate(node, env, false);
@@ -25876,8 +25872,8 @@ var lowerNativeFilter = (node, env) => translate(node, env, true);
 var isExpr = (a) => a.type !== "SpreadElement" && a.type !== "LetDecl" && a.type !== "FuncDecl" && a.type !== "AssignExpr" && a.type !== "DeleteStmt" && a.type !== "UpdateFilter";
 function translate(node, env, nativeOnly) {
   if (node.type === "BinaryExpr" && node.op === "&&") {
-    const all2 = extractIncludesChain(node, env);
-    if (all2 !== null) return includesChain(all2.path, all2.values);
+    const all2 = extractHasChain(node, env);
+    if (all2 !== null) return hasChain(all2.path, all2.values);
     const left = translate(node.left, childEnv(env, node, "left"), nativeOnly);
     const right = translate(node.right, childEnv(env, node, "right"), nativeOnly);
     if (left === null || right === null) return null;
@@ -26089,15 +26085,15 @@ function chainOf(node, op) {
   walk(node);
   return out;
 }
-function includesChain(path, values) {
+function hasChain(path, values) {
   return { [path]: { $all: values } };
 }
-function extractIncludesChain(node, env) {
+function extractHasChain(node, env) {
   const leaves = chainOf(node, "&&");
   let path = null;
   const values = [];
   for (const l of leaves) {
-    if (l.type !== "MethodCall" || l.name !== "includes" || l.args.length !== 1) return null;
+    if (l.type !== "MethodCall" || l.name !== "has" || l.args.length !== 1) return null;
     const p = pathOfIn(l.object, env);
     const a = l.args[0];
     const c = isExpr(a) ? constantIn(a) : null;
@@ -26275,7 +26271,7 @@ function arrayCallback(cb, recv, recvNode, env, read, name2) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
-  const element2 = recvNode === void 0 ? ANY : elementOf(typeOf(recvNode, env));
+  const element2 = recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
   const usesIndex = index !== void 0 && readsParam(cb.body, index);
   if (!usesIndex) {
     const bound = elem === void 0 ? env.fresh("unused") : env.param(elem, element2, cb.pos);
@@ -27063,7 +27059,9 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const receiver = receiverOf(recvNode, recvEnv);
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue) throw streamAsValue(node.pos);
   const exprArgs = args.filter(isExpr2);
-  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
+  const argEnv = childEnv(env, node, "args");
+  const kinds = args.map((a) => isExpr2(a) ? kindOf3(a, argEnv) : "unknown");
+  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length, kinds);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
@@ -27073,6 +27071,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
     checkSlots(name2, sel.rule.args, exprArgs);
+    checkSlotKinds(name2, sel.rule.args, exprArgs, kinds);
     const present2 = isPresent(recvNode, recvEnv);
     return sel.rule.emit(
       exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, present2)

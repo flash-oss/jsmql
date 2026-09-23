@@ -338,7 +338,7 @@ const VALUE_TERMINAL_PARAMS = {
   nth: "(n?: number)",
   every: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
   some: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
-  includes: "(value: any)",
+  has: "(value: any)",
   partition: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
   sumBy: "(iteratee: ((doc: any) => any) | string)",
   meanBy: "(iteratee: ((doc: any) => any) | string)",
@@ -533,7 +533,12 @@ const VALUE_METHOD_SIGNATURES = {
   mean: { recv: "Array", sig: "(): number", doc: "Arithmetic mean — `_.mean`." },
   sumBy: { recv: "Array", sig: `(${ITER}): number`, doc: "Sum of iteratee values — `_.sumBy`." },
   meanBy: { recv: "Array", sig: `(${ITER}): number`, doc: "Mean of iteratee values — `_.meanBy`." },
-  size: { recv: "Array", sig: "(): number", doc: "Element count — `_.size`." },
+  size: { recv: "Array", sig: "(): number", doc: "Element count — `Set.size`, `_.size`." },
+  has: {
+    recv: "Array",
+    sig: "(value: any): boolean",
+    doc: "Is `value` an element — `Set.has`; a string tests a substring with `.includes()`.",
+  },
   // ── Array<T> — reshaping returns ────────────────────────────────────────────
   chunk: { recv: "Array", sig: "(size: number): T[][]", doc: "Split into groups of `size` — `_.chunk`." },
   partition: { recv: "Array", sig: `(${PRED}): [T[], T[]]`, doc: "Split into `[matching, rest]` — `_.partition`." },

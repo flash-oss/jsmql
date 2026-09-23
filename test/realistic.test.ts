@@ -71,7 +71,7 @@ const candidateProductIdCounts = $$$.orders
   .toSorted({ createdAt: -1 })
   .take(100) // a pipeline of co-purchase orders, most recent 100 of the last year
   .flatMap("productIds")
-  .filter(p => !myProductIds.includes(p))
+  .filter(p => !myProductIds.has(p))
   .countBy() // { ID: count } map
   .entries()
   .sortBy(([id, count]) => -count)
@@ -663,13 +663,13 @@ $ = { ...$, computedScore: $.points * 1.1 };
 describe("flag the orders that carry a red tag (a written field keeps its type)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // Each write tells the compiler what the field holds from then on. `arr` is an
-    // array (or null, when `tags` is missing), so `.includes` takes the array form
+    // array (or null, when `tags` is missing), so `.has` takes the array form
     // with only the null guard; `bool` is a boolean, so the `? :` reads it as its
     // own truth — MongoDB already reads null and missing as false there.
     expect(
       jsmql`
 $.arr = $.tags.uniq();
-$.bool = $.arr.includes("red");
+$.bool = $.arr.has("red");
 $.result = $.bool ? "R" : "OTHER";
       `,
     ).toEqual([
@@ -1245,7 +1245,7 @@ describe("order eligibility for free shipping", { features: ["Comparisons and bo
       jsmql`
 $.cart.total >= 50 &&
 $.customer.status in ["premium", "gold", "platinum"] &&
-$.cart.items.length < 20 &&
+$.cart.items.size() < 20 &&
 $.customer.region.trim().toLowerCase() === "us"
       `,
     ).toEqual({
@@ -1253,20 +1253,7 @@ $.customer.region.trim().toLowerCase() === "us"
       "customer.status": { $in: ["premium", "gold", "platinum"] },
       $expr: {
         $and: [
-          {
-            $lt: [
-              {
-                $switch: {
-                  branches: [
-                    { case: { $in: [{ $type: "$cart.items" }, ["array"]] }, then: { $size: "$cart.items" } },
-                    { case: { $in: [{ $type: "$cart.items" }, ["string"]] }, then: { $strLenCP: "$cart.items" } },
-                  ],
-                  default: null,
-                },
-              },
-              20,
-            ],
-          },
+          { $lt: [{ $size: { $ifNull: ["$cart.items", []] } }, 20] },
           {
             $eq: [
               {
@@ -1641,18 +1628,7 @@ describe("CSV field word count", { features: ["String methods"] }, () => {
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { tagCount: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.tags.split(",").length`)).toEqual({
-        $let: {
-          vars: { jsmqlRecv: { $split: ["$tags", ","] } },
-          in: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-              then: null,
-              else: { $size: "$$jsmqlRecv" },
-            },
-          },
-        },
-      });
+      expect(jsmql.expr(`$.tags.split(",").size()`)).toEqual({ $size: { $ifNull: [{ $split: ["$tags", ","] }, []] } });
     },
   );
 });
@@ -2036,11 +2012,11 @@ describe("immutable replace and indexed map through .with / (x, i)", { features:
   );
 });
 
-describe("file upload validation with [literal].includes + .endsWith", { features: ["Array methods"] }, () => {
+describe("file upload validation with [literal].has + .endsWith", { features: ["Array methods"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.uploads.find(jsmql(...))" }, () => {
     expect(
       jsmql`
-[".jpg", ".png", ".pdf", ".docx"].includes($.file.ext.toLowerCase()) &&
+[".jpg", ".png", ".pdf", ".docx"].has($.file.ext.toLowerCase()) &&
 $.file.name.endsWith($.file.ext) &&
 $.file.size <= 25_000_000
       `,
@@ -2098,7 +2074,7 @@ $.file.size <= 25_000_000
 
 describe("chat moderation with ?. inside an array spread", { features: ["Optional chaining"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.chatRooms.find(jsmql(...))" }, () => {
-    expect(jsmql(`[...$.moderators, ...$.room?.mods, "root"].includes($.userId)`)).toEqual({
+    expect(jsmql(`[...$.moderators, ...$.room?.mods, "root"].has($.userId)`)).toEqual({
       $expr: { $in: ["$userId", { $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }] },
     });
   });
@@ -2129,24 +2105,12 @@ describe("full name with three-step ?? fallback chain", { features: ["Nullish co
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])" },
     () => {
-      // `.at()` reads from either end of an array OR a string in JS, and `$.aliases`
-      // is a bare field — no provable type — so the middle term dispatches at query
-      // time. Pin the type (a `const` with an array-producing initialiser, or a
-      // chained `.map`/`.uniq`) to get a bare `$arrayElemAt`.
+      // `.at()` reads one element of an array. `$.aliases` is a bare field with no
+      // provable type, so the compiler emits the array operator alone and the server
+      // judges the value at query time. For one character of a string, write
+      // `.charAt(index)`.
       expect(jsmql.expr(`$.firstName ?? $.aliases.at(0) ?? "anonymous"`)).toEqual({
-        $ifNull: [
-          "$firstName",
-          {
-            $switch: {
-              branches: [
-                { case: { $in: [{ $type: "$aliases" }, ["string"]] }, then: { $substrCP: ["$aliases", 0, 1] } },
-                { case: { $in: [{ $type: "$aliases" }, ["array"]] }, then: { $arrayElemAt: ["$aliases", 0] } },
-              ],
-              default: null,
-            },
-          },
-          "anonymous",
-        ],
+        $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],
       });
     },
   );
@@ -2176,7 +2140,7 @@ $dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
 
 describe("moderator membership check through [...a, ...b]", { features: ["Array spread"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.threads.find(jsmql(...))" }, () => {
-    expect(jsmql(`[...$.moderators, ...$.room.mods, "root"].includes($.userId)`)).toEqual({
+    expect(jsmql(`[...$.moderators, ...$.room.mods, "root"].has($.userId)`)).toEqual({
       $expr: { $in: ["$userId", { $concatArrays: ["$moderators", "$room.mods", ["root"]] }] },
     });
   });
@@ -2490,7 +2454,7 @@ $.recentOrders = $$$.orders.aggregate(o => {
   $sort({ createdAt: -1 });
   $limit(5);
 });
-let nOrders = $$$.orders.filter({ userId: $._id }).length;
+let nOrders = $$$.orders.filter({ userId: $._id }).size();
 $project({ name: 1, recentOrders: 1, nOrders });
       `,
     ).toEqual([
@@ -3464,7 +3428,7 @@ describe("Per-user order report with counts at three nesting levels", { features
 $match($.createdAt >= new Date(2026, 1, 1));
 $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
   return {
-    totalShipments: $$$.shipments.filter({ orderId: o._id }).length,
+    totalShipments: $$$.shipments.filter({ orderId: o._id }).size(),
     totalOrders: ordersColl.length,
     totalUsers: $$.length,
   };
@@ -3512,7 +3476,7 @@ describe("Recent co-purchase window: a lodash stream chain starts the lookup", {
 $.recentCoPurchaseOrders = $$$.orders
   .toSorted({ createdAt: -1 })
   .take(200)
-  .filter(o => o.productIds.includes($._id));
+  .filter(o => o.productIds.has($._id));
       `),
     ).toEqual([
       {
@@ -3525,18 +3489,10 @@ $.recentCoPurchaseOrders = $$$.orders
             {
               $match: {
                 $expr: {
-                  $switch: {
-                    branches: [
-                      {
-                        case: { $in: [{ $type: "$productIds" }, ["array"]] },
-                        then: { $in: ["$$jsmql_f0__id", "$productIds"] },
-                      },
-                      {
-                        case: { $in: [{ $type: "$productIds" }, ["string"]] },
-                        then: { $gte: [{ $indexOfCP: ["$productIds", "$$jsmql_f0__id"] }, 0] },
-                      },
-                    ],
-                    default: null,
+                  $cond: {
+                    if: { $eq: [{ $ifNull: ["$productIds", null] }, null] },
+                    then: null,
+                    else: { $in: ["$$jsmql_f0__id", "$productIds"] },
                   },
                 },
               },

@@ -52,7 +52,6 @@ import {
   singleArrayArg,
   sizeOf,
   sliceArray,
-  sliceString,
   strLenOf,
   stringKeyExpr,
   takeDropWhile,
@@ -185,6 +184,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * `$ifNull` guard when the chain starts from something that is there.
    */
   neverNull?: true;
+  /**
+   * The way forward when the receiver is PROVEN to be a family this row does not
+   * take, one sentence per such family. `.length()` reads a string, so on an array
+   * the sentence names `.size()`. The refusal (src/compiler/emit/errors.ts) puts the
+   * sentence after its head in place of the generic hint for that family. Absent, the
+   * generic hint stands.
+   */
+  sibling?: Readonly<Partial<Record<Family, string>>>;
   /**
    * The stream cell's stages give every document back as it arrived — fewer of
    * them, none changed. `.uniq()` groups on a key and `$replaceWith`s the document
@@ -7194,10 +7201,12 @@ export const NAMES = {
           },
           emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] }),
         },
+        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
         string: {
           args: {
             sig: "searchValue",
             exact: 1,
+            slotType: { 0: "string" },
             noCallback: {
               0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
             },
@@ -7218,18 +7227,56 @@ export const NAMES = {
   includes: name({
     doc: "'.includes()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "string",
+    sibling: { array: "For membership in an array, write '.has(x)'." },
+    returns: "bool",
+    where: ["value", "filter"],
+    // A regex with no anchor — indexable where the planner can use one, and unlike
+    // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
+    // run-time needle cannot go into a pattern.
+    filter: {
+      args: { sig: "searchString", exact: 1 },
+      emit: ({ recv, args, pathOf }) => {
+        const path = recv === null ? null : pathOf(recv);
+        const needle = args[0];
+        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
+      },
+    },
+    expr: {
+      args: {
+        sig: "searchString",
+        exact: 1,
+        noCallback: {
+          0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => …)'.",
+        },
+      },
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] })),
+    },
+    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'",
+    ),
+    group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  has: name({
+    doc: "'.has()' — see docs/LANGUAGE.md.",
+    call: true,
+    on: "array",
+    sibling: { string: "For a substring test, write '.includes(x)'." },
     returns: "bool",
     where: ["value", "filter"],
     // An INDEX reads a query document, so the query form is the indexable one:
-    // `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
-    // an array containing" — exactly what `.includes` means on an array, and a plain
-    // equality on any other field. `["a","b"].includes($.s)` → { s: { $in: […] } }.
-    // The substring reading that a STRING receiver has belongs to the expression form
-    // below, where no index applies; `.match(/x/)` is the query spelling that asks for it.
+    // `$.tags.has("x")` → { tags: "x" }, MongoDB's "equals, or is an array containing" —
+    // exactly what `.has` means on an array. `["a", "b"].has($.s)` → { s: { $in: […] } }.
     // Anything else keeps the expression fallback.
     filter: {
-      args: { sig: "searchElement", exact: 1 },
+      args: { sig: "value", exact: 1 },
       emit: ({ recv, args, pathOf, constant }) => {
         if (recv === null) return null;
         const path = pathOf(recv);
@@ -7259,63 +7306,36 @@ export const NAMES = {
       },
     },
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
-            },
-          },
-          emit: ({ recv, args, value, present, bind }) =>
-            nullOr(recv, present, bind, (r) => ({ $in: [value(args[0]), r] })),
-        },
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
-            },
-          },
-          emit: ({ recv, args, value, present, bind }) =>
-            nullOr(recv, present, bind, (r) => ({ $gte: [{ $indexOfCP: [r, value(args[0])] }, 0] })),
+      args: {
+        sig: "value",
+        exact: 1,
+        noCallback: {
+          0: "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
         },
       },
-      uncertain: () => null,
+      // MEASURED: `$in` aborts on a null list, so a receiver that may be missing is tested first.
+      emit: ({ recv, args, value, present, bind }) =>
+        nullOr(recv, present, bind, (r) => ({ $in: [value(args[0]), r] })),
     },
-    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.has()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'",
+      "'.has()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.has();'",
     ),
-    group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
-    ),
+    group: unsupported("'.has()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.has()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   at: name({
     doc: "'.at()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array"],
-    returns: { array: "element", string: "string" },
+    on: "array",
+    sibling: { string: "For one character, write '.charAt(index)'." },
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: { sig: "index", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
-        },
-        string: {
-          args: { sig: "index", exact: 1 },
-          emit: ({ recv, args, value }) => ({
-            $substrCP: [recv, args[0] === undefined ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1],
-          }),
-        },
-      },
-      uncertain: () => null,
+      args: { sig: "index", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -7328,8 +7348,9 @@ export const NAMES = {
   slice: name({
     doc: "'.slice()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array", "stream"],
-    returns: { string: "same", array: "same", stream: "stream" },
+    on: ["array", "stream"],
+    sibling: { string: "For a part of a string, write '.substring(start, end)'." },
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7343,14 +7364,7 @@ export const NAMES = {
           emit: ({ recv, args, value, bind, present }) =>
             nullOr(recv, present, bind, (r) => sliceArray(r, args, value, bind)),
         },
-        string: {
-          // MEASURED: `$substrCP` / `$indexOfCP` of null or a missing field answer as of ""
-          args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
-          emit: ({ recv, args, value, present, bind }) =>
-            nullOr(recv, present, bind, (r) => sliceString(r, args, value)),
-        },
       },
-      uncertain: () => null,
     },
     stream: {
       args: {
@@ -7382,8 +7396,9 @@ export const NAMES = {
     mergesInto: true,
     doc: "'.concat()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string", "stream"],
-    returns: { array: "array", string: "string", stream: "stream" },
+    on: ["array", "stream"],
+    sibling: { string: "To join strings, write '+' between them: 'a + b'." },
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7411,34 +7426,7 @@ export const NAMES = {
             ],
           }),
         },
-        // `String.prototype.concat` STRINGIFIES each argument; `$concat` takes strings
-        // only. The emitter joins an argument PROVEN to be an array element by element, and
-        // any other proven non-string goes through `$toString` — JavaScript's answer in both
-        // cases. An argument that proves nothing stays as written.
-        string: {
-          args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value, kind }) => ({
-            $concat: [
-              recv,
-              ...args.map((a) => {
-                const k = kind(a);
-                // JavaScript writes an ARRAY into a string the way `.join(",")` does —
-                // `"a".concat([3, 4])` is "a3,4" — so this is the same helper `.join()` uses.
-                // The exception is the list the desugar packed from a SPREAD call:
-                // `"a".concat(...[3, 4])` passes two arguments, and JavaScript writes each
-                // one on its own, with nothing between them.
-                if (k === "array") {
-                  return a.type === "ArrayLiteral" && a.packed === true
-                    ? joinedWith(value(a), "")
-                    : joinedWith(value(a), ",");
-                }
-                return k === "string" || k === "unknown" ? value(a) : { $toString: value(a) };
-              }),
-            ],
-          }),
-        },
       },
-      uncertain: () => null,
     },
     stream: inCode("src/compiler/emit/union.ts"),
     statement: unsupported(
@@ -8402,7 +8390,7 @@ export const NAMES = {
       by: {
         1: "[..._r].map(() => _0)",
         2: "[...[..._r].slice(0, _1), ...[..._r].slice(_1).map(() => _0)]",
-        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).length + [..._r].slice(_1, _2).length)]",
+        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).size() + [..._r].slice(_1, _2).size())]",
       },
     },
     returns: "unknown",
@@ -8426,8 +8414,8 @@ export const NAMES = {
     mutatorForm: {
       sig: "target, start[, end]",
       by: {
-        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]",
-        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]",
+        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].size() - [..._r].slice(0, _0).size()), ...[..._r].slice([..._r].slice(0, _0).size() + [..._r].slice(_1).slice(0, [..._r].size() - [..._r].slice(0, _0).size()).size())]",
+        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].size() - [..._r].slice(0, _0).size()), ...[..._r].slice([..._r].slice(0, _0).size() + [..._r].slice(_1, _2).slice(0, [..._r].size() - [..._r].slice(0, _0).size()).size())]",
       },
     },
     returns: "unknown",
@@ -9945,7 +9933,7 @@ export const NAMES = {
         const x = bind("x").as;
         const pos = args[0].pos;
         const values: Expr = { type: "ArrayLiteral", elements: args, pos };
-        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "includes", [identOf(x, pos)])), pos)) }];
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "has", [identOf(x, pos)])), pos)) }];
       },
     },
     statement: unsupported(
@@ -10450,24 +10438,14 @@ export const NAMES = {
   nth: name({
     doc: "'.nth()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["string", "array"],
-    returns: { array: "element", string: "string" },
+    on: "array",
+    sibling: { string: "For one character, write '.charAt(index)'." },
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: { sig: "[n=0]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
-        },
-        string: {
-          args: { sig: "[n=0]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({
-            $substrCP: [recv, args[0] === undefined ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1],
-          }),
-        },
-      },
-      uncertain: () => "$$REMOVE",
+      args: { sig: "[n=0]", allowed: [0, 1] },
+      emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
     },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10480,20 +10458,20 @@ export const NAMES = {
   size: name({
     doc: "'.size()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "object"],
+    on: "array",
+    sibling: {
+      string: "For the number of characters, write '.length()'.",
+      object: "For the number of fields, write '.keys().size()'.",
+    },
     returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        // lodash's `_.size(undefined)` is 0: this cell guards a receiver that may be missing, as `.length` does.
-        array: {
-          args: { sig: "", none: true },
-          emit: ({ recv, present }) => sizeOf(present ? recv : arrayOrEmpty(recv)),
-        },
-        object: { args: { sig: "", none: true }, emit: ({ recv, present }) => sizeOf(pairsOfObject(recv, present)) },
-      },
-      uncertain: () => "$$REMOVE",
+      // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
+      // missing is read as the empty array. An array LITERAL is the value, not an operand list.
+      args: { sig: "", none: true },
+      emit: ({ recv, present }) =>
+        Array.isArray(recv) ? { $size: [recv] } : sizeOf(present ? recv : arrayOrEmpty(recv)),
     },
     stream: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -11780,7 +11758,7 @@ export const NAMES = {
         const x = bind("x").as;
         const other = listOf(args[0]);
         return [
-          { $match: predicate(arrowOf(x, callOf(other, "includes", [identOf(x, other.pos)]), other.pos)) },
+          { $match: predicate(arrowOf(x, callOf(other, "has", [identOf(x, other.pos)]), other.pos)) },
           ...keepFirstPer(element().ref),
         ];
       },
@@ -11848,9 +11826,7 @@ export const NAMES = {
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
         const other = listOf(args[0]);
-        return [
-          { $match: predicate(arrowOf(x, notOf(callOf(other, "includes", [identOf(x, other.pos)])), other.pos)) },
-        ];
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(other, "has", [identOf(x, other.pos)])), other.pos)) }];
       },
     },
     statement: unsupported(
@@ -12820,10 +12796,10 @@ export const NAMES = {
     forbiddenIn: ["$match"],
     placement: {
       container:
-        "Write the predicate in JSMQL — '$.x > 1', '$.tags.includes(\"a\")' — and it runs as a query, in a '$match' or a 'find' filter alike.",
+        "Write the predicate in JSMQL — '$.x > 1', '$.tags.has(\"a\")' — and it runs as a query, in a '$match' or a 'find' filter alike.",
     },
     filter: unsupported(
-      "'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL — '$.x > 1', '$.tags.includes(\"a\")' — and it runs as a query.",
+      "'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL — '$.x > 1', '$.tags.has(\"a\")' — and it runs as a query.",
     ),
     expr: unsupported(
       "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: … }'.",
@@ -14172,9 +14148,10 @@ export const NAMES = {
   }),
 
   length: name({
-    doc: "The number of elements, the number of characters, or the size of the stream.",
+    doc: "The number of characters of a string, or the size of the stream.",
     call: false,
-    on: ["array", "string", "stream"],
+    on: ["string", "stream"],
+    sibling: { array: "For the number of elements, write '.size()'." },
     returns: "number",
     where: ["value"],
     // Per family, because one answer for all three states a legality the stream
@@ -14182,7 +14159,6 @@ export const NAMES = {
     // compile at all. A flat `viaFallback` would promise that the third merely scans.
     filter: {
       perFamily: {
-        array: viaFallback,
         string: viaFallback,
         stream: unsupported(
           "'$$.length' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.length; … }`); it has no meaning in a Filter or in 'jsmql.expr'.",
@@ -14191,15 +14167,8 @@ export const NAMES = {
     },
     expr: {
       perFamily: {
-        // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
-        // → { $size: [["$a", 2]] }. The emitter hands a path or an expression over as it is.
-        array: {
-          args: { sig: "", none: true },
-          // `$size` aborts on null; a receiver that may be missing answers null, as a
-          // JavaScript method does, and the cell counts one that is there as it is.
-          emit: ({ recv, present, bind }) =>
-            Array.isArray(recv) ? { $size: [recv] } : nullOr(recv, present, bind, (r) => ({ $size: r })),
-        },
+        // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
+        // JavaScript method does, and the cell counts one that is there as it is.
         string: {
           args: { sig: "", none: true },
           emit: ({ recv, present, bind }) => nullOr(recv, present, bind, (r) => ({ $strLenCP: r })),
@@ -14212,10 +14181,6 @@ export const NAMES = {
             hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT),
         },
       },
-      // A receiver that is neither array nor string — null, missing, a number — answers
-      // null, as JavaScript's `undefined` does. A two-way $cond that reads "not an array"
-      // as "string" aborts the whole command.
-      uncertain: () => null,
     },
     stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
     statement: unsupported(

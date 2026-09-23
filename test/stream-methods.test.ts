@@ -1172,7 +1172,7 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
       { $unwind: "$ids" },
       { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
     ]);
-    expect(jsmql('$$.flatMap("ids").filter(p => ![1, 2].includes(p));')).toEqual([
+    expect(jsmql('$$.flatMap("ids").filter(p => ![1, 2].has(p));')).toEqual([
       { $unwind: "$ids" },
       { $match: { $nor: [{ ids: { $in: [1, 2] } }] } },
     ]);
@@ -1264,8 +1264,8 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
     );
   });
 
-  it("in a join, the same link on whole documents reads the joined array as a value — as before", () => {
-    expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).difference([{ a: 1 }]).length;")).toEqual([
+  it("in a join, the same link on whole documents reads the joined array as a value", () => {
+    expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).difference([{ a: 1 }]).size();")).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       {
         $set: {

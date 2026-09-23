@@ -1036,7 +1036,7 @@ GROUP BY customer_id HAVING SUM(total) &gt; 1000</code></pre>
           <div class="vs-js">
             <pre class="src"><code>$.failed = $$$.payments.filter(
   (p) =&gt; p.orderId === $._id &amp;&amp; p.status === "failed",
-).length;</code></pre>
+).size();</code></pre>
             <a class="play" data-play href="playground.html">MQL in the playground →</a>
           </div>
         </div>

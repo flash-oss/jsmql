@@ -120,19 +120,6 @@ export function negativeLiteralValue(node: Expr): number | null {
   return lit !== null && lit < 0 ? -lit : null;
 }
 
-/** `str.slice(start[, end])` on a string value. */
-export function sliceString(recv: unknown, args: readonly Expr[], value: (e: Expr) => unknown): unknown {
-  if (args.length === 0) return recv;
-  const start = normaliseSliceIndex(args[0], value(args[0]), recv);
-  if (args.length === 1) {
-    const negative = negativeLiteralValue(args[0]);
-    if (negative !== null) return { $substrCP: [recv, start, negative] };
-    return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(strLenOf(recv), start))] };
-  }
-  const end = normaliseSliceIndex(args[1], value(args[1]), recv);
-  return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(end, start))] };
-}
-
 /** Everything from `from` on. */
 export const strTail = (s: unknown, from: number): unknown => ({ $substrCP: [s, from, strLenOf(s)] });
 

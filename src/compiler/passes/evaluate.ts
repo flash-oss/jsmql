@@ -424,8 +424,8 @@ const isPlain = (v: unknown): v is Record<string, unknown> =>
  * moment a character sits outside the basic plane: `"😀".length` is 2 there,
  * and 1 here. The fold answers the LANGUAGE's question.
  */
+/** `.length` counts the characters of a string. An array has `.size()`, and the registry refuses `.length` on it. */
 function lengthOf(receiver: unknown): Evaluation {
-  if (Array.isArray(receiver)) return ok(receiver.length);
   if (typeof receiver === "string") return ok([...receiver].length);
   return NOT_CONSTANT;
 }

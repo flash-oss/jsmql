@@ -37,7 +37,7 @@ import {
   soleFieldFamilyOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
-import { checkBody, checkSlots } from "./check.ts";
+import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
 import { operandShapeOf, bodyRuleOf } from "../rows.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
@@ -673,7 +673,11 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   const receiver = receiverOf(recvNode, recvEnv);
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue) throw E.streamAsValue(node.pos);
   const exprArgs = args.filter(isExpr);
-  const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
+  // What each argument PROVABLY is. A branch whose slot cannot take it drops out
+  // of the dispatch, and a rule whose slot cannot take it is refused.
+  const argEnv = childEnv(env, node, "args");
+  const kinds = (args as readonly Expr[]).map((a) => (isExpr(a) ? kindOf(a, argEnv) : "unknown"));
+  const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length, kinds);
   const spelled = spelledMethod(wroteName(node, name), recvNode);
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
@@ -684,6 +688,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
     checkSlots(name, sel.rule.args, exprArgs);
+    checkSlotKinds(name, sel.rule.args, exprArgs, kinds);
     // A receiver is there when the source says so — or when an optional chain read
     // a missing one as the family's empty value, which is there too.
     const present = isPresent(recvNode, recvEnv);

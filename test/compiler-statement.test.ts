@@ -387,7 +387,7 @@ describe("compiler/emit/statement — bindings between stages", () => {
     // nothing has written — silently wrong, and a server rejection when two joins
     // chain. So it ends the run and takes its own stage, exactly as the `;`
     // spelling does.
-    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual([
+    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).size(); $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $lookup: { from: "other", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
@@ -395,8 +395,8 @@ describe("compiler/emit/statement — bindings between stages", () => {
       { $unset: "__jsmql" },
     ]);
     // and the `;` spelling of it is the same document, scratch slots included
-    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual(
-      compiled("let a = $.x; let b = $$$.other.filter(o => o.k === a).length; $.o = b;"),
+    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).size(); $.o = b;")).toEqual(
+      compiled("let a = $.x; let b = $$$.other.filter(o => o.k === a).size(); $.o = b;"),
     );
   });
 
@@ -786,7 +786,7 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
     expect(pipeline("$ = $.items")).toEqual([{ $replaceWith: "$items" }]);
   });
   it("a binding holding an array-returning method's value is typed, so a read dispatches at compile time", () => {
-    expect(pipeline('const ids = $.tags.uniq(); $.y = ids.includes("a")')).toEqual([
+    expect(pipeline('const ids = $.tags.uniq(); $.y = ids.has("a")')).toEqual([
       { $set: { "__jsmql.var.ids": { $setUnion: "$tags" } } },
       // A reader over a MISSING field answers null, so a value the compiler proved is
       // an array can still be null at run time — and `$in` refuses that rather than

@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-23 — feat!: each method reads one kind of value, and its name says which
+
+`.length` counted the characters of a string and the elements of an array,
+`.includes` tested a substring and a membership, and `.slice`, `.at`, `.concat`
+and `.size()` each served two families. A bare field proved nothing, so each of
+these took a runtime `$switch` on `$type`, and a developer who wrote `.length`
+on a field named `length` in the data could not reach that field. The names
+now split by family, as `Set.size` and `Map.has` split them in JavaScript:
+`.length`, `.includes()`, `.substring()` and `.charAt()` read a string;
+`.size()`, `.has()` (new), `.slice()`, `.at()`, `.nth()` and `.concat()` read an
+array. On a bare field the compiler emits the method's own operator and the
+server judges the value. On a receiver the type tracker has proven, a method of
+the other family is a compile-time error, and the row states the way out in a
+`sibling` sentence per family: "For the number of elements, write '.size()'."
+
+`.indexOf()` and `.lastIndexOf()` keep both families, because JavaScript gives
+a string no other spelling for "the position of". The argument's proof now
+takes part: a branch whose `slotType` cannot take a proven argument kind drops
+out of the dispatch (`argsFit` in `select.ts`), so `$.a.indexOf(1)` is
+`$indexOfArray` alone, and `checkSlotKinds` refuses a proven string receiver
+handed a proven number, which the server rejected at run time before.
+
+The filter road moves the names with the split: `$.tags.has("x")` is
+`{ tags: "x" }`, the indexable containment that `.includes` gave, and
+`$.name.includes("x")` is `{ name: { $regex: /x/ } }`, the substring test. The
+`&&` fold into `$all` reads `.has` leaves. SR2's example and the specs follow.
+The stream cells of `.difference`, `.without` and `.intersection` build `.has`.
+
+---
+
 ## 2026-09-23 — feat: a callback parameter carries the element's own presence
 
 `Object.keys(counts).map(ObjectId)` proved an array of maybe-absent ObjectIds,

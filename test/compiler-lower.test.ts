@@ -133,22 +133,21 @@ describe("compiler/emit/lower — access", () => {
     expect(() => expr("$.a[-1]")).toThrow(/Negative bracket index/);
   });
 
-  it("dispatches an unprovable `.length` at runtime, and proves a literal's length", () => {
-    expect(expr("[1, 2].length")).toBe(2);
+  it("reads a count from the method's one family, and proves a literal's count", () => {
+    expect(expr("[1, 2].size()")).toBe(2);
     expect(expr('"abc".length')).toBe(3);
     // an array LITERAL receiver is the value, wrapped once — `{ $size: ["$a", 2] }` would be two operands
-    expect(expr("[$.a, 2].length")).toEqual({ $size: [["$a", 2]] });
-    const out = expr("$.x.length");
-    expect(out).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: "$x" } },
-          { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $strLenCP: "$x" } },
-        ],
-        // null, missing, and a receiver of any other type: JavaScript's `undefined`
-        default: null,
-      },
+    expect(expr("[$.a, 2].size()")).toEqual({ $size: [["$a", 2]] });
+    // an unproven receiver takes the method's one family, and the server judges the value:
+    // `.length` reads a string under a null guard, `.size()` reads a missing array as empty
+    expect(expr("$.x.length")).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $strLenCP: "$x" } },
     });
+    expect(expr("$.x.size()")).toEqual({ $size: { $ifNull: ["$x", []] } });
+    // a proven array refuses `.length`, and the refusal names `.size()`
+    expect(() => expr("[$.a, 2].length")).toThrow(
+      "'.length' is not available on an 'array' — it is defined on 'string', 'stream'. For the number of elements, write '.size()'.",
+    );
   });
 
   it("reads a namespace member from its row", () => {

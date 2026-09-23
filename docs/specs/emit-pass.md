@@ -45,11 +45,21 @@ know about the proof it runs under.
 
 An unprovable receiver on a row with ONE field family is that family, by the
 row's claim. On a row with two or more families, the compiler dispatches it at
-run time over the families the receiver can be.
+run time over the families the receiver can be. `.indexOf()` and `.lastIndexOf()`
+are the two such rows among the JavaScript methods: every other method reads one
+family, and its row states a `sibling` sentence per family it refuses, which the
+refusal (`errors.ts`) puts after its head — `'.length' is not available on an
+'array' — it is defined on 'string', 'stream'. For the number of elements, write
+'.size()'.` A branch whose `slotType` cannot take a PROVEN argument kind drops
+out of the dispatch (`argsFit` in `select.ts`), and one branch left runs alone;
+`checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven
+kind.
 
 ```js
-$.x.length
-// → { $switch: { branches: [{ case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: "$x" } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $strLenCP: "$x" } }], default: null } }
+$.x.indexOf("a")
+// → { $switch: { branches: [{ case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $indexOfArray: ["$x", "a"] } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $indexOfCP: ["$x", "a"] } }], default: null } }
+$.x.indexOf(1)
+// → { $indexOfArray: ["$x", 1] }
 ```
 
 **A JavaScript method on a receiver that may be missing answers null.** `nullOr`
@@ -143,7 +153,7 @@ $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto 
 $size([$.a])            // → {$size:["$a"]}               a 1-operand operator: one element is the operand list as written
 $size([$.a, 2])         // → {$size:[["$a",2]]}           two or more can only be the array VALUE — wrapped once
 $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       shape "verbatim": the operand is a value, never a list
-[$.a, 2].length         // → {$size:[["$a",2]]}           a JavaScript lowering wraps an array LITERAL receiver itself
+[$.a, 2].size()         // → {$size:[["$a",2]]}           a JavaScript lowering wraps an array LITERAL receiver itself
 ```
 
 `$let(vars, arrow)` binds the arrow's parameters to the vars, and both sides
@@ -195,7 +205,7 @@ $.a === 1 && $.a === 2                 // → {"$and":[{"a":1},{"a":2}]}        
 $.a === 1 && $.q * $.p > 100           // → {"a":1,"$expr":{"$gt":[{"$multiply":["$q","$p"]},100]}}
 $.tags === "red" || $.q * $.p > 100    // → {"$or":[{"tags":"red"},{"$expr":{"$gt":[…]}}]}     PER BRANCH (the ruling)
 $.a || $.b                             // → {"$expr":{"$or":[<truth a>,<truth b>]}}            every branch $expr: one $expr
-$.tags.includes("a") && $.tags.includes("b")  // → {"tags":{"$all":["a","b"]}}
+$.tags.has("a") && $.tags.has("b")  // → {"tags":{"$all":["a","b"]}}
 $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
 { status: "a", x: $gt($.y) }           // → {"status":"a","$expr":{"$gt":["$x","$y"]}}   a raw document keeps its keys, but an operand that READS the document has no query form and lifts through the row's `liftsTo` twin
 $abs($.delta)                          // → {"$expr":<truth of $abs>}            a value operator is a predicate through its truth

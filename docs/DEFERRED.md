@@ -124,7 +124,8 @@ This file exists so the project does not forget an open item. Every "not yet sup
   | `$.a.uniq()`, `.compact()`, `.flatten()`, `.take(1)`, `.sortBy("k")`, `.union($.b)` | `null` | `[]` |
   | `$.a.chunk(2)` | `[]` | `[]` |
   | `$.a.sum()`, `.sumBy("x")` | `0` | `0` |
-  | `$.a.size()`, `.nth(0)` | no value | `0`, `undefined` |
+  | `$.a.size()` | `0` | `0` |
+  | `$.a.nth(0)` | `null` | `undefined` |
   | `$.a.first()`, `.last()`, `.min()`, `.sample()` | `null` | `undefined` |
   | `$.a.partition(f)` | `[null, null]` | `[[], []]` |
   | `$.a.countBy()`, `.groupBy("k")`, `.keyBy("k")` | `null` | `{}` |

@@ -14,7 +14,17 @@
 // number because `.ceil()` is. On a row with two or more families it takes the runtime
 // dispatch, with the row's own `uncertain` as the default. A name never decides this.
 
-import type { Arity, BsonType, Emit, Family, FieldFamily, Refusal, Rule } from "../../registry/vocabulary.ts";
+import type {
+  Arity,
+  ArgType,
+  BsonType,
+  Emit,
+  Family,
+  FieldFamily,
+  Kind,
+  Refusal,
+  Rule,
+} from "../../registry/vocabulary.ts";
 import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
 import type { Expr } from "../../registry/vocabulary.ts";
 import type { Verdict } from "./consult.ts";
@@ -237,6 +247,42 @@ function fromByArgs(name: string, byArgs: Record<string, unknown>, shaped: Shape
   }
 }
 
+/**
+ * Can a value PROVEN to be `kind` fill a slot that takes `expected`? An unproven
+ * value can fill any slot, and the server judges it. A `fieldName` or a `fieldPath`
+ * slot reads a string, and a date slot takes a date alone.
+ */
+export function kindFits(kind: Kind | "unknown", expected: ArgType | readonly ArgType[]): boolean {
+  if (kind === "unknown") return true;
+  if (Array.isArray(expected)) return (expected as readonly ArgType[]).some((t) => kindFits(kind, t));
+  switch (expected as ArgType) {
+    case "number":
+    case "int":
+    case "int-or-long":
+      return kind === "number";
+    case "number-or-date":
+      return kind === "number" || kind === "date";
+    case "string":
+    case "fieldName":
+    case "fieldPath":
+      return kind === "string";
+    case "bool":
+    case "array":
+    case "object":
+    case "date":
+      return kind === expected;
+    case "timestamp":
+      return false;
+  }
+}
+
+/** Does a proven argument kind rule this branch out — a string slot handed a number? */
+const argsFit = (rule: AnyRule, kinds: readonly (Kind | "unknown")[]): boolean =>
+  Object.entries(rule.args.slotType ?? {}).every(([i, t]) => {
+    const k = kinds[Number(i)];
+    return k === undefined || kindFits(k, t);
+  });
+
 function fromPerFamily(
   name: string,
   branches: Readonly<Record<string, unknown>>,
@@ -244,6 +290,7 @@ function fromPerFamily(
   receiver: Receiver,
   shaped: Shaped,
   count: number,
+  kinds: readonly (Kind | "unknown")[],
 ): Selected {
   const on = familiesFor(name);
   if (receiver.kind !== "opaque") {
@@ -277,6 +324,20 @@ function fromPerFamily(
     return true;
   });
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
+  // A branch whose slot cannot take a PROVEN argument kind is not the branch the
+  // call means: `.indexOf(1)` searches an array, because `$indexOfCP` takes a string.
+  // The receiver's proof, then the argument's, then the runtime test — in that order.
+  // One branch left by the argument runs on its own, by the same claim a one-family
+  // row makes: the call is on that family, or the server raises an error.
+  const fitting = fieldFamilies.filter((f) => {
+    const b = branches[f];
+    return !isRule(b) || argsFit(b, kinds);
+  });
+  if (fitting.length === 1 && fieldFamilies.length > 1) {
+    const branch = branches[fitting[0]];
+    if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
+    return settle(name, branch, shaped, count);
+  }
   // Does the row take EVERY kind the value can be? Only then can a lone branch run
   // with no test, and only then can a dispatch drop its default. A possible kind
   // the row has no branch for — a number under `.length` — falls to the default.
@@ -316,7 +377,14 @@ function fromPerFamily(
  * number of arguments as written. The shape says which class applies, and the count says
  * whether the rule takes that many arguments.
  */
-export function select(verdict: Verdict, receiver: Receiver, shaped: Shaped, count: number): Selected {
+export function select(
+  verdict: Verdict,
+  receiver: Receiver,
+  shaped: Shaped,
+  count: number,
+  /** The PROVEN kind of each positional argument, `"unknown"` where the proof says nothing. */
+  kinds: readonly (Kind | "unknown")[] = [],
+): Selected {
   const name = verdict.name;
   switch (verdict.kind) {
     case "unknown":
@@ -343,7 +411,7 @@ export function select(verdict: Verdict, receiver: Receiver, shaped: Shaped, cou
       return gate ?? { kind: "noCell", name };
     }
     case "perFamily":
-      return fromPerFamily(name, verdict.branches, verdict.uncertain, receiver, shaped, count);
+      return fromPerFamily(name, verdict.branches, verdict.uncertain, receiver, shaped, count, kinds);
     case "lower": {
       const gate = receiverGate(name, receiver);
       if (gate !== null) return gate;

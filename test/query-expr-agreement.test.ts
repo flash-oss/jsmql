@@ -86,7 +86,12 @@ const AGREE: readonly string[] = [
   "$.s.match(/^he/g)",
   "$.s.match(/^HE/gi)",
   // Membership
-  '["hello", "Hi"].includes($.s)',
+  '["hello", "Hi"].has($.s)',
+  // Substring — an escaped `$regex` as a query, `$indexOfCP` as an expression. Both must
+  // select the same documents, and a needle with a regex metacharacter must be escaped:
+  // an unescaped `l.` would select "hello" as a query and nothing as an expression.
+  '$.s.includes("ell")',
+  '$.s.includes("l.")',
   // Exists — `=== undefined` is an existence test in BOTH targets: `$exists` in the query
   // language, `$type` against "missing" in the expression language. Note it must NOT treat an
   // explicit null as absent, which is why the doc set carries both.
@@ -94,8 +99,8 @@ const AGREE: readonly string[] = [
   "$.a !== undefined",
   "$.n === undefined",
   "$.n !== undefined",
-  // `.length` — the runtime three-way dispatch. Its receiver is unknown here, so both
-  // targets take the same `$cond`; the doc set has strings and a missing field.
+  // `.length` — the length of a string. Both targets guard a null receiver the same way;
+  // the doc set has strings of several lengths and an empty string.
   "$.s.length === 5",
   "$.s.length > 2",
   // Quantify — `$elemMatch` as a query, `$anyElementTrue`/`$allElementsTrue` as an
@@ -123,14 +128,6 @@ const DIVERGE: readonly { src: string; why: string }[] = [
       "number in BSON order, so `missing < 0` is true. Documented in emit-pass.md § The filter target.",
   },
   { src: "$.a <= 0", why: "Same as `<` — ordered comparison against a missing field." },
-  {
-    src: '$.s.includes("ell")',
-    why:
-      "A query document is what an INDEX is read through, so the query form is the indexable one: " +
-      '`{ s: "ell" }`, MongoDB\'s "equals, or is an array containing". The expression form has no index ' +
-      "at stake, so it keeps both readings a JavaScript `.includes` has and answers true for a string " +
-      "that merely CONTAINS the needle. `.match(/ell/)` is the query spelling that asks for the substring.",
-  },
 ];
 
 let client: MongoClient | null = null;

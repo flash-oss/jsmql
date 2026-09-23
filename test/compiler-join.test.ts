@@ -152,10 +152,10 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
       },
       { $unset: "__jsmql" },
     ]);
-    // the `.some(…includes…)` spelling is a predicate over the foreign array, and keeps
+    // the `.some(…has…)` spelling is a predicate over the foreign array, and keeps
     // the `$expr` body: JavaScript reads a missing `wants` as no elements, so users 3
     // and 4 join nothing
-    const some = compiled("$.o = $$$.orders.filter(o => o.productIds.some(p => $.wants.includes(p)));", [
+    const some = compiled("$.o = $$$.orders.filter(o => o.productIds.some(p => $.wants.has(p)));", [
       { _id: 1, o: [101, 102] },
       { _id: 2, o: [103] },
       { _id: 3, o: [] },
@@ -276,7 +276,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
   it("reads what follows the body as a value over the joined array", () => {
     // `.length` is `$size` — the slot is KNOWN to be an array, so no runtime guard
     expect(
-      compiled("$.n = $$$.orders.filter(o => o.userId === $._id).length;", [
+      compiled("$.n = $$$.orders.filter(o => o.userId === $._id).size();", [
         { _id: 1, n: 2 },
         { _id: 2, n: 1 },
         { _id: 3, n: 0 },
@@ -314,7 +314,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
       { $unset: "__jsmql" },
     ]);
     // inside a stage body the `$lookup` is hoisted ahead of the stage
-    expect(compiled("$match($$$.orders.filter(o => o.userId === $._id).length > 1);", [{ _id: 1 }])).toEqual([
+    expect(compiled("$match($$$.orders.filter(o => o.userId === $._id).size() > 1);", [{ _id: 1 }])).toEqual([
       { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
       { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 1] } } },
       { $unset: "__jsmql" },
@@ -353,7 +353,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
 
   it("binds the join to a `let`, in the binding's own slot", () => {
     expect(
-      compiled("let os = $$$.orders.filter(o => o.userId === $._id); $.n = os.length;", [
+      compiled("let os = $$$.orders.filter(o => o.userId === $._id); $.n = os.size();", [
         { _id: 1, n: 2 },
         { _id: 2, n: 1 },
         { _id: 3, n: 0 },
@@ -483,7 +483,7 @@ describe("compiler/emit/join — inside the body", () => {
     // own cleanup runs, so no scratch leaks into the joined array
     expect(
       compiled(
-        "$.o = $$$.orders.filter(o => o.userId === $._id && $$$.items.filter(i => i.orderId === o._id).length > 0);",
+        "$.o = $$$.orders.filter(o => o.userId === $._id && $$$.items.filter(i => i.orderId === o._id).size() > 0);",
         [
           { _id: 1, o: [101] },
           { _id: 2, o: [103] },
@@ -547,8 +547,8 @@ describe("compiler/emit/join — the stream and the root", () => {
 describe("compiler/emit/join — the refusals name the way out", () => {
   it("a read with no destination, a value in the stream, a value outside a pipeline", () => {
     expect(() => pipeline("$$$.orders.filter(o => o.a > 1);")).toThrow(/gives it no destination/);
-    expect(() => pipeline("$$ = $$$.orders.filter(o => o.a > 1).length;")).toThrow(/makes a value/);
-    expect(() => expr("$$$.orders.filter(o => o.a > 1).length")).toThrow(
+    expect(() => pipeline("$$ = $$$.orders.filter(o => o.a > 1).size();")).toThrow(/makes a value/);
+    expect(() => expr("$$$.orders.filter(o => o.a > 1).size()")).toThrow(
       /'\$\$\$\.<coll>' \(a read of another collection\) needs Pipeline mode — it materialises a '\$lookup' stage/,
     );
   });
@@ -556,8 +556,8 @@ describe("compiler/emit/join — the refusals name the way out", () => {
     expect(() => pipeline("$.x = $$$.orders.find()")).toThrow(
       /'\.find\(predicate\)' requires exactly 1 argument, got 0/,
     );
-    expect(() => pipeline("$.x = $$$.orders.find(o => o.a === 1).length")).toThrow(
-      /'\.length' is not available on an 'object' — it is defined on 'array', 'string', 'stream'/,
+    expect(() => pipeline("$.x = $$$.orders.find(o => o.a === 1).size()")).toThrow(
+      /'\.size\(\)' is not available on an 'object' — it is defined on 'array'/,
     );
   });
   it("the collection is named when the pipeline is written, in the current database", () => {
@@ -613,7 +613,7 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
   it("joins on the group key a reshaping stage made, not on the source document", () => {
     expect(
       compiled(
-        "$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length })); $$.toSorted({ n: -1, _id: 1 });",
+        "$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).size() })); $$.toSorted({ n: -1, _id: 1 });",
         [
           { _id: "y", n: 2 },
           { _id: null, n: 1 },
@@ -629,7 +629,7 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
     // `$group` is the same reshape by another name.
     expect(
       compiled(
-        '$$.$group({ _id: "$tag", top: { $max: "$minTotal" } }).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length })); $$.toSorted({ _id: 1 });',
+        '$$.$group({ _id: "$tag", top: { $max: "$minTotal" } }).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).size() })); $$.toSorted({ _id: 1 });',
         [
           { _id: null, n: 1 },
           { _id: "x", n: 1 },
@@ -677,7 +677,7 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
   // the first one wrote — and the join between them reads the NEW field.
   it("reads the field the write before it made", () => {
     expect(
-      compiled("$.t = $.tag, $.n = $$$.orders.filter(o => o.tag === $.t).length;", [
+      compiled("$.t = $.tag, $.n = $$$.orders.filter(o => o.tag === $.t).size();", [
         { _id: 1, t: "x", n: 1 },
         { _id: 2, t: "y", n: 2 },
         { _id: 3, n: 1 },
@@ -697,7 +697,7 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
   it("runs after a stage that only selects documents", () => {
     expect(
       compiled(
-        '$$.filter(u => u.tag === "y").map(u => ({ _id: u._id, o: $$$.orders.filter(o => o.userId === u._id).length }));',
+        '$$.filter(u => u.tag === "y").map(u => ({ _id: u._id, o: $$$.orders.filter(o => o.userId === u._id).size() }));',
         [{ _id: 2, o: 1 }],
       ),
     ).toEqual([
@@ -735,7 +735,7 @@ describe("compiler/emit/join — a join inside an expression that binds its own 
       { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $replaceWith: { id: "$_id", u: "$userId" } }], as: "o" } },
     ]);
     // a callback that binds an element but never reads it inside the join is fine
-    expect(compiled("$.n = $.ids.map(x => $$$.orders.filter(o => o.userId === $._id).length);")).toEqual([
+    expect(compiled("$.n = $.ids.map(x => $$$.orders.filter(o => o.userId === $._id).size());")).toEqual([
       { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
       { $set: { n: { $map: { input: "$ids", as: "x", in: { $size: "$__jsmql.tmp.0" } } } } },
       { $unset: "__jsmql" },
@@ -965,7 +965,7 @@ describe("compiler/emit/join — the pair is answered from the foreign index", (
 describe("compiler/emit/join — hoists of a lowering that is taken back", () => {
   it("stamps the root count once when the chain goes on after the join", () => {
     const out = pipeline(
-      "$.o = $$$.orders.filter(o => o.i < $$.length).map((o, i, coll) => o.i + coll.length)",
+      "$.o = $$$.orders.filter(o => o.i < $$.length).map((o, i, coll) => o.i + coll.size())",
     ) as Record<string, unknown>[];
     expect(out.filter((s) => "$setWindowFields" in s)).toHaveLength(1);
     expect(out[1]).toMatchObject({ $lookup: { let: { jsmql_s0_length: "$__jsmql.length" } } });

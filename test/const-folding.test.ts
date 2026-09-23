@@ -115,11 +115,11 @@ describe("const folding — collapse to Filter", () => {
     });
   });
 
-  it(".length and index fold inside a const RHS (folding applies to the RHS, not query exprs)", () => {
-    // Folding evaluates the const's RHS; a `.length`/index there collapses to a
-    // literal. (In a query expression like `$.count === items.length`, `items`
-    // inlines but `.length` stays `$size` — the server computes it.)
-    expect(jsmql("const n = [10, 20, 30].length; $.count === n")).toEqual({ count: 3 });
+  it(".size() and index fold inside a const RHS (folding applies to the RHS, not query exprs)", () => {
+    // Folding evaluates the const's RHS; a `.size()`/index there collapses to a
+    // literal. (In a query expression like `$.count === items.size()`, `items`
+    // inlines but `.size()` stays `$size` — the server computes it.)
+    expect(jsmql("const n = [10, 20, 30].size(); $.count === n")).toEqual({ count: 3 });
     expect(jsmql("const first = [10, 20, 30][0]; $.first === first")).toEqual({ first: 10 });
   });
 });

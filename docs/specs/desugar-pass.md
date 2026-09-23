@@ -171,7 +171,7 @@ position, because that gave two answers for one link.
 A matcher is lodash's `_.matches`, a PARTIAL deep match, and `matchTests` reads
 it as such. A nested object narrows the path (`{ a: { b: { c: 3 } } }` →
 `x.a.b.c === 3`; it says nothing about `a.b.d`). An array of constants is a
-subset (`{ tags: ["a", "b"] }` → `x.tags.includes("a") && x.tags.includes("b")`).
+subset (`{ tags: ["a", "b"] }` → `x.tags.has("a") && x.tags.has("b")`).
 An empty object or array matches anything (`x => true`, because nothing is left
 to test). Any other value compares with `===`.
 

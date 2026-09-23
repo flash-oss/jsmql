@@ -544,7 +544,7 @@ function matchTests(param: string, prefix: string, entries: readonly object[], p
         tests.push({
           type: "MethodCall",
           object: pathOn(param, path, pos),
-          name: "includes",
+          name: "has",
           args: [e],
           optional: false,
           pos,

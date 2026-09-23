@@ -47,7 +47,7 @@ describe("compiler/passes/fold — a constant declaration becomes its value", ()
     // index; `{"age":{"$gt":18}}` can.
     expect(shape("const CONFIG = { minAge: 18 }; $.age > CONFIG.minAge")).toBe(shape("$.age > 18"));
     expect(shape("const xs = [1, 2, 3]; $.x === xs[1]")).toBe(shape("$.x === 2"));
-    expect(shape("const xs = [1, 2, 3]; $.x === xs.length")).toBe(shape("$.x === 3"));
+    expect(shape("const xs = [1, 2, 3]; $.x === xs.size()")).toBe(shape("$.x === 3"));
   });
 
   it("feeds the desugar rules, which feed it back", () => {
@@ -110,7 +110,6 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
   it("leaves a read that found nothing to run at run time", () => {
     // `undefined` and MongoDB's MISSING are not the same thing downstream.
     expect(valueOf("[1, 2, 3].at(9)")).toBe("(not constant)");
-    expect(valueOf('"abc".at(9)')).toBe("(not constant)");
     expect(valueOf("({ a: 1 }).missing")).toBe("(not constant)");
     expect(valueOf("[1][9]")).toBe("(not constant)");
     expect(valueOf("[1, 2].find(x => x > 9)")).toBe("(not constant)");
@@ -183,7 +182,7 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
     // false for every structural comparison there is.
     expect(valueOf("[1, 2] === [1, 2]")).toBe(true);
     expect(valueOf("({ a: 1 }) === ({ a: 1 })")).toBe(true);
-    expect(valueOf("[[1]].includes([1])")).toBe(true);
+    expect(valueOf("[[1]].has([1])")).toBe(true);
     expect(valueOf("[{ a: 1 }].indexOf({ a: 1 })")).toBe(0);
   });
 
@@ -353,7 +352,7 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
     expect(valueOf("/ab/.size()")).toBe("(not constant)");
     expect(valueOf("/ab/.pick(['source'])")).toBe("(not constant)");
     expect(valueOf("(0x507f1f77bcf86cd799439011).size()")).toBe("(not constant)");
-    expect(valueOf("({ a: 1 }).size()")).toBe(1);
+    expect(valueOf("Object.keys({ a: 1 }).size()")).toBe(1);
   });
 });
 

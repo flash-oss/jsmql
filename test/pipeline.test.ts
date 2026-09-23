@@ -1918,7 +1918,7 @@ describe("jsmql() and jsmql.pipeline() agree on the lookup form", () => {
 
   it("jsmql.update() still refuses it — $lookup is not in the update whitelist", () => {
     expect(() => jsmql.update(SRC)).toThrow(
-      "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline — for example, `({ $ }) => { $.n = $$$.<coll>.filter(…).length; }`. It has no meaning in a Filter or in 'jsmql.expr'.",
+      "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline — for example, `({ $ }) => { $.n = $$$.<coll>.filter(…).size(); }`. It has no meaning in a Filter or in 'jsmql.expr'.",
     );
   });
 });

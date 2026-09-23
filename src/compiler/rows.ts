@@ -523,6 +523,11 @@ export function neverNullOf(name: string): boolean {
   return (row(name) as { neverNull?: true } | undefined)?.neverNull === true;
 }
 
+/** The sentence a refusal adds when the receiver is proven to be `family`, which this row does not take. Null when the row states none. */
+export function siblingOf(name: string, family: string): string | null {
+  return (row(name) as { sibling?: Readonly<Record<string, string>> } | undefined)?.sibling?.[family] ?? null;
+}
+
 /** Do the stream cell's stages give every document back as it arrived — `.uniq()`'s `$group` + `$replaceWith`? */
 export function restoresDocumentsOf(name: string): boolean {
   return (row(name) as { restoresDocuments?: true } | undefined)?.restoresDocuments === true;

@@ -362,7 +362,7 @@ describe("compiler/emit — array methods", () => {
     });
     expect(compiled("$.nested.flatMap(x => x)", (d) => d.nested.flatMap((x) => x))).toMatchObject({ $reduce: {} });
     expect(
-      compiled("$.docs.map((x, i, arr) => arr.length)", (d) => d.docs.map((_x, _i, arr) => arr.length)),
+      compiled("$.docs.map((x, i, arr) => arr.size())", (d) => d.docs.map((_x, _i, arr) => arr.length)),
     ).toMatchObject({ $map: { in: { $let: { vars: { arr: "$docs" } } } } });
   });
 
@@ -444,38 +444,52 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.toSpliced($.neg, 1)", (d) => d.a.toSpliced(d.neg, 1))).toMatchObject({ $let: {} });
   });
 
-  it("dispatches a method two prototypes share on the receiver's type at run time", () => {
-    expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toMatchObject({ $switch: {} });
+  it("dispatches `.indexOf` on the receiver's type at run time, unless the argument settles it", () => {
+    // `.indexOf` is the one method of two families. A string argument leaves both open, so
+    // a bare receiver takes a `$switch`; an argument proven not to be a string picks the
+    // array form alone, and a receiver the row proves runs its one family with no test.
     expect(compiled('$.csv.indexOf("b")', (d) => d.csv.indexOf("b"))).toMatchObject({ $switch: {} });
-    expect(compiled("$.a.includes(2)", (d) => d.a.includes(2))).toMatchObject({ $switch: {} });
-    expect(compiled('$.csv.includes("b")', (d) => d.csv.includes("b"))).toMatchObject({ $switch: {} });
-    expect(compiled("$.a.at(-1)", (d) => d.a.at(-1))).toMatchObject({ $switch: {} });
-    expect(compiled("$.csv.at(0)", (d) => d.csv.at(0))).toMatchObject({ $switch: {} });
-    expect(compiled("$.a.slice(1, 3)", (d) => d.a.slice(1, 3))).toMatchObject({ $switch: {} });
-    expect(compiled("$.csv.slice(2)", (d) => d.csv.slice(2))).toMatchObject({ $switch: {} });
-    expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toMatchObject({ $switch: {} });
-    // Several arguments, and each rendered the way JavaScript renders it for the family
-    // that runs: `$concatArrays` takes arrays only, `$concat` takes strings only, and the
-    // server folds a run of ADJACENT constant operands while it optimises — so a proven
-    // scalar becomes the one-element array it stands for, and a proven array is joined.
-    expect(compiled('$.csv.concat("!", "?")', (d) => d.csv.concat("!", "?"))).toMatchObject({ $switch: {} });
-    expect(compiled('$.a.concat("!", "?")', (d) => d.a.concat("!", "?"))).toMatchObject({ $switch: {} });
-    expect(compiled("$.a.concat([9], [8])", (d) => d.a.concat([9], [8]))).toMatchObject({ $switch: {} });
-    expect(compiled("$.a.concat(2, 3)", (d) => d.a.concat(2, 3))).toMatchObject({ $switch: {} });
-    expect(compiled("$.csv.concat(1, 2)", (d) => d.csv.concat(1, 2))).toMatchObject({ $switch: {} });
-    expect(compiled('$.a.concat($.b, "!", "?")', (d) => d.a.concat(d.b, "!", "?"))).toMatchObject({ $switch: {} });
-    // a receiver the row PROVES, so one family and no test at run time
-    expect(compiled("$.s.trim().concat(1, 2)", (d) => d.s.trim().concat(1, 2))).toEqual({
-      $concat: [{ $trim: { input: "$s" } }, { $toString: 1 }, { $toString: 2 }],
+    expect(compiled('$.a.indexOf("x")', (d) => d.a.indexOf("x"))).toMatchObject({ $switch: {} });
+    expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toEqual({ $indexOfArray: ["$a", 1] });
+    expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
+      $indexOfArray: [{ $split: ["$csv", ","] }, "b"],
+    });
+    // `.lastIndexOf` states one emitting family — the string form is refused — so it
+    // answers the array reading outright rather than testing the receiver's type.
+    expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toMatchObject({ $let: {} });
+  });
+
+  it("lowers each method of one family to that family's operator on a bare receiver", () => {
+    // Membership is `.has` on an array; the substring test is `.includes` on a string.
+    expect(compiled("$.a.has(2)", (d) => d.a.includes(2))).toEqual(nullOr("$a", { $in: [2, "$a"] }));
+    expect(compiled('$.csv.includes("b")', (d) => d.csv.includes("b"))).toEqual(
+      nullOr("$csv", { $gte: [{ $indexOfCP: ["$csv", "b"] }, 0] }),
+    );
+    expect(compiled("$.a.at(-1)", (d) => d.a.at(-1))).toEqual({ $arrayElemAt: ["$a", -1] });
+    expect(compiled("$.a.slice(1, 3)", (d) => d.a.slice(1, 3))).toEqual(nullOr("$a", { $slice: ["$a", 1, 2] }));
+    expect(compiled("$.csv.substring(2)", (d) => d.csv.substring(2))).toMatchObject({
+      $cond: { else: { $substrCP: {} } },
+    });
+    // `$concatArrays` takes arrays only, so a scalar argument becomes the one-element
+    // array it stands for, as JavaScript's `Array.prototype.concat` reads it.
+    expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toEqual({ $concatArrays: ["$a", "$b"] });
+    expect(compiled('$.a.concat("!", "?")', (d) => d.a.concat("!", "?"))).toEqual({
+      $concatArrays: ["$a", ["!"], ["?"]],
+    });
+    expect(compiled("$.a.concat([9], [8])", (d) => d.a.concat([9], [8]))).toEqual({ $concatArrays: ["$a", [9], [8]] });
+    expect(compiled("$.a.concat(2, 3)", (d) => d.a.concat(2, 3))).toEqual({ $concatArrays: ["$a", [2], [3]] });
+    expect(compiled('$.a.concat($.b, "!", "?")', (d) => d.a.concat(d.b, "!", "?"))).toEqual({
+      $concatArrays: ["$a", "$b", ["!"], ["?"]],
     });
     expect(compiled('$.csv.split(",").concat("!", "?")', (d) => d.csv.split(",").concat("!", "?"))).toEqual({
       $concatArrays: [{ $split: ["$csv", ","] }, ["!"], ["?"]],
     });
-    expect(compiled("$.a.size()", (d) => d.a.length)).toMatchObject({ $switch: {} });
-    expect(compiled("$.o.size()", (d) => Object.keys(d.o).length)).toMatchObject({ $switch: {} });
-    // `.lastIndexOf` states one emitting family — the string form is refused — so it
-    // answers the array reading outright rather than testing the receiver's type.
-    expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toMatchObject({ $let: {} });
+    // Strings join with `+`.
+    expect(compiled('$.csv + "!" + "?"', (d) => d.csv + "!" + "?")).toEqual({ $concat: ["$csv", "!", "?"] });
+    // `.size()` counts the elements of an array, and a missing array counts as empty; the
+    // number of fields of an object is the size of its keys.
+    expect(compiled("$.a.size()", (d) => d.a.length)).toEqual({ $size: { $ifNull: ["$a", []] } });
+    expect(compiled("$.o.keys().size()", (d) => Object.keys(d.o).length)).toMatchObject({ $size: {} });
     expect(compiled("$.a.toString()", (d) => d.a.toString())).toMatchObject({ $let: {} });
     expect(compiled("$.n.toString()", (d) => d.n.toString())).toMatchObject({ $let: {} });
     // Inside the null test, `$ifNull` wraps the reduce so an EMPTY array answers "" rather
@@ -487,10 +501,6 @@ describe("compiler/emit — array methods", () => {
       $cond: { else: { $ifNull: [{ $reduce: {} }, ""] } },
     });
     expect(compiled("$.n.clamp(0, 5)", () => 5)).toEqual({ $min: [{ $max: ["$n", 0] }, 5] });
-    // a receiver PROVEN to be one family runs that cell alone
-    expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
-      $indexOfArray: [{ $split: ["$csv", ","] }, "b"],
-    });
   });
 
   it("folds, sets and groups as lodash does", () => {
@@ -539,7 +549,18 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.a.take(-1)")).toThrow(/from 0 to Infinity/);
     expect(() => expr("$.a.chunk($.n)")).toThrow(/compile-time constant/);
     expect(() => expr("$.a.flat(2)")).toThrow(/from 1 to 1/);
-    expect(() => expr("$.a.includes(x => x > 1)")).toThrow(/searches for a VALUE/);
+    expect(() => expr("$.a.has(x => x > 1)")).toThrow(/searches for a VALUE/);
+    expect(() => expr("$.csv.includes(x => x > 1)")).toThrow(/searches for a STRING/);
+    // a receiver proven to be the other family: the refusal names that family's spelling
+    expect(() => expr('$.csv.split(",").includes("b")')).toThrow("For membership in an array, write '.has(x)'.");
+    expect(() => expr('$.s.trim().has("x")')).toThrow("For a substring test, write '.includes(x)'.");
+    expect(() => expr('$.csv.split(",").length')).toThrow("For the number of elements, write '.size()'.");
+    expect(() => expr("$.s.trim().size()")).toThrow("For the number of characters, write '.length()'.");
+    expect(() => expr('$.o.pick(["a"]).size()')).toThrow("For the number of fields, write '.keys().size()'.");
+    expect(() => expr("$.s.trim().at(0)")).toThrow("For one character, write '.charAt(index)'.");
+    expect(() => expr("$.s.trim().slice(1)")).toThrow("For a part of a string, write '.substring(start, end)'.");
+    expect(() => expr('$.s.trim().concat("x")')).toThrow("To join strings, write '+' between them: 'a + b'.");
+    expect(() => expr("$.s.trim().indexOf(1)")).toThrow("'indexOf' expects a string, but got a number.");
     expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
   });
@@ -752,7 +773,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
 
   it("packs a spread into the one list a variadic method reads", () => {
     expect(compiled("$.a.concat(...$.b, 1)", () => DOC.a.concat(...DOC.b, 1))).toBeDefined();
-    expect(compiled("$.csv.concat(...$.a)", () => DOC.csv.concat(...DOC.a))).toBeDefined();
+    expect(compiled('$.csv.split(",").concat(...$.a)', () => DOC.csv.split(",").concat(...DOC.a))).toBeDefined();
     expect(() => expr("$.a.indexOf(...$.b)")).toThrow(/Spread \(\.\.\.\) is not supported/);
   });
 
@@ -864,16 +885,16 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o?.keys()", null],
   ["$.o?.values()", null],
   ["$.o?.entries()", null],
-  ["$.o?.keys().length", null],
+  ["$.o?.keys().size()", null],
   ["$.s?.trim().length", null],
-  ["$.a?.map(x => x).length", null],
+  ["$.a?.map(x => x).size()", null],
   // a NAMESPACE call has no receiver to carry the `?.`, so the row reads it off the
   // argument — and there is no call AFTER the `?.` to stop, so `{}` still applies
   ["Object.keys($.o?.sub)", []],
   // nothing runs after this `?.`, so the document and the answer are what they were
   ['$.first + " " + $.user?.last', "An "],
   // the root document is there, so it takes no neutral
-  ["Object.keys($).length", 2],
+  ["Object.keys($).size()", 2],
 ];
 
 describe("compiler/emit — a missing list is the empty list, never an aborted command", () => {

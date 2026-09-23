@@ -141,7 +141,7 @@ describe("let bindings — declaration lists", () => {
     // run BEFORE the `$set` that binds the sibling and would join on a missing
     // field — silently wrong data, and a server rejection when two joins chain.
     // Such a declarator therefore ends the run and takes a stage of its own.
-    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual([
+    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).size(); $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
@@ -151,7 +151,7 @@ describe("let bindings — declaration lists", () => {
     // One lowering, one output: the `;` spelling of this program is the SAME
     // document, scratch-slot numbers included. The taken-back lowering gives its
     // slot back, so the two spellings cannot drift to `tmp.0` and `tmp.1`.
-    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual([
+    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).size(); $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },

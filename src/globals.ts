@@ -2612,9 +2612,9 @@ declare global {
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     fromPairs(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    head(): any;
+    has(value: any): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    includes(value: any): any;
+    head(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     indexOf(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
@@ -3270,6 +3270,8 @@ declare global {
     fromPairs(): Record<string, any>;
     /** Group elements by iteratee (omit for identity) — `_.groupBy`. */
     groupBy(iteratee?: string | ((value: T) => any)): Record<string, T[]>;
+    /** Is `value` an element — `Set.has`; a string tests a substring with `.includes()`. */
+    has(value: any): boolean;
     /** First element — `_.head`. */
     head(): T;
     /** All but the last element — `_.initial`. */
@@ -3307,7 +3309,7 @@ declare global {
     sample(): T;
     /** `n` random elements — `_.sampleSize`. */
     sampleSize(n?: number): T[];
-    /** Element count — `_.size`. */
+    /** Element count — `Set.size`, `_.size`. */
     size(): number;
     /** Ascending sort by iteratee(s) — `_.sortBy`. */
     sortBy(iteratee?: string | string[] | ((value: T) => any)): T[];

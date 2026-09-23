@@ -93,15 +93,14 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
   // The same hazards through the value-mode string methods, asserting the
   // returned values rather than just "it ran". Missing and null both read as "".
   it("expr: string methods on short / null / missing receivers match JS semantics", async () => {
-    const rows = (await aggregate("users", `$ = { name: $.name, tail: $.email.slice(-13), len: $.email.length };`)) as {
-      name: string;
-      tail: string;
-      len: number;
-    }[];
+    const rows = (await aggregate(
+      "users",
+      `$ = { name: $.name, tail: $.email.substr(-13), len: $.email.length };`,
+    )) as { name: string; tail: string; len: number }[];
     const byName = Object.fromEntries(rows.map((r) => [r.name, { tail: r.tail, len: r.len }]));
     expect(byName["Joan Clarke"]).toEqual({ tail: "@bletchley.uk", len: 17 }); // longer than 13
     expect(byName["Katherine Johnson"]).toEqual({ tail: "kat@nasa.gov", len: 12 }); // SHORTER → clamped, whole string
-    // a JavaScript method on a null or missing receiver answers null — `"".slice` would be "", `undefined.slice` throws
+    // a JavaScript method on a null or missing receiver answers null — `"".substr` would be "", `undefined.substr` throws
     expect(byName["Margaret Hamilton"]).toEqual({ tail: null, len: null }); // email: null
     expect(byName["Karen Spärck Jones"]).toEqual({ tail: null, len: null }); // email absent
   });
@@ -548,7 +547,7 @@ $ = { byRegion };`,
   // that class of bug (the emitted MQL looked fine).
   it("pipeline: correlated query-document $match returns real matches", async () => {
     const src = (chain: string) =>
-      `$match($.status === "active");\n$.orders = ${chain};\n$ = { user: $._id, n: $.orders.length };`;
+      `$match($.status === "active");\n$.orders = ${chain};\n$ = { user: $._id, n: $.orders.size() };`;
     const counts = async (chain: string) =>
       (await aggregate("users", src(chain)))
         .map((r) => ({ user: String((r as { user: unknown }).user), n: (r as { n: number }).n }))
@@ -658,33 +657,33 @@ $ = { shops };`,
   });
 
   // A positional single-array-argument operator (`$size`/`$first`/`$last`/
-  // `$reverseArray`) SPLICES a bare array operand into an argument list, so every
-  // one of these emitted MQL the server refused outright — `[10,20,30].length` was
-  // "$size takes exactly 1 arguments. 2 were passed in", and the one-element
-  // `[7].length` was "must be an array, but was of type: int". Nothing but a real
-  // run catches this: the emitted document looks perfectly reasonable.
+  // `$reverseArray`) SPLICES a bare array operand into an argument list: the server
+  // reads `{ $size: [10, 20, 30] }` as three arguments, and `{ $size: [7] }` as the
+  // scalar 7. So a literal array operand is wrapped one level deeper, and nothing
+  // but a real run proves the wrap: the emitted document looks reasonable either way.
   it("pipeline: single-array-argument operators over a literal array match JS", async () => {
     const rows = await aggregate(
       "users",
       `$match($._id === 0x6500000000000000000000a1);
-$ = { n: [10, 20, 30].length, rev: [10, 20, 30].toReversed(), h: [10, 20, 30].head(),
-      l: [10, 20, 30].last(), one: [7].length, nested: [[1, 2], [3]].head().toReversed() };`,
+$ = { n: [10, 20, 30].size(), rev: [10, 20, 30].toReversed(), h: [10, 20, 30].head(),
+      l: [10, 20, 30].last(), one: [7].size(), nested: [[1, 2], [3]].head().toReversed() };`,
     );
     // Values are exactly what JavaScript returns for the same expressions.
     expect(rows).toEqual([{ n: 3, rev: [30, 20, 10], h: 10, l: 30, one: 1, nested: [2, 1] }]);
   });
 
   // A `toEqual` cannot tell an index dispatch that *runs* from one the server
-  // refuses, and this family has three receiver types and two spellings. So run
-  // each one and compare against what JavaScript returns for the same expression.
-  // `tags` is `["vip", "beta"]`, `name` is the string "Ada Lovelace", `profile` is
-  // a document, and `nope` is absent.
-  it("pipeline: bracket index and .at() match JavaScript on arrays, strings, and documents", async () => {
+  // refuses, and a bracket index has three receiver types. `.at()` reads an ARRAY
+  // element; one character of a string is `.charAt(i)`, and its tail `.substr(-n)`.
+  // So run each one and compare against what JavaScript returns for the same
+  // expression. `tags` is `["vip", "beta"]`, `name` is the string "Ada Lovelace",
+  // `profile` is a document, and `nope` is absent.
+  it("pipeline: bracket index, .at(), .charAt() and .substr() match JavaScript on arrays, strings, and documents", async () => {
     const rows = await aggregate(
       "users",
       `$match($._id === 0x6500000000000000000000a1);
 $ = { arrFirst: $.tags[0], arrLast: $.tags.at(-1),
-      strFirst: $.name[0], strAt: $.name.at(4), strLast: $.name.at(-1),
+      strFirst: $.name[0], strAt: $.name.charAt(4), strLast: $.name.substr(-1),
       docKey: $.profile["verified"],
       absent: $.nope.at(0) ?? "fallback", absentIdx: $.nope[0] ?? "fallback" };`,
     );
@@ -692,9 +691,9 @@ $ = { arrFirst: $.tags[0], arrLast: $.tags.at(-1),
       {
         arrFirst: "vip", // ["vip","beta"][0]
         arrLast: "beta", // .at(-1)
-        strFirst: "A", // "Ada Lovelace"[0]  — was a server error before
-        strAt: "L", // .at(4) — A-d-a-space-L
-        strLast: "e", // .at(-1) on a string
+        strFirst: "A", // "Ada Lovelace"[0]
+        strAt: "L", // .charAt(4) — A-d-a-space-L
+        strLast: "e", // .substr(-1) — the last character
         docKey: true,
         // A missing receiver stays MISSING through both spellings, so `??` fires.
         absent: "fallback",
@@ -736,8 +735,8 @@ $ = { byLiteral: $.subscription["tier"], byMissing: $.subscription[$.keyField] ?
       "users",
       `$match($._id === 0x6500000000000000000000a1);
 const mine = $$$.orders.filter(o => o.userId === $._id);
-$ = { n: mine.length, firstStatus: mine.at(0).status, lastStatus: mine.at(-1).status,
-      idxStatus: mine[0].status, tierCount: $$$.orders.filter(o => o.userId === $._id).countBy("status").size() };`,
+$ = { n: mine.size(), firstStatus: mine.at(0).status, lastStatus: mine.at(-1).status,
+      idxStatus: mine[0].status, tierCount: $$$.orders.filter(o => o.userId === $._id).countBy("status").keys().size() };`,
     );
     expect(rows).toEqual([
       // Ada has 3 orders and they all share one status, so countBy has 1 key.
@@ -790,7 +789,7 @@ const candidateProductIdCounts = $$$.orders
   .map("items")
   .flatten()
   .map("productId")
-  .filter(p => !myProductIds.includes(p))
+  .filter(p => !myProductIds.has(p))
   .countBy();
 const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
 
@@ -826,22 +825,20 @@ $$ = candidateProductIds
     ]);
   });
 
-  // `.length` after `.flatMap` in a join counts the joined documents themselves
-  // (one per line) — no pick of the lines first. The long spelling that does pick
-  // them agrees, and so does the sum of the per-order line counts.
-  // A missing array field reads as empty under `.length`, `.size()`, `.includes()`
-  // and `.some()`, through any chain of array methods — `_.size(undefined)` is 0 —
-  // where an unguarded `$size` / `$in` / `$map` input would abort the command. The
-  // guard goes only where the array is certainly there: here, the root's keys.
-  it("expr: a JavaScript method on a missing array answers null through a chain; lodash's .size() counts it as empty", async () => {
+  // A missing array field answers through any chain of array methods, where an
+  // unguarded `$size` / `$in` / `$map` input would abort the command. `.size()`
+  // counts it as empty — `_.size(undefined)` is 0 — and a JavaScript method such as
+  // `.has()` or `.some()` answers null. The guard goes only where the array is
+  // certainly there: here, the root's keys.
+  it("expr: a JavaScript method on a missing array answers null through a chain; .size() counts it as empty", async () => {
     const rows = await aggregate(
       "users",
       `$match($._id === 0x6500000000000000000000a1);
-$ = { n: $.noSuchField.map(x => x).length, s: $.noSuchField.map(x => x).size(),
-      has: $.noSuchField.map(x => x).includes(1), any: $.noSuchField.filter(x => x).some(x => x),
-      keys: Object.keys($).length > 3 };`,
+$ = { s: $.noSuchField.map(x => x).size(),
+      has: $.noSuchField.map(x => x).has(1), any: $.noSuchField.filter(x => x).some(x => x),
+      keys: Object.keys($).size() > 3 };`,
     );
-    expect(rows).toEqual([{ n: null, s: 0, has: null, any: null, keys: true }]);
+    expect(rows).toEqual([{ s: 0, has: null, any: null, keys: true }]);
   });
 
   // The set methods on an unwound element inside a real pipeline: `.differenceBy`
@@ -869,13 +866,16 @@ $ = { n: $.noSuchField.map(x => x).length, s: $.noSuchField.map(x => x).size(),
     expect(kept.map((r) => String(r.p))).toEqual([ID.product(1).toHexString()]);
   });
 
-  it("pipeline: .length after .flatMap counts one joined document per line", async () => {
+  // `.size()` after `.flatMap` in a join counts the joined documents themselves
+  // (one per line) — no pick of the lines first. The long spelling that does pick
+  // them agrees, and so does the sum of the per-order line counts.
+  it("pipeline: .size() after .flatMap counts one joined document per line", async () => {
     const rows = await aggregate(
       "users",
       `$match($._id === 0x6500000000000000000000a1);
-$.n = $$$.orders.filter({ userId: $._id }).flatMap("items").length;
-$.m = $$$.orders.filter({ userId: $._id }).flatMap("items").map(i => i.qty).length;
-$.lines = $$$.orders.filter({ userId: $._id }).map(o => o.items.length);
+$.n = $$$.orders.filter({ userId: $._id }).flatMap("items").size();
+$.m = $$$.orders.filter({ userId: $._id }).flatMap("items").map(i => i.qty).size();
+$.lines = $$$.orders.filter({ userId: $._id }).map(o => o.items.size());
 $ = { n: $.n, m: $.m, lines: $.lines };`,
     );
     expect(rows).toEqual([{ n: 6, m: 6, lines: [2, 1, 3] }]);
@@ -903,11 +903,11 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter(o => o.items.some(i => myProductIds.includes(i.productId)) && o.placedAt > new Date("2025-01-01"))
+  .filter(o => o.items.some(i => myProductIds.has(i.productId)) && o.placedAt > new Date("2025-01-01"))
   .toSorted({ placedAt: -1 })
   .take(100)
   .flatMap("items")
-  .filter(i => !myProductIds.includes(i.productId))
+  .filter(i => !myProductIds.has(i.productId))
   .countBy("productId")
   .entries()
   .sortBy(([id, count]) => -count)

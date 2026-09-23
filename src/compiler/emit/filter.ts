@@ -69,8 +69,8 @@ const isExpr = (a: { type: string }): a is Expr =>
 
 function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
   if (node.type === "BinaryExpr" && node.op === "&&") {
-    const all = extractIncludesChain(node, env);
-    if (all !== null) return includesChain(all.path, all.values);
+    const all = extractHasChain(node, env);
+    if (all !== null) return hasChain(all.path, all.values);
     const left = translate(node.left, childEnv(env, node, "left"), nativeOnly);
     const right = translate(node.right, childEnv(env, node, "right"), nativeOnly);
     if (left === null || right === null) return null;
@@ -398,23 +398,22 @@ function chainOf(node: Expr, op: string): Expr[] {
 }
 
 /**
- * `$.tags.includes("a") && $.tags.includes("b")` — every leaf an `.includes`
- * of a constant on the SAME path — becomes `{ tags: { $all: ["a", "b"] } }`.
- * This matches the same documents as the `$and` of two clauses, in the shorter
- * indexable shape the developer meant. It also folds what one `.includes`
- * already answers (see the `includes` row).
+ * `$.tags.has("a") && $.tags.has("b")` — every leaf a `.has` of a constant on the
+ * SAME path — becomes `{ tags: { $all: ["a", "b"] } }`. This matches the same
+ * documents as the `$and` of two clauses, in the shorter indexable shape the
+ * developer meant. It also folds what one `.has` already answers (see the `has` row).
  */
-function includesChain(path: string, values: readonly unknown[]): QueryDoc {
+function hasChain(path: string, values: readonly unknown[]): QueryDoc {
   return { [path]: { $all: values } };
 }
 
-/** The path and the needles of an `&&` chain whose every leaf is `.includes(<constant>)` on ONE path, or null. */
-function extractIncludesChain(node: Expr, env: Env): { path: string; values: unknown[] } | null {
+/** The path and the needles of an `&&` chain whose every leaf is `.has(<constant>)` on ONE path, or null. */
+function extractHasChain(node: Expr, env: Env): { path: string; values: unknown[] } | null {
   const leaves = chainOf(node, "&&");
   let path: string | null = null;
   const values: unknown[] = [];
   for (const l of leaves) {
-    if (l.type !== "MethodCall" || l.name !== "includes" || l.args.length !== 1) return null;
+    if (l.type !== "MethodCall" || l.name !== "has" || l.args.length !== 1) return null;
     const p = pathOfIn(l.object, env);
     const a = l.args[0];
     const c = isExpr(a) ? constantIn(a) : null;

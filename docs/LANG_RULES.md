@@ -78,12 +78,13 @@ A comparison emits the query document a MongoDB developer writes by hand. MongoD
 
 ```js
 $.tags === "red"            // → {"tags":"red"}
-$.tags.includes("red")      // → containment for an array value, substring for a string one
+$.tags.has("red")           // → {"tags":"red"} — membership in an array, the same document
+$.name.includes("red")      // → {"name":{"$regex":/red/}} — a substring of a string
 $.items.some(i => i.q > 2)  // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
 $.a.b === 1                 // → {"a.b":1}
 ```
 
-A comparison that must read one value, not one element, has its own spelling. `.includes(x)` tests containment. `.some(e => …)` tests one element. The aggregation road — `jsmql.expr`, or a predicate that already needs `$expr` — compares the value itself.
+A comparison that must read one value, not one element, has its own spelling. `.has(x)` tests membership in an array. `.includes(x)` tests a substring of a string. `.some(e => …)` tests one element. The aggregation road — `jsmql.expr`, or a predicate that already needs `$expr` — compares the value itself. Each method reads one kind of value, and its name says which: `.length()` counts the characters of a string, `.size()` counts the elements of an array.
 
 This rule does not allow a guess at a value's type. A `$cond` on `$isArray` appears when the compiler does not know whether a field holds an array or a string. This is missing information, not JavaScript behaviour. Dropping the check would return a wrong answer, not a smaller one.
 

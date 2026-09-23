@@ -114,9 +114,8 @@ describe("compiler/emit/consult — the other verdicts", () => {
   });
 
   it("resolves a per-family cell when the family is known, and reports the branches when it is not", () => {
-    // `.length` is the worked case: two families merely scan, the third does not
-    // compile at all, and one answer for all three claimed the wrong thing.
-    expect(consult("length", "filter", "array").kind).toBe("fallback");
+    // `.length` is the worked case: the string family merely scans, the stream does
+    // not compile at all, and one answer for both would claim the wrong thing.
     expect(consult("length", "filter", "string").kind).toBe("fallback");
     expect(consult("length", "filter", "stream").kind).toBe("refused");
     expect(consult("length", "filter").kind).toBe("perFamily");
