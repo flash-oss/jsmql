@@ -1992,7 +1992,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
         in: {
           $switch: {
             branches: [{ case: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$$i"] } }],
-            default: { $getField: { field: { $toString: { $ifNull: ["$$i", ""] } }, input: "$m" } },
+            default: { $getField: { field: { $toString: "$$i" }, input: "$m" } },
           },
         },
       },

@@ -240,8 +240,9 @@ function siteOf(name: string, receiver: Type, family: string | null, args: reado
 /**
  * What the n-th callback argument RETURNS, its parameters bound as the row's
  * `params` say: the element (`value`), the index (a number), the key (a string),
- * the whole receiver (`collection`), the seed (`accumulator`). A parameter is
- * never proven present. A callback that is not an arrow with a body proves nothing.
+ * the whole receiver (`collection`), the seed (`accumulator`). Each carries its
+ * own presence: an element the receiver proves present is present, the index and
+ * the key always are. A callback that is not an arrow with a body proves nothing.
  */
 function callbackAnswer(
   name: string,
@@ -269,7 +270,7 @@ function callbackAnswer(
               : kind === "accumulator"
                 ? arg(n + 1)
                 : ANY;
-    bodyEnv = bodyEnv.param(p, maybeAbsent(t), cb.pos).env;
+    bodyEnv = bodyEnv.param(p, t, cb.pos).env;
   });
   return typeOf(cb.body, bodyEnv);
 }

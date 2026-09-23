@@ -602,7 +602,8 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
       fieldAt(o),
     );
   }
-  const key = { $toString: { $ifNull: [idx, ""] } };
+  // `$getField` refuses a null name, so a key the proof cannot show is there reads as `""`
+  const key = { $toString: isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] } };
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);

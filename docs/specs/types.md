@@ -102,8 +102,12 @@ below.
 
 A callback parameter takes the receiver's element proof through the row's
 `binds`. A declared function is inlined per call, so its parameter takes the
-argument's proof at that call. A parameter is never proven present: `$$x` is
-bound to the value, and the value may be null.
+argument's proof at that call. A parameter carries its own presence: an element
+the receiver proves present (`Object.keys(o)`, `.split()`, a literal) is
+present, because `$map` over a null receiver never runs the body; an element of
+an unproven array may be null. So `Object.keys(counts).map(ObjectId)` is a
+present array of present ObjectIds, and `[1, 2, 3].map(i => $.m[i])` reads the
+key with no `$ifNull`.
 
 ### A join
 

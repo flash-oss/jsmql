@@ -236,10 +236,7 @@ $$ = candidateProductIds
                     in: {
                       productId: "$$id",
                       score: {
-                        $getField: {
-                          field: { $toString: { $ifNull: ["$$id", ""] } },
-                          input: "$__jsmql.var.candidateProductIdCounts",
-                        },
+                        $getField: { field: { $toString: "$$id" }, input: "$__jsmql.var.candidateProductIdCounts" },
                       },
                       name: {
                         $getField: {

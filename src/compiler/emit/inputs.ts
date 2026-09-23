@@ -37,7 +37,7 @@ import {
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
 import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
-import { ANY, DOCUMENT, cannotBe, elementOf, maybeAbsent, of } from "./type.ts";
+import { ANY, DOCUMENT, cannotBe, flattenOnce, maybeAbsent, of } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
@@ -105,7 +105,9 @@ function arrayCallback(
   // list of strings, a `.split()`, a row whose `returns` states its element. Without it a
   // string key read as `$.m[k]` would take the runtime array/object dispatch, whose
   // array arm hands `$arrayElemAt` a string — MEASURED, the server refuses that.
-  const element = recvNode === undefined ? ANY : maybeAbsent(elementOf(typeOf(recvNode, env)));
+  // The element's own presence holds, not the array's: `$map` over null never runs
+  // the body, and an element the row proves present (`Object.keys`, `.split()`) is never null.
+  const element = recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env));
   const usesIndex = index !== undefined && readsParam(cb.body, index);
   if (!usesIndex) {
     // A callback that names no parameter still needs a binder, and it must be a name

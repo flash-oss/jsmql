@@ -13375,6 +13375,8 @@ var NAMES = {
     token: "Ident",
     newKeyword: "optional",
     returns: "objectId",
+    // a mint, a literal, or `$toObjectId` over a value that is there: never null
+    neverNull: true,
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
     updateDoc: unsupported(
@@ -24810,7 +24812,7 @@ function callbackAnswer(name2, receiver, args, n2, arg, env) {
   cb.params.forEach((p, i) => {
     const kind = kinds[i];
     const t = kind === "value" ? flattenOnce(receiver) : kind === "index" ? of("number") : kind === "key" ? of("string") : kind === "collection" ? receiver : kind === "accumulator" ? arg(n2 + 1) : ANY;
-    bodyEnv = bodyEnv.param(p, maybeAbsent(t), cb.pos).env;
+    bodyEnv = bodyEnv.param(p, t, cb.pos).env;
   });
   return typeOf(cb.body, bodyEnv);
 }
@@ -26273,7 +26275,7 @@ function arrayCallback(cb, recv, recvNode, env, read, name2) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
-  const element2 = recvNode === void 0 ? ANY : maybeAbsent(elementOf(typeOf(recvNode, env)));
+  const element2 = recvNode === void 0 ? ANY : elementOf(typeOf(recvNode, env));
   const usesIndex = index !== void 0 && readsParam(cb.body, index);
   if (!usesIndex) {
     const bound = elem === void 0 ? env.fresh("unused") : env.param(elem, element2, cb.pos);
@@ -27018,7 +27020,7 @@ function indexAccess(node, env) {
       fieldAt(o2)
     );
   }
-  const key = { $toString: { $ifNull: [idx, ""] } };
+  const key = { $toString: isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] } };
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);

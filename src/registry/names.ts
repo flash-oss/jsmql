@@ -581,6 +581,8 @@ type GlobalSpec<W extends readonly Position[]> = {
   /** The receiver family a VALUE built by this constructor belongs to — `new Set(…)` is a `set`. */
   family?: Family;
   returns: TypeExpr;
+  /** The value is never null once its arguments are there — the same fact `neverNull` states on a JavaScript row. */
+  neverNull?: true;
   where: W;
   only?: readonly Only[];
   filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
@@ -13986,6 +13988,8 @@ export const NAMES = {
     token: "Ident",
     newKeyword: "optional",
     returns: "objectId",
+    // a mint, a literal, or `$toObjectId` over a value that is there: never null
+    neverNull: true,
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
     updateDoc: unsupported(

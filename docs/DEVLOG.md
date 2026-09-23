@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-23 — feat: a callback parameter carries the element's own presence
+
+`Object.keys(counts).map(ObjectId)` proved an array of maybe-absent ObjectIds,
+because the tracker bound every callback parameter as maybe-absent. `$map` over
+a null receiver never runs the body, and an element a row proves present — the
+keys of an object, the parts of a `.split()`, the items of a literal — is never
+null. So the parameter takes the element's proof as it is, in both places that
+bind one (`arrayCallback` in `inputs.ts`, `callbackAnswer` in `prove.ts`). The
+`ObjectId` global states `neverNull`, which the `GlobalSpec` type now allows,
+and a dynamic key the proof shows present reads with no `$ifNull` in
+`indexAccess`. The recommendation program's `candidateProductIds` is a present
+array of present ObjectIds, and its `score` read drops the guard on the key.
+
+---
+
 ## 2026-09-22 — feat: a join's value carries the shape its body made
 
 A `const` bound to a chain over another collection proved nothing: `typeOf`
