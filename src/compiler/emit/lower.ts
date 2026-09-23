@@ -890,7 +890,7 @@ function applyLambda(
 function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): unknown {
   const position = positionIn(env);
   const verdict = consult(node.name, position);
-  if (verdict.kind === "unknown") return unknownOperator(node, node.args.filter(isExpr), env);
+  if (verdict.kind === "unknown") return unknownOperator(node, node.args, env);
   const hosts = onlyInsideOf(node.name, position);
   if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(node.name, hosts, node.pos);
   // The operand LIST of a list-only operator may be written as one array literal:
@@ -1000,7 +1000,21 @@ function ruleArgsOf(verdict: ReturnType<typeof consult>): { emptyList?: true } |
 }
 
 /** HR2: an operator the registry does not know passes through as written. */
-function unknownOperator(node: Extract<Expr, { type: "OperatorCall" }>, args: readonly Expr[], env: Env): unknown {
+function unknownOperator(node: Extract<Expr, { type: "OperatorCall" }>, all: readonly CallArg[], env: Env): unknown {
+  // A spread has no meaning in the `$op(…)` escape hatch, whatever the operator: the
+  // same refusal the registry's rows make. See docs/DEFERRED.md § B.
+  const spread = all.find((a) => a.type === "SpreadElement");
+  const args = all.filter(isExpr);
+  if (spread !== undefined) {
+    throw E.refusalFor(
+      { kind: "spreadRefused", name: node.name, sig: "…" },
+      node.name,
+      "",
+      positionIn(env),
+      spread.pos,
+      [],
+    );
+  }
   const inner = childEnv(env, node, "args");
   if (args.length === 0) return { [node.name]: {} };
   if (args.length === 1) return { [node.name]: lowerValue(args[0], inner) };

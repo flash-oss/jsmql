@@ -2538,6 +2538,9 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   });
   it("at-least and no-argument forms", () => {
     expect(() => jsmql.expr("$.arr.concat()")).toThrow("'.concat(...items)' requires at least 1 argument, got 0");
+    // the escape hatch takes no spread, whatever the operator — see docs/DEFERRED.md § B
+    expect(() => jsmql.expr("$foo(...$.arr)")).toThrow(/Spread \(\.\.\.\) is not supported in \$foo\(\.\.\.\)/);
+    expect(() => jsmql.expr("$foo(1, ...$.arr)")).toThrow(/Spread \(\.\.\.\) is not supported in \$foo\(\.\.\.\)/);
     expect(() => jsmql.expr("$.arr.toSpliced()")).toThrow(
       "'.toSpliced(start[, deleteCount, ...items])' requires at least 1 argument, got 0",
     );

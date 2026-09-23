@@ -2988,11 +2988,10 @@ $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input
 
 ### Spread in Variadic Calls
 
-For a variadic operator (and `Math.min` / `Math.max`, `Object.assign`), `...arr` passes the whole array through as the operator value:
+A JavaScript static that takes a list (`Math.min` / `Math.max`, `Object.assign`) takes `...arr`, and passes the whole array through as the operator's value:
 
 ```js
 Math.max(...$.scores)              // { $max: "$scores" }
-$concatArrays(...$.arrs)           // { $concatArrays: "$arrs" }
 Object.assign(...$.docs)           // { $mergeObjects: "$docs" }
 ```
 
@@ -3001,6 +3000,8 @@ When you mix spread with non-spread arguments, JSMQL wraps each non-spread value
 ```js
 Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
 ```
+
+**The `$op(…)` escape hatch takes no spread.** `$op(value)` is `{ $op: value }` and `$op(a, b)` is `{ $op: [a, b] }` ([HR2](LANG_RULES.md)); a spread has no MQL of its own. JSMQL refuses `$concatArrays(...$.arrs)` and `$foo(...$.arr)` alike, and the message names the forms that work: the operands one by one, the single array (`$concatArrays($.arrs)`), or the JavaScript spelling (`Math.max(...)`, `[...a, ...b]`, `.concat()`).
 
 `$getField` and `$setField` are useful when a field name is dynamic or contains special characters.
 

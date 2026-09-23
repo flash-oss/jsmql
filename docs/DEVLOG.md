@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-24 — fix: the `$op(…)` escape hatch refuses a spread for every operator
+
+`$foo(...$.arr)`, an operator the registry does not know with a spread
+argument, emitted `{ $foo: {} }`: the operator call dropped the spread and
+lowered an empty list. A known operator already refused the spread with the
+forms that work. The developer decided that a spread has no place in the
+escape hatch at all: `$op(value)` is `{ $op: value }` and `$op(a, b)` is
+`{ $op: [a, b] }` (HR2), and a spread has no MQL of its own — its lowering
+would be either the single-array form that exists, or a second spelling for
+`[...a, ...b]` and `.concat()`. The unknown operator now makes the same
+refusal, DEFERRED.md § B records the decision, and LANGUAGE.md states the rule
+beside the JavaScript statics (`Math.max(...)`, `Object.assign(...)`) that do
+take a spread.
+
+---
+
 ## 2026-09-24 — docs: DEF-039 records `.shuffle()` on an array value
 
 `.shuffle()` is a stream link. On an array value — `$.a.shuffle()`, lodash's

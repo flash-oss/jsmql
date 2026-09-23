@@ -11,6 +11,7 @@ var shorthand = (test) => {
 };
 var escapeForRegex = (needle) => needle.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
 function queryOwnValue(path, test) {
+  if (path === "") return test;
   return { [path]: shorthand(test) };
 }
 var BSON_KIND = {
@@ -7269,7 +7270,12 @@ var NAMES = {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
         const q = elementQuery(args[0]);
-        return q === null ? null : queryOwnValue(path, { $elemMatch: q });
+        if (q === null) return null;
+        const keys = Object.keys(q);
+        const operators = keys.filter((k) => k.startsWith("$"));
+        if (operators.length > 0 && operators.length < keys.length) return null;
+        if (operators.some((k) => k === "$and" || k === "$or" || k === "$nor" || k === "$expr")) return null;
+        return queryOwnValue(path, { $elemMatch: q });
       }
     },
     expr: {
@@ -12000,6 +12006,7 @@ var NAMES = {
     returns: "stream",
     where: ["stream"],
     filter: unsupported("'.shuffle()' reorders a stream; it is not a filter predicate."),
+    // [DEF-039] `.shuffle()` on an ARRAY value is not yet supported; `.sampleSize(n)` covers the sampled read.
     expr: unsupported(
       "'.shuffle()' reorders a stream of documents, which is not a value. To shuffle an array use '.sampleSize(n)'."
     ),
@@ -13178,7 +13185,7 @@ function membershipQuery(input) {
   const [l, r] = input.args;
   const objPath = input.pathOf(r);
   if (objPath !== null && l.type === "StringLiteral" && !l.value.includes(".") && !l.value.startsWith("$") && l.value !== "") {
-    return { [`${objPath}.${l.value}`]: { $exists: true } };
+    return { [objPath === "" ? l.value : `${objPath}.${l.value}`]: { $exists: true } };
   }
   const path = input.pathOf(l);
   if (path === null) return null;
@@ -26127,7 +26134,7 @@ function chainOf(node, op) {
   return out;
 }
 function hasChain(path, values) {
-  return { [path]: { $all: values } };
+  return queryOwnValue(path, { $all: values });
 }
 function extractHasChain(node, env) {
   const leaves = chainOf(node, "&&");
@@ -26150,7 +26157,8 @@ function pathOfIn(e, env) {
   if (e.type === "FieldRef") return e.path === "" || innermost !== null || env.level > 0 ? null : e.path;
   if (e.type === "Ident" && env.scope.has(e.name)) {
     const b = env.lookup(e.name, e.pos);
-    if (b.ref.kind !== "document" || b.ref.path === "" || b.level !== env.level) return null;
+    if (b.ref.kind !== "document" || b.level !== env.level) return null;
+    if (b.ref.path === "") return innermost !== null && innermost.element === e.name ? "" : null;
     return innermost === null || innermost.element === e.name ? b.ref.path : null;
   }
   if (e.type === "MemberAccess") {
@@ -26163,7 +26171,7 @@ function pathOfIn(e, env) {
       }
     }
     const base = pathOfIn(e.object, env);
-    return base === null ? null : `${base}.${e.name}`;
+    return base === null ? null : base === "" ? e.name : `${base}.${e.name}`;
   }
   return null;
 }
@@ -27245,7 +27253,7 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
 function operatorCall(node, env) {
   const position = positionIn(env);
   const verdict = consult(node.name, position);
-  if (verdict.kind === "unknown") return unknownOperator(node, node.args.filter(isExpr2), env);
+  if (verdict.kind === "unknown") return unknownOperator(node, node.args, env);
   const hosts = onlyInsideOf(node.name, position);
   if (hosts !== void 0 && !hosts.includes(env.site.inside ?? "")) throw onlyInside(node.name, hosts, node.pos);
   const shape = position === "updateDoc" ? void 0 : operandShapeOf(node.name);
@@ -27315,7 +27323,19 @@ function ruleArgsOf(verdict) {
   const cell = verdict.cell;
   return cell !== null && typeof cell === "object" ? cell.args : void 0;
 }
-function unknownOperator(node, args, env) {
+function unknownOperator(node, all2, env) {
+  const spread = all2.find((a) => a.type === "SpreadElement");
+  const args = all2.filter(isExpr2);
+  if (spread !== void 0) {
+    throw refusalFor(
+      { kind: "spreadRefused", name: node.name, sig: "\u2026" },
+      node.name,
+      "",
+      positionIn(env),
+      spread.pos,
+      []
+    );
+  }
   const inner = childEnv(env, node, "args");
   if (args.length === 0) return { [node.name]: {} };
   if (args.length === 1) return { [node.name]: lowerValue(args[0], inner) };

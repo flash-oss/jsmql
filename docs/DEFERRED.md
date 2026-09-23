@@ -178,6 +178,10 @@ A key-sorting flag has no safe use here. MQL is order-sensitive in places: a `$p
 
 Negation has subtle null/missing interactions in MongoDB. A silent flip between an index and no index, driven only by data shape, is exactly the surprise JSMQL exists to prevent. `!expr` itself lowers to the query language's own negation, `$nor`. What is rejected is DISTRIBUTING the negation into each clause. `$op($not, …)` stays as the explicit escape. See [`docs/specs/emit-pass.md`](specs/emit-pass.md) § The filter target, and `feedback_no_silent_output_drift.md` in user memory for the broader principle.
 
+### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
+
+The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`Math.max(...)`, `Object.assign(...)`, `[...a, ...b]`, `.concat()`).
+
 ### Spreading a STRING into its characters (`[..."abc"]`)
 
 JavaScript spreads a string into one element per character. `[..."abc"]` is `["a","b","c"]`, and `{ ..."ab" }` is `{ 0: "a", 1: "b" }`. MongoDB has no operator that does this. `$concatArrays` takes only arrays, and `$mergeObjects` takes only documents, so there is nothing to lower the spread to.
