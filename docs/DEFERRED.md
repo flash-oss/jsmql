@@ -127,6 +127,18 @@ This file exists so the project does not forget an open item. Every "not yet sup
 - **Status.** design-only
 - **Effort.** S
 
+### DEF-039 — `.shuffle()` on an ARRAY value
+
+- **What is blocked.** `.shuffle()` is a stream link: `$$.shuffle();` stamps a `$rand` key, sorts on it and drops it. On an array value — `$.a.shuffle()`, lodash's `_.shuffle(array)` — the row states no value cell, so the call is refused, and the message names `.sampleSize(n)`, which shuffles and then takes `n`.
+- **Target lowering.** The `.sampleSize()` cell without the `$slice`: `{ $map: { input: { $sortArray: { input: { $map: { input: <arr>, as: "x", in: { k: { $rand: {} }, v: "$$x" } } }, sortBy: { k: 1 } } }, as: "x", in: "$$x.v" } }`. HR5 reads a missing array as `[]`.
+- **Why blocked.** The value form is a small cell, and the developer wants it, but it has not been asked for by a program yet; the stream form covers the sampled read through `.sampleSize(n)`.
+- **Attempted approaches.** None.
+- **Success criteria.** `$.a.shuffle()` compiles to the lowering above; a case in [test/compiler-methods.test.ts](../test/compiler-methods.test.ts) runs it on the fixture and checks that the answer holds the same elements.
+- **Rejection site(s).** The `expr` cell of the `shuffle` row in [src/registry/names.ts](../src/registry/names.ts), tagged `[DEF-039]`.
+- **Spec.** [docs/specs/emit-pass.md](specs/emit-pass.md) § The method cells.
+- **Status.** design-only
+- **Effort.** S
+
 ---
 
 ## §B. Decisions — will not implement (rejected as bad DX or unnecessary)
@@ -165,6 +177,10 @@ A key-sorting flag has no safe use here. MQL is order-sensitive in places: a `$p
 ### `!expr` via De Morgan in `$match`
 
 Negation has subtle null/missing interactions in MongoDB. A silent flip between an index and no index, driven only by data shape, is exactly the surprise JSMQL exists to prevent. `!expr` itself lowers to the query language's own negation, `$nor`. What is rejected is DISTRIBUTING the negation into each clause. `$op($not, …)` stays as the explicit escape. See [`docs/specs/emit-pass.md`](specs/emit-pass.md) § The filter target, and `feedback_no_silent_output_drift.md` in user memory for the broader principle.
+
+### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
+
+The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`Math.max(...)`, `Object.assign(...)`, `[...a, ...b]`, `.concat()`).
 
 ### Spreading a STRING into its characters (`[..."abc"]`)
 

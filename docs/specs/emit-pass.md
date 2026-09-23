@@ -214,6 +214,7 @@ $.tags === "red" || $.q * $.p > 100    // → {"$or":[{"tags":"red"},{"$expr":{"
 $.a || $.b                             // → {"$expr":{"$or":[<truth a>,<truth b>]}}            every branch $expr: one $expr
 $.tags.has("a") && $.tags.has("b")  // → {"tags":{"$all":["a","b"]}}
 $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
+$.tags.some(t => t === "red")          // → {"tags":{"$elemMatch":{"$eq":"red"}}}   the element itself is the path "", one operator document
 { status: "a", x: $gt($.y) }           // → {"status":"a","$expr":{"$gt":["$x","$y"]}}   a raw document keeps its keys, but an operand that READS the document has no query form and lifts through the row's `liftsTo` twin
 $abs($.delta)                          // → {"$expr":<truth of $abs>}            a value operator is a predicate through its truth
 ```

@@ -8080,7 +8080,16 @@ export const NAMES = {
         // `$elemMatch` asks about the FIELD — is it an array with a matching
         // element — so it takes no leaf exclusion, and a PREFIX array is still
         // absent, where JavaScript's `.some` throws and selects nothing.
-        return q === null ? null : queryOwnValue(path, { $elemMatch: q });
+        // MEASURED: a body that tests the element ITSELF is one operator document
+        // (`{ $elemMatch: { $gt: 1, $lt: 5 } }`); `$and`, `$or`, `$nor` and `$expr`
+        // over operator-only clauses are refused there, and so is a mix of a field
+        // and an operator. Those bodies take the expression road.
+        if (q === null) return null;
+        const keys = Object.keys(q);
+        const operators = keys.filter((k) => k.startsWith("$"));
+        if (operators.length > 0 && operators.length < keys.length) return null;
+        if (operators.some((k) => k === "$and" || k === "$or" || k === "$nor" || k === "$expr")) return null;
+        return queryOwnValue(path, { $elemMatch: q });
       },
     },
     expr: {
@@ -13015,6 +13024,7 @@ export const NAMES = {
     returns: "stream",
     where: ["stream"],
     filter: unsupported("'.shuffle()' reorders a stream; it is not a filter predicate."),
+    // [DEF-039] `.shuffle()` on an ARRAY value is not yet supported; `.sampleSize(n)` covers the sampled read.
     expr: unsupported(
       "'.shuffle()' reorders a stream of documents, which is not a value. To shuffle an array use '.sampleSize(n)'.",
     ),

@@ -94,7 +94,7 @@ The first four rows all produce arrays. The rule for `jsmql()` is simple: does t
 
 JSMQL reads the expression as a Filter. A field-vs-literal predicate the MongoDB query language can express directly emits an indexable `{ field: { $op: lit } }` pair. Anything else — a method call, a computed expression, a non-predicate value — rides in a top-level `$expr` residual, a legal Filter operator. So both a predicate and a computed expression produce a valid Filter.
 
-**A query document is the plain one.** `$.age > 18` is `{ age: { $gt: 18 } }`. This is the document you would write by hand, and the one every index plan and `explain` output is written against. MongoDB's own rules then apply to it. A field comparison is satisfied when *any element* of an array value satisfies it, and a path can traverse an array in the middle. JavaScript does neither. So a comparison that must read exactly ONE value has its own spelling: `$.tags.has("a")` for membership in an array, `$.items.some(i => i.qty > 5)` for an element test, and `jsmql.expr` for the aggregation language's value comparison.
+**A query document is the plain one.** `$.age > 18` is `{ age: { $gt: 18 } }`. This is the document you would write by hand, and the one every index plan and `explain` output is written against. MongoDB's own rules then apply to it. A field comparison is satisfied when *any element* of an array value satisfies it, and a path can traverse an array in the middle. JavaScript does neither. So a comparison that must read exactly ONE value has its own spelling: `$.tags.has("a")` for membership in an array, `$.items.some(i => i.qty > 5)` for an element test (`$.tags.some(t => t.startsWith("a"))` tests the element itself: `{ tags: { $elemMatch: { $regex: /^a/ } } }`), and `jsmql.expr` for the aggregation language's value comparison.
 
 ```js
 // Pure query-document — indexable on `age` and `status`
@@ -2988,11 +2988,10 @@ $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input
 
 ### Spread in Variadic Calls
 
-For a variadic operator (and `Math.min` / `Math.max`, `Object.assign`), `...arr` passes the whole array through as the operator value:
+A JavaScript static that takes a list (`Math.min` / `Math.max`, `Object.assign`) takes `...arr`, and passes the whole array through as the operator's value:
 
 ```js
 Math.max(...$.scores)              // { $max: "$scores" }
-$concatArrays(...$.arrs)           // { $concatArrays: "$arrs" }
 Object.assign(...$.docs)           // { $mergeObjects: "$docs" }
 ```
 
@@ -3001,6 +3000,8 @@ When you mix spread with non-spread arguments, JSMQL wraps each non-spread value
 ```js
 Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
 ```
+
+**The `$op(…)` escape hatch takes no spread.** `$op(value)` is `{ $op: value }` and `$op(a, b)` is `{ $op: [a, b] }` ([HR2](LANG_RULES.md)); a spread has no MQL of its own. JSMQL refuses `$concatArrays(...$.arrs)` and `$foo(...$.arr)` alike, and the message names the forms that work: the operands one by one, the single array (`$concatArrays($.arrs)`), or the JavaScript spelling (`Math.max(...)`, `[...a, ...b]`, `.concat()`).
 
 `$getField` and `$setField` are useful when a field name is dynamic or contains special characters.
 

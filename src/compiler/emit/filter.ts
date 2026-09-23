@@ -404,7 +404,7 @@ function chainOf(node: Expr, op: string): Expr[] {
  * developer meant. It also folds what one `.has` already answers (see the `has` row).
  */
 function hasChain(path: string, values: readonly unknown[]): QueryDoc {
-  return { [path]: { $all: values } };
+  return queryOwnValue(path, { $all: values });
 }
 
 /** The path and the needles of an `&&` chain whose every leaf is `.has(<constant>)` on ONE path, or null. */
@@ -444,7 +444,11 @@ export function pathOfIn(e: Expr, env: Env): string | null {
   // The whole document has no query path. The `$expr` road captures a shallower level's element.
   if (e.type === "Ident" && env.scope.has(e.name)) {
     const b = env.lookup(e.name, e.pos);
-    if (b.ref.kind !== "document" || b.ref.path === "" || b.level !== env.level) return null;
+    if (b.ref.kind !== "document" || b.level !== env.level) return null;
+    // The innermost element ITSELF is the path "": inside `$elemMatch` a test with no field
+    // name tests the element — `{ $elemMatch: { $gt: 2 } }` — so `.some(n => n > 2)` has a
+    // query form. A whole document, and an outer element, have no query path.
+    if (b.ref.path === "") return innermost !== null && innermost.element === e.name ? "" : null;
     return innermost === null || innermost.element === e.name ? b.ref.path : null;
   }
   if (e.type === "MemberAccess") {
@@ -464,7 +468,7 @@ export function pathOfIn(e: Expr, env: Env): string | null {
       }
     }
     const base = pathOfIn(e.object, env);
-    return base === null ? null : `${base}.${e.name}`;
+    return base === null ? null : base === "" ? e.name : `${base}.${e.name}`;
   }
   return null;
 }

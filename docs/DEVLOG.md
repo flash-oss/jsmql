@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-24 — docs: DEF-039 records `.shuffle()` on an array value
+
+`.shuffle()` is a stream link. On an array value — `$.a.shuffle()`, lodash's
+`_.shuffle(array)` — the row states no value cell, and the call is refused with
+`.sampleSize(n)` named as the way out. The developer asked for the value form
+to be tracked: DEF-039 holds the target lowering (the `.sampleSize()` cell with
+no `$slice`), and the `expr` refusal of the `shuffle` row carries the tag.
+
+---
+
 ## 2026-09-24 — feat!: every value JSMQL computes is a call; the stream count is `$$.size()`
 
 `.length` was the one property JSMQL computed, and `$$.length` its stream twin. A
@@ -61,6 +71,21 @@ JavaScript). DEF-037 is closed.
 
 ---
 
+## 2026-09-24 — fix: `.some(t => …)` over the element itself has a query form
+
+`$.tags.some(t => t === "red")` took the `$expr` road, because the element `t`
+had no query path: only a field of the element (`i.q > 2`) became an
+`$elemMatch` clause. Inside an `$elemMatch` body a test with no field name tests
+the element itself, so the innermost element is now the path `""`, and
+`queryOwnValue` writes a test on that path as the bare operator document:
+`{ tags: { $elemMatch: { $eq: "red" } } }`, `{ nums: { $elemMatch: { $gt: 1, $lt: 5 } } }`,
+`{ tags: { $elemMatch: { $regex: /^re/ } } }`. MEASURED: the server refuses `$and`,
+`$or` and `$nor` over operator-only clauses inside `$elemMatch`, and a field
+beside an operator, so the `some` cell hands those bodies to the expression
+road. `"k" in r` on the element and the `$all` fold follow the same path rule.
+
+---
+
 ## 2026-09-24 — fix: `key in obj` tests a key of the object, as JavaScript's `in` does
 
 `"k" in $.o` emitted `{ $in: ["k", "$o"] }`, MongoDB's array membership, and the
@@ -74,6 +99,22 @@ is an object, and `in` tests its keys: a literal key reads the field itself
 keys, which HR5 reads as `{}` when the object is missing. A value the tracker has
 proven to be an array is refused, because an array's keys are its indexes and no
 query asks for those; the message names `.has(x)` and `.size() > n`.
+
+---
+
+## 2026-09-24 — fix: the `$op(…)` escape hatch refuses a spread for every operator
+
+`$foo(...$.arr)`, an operator the registry does not know with a spread
+argument, emitted `{ $foo: {} }`: the operator call dropped the spread and
+lowered an empty list. A known operator already refused the spread with the
+forms that work. The developer decided that a spread has no place in the
+escape hatch at all: `$op(value)` is `{ $op: value }` and `$op(a, b)` is
+`{ $op: [a, b] }` (HR2), and a spread has no MQL of its own — its lowering
+would be either the single-array form that exists, or a second spelling for
+`[...a, ...b]` and `.concat()`. The unknown operator now makes the same
+refusal, DEFERRED.md § B records the decision, and LANGUAGE.md states the rule
+beside the JavaScript statics (`Math.max(...)`, `Object.assign(...)`) that do
+take a spread.
 
 ---
 

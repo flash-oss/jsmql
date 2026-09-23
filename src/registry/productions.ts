@@ -181,7 +181,7 @@ function membershipQuery(input: FilterIn): QueryDoc | null {
     !l.value.startsWith("$") &&
     l.value !== ""
   ) {
-    return { [`${objPath}.${l.value}`]: { $exists: true } };
+    return { [objPath === "" ? l.value : `${objPath}.${l.value}`]: { $exists: true } };
   }
   const path = input.pathOf(l);
   if (path === null) return null;

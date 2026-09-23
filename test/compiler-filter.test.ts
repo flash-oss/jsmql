@@ -69,6 +69,40 @@ describe("compiler/emit/filter — comparisons", () => {
     });
     // a literal key on a path is the field's own existence
     expect(filter('"k" in $.o')).toEqual({ "o.k": { $exists: true } });
+  });
+
+  it("tests the element itself inside $elemMatch, as one operator document", () => {
+    // MEASURED: a body over the element alone is an operator document with no field name
+    expect(filter('$.tags.some(t => t === "red")')).toEqual({ tags: { $elemMatch: { $eq: "red" } } });
+    expect(filter("$.nums.some(n => n > 2)")).toEqual({ nums: { $elemMatch: { $gt: 2 } } });
+    expect(filter("$.nums.some(n => n > 1 && n < 5)")).toEqual({ nums: { $elemMatch: { $gt: 1, $lt: 5 } } });
+    expect(filter('$.tags.some(t => t.startsWith("re"))')).toEqual({ tags: { $elemMatch: { $regex: /^re/ } } });
+    expect(filter('$.tags.some(t => typeof t === "string")')).toEqual({ tags: { $elemMatch: { $type: "string" } } });
+    expect(filter('$.rows.some(r => "k" in r)')).toEqual({ rows: { $elemMatch: { k: { $exists: true } } } });
+    // MEASURED: `$and` and `$or` over operator-only clauses are refused inside `$elemMatch`,
+    // and so is the same operator twice — those bodies take the expression road
+    expect(filter("$.nums.some(n => n > 1 && n > 2)")).toEqual({
+      $expr: {
+        $anyElementTrue: {
+          $map: {
+            input: { $ifNull: ["$nums", []] },
+            as: "n",
+            in: { $and: [{ $gt: ["$$n", 1] }, { $gt: ["$$n", 2] }] },
+          },
+        },
+      },
+    });
+    expect(filter('$.tags.some(t => t === "a" || t === "b")')).toEqual({
+      $expr: {
+        $anyElementTrue: {
+          $map: {
+            input: { $ifNull: ["$tags", []] },
+            as: "t",
+            in: { $or: [{ $eq: ["$$t", "a"] }, { $eq: ["$$t", "b"] }] },
+          },
+        },
+      },
+    });
     // `.size()` counts the elements of an array. The query language has no operator for a
     // count, so the comparison stays under `$expr`; a missing array reads as empty.
     expect(filter("$.arr.size() > 2")).toEqual({ $expr: { $gt: [{ $size: { $ifNull: ["$arr", []] } }, 2] } });
