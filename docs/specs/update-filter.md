@@ -179,7 +179,9 @@ constants only.
 The lowering refuses a value computed from the document, because the server reads
 `"$b"` in an update document as the string. The pipeline form
 (`jsmql.pipeline("$.a = $.b + 1;")`), which `updateOne` also accepts, is the
-alternative to name. The rename pair above is the one read of the document that a
+alternative to name. The message quotes the read as the server would see it, for
+example `'$name'` for `$.name`. A copy of the whole document (`$.a = $`) has no
+`$rename` form, so its refusal names the pipeline form alone. The rename pair above is the one read of the document that a
 document-form update takes, because `$rename` names the source field rather than
 evaluating it. A value the server computes without reading the document (`new Date()`
 inside a value, `ObjectId()`, `Date.now()`) is refused by its row's `updateDoc` cell,

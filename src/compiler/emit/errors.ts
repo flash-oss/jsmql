@@ -1235,16 +1235,19 @@ export const needsPrecedingSort = (name: string, pos: number): CodegenError =>
 
 // ── the update-document target ───────────────────────────────────────────────
 
-/** `$set({ a: $.b })` in a document-form update — the server would store the string "$b". */
-export const readInUpdateDocument = (pos: number): CodegenError =>
+/** `$set({ a: $.b })` in a document-form update — the server would store the string "$b". `ref` is the read as the server would see it. */
+export const readInUpdateDocument = (ref: string, pos: number): CodegenError =>
   new CodegenError(
-    "A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'). 'updateOne' also accepts this form.",
+    `A document-form update takes constants: the server reads '${ref}' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.`,
     pos,
   );
 
+/** `from` is `""` for the whole document (`$.a = $`), which no `$rename` can move. */
 export const updateCopyNeedsPipeline = (from: string, to: string, pos: number): CodegenError =>
   new CodegenError(
-    `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
+    from === ""
+      ? `'$.${to} = $' copies the whole document. A document-form update cannot do this. Use the pipeline form ('jsmql.pipeline("$.${to} = $;")'). 'updateOne' also accepts this form.`
+      : `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
     pos,
   );
 

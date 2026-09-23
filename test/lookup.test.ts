@@ -465,7 +465,7 @@ describe("$$$.coll.find/filter — error cases", () => {
 
   it("jsmql.update() pre-rejects lookup with a stage-whitelist hint", () => {
     expect(() => jsmql.update("$.x = $$$.users.find(u => u._id === $._id);")).toThrow(
-      "A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'). 'updateOne' also accepts this form.",
+      "A document-form update takes constants: the server reads '$_id' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'). 'updateOne' also accepts this form.",
     );
   });
 

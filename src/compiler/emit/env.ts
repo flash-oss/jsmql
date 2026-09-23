@@ -329,8 +329,8 @@ export class Env {
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }
-    if (this.site.root === "updateDoc") throw readInUpdateDocument(pos);
     const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
+    if (this.site.root === "updateDoc") throw readInUpdateDocument(value, pos);
     if (loc.level === this.level) return value;
     // The boundary whose `let` evaluates against level-`loc.level` documents.
     const boundary = this.foreign()[loc.level];

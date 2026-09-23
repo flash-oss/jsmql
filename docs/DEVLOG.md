@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-23 — fix: an update refusal quotes the field the user wrote
+
+`readInUpdateDocument` always said "the server reads '$b' there", whatever the
+source read. It now quotes the read as the server would see it (`'$name'` for
+`$.name`, `'$user.name'` for a dotted path). A copy of the whole document,
+`$.a = $`, gave the rename advice with an empty path (`'$.a = $.'`, `delete $.;`);
+it now names the pipeline form alone, because no `$rename` moves the root.
+See docs/specs/update-filter.md.
+
+---
+
 ## 2026-09-23 — feat: a callback parameter carries the element's own presence
 
 `Object.keys(counts).map(ObjectId)` proved an array of maybe-absent ObjectIds,

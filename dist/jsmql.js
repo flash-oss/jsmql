@@ -23699,12 +23699,12 @@ var needsPrecedingSort = (name2, pos) => new CodegenError(
   `'.${name2}(predicate)' keeps the ${name2 === "takeWhile" ? "LEADING" : "TRAILING"} run of the stream, and a MongoDB stream has no order until you give it one. Sort first, then '.${name2}(\u2026)': '$$.toSorted({ t: 1 }).${name2}(o => o.ok)' \u2014 any sort spelling works ('.sort', '.toSorted', '.sortBy', '.orderBy', '.$sort({ \u2026 })').`,
   pos
 );
-var readInUpdateDocument = (pos) => new CodegenError(
-  `A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.`,
+var readInUpdateDocument = (ref, pos) => new CodegenError(
+  `A document-form update takes constants: the server reads '${ref}' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.`,
   pos
 );
 var updateCopyNeedsPipeline = (from, to, pos) => new CodegenError(
-  `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
+  from === "" ? `'$.${to} = $' copies the whole document. A document-form update cannot do this. Use the pipeline form ('jsmql.pipeline("$.${to} = $;")'). 'updateOne' also accepts this form.` : `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
   pos
 );
 var updateConflict = (path, held, op, pos) => new CodegenError(
@@ -23939,8 +23939,8 @@ var Env = class _Env {
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }
-    if (this.site.root === "updateDoc") throw readInUpdateDocument(pos);
     const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
+    if (this.site.root === "updateDoc") throw readInUpdateDocument(value, pos);
     if (loc.level === this.level) return value;
     const boundary = this.foreign()[loc.level];
     if (boundary.capture === null || boundary.capture === void 0) throw noCorrelationSlot(boundary.stage, pos);
@@ -26275,7 +26275,7 @@ function arrayCallback(cb, recv, recvNode, env, read, name2) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
-  const element2 = recvNode === void 0 ? ANY : elementOf(typeOf(recvNode, env));
+  const element2 = recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
   const usesIndex = index !== void 0 && readsParam(cb.body, index);
   if (!usesIndex) {
     const bound = elem === void 0 ? env.fresh("unused") : env.param(elem, element2, cb.pos);

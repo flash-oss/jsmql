@@ -110,6 +110,20 @@ describe("compiler/emit/update — writes become their operators", () => {
     expect(() => update('$.n += "x"')).toThrow(/takes a number/);
   });
 
+  it("quotes the read that the user wrote, as the server would see it", () => {
+    expect(() => update("$.name = $.name.toUpperCase()")).toThrow(
+      "A document-form update takes constants: the server reads '$name' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'). 'updateOne' also accepts this form.",
+    );
+    expect(() => update("$set({ a: $.user.name })")).toThrow("the server reads '$user.name' there as the string");
+  });
+
+  it("refuses a copy of the whole document with the pipeline form alone", () => {
+    // no `$rename` can move the root, so the field-copy advice does not apply
+    expect(() => update("$.a = $")).toThrow(
+      "'$.a = $' copies the whole document. A document-form update cannot do this. Use the pipeline form ('jsmql.pipeline(\"$.a = $;\")'). 'updateOne' also accepts this form.",
+    );
+  });
+
   it("refuses a server-computed value with what to write instead", () => {
     // `new Date()` is `$currentDate` only as the whole write; anywhere else the row says so.
     for (const src of ["$.a = { t: new Date() }", "$.tags.push(new Date())", "$.t = new Date($.x)"])

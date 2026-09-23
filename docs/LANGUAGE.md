@@ -3254,9 +3254,9 @@ jsmql.update("delete $.a, delete $.b, $.status = 'done'")
 // → { $unset: { a: "", b: "" }, $set: { status: "done" } }
 
 jsmql.update("$.name = $.name.toUpperCase()")
-// Error: A document-form update takes constants: the server reads '$b' there as the string,
-//        not the field. To compute from the document, use the pipeline form
-//        ('jsmql.pipeline("$.a = $.b + 1;")'), which 'updateOne' accepts as well.
+// Error: A document-form update takes constants: the server reads '$name' there as the
+//        string, not the field. To compute from the document, use the pipeline form
+//        ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.
 ```
 
 `jsmql.expr()` refuses a write altogether, because an aggregation expression has no `$set`. It names the two entries that take one.
@@ -4473,9 +4473,9 @@ db.users.updateOne(
 //   )
 
 jsmql.update("$.name = $.name.toUpperCase()");
-// Error: A document-form update takes constants: the server reads '$b' there as the
+// Error: A document-form update takes constants: the server reads '$name' there as the
 //        string, not the field. To compute from the document, use the pipeline form
-//        ('jsmql.pipeline("$.a = $.b + 1;")'), which 'updateOne' accepts as well.
+//        ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.
 
 jsmql.update("$match($.age > 18); $set({ x: 1 })");
 // Error: '$match' is not valid in an update document — see its 'where'.
