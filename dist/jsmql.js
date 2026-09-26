@@ -3923,6 +3923,7 @@ var NAMES = {
     category: "array",
     returns: "number",
     document: "fields",
+    evaluates: [],
     where: ["group", "window", "stream", "statement"],
     shape: "none",
     // MEASURED: { $count: "" } → the count field must be a non-empty string (the operand rule is in `args`)
@@ -4550,6 +4551,7 @@ var NAMES = {
     only: ["update"],
     // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
     document: "keeps",
+    evaluates: ["*"],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -4577,6 +4579,7 @@ var NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
+    evaluates: ["groupBy", "default"],
     body: {
       required: ["groupBy", "boundaries"],
       optional: ["default", "output"],
@@ -4611,6 +4614,7 @@ var NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
+    evaluates: ["groupBy"],
     body: {
       required: ["groupBy", "buckets"],
       optional: ["output", "granularity"],
@@ -4648,6 +4652,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $changeStream: { zzz: 1 } } → BSON field '$changeStream.zzz' is an unknown field
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: [
@@ -4691,6 +4696,7 @@ var NAMES = {
     only: ["stageLast"],
     // MEASURED: { $changeStreamSplitLargeEvent: { zzz: 1 } } → $changeStreamSplitLargeEvent spec should be an empty object
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
@@ -4714,6 +4720,7 @@ var NAMES = {
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: ["latencyStats", "storageStats", "count", "queryExecStats"],
@@ -4747,6 +4754,7 @@ var NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: [
@@ -4804,6 +4812,7 @@ var NAMES = {
     // MEASURED: { $densify: { field: "t", range: {…}, zzz: 1 } } → BSON field '$densify.zzz' is an unknown field
     // MEASURED: range.bounds: "everything" → Bounds string must either be 'full' or 'partition' (a nested key; not stated here)
     document: "keeps",
+    evaluates: [],
     body: {
       required: ["field", "range"],
       optional: ["partitionByFields"],
@@ -4831,6 +4840,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $documents: { a: 1 } } → '$documents' can only be run with database or cluster-level aggregation
     document: "unknown",
+    evaluates: [""],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
@@ -4864,6 +4874,7 @@ var NAMES = {
     statementBody: "pipeline",
     where: ["stream", "statement"],
     document: "fields",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
@@ -4898,6 +4909,7 @@ var NAMES = {
     // MEASURED: partitionBy AND partitionByFields → Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'
     // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
     document: "keeps",
+    evaluates: ["partitionBy", "output.*.value"],
     body: {
       // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
       // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
@@ -4943,6 +4955,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } } → Unknown argument to $geoNear: zzz
     document: "keeps",
+    evaluates: ["near"],
     body: {
       required: ["near"],
       optional: [
@@ -4985,6 +4998,7 @@ var NAMES = {
     doc: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
     where: ["stream", "statement"],
     document: "keeps",
+    evaluates: ["startWith"],
     body: {
       required: ["from", "startWith", "connectFromField", "connectToField", "as"],
       optional: ["maxDepth", "depthField", "restrictSearchWithMatch"],
@@ -5018,6 +5032,7 @@ var NAMES = {
     bodyExample: "$group({ _id: $.category })",
     where: ["stream", "statement"],
     document: "fields",
+    evaluates: ["_id"],
     body: { required: ["_id"], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
@@ -5045,6 +5060,7 @@ var NAMES = {
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -5071,6 +5087,7 @@ var NAMES = {
     where: ["stream", "statement"],
     // MEASURED: { $limit: 0 } → the limit must be positive (the operand rule is in `args`)
     document: "keeps",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5110,6 +5127,7 @@ var NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: ["users", "allUsers"],
@@ -5144,6 +5162,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: not supported on a standalone mongod; the key set is the manual's
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: ["namespace"], closed: true, keyTypes: { namespace: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5166,6 +5185,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: ["id", "name"], closed: true, keyTypes: { id: "string", name: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5187,6 +5207,7 @@ var NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: ["users", "allUsers"],
@@ -5221,6 +5242,7 @@ var NAMES = {
     where: ["stream", "statement"],
     preservesCount: true,
     document: "keeps",
+    evaluates: ["let"],
     body: {
       required: ["as"],
       optional: ["from", "localField", "foreignField", "let", "pipeline"],
@@ -5256,6 +5278,7 @@ var NAMES = {
     where: ["stream", "statement"],
     // MEASURED: { $match: [1] } → the match filter must be an expression in an object
     document: "narrows",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
@@ -5282,6 +5305,7 @@ var NAMES = {
     // MEASURED: whenMatched: "zzz" → Enumeration value 'zzz' for field 'whenMatched' is not a valid value (an array is an update pipeline and passes)
     // MEASURED: whenNotMatched: "zzz" → Enumeration value 'zzz' for field '$merge.whenNotMatched' is not a valid value
     document: "keeps",
+    evaluates: ["let"],
     body: {
       required: ["into"],
       optional: ["on", "let", "whenMatched", "whenNotMatched"],
@@ -5321,6 +5345,7 @@ var NAMES = {
     only: ["stageLast"],
     // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → BSON field '$out.zzz' is an unknown field; { $out: 1 } → $out only supports a string or object argument
     document: "keeps",
+    evaluates: [],
     body: {
       required: ["coll"],
       optional: ["db", "timeseries"],
@@ -5354,6 +5379,7 @@ var NAMES = {
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: ["allHosts"],
@@ -5385,6 +5411,7 @@ var NAMES = {
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
     bodyExample: "$project({ name: 1 })",
     document: "projection",
+    evaluates: ["*"],
     where: ["stream", "statement"],
     only: ["update"],
     // MEASURED: { $project: {} } → projection specification must have at least one field
@@ -5416,6 +5443,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
+    evaluates: [],
     body: {
       required: ["input"],
       optional: ["combination", "scoreDetails"],
@@ -5442,6 +5470,7 @@ var NAMES = {
     // MEASURED: { $redact: "$KEEP" } → accepted
     // The developer's own expression decides what it prunes; the fields it does not name survive.
     document: "keeps",
+    evaluates: [""],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5461,6 +5490,7 @@ var NAMES = {
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream", "statement"],
     document: "value",
+    evaluates: ["newRoot"],
     only: ["update"],
     body: {
       required: ["newRoot"],
@@ -5495,6 +5525,7 @@ var NAMES = {
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream", "statement"],
     document: "value",
+    evaluates: [""],
     only: ["update"],
     // MEASURED: { $replaceWith: 1 } → 'replacement document' must evaluate to an object
     body: { required: [], optional: [], closed: false },
@@ -5523,6 +5554,7 @@ var NAMES = {
     bodyExample: "$sample({ size: 10 })",
     where: ["stream", "statement"],
     document: "keeps",
+    evaluates: [],
     body: {
       required: ["size"],
       optional: [],
@@ -5558,6 +5590,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
+    evaluates: ["combination.expression"],
     body: {
       required: ["input"],
       optional: ["combination", "scoreDetails"],
@@ -5584,6 +5617,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the operators inside a $search body are its own language and pass through
     document: "keeps",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -5605,6 +5639,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the operators inside a $searchMeta body are its own language and pass through
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -5628,6 +5663,7 @@ var NAMES = {
     only: ["update"],
     // MEASURED: { $set: {} } → accepted, the stage is a no-op
     document: "keeps",
+    evaluates: ["*"],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5659,6 +5695,7 @@ var NAMES = {
     // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
     document: "keeps",
+    evaluates: ["partitionBy"],
     body: {
       // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
       nested: {
@@ -5714,6 +5751,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: sharded clusters only; the manual takes an empty document
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5736,6 +5774,7 @@ var NAMES = {
     where: ["stream", "statement"],
     // MEASURED: { $skip: -1 } → Expected a non-negative number; { $skip: 1.5 } → Expected an integer (the operand rule is in `args`)
     document: "keeps",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5776,6 +5815,7 @@ var NAMES = {
     preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },
     document: "keeps",
+    evaluates: [],
     body: {
       required: [],
       optional: [],
@@ -5810,6 +5850,7 @@ var NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
+    evaluates: [""],
     where: ["stream", "statement"],
     // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
     body: { required: [], optional: [], closed: false },
@@ -5830,6 +5871,7 @@ var NAMES = {
   $unionWith: mongo({
     // The stream is another collection's documents after it (or a mix): no field of this one is reliable.
     document: "unknown",
+    evaluates: [],
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     pipelineOver: "foreign",
     statementBody: "pipeline",
@@ -5869,6 +5911,7 @@ var NAMES = {
     only: ["update"],
     // MEASURED: { $unset: 1 } → $unset specification must be a string or an array; { $unset: [] } → … with at least one field
     document: "keeps",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5909,6 +5952,7 @@ var NAMES = {
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
     where: ["stream", "statement"],
     document: "element",
+    evaluates: [],
     body: {
       required: ["path"],
       optional: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
@@ -5942,6 +5986,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "keeps",
+    evaluates: [],
     body: {
       required: ["index", "path", "queryVector", "limit"],
       optional: ["numCandidates", "exact", "filter"],
@@ -14518,7 +14563,10 @@ function bodySlotAt(stage, path) {
   const layout = bodyLayoutOf(stage);
   if (layout === void 0) return void 0;
   const keys = Object.keys(layout).map((key) => ({ key, seg: segmentsOf(key) }));
-  const deeper = keys.some(({ seg }) => seg.length > path.length && covers(seg.slice(0, path.length), path));
+  const evaluatedPaths = evaluatesOf(stage).map(segmentsOf);
+  const below = (seg) => seg.length > path.length && covers(seg.slice(0, path.length), path);
+  const deeper = keys.some(({ seg }) => below(seg)) || evaluatedPaths.some(below);
+  const evaluated = evaluatedPaths.some((seg) => covers(seg, path));
   let best;
   for (const cand of keys) {
     if (!covers(cand.seg, path)) continue;
@@ -14527,7 +14575,10 @@ function bodySlotAt(stage, path) {
   }
   if (best === void 0) return void 0;
   const stated = layout[best.key];
-  return typeof stated === "string" ? { at: stated, otherwise: stated, deeper } : { at: stated.list, otherwise: stated.otherwise, deeper };
+  return typeof stated === "string" ? { at: stated, otherwise: stated, deeper, evaluated } : { at: stated.list, otherwise: stated.otherwise, deeper, evaluated };
+}
+function evaluatesOf(stage) {
+  return row(stage)?.evaluates ?? [];
 }
 function blockBodyOf(name2) {
   return row(name2)?.blockBody ?? "javascript";
@@ -21908,7 +21959,8 @@ var stageMayStand = (here) => here.at === "statement" || here.at === "stream";
 function reached(stage, path, slot, child) {
   const type = typeof child === "object" && child !== null ? child.type : void 0;
   if (slot.deeper && type === "ObjectLiteral") return { at: "stageBody", stage, path };
-  return { at: type === "ArrayLiteral" ? slot.at : slot.otherwise };
+  const at3 = type === "ArrayLiteral" ? slot.at : slot.otherwise;
+  return at3 === "value" && !slot.evaluated ? { at: at3, written: { stage, path } } : { at: at3 };
 }
 function edge(node, key, here) {
   const n2 = node;
@@ -21957,6 +22009,11 @@ function edge(node, key, here) {
     }
   }
   if (here.at === "updateDoc") return here;
+  if (here.at === "value" && here.written !== void 0) {
+    if (n2.type !== "KeyValueEntry" || key !== "value") return here;
+    const { stage, path } = here.written;
+    return { at: "value", written: { stage, path: [...path, staticKey(n2)] } };
+  }
   return VALUE;
 }
 
@@ -23192,6 +23249,145 @@ function didYouMean(name2, candidates, format = (s) => `.${s}()`) {
   return suggestion ? ` Did you mean '${format(suggestion)}'?` : "";
 }
 
+// src/stringify.ts
+var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
+var kindOf2 = (v) => Object.prototype.toString.call(v);
+var isDate3 = (v) => kindOf2(v) === "[object Date]";
+var isRegExp3 = (v) => kindOf2(v) === "[object RegExp]";
+var isBytes2 = (v) => kindOf2(v) === "[object Uint8Array]";
+function keySource(key) {
+  if (key === "__proto__") return `[${JSON.stringify(key)}]`;
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
+}
+var str = (s) => JSON.stringify(s);
+var num = (n2) => Object.is(n2, -0) ? "-0" : String(n2);
+function bsonSource(tag, v, render) {
+  const o = v;
+  const own = (name2) => {
+    const f = o[name2];
+    const everyObject = Object.prototype[name2];
+    return typeof f === "function" && f !== everyObject ? f : null;
+  };
+  const text = () => {
+    const f = own("toString");
+    return f === null ? null : String(f.call(v));
+  };
+  switch (tag) {
+    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
+    case "ObjectID":
+    case "ObjectId": {
+      const hex = own("toHexString");
+      return hex === null ? null : `new ObjectId(${str(String(hex.call(v)))})`;
+    }
+    case "Decimal128": {
+      const s = text();
+      return s === null ? null : `new Decimal128(${str(s)})`;
+    }
+    // `Long.fromString` rather than `new Long(low, high)`: the string is the value a
+    // reader can check, and the two-word constructor is not.
+    case "Long": {
+      const s = text();
+      return s === null ? null : `Long.fromString(${str(s)})`;
+    }
+    case "Int32":
+      return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
+    // A whole-number Double must keep its type: `42` would come back as an int.
+    case "Double":
+      return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
+    case "Binary": {
+      const bytes = own("toString");
+      if (bytes === null) return null;
+      const sub = Number(o.sub_type ?? 0);
+      const uuid = own("toUUID");
+      if (sub === 4 && uuid !== null) return `new UUID(${str(String(uuid.call(v)))})`;
+      return `Binary.createFromBase64(${str(String(bytes.call(v, "base64")))}, ${sub})`;
+    }
+    case "Timestamp": {
+      const t = Number(o.t ?? o.high ?? 0);
+      const i = Number(o.i ?? o.low ?? 0);
+      return Number.isFinite(t) && Number.isFinite(i) ? `new Timestamp({ t: ${t}, i: ${i} })` : null;
+    }
+    case "MinKey":
+      return "new MinKey()";
+    case "MaxKey":
+      return "new MaxKey()";
+    case "Code":
+      if (typeof o.code !== "string") return null;
+      return o.scope === void 0 || o.scope === null ? `new Code(${str(o.code)})` : `new Code(${str(o.code)}, ${render(o.scope)})`;
+    case "DBRef":
+      if (typeof o.collection !== "string") return null;
+      return o.db === void 0 || o.db === null || o.db === "" ? `new DBRef(${str(o.collection)}, ${render(o.oid)})` : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
+    case "BSONSymbol": {
+      const s = text();
+      return s === null ? null : `new BSONSymbol(${str(s)})`;
+    }
+    case "BSONRegExp":
+      return typeof o.pattern === "string" ? `new BSONRegExp(${str(o.pattern)}, ${str(String(o.options ?? ""))})` : null;
+    default:
+      return null;
+  }
+}
+function stringify2(value, options) {
+  const indent = options?.indent ?? 2;
+  const width = options?.width ?? 80;
+  const pad2 = typeof indent === "string" ? indent : " ".repeat(indent);
+  const seen = /* @__PURE__ */ new Set();
+  const leaf2 = (v) => {
+    if (v === null) return "null";
+    if (isDate3(v)) {
+      if (Number.isNaN(v.getTime()))
+        throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
+      return `new Date(${str(v.toISOString())})`;
+    }
+    if (isRegExp3(v)) return String(v);
+    if (isBytes2(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
+    const tag = tagOf(v);
+    if (tag !== void 0) {
+      const spelled3 = bsonSource(tag, v, (x) => render(x, 0));
+      if (spelled3 !== null) return spelled3;
+    }
+    const t = typeof v;
+    if (t === "string") return str(v);
+    if (t === "boolean") return String(v);
+    if (t === "bigint") return `${String(v)}n`;
+    if (t === "number") return num(v);
+    if (t === "undefined") {
+      throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
+    }
+    return null;
+  };
+  const render = (v, depth) => {
+    const simple = leaf2(v);
+    if (simple !== null) return simple;
+    if (seen.has(v)) throw new TypeError("jsmql.stringify(): the document contains a circular reference.");
+    seen.add(v);
+    try {
+      if (Array.isArray(v)) {
+        if (v.length === 0) return "[]";
+        const parts2 = v.map((x) => render(x, depth + 1));
+        const flat2 = `[${parts2.join(", ")}]`;
+        if (pad2 === "" || fits(flat2, depth)) return flat2;
+        return `[
+${parts2.map((p) => at3(depth + 1) + p).join(",\n")}
+${at3(depth)}]`;
+      }
+      const entries = Object.entries(v);
+      if (entries.length === 0) return "{}";
+      const parts = entries.map(([k, x]) => `${keySource(k)}: ${render(x, depth + 1)}`);
+      const flat = `{ ${parts.join(", ")} }`;
+      if (pad2 === "" || fits(flat, depth)) return flat;
+      return `{
+${parts.map((p) => at3(depth + 1) + p).join(",\n")}
+${at3(depth)}}`;
+    } finally {
+      seen.delete(v);
+    }
+  };
+  const at3 = (d) => pad2.repeat(d);
+  const fits = (text, depth) => !text.includes("\n") && at3(depth).length + text.length <= width;
+  return render(value, 0);
+}
+
 // src/compiler/emit/consult.ts
 var ROWS2 = Object.assign(/* @__PURE__ */ Object.create(null), NAMES, PRODUCTIONS);
 var CELL_OF = {
@@ -23828,6 +24024,73 @@ var outTooManySegments = (pos) => new CodegenError(
   "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
   pos
 );
+function holes(value) {
+  const hole = (v) => Array.isArray(v) ? v.map(hole) : isPlainObject(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hole(x)])) : "\u2026";
+  return stringify2(hole(value)).split('"\u2026"').join("\u2026");
+}
+function runTimeValueAsMql(value, where, pos) {
+  const lead = "A run-time value is a value, never MQL.";
+  if (where.at === "value" && where.written !== void 0) {
+    const { stage, path } = where.written;
+    const key = path[path.length - 1];
+    const slot = key === void 0 ? "its body" : `'${path.join(".")}'`;
+    if (typeof value === "string") {
+      const inSource2 = key === void 0 || key === null ? `${stage}(${stringify2(value)})` : `${key}: ${stringify2(value)}`;
+      return new CodegenError(
+        `${lead} '${stage}' reads ${slot} as written, and there the string ${stringify2(value)} becomes part of the MQL. Write it in the source: '${inSource2}'.`,
+        pos
+      );
+    }
+    const inSource = key === void 0 || key === null ? `${stage}(${holes(value)})` : `${key}: ${holes(value)}`;
+    return new CodegenError(
+      `${lead} '${stage}' reads ${slot} as written, and there this value becomes part of the MQL. Write it in the source, and pass only its values: '${inSource}'.`,
+      pos
+    );
+  }
+  if (where.at === "group" || where.at === "window") {
+    const kind = where.at === "group" ? "an accumulator" : "a window function";
+    const keys = isPlainObject(value) ? Object.keys(value) : [];
+    const shape = keys.length === 1 && keys[0].startsWith("$") ? `${keys[0]}(\u2026)` : holes(value);
+    return new CodegenError(
+      `${lead} This slot takes ${kind}, and there the value becomes part of the MQL. Write ${kind} in the source, and pass only its values: '${shape}'.`,
+      pos
+    );
+  }
+  if (where.at === "filter") return runTimeValueAsQuery(value, pos);
+  if (where.at === "statement" || where.at === "stream") {
+    return new CodegenError(
+      "A run-time value is a value, never a stage. Write the stage in the source, and pass only its values.",
+      pos
+    );
+  }
+  return new CodegenError(`${lead} Write this part in the source, and pass only its values.`, pos);
+}
+var runTimeValueAsQuery = (value, pos) => new CodegenError(
+  typeof value === "string" ? "A run-time value is a value, never a query. Write the query in the source, and pass only its values." : `A run-time document is a value, never a query. Write the query in the source, and pass only its values: '${holes(value)}'.`,
+  pos
+);
+var LITERAL_NOUNS = {
+  NumberLiteral: "a number",
+  BooleanLiteral: "a boolean",
+  NullLiteral: "null",
+  ArrayLiteral: "an array",
+  ObjectLiteral: "a document",
+  BigIntLiteral: "a bigint",
+  RegexLiteral: "a regular expression",
+  ObjectIdLiteral: "an ObjectId"
+};
+function collectionNameFrom(index) {
+  if (index.type === "Injected") {
+    return typeof index.value === "string" ? new CodegenError(
+      `The run-time value ${stringify2(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
+      index.pos
+    ) : new CodegenError("A collection name must be a string, and this run-time value is not a string.", index.pos);
+  }
+  const noun = LITERAL_NOUNS[index.type];
+  if (noun !== void 0)
+    return new CodegenError(`A collection name must be a string, and this value is ${noun}.`, index.pos);
+  return collectionNameMustBeConstant(index.pos);
+}
 var badOutTarget = (name2, pos) => new CodegenError(
   `'${name2}' cannot name a collection to write: the server refuses an empty name and one that starts with '$'.`,
   pos
@@ -23957,7 +24220,11 @@ var arrayReduceShape = (pos) => new CodegenError(
 
 // src/compiler/emit/env.ts
 var isForeign = (b) => pipelineOverOf(b.stage) === "foreign";
-var injectedNeedsLiteral = (site) => site.where.at === "value" && site.root !== "updateDoc" && site.envelope === "none";
+function injectedPlacement(site) {
+  if (site.envelope === "$literal" || site.root === "updateDoc" || site.where.at === "filter") return "asWritten";
+  if (site.where.at === "value" && site.where.written === void 0) return "literal";
+  return "refused";
+}
 var Chain = class {
   constructor(isPipeline = true) {
     /** The stages emitted so far. */
@@ -24427,145 +24694,6 @@ function select(verdict, receiver, shaped, count, kinds = []) {
   }
 }
 
-// src/stringify.ts
-var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
-var kindOf2 = (v) => Object.prototype.toString.call(v);
-var isDate3 = (v) => kindOf2(v) === "[object Date]";
-var isRegExp3 = (v) => kindOf2(v) === "[object RegExp]";
-var isBytes2 = (v) => kindOf2(v) === "[object Uint8Array]";
-function keySource(key) {
-  if (key === "__proto__") return `[${JSON.stringify(key)}]`;
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
-}
-var str = (s) => JSON.stringify(s);
-var num = (n2) => Object.is(n2, -0) ? "-0" : String(n2);
-function bsonSource(tag, v, render) {
-  const o = v;
-  const own = (name2) => {
-    const f = o[name2];
-    const everyObject = Object.prototype[name2];
-    return typeof f === "function" && f !== everyObject ? f : null;
-  };
-  const text = () => {
-    const f = own("toString");
-    return f === null ? null : String(f.call(v));
-  };
-  switch (tag) {
-    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
-    case "ObjectID":
-    case "ObjectId": {
-      const hex = own("toHexString");
-      return hex === null ? null : `new ObjectId(${str(String(hex.call(v)))})`;
-    }
-    case "Decimal128": {
-      const s = text();
-      return s === null ? null : `new Decimal128(${str(s)})`;
-    }
-    // `Long.fromString` rather than `new Long(low, high)`: the string is the value a
-    // reader can check, and the two-word constructor is not.
-    case "Long": {
-      const s = text();
-      return s === null ? null : `Long.fromString(${str(s)})`;
-    }
-    case "Int32":
-      return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
-    // A whole-number Double must keep its type: `42` would come back as an int.
-    case "Double":
-      return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
-    case "Binary": {
-      const bytes = own("toString");
-      if (bytes === null) return null;
-      const sub = Number(o.sub_type ?? 0);
-      const uuid = own("toUUID");
-      if (sub === 4 && uuid !== null) return `new UUID(${str(String(uuid.call(v)))})`;
-      return `Binary.createFromBase64(${str(String(bytes.call(v, "base64")))}, ${sub})`;
-    }
-    case "Timestamp": {
-      const t = Number(o.t ?? o.high ?? 0);
-      const i = Number(o.i ?? o.low ?? 0);
-      return Number.isFinite(t) && Number.isFinite(i) ? `new Timestamp({ t: ${t}, i: ${i} })` : null;
-    }
-    case "MinKey":
-      return "new MinKey()";
-    case "MaxKey":
-      return "new MaxKey()";
-    case "Code":
-      if (typeof o.code !== "string") return null;
-      return o.scope === void 0 || o.scope === null ? `new Code(${str(o.code)})` : `new Code(${str(o.code)}, ${render(o.scope)})`;
-    case "DBRef":
-      if (typeof o.collection !== "string") return null;
-      return o.db === void 0 || o.db === null || o.db === "" ? `new DBRef(${str(o.collection)}, ${render(o.oid)})` : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
-    case "BSONSymbol": {
-      const s = text();
-      return s === null ? null : `new BSONSymbol(${str(s)})`;
-    }
-    case "BSONRegExp":
-      return typeof o.pattern === "string" ? `new BSONRegExp(${str(o.pattern)}, ${str(String(o.options ?? ""))})` : null;
-    default:
-      return null;
-  }
-}
-function stringify2(value, options) {
-  const indent = options?.indent ?? 2;
-  const width = options?.width ?? 80;
-  const pad2 = typeof indent === "string" ? indent : " ".repeat(indent);
-  const seen = /* @__PURE__ */ new Set();
-  const leaf2 = (v) => {
-    if (v === null) return "null";
-    if (isDate3(v)) {
-      if (Number.isNaN(v.getTime()))
-        throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
-      return `new Date(${str(v.toISOString())})`;
-    }
-    if (isRegExp3(v)) return String(v);
-    if (isBytes2(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
-    const tag = tagOf(v);
-    if (tag !== void 0) {
-      const spelled3 = bsonSource(tag, v, (x) => render(x, 0));
-      if (spelled3 !== null) return spelled3;
-    }
-    const t = typeof v;
-    if (t === "string") return str(v);
-    if (t === "boolean") return String(v);
-    if (t === "bigint") return `${String(v)}n`;
-    if (t === "number") return num(v);
-    if (t === "undefined") {
-      throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
-    }
-    return null;
-  };
-  const render = (v, depth) => {
-    const simple = leaf2(v);
-    if (simple !== null) return simple;
-    if (seen.has(v)) throw new TypeError("jsmql.stringify(): the document contains a circular reference.");
-    seen.add(v);
-    try {
-      if (Array.isArray(v)) {
-        if (v.length === 0) return "[]";
-        const parts2 = v.map((x) => render(x, depth + 1));
-        const flat2 = `[${parts2.join(", ")}]`;
-        if (pad2 === "" || fits(flat2, depth)) return flat2;
-        return `[
-${parts2.map((p) => at3(depth + 1) + p).join(",\n")}
-${at3(depth)}]`;
-      }
-      const entries = Object.entries(v);
-      if (entries.length === 0) return "{}";
-      const parts = entries.map(([k, x]) => `${keySource(k)}: ${render(x, depth + 1)}`);
-      const flat = `{ ${parts.join(", ")} }`;
-      if (pad2 === "" || fits(flat, depth)) return flat;
-      return `{
-${parts.map((p) => at3(depth + 1) + p).join(",\n")}
-${at3(depth)}}`;
-    } finally {
-      seen.delete(v);
-    }
-  };
-  const at3 = (d) => pad2.repeat(d);
-  const fits = (text, depth) => !text.includes("\n") && at3(depth).length + text.length <= width;
-  return render(value, 0);
-}
-
 // src/compiler/emit/check.ts
 function literal(e) {
   switch (e.type) {
@@ -24925,7 +25053,7 @@ function checkBody(name2, rule, args, keys, pos) {
   }
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf2(k);
-    if (v !== void 0 && !evaluate(v, /* @__PURE__ */ new Map()).ok) {
+    if (v !== void 0 && v.type !== "Injected" && !evaluate(v, /* @__PURE__ */ new Map()).ok) {
       throw new CodegenError(
         `'${name2}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         v.pos
@@ -25037,7 +25165,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true) {
   }
   for (const i of args.constant ?? []) {
     const e = operands[i];
-    if (e !== void 0 && e.type !== "ObjectLiteral" && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
+    if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
       throw new CodegenError(
         `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         e.pos
@@ -25518,7 +25646,7 @@ function documentAfter(stage, doc) {
     }
     case "element": {
       const spec = typeof body === "string" ? { path: body } : body;
-      const path = spec.path?.startsWith("$") ? spec.path.slice(1) : null;
+      const path = typeof spec.path === "string" && spec.path.startsWith("$") ? spec.path.slice(1) : null;
       if (path === null) return doc;
       const element2 = elementOf(at2(doc, path));
       return written(doc, path, spec.preserveNullAndEmptyArrays === true ? maybeAbsent(element2) : present(element2));
@@ -25668,7 +25796,7 @@ function foreignChain(node) {
   if (chainBase(cur).type === "ClusterRef") throw crossDatabaseRead(node.pos);
   if (cur.type === "MemberAccess" && cur.object.type === "DatabaseRef") return { from: cur.name, links, pos: node.pos };
   if (cur.type === "IndexAccess" && cur.object.type === "DatabaseRef") {
-    if (cur.index.type !== "StringLiteral") throw collectionNameMustBeConstant(cur.index.pos);
+    if (cur.index.type !== "StringLiteral") throw collectionNameFrom(cur.index);
     if (cur.index.value === "") throw emptyCollectionName(cur.index.pos);
     return { from: cur.index.value, links, pos: node.pos };
   }
@@ -26155,6 +26283,7 @@ function lowerFilter(node, env) {
 var lowerNativeFilter = (node, env) => translate(node, env, true);
 var isExpr = (a) => a.type !== "SpreadElement" && a.type !== "LetDecl" && a.type !== "FuncDecl" && a.type !== "AssignExpr" && a.type !== "DeleteStmt" && a.type !== "UpdateFilter";
 function translate(node, env, nativeOnly) {
+  if (node.type === "Injected" && isMqlShaped(node.value)) throw runTimeValueAsQuery(node.value, node.pos);
   if (node.type === "BinaryExpr" && node.op === "&&") {
     const all2 = extractHasChain(node, env);
     if (all2 !== null) return hasChain(all2.path, all2.values);
@@ -26275,12 +26404,25 @@ function readsAtRunTime(e) {
       return false;
   }
 }
+var NOT_INJECTED = /* @__PURE__ */ Symbol("not injected");
+function injectedInQuery(key, value) {
+  if (value.type !== "Injected" || !isMqlShaped(value.value)) return NOT_INJECTED;
+  if (!key.startsWith("$")) return queryOwnValue(key, { $eq: value.value })[key];
+  if (liftsToOf(key) !== void 0) return value.value;
+  if (operandPositionOf(key) === "value") return NOT_INJECTED;
+  throw runTimeValueAsQuery(value.value, value.pos);
+}
 function rawDocument(node, env) {
   const out = {};
   for (const e of node.entries) {
     if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
     const key = staticKey(e);
     if (key === null) throw computedKeyInOperatorBody(e.pos);
+    const placed = injectedInQuery(key, e.value);
+    if (placed !== NOT_INJECTED) {
+      setKey(out, key, placed);
+      continue;
+    }
     if (key.startsWith("$") && operandShapeOf(key) === "array" && e.value.type !== "ArrayLiteral") {
       throw listOperand(key, e.value.pos);
     }
@@ -26298,6 +26440,8 @@ function rawDocument(node, env) {
 }
 function rawValue(e, env) {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
+    const placed = injectedInQuery(e.name, e.args[0]);
+    if (placed !== NOT_INJECTED) return { [e.name]: placed };
     return { [e.name]: rawValue(e.args[0], env) };
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
@@ -26990,7 +27134,7 @@ function lowerValue(node, env) {
     case "ObjectLiteral":
       return objectLiteral(node, node.entries, env);
     case "Injected":
-      return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
+      return injectedValue(node, env);
     case "FieldRef": {
       const path = reachable(env.render(locate(node, env), node.pos));
       return node.optional === true ? { $ifNull: [path, null] } : path;
@@ -27144,6 +27288,17 @@ function arrayLiteral(node, elements, env) {
   flush();
   return operands.length === 1 ? operands[0] : { $concatArrays: operands };
 }
+function injectedValue(node, env) {
+  if (!isMqlShaped(node.value)) return node.value;
+  switch (injectedPlacement(env.site)) {
+    case "literal":
+      return { $literal: node.value };
+    case "asWritten":
+      return node.value;
+    case "refused":
+      throw runTimeValueAsMql(node.value, env.site.where, node.pos);
+  }
+}
 function objectLiteral(node, entries, env) {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list) => {
@@ -27151,7 +27306,7 @@ function objectLiteral(node, entries, env) {
       const pairs = list.map((e) => {
         if (e.type !== "KeyValueEntry") internalError("a spread reached the computed-key path");
         const k = e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, inner);
-        return { k, v: lowerValue(e.value, inner) };
+        return { k, v: lowerValue(e.value, childEnv(inner, e, "value")) };
       });
       return { $arrayToObject: [pairs] };
     }
@@ -27172,7 +27327,7 @@ function objectLiteral(node, entries, env) {
         setKey(out, e.key.name, own);
         continue;
       }
-      setKey(out, e.key.name, lowerValue(e.value, inner));
+      setKey(out, e.key.name, lowerValue(e.value, childEnv(inner, e, "value")));
     }
     return out;
   };
@@ -28057,13 +28212,17 @@ function stageBody(node, env) {
     if (key === null) return lowerValue(node, env);
     const slot = childEnv(entries, entry, "value");
     const at3 = slot.site.where.at;
-    out[key] = at3 === "statement" || at3 === "stream" ? pipelineBody(
-      entry.value,
-      slot,
-      env.site.where.at === "stageBody" ? env.site.where.stage : "",
-      [...env.site.where.at === "stageBody" ? env.site.where.path : [], key],
-      captures
-    ) : readIn(entry.value, slot);
+    setKey(
+      out,
+      key,
+      at3 === "statement" || at3 === "stream" ? pipelineBody(
+        entry.value,
+        slot,
+        env.site.where.at === "stageBody" ? env.site.where.stage : "",
+        [...env.site.where.at === "stageBody" ? env.site.where.path : [], key],
+        captures
+      ) : readIn(entry.value, slot)
+    );
   }
   const captured = captures.filter((c) => c.any);
   if (captured.length > 0) {
@@ -28383,7 +28542,7 @@ function outTarget(t) {
   let cur = t;
   while (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
     if (cur.type === "IndexAccess") {
-      if (cur.index.type !== "StringLiteral") throw collectionNameMustBeConstant(cur.index.pos);
+      if (cur.index.type !== "StringLiteral") throw collectionNameFrom(cur.index);
       segments.unshift(cur.index.value);
     } else segments.unshift(cur.name);
     cur = cur.object;

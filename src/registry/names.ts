@@ -316,12 +316,27 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
 };
 
 /**
- * A stage row states both `body` and `document`; a row that is not a stage states
- * neither. The pair is one type, so the two cannot come apart.
+ * A stage row states `body`, `document` and `evaluates`; a row that is not a stage
+ * states none of the three. They are one type, so they cannot come apart.
+ *
+ * `evaluates` lists the body paths whose value the server EVALUATES as an
+ * aggregation expression. The paths use the vocabulary of `bodyPositions`: `""` is
+ * the body itself, a `*` segment is every key at its level, and a path covers every
+ * value below it. The server reads every other value slot of the body AS WRITTEN: a
+ * name, a path, a number, a word, a sort order. HR1's gate for a run-time value
+ * reads this fact. In an evaluated slot, a value that reads as MQL takes `$literal`.
+ * In a slot that the server reads as written, the compiler refuses such a value,
+ * because there the value becomes part of the MQL. MEASURED, with `$literal` in the slot:
+ *   { $group: { _id: { $literal: "$k" }, n: { $sum: 1 } } }   → [{ _id: "$k", n: 1 }]
+ *   { $replaceWith: { $literal: { a: "$b" } } }              → [{ a: "$b" }]
+ *   { $bucket: { groupBy: "$a", boundaries: [0, 5], default: { $literal: "o" } } } → [{ _id: "o", count: 1 }]
+ *   { $unwind: { $literal: "$items" } }                      → "unrecognized option to $unwind stage: $literal"
+ *   { $lookup: { from: { $literal: "o" }, … } }              → "BSON field 'from.$literal' is an unknown field."
+ *   { $sort: { a: { $literal: 1 } } }                        → "$meta is the only expression supported by $sort right now"
  */
 export type StageFacts =
-  | { readonly body: BodyRule; readonly document: DocumentEffect }
-  | { readonly body?: undefined; readonly document?: undefined };
+  | { readonly body: BodyRule; readonly document: DocumentEffect; readonly evaluates: readonly string[] }
+  | { readonly body?: undefined; readonly document?: undefined; readonly evaluates?: undefined };
 
 type MongoSpec<
   W extends readonly Position[],
@@ -4604,6 +4619,7 @@ export const NAMES = {
     category: "array",
     returns: "number",
     document: "fields",
+    evaluates: [],
     where: ["group", "window", "stream", "statement"],
     shape: "none",
     // MEASURED: { $count: "" } → the count field must be a non-empty string (the operand rule is in `args`)
@@ -5255,6 +5271,7 @@ export const NAMES = {
     only: ["update"],
     // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
     document: "keeps",
+    evaluates: ["*"],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5284,6 +5301,7 @@ export const NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
+    evaluates: ["groupBy", "default"],
     body: {
       required: ["groupBy", "boundaries"],
       optional: ["default", "output"],
@@ -5319,6 +5337,7 @@ export const NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
+    evaluates: ["groupBy"],
     body: {
       required: ["groupBy", "buckets"],
       optional: ["output", "granularity"],
@@ -5357,6 +5376,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $changeStream: { zzz: 1 } } → BSON field '$changeStream.zzz' is an unknown field
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: [
@@ -5401,6 +5421,7 @@ export const NAMES = {
     only: ["stageLast"],
     // MEASURED: { $changeStreamSplitLargeEvent: { zzz: 1 } } → $changeStreamSplitLargeEvent spec should be an empty object
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
@@ -5425,6 +5446,7 @@ export const NAMES = {
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: ["latencyStats", "storageStats", "count", "queryExecStats"],
@@ -5459,6 +5481,7 @@ export const NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: [
@@ -5517,6 +5540,7 @@ export const NAMES = {
     // MEASURED: { $densify: { field: "t", range: {…}, zzz: 1 } } → BSON field '$densify.zzz' is an unknown field
     // MEASURED: range.bounds: "everything" → Bounds string must either be 'full' or 'partition' (a nested key; not stated here)
     document: "keeps",
+    evaluates: [],
     body: {
       required: ["field", "range"],
       optional: ["partitionByFields"],
@@ -5545,6 +5569,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $documents: { a: 1 } } → '$documents' can only be run with database or cluster-level aggregation
     document: "unknown",
+    evaluates: [""],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
@@ -5580,6 +5605,7 @@ export const NAMES = {
     statementBody: "pipeline",
     where: ["stream", "statement"],
     document: "fields",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
@@ -5615,6 +5641,7 @@ export const NAMES = {
     // MEASURED: partitionBy AND partitionByFields → Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'
     // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
     document: "keeps",
+    evaluates: ["partitionBy", "output.*.value"],
     body: {
       // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
       // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
@@ -5661,6 +5688,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } } → Unknown argument to $geoNear: zzz
     document: "keeps",
+    evaluates: ["near"],
     body: {
       required: ["near"],
       optional: [
@@ -5704,6 +5732,7 @@ export const NAMES = {
     doc: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
     where: ["stream", "statement"],
     document: "keeps",
+    evaluates: ["startWith"],
     body: {
       required: ["from", "startWith", "connectFromField", "connectToField", "as"],
       optional: ["maxDepth", "depthField", "restrictSearchWithMatch"],
@@ -5738,6 +5767,7 @@ export const NAMES = {
     bodyExample: "$group({ _id: $.category })",
     where: ["stream", "statement"],
     document: "fields",
+    evaluates: ["_id"],
     body: { required: ["_id"], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
@@ -5766,6 +5796,7 @@ export const NAMES = {
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -5793,6 +5824,7 @@ export const NAMES = {
     where: ["stream", "statement"],
     // MEASURED: { $limit: 0 } → the limit must be positive (the operand rule is in `args`)
     document: "keeps",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5834,6 +5866,7 @@ export const NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: ["users", "allUsers"],
@@ -5869,6 +5902,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: not supported on a standalone mongod; the key set is the manual's
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: ["namespace"], closed: true, keyTypes: { namespace: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5892,6 +5926,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: ["id", "name"], closed: true, keyTypes: { id: "string", name: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -5914,6 +5949,7 @@ export const NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: ["users", "allUsers"],
@@ -5949,6 +5985,7 @@ export const NAMES = {
     where: ["stream", "statement"],
     preservesCount: true,
     document: "keeps",
+    evaluates: ["let"],
     body: {
       required: ["as"],
       optional: ["from", "localField", "foreignField", "let", "pipeline"],
@@ -5985,6 +6022,7 @@ export const NAMES = {
     where: ["stream", "statement"],
     // MEASURED: { $match: [1] } → the match filter must be an expression in an object
     document: "narrows",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
@@ -6013,6 +6051,7 @@ export const NAMES = {
     // MEASURED: whenMatched: "zzz" → Enumeration value 'zzz' for field 'whenMatched' is not a valid value (an array is an update pipeline and passes)
     // MEASURED: whenNotMatched: "zzz" → Enumeration value 'zzz' for field '$merge.whenNotMatched' is not a valid value
     document: "keeps",
+    evaluates: ["let"],
     body: {
       required: ["into"],
       optional: ["on", "let", "whenMatched", "whenNotMatched"],
@@ -6053,6 +6092,7 @@ export const NAMES = {
     only: ["stageLast"],
     // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → BSON field '$out.zzz' is an unknown field; { $out: 1 } → $out only supports a string or object argument
     document: "keeps",
+    evaluates: [],
     body: {
       required: ["coll"],
       optional: ["db", "timeseries"],
@@ -6087,6 +6127,7 @@ export const NAMES = {
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     document: "unknown",
+    evaluates: [],
     body: {
       required: [],
       optional: ["allHosts"],
@@ -6119,6 +6160,7 @@ export const NAMES = {
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
     bodyExample: "$project({ name: 1 })",
     document: "projection",
+    evaluates: ["*"],
     where: ["stream", "statement"],
     only: ["update"],
     // MEASURED: { $project: {} } → projection specification must have at least one field
@@ -6152,6 +6194,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
+    evaluates: [],
     body: {
       required: ["input"],
       optional: ["combination", "scoreDetails"],
@@ -6179,6 +6222,7 @@ export const NAMES = {
     // MEASURED: { $redact: "$KEEP" } → accepted
     // The developer's own expression decides what it prunes; the fields it does not name survive.
     document: "keeps",
+    evaluates: [""],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6200,6 +6244,7 @@ export const NAMES = {
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream", "statement"],
     document: "value",
+    evaluates: ["newRoot"],
     only: ["update"],
     body: {
       required: ["newRoot"],
@@ -6235,6 +6280,7 @@ export const NAMES = {
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream", "statement"],
     document: "value",
+    evaluates: [""],
     only: ["update"],
     // MEASURED: { $replaceWith: 1 } → 'replacement document' must evaluate to an object
     body: { required: [], optional: [], closed: false },
@@ -6264,6 +6310,7 @@ export const NAMES = {
     bodyExample: "$sample({ size: 10 })",
     where: ["stream", "statement"],
     document: "keeps",
+    evaluates: [],
     body: {
       required: ["size"],
       optional: [],
@@ -6300,6 +6347,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
+    evaluates: ["combination.expression"],
     body: {
       required: ["input"],
       optional: ["combination", "scoreDetails"],
@@ -6327,6 +6375,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the operators inside a $search body are its own language and pass through
     document: "keeps",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -6349,6 +6398,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the operators inside a $searchMeta body are its own language and pass through
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
@@ -6373,6 +6423,7 @@ export const NAMES = {
     only: ["update"],
     // MEASURED: { $set: {} } → accepted, the stage is a no-op
     document: "keeps",
+    evaluates: ["*"],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6406,6 +6457,7 @@ export const NAMES = {
     // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
     document: "keeps",
+    evaluates: ["partitionBy"],
     body: {
       // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
       nested: {
@@ -6462,6 +6514,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: sharded clusters only; the manual takes an empty document
     document: "unknown",
+    evaluates: [],
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6485,6 +6538,7 @@ export const NAMES = {
     where: ["stream", "statement"],
     // MEASURED: { $skip: -1 } → Expected a non-negative number; { $skip: 1.5 } → Expected an integer (the operand rule is in `args`)
     document: "keeps",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6527,6 +6581,7 @@ export const NAMES = {
     preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },
     document: "keeps",
+    evaluates: [],
     body: {
       required: [],
       optional: [],
@@ -6563,6 +6618,7 @@ export const NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
+    evaluates: [""],
     where: ["stream", "statement"],
     // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
     body: { required: [], optional: [], closed: false },
@@ -6584,6 +6640,7 @@ export const NAMES = {
   $unionWith: mongo({
     // The stream is another collection's documents after it (or a mix): no field of this one is reliable.
     document: "unknown",
+    evaluates: [],
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     pipelineOver: "foreign",
     statementBody: "pipeline",
@@ -6625,6 +6682,7 @@ export const NAMES = {
     only: ["update"],
     // MEASURED: { $unset: 1 } → $unset specification must be a string or an array; { $unset: [] } → … with at least one field
     document: "keeps",
+    evaluates: [],
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -6667,6 +6725,7 @@ export const NAMES = {
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
     where: ["stream", "statement"],
     document: "element",
+    evaluates: [],
     body: {
       required: ["path"],
       optional: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
@@ -6701,6 +6760,7 @@ export const NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "keeps",
+    evaluates: [],
     body: {
       required: ["index", "path", "queryVector", "limit"],
       optional: ["numCandidates", "exact", "filter"],

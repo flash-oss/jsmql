@@ -176,6 +176,27 @@ when the chain's top is a value to its parent — `$.o = $$$.orders.filter(p).$g
 callee whose row says `blockBody: "stages"` takes them as an array too:
 `$$.aggregate([$match(…)])` puts each element at `statement`.
 
+## A value slot that the server reads as written
+
+A stage row also states `evaluates`: the body paths whose value the server
+evaluates as an expression. At a value leaf of a stage body, the pass reads it
+(`bodySlotAt` answers `evaluated`). A leaf that no `evaluates` path covers takes
+`{ at: "value", written: { stage, path } }`, and every node below it takes the same
+answer, with each key added to the path. A name, a path, a number, a word or a sort
+order stands in such a slot:
+
+```
+$unwind({ path: <v> })         path ["path"]   → { at: "value", written: { stage: "$unwind", path: ["path"] } }
+$lookup({ from: <v>, … })      path ["from"]   → written
+$lookup({ let: { w: <v> }, … })  path ["let"]  → { at: "value" }           `let` is evaluated
+$set({ x: <v> })               path ["x"]      → { at: "value" }           every key of `$set` is evaluated
+```
+
+An `evaluates` path below the leaf keeps the walk descending, the same as a
+`bodyPositions` key does: `$fill`'s `output.*.value` reaches its own slot, and
+`output.<field>.method` beside it is written. HR1's gate reads the answer (see
+[aggregation-stages.md § `$`-string pass-through](aggregation-stages.md)).
+
 ## The three answers that are not positions
 
 `edge` also returns three things `Position` does not name:

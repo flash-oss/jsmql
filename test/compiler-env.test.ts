@@ -8,7 +8,7 @@
 // test/types/registry-contracts.ts.
 
 import { describe, expect, it } from "vitest";
-import { Chain, Env, injectedNeedsLiteral, type Site } from "../src/compiler/emit/env.ts";
+import { Chain, Env, injectedPlacement, type Site } from "../src/compiler/emit/env.ts";
 import { parse } from "../src/compiler/parse/parser.ts";
 import type { Position } from "../src/registry/vocabulary.ts";
 
@@ -54,7 +54,7 @@ describe("compiler/emit/env — a transition changes one thing and keeps the res
   });
 });
 
-describe("compiler/emit/env — the HR1 gate is one predicate", () => {
+describe("compiler/emit/env — the HR1 gate is one function", () => {
   const site = (where: Site["where"], root: Position, envelope: Site["envelope"]): Site => ({
     where,
     root,
@@ -62,18 +62,25 @@ describe("compiler/emit/env — the HR1 gate is one predicate", () => {
     boundaries: [],
   });
 
-  it("wraps an injected `$…` in every value slot the server evaluates, outside $literal", () => {
-    expect(injectedNeedsLiteral(site({ at: "value" }, "value", "none"))).toBe(true);
-    expect(injectedNeedsLiteral(site({ at: "value" }, "filter", "none"))).toBe(true);
-    // a pipeline's `$set` value and stage bodies are evaluated too
-    expect(injectedNeedsLiteral(site({ at: "value" }, "statement", "none"))).toBe(true);
+  it("places an injected `$…` by the slot: $literal where the server evaluates, as written where nothing is read, refused elsewhere", () => {
+    expect(injectedPlacement(site({ at: "value" }, "value", "none"))).toBe("literal");
+    expect(injectedPlacement(site({ at: "value" }, "filter", "none"))).toBe("literal");
+    // a pipeline's `$set` value and an evaluated stage slot take the wrap too
+    expect(injectedPlacement(site({ at: "value" }, "statement", "none"))).toBe("literal");
     // an update DOCUMENT stores the string as written
-    expect(injectedNeedsLiteral(site({ at: "value" }, "updateDoc", "none"))).toBe(false);
+    expect(injectedPlacement(site({ at: "value" }, "updateDoc", "none"))).toBe("asWritten");
     // a $literal the developer wrote already protects it
-    expect(injectedNeedsLiteral(site({ at: "value" }, "value", "$literal"))).toBe(false);
-    // a query slot is not an expression: nothing there is read as a field reference
-    expect(injectedNeedsLiteral(site({ at: "filter" }, "filter", "none"))).toBe(false);
-    expect(injectedNeedsLiteral(site({ at: "target" }, "value", "none"))).toBe(false);
+    expect(injectedPlacement(site({ at: "value" }, "value", "$literal"))).toBe("asWritten");
+    // a stage slot that the server reads as written: there the value becomes part of the MQL
+    expect(injectedPlacement(site({ at: "value", written: { stage: "$unwind", path: [] } }, "statement", "none"))).toBe(
+      "refused",
+    );
+    // a query slot is not an expression: the query language compares the value as written
+    expect(injectedPlacement(site({ at: "filter" }, "filter", "none"))).toBe("asWritten");
+    // an accumulator and a window function are MQL syntax, never a value
+    expect(injectedPlacement(site({ at: "group" }, "statement", "none"))).toBe("refused");
+    expect(injectedPlacement(site({ at: "window" }, "statement", "none"))).toBe("refused");
+    expect(injectedPlacement(site({ at: "target" }, "value", "none"))).toBe("refused");
   });
 });
 

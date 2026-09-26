@@ -23,7 +23,7 @@ jsmql.expr('{ year: { $abs: 1900 + $.age } }'); // → { year: { $abs: { $add: [
 
 In your source, the string `"$x"` is the MQL field path `$x`. To get the string itself, write `$literal("$x")`, as in raw MQL.
 
-A value that your program passes in is different. There are two types of such a value: a `jsmql.compile` parameter, and a `${…}` value in a template tag. Such a value can read as MQL, for example the string `"$x"`. In an expression, the compiler then puts the value in `$literal`. This is a safety rule: untrusted input cannot become a field path.
+A value that your program passes in is different. There are two types of such a value: a `jsmql.compile` parameter, and a `${…}` value in a template tag. Such a value can read as MQL, for example the string `"$x"`. In an expression, the compiler then puts the value in `$literal`. This is a safety rule: untrusted input cannot become a field path. In a query, the compiler compares the value as written, and an update document stores it as written. Every other place refuses such a value, and the message names the spelling to write in the source.
 
 **HR2 — `$op(value)` and `{ $op: value }` are two spellings of the same MQL.** The escape hatch is the `$op(…)` form. It calls a MongoDB operator by its name. `$op(value)` lowers to `{ $op: value }`. The compiler does not put the value in an array. Two or more arguments become an array: `$op(a, b)` lowers to `{ $op: [a, b] }`.
 

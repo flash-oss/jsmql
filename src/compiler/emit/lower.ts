@@ -55,7 +55,7 @@ import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
 import { ANY, cannotBe, isOnly, kindsOf, maybeAbsent } from "./type.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
-import { injectedNeedsLiteral } from "./env.ts";
+import { injectedPlacement } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
 const NAMESPACES = namespaceNames();
@@ -178,8 +178,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "ObjectLiteral":
       return objectLiteral(node, node.entries, env);
     case "Injected":
-      // HR1: a value the call supplied is a VALUE — never an operator or a field reference
-      return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
+      return injectedValue(node, env);
     case "FieldRef": {
       const path = reachable(env.render(locate(node, env) as Located, node.pos));
       // `$.user?.name` is JavaScript's `undefined` when `user` is not there, and a document
@@ -397,6 +396,23 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
   return operands.length === 1 ? operands[0] : { $concatArrays: operands };
 }
 
+/**
+ * HR1: a value the call supplied is a VALUE — never an operator or a field reference.
+ * One that reads as MQL takes `$literal` where the server evaluates the slot, and the
+ * compiler refuses it where the value becomes part of the MQL. See `injectedPlacement`.
+ */
+function injectedValue(node: Extract<Expr, { type: "Injected" }>, env: Env): unknown {
+  if (!isMqlShaped(node.value)) return node.value;
+  switch (injectedPlacement(env.site)) {
+    case "literal":
+      return { $literal: node.value };
+    case "asWritten":
+      return node.value;
+    case "refused":
+      throw E.runTimeValueAsMql(node.value, env.site.where, node.pos);
+  }
+}
+
 function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): unknown {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list: readonly ObjectEntry[]): unknown => {
@@ -405,7 +421,7 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
       const pairs = list.map((e) => {
         if (e.type !== "KeyValueEntry") internalError("a spread reached the computed-key path");
         const k = e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, inner);
-        return { k, v: lowerValue(e.value, inner) };
+        return { k, v: lowerValue(e.value, childEnv(inner, e, "value")) };
       });
       return { $arrayToObject: [pairs] };
     }
@@ -436,7 +452,7 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
         setKey(out, e.key.name, own);
         continue;
       }
-      setKey(out, e.key.name, lowerValue(e.value, inner));
+      setKey(out, e.key.name, lowerValue(e.value, childEnv(inner, e, "value")));
     }
     return out;
   };

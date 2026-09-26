@@ -8,6 +8,10 @@
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import type { Arity, Kind, Position, SlotForm, Type } from "../../registry/vocabulary.ts";
+import type { Expr } from "../../registry/vocabulary.ts";
+import type { Where } from "../passes/position.ts";
+import { stringify } from "../../stringify.ts";
+import { isPlainObject } from "../../bson.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
@@ -1112,6 +1116,106 @@ export const outTooManySegments = (pos: number): CodegenError =>
     "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
     pos,
   );
+
+// ── run-time values (HR1) ────────────────────────────────────────────────────
+
+/**
+ * A run-time value with each leaf replaced by `…`: the shape to write in the source,
+ * with the values left for the call to pass. `{ a: { $gt: 1 } }` → `{ a: { $gt: … } }`.
+ */
+function holes(value: unknown): string {
+  const hole = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(hole)
+      : isPlainObject(v)
+        ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, hole(x)]))
+        : "…";
+  return stringify(hole(value)).split('"…"').join("…");
+}
+
+/**
+ * A run-time value that reads as MQL, in a slot where it becomes part of the MQL:
+ * a stage slot that the server reads as written, an accumulator, a window function,
+ * a statement. HR1: such a value is a value, never MQL. See `injectedPlacement`.
+ */
+export function runTimeValueAsMql(value: unknown, where: Where, pos: number): CodegenError {
+  const lead = "A run-time value is a value, never MQL.";
+  if (where.at === "value" && where.written !== undefined) {
+    const { stage, path } = where.written;
+    const key = path[path.length - 1];
+    const slot = key === undefined ? "its body" : `'${path.join(".")}'`;
+    if (typeof value === "string") {
+      const inSource =
+        key === undefined || key === null ? `${stage}(${stringify(value)})` : `${key}: ${stringify(value)}`;
+      return new CodegenError(
+        `${lead} '${stage}' reads ${slot} as written, and there the string ${stringify(value)} becomes part of the MQL. Write it in the source: '${inSource}'.`,
+        pos,
+      );
+    }
+    const inSource = key === undefined || key === null ? `${stage}(${holes(value)})` : `${key}: ${holes(value)}`;
+    return new CodegenError(
+      `${lead} '${stage}' reads ${slot} as written, and there this value becomes part of the MQL. Write it in the source, and pass only its values: '${inSource}'.`,
+      pos,
+    );
+  }
+  if (where.at === "group" || where.at === "window") {
+    const kind = where.at === "group" ? "an accumulator" : "a window function";
+    const keys = isPlainObject(value) ? Object.keys(value as Record<string, unknown>) : [];
+    const shape = keys.length === 1 && keys[0].startsWith("$") ? `${keys[0]}(…)` : holes(value);
+    return new CodegenError(
+      `${lead} This slot takes ${kind}, and there the value becomes part of the MQL. Write ${kind} in the source, and pass only its values: '${shape}'.`,
+      pos,
+    );
+  }
+  if (where.at === "filter") return runTimeValueAsQuery(value, pos);
+  if (where.at === "statement" || where.at === "stream") {
+    return new CodegenError(
+      "A run-time value is a value, never a stage. Write the stage in the source, and pass only its values.",
+      pos,
+    );
+  }
+  return new CodegenError(`${lead} Write this part in the source, and pass only its values.`, pos);
+}
+
+/** A run-time value where the query language reads a query: the whole predicate, a `$and` list, a `$not` operand. */
+export const runTimeValueAsQuery = (value: unknown, pos: number): CodegenError =>
+  new CodegenError(
+    typeof value === "string"
+      ? "A run-time value is a value, never a query. Write the query in the source, and pass only its values."
+      : `A run-time document is a value, never a query. Write the query in the source, and pass only its values: '${holes(value)}'.`,
+    pos,
+  );
+
+const LITERAL_NOUNS: Readonly<Partial<Record<Expr["type"], string>>> = {
+  NumberLiteral: "a number",
+  BooleanLiteral: "a boolean",
+  NullLiteral: "null",
+  ArrayLiteral: "an array",
+  ObjectLiteral: "a document",
+  BigIntLiteral: "a bigint",
+  RegexLiteral: "a regular expression",
+  ObjectIdLiteral: "an ObjectId",
+};
+
+/**
+ * `$$$[c]` where `c` cannot name a collection. A value read at run time has no name
+ * yet. A value that the call supplies, or that the source writes, must be a plain
+ * string: the server refuses a name that starts with '$'.
+ */
+export function collectionNameFrom(index: Expr): CodegenError {
+  if (index.type === "Injected") {
+    return typeof index.value === "string"
+      ? new CodegenError(
+          `The run-time value ${stringify(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
+          index.pos,
+        )
+      : new CodegenError("A collection name must be a string, and this run-time value is not a string.", index.pos);
+  }
+  const noun = LITERAL_NOUNS[index.type];
+  if (noun !== undefined)
+    return new CodegenError(`A collection name must be a string, and this value is ${noun}.`, index.pos);
+  return collectionNameMustBeConstant(index.pos);
+}
 
 /** `$$$[""] = $$` / `$$$["$x"] = $$` — a name the server refuses. */
 export const badOutTarget = (name: string, pos: number): CodegenError =>

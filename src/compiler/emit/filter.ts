@@ -19,9 +19,11 @@
 
 import type { Expr, QueryDoc, Truth } from "../../registry/vocabulary.ts";
 import { queryOwnValue } from "../../registry/vocabulary.ts";
+import { setKey } from "../../registry/mql.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
+import { isMqlShaped } from "../passes/inject.ts";
 import { bsonTagOf, isDate, isPlainObject, isRegExp, longsWithin, ObjectId } from "../../bson.ts";
 import { consult, listedIn } from "./consult.ts";
 import { checkSlots } from "./check.ts";
@@ -68,6 +70,9 @@ const isExpr = (a: { type: string }): a is Expr =>
   a.type !== "UpdateFilter";
 
 function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
+  // HR1: a run-time value that reads as MQL is a value. As the whole predicate, its
+  // truth is a constant. Read as a query, it becomes the query itself.
+  if (node.type === "Injected" && isMqlShaped(node.value)) throw E.runTimeValueAsQuery(node.value, node.pos);
   if (node.type === "BinaryExpr" && node.op === "&&") {
     const all = extractHasChain(node, env);
     if (all !== null) return hasChain(all.path, all.values);
@@ -260,6 +265,25 @@ function readsAtRunTime(e: Expr): boolean {
   }
 }
 
+const NOT_INJECTED = Symbol("not injected");
+
+/**
+ * HR1 in a query document: a run-time value that reads as MQL is a value, never
+ * syntax. A field compares it (`{ a: v }` → `{ a: { $eq: v } }` when `v` holds an
+ * operator), and the operand of a comparison operator is it: the operators whose
+ * row states `liftsTo` compare the field with their operand. `$expr` takes an
+ * expression, where the value road gives the value `$literal`. Every other operator
+ * reads its operand as a query or as MQL syntax (`$and`, `$not`, `$elemMatch`,
+ * `$near`), so the value is refused there. Anything else is `NOT_INJECTED`.
+ */
+function injectedInQuery(key: string, value: Expr): unknown {
+  if (value.type !== "Injected" || !isMqlShaped(value.value)) return NOT_INJECTED;
+  if (!key.startsWith("$")) return queryOwnValue(key, { $eq: value.value })[key];
+  if (liftsToOf(key) !== undefined) return value.value;
+  if (operandPositionOf(key) === "value") return NOT_INJECTED;
+  throw E.runTimeValueAsQuery(value.value, value.pos);
+}
+
 /** A raw document's entries, keys as written and checked, values through `rawValue`. */
 function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): QueryDoc {
   const out: QueryDoc = {};
@@ -267,6 +291,11 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
     if (e.type === "SpreadElement") throw E.spreadInOperatorBody(e.pos);
     const key = staticKey(e);
     if (key === null) throw E.computedKeyInOperatorBody(e.pos);
+    const placed = injectedInQuery(key, e.value);
+    if (placed !== NOT_INJECTED) {
+      setKey(out, key, placed);
+      continue;
+    }
     // `{ $and: true }` — in a query document a list operator takes a list. MEASURED:
     // "$and argument must be an array", and "malformed mod, needs to be an array".
     // An expression reads one operand instead: `{ $expr: { $add: "$x" } }` is valid,
@@ -300,6 +329,8 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
  */
 function rawValue(e: Expr, env: Env): unknown {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
+    const placed = injectedInQuery(e.name, e.args[0] as Expr);
+    if (placed !== NOT_INJECTED) return { [e.name]: placed };
     // The operand is raw too: `{ a: $not($gt(1)) }` nests one query operator in another.
     return { [e.name]: rawValue(e.args[0], env) };
   }

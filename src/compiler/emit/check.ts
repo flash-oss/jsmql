@@ -478,7 +478,8 @@ export function checkBody(
   // must hold a constant. The server refuses a field path or an expression there.
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf(k);
-    if (v !== undefined && !evaluate(v, new Map()).ok) {
+    // A run-time value is a constant too: the call supplies it before the compile.
+    if (v !== undefined && v.type !== "Injected" && !evaluate(v, new Map()).ok) {
       throw new CodegenError(
         `'${name}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         v.pos,
@@ -618,7 +619,8 @@ export function checkSlots(
     // a name OR a document, the row's `body` rule describes its keys, and several
     // of those keys hold expressions. `$unionWith("c")` must be constant;
     // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
-    if (e !== undefined && e.type !== "ObjectLiteral" && !evaluate(e, new Map()).ok) {
+    // A run-time value is a constant too: the call supplies it before the compile.
+    if (e !== undefined && e.type !== "ObjectLiteral" && e.type !== "Injected" && !evaluate(e, new Map()).ok) {
       throw new CodegenError(
         `'${name}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         e.pos,

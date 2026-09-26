@@ -10,6 +10,41 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a run-time value that reads as MQL goes only into an expression or a comparison
+
+A `${…}` value or a `jsmql.compile` parameter that reads as MQL — a string that
+starts with `$`, a document with a `$` key — is a value, never MQL (HR1). The
+compiler put such a value in `$literal` wherever the site was a value, and it put
+it as written everywhere else. Both halves went wrong in a stage body:
+
+```js
+jsmql`$group({ _id: null, t: ${{ $sum: "$secret" }} });`   // → { t: { $sum: "$secret" } }: the caller's document became an accumulator
+jsmql`$unwind(${"$items"});`                               // → { $unwind: { $literal: "$items" } }: the server refuses it
+jsmql`$unwind({ path: ${"$items"} });`                     // crash: "spec.path?.startsWith is not a function"
+jsmql`$match(${{ a: { $gt: 1 } }});`                       // → the truthiness of a $literal: every document matched
+jsmql`$set(${{ a: "$b" }});`                               // ✗ "must be a compile-time constant" (false)
+```
+
+The developer decided, in the interview on the HR3 change, that such a value goes
+only into an expression (inside `$literal`) or into a comparison (as the value),
+and that every other slot refuses it with the spelling to write in the source. The
+update document keeps its old answer, because it stores the value and evaluates
+nothing. A new stage-row fact, `evaluates`, names the body paths that the server
+evaluates. MEASURED: each path takes `{ $literal: … }`, and each other slot refuses
+it. The position pass marks a leaf that no path covers as `written`, and
+`injectedPlacement` in [src/compiler/emit/env.ts](../src/compiler/emit/env.ts)
+reads the mark. The query road applies the same rule in `injectedInQuery`
+([src/compiler/emit/filter.ts](../src/compiler/emit/filter.ts)): a field compares
+the value with `$eq`, and a comparison operator (a row with `liftsTo`) takes it as
+written. `$and`, `$not`, `$elemMatch` and a whole predicate refuse it.
+
+Two messages told a `jsmql.compile` user to use `jsmql.compile`: a collection name
+from a parameter that starts with `$`, and one that is not a string. Each now names
+the real problem. Both forms give one answer, because they share the `inject` pass.
+[test/security.test.ts](../test/security.test.ts) runs each case in both forms.
+
+---
+
 ## 2026-09-26 — fix: `Object.fromEntries` reads the pairs that you wrote
 
 `Object.fromEntries([["a", 1], ["b", $.x]])` gave the wrong document. On

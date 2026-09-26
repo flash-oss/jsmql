@@ -13,8 +13,8 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
   initialises after the code that reads it.
 - **Every fact is stated, never derived.** A phase might compute a fact from
   other fields, but the registry still writes it down, so a reader sees it and
-  a test can check it. `bodyPositions`, `returns`, `document`, `binds` and `alsoTypes` are
-  all measured on a running `mongod`, and the `// MEASURED:` comment beside
+  a test can check it. `bodyPositions`, `evaluates`, `returns`, `document`, `binds` and
+  `alsoTypes` are all measured on a running `mongod`, and the `// MEASURED:` comment beside
   each one shows the command and the answer.
 - **One fact, one field.** Two features with different names never share an
   array or a flag. `stream` and `statement` are two cells. `group` and

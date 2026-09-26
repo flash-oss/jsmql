@@ -82,7 +82,13 @@ export function isStageName(name: string): boolean {
  * window position; without the first, `$merge("out")` — a body with no keys to
  * descend into — would never reach any position at all.
  */
-export type BodySlot = { at: Position; otherwise: Position; deeper: boolean };
+export type BodySlot = {
+  at: Position;
+  otherwise: Position;
+  deeper: boolean;
+  /** Does the server evaluate a value under this path as an expression? The row's `evaluates` says. */
+  evaluated: boolean;
+};
 
 /** A body path, one segment per key. `null` is a COMPUTED key — `{ [k]: … }`. */
 export type BodyPath = readonly (string | null)[];
@@ -114,7 +120,13 @@ export function bodySlotAt(stage: string, path: BodyPath): BodySlot | undefined 
   const layout = bodyLayoutOf(stage);
   if (layout === undefined) return undefined;
   const keys = Object.keys(layout).map((key) => ({ key, seg: segmentsOf(key) }));
-  const deeper = keys.some(({ seg }) => seg.length > path.length && covers(seg.slice(0, path.length), path));
+  const evaluatedPaths = evaluatesOf(stage).map(segmentsOf);
+  // A longer key still claims something below this path: a position the layout
+  // states, or a path whose value the server evaluates.
+  const below = (seg: readonly string[]): boolean =>
+    seg.length > path.length && covers(seg.slice(0, path.length), path);
+  const deeper = keys.some(({ seg }) => below(seg)) || evaluatedPaths.some(below);
+  const evaluated = evaluatedPaths.some((seg) => covers(seg, path));
   let best: { key: string; seg: readonly string[] } | undefined;
   for (const cand of keys) {
     if (!covers(cand.seg, path)) continue;
@@ -125,8 +137,13 @@ export function bodySlotAt(stage: string, path: BodyPath): BodySlot | undefined 
   if (best === undefined) return undefined;
   const stated = layout[best.key];
   return typeof stated === "string"
-    ? { at: stated, otherwise: stated, deeper }
-    : { at: stated.list, otherwise: stated.otherwise, deeper };
+    ? { at: stated, otherwise: stated, deeper, evaluated }
+    : { at: stated.list, otherwise: stated.otherwise, deeper, evaluated };
+}
+
+/** The body paths whose value the server evaluates as an expression — the stage row's `evaluates`. */
+function evaluatesOf(stage: string): readonly string[] {
+  return (row(stage) as { evaluates?: readonly string[] } | undefined)?.evaluates ?? [];
 }
 
 /**

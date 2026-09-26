@@ -3108,13 +3108,21 @@ $literal(42)                       // { $literal: 42 }         — equivalent to
 $literal({ x: "$foo" })            // { $literal: { x: "$foo" } }
 ```
 
-A value that arrives at **run time** — a template-tag `${…}` interpolation, or a `jsmql.compile()` parameter — is a value, never syntax. JSMQL wraps a `"$..."` string there in `$literal` wherever the server would evaluate it (an expression, a `$set` value, a stage body), so user input cannot become a field reference. Two places evaluate nothing and take the string as written: a query slot (`$.a === ${s}` compares against the string) and an update document (`jsmql.update`). See [Template-Tag Form](#template-tag-form--jsmql-) and [Parameterised Queries](#parameterised-queries-jsmqlcompile).
+A value that arrives at **run time** — a template-tag `${…}` interpolation, or a `jsmql.compile()` parameter — is a value, never syntax. Such a value reads as MQL when it is a `"$..."` string or a document with a `$` key. JSMQL then places it by the slot that it fills:
+
+- A slot that the server evaluates takes the value inside `$literal`, so user input cannot become a field reference. Such a slot is an expression, a `$set` value, or `$group`'s `_id`, for example.
+- A query compares the value as written (`$.a === ${s}`), and an update document (`jsmql.update`) stores it as written.
+- Every other slot refuses the value, because there it becomes part of the MQL. This is a stage option that the server reads as written (`$unwind`'s path, `$lookup`'s `from`), an accumulator, or a whole query. The message names the spelling to write in the source.
+
+The two forms give the same answer. See [Template-Tag Form](#template-tag-form--jsmql-) and [Parameterised Queries](#parameterised-queries-jsmqlcompile).
 
 ```js
-jsmql.expr`$.a + ${"$b"}`        // { $add: ["$a", { $literal: "$b" }] }
-jsmql.pipeline`$.x = ${"$b"};`   // [{ $set: { x: { $literal: "$b" } } }]
-jsmql`$.a === ${"$b"}`           // { a: { $literal: "$b" } }
-jsmql.update`$.x = ${"$b"}`      // { $set: { x: "$b" } }
+jsmql.expr`$.a + ${"$b"}`             // { $add: ["$a", { $literal: "$b" }] }
+jsmql.pipeline`$.x = ${"$b"};`        // [{ $set: { x: { $literal: "$b" } } }]
+jsmql`$.a === ${"$b"}`                // { a: "$b" }
+jsmql.update`$.x = ${"$b"}`           // { $set: { x: "$b" } }
+jsmql`$unwind(${"$items"});`          // ✗ "A run-time value is a value, never MQL. '$unwind' reads its body as written, …"
+jsmql`$match(${{ a: { $gt: 1 } }});`  // ✗ "A run-time document is a value, never a query. … '{ a: { $gt: … } }'."
 ```
 
 ### `$meta` — per-document aggregation metadata

@@ -618,7 +618,7 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
     case "element": {
       const spec =
         typeof body === "string" ? { path: body } : (body as { path?: string; preserveNullAndEmptyArrays?: boolean });
-      const path = spec.path?.startsWith("$") ? spec.path.slice(1) : null;
+      const path = typeof spec.path === "string" && spec.path.startsWith("$") ? spec.path.slice(1) : null;
       if (path === null) return doc;
       const element = elementOf(at(doc, path));
       return written(doc, path, spec.preserveNullAndEmptyArrays === true ? maybeAbsent(element) : present(element));

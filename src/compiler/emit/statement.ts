@@ -105,7 +105,9 @@ function stageBody(node: Expr, env: Env): unknown {
     if (key === null) return lowerValue(node, env);
     const slot = childEnv(entries, entry, "value");
     const at = slot.site.where.at;
-    out[key] =
+    setKey(
+      out,
+      key,
       at === "statement" || at === "stream"
         ? pipelineBody(
             entry.value,
@@ -114,7 +116,8 @@ function stageBody(node: Expr, env: Env): unknown {
             [...(env.site.where.at === "stageBody" ? env.site.where.path : []), key],
             captures,
           )
-        : readIn(entry.value, slot);
+        : readIn(entry.value, slot),
+    );
   }
   // What the body read of the outer document goes into the stage's `let`, beside
   // whatever the developer wrote there; the `jsmql_` names cannot collide with theirs.
@@ -699,7 +702,7 @@ function outTarget(t: Expr): string | { db: string; coll: string } | null {
   let cur: Expr = t;
   while (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
     if (cur.type === "IndexAccess") {
-      if (cur.index.type !== "StringLiteral") throw E.collectionNameMustBeConstant(cur.index.pos);
+      if (cur.index.type !== "StringLiteral") throw E.collectionNameFrom(cur.index);
       segments.unshift(cur.index.value);
     } else segments.unshift(cur.name);
     cur = cur.object;
