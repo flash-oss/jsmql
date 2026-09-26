@@ -439,8 +439,12 @@ export function bindsOf(name: string): Binds | undefined {
 
 /** The key order a positional call to an object-shaped operator maps onto; empty when it has none. */
 export function positionalKeysOf(name: string): readonly string[] {
-  const shape = emitRow(name)?.shape;
-  return typeof shape === "object" && shape !== null ? (shape.object.positional ?? []) : [];
+  return (emitRow(name) as { keys?: readonly string[] } | undefined)?.keys ?? [];
+}
+
+/** Does the stage's body take a `let` document? The row's `takesLet` says. */
+export function takesLetOf(stage: string): boolean {
+  return (row(stage) as { takesLet?: true } | undefined)?.takesLet === true;
 }
 
 /** The object-shaped operator's body rule, or undefined for any other shape. */

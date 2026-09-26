@@ -879,21 +879,6 @@ export type BodyRule = {
   maxSortKeys?: number;
   /** Groups of keys that never come together: the ISO-week parts and the calendar parts of a date. */
   notTogether?: readonly (readonly (readonly string[])[])[];
-  /**
-   * The order of keys onto which a POSITIONAL call maps, for an operator in object shape:
-   *   $dateTrunc($.t, "day")  → { date: "$t", unit: "day" }
-   *   $hash($.s, "sha256")    → { input: "$s", algorithm: "sha256" }
-   *
-   * This is the order of JSMQL itself, and a public commitment. It is NOT the key
-   * order of the vendored YAML. The two differ for $top, $topN, $firstN, $lastN
-   * and $map. The order of the YAML emits valid MQL that answers a different
-   * question:
-   *   $top($.score, { score: -1 })
-   *     jsmql  → { $top: { output: "$score", sortBy: { score: -1 } } }
-   *     YAML   → { $top: { sortBy: "$score", output: { score: -1 } } }
-   * Both run. One is the query the user wrote.
-   */
-  positional?: readonly string[];
 };
 
 // ═════════════════════════════════════════════════════════════════════════════

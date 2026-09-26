@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — refactor: two lowering facts leave the check fields
+
+Two facts that a lowering reads sat inside fields that only a check should read.
+The key order of the positional form of an object-form operator
+(`$trim($.name, " ")` → `{ $trim: { input: "$name", chars: " " } }`) was
+`BodyRule.positional`, inside the operator's `shape`. Whether a stage's body takes
+a `let` was a search for `"let"` in the body rule's key lists. The HR3 change
+removes the escape hatch's checks, and these two facts must stay. So each one is
+now a field of its own on the row: `keys` on the 50 object-form operators, and
+`takesLet` on `$lookup` and `$merge`
+([src/registry/names.ts](../src/registry/names.ts)). `BodyRule.positional` is gone.
+[test/registry-agrees.test.ts](../test/registry-agrees.test.ts) holds each fact on
+the rows that it describes. No output changes.
+
+---
+
 ## 2026-09-26 — fix: a regex literal in your MQL passes through
 
 HR1 says that a RegExp passes unchanged, but the compiler refused every regex

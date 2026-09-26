@@ -373,6 +373,28 @@ type MongoSpec<
    */
   shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
   /**
+   * An operator whose MQL body is a document of named keys: the keys, in the order
+   * that the POSITIONAL form fills them:
+   *   $dateTrunc($.t, "day")  → { date: "$t", unit: "day" }
+   *   $hash($.s, "sha256")    → { input: "$s", algorithm: "sha256" }
+   *
+   * This is the order of JSMQL itself, and a public commitment. It is NOT the key
+   * order of the vendored YAML. The two differ for $top, $topN, $firstN, $lastN
+   * and $map. The order of the YAML emits valid MQL that answers a different
+   * question:
+   *   $top($.score, { score: -1 })
+   *     jsmql  → { $top: { output: "$score", sortBy: { score: -1 } } }
+   *     YAML   → { $top: { sortBy: "$score", output: { score: -1 } } }
+   * Both run. One is the query the user wrote.
+   */
+  keys?: readonly string[];
+  /**
+   * The stage's body takes a `let` document, whose variables its sub-pipeline reads.
+   * A read of the outer document inside the body reaches the server through this
+   * `let` (the join road). A stage without it (`$unionWith`) cannot carry such a read.
+   */
+  takesLet?: true;
+  /**
    * Stage-position facts. Meaningful when `where` includes "stream". A row with a
    * `body` is a stage, and a stage states its `document` effect: `StageFacts`
    * pairs the two, so a stage row without the effect does not type-check.
@@ -2150,9 +2172,8 @@ export const NAMES = {
     category: "conditional",
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: { required: ["if", "then", "else"], optional: [], closed: true, positional: ["if", "then", "else"] },
-    },
+    keys: ["if", "then", "else"],
+    shape: { object: { required: ["if", "then", "else"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "if, then, else", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$cond' is not valid in a $group output position — see its 'where'."),
@@ -2193,9 +2214,8 @@ export const NAMES = {
     category: "conditional",
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: { required: ["branches"], optional: ["default"], closed: true, positional: ["branches", "default"] },
-    },
+    keys: ["branches", "default"],
+    shape: { object: { required: ["branches"], optional: ["default"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "branches, default", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$switch' is not valid in a $group output position — see its 'where'."),
@@ -2280,7 +2300,8 @@ export const NAMES = {
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
+    keys: ["input", "chars"],
+    shape: { object: { required: ["input"], optional: ["chars"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$ltrim' is not valid in a $group output position — see its 'where'."),
@@ -2299,7 +2320,8 @@ export const NAMES = {
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
+    keys: ["input", "chars"],
+    shape: { object: { required: ["input"], optional: ["chars"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$rtrim' is not valid in a $group output position — see its 'where'."),
@@ -2318,7 +2340,8 @@ export const NAMES = {
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
+    keys: ["input", "chars"],
+    shape: { object: { required: ["input"], optional: ["chars"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$trim' is not valid in a $group output position — see its 'where'."),
@@ -2337,14 +2360,9 @@ export const NAMES = {
     category: "string",
     returns: "object",
     where: ["value"],
+    keys: ["input", "regex", "options"],
     shape: {
-      object: {
-        required: ["input", "regex"],
-        optional: ["options"],
-        closed: true,
-        charSets: { options: "imxsu" },
-        positional: ["input", "regex", "options"],
-      },
+      object: { required: ["input", "regex"], optional: ["options"], closed: true, charSets: { options: "imxsu" } },
     },
     filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
@@ -2364,14 +2382,9 @@ export const NAMES = {
     category: "string",
     returns: { arrayOf: "object" },
     where: ["value"],
+    keys: ["input", "regex", "options"],
     shape: {
-      object: {
-        required: ["input", "regex"],
-        optional: ["options"],
-        closed: true,
-        charSets: { options: "imxsu" },
-        positional: ["input", "regex", "options"],
-      },
+      object: { required: ["input", "regex"], optional: ["options"], closed: true, charSets: { options: "imxsu" } },
     },
     filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
@@ -2391,14 +2404,9 @@ export const NAMES = {
     category: "string",
     returns: "bool",
     where: ["value"],
+    keys: ["input", "regex", "options"],
     shape: {
-      object: {
-        required: ["input", "regex"],
-        optional: ["options"],
-        closed: true,
-        charSets: { options: "imxsu" },
-        positional: ["input", "regex", "options"],
-      },
+      object: { required: ["input", "regex"], optional: ["options"], closed: true, charSets: { options: "imxsu" } },
     },
     filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
@@ -2418,14 +2426,8 @@ export const NAMES = {
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "find", "replacement"],
-        optional: [],
-        closed: true,
-        positional: ["input", "find", "replacement"],
-      },
-    },
+    keys: ["input", "find", "replacement"],
+    shape: { object: { required: ["input", "find", "replacement"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$replaceAll' is not valid in a $group output position — see its 'where'."),
@@ -2444,14 +2446,8 @@ export const NAMES = {
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "find", "replacement"],
-        optional: [],
-        closed: true,
-        positional: ["input", "find", "replacement"],
-      },
-    },
+    keys: ["input", "find", "replacement"],
+    shape: { object: { required: ["input", "find", "replacement"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$replaceOne' is not valid in a $group output position — see its 'where'."),
@@ -2665,9 +2661,8 @@ export const NAMES = {
     category: "encrypted-string",
     returns: "bool",
     where: ["value"],
-    shape: {
-      object: { required: [], optional: ["input", "substring"], closed: true, positional: ["input", "substring"] },
-    },
+    keys: ["input", "substring"],
+    shape: { object: { required: [], optional: ["input", "substring"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, substring", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrContains' is not valid in a $group output position — see its 'where'."),
@@ -2686,7 +2681,8 @@ export const NAMES = {
     category: "encrypted-string",
     returns: "bool",
     where: ["value"],
-    shape: { object: { required: [], optional: ["input", "suffix"], closed: true, positional: ["input", "suffix"] } },
+    keys: ["input", "suffix"],
+    shape: { object: { required: [], optional: ["input", "suffix"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, suffix", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrEndsWith' is not valid in a $group output position — see its 'where'."),
@@ -2705,7 +2701,8 @@ export const NAMES = {
     category: "encrypted-string",
     returns: "bool",
     where: ["value"],
-    shape: { object: { required: [], optional: ["input", "string"], closed: true, positional: ["input", "string"] } },
+    keys: ["input", "string"],
+    shape: { object: { required: [], optional: ["input", "string"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, string", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrNormalizedEq' is not valid in a $group output position — see its 'where'."),
@@ -2724,7 +2721,8 @@ export const NAMES = {
     category: "encrypted-string",
     returns: "bool",
     where: ["value"],
-    shape: { object: { required: [], optional: ["input", "prefix"], closed: true, positional: ["input", "prefix"] } },
+    keys: ["input", "prefix"],
+    shape: { object: { required: [], optional: ["input", "prefix"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, prefix", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrStartsWith' is not valid in a $group output position — see its 'where'."),
@@ -2806,14 +2804,8 @@ export const NAMES = {
     binds: { valueAt: "as", default: "this", visibleIn: ["cond"] },
     returns: "array",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "cond"],
-        optional: ["as", "limit"],
-        closed: true,
-        positional: ["input", "as", "cond", "limit"],
-      },
-    },
+    keys: ["input", "as", "cond", "limit"],
+    shape: { object: { required: ["input", "cond"], optional: ["as", "limit"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, as, cond, limit", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$filter' is not valid in a $group output position — see its 'where'."),
@@ -2851,7 +2843,8 @@ export const NAMES = {
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
+    keys: ["input", "n"],
+    shape: { object: { required: ["input", "n"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -2953,7 +2946,8 @@ export const NAMES = {
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
+    keys: ["input", "n"],
+    shape: { object: { required: ["input", "n"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -2973,7 +2967,8 @@ export const NAMES = {
     binds: { valueAt: "as", default: "this", visibleIn: ["in"] },
     returns: "array",
     where: ["value"],
-    shape: { object: { required: ["input", "in"], optional: ["as"], closed: true, positional: ["input", "as", "in"] } },
+    keys: ["input", "as", "in"],
+    shape: { object: { required: ["input", "in"], optional: ["as"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, as, in", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$map' is not valid in a $group output position — see its 'where'."),
@@ -2992,7 +2987,8 @@ export const NAMES = {
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
+    keys: ["input", "n"],
+    shape: { object: { required: ["input", "n"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -3011,7 +3007,8 @@ export const NAMES = {
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
+    keys: ["input", "n"],
+    shape: { object: { required: ["input", "n"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -3074,14 +3071,8 @@ export const NAMES = {
     binds: { fixed: ["this", "value"], visibleIn: ["in"] },
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "initialValue", "in"],
-        optional: [],
-        closed: true,
-        positional: ["input", "initialValue", "in"],
-      },
-    },
+    keys: ["input", "initialValue", "in"],
+    shape: { object: { required: ["input", "initialValue", "in"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, initialValue, in", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$reduce' is not valid in a $group output position — see its 'where'."),
@@ -3164,7 +3155,8 @@ export const NAMES = {
     category: "array",
     returns: "array",
     where: ["value"],
-    shape: { object: { required: ["input", "sortBy"], optional: [], closed: true, positional: ["input", "sortBy"] } },
+    keys: ["input", "sortBy"],
+    shape: { object: { required: ["input", "sortBy"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, sortBy", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$sortArray' is not valid in a $group output position — see its 'where'."),
@@ -3183,14 +3175,8 @@ export const NAMES = {
     category: "array",
     returns: { arrayOf: "array" },
     where: ["value"],
-    shape: {
-      object: {
-        required: ["inputs"],
-        optional: ["useLongestLength", "defaults"],
-        closed: true,
-        positional: ["inputs", "useLongestLength", "defaults"],
-      },
-    },
+    keys: ["inputs", "useLongestLength", "defaults"],
+    shape: { object: { required: ["inputs"], optional: ["useLongestLength", "defaults"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "inputs, useLongestLength, defaults", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$zip' is not valid in a $group output position — see its 'where'."),
@@ -3351,7 +3337,8 @@ export const NAMES = {
     category: "object",
     returns: "unknown",
     where: ["value"],
-    shape: { object: { required: ["field"], optional: ["input"], closed: true, positional: ["field", "input"] } },
+    keys: ["field", "input"],
+    shape: { object: { required: ["field"], optional: ["input"], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$getField' is not valid in a $group output position — see its 'where'."),
@@ -3393,14 +3380,8 @@ export const NAMES = {
     category: "object",
     returns: "object",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["field", "input", "value"],
-        optional: [],
-        closed: true,
-        positional: ["field", "input", "value"],
-      },
-    },
+    keys: ["field", "input", "value"],
+    shape: { object: { required: ["field", "input", "value"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "field, input, value", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$setField' is not valid in a $group output position — see its 'where'."),
@@ -3419,7 +3400,8 @@ export const NAMES = {
     category: "object",
     returns: "object",
     where: ["value"],
-    shape: { object: { required: ["field", "input"], optional: [], closed: true, positional: ["field", "input"] } },
+    keys: ["field", "input"],
+    shape: { object: { required: ["field", "input"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$unsetField' is not valid in a $group output position — see its 'where'."),
@@ -3438,6 +3420,7 @@ export const NAMES = {
     category: "date",
     returns: "date",
     where: ["value"],
+    keys: ["startDate", "unit", "amount", "timezone"],
     shape: {
       object: {
         required: ["startDate", "unit", "amount"],
@@ -3445,7 +3428,6 @@ export const NAMES = {
         closed: true,
         enums: { unit: TIME_UNIT },
         keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
-        positional: ["startDate", "unit", "amount", "timezone"],
       },
     },
     filter: viaFallback,
@@ -3466,6 +3448,7 @@ export const NAMES = {
     category: "date",
     returns: "number",
     where: ["value"],
+    keys: ["startDate", "endDate", "unit", "startOfWeek", "timezone"],
     shape: {
       object: {
         required: ["startDate", "endDate", "unit"],
@@ -3474,7 +3457,6 @@ export const NAMES = {
         enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
         caseInsensitiveKeys: ["startOfWeek"],
         keyTypes: { startDate: "date", endDate: "date", timezone: "string" },
-        positional: ["startDate", "endDate", "unit", "startOfWeek", "timezone"],
       },
     },
     filter: viaFallback,
@@ -3498,6 +3480,7 @@ export const NAMES = {
     category: "date",
     returns: "date",
     where: ["value"],
+    keys: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"],
     shape: {
       object: {
         required: [],
@@ -3535,7 +3518,6 @@ export const NAMES = {
         },
         // Positional stays the natural order — JSMQL's public commitment. Only the
         // object style reaches the ISO keys.
-        positional: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"],
       },
     },
     filter: viaFallback,
@@ -3559,13 +3541,9 @@ export const NAMES = {
     category: "date",
     returns: "date",
     where: ["value"],
+    keys: ["dateString", "format", "timezone", "onError", "onNull"],
     shape: {
-      object: {
-        required: ["dateString"],
-        optional: ["format", "timezone", "onError", "onNull"],
-        closed: true,
-        positional: ["dateString", "format", "timezone", "onError", "onNull"],
-      },
+      object: { required: ["dateString"], optional: ["format", "timezone", "onError", "onNull"], closed: true },
     },
     filter: viaFallback,
     expr: {
@@ -3588,6 +3566,7 @@ export const NAMES = {
     category: "date",
     returns: "date",
     where: ["value"],
+    keys: ["startDate", "unit", "amount", "timezone"],
     shape: {
       object: {
         required: ["startDate", "unit", "amount"],
@@ -3595,7 +3574,6 @@ export const NAMES = {
         closed: true,
         enums: { unit: TIME_UNIT },
         keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
-        positional: ["startDate", "unit", "amount", "timezone"],
       },
     },
     filter: viaFallback,
@@ -3616,13 +3594,13 @@ export const NAMES = {
     category: "date",
     returns: "object",
     where: ["value"],
+    keys: ["date", "timezone", "iso8601"],
     shape: {
       object: {
         required: ["date"],
         optional: ["timezone", "iso8601"],
         closed: true,
         keyTypes: { date: "date", timezone: "string", iso8601: "bool" },
-        positional: ["date", "timezone", "iso8601"],
       },
     },
     filter: viaFallback,
@@ -3643,13 +3621,13 @@ export const NAMES = {
     category: "date",
     returns: "string",
     where: ["value"],
+    keys: ["date", "format", "timezone", "onNull"],
     shape: {
       object: {
         required: ["date"],
         optional: ["format", "timezone", "onNull"],
         closed: true,
         keyTypes: { date: "date", timezone: "string" },
-        positional: ["date", "format", "timezone", "onNull"],
       },
     },
     filter: viaFallback,
@@ -3670,6 +3648,7 @@ export const NAMES = {
     category: "date",
     returns: "date",
     where: ["value"],
+    keys: ["date", "unit", "binSize", "timezone", "startOfWeek"],
     shape: {
       object: {
         required: ["date", "unit"],
@@ -3678,7 +3657,6 @@ export const NAMES = {
         enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
         caseInsensitiveKeys: ["startOfWeek"],
         keyTypes: { date: "date", binSize: "int-or-long", timezone: "string" },
-        positional: ["date", "unit", "binSize", "timezone", "startOfWeek"],
       },
     },
     filter: viaFallback,
@@ -4003,6 +3981,7 @@ export const NAMES = {
     category: "type",
     returns: "unknown",
     where: ["value"],
+    keys: ["input", "to", "onError", "onNull"],
     shape: {
       object: {
         required: ["input", "to"],
@@ -4033,7 +4012,6 @@ export const NAMES = {
             "undefined",
           ],
         },
-        positional: ["input", "to", "onError", "onNull"],
       },
     },
     filter: viaFallback,
@@ -4303,7 +4281,8 @@ export const NAMES = {
     binds: { keysOf: "vars", visibleIn: ["in"] },
     returns: "unknown",
     where: ["value"],
-    shape: { object: { required: ["vars", "in"], optional: [], closed: true, positional: ["vars", "in"] } },
+    keys: ["vars", "in"],
+    shape: { object: { required: ["vars", "in"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "vars, in", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$let' is not valid in a $group output position — see its 'where'."),
@@ -4322,12 +4301,12 @@ export const NAMES = {
     category: "custom-aggregation",
     returns: "unknown",
     where: ["group"],
+    keys: ["init", "initArgs", "accumulate", "accumulateArgs", "merge", "finalize", "lang"],
     shape: {
       object: {
         required: ["init", "accumulate", "accumulateArgs", "merge", "lang"],
         optional: ["initArgs", "finalize"],
         closed: true,
-        positional: ["init", "initArgs", "accumulate", "accumulateArgs", "merge", "finalize", "lang"],
       },
     },
     filter: unsupported(
@@ -4358,15 +4337,8 @@ export const NAMES = {
     category: "custom-aggregation",
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["body", "args", "lang"],
-        optional: [],
-        closed: true,
-        enums: { lang: ["js"] },
-        positional: ["body", "args", "lang"],
-      },
-    },
+    keys: ["body", "args", "lang"],
+    shape: { object: { required: ["body", "args", "lang"], optional: [], closed: true, enums: { lang: ["js"] } } },
     filter: viaFallback,
     expr: { args: { sig: "body, args, lang", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$function' is not valid in a $group output position — see its 'where'."),
@@ -4461,9 +4433,8 @@ export const NAMES = {
     category: "miscellaneous",
     returns: "binData",
     where: ["value"],
-    shape: {
-      object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] },
-    },
+    keys: ["input", "algorithm"],
+    shape: { object: { required: ["input", "algorithm"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$hash' is not valid in a $group output position — see its 'where'."),
@@ -4482,9 +4453,8 @@ export const NAMES = {
     category: "miscellaneous",
     returns: "string",
     where: ["value"],
-    shape: {
-      object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] },
-    },
+    keys: ["input", "algorithm"],
+    shape: { object: { required: ["input", "algorithm"], optional: [], closed: true } },
     filter: viaFallback,
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$hexHash' is not valid in a $group output position — see its 'where'."),
@@ -4676,14 +4646,9 @@ export const NAMES = {
     category: "arithmetic",
     returns: "number",
     where: ["value", "group", "window"],
+    keys: ["input", "method"],
     shape: {
-      object: {
-        required: ["input", "method"],
-        optional: [],
-        closed: true,
-        enums: { method: ["approximate"] },
-        positional: ["input", "method"],
-      },
+      object: { required: ["input", "method"], optional: [], closed: true, enums: { method: ["approximate"] } },
     },
     filter: viaFallback,
     expr: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
@@ -4729,14 +4694,9 @@ export const NAMES = {
     category: "arithmetic",
     returns: "array",
     where: ["value", "group", "window"],
+    keys: ["input", "p", "method"],
     shape: {
-      object: {
-        required: ["input", "p", "method"],
-        optional: [],
-        closed: true,
-        enums: { method: ["approximate"] },
-        positional: ["input", "p", "method"],
-      },
+      object: { required: ["input", "p", "method"], optional: [], closed: true, enums: { method: ["approximate"] } },
     },
     filter: viaFallback,
     expr: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
@@ -4852,12 +4812,12 @@ export const NAMES = {
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
+    keys: ["output", "sortBy"],
     shape: {
       object: {
         required: ["output", "sortBy"],
         optional: [],
         closed: true,
-        positional: ["output", "sortBy"],
         nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
       },
     },
@@ -4883,12 +4843,12 @@ export const NAMES = {
     category: "array",
     returns: "array",
     where: ["group", "window"],
+    keys: ["output", "sortBy", "n"],
     shape: {
       object: {
         required: ["output", "sortBy", "n"],
         optional: [],
         closed: true,
-        positional: ["output", "sortBy", "n"],
         nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
       },
     },
@@ -4914,12 +4874,12 @@ export const NAMES = {
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
+    keys: ["output", "sortBy"],
     shape: {
       object: {
         required: ["output", "sortBy"],
         optional: [],
         closed: true,
-        positional: ["output", "sortBy"],
         nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
       },
     },
@@ -4945,12 +4905,12 @@ export const NAMES = {
     category: "array",
     returns: "array",
     where: ["group", "window"],
+    keys: ["output", "sortBy", "n"],
     shape: {
       object: {
         required: ["output", "sortBy", "n"],
         optional: [],
         closed: true,
-        positional: ["output", "sortBy", "n"],
         nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
       },
     },
@@ -5053,15 +5013,8 @@ export const NAMES = {
     category: "window",
     returns: "number",
     where: ["window"],
-    shape: {
-      object: {
-        required: ["input"],
-        optional: ["unit"],
-        closed: true,
-        enums: { unit: WINDOW_TIME_UNIT },
-        positional: ["input", "unit"],
-      },
-    },
+    keys: ["input", "unit"],
+    shape: { object: { required: ["input"], optional: ["unit"], closed: true, enums: { unit: WINDOW_TIME_UNIT } } },
     filter: unsupported(
       "$derivative is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $derivative(...) } }).",
     ),
@@ -5107,15 +5060,8 @@ export const NAMES = {
     category: "window",
     returns: "number",
     where: ["window"],
-    shape: {
-      object: {
-        required: ["input"],
-        optional: ["N", "alpha"],
-        closed: true,
-        exactlyOneOf: [["N", "alpha"]],
-        positional: ["input", "N", "alpha"],
-      },
-    },
+    keys: ["input", "N", "alpha"],
+    shape: { object: { required: ["input"], optional: ["N", "alpha"], closed: true, exactlyOneOf: [["N", "alpha"]] } },
     filter: unsupported(
       "$expMovingAvg is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $expMovingAvg(...) } }).",
     ),
@@ -5138,15 +5084,8 @@ export const NAMES = {
     category: "window",
     returns: "number",
     where: ["window"],
-    shape: {
-      object: {
-        required: ["input"],
-        optional: ["unit"],
-        closed: true,
-        enums: { unit: WINDOW_TIME_UNIT },
-        positional: ["input", "unit"],
-      },
-    },
+    keys: ["input", "unit"],
+    shape: { object: { required: ["input"], optional: ["unit"], closed: true, enums: { unit: WINDOW_TIME_UNIT } } },
     filter: unsupported(
       "$integral is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $integral(...) } }).",
     ),
@@ -5238,14 +5177,8 @@ export const NAMES = {
     category: "window",
     returns: "unknown",
     where: ["window"],
-    shape: {
-      object: {
-        required: ["output", "by"],
-        optional: ["default"],
-        closed: true,
-        positional: ["output", "by", "default"],
-      },
-    },
+    keys: ["output", "by", "default"],
+    shape: { object: { required: ["output", "by"], optional: ["default"], closed: true } },
     filter: unsupported(
       "$shift is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $shift(...) } }).",
     ),
@@ -5986,6 +5919,7 @@ export const NAMES = {
     preservesCount: true,
     document: "keeps",
     evaluates: ["let"],
+    takesLet: true,
     body: {
       required: ["as"],
       optional: ["from", "localField", "foreignField", "let", "pipeline"],
@@ -6052,6 +5986,7 @@ export const NAMES = {
     // MEASURED: whenNotMatched: "zzz" → Enumeration value 'zzz' for field '$merge.whenNotMatched' is not a valid value
     document: "keeps",
     evaluates: ["let"],
+    takesLet: true,
     body: {
       required: ["into"],
       optional: ["on", "let", "whenMatched", "whenNotMatched"],

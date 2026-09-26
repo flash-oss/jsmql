@@ -56,7 +56,7 @@ import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, typ
 import { documentAfter, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
-import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
+import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf, takesLetOf } from "../rows.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
@@ -169,11 +169,8 @@ function pipelineBody(node: Expr, env: Env, stage: string, path: BodyPath, captu
   return body.chain.close();
 }
 
-/** Does this stage's body take a `let`? The row's body rule says. */
-function hasLet(stage: string): boolean {
-  const rule = stageBodyRuleOf(stage);
-  return rule !== undefined && [...(rule.required ?? []), ...(rule.optional ?? [])].includes("let");
-}
+/** Does this stage's body take a `let`? The row's `takesLet` says. */
+const hasLet = (stage: string): boolean => takesLetOf(stage);
 
 /** The services a stage cell reads: each reading of an argument this file can give. */
 const READ = {

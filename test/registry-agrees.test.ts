@@ -162,3 +162,41 @@ describe("registry — a `statement` body slot says WHAT it holds", () => {
     }
   });
 });
+
+describe("registry — `keys` and `takesLet` sit on the rows they describe", () => {
+  type Facts = {
+    kind?: string;
+    keys?: readonly string[];
+    takesLet?: true;
+    body?: { required?: readonly string[]; optional?: readonly string[] };
+    shape?: unknown;
+    bodyPositions?: unknown;
+  };
+  const facts = Object.entries(NAMES) as [string, Facts][];
+
+  it("states `keys` on an operator whose body is a document of named keys, and never on a stage", () => {
+    const wrong: string[] = [];
+    for (const [name, row] of facts) {
+      if (row.keys === undefined) continue;
+      if (row.kind !== "mongo" || row.bodyPositions !== undefined)
+        wrong.push(`${name}: keys on a stage or a non-MongoDB row`);
+      if (row.keys.length === 0 || new Set(row.keys).size !== row.keys.length)
+        wrong.push(`${name}: keys must be non-empty and distinct`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("states `takesLet` on a stage exactly when its body has a `let` key", () => {
+    const wrong: string[] = [];
+    for (const [name, row] of facts) {
+      if (row.body === undefined) {
+        if (row.takesLet !== undefined) wrong.push(`${name}: takesLet on a row that is not a stage`);
+        continue;
+      }
+      const hasLet = [...(row.body.required ?? []), ...(row.body.optional ?? [])].includes("let");
+      if (hasLet !== (row.takesLet === true))
+        wrong.push(`${name}: body let=${hasLet} takesLet=${row.takesLet === true}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+});

@@ -549,7 +549,7 @@ export function checkSlots(
   }
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
-    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], rule.positional ?? [], e.pos);
+    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], [], e.pos);
   }
   for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
     const e = operands[Number(i)];

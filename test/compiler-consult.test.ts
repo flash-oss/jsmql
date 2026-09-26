@@ -266,9 +266,9 @@ describe("registry — a stage is one construct with two spellings", () => {
 });
 
 describe("registry — an operator cannot accept more operands than it renders", () => {
-  type Shape = "single" | "verbatim" | "array" | "none" | "flex" | { object: { positional?: readonly string[] } };
+  type Shape = "single" | "verbatim" | "array" | "none" | "flex" | { object: unknown };
   type Cell = { args?: Arity; emit?: unknown };
-  type Row = { kind?: string; shape?: Shape } & Partial<Record<Position, Cell>>;
+  type Row = { kind?: string; shape?: Shape; keys?: readonly string[] } & Partial<Record<Position, Cell>>;
 
   /**
    * The cells whose rendering is governed by the row's `shape` — the ones that
@@ -286,10 +286,11 @@ describe("registry — an operator cannot accept more operands than it renders",
     );
 
   /** How many operands the row's SHAPE can actually put into a document. */
-  const renders = (shape: Shape): number => {
+  const renders = (row: Row): number => {
+    const shape = row.shape as Shape;
     if (shape === "none") return 0;
     if (shape === "single" || shape === "verbatim") return 1;
-    if (typeof shape === "object") return shape.object.positional?.length ?? 1;
+    if (typeof shape === "object") return row.keys?.length ?? 1;
     return Infinity; // "array" and "flex" render the whole list
   };
 
@@ -307,11 +308,11 @@ describe("registry — an operator cannot accept more operands than it renders",
     // to emit `{"$abs":"$a"}` — valid MQL and the wrong answer — and the three
     // object-shaped date operators emitted a shape mongod refuses outright:
     //   {$dateDiff:"$a"} → "$dateDiff only supports an object as its argument"
-    // `BodyRule.positional`'s own doc records this regression once already.
+    // The `keys` field's own doc records this regression once already.
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo" || row.shape === undefined) continue;
-      const capacity = renders(row.shape);
+      const capacity = renders(row);
       for (const cell of arityCells(row)) {
         if (cell.emit === undefined) continue;
         const ceiling = accepts(cell.args);
@@ -360,7 +361,7 @@ describe("registry — an operator cannot accept more operands than it renders",
       // One argument is the object literal itself and needs no key order.
       const ceiling = Math.max(0, ...arityCells(row).map((c) => accepts(c.args)));
       if (ceiling <= 1) continue;
-      if (row.shape.object.positional === undefined) missing.push(name);
+      if (row.keys === undefined) missing.push(name);
     }
     expect(missing).toEqual([]);
   });
