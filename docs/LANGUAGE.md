@@ -4293,9 +4293,15 @@ jsmql("let big = $.score > 100; $match(big); $sort({ score: -1 });");
 //    { $unset: "__jsmql" }]
 ```
 
-A stage's own sub-pipeline, such as a `$facet` branch, is a `[…]` list too. Write the value inline in the stage that reads it: `$facet({ summary: [$project({ avg: $avg($.score) })] })`.
+A stage's own sub-pipeline, such as a `$facet` branch, is a `[…]` list too, so it holds no declaration. Write the sub-pipeline as an `.aggregate` block, which takes statements:
 
-**Sub-pipelines.** An outer let is not visible inside `$lookup.pipeline`, `$unionWith.pipeline`, or a `$facet.*` branch. Each sub-pipeline can declare its own lets independently; they live inside that sub-pipeline only.
+```js
+$ = { summary: $$.aggregate(() => { let avg = $avg($.score); $project({ avg }); }) };   // a $facet branch
+$.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });              // a $lookup
+$$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));             // a $unionWith
+```
+
+**Sub-pipelines.** An outer let is not visible inside `$lookup.pipeline`, `$unionWith.pipeline`, or a `$facet.*` branch. Each `.aggregate` block declares its own lets, and they live inside that sub-pipeline only.
 
 **Not the same as `$let`.** MongoDB's `$let` operator is *expression-scoped*: the binding lives inside one `in:` clause. JSMQL's `let` is *pipeline-scoped*. They are different constructs that happen to share a name.
 

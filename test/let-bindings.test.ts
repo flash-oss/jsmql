@@ -4,7 +4,7 @@ import { Long } from "../src/bson.ts";
 
 /** The refusal of a declaration as an array element. JavaScript refuses it there too. */
 const NOT_AN_ELEMENT = (wrote: string, pos: number): string =>
-  `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. In a stage's sub-pipeline, write the value inline in the stage that reads it.`;
+  `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. A sub-pipeline takes its statements in an '.aggregate' block: \`$.<field> = $$$.<coll>.aggregate(() => { ${wrote}; $match(…); })\` for a '$lookup', \`$$.push(...$$$.<coll>.aggregate(() => { … }))\` for a '$unionWith', and \`$ = { k: $$.aggregate(() => { … }) }\` for a '$facet' branch.`;
 
 /** The refusal of a second declaration of one name in one block. */
 const DECLARED_AGAIN = (wrote: string, pos: number): string =>
@@ -831,13 +831,41 @@ describe("let bindings — sub-pipeline depth", () => {
     ]);
   });
 
-  it("a $facet branch is a bracketed list of stages, so it holds no `let`: the value goes inline", () => {
+  it("a bracketed sub-pipeline holds no `let`; each '.aggregate' block form the refusal names takes one", () => {
     expect(refusal("[ $facet({ summary: [ let avg = $avg($.score), $project({ avg }) ] }) ]")).toEqual({
       message: NOT_AN_ELEMENT("let avg = …", 22),
       pos: 22,
     });
-    expect(jsmql("$facet({ summary: [$project({ avg: $avg($.score) })] })")).toEqual([
-      { $facet: { summary: [{ $project: { avg: { $avg: "$score" } } }] } },
+    // A `$facet` branch.
+    expect(jsmql("$ = { summary: $$.aggregate(() => { let avg = $avg($.score); $project({ avg }); }) };")).toEqual([
+      {
+        $facet: {
+          summary: [
+            { $set: { "__jsmql.var.avg": { $avg: "$score" } } },
+            { $project: { avg: "$__jsmql.var.avg" } },
+            { $unset: "__jsmql" },
+          ],
+        },
+      },
+    ]);
+    // A `$lookup`.
+    expect(jsmql("$.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_b: "$b" },
+          pipeline: [
+            { $set: { "__jsmql.var.x": { $multiply: ["$$jsmql_f0_b", 2] } } },
+            { $match: { $expr: { $eq: ["$y", "$__jsmql.var.x"] } } },
+            { $unset: "__jsmql" },
+          ],
+          as: "o",
+        },
+      },
+    ]);
+    // A `$unionWith`.
+    expect(jsmql("$$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));")).toEqual([
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { y: 1 } }] } },
     ]);
   });
 });

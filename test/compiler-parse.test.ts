@@ -73,7 +73,7 @@ describe("compiler/parse — a program is JavaScript syntax: the refusals, word 
   const TRAILING = (pos: number, next: string): string =>
     `A ',' with no write after it, before ${next} at position ${pos}. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').`;
   const ELEMENT = (wrote: string, pos: number): string =>
-    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. In a stage's sub-pipeline, write the value inline in the stage that reads it.`;
+    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. A sub-pipeline takes its statements in an '.aggregate' block: \`$.<field> = $$$.<coll>.aggregate(() => { ${wrote}; $match(…); })\` for a '$lookup', \`$$.push(...$$$.<coll>.aggregate(() => { … }))\` for a '$unionWith', and \`$ = { k: $$.aggregate(() => { … }) }\` for a '$facet' branch.`;
   const PARAM = (wrote: string, name: string, pos: number): string =>
     `\`${wrote}\` re-declares the parameter \`${name}\` at position ${pos}, which JavaScript refuses. Pick a different name.`;
   const AGAIN = (wrote: string, pos: number): string =>

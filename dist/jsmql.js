@@ -19121,7 +19121,7 @@ function declare(scope, stmt) {
 function declarationAsElement(kw, name2) {
   const wrote = `${kw.text} ${name2.type === "Ident" ? name2.text : "x"} = \u2026`;
   return new ParseError(
-    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${kw.pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(\u2026);\`. In a stage's sub-pipeline, write the value inline in the stage that reads it.`,
+    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${kw.pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(\u2026);\`. A sub-pipeline takes its statements in an '.aggregate' block: \`$.<field> = $$$.<coll>.aggregate(() => { ${wrote}; $match(\u2026); })\` for a '$lookup', \`$$.push(...$$$.<coll>.aggregate(() => { \u2026 }))\` for a '$unionWith', and \`$ = { k: $$.aggregate(() => { \u2026 }) }\` for a '$facet' branch.`,
     kw.pos
   );
 }

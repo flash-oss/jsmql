@@ -363,6 +363,25 @@ rule is refused, with the statement form's message.
 
 ---
 
+## 2026-09-26 — fix: a declaration in a sub-pipeline names the block that takes it
+
+A `let` or `const` in a stage's bracketed sub-pipeline is refused, because
+JavaScript refuses a declaration as an array element. The refusal told the
+developer to "write the value inline in the stage that reads it". That is not
+the only way out: each sub-pipeline container has an `.aggregate` block form,
+and a block takes statements, declarations included. The developer decided
+that no DEFERRED row is needed, and that the refusal names the three forms:
+
+```
+$ = { summary: $$.aggregate(() => { let avg = $avg($.score); $project({ avg }); }) };   // $facet
+$.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });              // $lookup
+$$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));             // $unionWith
+```
+
+Each form ran on the `:27018` mongod, and `test/let-bindings.test.ts` pins its MQL.
+
+---
+
 ## 2026-09-26 — fix: an error names the fix in the user's words
 
 Several refusals named an internal node type, a wrong receiver, or a fix that

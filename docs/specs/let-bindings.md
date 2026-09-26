@@ -186,12 +186,22 @@ stands, and names the statement form:
 [let x = $.a + 1, $match(x > 5)]
 // ✗ error — "`let x = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1.
 //            Write the pipeline as statements, with a ';' after each one: `let x = …; $match(…);`.
-//            In a stage's sub-pipeline, write the value inline in the stage that reads it."
+//            A sub-pipeline takes its statements in an '.aggregate' block: …"
 
 let x = $.a + 1; $match(x > 5);
 // → [{ $set: { "__jsmql.var.x": { $add: ["$a", 1] } } },
 //    { $match: { $expr: { $gt: ["$__jsmql.var.x", 5] } } },
 //    { $unset: "__jsmql" }]
+```
+
+A sub-pipeline takes its declarations in an `.aggregate` block, and the refusal
+names the three forms: `$.<field> = $$$.<coll>.aggregate(() => { … })` for a
+`$lookup`, `$$.push(...$$$.<coll>.aggregate(() => { … }))` for a `$unionWith`,
+and `$ = { k: $$.aggregate(() => { … }) }` for a `$facet` branch:
+
+```js
+$.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });
+// → [{ $lookup: { from: "orders", let: { jsmql_f0_b: "$b" }, pipeline: [{ $set: { "__jsmql.var.x": { $multiply: ["$$jsmql_f0_b", 2] } } }, { $match: { $expr: { $eq: ["$y", "$__jsmql.var.x"] } } }, { $unset: "__jsmql" }], as: "o" } }]
 ```
 
 The declaration's `pos` — the offset every codegen error about the binding

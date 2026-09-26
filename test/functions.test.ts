@@ -150,7 +150,7 @@ describe("reusable functions — output stability", () => {
   it("is refused as a bracketed-pipeline element; the statement form inlines it", () => {
     // `[const double = …]` is a JavaScript SyntaxError: a declaration is not an array element.
     expect(() => jsmql("[const double = (x) => x * 2, $set({ y: double($.x) })]")).toThrow(
-      "`const double = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1. Write the pipeline as statements, with a ';' after each one: `const double = …; $match(…);`. In a stage's sub-pipeline, write the value inline in the stage that reads it.",
+      "`const double = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1. Write the pipeline as statements, with a ';' after each one: `const double = …; $match(…);`. A sub-pipeline takes its statements in an '.aggregate' block: `$.<field> = $$$.<coll>.aggregate(() => { const double = …; $match(…); })` for a '$lookup', `$$.push(...$$$.<coll>.aggregate(() => { … }))` for a '$unionWith', and `$ = { k: $$.aggregate(() => { … }) }` for a '$facet' branch.",
     );
     expect(jsmql("const double = (x) => x * 2; $set({ y: double($.x) });")).toEqual([
       { $set: { y: { $let: { vars: { x: "$x" }, in: { $multiply: ["$$x", 2] } } } } },
