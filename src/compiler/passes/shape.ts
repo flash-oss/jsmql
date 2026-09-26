@@ -69,10 +69,9 @@ function writesItsTarget(node: Any): boolean {
 /**
  * The document this program becomes.
  *
- * The FIRST element decides a bracketed literal, and the compiler reads it the
- * same way: `[$match(…), 1]` refuses element 1 for not being a stage, and
- * `[1, $match(…)]` refuses `$match` for not being an expression. One of the
- * two readings must win before the rest can be checked at all.
+ * A bracketed literal is a pipeline, whatever it holds, as a raw MQL pipeline is:
+ * `[]` is the empty pipeline, and `[1, $match(…)]` refuses element 0 for not being
+ * a stage. `jsmql.expr` reads a list as an array value instead; see `isStageList`.
  */
 export function shapeOf(program: Program): Shape {
   const root = program as Any;
@@ -85,10 +84,18 @@ export function shapeOf(program: Program): Shape {
     if (last !== undefined && prelude && !statementShaped(last)) return "filter";
   }
   if (statementShaped(root)) return "pipeline";
-  if (root.type === "ArrayLiteral") {
-    const first = (root.elements as readonly Any[] | undefined)?.[0];
-    // An empty literal is the empty ARRAY, and not the empty pipeline.
-    return first !== undefined && statementShaped(first) ? "pipeline" : "filter";
-  }
+  if (root.type === "ArrayLiteral") return "pipeline";
   return "filter";
+}
+
+/**
+ * Is this program a bracketed STAGE list, with a stage as its first element? An
+ * expression entry reads any other bracketed literal as an array value, and it
+ * refuses a stage list with the pipeline entry named.
+ */
+export function isStageList(program: Program): boolean {
+  const root = program as Any;
+  if (root.type !== "ArrayLiteral") return false;
+  const first = (root.elements as readonly Any[] | undefined)?.[0];
+  return first !== undefined && statementShaped(first);
 }

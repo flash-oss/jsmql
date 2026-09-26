@@ -10578,16 +10578,8 @@ describe("Filter dispatch (no semicolons)", () => {
 
   describe("$expr fallback for untranslatable expressions", () => {
     it("a non-predicate expression rides entirely in `$expr`", () => {
-      expect(jsmql("$add($.a, $.b)")).toEqual({
-        $expr: {
-          $and: [
-            { $ne: [{ $ifNull: [{ $add: ["$a", "$b"] }, null] }, null] },
-            { $ne: [{ $add: ["$a", "$b"] }, false] },
-            { $ne: [{ $add: ["$a", "$b"] }, ""] },
-            { $ne: [{ $add: ["$a", "$b"] }, 0] },
-          ],
-        },
-      });
+      // The call is your own MQL, so its truth is MongoDB's own: no JavaScript test wraps it.
+      expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: { $add: ["$a", "$b"] } });
     });
 
     it("a method-call predicate is not query-translatable and rides in `$expr`", () => {
@@ -10640,16 +10632,8 @@ describe("Filter dispatch (no semicolons)", () => {
     it("non-stage operator calls still go through Filter dispatch unaffected", () => {
       // `$add` is an expression operator, not a stage — the auto-wrap does
       // not fire, and the expression rides in `$expr`.
-      expect(jsmql("$add($.a, $.b)")).toEqual({
-        $expr: {
-          $and: [
-            { $ne: [{ $ifNull: [{ $add: ["$a", "$b"] }, null] }, null] },
-            { $ne: [{ $add: ["$a", "$b"] }, false] },
-            { $ne: [{ $add: ["$a", "$b"] }, ""] },
-            { $ne: [{ $add: ["$a", "$b"] }, 0] },
-          ],
-        },
-      });
+      // The call is your own MQL, so its truth is MongoDB's own: no JavaScript test wraps it.
+      expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: { $add: ["$a", "$b"] } });
     });
   });
 

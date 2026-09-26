@@ -372,25 +372,6 @@ export const spreadInCall = (label: string, pos: number): CodegenError =>
     pos,
   );
 
-/** A bracketed stage list where a value belongs. `near` are the stage names, for the suggestion. */
-export const stageListAsValue = (pos: number): CodegenError =>
-  new CodegenError(
-    "A bracketed stage list is a pipeline, not an expression. Pass it to jsmql.pipeline(…), or write the stages as statements ('$match(…); $sort(…);').",
-    pos,
-  );
-
-export const unknownStage = (index: number, name: string, stages: readonly string[], pos: number): CodegenError =>
-  new CodegenError(
-    `Element ${index} of pipeline: '${name}' is not a known aggregation stage.${didYouMean(name, stages, (s) => s)}`,
-    pos,
-  );
-
-export const multiKeyStage = (index: number, keys: number, pos: number): CodegenError =>
-  new CodegenError(
-    `Element ${index} of pipeline must be a single-key stage object — for example, \`{ $match: ... }\`. This object has ${keys} keys.`,
-    pos,
-  );
-
 /** A computed expression in a raw query document's value slot. */
 export const expressionInQueryValue = (pos: number): CodegenError =>
   new CodegenError(

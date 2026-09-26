@@ -32,7 +32,7 @@ import * as E from "./errors.ts";
 import { childEnv, filterInputs } from "./inputs.ts";
 import { lowerTruth, lowerValue } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
-import { FALSE, or } from "./mode.ts";
+import { FALSE, mongoTruthy, or } from "./mode.ts";
 import { typeOf } from "./prove.ts";
 import { isNothing } from "./type.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
@@ -50,15 +50,20 @@ import {
  * native form. The caller of `nativeOnly` gets null instead of an `$expr` —
  * this is how a `.some` body or an `||` branch learns it cannot use an index
  * as a whole.
+ *
+ * `jsRead` says that a JavaScript spelling reads the predicate's truth: a
+ * lambda body, or an operand of `&&`, `||` and `!`. That spelling checks
+ * JavaScript's falsy values. A `$op(…)` call that no JavaScript spelling reads
+ * keeps MongoDB's truthiness, because the call is the developer's own MQL.
  */
-export function lowerFilter(node: Expr, env: Env): QueryDoc {
-  const q = translate(node, env, false);
+export function lowerFilter(node: Expr, env: Env, jsRead = false): QueryDoc {
+  const q = translate(node, env, false, jsRead);
   if (q === null) internalError("a full filter translation answered null");
   return q;
 }
 
 /** The same, null when any leaf would need `$expr`. */
-export const lowerNativeFilter = (node: Expr, env: Env): QueryDoc | null => translate(node, env, true);
+export const lowerNativeFilter = (node: Expr, env: Env): QueryDoc | null => translate(node, env, true, true);
 
 const isExpr = (a: { type: string }): a is Expr =>
   a.type !== "SpreadElement" &&
@@ -68,15 +73,15 @@ const isExpr = (a: { type: string }): a is Expr =>
   a.type !== "DeleteStmt" &&
   a.type !== "UpdateFilter";
 
-function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
+function translate(node: Expr, env: Env, nativeOnly: boolean, jsRead: boolean): QueryDoc | null {
   // HR1: a run-time value that reads as MQL is a value. As the whole predicate, its
   // truth is a constant. Read as a query, it becomes the query itself.
   if (node.type === "Injected" && isMqlShaped(node.value)) throw E.runTimeValueAsQuery(node.value, node.pos);
   if (node.type === "BinaryExpr" && node.op === "&&") {
     const all = extractHasChain(node, env);
     if (all !== null) return hasChain(all.path, all.values);
-    const left = translate(node.left, childEnv(env, node, "left"), nativeOnly);
-    const right = translate(node.right, childEnv(env, node, "right"), nativeOnly);
+    const left = translate(node.left, childEnv(env, node, "left"), nativeOnly, true);
+    const right = translate(node.right, childEnv(env, node, "right"), nativeOnly, true);
     if (left === null || right === null) return null;
     return mergeAnd(left, right);
   }
@@ -88,14 +93,14 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
     // complements only a clause with no `$expr` inside it. Anything else keeps
     // the truth road below, whose `$not` over one expression already gives
     // JavaScript's answer.
-    const inner = translate(node.argument, childEnv(env, node, "argument"), true);
+    const inner = translate(node.argument, childEnv(env, node, "argument"), true, true);
     if (inner !== null && Object.keys(inner).length > 0 && !isAlwaysTrue(inner) && !isAlwaysFalse(inner)) {
       return { $nor: [inner] };
     }
   }
   if (node.type === "BinaryExpr" && node.op === "||") {
     // Each branch stands on its own: a leaf's query form never depends on its sibling.
-    const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly));
+    const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly, true));
     if (branches.some((b) => b === null)) return null;
     // A folded constant branch: `false` adds nothing, `true` decides everything.
     if ((branches as QueryDoc[]).some(isAlwaysTrue)) return {};
@@ -113,7 +118,9 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
   const native = leaf(node, env) ?? bareTruth(node, env);
   if (native !== null) return native;
   if (nativeOnly) return null;
-  return matchExpr(lowerTruth(node, env.at({ at: "value" })));
+  const valueEnv = env.at({ at: "value" });
+  if (node.type === "OperatorCall" && !jsRead) return matchExpr(mongoTruthy(lowerValue(node, valueEnv)));
+  return matchExpr(lowerTruth(node, valueEnv));
 }
 
 /**

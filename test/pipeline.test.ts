@@ -236,12 +236,11 @@ describe("raw MQL stage bodies pass through UNGUARDED (escape hatch — see src/
 });
 
 describe("pipeline — error cases", () => {
-  it("rejects unknown stage name with did-you-mean suggestion", () => {
-    expect(() => jsmql("[{ $macth: $.age > 18 }]")).toThrow(/'\$match'/);
-  });
-
-  it("rejects unknown stage name in stage-call form", () => {
-    expect(() => jsmql("[$prject({ name: 1 })]")).toThrow(/'\$project'/);
+  // An unknown stage is your own MQL, so it passes through with no suggestion.
+  // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$macth'".
+  it("passes an unknown stage name through, in both spellings", () => {
+    expect(jsmql("[{ $macth: $.age > 18 }]")).toEqual([{ $macth: { $gt: ["$age", 18] } }]);
+    expect(jsmql("[$prject({ name: 1 })]")).toEqual([{ $prject: { name: 1 } }]);
   });
 
   it("once first element is a stage, every element must be a stage", () => {
@@ -251,14 +250,17 @@ describe("pipeline — error cases", () => {
   });
 
   it("multi-key object cannot be a stage element", () => {
-    expect(() => jsmql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(/single-key stage object/);
+    // MEASURED: "A pipeline stage specification object must contain exactly one field."
+    expect(() => jsmql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(
+      "A raw stage document holds exactly one stage, and this one holds 2 keys. Write '{ $match: … }' on its own, and the next stage as its own statement.",
+    );
   });
 
   it("jsmql.validate() surfaces pipeline errors as CODEGEN_ERROR", () => {
-    const r = jsmql.validate("[{ $macth: $.age > 18 }]");
+    const r = jsmql.validate("[{ $match: { age: 1 }, $sort: { age: 1 } }]");
     expect(r.valid).toBe(false);
     expect(r.errors[0].code).toBe("CODEGEN_ERROR");
-    expect(r.errors[0].message).toMatch(/\$match/);
+    expect(r.errors[0].message).toMatch(/holds exactly one stage/);
   });
 });
 
@@ -1922,9 +1924,11 @@ describe("chained stage calls on the current stream", () => {
   });
 
   describe("errors", () => {
-    it("rejects an unknown stage name with a suggestion", () => {
-      expect(() => jsmql("$$.$prject({ a: 1 });")).toThrow(
-        "'.$prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
+    it("passes an unknown stage name through, and suggests for a JavaScript name", () => {
+      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$prject'".
+      expect(jsmql("$$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }]);
+      expect(() => jsmql("$$.prject({ a: 1 });")).toThrow(
+        "'.prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
       );
     });
 

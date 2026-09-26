@@ -145,6 +145,23 @@ describe("compiler/emit/filter — && and ||", () => {
   });
 });
 
+describe("compiler/emit/filter — the truth of a `$op(…)` call is split by spelling", () => {
+  it("keeps MongoDB's truthiness for a call that no JavaScript spelling reads", () => {
+    // MEASURED: `{ $expr: "$s" }` reads false, null, missing and 0 as false, and "" and [] as true.
+    expect(filter("$foo($.a)")).toEqual({ $expr: { $foo: "$a" } });
+    expect(filter("$ifNull($.a, 0)")).toEqual({ $expr: { $ifNull: ["$a", 0] } });
+    expect(filter("$and($foo($.a), $.b > 1)")).toEqual({ $and: [{ $expr: { $foo: "$a" } }, { b: { $gt: 1 } }] });
+  });
+
+  it("checks JavaScript's falsy values where a JavaScript spelling reads the call", () => {
+    const js = (v: unknown) => ({
+      $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
+    });
+    expect(filter("!$foo($.a)")).toEqual({ $expr: { $not: js({ $foo: "$a" }) } });
+    expect(filter("$foo($.a) && $.b > 1")).toEqual({ b: { $gt: 1 }, $expr: js({ $foo: "$a" }) });
+  });
+});
+
 describe("compiler/emit/filter — a raw query document", () => {
   it("keeps the developer's own MQL, and refuses JavaScript the query language cannot read", () => {
     // Raw MQL passes through, keys as written (HR1) — including a name this build

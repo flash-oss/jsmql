@@ -246,10 +246,13 @@ describe("implicit pipeline — error handling", () => {
     );
   });
 
-  it("typo in stage name suggests the closest match", () => {
-    const r = jsmql.validate("$macth($.a); $.b = 1");
+  it("an unknown stage name is your own MQL, and it passes through with no suggestion", () => {
+    // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$macth'".
+    expect(jsmql("$macth($.a); $.b = 1")).toEqual([{ $macth: "$a" }, { $set: { b: 1 } }]);
+    // A JavaScript name keeps its suggestion, because JSMQL owns that closed set.
+    const r = jsmql.validate("$$.filterr(d => d.a); $.b = 1");
     expect(r.valid).toBe(false);
-    expect(r.errors[0].message).toMatch(/\$match/);
+    expect(r.errors[0].message).toMatch(/Did you mean '\.filter\(\)'/);
   });
 
   it("explicit `[…]` pipeline still uses `[]`-coalescing semantics (regression)", () => {

@@ -196,6 +196,10 @@ The developer decided that the compiler does not check the MQL that you write yo
 
 Two checks stay, because the developer decided so. The first is the place of each stage in the pipeline, your stages too. The second is the list of query operators that an aggregation `$match` refuses (`$near`, `$nearSphere`, `$where`). The compiler also refuses a spread in `$op(…)`, because no MQL exists for it.
 
+### A "Did you mean" refusal for an unknown `$name`
+
+The developer decided that an unknown `$name` passes through, with no suggestion. `$mtach($.a > 1);` compiles to `[{ $mtach: { $gt: ["$a", 1] } }]`, and the server gives the error "Unrecognized pipeline stage name: '$mtach'". A suggestion refuses each new MongoDB name that is near a known name. Many real names are near each other: `$gt` and `$gte`, `$sin` and `$sinh`, `$min` and `$minN`. A JavaScript name such as `.pushh()` or `Numberr(x)` keeps its suggestion, because JSMQL owns that closed set.
+
 ### Spreading a STRING into its characters (`[..."abc"]`)
 
 JavaScript spreads a string into one element per character. `[..."abc"]` is `["a","b","c"]`, and `{ ..."ab" }` is `{ 0: "a", 1: "b" }`. MongoDB has no operator that does this. `$concatArrays` takes only arrays, and `$mergeObjects` takes only documents, so there is nothing to lower the spread to.

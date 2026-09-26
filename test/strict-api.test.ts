@@ -45,8 +45,9 @@ describe("jsmql.filter() — strict Filter shape", () => {
     );
     expect(() => jsmql.filter("{ $match: $.x > 0 }")).toThrow(/top-level '\$match' stage call/);
   });
-  it("refuses an array-literal Pipeline", () => {
-    expect(() => jsmql.filter("[{ $match: $.x > 0 }]")).toThrow(/Pipeline array/);
+  it("refuses a bracketed list, which is a Pipeline", () => {
+    expect(() => jsmql.filter("[{ $match: $.x > 0 }]")).toThrow(/a bracketed list, which is a Pipeline/);
+    expect(() => jsmql.filter("[1, 2]")).toThrow(/a bracketed list, which is a Pipeline/);
   });
   it("rejects non-string / non-function / non-template inputs by name", () => {
     expect(() => (jsmql.filter as (n: unknown) => unknown)(42)).toThrow(
@@ -73,6 +74,17 @@ describe("jsmql.pipeline() — strict Pipeline shape", () => {
       { $match: { x: { $gt: 0 } } },
       { $sort: { x: 1 } },
     ]);
+  });
+  it("reads every bracketed literal as a pipeline, in each entry but the expression entry", () => {
+    // `[]` is the empty pipeline that you wrote (HR1); mongod runs `aggregate([])`.
+    expect(jsmql.pipeline("[]")).toEqual([]);
+    expect(jsmql("[]")).toEqual([]);
+    // An element that is not a stage is refused by the lowering, not taken as an array value.
+    expect(() => jsmql("[1, 2, 3]")).toThrow(/A pipeline statement writes something/);
+    // The expression entry reads a list as an array value, and refuses a stage list.
+    expect(jsmql.expr("[1, 2]")).toEqual([1, 2]);
+    expect(jsmql.expr("[]")).toEqual([]);
+    expect(() => jsmql.expr("[$match($.a > 1)]")).toThrow(/a bracketed list, which is a Pipeline/);
   });
   it("accepts the template-tag form with an interpolated value", () => {
     const cutoff = 100;

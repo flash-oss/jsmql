@@ -197,10 +197,14 @@ makes sure that every stated rule field has a reader.
 A JavaScript spelling checks missing, null, `false`, `""` and `0` — and only
 the tests the value's proof can fail: the subtractive rule and its constant
 folding live in [docs/specs/types.md § The truthiness rule](types.md#the-truthiness-rule).
-The `$op(...)` escape hatch keeps MongoDB's own rules. The compiler does not
-check NaN. `mode.ts` is the one minter of `Truth`, and `mql.ts` builds every
-slot that reads one. The table in [docs/LANG_RULES.md](../LANG_RULES.md) states
-the rule for developers.
+A `$op(…)` call keeps MongoDB's own truthiness where no JavaScript spelling
+reads it, because the call is the developer's own MQL: in a filter, `$foo($.a)`
+is `{ $expr: { $foo: "$a" } }` (`mongoTruthy`). Under `&&`, `||` and `!`, and in
+a lambda body, the JavaScript spelling checks the call's value (`jsRead` in
+`filter.ts`). The compiler does not check NaN. `mode.ts` is the one minter of
+`Truth`, and `mql.ts` builds every slot that reads one. The table in
+[docs/LANGUAGE.md § Truthy and falsy](../LANGUAGE.md#truthy-and-falsy) states the
+rule for developers.
 
 ## The filter target
 
@@ -222,7 +226,7 @@ $.tags.has("a") && $.tags.has("b")  // → {"tags":{"$all":["a","b"]}}
 $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
 $.tags.some(t => t === "red")          // → {"tags":{"$elemMatch":{"$eq":"red"}}}   the element itself is the path "", one operator document
 { status: "a", x: $gt($.y) }           // → {"status":"a","$expr":{"$gt":["$x","$y"]}}   a raw document keeps its keys, but an operand that READS the document has no query form and lifts through the row's `liftsTo` twin
-$abs($.delta)                          // → {"$expr":<truth of $abs>}            a value operator is a predicate through its truth
+$abs($.delta)                          // → {"$expr":{"$abs":"$delta"}}           a `$op(…)` call keeps MongoDB's truthiness
 ```
 
 Wrapping the whole `||` in `$expr` as soon as one branch needs it changes what

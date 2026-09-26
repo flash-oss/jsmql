@@ -16,7 +16,7 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 JSMQL accepts two surface forms, and both lower through the statement road in `src/compiler/emit/statement.ts`. The **`;`-separated form is canonical** for user-facing material. [LANGUAGE.md](../LANGUAGE.md#canonical-form--between-stages) recommends it, the README's tour uses it, and `test/realistic.test.ts` is written in it.
 
 1. **`;`-separated (canonical)** — the parser returns a `Pipeline` whose `stmts` are the `;`-separated statements. `lowerProgram` lowers each in turn, and it threads the scope: a `let` declared in one statement is a name the next one reads, and a stage that replaced the document takes it away again.
-2. **Bracketed `[…]`** — the parser returns an `ArrayLiteral`. The shape rule ([filter-mode.md § The decision](filter-mode.md)) reads its FIRST element, and `subPipeline` lowers the elements as the statements they are. Adjacent writes coalesce as a `,`-run does ([update-filter.md](update-filter.md)).
+2. **Bracketed `[…]`** — the parser returns an `ArrayLiteral`. The shape rule ([filter-mode.md § The decision](filter-mode.md)) reads it as a pipeline, whatever it holds, and `subPipeline` lowers the elements as the statements they are. Adjacent writes coalesce as a `,`-run does ([update-filter.md](update-filter.md)).
 
 The two forms agree on stage shapes, the `$match` body rule, and sub-pipeline lowering. They differ only in coalescing, which falls out of the separator: `,` is in-stage (and groups writes), `;` is a hard stage boundary.
 
@@ -41,7 +41,7 @@ nesting an `.aggregate((o) => { … })` block.
 **Surface.**
 
 - **Receiver** — a stream: `$$`, `$$$.<coll>`, a callback's third parameter, or any chain link off one of those. Stage links and the lodash chain methods ([stream-methods.md](stream-methods.md)) interleave freely while the chain is still stream-shaped.
-- **Name** — any row with a `statement` cell. `$count` resolves as the *stage*, matching statement position. The compiler refuses an unknown `$`-name and names the nearest stage (`didYouMean`), instead of falling through to value-mode method dispatch. An unknown name without a `$` names the nearest name of its own kind, as value position does: a method (`$.tags.popp();` names `.pop()`), a static (`Object.assignn(…);` names `Object.assign`), or a global (`assertt(…);` names `assert(...)`).
+- **Name** — any row with a `statement` cell. `$count` resolves as the *stage*, matching statement position. An unknown `$`-name is the developer's own MQL, so it passes through as a stage (`$$.$mtach({ a: 1 })` → `[{ $mtach: { a: 1 } }]`), with no suggestion. An unknown name without a `$` names the nearest name of its own kind, as value position does: a method (`$.tags.popp();` names `.pop()`), a static (`Object.assignn(…);` names `Object.assign`), or a global (`assertt(…);` names `assert(...)`).
 - **Arity** — one argument, the stage body. A `$`-named link is the developer's own MQL, so any other count takes HR2's plain form: `$$.$limit(5, 6)` → `{ $limit: [5, 6] }`.
 - **Not a stage link** — a bare `.$name` with no call, and `?.$name(…)`. Both are parse errors; see [grammar.md](grammar.md).
 - Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), the compiler refuses a following stage link, because a value has no stream for a stage to run over (`streamStages` in `src/compiler/emit/statement.ts`).
@@ -86,7 +86,7 @@ $.t = $$$.orders.$match({ qty: { $gte: $.min } });
 
 ## Which document a program is
 
-The shape rule in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape.ts) decides once, for the whole program ([filter-mode.md § The decision](filter-mode.md)). A stage call or stage document is a pipeline, with or without a `;`. The first element of a bracketed literal decides its shape, so `jsmql("[1, 2, 3]")` stays an array expression, and `[$match(…), …]` is a pipeline whose every element must then be a statement. The compiler refuses a bare predicate with a `;` (`$.age > 18;`), and it names the `$match(…)` wrapper.
+The shape rule in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape.ts) decides once, for the whole program ([filter-mode.md § The decision](filter-mode.md)). A stage call or stage document is a pipeline, with or without a `;`. A bracketed literal is a pipeline, whatever it holds, so every element of `[$match(…), …]` must be a statement, and `jsmql("[1, 2, 3]")` refuses element 0. `jsmql.expr("[1, 2, 3]")` is the array value. The compiler refuses a bare predicate with a `;` (`$.age > 18;`), and it names the `$match(…)` wrapper.
 
 ## Lowering
 
@@ -151,7 +151,7 @@ Coverage lives in [test/pipeline.test.ts](../../test/pipeline.test.ts):
 - Mixed-form pipelines.
 - `$match` body translation (expression body) and raw passthrough (object-literal body). Full coverage in `test/compiler-filter.test.ts` and the two agreement suites.
 - Sub-pipeline recursion in `$lookup.pipeline`, `$unionWith.pipeline`, `$facet`.
-- Negatives: unknown stage with did-you-mean, mid-pipeline non-stage element, multi-key stage object.
+- An unknown stage that passes through, a mid-pipeline non-stage element, and a multi-key stage object.
 - Regression: plain value array `[1, 2, 3]` stays expression-mode.
 - `validate()` surfaces pipeline errors as `CODEGEN_ERROR`.
 - The template-tag form of `jsmql` composes naturally.

@@ -353,10 +353,9 @@ describe("$out RHS accepts chained stage calls", () => {
         "'$documents' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
       );
     });
-    it("rejects an unknown stage name with a suggestion", () => {
-      expect(() => jsmql("$$$.archive = $$.$prject({ a: 1 });")).toThrow(
-        "'.$prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
-      );
+    it("passes an unknown stage name through, as your own MQL", () => {
+      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$prject'".
+      expect(jsmql("$$$.archive = $$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }, { $out: "archive" }]);
     });
   });
 });

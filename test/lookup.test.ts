@@ -2410,9 +2410,14 @@ describe("chained stage calls on $$$.<coll>", () => {
     );
   });
 
-  it("rejects an unknown stage name in a foreign chain with a suggestion", () => {
-    expect(() => jsmql("$.t = $$$.orders.$sortt({ a: 1 });")).toThrow(
-      "Unknown method '.$sortt()' at position 16. Did you mean '.sort()'?",
+  it("passes an unknown `$` stage in a foreign chain through, and suggests for a JavaScript name", () => {
+    // A `$`-named link is your own MQL. DELIBERATELY invalid: mongod says
+    // "Unrecognized pipeline stage name: '$sortt'".
+    expect(jsmql("$.t = $$$.orders.$sortt({ a: 1 });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $sortt: { a: 1 } }], as: "t" } },
+    ]);
+    expect(() => jsmql("$.t = $$$.orders.sortt({ a: 1 });")).toThrow(
+      "Unknown method '.sortt()' at position 16. Did you mean '.sort()'?",
     );
   });
 });

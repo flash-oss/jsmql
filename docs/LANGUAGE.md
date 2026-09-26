@@ -113,6 +113,10 @@ jsmql("$.status === 'active' && $.name.trim() === 'alice'");
 jsmql("$.a + $.b");
 // → { $expr: { $and: [{ $ne: [{ $ifNull: [{ $add: ["$a", "$b"] }, null] }, null] },
 //                     { $ne: [{ $add: ["$a", "$b"] }, false] }, { $ne: [{ $add: ["$a", "$b"] }, ""] }, { $ne: [{ $add: ["$a", "$b"] }, 0] }] } }
+
+// A `$op(…)` call is your own MQL, so its truth is MongoDB's own: "" and [] are true there
+jsmql("$foo($.a)");
+// → { $expr: { $foo: "$a" } }
 ```
 
 JSMQL uses the same translation rules that [`$match` uses inside a Pipeline](#match-indexes-by-default). See [docs/specs/emit-pass.md](specs/emit-pass.md) for the full table.
@@ -1565,7 +1569,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 | `NaN` | **no** — see limitation below |
 | everything else (`[]`, `{}`, `"0"`, `-1`, dates, …) | truthy |
 
-MongoDB's raw `$toBool` and bare `$cond` use a different rule; for example, `""` is truthy in MQL. To get raw MongoDB semantics — for example, to match an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes keep their own meaning.
+MongoDB's raw `$toBool` and bare `$cond` use a different rule; for example, `""` is truthy in MQL. To get raw MongoDB semantics — for example, to match an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes keep their own meaning. A `$op(…)` call that stands alone as a predicate keeps MongoDB's rule too, because it is your own MQL: `jsmql("$foo($.a)")` → `{ $expr: { $foo: "$a" } }`. Under `&&`, `||` and `!`, the JavaScript rule reads it.
 
 One rule for every spelling and every position keeps matching pairs equal. `.compact()` is `.filter(Boolean)`. `.reject(p)` is the exact complement of `.filter(p)`. `.partition(p)` is `[filter(p), reject(p)]`, so no element can fall out of both halves. A stream `$$.filter(p)` keeps exactly the documents that the value-mode `.filter(p)` keeps.
 
@@ -2952,7 +2956,7 @@ Valid `$dateAdd` / `$dateDiff` units: `"year"`, `"quarter"`, `"week"`, `"month"`
 
 ## Escape Hatch (Direct Operator Form)
 
-For a MongoDB operator with no JavaScript equivalent, use the `$opName()` escape hatch: a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way. JSMQL passes an unknown operator through automatically, which keeps it compatible with new MongoDB releases. The call is your own MQL, so JSMQL does not check it. The server checks it, and gives the error for a wrong shape. See [Mistakes caught at compile time](#mistakes-caught-at-compile-time).
+For a MongoDB operator with no JavaScript equivalent, use the `$opName()` escape hatch: a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way. JSMQL passes an unknown operator or stage through automatically, with no "Did you mean" suggestion, which keeps it compatible with new MongoDB releases. The position gives an unknown name its role: a stage in a statement, an expression in a value, and `{ $expr: { $foo: … } }` in a filter. The call is your own MQL, so JSMQL does not check it. The server checks it, and gives the error for a wrong shape. See [Mistakes caught at compile time](#mistakes-caught-at-compile-time).
 
 ### Examples:
 
@@ -4384,22 +4388,22 @@ jsmql(`[{
 
 Pipeline mode starts two ways:
 
-- **`;`-separated form.** Any top-level `;` flips `jsmql()` into pipeline mode. Every statement must be a recognised stage call, an update op, or a `let` binding.
-- **Bracketed form.** A top-level array enters pipeline mode when its first element looks like a stage attempt: a single-`$<name>`-key object literal, or a `$<name>(...)` call. Once pipeline mode is active, every element must be a recognised stage.
+- **`;`-separated form.** Any top-level `;` flips `jsmql()` into pipeline mode. Every statement must be a stage call, an update op, or a `let` binding.
+- **Bracketed form.** A top-level array is a pipeline, whatever it holds, as a raw MQL pipeline is. Every element must be a stage, and `[]` is the empty pipeline. To get an array value, use `jsmql.expr("[1, 2, 3]")`.
 
-Either way, a mistake surfaces immediately, with a Levenshtein-based suggestion:
+A stage name that you write is your own MQL, so JSMQL does not check it. An unknown name passes through, and the server names the problem:
 
 ```js
 jsmql("[{ $macth: $.age > 18 }]");
-// → CodegenError: Element 0 of pipeline: '$macth' is not a known
-//                 aggregation stage. Did you mean '$match'?
+// → [{ $macth: { $gt: ["$age", 18] } }]
+//   mongod: "Unrecognized pipeline stage name: '$macth'"
 ```
 
-A plain value array like `[1, 2, 3]` is *not* a pipeline. The first element does not look like a stage attempt, so JSMQL leaves it as a literal array expression.
+A JavaScript name keeps its suggestion, because JSMQL owns that closed set: `$$.filterr(d => d.a);` → "'.filterr()' is not a method of the stream '$$'. Did you mean '.filter()'?".
 
 ### Which stages does JSMQL support?
 
-JSMQL supports every stage that the pinned MongoDB aggregation spec defines: one row per stage in [`src/registry/names.ts`](../src/registry/names.ts), which is the live list. JSMQL refuses a name that is not one of them, and names the nearest match (`$grpup` → "Did you mean '$group'?").
+JSMQL knows every stage that the pinned MongoDB aggregation spec defines: one row per stage in [`src/registry/names.ts`](../src/registry/names.ts), which is the live list. A name that is not one of them passes through as your own MQL. So a stage of a newer server works on the day that it ships, and the server names a typo.
 
 **A sort of documents takes at most 32 keys.** The server refuses a longer compound sort ("too many compound keys"). A stream sort method (`.sort`, `.toSorted`, `.sortBy`, `.orderBy`) is JSMQL code, so JSMQL refuses a longer sort at compile time, at the position of the sort. A `$sort` stage that you write, and the `sortBy` of a stage or an accumulator that you write, is your own MQL, so the server checks it. An array sort (`$.items.toSorted({…})`) lowers to `$sortArray`, which takes more keys, so JSMQL does not limit it.
 

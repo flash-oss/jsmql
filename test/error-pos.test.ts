@@ -62,7 +62,7 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
 
   it("chain links caret at the offending link, not the chain root", () => {
     firstError("$$.filter(p => p.a > 1).flat(1).take(2);", ".flat");
-    firstError("$$.$match({ a: 1 }).$prject({ b: 1 });", ".$prject");
+    firstError("$$.$match({ a: 1 }).prject({ b: 1 });", ".prject");
     firstError("$.n + $.items.every(x => x.ok).map(y => y)", ".map");
   });
 

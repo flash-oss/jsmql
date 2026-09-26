@@ -10,6 +10,44 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat!: an unknown `$name` passes through, and a bracketed literal is a pipeline
+
+The developer decided, in the interview on the HR3 change, that an unknown `$name`
+passes through in every position, with no "Did you mean" suggestion. The position
+gives the name its role. Each input below was refused before:
+
+```js
+$mtach($.a > 1);                       // → [{ $mtach: { $gt: ["$a", 1] } }]
+[{ $macth: $.age > 18 }]               // → [{ $macth: { $gt: ["$age", 18] } }]
+$$.$prject({ a: 1 });                  // → [{ $prject: { a: 1 } }]
+$.t = $$$.orders.$sortt({ a: 1 });     // → [{ $lookup: { from: "orders", pipeline: [{ $sortt: { a: 1 } }], as: "t" } }]
+```
+
+A suggestion refuses each new MongoDB name that is near a known one, and many real
+names are near each other (`$gt` and `$gte`). A JavaScript name keeps its
+suggestion, because JSMQL owns that closed set: `$$.filterr(…)` names `.filter()`.
+The value-position check that refused a list of stages (`refuseStageList`) is gone
+with it. It was a near-miss check for a `$name`, and a stage in a value is a wrong
+role, which passes through.
+
+In a filter, a `$op(…)` call that stands as the predicate keeps MongoDB's own
+truthiness, known or unknown: `$foo($.a)` → `{ $expr: { $foo: "$a" } }`, and
+`$ifNull($.a, 0)` loses its JavaScript chain. MEASURED: `{ $expr: "$s" }` reads ""
+and [] as true. Under `&&`, `||` and `!`, and in a lambda body, the JavaScript
+spelling reads the call, so the JavaScript chain stays there (`jsRead` in
+`filter.ts`). This is the split by spelling of the 2026-09-04 truthiness ruling.
+
+A top-level bracketed literal is a pipeline, whatever it holds, as a raw MQL
+pipeline is. `jsmql("[]")` and `jsmql.pipeline("[]")` give `[]`, and
+`jsmql("[1, 2, 3]")` refuses element 0, where it gave `{ $expr: true }` before.
+`jsmql.filter("[1, 2]")` names the pipeline entry. `jsmql.expr` still reads a
+list as an array value, and refuses a stage list (`isStageList` in
+[src/compiler/passes/shape.ts](../src/compiler/passes/shape.ts)). A raw stage
+document with two keys gives its own refusal again. The DEFERRED §B row "A "Did
+you mean" refusal for an unknown `$name`" records the decision.
+
+---
+
 ## 2026-09-26 — feat!: HR3 does not apply to the escape hatch
 
 HR3 now covers only the MQL that the compiler makes from JSMQL code. The developer

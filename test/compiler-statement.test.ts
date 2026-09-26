@@ -654,8 +654,10 @@ describe("compiler/emit/statement — the stream road", () => {
     expect(() => pipeline("$$.omit([1, 2]);")).toThrow(/names a field to WRITE/);
     // an argument that is neither an arrow nor a shorthand
     expect(() => pipeline("$$ = $$.countBy(String);")).toThrow(/takes a key here/);
-    // an unknown link, with the nearest one in the chain's own spelling
-    expect(() => pipeline("$$.$prject({ a: 1 });")).toThrow(/Did you mean '\.\$project\(\)'/);
+    // An unknown JavaScript link names the nearest one. A `$`-named link is your own MQL,
+    // so it passes through. DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$prject'".
+    expect(() => pipeline("$$.filterr(d => d.a);")).toThrow(/Did you mean '\.filter\(\)'/);
+    expect(pipeline("$$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }]);
     // a read of the index or receiver parameter says what to write instead
     expect(() => pipeline("$$ = $$.map((d, i) => ({ n: i }));")).toThrow(/no per-document index/);
     expect(compiled("$$ = $$.map((d, _i, _coll) => ({ id: d._id }));")).toEqual([{ $replaceWith: { id: "$_id" } }]);
@@ -705,8 +707,9 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(refusal("$.n = Numberr($.s);")).toBe(
       "Unknown function 'Numberr(...)'. Did you mean 'Number(...)'? Declare it first with `const Numberr = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Numberr(...)`; for a method, `receiver.Numberr(...)`.",
     );
-    // A stage name.
-    expect(refusal("$matc({ a: 1 });")).toBe("Unknown name '$matc' at position 0. Did you mean '$match'?");
+    // A `$`-named stage is your own MQL, so an unknown one passes through, with no
+    // suggestion. DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$matc'".
+    expect(pipeline("$matc({ a: 1 });")).toEqual([{ $matc: { a: 1 } }]);
     // Each suggestion is a name that works in the same place.
     expect(compiled("$.tags.pop();")).toEqual([
       {
@@ -775,8 +778,9 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // A folded constant array is a VALUE, not the empty pipeline: `[1,2].slice(2,2)`
     // settles to `[]`, which read as a program would compile to no stages at all.
     expect(() => pipeline("[1, 2, 3].slice(3, 2)")).toThrow(/A pipeline is one or more statements/);
-    expect(() => pipeline("[]")).toThrow(/A pipeline is one or more statements/);
     expect(() => pipeline("const x = 5;")).toThrow(/produces no stages/);
+    // A bracketed literal as written is a pipeline, and `[]` is the empty one (HR1).
+    expect(compiled("[]")).toEqual([]);
   });
 
   it("keeps a stage inside the body it was written in", () => {

@@ -22682,11 +22682,14 @@ function shapeOf(program) {
     if (last !== void 0 && prelude && !statementShaped(last)) return "filter";
   }
   if (statementShaped(root2)) return "pipeline";
-  if (root2.type === "ArrayLiteral") {
-    const first = root2.elements?.[0];
-    return first !== void 0 && statementShaped(first) ? "pipeline" : "filter";
-  }
+  if (root2.type === "ArrayLiteral") return "pipeline";
   return "filter";
+}
+function isStageList(program) {
+  const root2 = program;
+  if (root2.type !== "ArrayLiteral") return false;
+  const first = root2.elements?.[0];
+  return first !== void 0 && statementShaped(first);
 }
 
 // src/namespace.ts
@@ -23512,18 +23515,6 @@ var tooManySortKeys = (who, count, limit, pos) => new CodegenError(
 );
 var spreadInCall = (label, pos) => new CodegenError(
   `${label}: spread arguments are not supported. Pass each argument explicitly, or use $op($let, ...) to build the bindings by hand.`,
-  pos
-);
-var stageListAsValue = (pos) => new CodegenError(
-  "A bracketed stage list is a pipeline, not an expression. Pass it to jsmql.pipeline(\u2026), or write the stages as statements ('$match(\u2026); $sort(\u2026);').",
-  pos
-);
-var unknownStage = (index, name2, stages, pos) => new CodegenError(
-  `Element ${index} of pipeline: '${name2}' is not a known aggregation stage.${didYouMean(name2, stages, (s) => s)}`,
-  pos
-);
-var multiKeyStage = (index, keys, pos) => new CodegenError(
-  `Element ${index} of pipeline must be a single-key stage object \u2014 for example, \`{ $match: ... }\`. This object has ${keys} keys.`,
   pos
 );
 var expressionInQueryValue = (pos) => new CodegenError(
@@ -26091,6 +26082,7 @@ var TRUE = mint(true);
 var FALSE = mint(false);
 var constantOf = (t) => t === TRUE ? true : t === FALSE ? false : null;
 var boolTruth = (doc) => mint(doc);
+var mongoTruthy = (value) => mint(value);
 function truthOf(value, type) {
   if (isNothing(type)) return FALSE;
   const kinds = type.kinds;
@@ -26166,31 +26158,31 @@ var readsRef = (mql, ref) => {
 };
 
 // src/compiler/emit/filter.ts
-function lowerFilter(node, env) {
-  const q = translate(node, env, false);
+function lowerFilter(node, env, jsRead = false) {
+  const q = translate(node, env, false, jsRead);
   if (q === null) internalError("a full filter translation answered null");
   return q;
 }
-var lowerNativeFilter = (node, env) => translate(node, env, true);
+var lowerNativeFilter = (node, env) => translate(node, env, true, true);
 var isExpr = (a) => a.type !== "SpreadElement" && a.type !== "LetDecl" && a.type !== "FuncDecl" && a.type !== "AssignExpr" && a.type !== "DeleteStmt" && a.type !== "UpdateFilter";
-function translate(node, env, nativeOnly) {
+function translate(node, env, nativeOnly, jsRead) {
   if (node.type === "Injected" && isMqlShaped(node.value)) throw runTimeValueAsQuery(node.value, node.pos);
   if (node.type === "BinaryExpr" && node.op === "&&") {
     const all2 = extractHasChain(node, env);
     if (all2 !== null) return hasChain(all2.path, all2.values);
-    const left = translate(node.left, childEnv(env, node, "left"), nativeOnly);
-    const right = translate(node.right, childEnv(env, node, "right"), nativeOnly);
+    const left = translate(node.left, childEnv(env, node, "left"), nativeOnly, true);
+    const right = translate(node.right, childEnv(env, node, "right"), nativeOnly, true);
     if (left === null || right === null) return null;
     return mergeAnd(left, right);
   }
   if (node.type === "UnaryExpr" && node.op === "!") {
-    const inner = translate(node.argument, childEnv(env, node, "argument"), true);
+    const inner = translate(node.argument, childEnv(env, node, "argument"), true, true);
     if (inner !== null && Object.keys(inner).length > 0 && !isAlwaysTrue(inner) && !isAlwaysFalse(inner)) {
       return { $nor: [inner] };
     }
   }
   if (node.type === "BinaryExpr" && node.op === "||") {
-    const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly));
+    const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly, true));
     if (branches.some((b) => b === null)) return null;
     if (branches.some(isAlwaysTrue)) return {};
     const docs = branches.filter((d) => !isAlwaysFalse(d));
@@ -26204,7 +26196,9 @@ function translate(node, env, nativeOnly) {
   const native = leaf(node, env) ?? bareTruth(node, env);
   if (native !== null) return native;
   if (nativeOnly) return null;
-  return matchExpr(lowerTruth(node, env.at({ at: "value" })));
+  const valueEnv = env.at({ at: "value" });
+  if (node.type === "OperatorCall" && !jsRead) return matchExpr(mongoTruthy(lowerValue(node, valueEnv)));
+  return matchExpr(lowerTruth(node, valueEnv));
 }
 function bareTruth(node, env) {
   const path = pathOfIn(node, env);
@@ -27149,32 +27143,7 @@ function withoutOptional(e) {
   }
   return e;
 }
-var STAGE_NAMES = everyName().filter(isStageName);
-function refuseStageList(node, elements) {
-  const first = elements[0];
-  if (first === void 0) return;
-  const stageLike = (el) => {
-    if (el.type === "OperatorCall") return { name: el.name, keys: 1 };
-    if (el.type === "ObjectLiteral") {
-      const keys = el.entries.map(staticKey);
-      if (keys.length > 0 && keys[0] !== null && keys[0].startsWith("$")) return { name: keys[0], keys: keys.length };
-    }
-    return null;
-  };
-  const head = stageLike(first);
-  if (head === null) return;
-  const near = consult(head.name, "value").kind === "unknown" && didYouMean(head.name, STAGE_NAMES) !== "";
-  if (!isStageName(head.name) && !near) return;
-  elements.forEach((el, i) => {
-    const s = stageLike(el);
-    if (s === null) return;
-    if (s.keys !== 1) throw multiKeyStage(i, s.keys, el.pos);
-    if (!isStageName(s.name)) throw unknownStage(i, s.name, STAGE_NAMES, el.pos);
-  });
-  throw stageListAsValue(node.pos);
-}
 function arrayLiteral(node, elements, env) {
-  refuseStageList(node, elements);
   const inner = childEnv(env, node, "elements");
   for (const el of elements) {
     if (el.type === "AssignExpr" || el.type === "UpdateFilter" || el.type === "DeleteStmt" || el.type === "FuncDecl")
@@ -28146,8 +28115,8 @@ var hasLet = (stage) => takesLetOf(stage);
 var READ2 = {
   value: readIn,
   truth: lowerTruth,
-  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. */
-  predicate: (body, env) => lowerFilter(body, env.at(FILTER)),
+  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. A lambda body is a JavaScript spelling. */
+  predicate: (body, env) => lowerFilter(body, env.at(FILTER), true),
   reshape: lowerValue,
   /** The statements of a stage block, each as its stages, under the parameter's env. */
   block: (stages, env) => {
@@ -28755,9 +28724,8 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
   if (diagnosticOf(name2) !== void 0) throw diagnosticIsNotALink(name2, link.pos);
   if (unionsOf(name2)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name2, "stream", "stream");
-  if (verdict.kind === "unknown") return null;
   const escape = link.name.startsWith("$");
-  if (verdict.kind === "noCell" && !escape) return null;
+  if ((verdict.kind === "unknown" || verdict.kind === "noCell") && !escape) return null;
   const only = elementOnlyOf(name2);
   if (only !== null && env.chain.element === "" && (only.when === "always" || link.args.length === 0)) {
     throw refusalFor(
@@ -28795,6 +28763,7 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
 }
 function peels(link, env) {
   const name2 = namedRow(link) ?? link.name;
+  if (link.name.startsWith("$")) return true;
   const verdict = consult(name2, "stream", "stream");
   if (verdict.kind === "unknown" || verdict.kind === "noCell" || verdict.kind === "refused") return false;
   const only = env === void 0 ? null : elementOnlyOf(name2);
@@ -28855,6 +28824,10 @@ function stageStatement(node, env, first) {
   if (node.type === "StreamRef") throw bareContextRef("$$", node.pos);
   if (node.type === "DatabaseRef") throw bareContextRef("$$$", node.pos);
   if (node.type === "ClusterRef") throw bareContextRef("$$$$", node.pos);
+  if (name2 === null && node.type === "ObjectLiteral" && node.entries.length > 1) {
+    const head = staticKey(node.entries[0]);
+    if (head !== null && head.startsWith("$")) throw multiKeyStageDocument(head, node.entries.length, node.pos);
+  }
   if (name2 === null) throw notAStatement(node.pos);
   const escape = name2.startsWith("$");
   let bodyEnv = null;
@@ -28862,7 +28835,6 @@ function stageStatement(node, env, first) {
   if (node.type === "ObjectLiteral") {
     if (!escape && !isStageName(name2)) throw notAStage(name2, everyName().filter(isStageName), node.pos);
     const entries = childEnv(env, node, "entries");
-    if (node.entries.length !== 1) throw multiKeyStageDocument(name2, node.entries.length, node.pos);
     const entry = node.entries[0];
     if (entry.type !== "KeyValueEntry" || staticKey(entry) === null) throw notAStatement(node.pos);
     bodyEnv = childEnv(entries, entry, "value");
@@ -28879,10 +28851,6 @@ function stageStatement(node, env, first) {
   if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
-    if (sel.kind === "unknown") {
-      const stages3 = everyName().filter((n2) => n2.startsWith("$") && listedIn(n2, "statement"));
-      throw refusalFor(sel, name2, "", "statement", node.pos, stages3, (s) => s);
-    }
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
     const stages2 = bodyEnv !== null ? [{ [name2]: readIn(args[0], bodyEnv) }] : sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
     return stages2.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos));
@@ -29240,7 +29208,7 @@ function received(program) {
     };
   }
   if (program.type === "ArrayLiteral") {
-    return { what: "a Pipeline array (`[{ $stage: \u2026 }, \u2026]`)", hint: "jsmql.pipeline()" };
+    return { what: "a bracketed list, which is a Pipeline (`[{ $stage: \u2026 }, \u2026]`)", hint: "jsmql.pipeline()" };
   }
   const stage = shapeOf(program) === "pipeline" ? namedRow(program) : null;
   if (stage !== null) {
@@ -29309,19 +29277,18 @@ function lowerMode(mode, api, parsed, values) {
   switch (resolved) {
     case "expr":
     case "filter": {
-      if (shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected))) {
-        throw wrongShape(api, resolved, injected);
-      }
+      const pipelineShaped = resolved === "expr" && injected.type === "ArrayLiteral" ? isStageList(injected) : shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected));
+      if (pipelineShaped) throw wrongShape(api, resolved, injected);
       const program = expressionOf(desugar(fold(injected), resolved === "expr" ? VALUE : FILTER));
       return resolved === "expr" ? lowerValue(program, Env.root(program, "value")) : lowerFilter(program, Env.root(program, "filter"));
     }
     case "pipeline": {
-      if (shapeOf(injected) !== "pipeline" && injected.type !== "ArrayLiteral") {
+      if (shapeOf(injected) !== "pipeline") {
         throw defectAsFilter(injected) ?? wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);
       const stages = lowerProgram(program, Env.root(program, "statement"));
-      if (stages.length === 0) throw noStages(program.pos);
+      if (stages.length === 0 && injected.type !== "ArrayLiteral") throw noStages(program.pos);
       return stages;
     }
     case "update": {

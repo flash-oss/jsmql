@@ -56,7 +56,7 @@ The compiler refuses JSMQL code that has no MQL inside a `$op(…)` call. A Java
 
 ## Unknown operators
 
-A `$name` with no row passes through by its argument count. So JSMQL runs a MongoDB operator it has no row for yet:
+A `$name` with no row passes through by its argument count, in every position. So JSMQL runs a MongoDB operator or stage it has no row for yet. The position gives the name its role: a stage in a statement or a stream link, an expression in a value, and `{ $expr: { $foo: … } }` in a filter, with MongoDB's own truthiness. The compiler gives no "Did you mean" suggestion for a `$name`, because a suggestion refuses each new MongoDB name that is near a known one (docs/DEFERRED.md § B):
 
 | Args | Output |
 |---|---|

@@ -12,7 +12,6 @@
 import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { didYouMean } from "../../levenshtein.ts";
 import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
@@ -25,7 +24,6 @@ import {
   flattensChain,
   isCallable,
   isGlobalName,
-  isStageName,
   namespaceNames,
   newKeywordOf,
   positionalKeysOf,
@@ -320,45 +318,7 @@ function withoutOptional(e: Expr): Expr {
   return e;
 }
 
-/** Every stage name the registry has, for the suggestion a mistyped stage gets. */
-const STAGE_NAMES = everyName().filter(isStageName);
-
-/**
- * A bracketed STAGE LIST — `[$match(…), $sort(…)]`, `[{ $match: … }]` — is a
- * pipeline. It has no value, and lowering it as an array of operators produces a
- * document the server refuses on every input; the developer is told what it is.
- * The judgement is by the FIRST element: a `$`-named call, or an object whose
- * single key is `$`-led. A mistyped stage gets the stage it meant.
- */
-function refuseStageList(node: Expr, elements: readonly ArrayElement[]): void {
-  const first = elements[0];
-  if (first === undefined) return;
-  const stageLike = (el: ArrayElement): { name: string; keys: number } | null => {
-    if (el.type === "OperatorCall") return { name: el.name, keys: 1 };
-    if (el.type === "ObjectLiteral") {
-      const keys = el.entries.map(staticKey);
-      if (keys.length > 0 && keys[0] !== null && keys[0].startsWith("$")) return { name: keys[0], keys: keys.length };
-    }
-    return null;
-  };
-  const head = stageLike(first);
-  if (head === null) return;
-  // A known stage, or a name the registry does not know that is NEAR a stage
-  // (`$macth`). A known operator (`[$abs($.a), 1]`) or an unknown name near no
-  // stage is an array of values — HR2 passes it through.
-  const near = consult(head.name, "value").kind === "unknown" && didYouMean(head.name, STAGE_NAMES) !== "";
-  if (!isStageName(head.name) && !near) return;
-  elements.forEach((el, i) => {
-    const s = stageLike(el);
-    if (s === null) return;
-    if (s.keys !== 1) throw E.multiKeyStage(i, s.keys, el.pos);
-    if (!isStageName(s.name)) throw E.unknownStage(i, s.name, STAGE_NAMES, el.pos);
-  });
-  throw E.stageListAsValue(node.pos);
-}
-
 function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): unknown {
-  refuseStageList(node, elements);
   const inner = childEnv(env, node, "elements");
   // The desugar pass refuses a statement in a value, with the spelling the developer wrote.
   for (const el of elements) {

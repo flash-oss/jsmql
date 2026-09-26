@@ -180,8 +180,8 @@ const hasLet = (stage: string): boolean => takesLetOf(stage);
 const READ = {
   value: readIn,
   truth: lowerTruth,
-  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. */
-  predicate: (body: Expr, env: Env): QueryDoc => lowerFilter(body, env.at(FILTER)),
+  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. A lambda body is a JavaScript spelling. */
+  predicate: (body: Expr, env: Env): QueryDoc => lowerFilter(body, env.at(FILTER), true),
   reshape: lowerValue,
   /** The statements of a stage block, each as its stages, under the parameter's env. */
   block: (stages: Pipeline, env: Env): Stage[] => {
@@ -1273,12 +1273,11 @@ function streamLink(
   // `.concat(…)` — documents unioned into this stream, wherever the chain stands.
   if (unionsOf(name)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name, "stream", "stream");
-  if (verdict.kind === "unknown") return null;
   // A `$`-named link is the developer's own MQL (HR3 does not apply to it): a name
-  // with no link form, or a count that its form does not take, gives HR2's plain
-  // form, and no body is checked. Its place stays checked.
+  // that no row knows, a name with no link form, or a count that its form does not
+  // take, gives HR2's plain form, and no body is checked. Its place stays checked.
   const escape = link.name.startsWith("$");
-  if (verdict.kind === "noCell" && !escape) return null;
+  if ((verdict.kind === "unknown" || verdict.kind === "noCell") && !escape) return null;
   // A cell that reads the ELEMENT has nothing to read on a stream of whole documents.
   const only = elementOnlyOf(name);
   if (only !== null && env.chain.element === "" && (only.when === "always" || link.args.length === 0)) {
@@ -1332,6 +1331,9 @@ function streamLink(
  */
 function peels(link: Extract<Expr, { type: "MethodCall" }>, env?: Env): boolean {
   const name = namedRow(link) ?? link.name;
+  // A `$`-named link is a stage of the developer's own MQL, known or not. A diagnostic
+  // stage is a source, so `streamLink` refuses it by name.
+  if (link.name.startsWith("$")) return true;
   const verdict = consult(name, "stream", "stream");
   if (verdict.kind === "unknown" || verdict.kind === "noCell" || verdict.kind === "refused") return false;
   const only = env === undefined ? null : elementOnlyOf(name);
@@ -1445,6 +1447,13 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   if (node.type === "StreamRef") throw E.bareContextRef("$$", node.pos);
   if (node.type === "DatabaseRef") throw E.bareContextRef("$$$", node.pos);
   if (node.type === "ClusterRef") throw E.bareContextRef("$$$$", node.pos);
+  // `{ $match: …, $sort: … }` — two stages in one raw document. MEASURED: the server
+  // refuses it ("must contain exactly one field"), and the place of each stage needs
+  // the one name its document holds.
+  if (name === null && node.type === "ObjectLiteral" && node.entries.length > 1) {
+    const head = staticKey(node.entries[0]);
+    if (head !== null && head.startsWith("$")) throw E.multiKeyStageDocument(head, node.entries.length, node.pos);
+  }
   if (name === null) throw E.notAStatement(node.pos);
 
   // A `$`-named stage — a call, or the raw document `{ $match: … }` that HR1 lets the
@@ -1458,8 +1467,6 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   if (node.type === "ObjectLiteral") {
     if (!escape && !isStageName(name)) throw E.notAStage(name, everyName().filter(isStageName), node.pos);
     const entries = childEnv(env, node, "entries");
-    // One document, one stage: the key names the stage whose place the compiler checks.
-    if (node.entries.length !== 1) throw E.multiKeyStageDocument(name, node.entries.length, node.pos);
     const entry = node.entries[0];
     if (entry.type !== "KeyValueEntry" || staticKey(entry) === null) throw E.notAStatement(node.pos);
     bodyEnv = childEnv(entries, entry, "value");
@@ -1478,11 +1485,9 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, name, "", "statement", node.pos, []);
-    // a misspelled stage gets the nearest one: the stages are the names with a statement form
-    if (sel.kind === "unknown") {
-      const stages = everyName().filter((n) => n.startsWith("$") && listedIn(n, "statement"));
-      throw E.refusalFor(sel, name, "", "statement", node.pos, stages, (s) => s);
-    }
+    // A name that no row knows is a stage of a newer server, or a typo: the server
+    // judges it. A near-miss suggestion refuses each new MongoDB name that is near a
+    // known one. See docs/DEFERRED.md § B.
     // A stage body of named keys: a JavaScript spread or computed key has no lowering there.
     if (args.length === 1 && isStageName(name)) checkBodyKeys(args[0]);
     const stages: Stage[] =
