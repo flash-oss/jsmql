@@ -42,15 +42,15 @@ jsmql.expr('{ year: $abs(1900 + $.age) }');  // → { year: { $abs: { $add: [190
 
 **HR3 — JSMQL never emits MQL that it knows is invalid.** The registry gives the compiler the shape of each operator and each stage. When a shape shows that the server rejects an output, the compiler does not emit that output. It throws an error that names the fix.
 
-A list operator takes a list of operands, for example `$add`. In the escape hatch, the compiler rejects a list operator with one operand that is not an array:
+The count of operands is one such shape. `$divide` takes exactly two operands, so the server rejects one. `$add` takes one or more, so one operand is valid MQL:
 
 ```js
-$setUnion($.a)          // ✗ "$setUnion operates on a list of operands" → write $setUnion($.a, $.b) or $setUnion([$.a, $.b])
-$add($.x)               // ✗ "$add operates on a list of operands" → write $add($.x, $.y) or $add([$.x, $.y])
+$divide(10)             // ✗ "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1" → write $divide(a, b) or $divide([a, b])
+$add($.x)               // → { $add: "$x" }   // the server reads "$x" as the one operand
 $round($.x)             // → { $round: "$x" }   // $round accepts one operand, because its place operand is optional
 ```
 
-HR3 applies to two sources of MQL: the raw MQL that you write, and the MQL that the compiler emits from JavaScript.
+HR3 applies to two sources of MQL: the raw MQL that you write, and the MQL that the compiler emits from JavaScript. So `{ $divide: 10 }` gets the same error, and `{ $add: "$x" }` passes unchanged (HR1).
 
 **HR4 — Each of the four sigils names one scope, at every depth.** The four sigils are the context references:
 

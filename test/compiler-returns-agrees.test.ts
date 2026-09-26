@@ -20,7 +20,8 @@ import yaml from "js-yaml";
 import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MongoClient, ObjectId, Timestamp } from "mongodb";
 import { NAMES } from "../src/registry/names.ts";
 import type { Position, TypeExpr } from "../src/registry/vocabulary.ts";
-import { topKindOf } from "../src/compiler/rows.ts";
+import { operandShapeOf, topKindOf } from "../src/compiler/rows.ts";
+import { jsmql } from "../src/index.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
@@ -477,6 +478,58 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       if (VARIES_BY_OPERAND[name] === undefined) unproven.push(name);
     }
     expect(unproven).toEqual([]);
+  });
+
+  it("takes ONE operand of a list operator exactly where mongod does (HR1, HR3)", async () => {
+    // MEASURED: the server reads a lone operand that is not an array as one operand.
+    // `{ $add: "$x" }` answers `$x`, and `{ $divide: 10 }` is refused ("takes exactly
+    // 2 arguments"). The row's count says which is which. So the compiler must take
+    // the raw document unchanged where the server takes it (HR1), refuse it where the
+    // server refuses it (HR3), and give the call spelling the same answer (HR2).
+    const disagree: string[] = [];
+    const gated: string[] = [];
+    let checked = 0;
+    const compile = (src: string): unknown => {
+      try {
+        return jsmql.expr(src);
+      } catch {
+        return null;
+      }
+    };
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      if (row.kind !== "mongo" || operandShapeOf(name) !== "array" || !row.where?.includes("value")) continue;
+      const raw = { [name]: "$nope" };
+      let refusal: string | null = null;
+      try {
+        await coll.aggregate([{ $addFields: { __v: raw } }]).toArray();
+      } catch (e) {
+        refusal = String((e as Error).message).replace(/\s+/g, " ");
+      }
+      if (refusal !== null && environmental(refusal)) {
+        gated.push(name);
+        continue;
+      }
+      checked++;
+      const written = compile(`{ ${name}: "$nope" }`);
+      const called = compile(`${name}($.nope)`);
+      if ((written !== null) !== (refusal === null)) {
+        disagree.push(
+          `${name}: the compiler ${written === null ? "refuses" : "takes"} one operand; mongod ${refusal ?? "takes it"}`,
+        );
+      }
+      if (written !== null && JSON.stringify(written) !== JSON.stringify(raw)) {
+        disagree.push(`${name}: the raw document became ${JSON.stringify(written)}`);
+      }
+      if (JSON.stringify(called) !== JSON.stringify(written)) {
+        disagree.push(
+          `${name}: the call spelling gives ${JSON.stringify(called)}, the raw one ${JSON.stringify(written)}`,
+        );
+      }
+    }
+    expect(disagree).toEqual([]);
+    // A check that silently stops comparing is worse than none.
+    expect(checked).toBeGreaterThanOrEqual(30);
+    expect(gated.length, `not on this server: ${gated.join(", ")}`).toBeLessThan(checked / 4);
   });
 
   it("cannot measure exactly the operators it says it cannot", async () => {

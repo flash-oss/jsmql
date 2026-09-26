@@ -131,27 +131,44 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$add($.a, $.b, $.c)")).toEqual({ $add: ["$a", "$b", "$c"] });
   });
 
-  // List-only operators (no single-value form) — HR2/HR3:
-  //   2+ args → array; 1 array literal → the array IS the operand list; 1 non-array → error.
+  // List-only operators — HR1/HR2/HR3:
+  //   2+ args → array; 1 array literal → the array IS the operand list; 1 other operand →
+  //   that one operand as written, where the row's count takes one (MEASURED: the server
+  //   reads `{ $add: "$x" }` as one operand), and the count's refusal where it does not.
   it("list-only op: a single array literal is the operand list (HR2 round-trip)", () => {
     expect(jsmql.expr("$setUnion([$.a, $.b])")).toEqual({ $setUnion: ["$a", "$b"] });
     expect(jsmql.expr("$setUnion($.a, $.b)")).toEqual({ $setUnion: ["$a", "$b"] });
     expect(jsmql.expr("$divide([10, 2])")).toEqual({ $divide: [10, 2] });
   });
 
-  it("list-only op: rejects a single non-array operand (HR3)", () => {
-    expect(() => jsmql.expr("$setUnion($.a)")).toThrow(/\$setUnion operates on a list of operands/);
-    expect(() => jsmql.expr("$divide(10)")).toThrow(/\$divide operates on a list of operands/);
-    expect(() => jsmql.expr("$and(true)")).toThrow(/\$and operates on a list of operands/);
+  it("list-only op: one operand stays as written where the row takes one (HR2)", () => {
+    expect(jsmql.expr("$setUnion($.a)")).toEqual({ $setUnion: "$a" });
+    expect(jsmql.expr("$and(true)")).toEqual({ $and: true });
+    expect(jsmql.expr("$concat($.s)")).toEqual({ $concat: "$s" });
   });
 
-  // HR3 governs raw MQL too: the same rejection applies to the `{ $op: value }`
-  // raw-object form, not just the `$op(...)` call form.
-  it("list-only op: rejects a raw `{ $op: <non-array> }` object (HR3)", () => {
-    expect(() => jsmql.expr("({ $setUnion: $.x })")).toThrow(/\$setUnion operates on a list of operands/);
-    expect(() => jsmql.expr("({ $add: 5 })")).toThrow(/\$add operates on a list of operands/);
-    // ...but the valid array-operand form passes through verbatim (HR1).
+  // HR1 governs raw MQL: a document the server takes passes unchanged, and one it
+  // refuses gets the same count refusal as the call spelling (HR3).
+  it("list-only op: a raw `{ $op: <one operand> }` object passes unchanged (HR1)", () => {
+    expect(jsmql.expr("({ $setUnion: $.x })")).toEqual({ $setUnion: "$x" });
+    expect(jsmql.expr("({ $add: 5 })")).toEqual({ $add: 5 });
+    // the output of `.uniq()` pastes back in and round-trips
+    const uniq = jsmql.expr("$.a.uniq()");
+    expect(uniq).toEqual({ $setUnion: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr('({ $setUnion: { $ifNull: ["$a", []] } })')).toEqual(uniq);
     expect(jsmql.expr("({ $setUnion: [$.a, $.b] })")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(() => jsmql.expr("({ $divide: 10 })")).toThrow(
+      "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1",
+    );
+  });
+
+  it("list-only op: one operand of a `$group` accumulator is its own shape", () => {
+    expect(jsmql.pipeline("$group({ _id: null, s: $setUnion($.x) })")).toEqual([
+      { $group: { _id: null, s: { $setUnion: "$x" } } },
+    ]);
+    expect(jsmql.pipeline('$group({ _id: null, s: { $setUnion: "$x" } })')).toEqual([
+      { $group: { _id: null, s: { $setUnion: "$x" } } },
+    ]);
   });
 
   it("$and logical", () => {
@@ -305,8 +322,10 @@ describe("operator arity validation (array / flex shapes)", () => {
     );
   });
 
-  it("a single non-array arg to a list operator keeps the list-operand error (codegen owns it)", () => {
-    expect(() => jsmql.expr("$divide(10)")).toThrow(/\$divide operates on a list of operands/);
+  it("one operand to a two-operand list operator is the count refusal, in both spellings", () => {
+    const refusal = "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1";
+    expect(() => jsmql.expr("$divide(10)")).toThrow(refusal);
+    expect(() => jsmql.expr("({ $divide: 10 })")).toThrow(refusal);
   });
 
   it("variadic operators stay unconstrained ($add / $setUnion / $concat)", () => {

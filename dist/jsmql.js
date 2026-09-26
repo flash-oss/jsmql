@@ -26921,7 +26921,11 @@ function objectLiteral(node, entries, env) {
         continue;
       }
       if (e.key.name.startsWith("$") && operandShapeOf(e.key.name) === "array" && e.value.type !== "ArrayLiteral") {
-        throw listOperand(e.key.name, e.value.pos);
+        const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
+        const own = doc !== null && typeof doc === "object" ? doc[e.key.name] : void 0;
+        if (own === void 0) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
+        setKey(out, e.key.name, own);
+        continue;
       }
       setKey(out, e.key.name, lowerValue(e.value, inner));
     }
@@ -27268,9 +27272,8 @@ function operatorCall(node, env) {
       }
       if (shape === "array") args = operands;
     }
-  } else if (shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && verdict.kind !== "refused") {
-    throw listOperand(node.name, first.pos);
   }
+  const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr2);
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), count);
   if (sel.kind !== "rule") {
@@ -27282,7 +27285,14 @@ function operatorCall(node, env) {
   checkSlots(node.name, sel.rule.args, operands);
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
   const inputs = exprInputs(node.name, null, exprArgs, positionalKeysOf(node.name), env, node, READ, overrides);
-  return sel.rule.emit(inputs);
+  const out = sel.rule.emit(inputs);
+  return loneOperand ? asWritten(node.name, out) : out;
+}
+function asWritten(name2, out) {
+  if (out === null || typeof out !== "object" || Array.isArray(out)) return out;
+  const keys = Object.keys(out);
+  const list = out[name2];
+  return keys.length === 1 && keys[0] === name2 && Array.isArray(list) && list.length === 1 ? { [name2]: list[0] } : out;
 }
 function boundArrowOverrides(node, args, env) {
   const out = /* @__PURE__ */ new Map();

@@ -307,7 +307,7 @@ export const redeclared = (kind: string, name: string, pos: number): CodegenErro
     pos,
   );
 
-/** A list-only operator handed one operand that is not an array literal. */
+/** In a query document, a list operator whose operand is not a list: `{ $and: true }`. */
 export const listOperand = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `${name} operates on a list of operands — pass two or more (${name}(a, b)) or a single array (${name}([a, b])).`,

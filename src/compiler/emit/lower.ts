@@ -412,16 +412,22 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
     for (const e of list) {
       if (e.type !== "KeyValueEntry" || e.key.kind !== "static")
         internalError("a non-static entry reached the static path");
-      // `{ $setUnion: $.x }` — a list-only operator with a lone non-array operand is the
-      // shape the server refuses, on this spelling as on the call.
       // In an update document an operator key is that operator's own cell: `{ $each: [...], $slice: -3 }` under `$push`.
       if (e.key.name.startsWith("$") && positionIn(inner) === "updateDoc") {
         const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
         if (doc !== null && typeof doc === "object") Object.assign(out, doc as Record<string, unknown>);
         continue;
       }
+      // `{ $add: "$x" }` — a list-only operator with ONE operand that is not an array
+      // literal. The call spelling lowers it, so the row's count judges both spellings
+      // (HR2): `{ $add: "$x" }` stays as written, and `{ $divide: 10 }` is refused as
+      // `$divide(10)` is, because the server refuses it.
       if (e.key.name.startsWith("$") && operandShapeOf(e.key.name) === "array" && e.value.type !== "ArrayLiteral") {
-        throw E.listOperand(e.key.name, e.value.pos);
+        const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
+        const own = doc !== null && typeof doc === "object" ? (doc as Record<string, unknown>)[e.key.name] : undefined;
+        if (own === undefined) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
+        setKey(out, e.key.name, own);
+        continue;
       }
       setKey(out, e.key.name, lowerValue(e.value, inner));
     }
@@ -894,8 +900,10 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   const hosts = onlyInsideOf(node.name, position);
   if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(node.name, hosts, node.pos);
   // The operand LIST of a list-only operator may be written as one array literal:
-  // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone scalar there is the shape the
-  // server refuses, and is refused here in the same words.
+  // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone operand that is not an array
+  // literal is ONE operand (HR1, HR2): `$add($.x)` is `{ $add: "$x" }`, as the server
+  // reads it. The row's count decides whether one operand is enough — `$divide`
+  // takes exactly two. MEASURED on every list-only row.
   // The operand shape is the EXPRESSION form's. In an update document the row's updateDoc cell states its own.
   const shape = position === "updateDoc" ? undefined : operandShapeOf(node.name);
   const first = node.args[0];
@@ -933,14 +941,8 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
       // A list operator renders the elements. A single or flex one renders the array as written.
       if (shape === "array") args = operands;
     }
-  } else if (
-    shape === "array" &&
-    node.args.length === 1 &&
-    first.type !== "SpreadElement" &&
-    verdict.kind !== "refused"
-  ) {
-    throw E.listOperand(node.name, first.pos);
   }
+  const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr);
   const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count);
   if (sel.kind !== "rule") {
@@ -954,7 +956,20 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   // them, so `$let({ x: 1 }, (x) => x + 1)` reads `x` as `$$x`.
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
   const inputs = exprInputs(node.name, null, exprArgs, positionalKeysOf(node.name), env, node, READ, overrides);
-  return sel.rule.emit(inputs);
+  const out = sel.rule.emit(inputs);
+  return loneOperand ? asWritten(node.name, out) : out;
+}
+
+/**
+ * A list operator's one operand, as the developer wrote it (HR2): the rule renders
+ * the list `{ $add: ["$x"] }`, and `$add($.x)` is `{ $add: "$x" }`. A rule that
+ * renders another shape keeps it.
+ */
+function asWritten(name: string, out: unknown): unknown {
+  if (out === null || typeof out !== "object" || Array.isArray(out)) return out;
+  const keys = Object.keys(out);
+  const list = (out as Record<string, unknown>)[name];
+  return keys.length === 1 && keys[0] === name && Array.isArray(list) && list.length === 1 ? { [name]: list[0] } : out;
 }
 
 /** The `$let(vars, arrow)` form: the arrow's parameters must name the vars, and its body is the `in`. */

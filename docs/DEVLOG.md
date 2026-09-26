@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a list operator takes one operand wherever the server does
+
+The compiler refused every list-only operator with one operand that is not an
+array literal: `{ $add: 5 }`, `{ $setUnion: "$a" }`, `$and(true)`, and the
+`$group` accumulator `$setUnion($.x)`. The comments said that the server refuses
+this shape. MEASURED on the project's mongod, it does not: the server reads a
+lone operand as ONE operand, so `{ $add: 5 }` answers 5. Only an operator with a
+count of two or more refuses it (`{ $divide: 10 }`: "takes exactly 2
+arguments"). So the compiler broke HR1, and it even refused its own output: the
+`{ $setUnion: { $ifNull: ["$a", []] } }` that `$.a.uniq()` emits did not paste
+back in. The developer decided that valid raw MQL is accepted in all cases.
+
+The row's count now decides, as it does for every other call. The one-operand
+refusal is gone from the value road in [lower.ts](../src/compiler/emit/lower.ts).
+The call keeps its operand as written (`$add($.x)` → `{ $add: "$x" }`, HR2), and
+the raw document takes the call's lowering, so both spellings get one answer:
+`$divide(10)` and `{ $divide: 10 }` both get "'$divide(dividend, divisor)'
+requires exactly 2 arguments, got 1". The registry's count agreed with mongod on
+all 33 list-only rows, and `test/compiler-returns-agrees.test.ts` now asks the
+server again for each row. A filter keeps its refusal: in a query document,
+`$and`, `$or` and `$mod` take a list, and the server refuses `{ $and: true }`.
+The HR3 example in [LANG_RULES.md](LANG_RULES.md) moves to `$divide(10)`, a
+case that the server does refuse.
+
+---
+
 ## 2026-09-26 — fix!: "collection" names only a MongoDB collection
 
 The word had four meanings. It named a MongoDB collection, and also `[]` and
