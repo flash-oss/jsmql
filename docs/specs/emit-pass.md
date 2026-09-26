@@ -152,7 +152,8 @@ A MongoDB operator's `shape` is applied at the call, not in the renderer:
 ```js
 $setUnion([$.a, $.b])   // → {$setUnion:["$a","$b"]}     one array literal IS the operand list (HR2)
 $eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex operator; counted by its elements
-$setUnion($.a)          // refused: a list operator with one scalar (the server refuses it too)
+$setUnion($.a)          // → {$setUnion:"$a"}               one operand, as the server reads it: the row's count takes one
+$divide(10)             // refused: the row's count takes two, and the server refuses one too
 $and([])                // → {$and:[]}                    an explicit empty list passes where the row states `emptyList`
 $divide([])             // refused: nothing was written, and `$divide` states no empty list
 $concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:[{$ifNull:["$a",[]]},[[1]]]}}  a list with a spread is one array-valued expression
