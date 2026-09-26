@@ -2157,7 +2157,7 @@ $.xs.size()                                  // the element count — a string h
 
 ### Bare built-in callbacks
 
-You can pass a built-in that converts one value bare as the callback, just like in plain JavaScript: `Boolean`, `Number`, `String`, `ObjectId`, and the single-argument `Math` methods:
+You can pass a built-in that converts one value bare as the callback, just like in plain JavaScript: `Boolean`, `Number`, `String`, `ObjectId`, `Date`, and the single-argument `Math` methods:
 
 ```js
 $.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, missing)
@@ -2172,6 +2172,9 @@ Object.keys($.counts).map(ObjectId)   // object keys are strings — cast them b
 
 $.scores.map(Math.floor)        // round each element down
 
+$.stamps.map(Date)              // convert each element to a date
+// → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
+
 [$.first, $.middle, $.last].filter(Boolean).join(" ")
 // composed display name, skipping missing parts
 ```
@@ -2180,7 +2183,7 @@ Each is sugar for the one-parameter arrow it reads as (`x => Number(x)`), and it
 
 The bare form is for **arrays of values**. A pipeline stream carries documents, so `$$.countBy(String)` would stringify a whole document. The stream methods take a field name or an arrow instead (see [Stream methods](#stream-methods-chained-after-the-rhs)). Outside a callback position, the bare form errors at compile time. Write `Boolean(x)` / `ObjectId(x)` to convert a single value.
 
-**JSMQL does not allow `Date` bare, by design.** The rule is that a bare built-in must mean what it reads as. `Date`, called without `new`, ignores its argument entirely and returns the current time as a string. Write the explicit form instead: `x => new Date(x)`.
+**`Date(…)` without `new` is a date, not a string.** JavaScript's `Date()` ignores its arguments and returns the current time as a string. In JSMQL, `Date(…)` means `new Date(…)`, as every value constructor does (`ObjectId(…)`, `Decimal128(…)`): `Date()` is the current date, and `Date(x)` converts `x`. So `$.stamps.map(Date)` converts each element, where JavaScript gives the same string for every element.
 
 **`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Math.trunc(Number(<value>))` for the whole number `parseInt` would give.
 
@@ -2691,7 +2694,9 @@ new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
 new Date()                         // "$$NOW"  (current date/time)
+Date()                             // "$$NOW"  — the same as `new Date()`; JavaScript's `Date()` gives a string
 new Date($.dateString)             // { $toDate: "$dateString" }
+Date($.dateString)                 // { $toDate: "$dateString" }  — the same as `new Date($.dateString)`
 new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)

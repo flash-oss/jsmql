@@ -363,6 +363,25 @@ rule is refused, with the statement form's message.
 
 ---
 
+## 2026-09-26 — docs: `Date(…)` without `new` is a date, and `.map(Date)` converts
+
+LANGUAGE.md § Bare built-in callbacks said that JSMQL refuses a bare `Date`,
+because `Date` without `new` returns a string. The compiler has not done that
+since the BSON-constructor rule ("`X(…)` and `new X(…)`" below): `Date(…)` means
+`new Date(…)`, as `ObjectId(…)` does. The developer confirmed the rule: `Date()`
+in JSMQL is a date, not a string.
+
+```
+Date()               → "$$NOW"
+Date($.s)            → { $toDate: "$s" }
+$.stamps.map(Date)   → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
+```
+
+The paragraph now flags the difference from JavaScript, the bare-callback list
+names `Date`, and the date section shows both spellings. No behaviour changes.
+
+---
+
 ## 2026-09-26 — fix: a declaration in a sub-pipeline names the block that takes it
 
 A `let` or `const` in a stage's bracketed sub-pipeline is refused, because
