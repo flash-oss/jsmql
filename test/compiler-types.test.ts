@@ -705,6 +705,19 @@ describe("types — a read that the proof shows gives no value is refused", () =
       "'.price' reads a field that 'p' does not have. It holds '_id', 'name'.",
       ".price",
     ],
+    // a query path through an array whose elements cannot hold the field
+    [
+      "pipeline",
+      '$.tags = $.csv.split(","); $match($.tags.length > 0);',
+      "'$.tags.length' reads a field, and an array has no fields. For the number of elements, write '.size()'.",
+      "$.tags.length",
+    ],
+    [
+      "pipeline",
+      "$.items = [{ q: 1 }]; $match($.items.z === 1);",
+      "'$.items.z' reads a field that the elements of '$.items' do not have. They hold 'q'.",
+      "$.items.z",
+    ],
     // a shorthand's parameter is named by what it stands for
     [
       "pipeline",
@@ -747,10 +760,12 @@ describe("types — a read that the proof shows gives no value is refused", () =
     // A value of several kinds, or an open object, can hold the field.
     expect(jsmql('$.v = $.flag ? "s" : { a: 1 }; $.y = $.v.a;')[1]).toEqual({ $set: { y: "$v.a" } });
     expect(jsmql("$.o = { a: 1, ...$.rest }; $.y = $.o.b;")[1]).toEqual({ $set: { y: "$o.b" } });
-    // A query keeps MongoDB's path through an array (SR2).
+    // A query keeps MongoDB's path through an array (SR2), where an element can hold the field.
     expect(jsmql('$.orders = $$$.orders.filter(o => o.uid === $._id); $match($.orders.status === "open");')[1]).toEqual(
       { $match: { "orders.status": "open" } },
     );
+    expect(jsmql("$.items = [{ q: 1 }]; $match($.items.q === 1);")[1]).toEqual({ $match: { "items.q": 1 } });
+    expect(jsmql("$.a = []; $.a.push({ x: 1 }); $match($.a.x === 1);")[2]).toEqual({ $match: { "a.x": 1 } });
     // Each link reads what the link before it made.
     expect(jsmql("$group({ _id: $.k, n: $sum(1) }); $$.map(d => ({ total: d.n })).filter(d => d.total > 1);")).toEqual([
       { $group: { _id: "$k", n: { $sum: 1 } } },
@@ -790,6 +805,11 @@ describe.skipIf(up === null)("types — the server gives no value for a read tha
       ])
       .toArray();
     expect(doc).toEqual({ _id: 1, k: "a", n: 1, s: "abc", arr: [1, 2], o: { a: 1 }, arrayPath: [] });
+  });
+
+  it("a query path through an array of numbers matches no document", async () => {
+    expect(await coll.find({ "arr.size": { $exists: true } }).toArray()).toEqual([]);
+    expect(await coll.find({ "arr.length": { $gt: 0 } }).toArray()).toEqual([]);
   });
 
   it("a field that a `$group` did not make is missing", async () => {

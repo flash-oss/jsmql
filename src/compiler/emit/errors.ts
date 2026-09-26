@@ -370,16 +370,18 @@ export function unreadableField(
 ): CodegenError {
   if (why.kind === "closed") {
     const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
-    const holds =
-      why.keys.length === 0
-        ? "It holds no fields."
-        : `It holds ${shown.join(", ")}${why.keys.length > 6 ? ", …" : ""}.`;
+    const list = `${shown.join(", ")}${why.keys.length > 6 ? ", …" : ""}`;
     const fix = methodFix(name, "object") ?? didYouMean(name, why.keys, (k) => spelledField(k)).trim();
     const subject = holder ?? "this object";
-    return new CodegenError(
-      `'${read}' reads a field that ${subject} does not have. ${holds}${fix === "" ? "" : ` ${fix}`}`,
-      pos,
-    );
+    // A query path through an array reads the field off each element.
+    const [owner, holds] =
+      why.elements === true
+        ? [
+            `the elements of ${subject} do not have`,
+            why.keys.length === 0 ? "They hold no fields." : `They hold ${list}.`,
+          ]
+        : [`${subject} does not have`, why.keys.length === 0 ? "It holds no fields." : `It holds ${list}.`];
+    return new CodegenError(`'${read}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
   }
   if (why.kinds.length === 0) return alwaysAbsent(read, holder, pos);
   const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");

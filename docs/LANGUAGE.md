@@ -1463,7 +1463,7 @@ jsmql('$.a = "x"; $unset("a"); $.n = $.a.length();')
 - **A field that a closed object does not hold.** After `$group`, an inclusion `$project` or `$ = { … }`, the document holds only the fields that the stage names. An object from `.pick([...])` or from an object literal holds only its keys. The message lists the fields that are there. The same check applies to a sort key (`$$.sortBy("total")`) and to a callback's parameter.
 - **A value that is always null or missing.** A field that `$unset`, `delete` or an exclusion `$project` removed, or that you set to `null`, has nothing to read. A method call on it is refused too.
 - **Where JSMQL cannot prove the kind, the read compiles.** `$.a.length` reads the field `length` of `a`, and the server judges the value.
-- **A query keeps MongoDB's path through an array.** After `$.orders = $$$.orders.filter(o => o.uid === $._id)`, the filter `$match($.orders.status === "open")` is `{ "orders.status": "open" }`, and it matches a document with an open order. In an expression, the same read of a known array is a compile error that names `.map(e => e.status)`.
+- **A query keeps MongoDB's path through an array.** After `$.orders = $$$.orders.filter(o => o.uid === $._id)`, the filter `$match($.orders.status === "open")` is `{ "orders.status": "open" }`, and it matches a document with an open order. In an expression, the same read of a known array is a compile error that names `.map(e => e.status)`. A query path through an array whose elements cannot hold the field matches no document, so it is a compile error too: after `$.tags = $.csv.split(",")`, `$match($.tags.length > 0)` names `.size()`.
 
 ---
 

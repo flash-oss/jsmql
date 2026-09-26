@@ -23204,7 +23204,12 @@ function propOf(t, name2) {
 }
 function unreadable(t, name2, throughArrays) {
   if (t.kinds === "any" || t.kinds.has("stream")) return null;
-  if (throughArrays && t.kinds.has("array")) return null;
+  if (throughArrays && t.kinds.has("array")) {
+    if (t.kinds.size > 1) return null;
+    const inner = unreadable(t.element ?? ANY, name2, true);
+    if (inner === null) return null;
+    return inner.kind === "closed" ? { ...inner, elements: true } : { kind: "noFields", kinds: ["array"] };
+  }
   if (!t.kinds.has("object")) return { kind: "noFields", kinds: [...t.kinds] };
   if (t.kinds.size > 1 || t.open || t.props?.has(name2) === true) return null;
   return { kind: "closed", keys: [...t.props?.keys() ?? []] };
@@ -23692,13 +23697,14 @@ function readFix(name2, kinds) {
 function unreadableField(name2, why, read, holder, pos) {
   if (why.kind === "closed") {
     const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
-    const holds = why.keys.length === 0 ? "It holds no fields." : `It holds ${shown.join(", ")}${why.keys.length > 6 ? ", \u2026" : ""}.`;
+    const list = `${shown.join(", ")}${why.keys.length > 6 ? ", \u2026" : ""}`;
     const fix = methodFix(name2, "object") ?? didYouMean(name2, why.keys, (k) => spelledField(k)).trim();
     const subject2 = holder ?? "this object";
-    return new CodegenError(
-      `'${read}' reads a field that ${subject2} does not have. ${holds}${fix === "" ? "" : ` ${fix}`}`,
-      pos
-    );
+    const [owner, holds] = why.elements === true ? [
+      `the elements of ${subject2} do not have`,
+      why.keys.length === 0 ? "They hold no fields." : `They hold ${list}.`
+    ] : [`${subject2} does not have`, why.keys.length === 0 ? "It holds no fields." : `It holds ${list}.`];
+    return new CodegenError(`'${read}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
   }
   if (why.kinds.length === 0) return alwaysAbsent(read, holder, pos);
   const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");

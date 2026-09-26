@@ -442,9 +442,11 @@ A property read that the proof shows can give no value is a compile error.
 
 A query and a sort key keep MongoDB's path through an array (SR2): `{ "items.sku":
 "a" }` matches an element's `sku`, and `{ $sort: { "items.qty": 1 } }` sorts by
-the elements' `qty`. So an array in the path passes there. The value road reads a
-member as JavaScript does: an array has no fields, and the message names
-`.map(e => e.<field>)`.
+the elements' `qty`. So an array in the path passes there, where an element can hold
+the field. When no element can, the path matches no document. Elements with no fields
+leave the read on the array itself. Closed elements name the fields that they hold
+(`elements` on the `closed` reason). The value road reads a member as JavaScript
+does: an array has no fields, and the message names `.map(e => e.<field>)`.
 
 A stream callback's first parameter holds the document's proof at the chain's
 element (`stageInputs` in inputs.ts). So a read inside `$$.filter(d => …)` of a

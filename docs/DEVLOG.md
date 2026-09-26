@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat!: a query path through an array needs an element that can hold the field
+
+The read refusal let a query path through any array pass, because MongoDB's query
+language reads the field off each element (SR2). But the proof can show that no
+element holds the field. After `$.tags = $.csv.split(",")`, the filter
+`$match($.tags.length > 0)` compiled to `{ "tags.length": { $gt: 0 } }`, and it matched no
+document: a string has no fields. A JavaScript developer reads `.length` there as the
+count. Now the path passes through an array only where an element can hold the field.
+Elements with no fields leave the read on the array, so the message names `.size()`.
+Closed elements name the fields that they hold:
+`$.items = [{ q: 1 }]; $match($.items.z === 1)` is refused, and `$.items.q` passes. The
+same rule holds for a sort key. See [docs/specs/types.md](specs/types.md) § A read that
+gives no value.
+
+---
+
 ## 2026-09-26 — fix: a `?.` guards the value before it, however many members follow it
 
 `$.a?.b.uniq()` tests `a` alone, and inside the test `a.b` follows the dot rule, as HR5

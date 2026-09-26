@@ -120,10 +120,14 @@ export function propOf(t: Type, name: string): Type {
   return t.absent ? maybeAbsent(own) : own;
 }
 
-/** Why a property read can give no value: the value has no fields, or it is a closed object without the name. */
+/**
+ * Why a property read can give no value: the value has no fields, or it is a closed
+ * object without the name. `elements` marks a query path through an array whose
+ * elements are such closed objects.
+ */
 export type Unreadable =
   | { readonly kind: "noFields"; readonly kinds: readonly Kind[] }
-  | { readonly kind: "closed"; readonly keys: readonly string[] };
+  | { readonly kind: "closed"; readonly keys: readonly string[]; readonly elements?: true };
 
 /**
  * Why a read of property `name` gives NO value, by the proof of the value before the
@@ -136,7 +140,14 @@ export type Unreadable =
 export function unreadable(t: Type, name: string, throughArrays: boolean): Unreadable | null {
   // A stream read has its own refusal, which names the stream form (`$$.first()`).
   if (t.kinds === "any" || t.kinds.has("stream")) return null;
-  if (throughArrays && t.kinds.has("array")) return null;
+  if (throughArrays && t.kinds.has("array")) {
+    // A query reads the field off each element, so the path passes where an element can hold it.
+    if (t.kinds.size > 1) return null;
+    const inner = unreadable(t.element ?? ANY, name, true);
+    if (inner === null) return null;
+    // Elements with no fields leave the read on the array itself, and an array has no fields.
+    return inner.kind === "closed" ? { ...inner, elements: true } : { kind: "noFields", kinds: ["array"] };
+  }
   if (!t.kinds.has("object")) return { kind: "noFields", kinds: [...t.kinds] };
   // Another possible kind, an open object, or a field the object names can hold a value.
   if (t.kinds.size > 1 || t.open || t.props?.has(name) === true) return null;
