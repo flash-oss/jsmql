@@ -19,7 +19,7 @@
 
 import type { Expr, QueryDoc, Truth } from "../../registry/vocabulary.ts";
 import { queryOwnValue } from "../../registry/vocabulary.ts";
-import { setKey } from "../../registry/mql.ts";
+import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -316,7 +316,10 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
       });
       continue;
     }
-    out[key] = operandPositionOf(key) === "value" ? lowerValue(e.value, env) : rawValue(e.value, env);
+    out[key] =
+      operandPositionOf(key) === "value"
+        ? lowerValue(e.value, env)
+        : rawValue(e.value, key.startsWith("$") ? env.inside(key) : env);
   }
   return out;
 }
@@ -335,6 +338,9 @@ function rawValue(e: Expr, env: Env): unknown {
     return { [e.name]: rawValue(e.args[0], env) };
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
+  // A regex literal in the developer's own query document is a BSON regex, as HR1 says:
+  // `{ name: /^a/ }`, `{ name: { $regex: /^a/ } }`, `{ name: { $not: /^a/ } }`.
+  if (e.type === "RegexLiteral") return e.injected ?? new RegExp(e.pattern, mongoRegexOptions(e.flags));
   // A computed expression is neither a value nor a query operator. `{ a: $.b > 1 }`
   // becomes `{ a: { $gt: ["$b", 1] } }`, which the server ACCEPTS and matches
   // nothing. This is the silent kind of wrong answer. A constant that happens

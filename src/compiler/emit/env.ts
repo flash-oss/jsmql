@@ -61,7 +61,13 @@ export type Site = {
   readonly envelope: "none" | "$literal";
   /** The sub-pipeline boundaries crossed to reach here, outermost first. */
   readonly boundaries: readonly Boundary[];
-  /** The operator whose ARGUMENT this is — what a fragment like `$case` or `$box` is only valid inside of — or null. */
+  /**
+   * The operator whose ARGUMENT this is — what a fragment like `$case` or `$box` is
+   * only valid inside of — or null. It stays set through a document, a list and a
+   * value under a `$` key, which are MQL structure. Any JavaScript node resets it,
+   * because that node lowers to MQL of its own. A regex literal reads it: set, the
+   * literal is in the developer's own MQL (HR1).
+   */
   readonly inside: string | null;
 };
 

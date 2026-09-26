@@ -51,12 +51,12 @@ export const childEnv = (env: Env, node: object, key: string): Env => {
   const at = env.at(edge(node, key, env.site.where));
   const n = node as { type?: string; name?: string };
   // An operator's arguments are INSIDE it. A fragment like `$case` or `$box` is valid only inside it.
-  // Any other call boundary is inside nothing.
   if (n.type === "OperatorCall" && key === "args") return at.inside(n.name ?? null);
-  if (n.type === "MethodCall" || n.type === "CallExpression" || n.type === "NewExpression" || n.type === "Lambda") {
-    return at.inside(null);
-  }
-  return at;
+  // A document or a list keeps the operator it stands in: `$switch({ branches: [$case(…)] })`,
+  // `$regexMatch({ regex: /x/ })`. Every other node is JavaScript that lowers to MQL of its
+  // own — `===` is `$eq`, a method is its operator — so a value below it is inside nothing.
+  if (n.type === "ObjectLiteral" || n.type === "KeyValueEntry" || n.type === "ArrayLiteral") return at;
+  return at.inside(null);
 };
 
 /**

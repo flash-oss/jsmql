@@ -15,7 +15,7 @@ import { internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
-import { setKey } from "../../registry/mql.ts";
+import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -166,8 +166,12 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "UndefinedLiteral":
       throw E.undefinedAsValue(node.pos);
     case "RegexLiteral":
-      // A RegExp the CALL supplied is a value in its own right. A source regex has no value form.
+      // A RegExp the CALL supplied is a value in its own right.
       if (node.injected !== undefined) return node.injected;
+      // Inside MQL the developer wrote — an argument of a `$`-named call, a value under a
+      // `$` key — a regex literal is a BSON regex, as HR1 says. JavaScript code reads a
+      // regex only through the regex methods.
+      if (env.site.inside !== null) return new RegExp(node.pattern, mongoRegexOptions(node.flags));
       throw E.regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);
@@ -452,7 +456,9 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
         setKey(out, e.key.name, own);
         continue;
       }
-      setKey(out, e.key.name, lowerValue(e.value, childEnv(inner, e, "value")));
+      // A value under a `$` key is the operand of that operator, as in `$op(…)` (HR2).
+      const at = childEnv(inner, e, "value");
+      setKey(out, e.key.name, lowerValue(e.value, e.key.name.startsWith("$") ? at.inside(e.key.name) : at));
     }
     return out;
   };

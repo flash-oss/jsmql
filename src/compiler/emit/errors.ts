@@ -208,7 +208,7 @@ export const bigIntTooLarge = (digits: string, pos: number): CodegenError =>
 
 export const regexAsValue = (pos: number): CodegenError =>
   new CodegenError(
-    `Regex literals are only valid as arguments to .match(), .test(), .exec(), .matchAll(), and .search(). To pass a regex pattern as a string, use a string literal instead.`,
+    `In JavaScript code, a regex literal is valid only as an argument of .match(), .test(), .exec(), .matchAll() or .search(). In MQL that you write, a regex literal is a BSON regex: '{ name: /^a/ }', '$regexMatch({ input: $.name, regex: /^a/ })'. To pass a pattern as a string, use a string literal.`,
     pos,
   );
 

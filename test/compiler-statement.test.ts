@@ -857,6 +857,33 @@ afterAll(async () => {
   await client?.close();
 });
 
+describe("compiler/emit/statement — a regex literal in MQL that you write is a BSON regex", () => {
+  it("keeps the regex in a query document, in an operator's operand, and in a stage body", () => {
+    expect(compiled("$match({ s: /^a/i });")).toEqual([{ $match: { s: /^a/i } }]);
+    expect(compiled("$match({ s: { $in: [/^a/, /^b/] } });")).toEqual([{ $match: { s: { $in: [/^a/, /^b/] } } }]);
+    expect(compiled("$match({ s: { $not: /^a/ } });")).toEqual([{ $match: { s: { $not: /^a/ } } }]);
+    expect(compiled("$.m = $regexMatch({ input: $.s, regex: /^a/i });")).toEqual([
+      { $set: { m: { $regexMatch: { input: "$s", regex: /^a/i } } } },
+    ]);
+    // A value under a `$` key is that operator's operand, as the call's argument is.
+    expect(compiled('$.m = { $regexMatch: { input: "$s", regex: /^a/ } };')).toEqual([
+      { $set: { m: { $regexMatch: { input: "$s", regex: /^a/ } } } },
+    ]);
+    // MongoDB has no `g`: the regex keeps the options the server knows.
+    expect(compiled("$.m = $regexMatch({ input: $.s, regex: /^a/g });")).toEqual([
+      { $set: { m: { $regexMatch: { input: "$s", regex: /^a/ } } } },
+    ]);
+  });
+
+  it("stays refused in JavaScript code, and the message names both spellings", () => {
+    const msg =
+      "In JavaScript code, a regex literal is valid only as an argument of .match(), .test(), .exec(), .matchAll() or .search(). In MQL that you write, a regex literal is a BSON regex: '{ name: /^a/ }', '$regexMatch({ input: $.name, regex: /^a/ })'. To pass a pattern as a string, use a string literal.";
+    expect(() => pipeline("$.m = /^a/;")).toThrow(msg);
+    expect(() => pipeline("$.m = [/^a/];")).toThrow(msg);
+    expect(() => pipeline("$match($.s === /^a/);")).toThrow(msg);
+  });
+});
+
 describe("compiler/emit/statement — the server accepts every pipeline this file asserts", () => {
   it("ran each one, or none", async () => {
     // The cases above register their sources whether a server runs or not.

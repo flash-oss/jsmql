@@ -537,7 +537,9 @@ describe("escape-hatch operators (single-arg, expression-shaped)", () => {
 
 describe("regex literal in standalone position", () => {
   it("rejects /pattern/ as a binary operand with a clear error", () => {
-    expect(() => jsmql.expr("$.x === /foo/")).toThrow(/Regex literals are only valid as arguments to \.match\(\)/);
+    expect(() => jsmql.expr("$.x === /foo/")).toThrow(
+      /In JavaScript code, a regex literal is valid only as an argument of \.match\(\)/,
+    );
   });
 });
 

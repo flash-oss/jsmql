@@ -283,6 +283,15 @@ jsmql.expr(`$literal("$y")`)                // → { $literal: "$y" }
 jsmql(`$project({ x: $literal("$y") });`)   // → [{ $project: { x: { $literal: "$y" } } }]
 ```
 
+A regex literal in MQL that you write is a BSON regex, as in raw MQL. This is true in a query document, in an argument of a `$`-named call, and under a `$` key. JavaScript code reads a regex literal only through the regex methods (`.match()`, `.test()`, …), so JSMQL refuses `$.name === /^a/`. The regex keeps the options that MongoDB knows (see **Regex flags** under [String Methods](#string-methods)):
+
+```js
+jsmql(`({ name: /^a/i })`)                                   // → { name: /^a/i }
+jsmql(`({ tag: { $in: [/^a/, /^b/] } })`)                    // → { tag: { $in: [/^a/, /^b/] } }
+jsmql.expr(`$regexMatch({ input: $.name, regex: /^a/ })`)    // → { $regexMatch: { input: "$name", regex: /^a/ } }
+jsmql(`$.name.match(/^a/i)`)                                 // → { name: { $regex: /^a/i } }   (the JavaScript method)
+```
+
 There is one exception, for safety. A **runtime-injected** value (a `jsmql.compile`
 parameter or a template-tag `${…}` interpolation) that looks like `"$x"` *is*
 wrapped in `$literal` in expression position. This stops untrusted input from

@@ -28,7 +28,7 @@ describe("compiler/emit/lower — literals and references", () => {
 
   it("refuses the literals that have no value", () => {
     expect(() => expr("undefined")).toThrow(/only meaningful in a comparison/);
-    expect(() => expr("/x/i")).toThrow(/Regex literals are only valid/);
+    expect(() => expr("/x/i")).toThrow(/In JavaScript code, a regex literal is valid only as an argument of/);
     expect(() => expr("x => x")).toThrow(
       "A function (=>) is only valid as the callback to an array method that iterates (.map, .filter, .some, .every, .find, .reduce, …), or as the second argument to $let.",
     );

@@ -23546,7 +23546,7 @@ var bigIntTooLarge = (digits2, pos) => new CodegenError(
   pos
 );
 var regexAsValue = (pos) => new CodegenError(
-  `Regex literals are only valid as arguments to .match(), .test(), .exec(), .matchAll(), and .search(). To pass a regex pattern as a string, use a string literal instead.`,
+  `In JavaScript code, a regex literal is valid only as an argument of .match(), .test(), .exec(), .matchAll() or .search(). In MQL that you write, a regex literal is a BSON regex: '{ name: /^a/ }', '$regexMatch({ input: $.name, regex: /^a/ })'. To pass a pattern as a string, use a string literal.`,
   pos
 );
 var lambdaAsValue = (pos) => new CodegenError(
@@ -26434,7 +26434,7 @@ function rawDocument(node, env) {
       });
       continue;
     }
-    out[key] = operandPositionOf(key) === "value" ? lowerValue(e.value, env) : rawValue(e.value, env);
+    out[key] = operandPositionOf(key) === "value" ? lowerValue(e.value, env) : rawValue(e.value, key.startsWith("$") ? env.inside(key) : env);
   }
   return out;
 }
@@ -26445,6 +26445,7 @@ function rawValue(e, env) {
     return { [e.name]: rawValue(e.args[0], env) };
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
+  if (e.type === "RegexLiteral") return e.injected ?? new RegExp(e.pattern, mongoRegexOptions(e.flags));
   if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
     throw expressionInQueryValue(e.pos);
   }
@@ -26674,10 +26675,8 @@ var childEnv = (env, node, key) => {
   const at3 = env.at(edge(node, key, env.site.where));
   const n2 = node;
   if (n2.type === "OperatorCall" && key === "args") return at3.inside(n2.name ?? null);
-  if (n2.type === "MethodCall" || n2.type === "CallExpression" || n2.type === "NewExpression" || n2.type === "Lambda") {
-    return at3.inside(null);
-  }
-  return at3;
+  if (n2.type === "ObjectLiteral" || n2.type === "KeyValueEntry" || n2.type === "ArrayLiteral") return at3;
+  return at3.inside(null);
 };
 function callback(cb, env, read) {
   if (cb.type !== "Lambda" || cb.body === void 0) {
@@ -27124,6 +27123,7 @@ function lowerValue(node, env) {
       throw undefinedAsValue(node.pos);
     case "RegexLiteral":
       if (node.injected !== void 0) return node.injected;
+      if (env.site.inside !== null) return new RegExp(node.pattern, mongoRegexOptions(node.flags));
       throw regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);
@@ -27327,7 +27327,8 @@ function objectLiteral(node, entries, env) {
         setKey(out, e.key.name, own);
         continue;
       }
-      setKey(out, e.key.name, lowerValue(e.value, childEnv(inner, e, "value")));
+      const at3 = childEnv(inner, e, "value");
+      setKey(out, e.key.name, lowerValue(e.value, e.key.name.startsWith("$") ? at3.inside(e.key.name) : at3));
     }
     return out;
   };

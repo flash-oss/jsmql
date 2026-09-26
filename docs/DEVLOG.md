@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a regex literal in your MQL passes through
+
+HR1 says that a RegExp passes unchanged, but the compiler refused every regex
+literal outside the regex methods:
+
+```js
+{ s: /x/ }                                  // ✗ "Regex literals are only valid as arguments to .match(), …"
+{ tag: { $in: [/^a/, /^b/] } }              // ✗ the same message
+$regexMatch({ input: $.s, regex: /x/ })     // ✗ the same message
+```
+
+MEASURED on mongod, all three run and give the expected answer. The developer
+decided, in the interview on the HR3 change, that a regex literal in MQL that
+the developer writes is a BSON regex. This covers a query document, an argument of
+a `$`-named call, and a value under a `$` key. JavaScript code keeps the refusal
+(`$.a === /x/`, `$.a = /x/`). The regex keeps the options that MongoDB knows
+(`mongoRegexOptions`), as the regex methods do.
+
+`Site.inside` carries the answer. It stays set through a document, a list and a
+`$` key, and a JavaScript node now resets it, because that node lowers to MQL of its
+own. So `$match($.s === /^a/)` stays refused: the regex is an operand of `===`, not
+of `$match`. The refusal message now names both spellings. See
+[src/compiler/emit/lower.ts](../src/compiler/emit/lower.ts),
+[src/compiler/emit/filter.ts](../src/compiler/emit/filter.ts) and
+[src/compiler/emit/inputs.ts](../src/compiler/emit/inputs.ts).
+
+---
+
 ## 2026-09-26 — fix: a run-time value that reads as MQL goes only into an expression or a comparison
 
 A `${…}` value or a `jsmql.compile` parameter that reads as MQL — a string that

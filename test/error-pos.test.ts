@@ -36,7 +36,7 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
     expect(firstError("$.name.charAt()", ".charAt").code).toBe("CODEGEN_ERROR");
     const regex = firstError("$.name === /hello/", "/hello/");
     expect(regex.code).toBe("CODEGEN_ERROR");
-    expect(regex.message).toMatch(/Regex literals/);
+    expect(regex.message).toMatch(/a regex literal is valid only as an argument of/);
     expect(firstError("$.age > minAge", "minAge").code).toBe("CODEGEN_ERROR");
     expect(firstError("$.age == 18", "==").code).toBe("CODEGEN_ERROR");
   });
