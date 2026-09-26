@@ -139,7 +139,7 @@ export function refusalFor(
       const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
       const hint =
         oneRef !== undefined
-          ? ` Write '${oneRef.sigil}${bare}()' — ${oneRef.place}.`
+          ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' — ${oneRef.place}.`
           : sibling !== null
             ? ` ${sibling}`
             : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array")

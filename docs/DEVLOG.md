@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — fix: the hint for a source stage on the wrong receiver keeps its dot
+
+The wrong-receiver refusal names the context reference that a source stage runs
+on. The hint joined the sigil and the name with no dot, so it named a spelling
+that does not parse:
+
+```
+$.items.indexStats();   ✗ … Write '$$indexStats()' — the root stream, …        (before)
+$.items.indexStats();   ✗ … Write '$$.indexStats()' — the root stream, …       (now)
+$.items.currentOp();    ✗ … Write '$$$$.currentOp()' — the cluster reference, …
+```
+
+The hint in `refusalFor` (`src/compiler/emit/errors.ts`) now writes the dot, and
+it takes the name with or without its own dot. Test:
+`test/compiler-statement.test.ts`.
+
+---
+
 ## 2026-09-27 — fix: the compiler refuses a stage, an operator or a global function on a value
 
 A MongoDB operator, a stage and a global function read no receiver: each one is

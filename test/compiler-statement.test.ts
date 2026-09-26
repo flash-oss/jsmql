@@ -693,6 +693,15 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(pipeline("$$.$match({ a: 1 }).$sort({ b: 1 });")).toEqual([{ $match: { a: 1 } }, { $sort: { b: 1 } }]);
   });
 
+  it("names the context reference that a source stage runs on, with its dot", () => {
+    expect(() => pipeline("$.items.indexStats();")).toThrow(
+      "'indexStats()' is not available on a receiver whose type JSMQL cannot prove — it is defined on 'stream'. Write '$$.indexStats()' — the root stream, run on 'db.coll.aggregate()'.",
+    );
+    expect(() => pipeline("$.items.currentOp();")).toThrow(
+      /Write '\$\$\$\$\.currentOp\(\)' — the cluster reference, run on the admin database\.$/,
+    );
+  });
+
   it("names the nearest working name for a misspelled call, from the names of its kind", () => {
     const refusal = (src: string): string => {
       try {
