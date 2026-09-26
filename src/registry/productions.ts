@@ -171,18 +171,6 @@ function pathAndConstant(input: FilterIn): { path: string; value: unknown; flipp
 /** `$.x in [c, …]`: the own value of a field among constants. This is the native `$in`, which the planner reads. */
 function membershipQuery(input: FilterIn): QueryDoc | null {
   const [l, r] = input.args;
-  // `"k" in $.o` — the key test: the field `o.k` exists. A key with a dot or a `$` is
-  // no path segment, so it takes the expression road.
-  const objPath = input.pathOf(r);
-  if (
-    objPath !== null &&
-    l.type === "StringLiteral" &&
-    !l.value.includes(".") &&
-    !l.value.startsWith("$") &&
-    l.value !== ""
-  ) {
-    return { [objPath === "" ? l.value : `${objPath}.${l.value}`]: { $exists: true } };
-  }
   const path = input.pathOf(l);
   if (path === null) return null;
   const c = input.constant(r);

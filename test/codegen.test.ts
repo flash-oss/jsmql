@@ -7611,43 +7611,18 @@ describe("in operator RHS validation", () => {
   it("accepts array literal RHS", () => {
     expect(jsmql.expr('$.x in ["a", "b"]')).toEqual({ $in: ["$x", ["a", "b"]] });
   });
-  it("object literal RHS → property-existence (JS-faithful)", () => {
-    expect(jsmql.expr("$.x in { a: 1, b: 2 }")).toEqual({ $in: ["$x", ["a", "b"]] });
+  it("refuses every right side that is not a list, and names the spelling for the intent", () => {
+    const message =
+      "The right side of 'in' must be a list, as in 'x in [1, 2, 3]'. For an element of an array value, write '<array>.has(x)'; for a key of an object, write '<object>.key !== undefined' or '<object>.keys().has(k)'.";
+    expect(() => jsmql.expr("$.x in { a: 1, b: 2 }")).toThrow(message);
+    expect(() => jsmql.expr('"k" in $.o')).toThrow(message);
+    expect(() => jsmql.expr("$.x in $.list")).toThrow(message);
+    expect(() => jsmql("$.arr = $.tags.uniq(); $.b = 2 in $.arr;")).toThrow(message);
   });
-  it("string-literal LHS works against an object literal", () => {
-    expect(jsmql.expr("'a' in { a: 1, b: 2 }")).toEqual({ $in: ["a", ["a", "b"]] });
-  });
-  it("object literal with computed key emits the key expression", () => {
-    expect(jsmql.expr("$.x in { a: 1, [$.dynKey]: 2 }")).toEqual({ $in: ["$x", ["a", "$dynKey"]] });
-  });
-  it("object literal with spread uses $objectToArray for the spread keys", () => {
-    expect(jsmql.expr("$.x in { ...$.base, a: 1 }")).toEqual({
-      $in: [
-        "$x",
-        { $concatArrays: [{ $map: { input: { $objectToArray: "$base" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }, ["a"]] },
-      ],
-    });
-  });
-  it("object literal with only spread reduces to $objectToArray.k directly", () => {
-    expect(jsmql.expr("$.x in { ...$.other }")).toEqual({
-      $in: ["$x", { $map: { input: { $objectToArray: "$other" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }],
-    });
-  });
-  it("accepts field ref RHS", () => {
-    // a right side the proof cannot place is an object, and `in` tests its keys
-    expect(jsmql.expr("$.x in $.list")).toEqual({
-      $in: [
-        { $toString: "$x" },
-        { $map: { input: { $objectToArray: { $ifNull: ["$list", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
-      ],
-    });
-    expect(jsmql.expr('"k" in $.o')).toEqual({
-      $ne: [{ $type: { $getField: { field: "k", input: "$o" } } }, "missing"],
-    });
-    // a PROVEN array has only indexes for keys, which no query asks for
-    expect(() => jsmql("$.arr = $.tags.uniq(); $.b = 2 in $.arr;")).toThrow(
-      "'in' tests a key of an object, and the value on its right is an array. For membership, write '<array>.has(x)'; for a bound on the count, write '<array>.size() > n'.",
-    );
+  it("a constant, a parameter, and an interpolation each arrive as the list", () => {
+    expect(jsmql('const allowed = ["a", "b"]; $.status in allowed')).toEqual({ status: { $in: ["a", "b"] } });
+    expect(jsmql.compile(({ list }, { $ }) => $.x in list)({ list: [1, 2] })).toEqual({ x: { $in: [1, 2] } });
+    expect(jsmql`$.x in ${[1, 2]}`).toEqual({ x: { $in: [1, 2] } });
   });
 });
 

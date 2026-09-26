@@ -13183,10 +13183,6 @@ function pathAndConstant(input) {
 }
 function membershipQuery(input) {
   const [l, r] = input.args;
-  const objPath = input.pathOf(r);
-  if (objPath !== null && l.type === "StringLiteral" && !l.value.includes(".") && !l.value.startsWith("$") && l.value !== "") {
-    return { [objPath === "" ? l.value : `${objPath}.${l.value}`]: { $exists: true } };
-  }
   const path = input.pathOf(l);
   if (path === null) return null;
   const c = input.constant(r);
@@ -23147,12 +23143,8 @@ var looseEqualityNotNull = (op, pos) => new CodegenError(
   `'${op}' is only allowed against null in JSMQL. Use '${op === "==" ? "===" : "!=="}' for JS-like strict equality (no surprising type coercion). To match "null or missing", write '$.x ${op} null'.`,
   pos
 );
-var inOnArray = (pos) => new CodegenError(
-  "'in' tests a key of an object, and the value on its right is an array. For membership, write '<array>.has(x)'; for a bound on the count, write '<array>.size() > n'.",
-  pos
-);
-var scalarInOperand = (pos) => new CodegenError(
-  "The right side of 'in' must be an array literal, an object literal, or a field reference, not a scalar value.",
+var inNeedsList = (pos) => new CodegenError(
+  "The right side of 'in' must be a list, as in 'x in [1, 2, 3]'. For an element of an array value, write '<array>.has(x)'; for a key of an object, write '<object>.key !== undefined' or '<object>.keys().has(k)'.",
   pos
 );
 var recursiveFunction = (name2, pos) => new CodegenError(
@@ -27453,47 +27445,8 @@ function logicalValue(node, env) {
 }
 function membership2(node, env) {
   const { left, right } = node;
-  if (right.type === "StringLiteral" || right.type === "NumberLiteral" || right.type === "BooleanLiteral" || right.type === "NullLiteral") {
-    throw scalarInOperand(node.pos);
-  }
-  if (right.type === "ObjectLiteral") {
-    const entries = right.entries;
-    if (entries.every((e) => e.type === "KeyValueEntry" && e.key.kind === "static")) {
-      return { $in: [lowerValue(left, env), entries.map((e) => staticKey(e))] };
-    }
-    const operands = [];
-    let group = [];
-    const flush = () => {
-      if (group.length > 0) operands.push(group);
-      group = [];
-    };
-    for (const e of entries) {
-      if (e.type === "SpreadElement") {
-        flush();
-        const kv2 = env.fresh("kv");
-        operands.push({
-          $map: { input: { $objectToArray: lowerValue(e.argument, env) }, as: kv2.as, in: `${kv2.ref}.k` }
-        });
-      } else group.push(e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, env));
-    }
-    flush();
-    return { $in: [lowerValue(left, env), operands.length === 1 ? operands[0] : { $concatArrays: operands }] };
-  }
-  if (right.type === "ArrayLiteral") return { $in: [lowerValue(left, env), lowerValue(right, env)] };
-  const t = typeOf(right, env);
-  if (isOnly(t, "array")) throw inOnArray(node.pos);
-  const obj = lowerValue(right, env);
-  if (left.type === "StringLiteral") {
-    return { $ne: [{ $type: { $getField: { field: left.value, input: obj } } }, "missing"] };
-  }
-  const key = lowerValue(left, env);
-  const kv = env.fresh("kv");
-  return {
-    $in: [
-      kindOf3(left, env) === "string" ? key : { $toString: key },
-      { $map: { input: { $objectToArray: ifNull(obj, {}) }, as: kv.as, in: `${kv.ref}.k` } }
-    ]
-  };
+  if (right.type !== "ArrayLiteral") throw inNeedsList(node.pos);
+  return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 function exprBlock(node, env, ret) {
   const seen = /* @__PURE__ */ new Set();

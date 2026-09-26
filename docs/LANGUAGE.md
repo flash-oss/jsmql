@@ -1477,7 +1477,6 @@ $.status in ["active", "pending"]   // { $in: ["$status", ["active", "pending"]]
 // in a filter (no ';'), a constant list is the native query operator — the '$not' keeps JavaScript's
 // meaning, a test of the scalar, where MongoDB's '$in' alone would also match an array field holding the value:
 //   {status:{$in:["active","pending"]}}
-$.key in { foo: 1, bar: 2 }         // { $in: ["$key", ["foo", "bar"]] }    (property existence)
 ```
 
 #### `===` / `!==` vs `==` / `!=` — null and missing fields
@@ -1504,11 +1503,20 @@ The error for non-null `==`:
 
 The `$match` column reads the field's **own** value (see [No semicolons → Filter](#no-semicolons--filter)). An equality excludes an array field. A negation (`!==`, `!= null`) is a two-branch `$or`, because an array field is *not equal* to the literal in JavaScript and must match.
 
-**`in` operator semantics:**
-- A list spelled in the source on the right → value membership, MongoDB's own `$in`: `$.x in [1, 2, 3]` is true when `$.x` equals 1, 2, or 3, and in a filter it is `{ x: { $in: [1, 2, 3] } }`. *(JavaScript itself tests index existence here.)*
-- An object literal on the right → key existence, as in JavaScript: `$.x in { a, b }` is true when `$.x` equals `"a"` or `"b"`. JSMQL supports computed keys and `...spread`, and reads spread keys at run time through `$objectToArray`.
-- Any other value on the right → the key test on an object. `"k" in $.o` reads the field: `{ $ne: [{ $type: { $getField: { field: "k", input: "$o" } } }, "missing"] }`, and in a filter `{ "o.k": { $exists: true } }`. A computed key is searched among the object's keys, and a missing object has none (HR5). A value the compiler has PROVEN to be an array is refused, because an array's keys are its indexes: for membership write `.has(x)`, for a bound on the count `.size() > n`.
-- A scalar literal on the right → a compile-time error (JSMQL has no useful reading for this).
+**`in` operator semantics.** `x in [ … ]` is MongoDB's own `$in`: it is true when `x` equals an element of the list. The right side must be a list spelled in the source. A `const` that holds a list, a `jsmql.compile` parameter, and a `${…}` interpolation each count as one: the compiler puts the value in as the list.
+
+```js
+$.x in [1, 2, 3]                     // { $in: ["$x", [1, 2, 3]] }; in a filter { x: { $in: [1, 2, 3] } }
+const allowed = ["a", "b"];
+$.status in allowed                  // { status: { $in: ["a", "b"] } }
+```
+
+Any other right side is a compile error, and the message names the spelling that does the job. JavaScript's `in` tests a key, and JSMQL gives that test its own spelling, so the two never mix:
+
+| You want | Write | Not |
+| --- | --- | --- |
+| an element of an array value | `$.tags.has("red")` | `"red" in $.tags` |
+| a key of an object | `$.o.k !== undefined` or `$.o.keys().has($.k)` | `"k" in $.o` |
 
 ### Logical
 

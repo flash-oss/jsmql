@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat!: `in` takes a list on its right, and the key test goes
+
+`in` had two meanings: with a list on the right it was MongoDB's `$in`, and
+with anything else it was JavaScript's key test (`"k" in $.o` →
+`{ "o.k": { $exists: true } }`, `$.x in { a: 1 }` → the literal's keys). The
+developer decided that `in` keeps the element test only, because that is the
+meaning a query reads, and one operator gets one meaning. The emitter now
+accepts one right side, an `ArrayLiteral` (a constant, a `jsmql.compile`
+parameter and a `${…}` interpolation each arrive as one), and refuses every
+other one with the spelling for the intent: `.has(x)` for an element of an
+array value, `.key !== undefined` or `.keys().has(k)` for a key of an object.
+The filter road's key-test branch in `membershipQuery` and the two old
+refusals (`inOnArray`, `scalarInOperand`) are gone. DEFERRED.md § B records
+the decision; LANGUAGE.md § Comparison and grammar.md state the rule.
+
+---
+
 ## 2026-09-24 — fix: the `$op(…)` escape hatch refuses a spread for every operator
 
 `$foo(...$.arr)`, an operator the registry does not know with a spread

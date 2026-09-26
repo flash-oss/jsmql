@@ -66,7 +66,6 @@ describe("compiler/emit/lower — operators", () => {
     expect(expr("$.a === 1")).toEqual({ $eq: ["$a", 1] });
     expect(expr("$.a >= 1")).toEqual({ $gte: ["$a", 1] });
     expect(expr("$.a in [1, 2]")).toEqual({ $in: ["$a", [1, 2]] });
-    expect(expr('"k" in { k: 1, j: 2 }')).toEqual({ $in: ["k", ["k", "j"]] });
   });
 
   it("reads `+` as $concat when an operand is a string, $add otherwise", () => {

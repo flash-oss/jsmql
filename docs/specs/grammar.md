@@ -457,15 +457,9 @@ Direct operator escapes (`$toBool($.x)`, `$op($and, …)`, `$cond({…})`) bypas
 
 `a ?? b` keeps the existing `$ifNull` codegen, because JS's `??` already matches MongoDB's null/undefined-fallback behaviour.
 
-## `in` operator — RHS validation
+## `in` operator — the right side
 
-The parser reads the `in` operator like any relational operator, but **codegen validates the right-hand side**: if the RHS is a scalar literal (`StringLiteral`, `NumberLiteral`, `BooleanLiteral`, `NullLiteral`), codegen throws:
-
-```
-Right-hand side of 'in' must be an array literal or field reference, not a scalar value
-```
-
-Array literals, field refs, operator calls, and any other expression are accepted. This catches the common mistake `$.x in "value"` at transpile time, instead of producing silently invalid MQL.
+The parser reads `in` like any relational operator. The emitter (`membership` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)) accepts one right side: an `ArrayLiteral`. A constant that folds to a list, a `jsmql.compile` parameter, and a `${…}` interpolation each arrive as that literal (see [literal.ts](../../src/compiler/passes/literal.ts)). Every other right side — a scalar, an object literal, a field read, a call — is a compile error that names the JavaScript spelling for the intent: `.has(x)` for an element of an array value, `.key !== undefined` or `.keys().has(k)` for a key of an object. The user-facing rule and its examples live in [docs/LANGUAGE.md § Comparison](../LANGUAGE.md#comparison).
 
 ## What is NOT supported
 
