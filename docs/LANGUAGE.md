@@ -2588,7 +2588,7 @@ $convert($.field, "int", 0)             // { $convert: { input: "$field", to: "i
 $convert($.field, "int", 0, null)       // { $convert: { input: "$field", to: "int", onError: 0, onNull: null } }
 ```
 
-`to` takes any BSON type name that `$convert` accepts. The enum is a fact on the `$convert` row in [`src/registry/names.ts`](../src/registry/names.ts). JSMQL refuses a typo at compile time and names the valid set in the message.
+`to` takes any BSON type name that `$convert` accepts. The call is your own MQL, so the server checks the name: `$convert($.field, "intt")` → `{ $convert: { input: "$field", to: "intt" } }`, and mongod answers "Unknown type name: intt".
 
 ### ObjectId literals
 
@@ -4401,11 +4401,11 @@ A plain value array like `[1, 2, 3]` is *not* a pipeline. The first element does
 
 JSMQL supports every stage that the pinned MongoDB aggregation spec defines: one row per stage in [`src/registry/names.ts`](../src/registry/names.ts), which is the live list. JSMQL refuses a name that is not one of them, and names the nearest match (`$grpup` → "Did you mean '$group'?").
 
-**A sort of documents takes at most 32 keys.** The server refuses a longer compound sort ("too many compound keys"). So JSMQL refuses it at compile time, at the position of the sort. The limit applies to each place that sorts documents: the `$sort` stage in both spellings, a stream sort method (`.sort`, `.toSorted`, `.sortBy`, `.orderBy`), and the `sortBy` of `$setWindowFields`, `$fill`, `$top`, `$topN`, `$bottom` and `$bottomN`. An array sort (`$.items.toSorted({…})`) lowers to `$sortArray`, which takes more keys, so JSMQL does not limit it.
+**A sort of documents takes at most 32 keys.** The server refuses a longer compound sort ("too many compound keys"). A stream sort method (`.sort`, `.toSorted`, `.sortBy`, `.orderBy`) is JSMQL code, so JSMQL refuses a longer sort at compile time, at the position of the sort. A `$sort` stage that you write, and the `sortBy` of a stage or an accumulator that you write, is your own MQL, so the server checks it. An array sort (`$.items.toSorted({…})`) lowers to `$sortArray`, which takes more keys, so JSMQL does not limit it.
 
 ```js
-$sort({ k0: 1, k1: 1, /* … */ k32: 1 })
-// ✗ '$sort' sorts by at most 32 keys, and this sort names 33. The server refuses a longer compound sort.
+$$.toSorted({ k0: 1, k1: 1, /* … */ k32: 1 });
+// ✗ '.toSorted()' sorts by at most 32 keys, and this sort names 33. The server refuses a longer compound sort.
 //   Keep the 32 keys that decide the order, or put the last keys into one document field
 //   ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.
 ```
