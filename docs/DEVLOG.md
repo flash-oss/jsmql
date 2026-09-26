@@ -10,127 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-09-26 — fix: every example names the third callback parameter `stream`
+## 2026-09-26 — docs: a cheap sub-agent checks new and edited prose against STE
 
-"`collection` names only a MongoDB collection" (below) renamed the third
-callback parameter in two examples, but LANGUAGE.md, four specs and one error
-hint still spelled it `(o, _i, coll)`. That parameter is the body's own
-stream, not a collection, so each example now reads `(o, _i, stream)` and
-`stream.size()`. The hint for `$$` inside a body over another collection reads
-"'(o, _i, stream) => { stream.filter(…); }'". A `coll` that is MQL
-(`{ $unionWith: { coll: … } }`, `{ db, coll }`) or a collection name
-(`$$$.<coll>`) stays as it is.
+The root [CLAUDE.md](../CLAUDE.md) now has one more step in § Write in Simplified
+Technical English. Before a commit that adds or edits prose, the session starts
+one sub-agent on the cheapest model (`model: "haiku"`). The sub-agent reads
+[docs/STE.md](STE.md), then checks the prose lines of the staged diff and the
+draft commit message. It reports each sentence that does not obey the digest,
+with a replacement. The session corrects each real problem, and it rejects each
+report on text that the digest exempts.
 
----
+An author who follows the digest still makes errors, and does not always see
+them. The first STE pass over [docs/LANG_RULES.md](LANG_RULES.md) kept four
+headlines that STE does not allow, and only
+[a second pass](#2026-09-26--docs-rewrite-lang_rulesmd-in-ste-and-correct-it-against-the-compiler)
+found them. The check compares each sentence with the rules of the digest. This
+is a simple task, so the cheapest model is enough. The sub-agent does not edit a
+file, because only the session that wrote the prose knows its context. That
+context includes each Technical Name, each heading that other files link to, and
+each phrase that a test pins.
 
-## 2026-09-26 — fix!: the escape hatch is the MQL you wrote: no fold, and no wrap
+In [the 2026-09-19 entry](#2026-09-19--docs-all-prose-follows-asd-ste100), we
+decided to ship no mechanical checker. A heuristic for the passive voice or an
+`-ing` verb often gives false results. That decision does not change. The
+sub-agent is not a pattern match: it reads each sentence in its context. A false
+report costs one rejection, and it needs no allowlist.
 
-This supersedes "feat: the size of a constant array is a constant, in both
-spellings" below. The developer decided that `$size([1, 2])`, `$size(1, 2)` and
-`{ $size: [1, 2] }` are the escape hatch to actual MQL, so the compiler must not
-touch them. Only the JavaScript method computes a count: `[1, 2].size()` is 2,
-and `[$.a, $.b].size()` is 2 as well.
-
-So the `foldsAs` row fact and the evaluator's case for an operator call are
-gone, and the fold pass does not ask an `OperatorCall` again. The emitter's
-old wrap is gone too: a one-operand operator given an array literal of two or
-more elements read the literal as ONE array value (`$size([$.a, 2])` →
-`{ $size: [["$a", 2]] }`, `$arrayToObject([[k, v], [k, v]])` → one pairs
-array). That also touched the MQL, because in MQL the literal is the operand
-list. Now all three spellings of `{ $size: [1, 2] }` get one count refusal,
-because the server refuses two operands: the raw document takes the call's
-lowering, as a list operator's already does. Where one array literal is the
-operand list, the refusal adds "one array literal is the operand list, as in
-MQL", and it names `$size([[…]])`, the spelling of one array operand.
-
-`.size()` of an array literal is its element count, whatever each entry holds:
-`sizeOf` in [mql.ts](../src/registry/mql.ts) writes the count of a literal, so
-`[$.a, $.b].size()` is 2 and `["a", "b"].map((k, i) => …)` counts with
-`$range: [0, 2]`. MEASURED: `{ $size: [["$nope", "$x"]] }` → 2, because a
-missing field is still an element, and `test/compiler-returns-agrees.test.ts`
-holds each count against the server's own. A filter keeps the runtime
-comparison for such a count (`$.n === [$.a, $.b].size()` →
-`{ $expr: { $eq: ["$n", 2] } }`). The fold pass would drop the entries before the
-emitter checks them, so a typo in an entry would disappear.
-
----
-
-## 2026-09-26 — feat: the size of a constant array is a constant, in both spellings
-
-`[1, 2, 3].size()` already folded to 3, but `$size([1, 2, 3])` emitted
-`{ $size: [[1, 2, 3]] }`: the evaluator never reads an escape-hatch call,
-because the escape hatch is the developer's MQL. The developer decided that
-both spellings lower to 3, because the array is a constant. The same held for a
-`const` array, a `jsmql.compile` parameter and a template value.
-
-The fact sits on the row, not in the compiler: the `$size` row states
-`foldsAs: "size"`, and the evaluator settles a call to such a row with the fold
-of that method, over the operand the lowering reads. A list of ONE element is
-the operand list, so `$size([[1, 2]])` is 2. An empty list is no operand, and
-the count still refuses it. Any other array literal is the value. The fold pass
-now asks an `OperatorCall`, so the constant settles before the filter picks its
-shape: `$.n === $size([1, 2, 3])` is `{ n: 3 }`, as the `.size()` spelling is.
-A raw document stays as written (HR1), and `test/compiler-returns-agrees.test.ts`
-holds each fold against mongod's answer for the call left alone. The fold also
-repairs `$size([...[1, 2]])`, which emitted `{ $size: [1, 2] }`, a document the
-server refuses. The registry's `sizeOf` settles a constant array too, so a
-lowering that counts one writes the number: `["a", "b"].map((k, i) => …)` counts
-with `$range: [0, 2]`.
-
----
-
-## 2026-09-26 — fix: a list operator takes one operand wherever the server does
-
-The compiler refused every list-only operator with one operand that is not an
-array literal: `{ $add: 5 }`, `{ $setUnion: "$a" }`, `$and(true)`, and the
-`$group` accumulator `$setUnion($.x)`. The comments said that the server refuses
-this shape. MEASURED on the project's mongod, it does not: the server reads a
-lone operand as ONE operand, so `{ $add: 5 }` answers 5. Only an operator with a
-count of two or more refuses it (`{ $divide: 10 }`: "takes exactly 2
-arguments"). So the compiler broke HR1, and it even refused its own output: the
-`{ $setUnion: { $ifNull: ["$a", []] } }` that `$.a.uniq()` emits did not paste
-back in. The developer decided that valid raw MQL is accepted in all cases.
-
-The row's count now decides, as it does for every other call. The one-operand
-refusal is gone from the value road in [lower.ts](../src/compiler/emit/lower.ts).
-The call keeps its operand as written (`$add($.x)` → `{ $add: "$x" }`, HR2), and
-the raw document takes the call's lowering, so both spellings get one answer:
-`$divide(10)` and `{ $divide: 10 }` both get "'$divide(dividend, divisor)'
-requires exactly 2 arguments, got 1". The registry's count agreed with mongod on
-all 33 list-only rows, and `test/compiler-returns-agrees.test.ts` now asks the
-server again for each row. A filter keeps its refusal: in a query document,
-`$and`, `$or` and `$mod` take a list, and the server refuses `{ $and: true }`.
-The HR3 example in [LANG_RULES.md](LANG_RULES.md) moves to `$divide(10)`, a
-case that the server does refuse.
-
----
-
-## 2026-09-26 — fix!: "collection" names only a MongoDB collection
-
-The word had four meanings. It named a MongoDB collection, and also `[]` and
-`{}` (HR5 said "a dot runs the method on an empty collection"), the root stream
-`$$` ("the current collection, as a stream"), and the third parameter of a
-callback (lodash's `(value, index, collection)`). The developer decided that a
-"collection" is only a MongoDB collection, or the current collection: the
-collection that the MQL starts to run from. An array, an object and a stream are
-never collections.
-
-So HR5 now reads "a dot runs the method on an empty array or object", in
-[LANG_RULES.md](LANG_RULES.md), the README, LANGUAGE.md and the specs. `$$` is
-"the root stream" everywhere, as HR4 already says. The refusal of a bare `$$`
-value now says "'$$' (the root stream) is statement-only", and a system stage
-spelled on `$$` says "the root stream, run on 'db.coll.aggregate()'". The
-`Object.groupBy` refusal names its parameters `(items, discriminator)`, as MDN
-does, and its fix `<array>.groupBy(…)`. The examples call the third callback
-parameter `stream`, and the lodash "Collection" group is "the lodash array
-vocabulary". A word that names the scope of `$$` stays: `$$.indexStats()`
-reports on the current collection.
-
-The names in the code follow the same rule: the AST node of `$$` is `StreamRef`
-(it was `CollectionRef`), the callback parameter kind is `receiver`, the HR5
-helper is `emptyValueOf`, and the ambient type of `$$` in
-`@koresar/jsmql/globals` is `JsmqlStreamRef` (it was `JsmqlCollectionRef`). The
-type rename and the new message text are why this entry carries a `!`.
+No behaviour of the compiler changes.
 
 ---
 
@@ -169,6 +75,30 @@ compile, and `$$ = $$.uniqBy("t")` becomes the default bare chain
 
 ---
 
+## 2026-09-26 — feat: the size of a constant array is a constant, in both spellings
+
+`[1, 2, 3].size()` already folded to 3, but `$size([1, 2, 3])` emitted
+`{ $size: [[1, 2, 3]] }`: the evaluator never reads an escape-hatch call,
+because the escape hatch is the developer's MQL. The developer decided that
+both spellings lower to 3, because the array is a constant. The same held for a
+`const` array, a `jsmql.compile` parameter and a template value.
+
+The fact sits on the row, not in the compiler: the `$size` row states
+`foldsAs: "size"`, and the evaluator settles a call to such a row with the fold
+of that method, over the operand the lowering reads. A list of ONE element is
+the operand list, so `$size([[1, 2]])` is 2. An empty list is no operand, and
+the count still refuses it. Any other array literal is the value. The fold pass
+now asks an `OperatorCall`, so the constant settles before the filter picks its
+shape: `$.n === $size([1, 2, 3])` is `{ n: 3 }`, as the `.size()` spelling is.
+A raw document stays as written (HR1), and `test/compiler-returns-agrees.test.ts`
+holds each fold against mongod's answer for the call left alone. The fold also
+repairs `$size([...[1, 2]])`, which emitted `{ $size: [1, 2] }`, a document the
+server refuses. The registry's `sizeOf` settles a constant array too, so a
+lowering that counts one writes the number: `["a", "b"].map((k, i) => …)` counts
+with `$range: [0, 2]`.
+
+---
+
 ## 2026-09-26 — feat!: `in` takes a list on its right, and the key test goes
 
 `in` had two meanings: with a list on the right it was MongoDB's `$in`, and
@@ -186,19 +116,103 @@ the decision; LANGUAGE.md § Comparison and grammar.md state the rule.
 
 ---
 
-## 2026-09-24 — fix: the `$op(…)` escape hatch refuses a spread for every operator
+## 2026-09-26 — fix: a list operator takes one operand wherever the server does
 
-`$foo(...$.arr)`, an operator the registry does not know with a spread
-argument, emitted `{ $foo: {} }`: the operator call dropped the spread and
-lowered an empty list. A known operator already refused the spread with the
-forms that work. The developer decided that a spread has no place in the
-escape hatch at all: `$op(value)` is `{ $op: value }` and `$op(a, b)` is
-`{ $op: [a, b] }` (HR2), and a spread has no MQL of its own — its lowering
-would be either the single-array form that exists, or a second spelling for
-`[...a, ...b]` and `.concat()`. The unknown operator now makes the same
-refusal, DEFERRED.md § B records the decision, and LANGUAGE.md states the rule
-beside the JavaScript statics (`Math.max(...)`, `Object.assign(...)`) that do
-take a spread.
+The compiler refused every list-only operator with one operand that is not an
+array literal: `{ $add: 5 }`, `{ $setUnion: "$a" }`, `$and(true)`, and the
+`$group` accumulator `$setUnion($.x)`. The comments said that the server refuses
+this shape. MEASURED on the project's mongod, it does not: the server reads a
+lone operand as ONE operand, so `{ $add: 5 }` answers 5. Only an operator with a
+count of two or more refuses it (`{ $divide: 10 }`: "takes exactly 2
+arguments"). So the compiler broke HR1, and it even refused its own output: the
+`{ $setUnion: { $ifNull: ["$a", []] } }` that `$.a.uniq()` emits did not paste
+back in. The developer decided that valid raw MQL is accepted in all cases.
+
+The row's count now decides, as it does for every other call. The one-operand
+refusal is gone from the value road in [lower.ts](../src/compiler/emit/lower.ts).
+The call keeps its operand as written (`$add($.x)` → `{ $add: "$x" }`, HR2), and
+the raw document takes the call's lowering, so both spellings get one answer:
+`$divide(10)` and `{ $divide: 10 }` both get "'$divide(dividend, divisor)'
+requires exactly 2 arguments, got 1". The registry's count agreed with mongod on
+all 33 list-only rows, and `test/compiler-returns-agrees.test.ts` now asks the
+server again for each row. A filter keeps its refusal: in a query document,
+`$and`, `$or` and `$mod` take a list, and the server refuses `{ $and: true }`.
+The HR3 example in [LANG_RULES.md](LANG_RULES.md) moves to `$divide(10)`, a
+case that the server does refuse.
+
+---
+
+## 2026-09-26 — fix: every example names the third callback parameter `stream`
+
+"`collection` names only a MongoDB collection" (below) renamed the third
+callback parameter in two examples, but LANGUAGE.md, four specs and one error
+hint still spelled it `(o, _i, coll)`. That parameter is the body's own
+stream, not a collection, so each example now reads `(o, _i, stream)` and
+`stream.size()`. The hint for `$$` inside a body over another collection reads
+"'(o, _i, stream) => { stream.filter(…); }'". A `coll` that is MQL
+(`{ $unionWith: { coll: … } }`, `{ db, coll }`) or a collection name
+(`$$$.<coll>`) stays as it is.
+
+---
+
+## 2026-09-26 — fix!: "collection" names only a MongoDB collection
+
+The word had four meanings. It named a MongoDB collection, and also `[]` and
+`{}` (HR5 said "a dot runs the method on an empty collection"), the root stream
+`$$` ("the current collection, as a stream"), and the third parameter of a
+callback (lodash's `(value, index, collection)`). The developer decided that a
+"collection" is only a MongoDB collection, or the current collection: the
+collection that the MQL starts to run from. An array, an object and a stream are
+never collections.
+
+So HR5 now reads "a dot runs the method on an empty array or object", in
+[LANG_RULES.md](LANG_RULES.md), the README, LANGUAGE.md and the specs. `$$` is
+"the root stream" everywhere, as HR4 already says. The refusal of a bare `$$`
+value now says "'$$' (the root stream) is statement-only", and a system stage
+spelled on `$$` says "the root stream, run on 'db.coll.aggregate()'". The
+`Object.groupBy` refusal names its parameters `(items, discriminator)`, as MDN
+does, and its fix `<array>.groupBy(…)`. The examples call the third callback
+parameter `stream`, and the lodash "Collection" group is "the lodash array
+vocabulary". A word that names the scope of `$$` stays: `$$.indexStats()`
+reports on the current collection.
+
+The names in the code follow the same rule: the AST node of `$$` is `StreamRef`
+(it was `CollectionRef`), the callback parameter kind is `receiver`, the HR5
+helper is `emptyValueOf`, and the ambient type of `$$` in
+`@koresar/jsmql/globals` is `JsmqlStreamRef` (it was `JsmqlCollectionRef`). The
+type rename and the new message text are why this entry carries a `!`.
+
+---
+
+## 2026-09-26 — fix!: the escape hatch is the MQL you wrote: no fold, and no wrap
+
+This supersedes "feat: the size of a constant array is a constant, in both
+spellings" below. The developer decided that `$size([1, 2])`, `$size(1, 2)` and
+`{ $size: [1, 2] }` are the escape hatch to actual MQL, so the compiler must not
+touch them. Only the JavaScript method computes a count: `[1, 2].size()` is 2,
+and `[$.a, $.b].size()` is 2 as well.
+
+So the `foldsAs` row fact and the evaluator's case for an operator call are
+gone, and the fold pass does not ask an `OperatorCall` again. The emitter's
+old wrap is gone too: a one-operand operator given an array literal of two or
+more elements read the literal as ONE array value (`$size([$.a, 2])` →
+`{ $size: [["$a", 2]] }`, `$arrayToObject([[k, v], [k, v]])` → one pairs
+array). That also touched the MQL, because in MQL the literal is the operand
+list. Now all three spellings of `{ $size: [1, 2] }` get one count refusal,
+because the server refuses two operands: the raw document takes the call's
+lowering, as a list operator's already does. Where one array literal is the
+operand list, the refusal adds "one array literal is the operand list, as in
+MQL", and it names `$size([[…]])`, the spelling of one array operand.
+
+`.size()` of an array literal is its element count, whatever each entry holds:
+`sizeOf` in [mql.ts](../src/registry/mql.ts) writes the count of a literal, so
+`[$.a, $.b].size()` is 2 and `["a", "b"].map((k, i) => …)` counts with
+`$range: [0, 2]`. MEASURED: `{ $size: [["$nope", "$x"]] }` → 2, because a
+missing field is still an element, and `test/compiler-returns-agrees.test.ts`
+holds each count against the server's own. A filter keeps the runtime
+comparison for such a count (`$.n === [$.a, $.b].size()` →
+`{ $expr: { $eq: ["$n", 2] } }`). The fold pass would drop the entries before the
+emitter checks them, so a typo in an entry would disappear.
 
 ---
 
@@ -209,6 +223,57 @@ take a spread.
 `.sampleSize(n)` named as the way out. The developer asked for the value form
 to be tracked: DEF-039 holds the target lowering (the `.sampleSize()` cell with
 no `$slice`), and the `expr` refusal of the `shuffle` row carries the tag.
+
+---
+
+## 2026-09-24 — feat!: every value JSMQL computes is a call; the stream count is `$$.size()`
+
+`.length` was the one property JSMQL computed, and `$$.length` its stream twin. A
+developer whose documents hold a field named `length` could not reach it with a
+dot, and a reader of `$.a.length` could not tell a field from a computation. No
+dot property is computed any more: `$.a.length` reads the field `a.length`, and
+`$.s.length()` counts the characters of `s`. `.length()` is a string method, so
+the stream's document count moves to `.size()`, the array method, as `Set.size`
+and `Map.size` name it: `$$.size()` stamps `__jsmql.size` through
+`$setWindowFields` (`SIZE_SLOT`), a `$lookup.let` carries it as `jsmql_s0_size`,
+and a stream callback's third parameter counts its own stream with `.size()` too.
+
+The `size` row holds the stream cell the `length` row held. A method call on `$$`
+in a value slot passes when its row states a stream cell in the value position
+(`hasStreamValueCell`); every other chain on the stream there is still the
+`$facet` road and is refused. The ambient globals skip `length`, because
+TypeScript's own `String` declares the property. The spec is
+`docs/specs/stream-size.md`, the suite `test/stream-size.test.ts`.
+
+---
+
+## 2026-09-24 — feat!: HR5 — a dot runs the method on an empty collection, a `?.` gives null
+
+A method on a receiver that is null or missing answered four different things:
+`.uniq()` null, `.chunk(2)` `[]`, `.sum()` `0`, `.pick([...])` `{}`. A developer
+could not predict the next one, and an analytics column such as
+`$.b = $.tags.has("red")` came out as boolean-or-null. DEF-037 asked for one
+rule. HR5 is that rule, and the fifth HARD RULE in docs/LANG_RULES.md. Under a
+dot, an array or object method runs on the empty collection of its family: the
+compiler wraps a receiver it cannot prove present in `{ $ifNull: [recv, []] }` or
+`{ $ifNull: [recv, {}] }` (`dispatchOn` in `lower.ts`), and the operator answers
+what it answers there — `[]`, `0`, `false`, `true`, `{}`, or missing for an
+element that is not there. No table of neutrals: the empty collection IS the
+neutral. A string method keeps `null`, the nearest value MongoDB has to the
+TypeError JavaScript raises. Under `?.` the chain stops and answers `null`, and
+each `?.` tests only the value in front of it: the fold records the path the last
+`?.` tests (`FieldRef.optionalAt`), so `$.a?.b.uniq()` is null for a missing `a`
+and `[]` for a missing `b`.
+
+A wrapped call is present, so a chain pays once at its head and the third callback
+parameter binds a present array. A family a row refuses is never an unproven
+receiver's family, so `.keys()` on a field is a call on an object and takes the
+`{}`. `.indexOf` on an unproven receiver keeps its runtime dispatch, with `-1`
+where neither branch matched. The developer chose this over a per-method table
+(three lodash cells differ, all worse: `_.concat(undefined, [1])` is
+`[undefined, 1]`, `_.mean(undefined)` is `NaN`) and over forcing `null` for an
+element read (`.at(0)` on `[]` is missing on the server, as `undefined` is in
+JavaScript). DEF-037 is closed.
 
 ---
 
@@ -243,54 +308,34 @@ query asks for those; the message names `.has(x)` and `.size() > n`.
 
 ---
 
-## 2026-09-24 — feat!: HR5 — a dot runs the method on an empty collection, a `?.` gives null
+## 2026-09-24 — fix: the `$op(…)` escape hatch refuses a spread for every operator
 
-A method on a receiver that is null or missing answered four different things:
-`.uniq()` null, `.chunk(2)` `[]`, `.sum()` `0`, `.pick([...])` `{}`. A developer
-could not predict the next one, and an analytics column such as
-`$.b = $.tags.has("red")` came out as boolean-or-null. DEF-037 asked for one
-rule. HR5 is that rule, and the fifth HARD RULE in docs/LANG_RULES.md. Under a
-dot, an array or object method runs on the empty collection of its family: the
-compiler wraps a receiver it cannot prove present in `{ $ifNull: [recv, []] }` or
-`{ $ifNull: [recv, {}] }` (`dispatchOn` in `lower.ts`), and the operator answers
-what it answers there — `[]`, `0`, `false`, `true`, `{}`, or missing for an
-element that is not there. No table of neutrals: the empty collection IS the
-neutral. A string method keeps `null`, the nearest value MongoDB has to the
-TypeError JavaScript raises. Under `?.` the chain stops and answers `null`, and
-each `?.` tests only the value in front of it: the fold records the path the last
-`?.` tests (`FieldRef.optionalAt`), so `$.a?.b.uniq()` is null for a missing `a`
-and `[]` for a missing `b`.
-
-A wrapped call is present, so a chain pays once at its head and the third callback
-parameter binds a present array. A family a row refuses is never an unproven
-receiver's family, so `.keys()` on a field is a call on an object and takes the
-`{}`. `.indexOf` on an unproven receiver keeps its runtime dispatch, with `-1`
-where neither branch matched. The developer chose this over a per-method table
-(three lodash cells differ, all worse: `_.concat(undefined, [1])` is
-`[undefined, 1]`, `_.mean(undefined)` is `NaN`) and over forcing `null` for an
-element read (`.at(0)` on `[]` is missing on the server, as `undefined` is in
-JavaScript). DEF-037 is closed.
+`$foo(...$.arr)`, an operator the registry does not know with a spread
+argument, emitted `{ $foo: {} }`: the operator call dropped the spread and
+lowered an empty list. A known operator already refused the spread with the
+forms that work. The developer decided that a spread has no place in the
+escape hatch at all: `$op(value)` is `{ $op: value }` and `$op(a, b)` is
+`{ $op: [a, b] }` (HR2), and a spread has no MQL of its own — its lowering
+would be either the single-array form that exists, or a second spelling for
+`[...a, ...b]` and `.concat()`. The unknown operator now makes the same
+refusal, DEFERRED.md § B records the decision, and LANGUAGE.md states the rule
+beside the JavaScript statics (`Math.max(...)`, `Object.assign(...)`) that do
+take a spread.
 
 ---
 
-## 2026-09-24 — feat!: every value JSMQL computes is a call; the stream count is `$$.size()`
+## 2026-09-23 — feat: a callback parameter carries the element's own presence
 
-`.length` was the one property JSMQL computed, and `$$.length` its stream twin. A
-developer whose documents hold a field named `length` could not reach it with a
-dot, and a reader of `$.a.length` could not tell a field from a computation. No
-dot property is computed any more: `$.a.length` reads the field `a.length`, and
-`$.s.length()` counts the characters of `s`. `.length()` is a string method, so
-the stream's document count moves to `.size()`, the array method, as `Set.size`
-and `Map.size` name it: `$$.size()` stamps `__jsmql.size` through
-`$setWindowFields` (`SIZE_SLOT`), a `$lookup.let` carries it as `jsmql_s0_size`,
-and a stream callback's third parameter counts its own stream with `.size()` too.
-
-The `size` row holds the stream cell the `length` row held. A method call on `$$`
-in a value slot passes when its row states a stream cell in the value position
-(`hasStreamValueCell`); every other chain on the stream there is still the
-`$facet` road and is refused. The ambient globals skip `length`, because
-TypeScript's own `String` declares the property. The spec is
-`docs/specs/stream-size.md`, the suite `test/stream-size.test.ts`.
+`Object.keys(counts).map(ObjectId)` proved an array of maybe-absent ObjectIds,
+because the tracker bound every callback parameter as maybe-absent. `$map` over
+a null receiver never runs the body, and an element a row proves present — the
+keys of an object, the parts of a `.split()`, the items of a literal — is never
+null. So the parameter takes the element's proof as it is, in both places that
+bind one (`arrayCallback` in `inputs.ts`, `callbackAnswer` in `prove.ts`). The
+`ObjectId` global states `neverNull`, which the `GlobalSpec` type now allows,
+and a dynamic key the proof shows present reads with no `$ifNull` in
+`indexAccess`. The recommendation program's `candidateProductIds` is a present
+array of present ObjectIds, and its `score` read drops the guard on the key.
 
 ---
 
@@ -321,21 +366,6 @@ The filter road moves the names with the split: `$.tags.has("x")` is
 `$.name.includes("x")` is `{ name: { $regex: /x/ } }`, the substring test. The
 `&&` fold into `$all` reads `.has` leaves. SR2's example and the specs follow.
 The stream cells of `.difference`, `.without` and `.intersection` build `.has`.
-
----
-
-## 2026-09-23 — feat: a callback parameter carries the element's own presence
-
-`Object.keys(counts).map(ObjectId)` proved an array of maybe-absent ObjectIds,
-because the tracker bound every callback parameter as maybe-absent. `$map` over
-a null receiver never runs the body, and an element a row proves present — the
-keys of an object, the parts of a `.split()`, the items of a literal — is never
-null. So the parameter takes the element's proof as it is, in both places that
-bind one (`arrayCallback` in `inputs.ts`, `callbackAnswer` in `prove.ts`). The
-`ObjectId` global states `neverNull`, which the `GlobalSpec` type now allows,
-and a dynamic key the proof shows present reads with no `$ifNull` in
-`indexAccess`. The recommendation program's `candidateProductIds` is a present
-array of present ObjectIds, and its `score` read drops the guard on the key.
 
 ---
 
@@ -383,31 +413,6 @@ them. The developer approved recording that gap: DEF-038 in `docs/DEFERRED.md`
 names the target — a layout on the row that says where the output fields come
 from — and the three rows, the `DocumentEffect` comment and the spec table carry
 the tag.
-
----
-
-## 2026-09-21 — fix: a refusal reads the whole kind set
-
-Seven refusals still asked `kindOf` for ONE kind: the document root under
-`$ = …`, the elements of `$$ = <array>`, an array spread, an object spread, a
-`$$.push(…)` argument, a `$$$.<coll>.push(<value>)` value, and a `.map(d => …)`
-body that must return a document. A value proven two kinds answered "unknown"
-there, so `$.x = $.f ? "s" : 5; $ = $.x;` compiled to a `$replaceWith` the
-server refuses, and `[...$.x]` over a proven number passed. Each site now asks
-`cannotBe(type, kind)`: a value that can never be the kind is refused, a value
-that may be it passes for the server to judge, and the message names every kind
-the value can be ("a string or a number is not one"). The two noun tables move
-into `errors.ts` beside the messages that read them. The receiver gate of a
-`lower` verdict had the same hole: `$.v.trim()` over a value proven a number or
-an array compiled to a bare `$trim`; it now refuses when none of the receiver's
-possible families is one the row takes. A coverage audit by a sub-agent found the
-sites; two of its other claims did not hold (`"b" + $.x` already emits `$concat`,
-and a value that may be a document is rightly allowed).
-
-Three message changes ride along. A quoted kind takes its article ("an
-'array'", not "a 'array'"). `.map()` on a string names the character-wise
-spelling. The `.length`-on-a-document hint names `.keys().length`, `.<field>` and
-the element-taking call to remove, in place of the word "terminal".
 
 ---
 
@@ -487,32 +492,6 @@ output fields are not their body's keys, and no layout states them yet.
 
 ---
 
-## 2026-09-21 — feat: the truthiness check keeps only the tests the value can fail
-
-`truthOf` read every value the compiler could not prove boolean with the same
-four tests — null-or-missing, `false`, `""`, `0`. It now reads the value's
-`Type`, and the check is subtractive: each test belongs to one part of the
-proof, and only a part that can be falsy keeps its test. A string keeps the `""`
-test; an array, an object or a date keeps only the null test while it may be
-missing; a value that can only be a boolean or a number is its own truth, because
-MongoDB already reads `0`, a `Long` zero, a `Decimal128` zero, negative zero,
-`false`, null and missing as false (measured, the table in
-`src/compiler/emit/mode.ts`). No test left is the constant `TRUE`, and every slot
-that reads a condition — `cond`, `filter`, `switchOn`, `switchOver`, the
-registry's `cond` builder, `and`, `or`, `not` — folds it, so `$.arr ? a : b`
-over a present array emits `a`. The many `truthOf(doc, true)` call sites, which
-read a document that already IS a boolean, spell that as `boolTruth(doc)` now.
-
-The filter target gains the native half: `bareTruth` in `filter.ts` lowers a
-bare field read whose proof rules an array out to a query clause —
-`{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that
-may be missing, `{}` when nothing can be falsy. A value that may be an array
-stays on the `$expr` road, because the query language reads an array field
-element by element. The rule and the `{ $gt: [v, ""] }` spelling it rejected
-are in `docs/specs/types.md` § The truthiness rule.
-
----
-
 ## 2026-09-21 — feat: a written field carries the type of its value
 
 `$.arr = $.tags.uniq(); $.bool = $.arr.includes("red"); $.result = $.bool ? "R"
@@ -548,6 +527,57 @@ Presence is part of the proof now, not a second walk: `statedPresence` in
 
 ---
 
+## 2026-09-21 — feat: the truthiness check keeps only the tests the value can fail
+
+`truthOf` read every value the compiler could not prove boolean with the same
+four tests — null-or-missing, `false`, `""`, `0`. It now reads the value's
+`Type`, and the check is subtractive: each test belongs to one part of the
+proof, and only a part that can be falsy keeps its test. A string keeps the `""`
+test; an array, an object or a date keeps only the null test while it may be
+missing; a value that can only be a boolean or a number is its own truth, because
+MongoDB already reads `0`, a `Long` zero, a `Decimal128` zero, negative zero,
+`false`, null and missing as false (measured, the table in
+`src/compiler/emit/mode.ts`). No test left is the constant `TRUE`, and every slot
+that reads a condition — `cond`, `filter`, `switchOn`, `switchOver`, the
+registry's `cond` builder, `and`, `or`, `not` — folds it, so `$.arr ? a : b`
+over a present array emits `a`. The many `truthOf(doc, true)` call sites, which
+read a document that already IS a boolean, spell that as `boolTruth(doc)` now.
+
+The filter target gains the native half: `bareTruth` in `filter.ts` lowers a
+bare field read whose proof rules an array out to a query clause —
+`{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that
+may be missing, `{}` when nothing can be falsy. A value that may be an array
+stays on the `$expr` road, because the query language reads an array field
+element by element. The rule and the `{ $gt: [v, ""] }` spelling it rejected
+are in `docs/specs/types.md` § The truthiness rule.
+
+---
+
+## 2026-09-21 — fix: a refusal reads the whole kind set
+
+Seven refusals still asked `kindOf` for ONE kind: the document root under
+`$ = …`, the elements of `$$ = <array>`, an array spread, an object spread, a
+`$$.push(…)` argument, a `$$$.<coll>.push(<value>)` value, and a `.map(d => …)`
+body that must return a document. A value proven two kinds answered "unknown"
+there, so `$.x = $.f ? "s" : 5; $ = $.x;` compiled to a `$replaceWith` the
+server refuses, and `[...$.x]` over a proven number passed. Each site now asks
+`cannotBe(type, kind)`: a value that can never be the kind is refused, a value
+that may be it passes for the server to judge, and the message names every kind
+the value can be ("a string or a number is not one"). The two noun tables move
+into `errors.ts` beside the messages that read them. The receiver gate of a
+`lower` verdict had the same hole: `$.v.trim()` over a value proven a number or
+an array compiled to a bare `$trim`; it now refuses when none of the receiver's
+possible families is one the row takes. A coverage audit by a sub-agent found the
+sites; two of its other claims did not hold (`"b" + $.x` already emits `$concat`,
+and a value that may be a document is rightly allowed).
+
+Three message changes ride along. A quoted kind takes its article ("an
+'array'", not "a 'array'"). `.map()` on a string names the character-wise
+spelling. The `.length`-on-a-document hint names `.keys().length`, `.<field>` and
+the element-taking call to remove, in place of the word "terminal".
+
+---
+
 ## 2026-09-21 — refactor: one `Type` value carries every proof
 
 The compiler now proves a value with one record, `Type` in
@@ -572,33 +602,6 @@ type level, so a stage row cannot omit it. This is the foundation for the type
 tracker: the next entries make the field writes, the dispatch, the truthiness
 check and the stages read these facts. The full design lives in
 `docs/specs/types.md`.
-
----
-
-## 2026-09-19 — fix: the error messages move to STE
-
-Every user-visible error message now follows ASD-STE100, and 1,253 assertions
-move with them. A caller that matches on message TEXT must update that match.
-The error CLASSES, the `.pos` contract, `.slot` and `.key` do not change, so a
-caller that reads those fields needs no work.
-
-The change is wording, never meaning. A message that named an alternative still
-names it, in the same spelling, because the DX rule says a rejection must tell
-the user what to write instead. An argument-count message still names the
-parameter. A position-bearing message still says `at position N` and still sets
-`.pos`. `internalError` keeps its "please report" framing.
-
-Capitals stay where they tell two errors apart. `$count` "names a field to
-WRITE" and `$unwind` "reads a field PATH" are siblings a user meets one after
-the other, and the capital is what makes the difference visible at a glance.
-The same holds for a sort comparator that sorts by "the WHOLE element" instead
-of a field NAME. ASD-STE100 does not ban a capital, so the emphasis stays.
-
-Two surfaces needed no work. The 2,276 refusal strings in the registry already
-read as STE. The lexer and the scanners did too.
-
-`src/globals.ts` keeps MongoDB's own wording, because a generator writes that
-file from the pinned spec YAML.
 
 ---
 
@@ -643,6 +646,33 @@ No behaviour changed with this entry.
 
 ---
 
+## 2026-09-19 — fix: the error messages move to STE
+
+Every user-visible error message now follows ASD-STE100, and 1,253 assertions
+move with them. A caller that matches on message TEXT must update that match.
+The error CLASSES, the `.pos` contract, `.slot` and `.key` do not change, so a
+caller that reads those fields needs no work.
+
+The change is wording, never meaning. A message that named an alternative still
+names it, in the same spelling, because the DX rule says a rejection must tell
+the user what to write instead. An argument-count message still names the
+parameter. A position-bearing message still says `at position N` and still sets
+`.pos`. `internalError` keeps its "please report" framing.
+
+Capitals stay where they tell two errors apart. `$count` "names a field to
+WRITE" and `$unwind` "reads a field PATH" are siblings a user meets one after
+the other, and the capital is what makes the difference visible at a glance.
+The same holds for a sort comparator that sorts by "the WHOLE element" instead
+of a field NAME. ASD-STE100 does not ban a capital, so the emphasis stays.
+
+Two surfaces needed no work. The 2,276 refusal strings in the registry already
+read as STE. The lexer and the scanners did too.
+
+`src/globals.ts` keeps MongoDB's own wording, because a generator writes that
+file from the pinned spec YAML.
+
+---
+
 ## 2026-09-18 — decision: a `?.` stops the chain, and nothing wider
 
 DEF-036 now names the rule it targets. A `?.` makes every link AFTER it not run, and
@@ -681,6 +711,22 @@ the fixture. No behaviour changed with this entry.
 
 ---
 
+## 2026-09-18 — docs: DEF-037 asks which answer a lodash method gives on a missing array
+
+A JavaScript method on a receiver that is null or missing answers null, one rule for all
+of them. The lodash methods have no such rule. MEASURED over a document with no `a`:
+`.uniq()` answers null, `.chunk(2)` answers `[]`, `.sum()` answers 0, `.size()` writes
+no value, `.partition(f)` answers `[null, null]`, and the object methods answer `{}`.
+Four answers for one condition.
+
+Two rules are on the table, and the choice is a product decision: `null`, the same as a
+JavaScript method, which is one rule for the whole language and the smallest MQL; or
+lodash's own answer per method — `[]`, `0`, `{}` — which is what the object methods took
+on 2026-09-17 and costs one `$ifNull` per method on a receiver jsmql cannot prove is
+there. Both shapes are measured in the row. No behaviour changed with this entry.
+
+---
+
 ## 2026-09-18 — feat: a `?.` with a call after it stops the chain (DEF-036 ships)
 
 JavaScript stops a chain at a `?.`. jsmql put an empty value in place of the missing
@@ -701,51 +747,6 @@ checks the base field reference as well as each link. And `Env.proving` records 
 a test has proven, which `isPresent` reads — without it the second branch of the `$cond`
 would put the `$ifNull` straight back on the field the test just proved. `dropFields`
 deliberately drops the set: a stage that replaced the document invalidates it.
-
----
-
-## 2026-09-18 — fix: `$ = $.pick($.keys)` reads the key list at query time
-
-`$ = $.pick(["a", "b"])` takes the `$project` road, and `$ = $.pick($.keys)` was refused
-on it: a stage reads its field list before any document, so the stream cell demands a
-list the source spells. The value cell of `.pick` reads a list the server knows — the
-first fix of this branch — and the root dispatch never asked which cell could take the
-arguments. It now does: a chain on the bare `$` takes the stream road only when every
-argument is a compile-time constant, and otherwise the value road, under `$replaceWith`
-as any root value. MEASURED on the fixture: `{ a: 1, b: 2, keys: ["a", "_id"] }` becomes
-`{ _id, a: 1 }`, a document without `keys` becomes `{}`. The dispatch keys on what the
-developer wrote, so the same input gives the same output.
-
----
-
-## 2026-09-18 — docs: DEF-037 asks which answer a lodash method gives on a missing array
-
-A JavaScript method on a receiver that is null or missing answers null, one rule for all
-of them. The lodash methods have no such rule. MEASURED over a document with no `a`:
-`.uniq()` answers null, `.chunk(2)` answers `[]`, `.sum()` answers 0, `.size()` writes
-no value, `.partition(f)` answers `[null, null]`, and the object methods answer `{}`.
-Four answers for one condition.
-
-Two rules are on the table, and the choice is a product decision: `null`, the same as a
-JavaScript method, which is one rule for the whole language and the smallest MQL; or
-lodash's own answer per method — `[]`, `0`, `{}` — which is what the object methods took
-on 2026-09-17 and costs one `$ifNull` per method on a receiver jsmql cannot prove is
-there. Both shapes are measured in the row. No behaviour changed with this entry.
-
----
-
-## 2026-09-18 — fix: a `?.` on a receiver that is certainly there adds nothing
-
-`$ = $?.pick(["a"])` emitted a `$cond` that tested `$$ROOT` for null. The document is
-always there, so the test could never fire and the `?.` bought a dead branch. The chain
-stop now asks `isPresent` first: a `?.` on the root document, on a `$lookup`'s array, on
-a literal or on a path a test on the way in already proved is read as the plain `.` it
-is. The same input still gives the same output — presence is a proof from the source,
-not a guess about the data.
-
-Two expectations that arrived with the `$.name(…)` commits are brought up to the rules
-this branch already holds: `.mapValues` reads a receiver it cannot prove present through
-the `{}` neutral, and `.toUpperCase()` on a field tests it first and answers null.
 
 ---
 
@@ -771,6 +772,35 @@ every receiver it wrapped is now stopped above it, because a `?.` followed by an
 COMPUTED — a call, an index, a property row such as `.length` — stops the chain, not
 only a call. The one thing kept from that mechanism is the consumer table in
 [docs/LANGUAGE.md](docs/LANGUAGE.md) § Optional Chaining, for a `?.` with nothing after it.
+
+---
+
+## 2026-09-18 — fix: `$ = $.pick($.keys)` reads the key list at query time
+
+`$ = $.pick(["a", "b"])` takes the `$project` road, and `$ = $.pick($.keys)` was refused
+on it: a stage reads its field list before any document, so the stream cell demands a
+list the source spells. The value cell of `.pick` reads a list the server knows — the
+first fix of this branch — and the root dispatch never asked which cell could take the
+arguments. It now does: a chain on the bare `$` takes the stream road only when every
+argument is a compile-time constant, and otherwise the value road, under `$replaceWith`
+as any root value. MEASURED on the fixture: `{ a: 1, b: 2, keys: ["a", "_id"] }` becomes
+`{ _id, a: 1 }`, a document without `keys` becomes `{}`. The dispatch keys on what the
+developer wrote, so the same input gives the same output.
+
+---
+
+## 2026-09-18 — fix: a `?.` on a receiver that is certainly there adds nothing
+
+`$ = $?.pick(["a"])` emitted a `$cond` that tested `$$ROOT` for null. The document is
+always there, so the test could never fire and the `?.` bought a dead branch. The chain
+stop now asks `isPresent` first: a `?.` on the root document, on a `$lookup`'s array, on
+a literal or on a path a test on the way in already proved is read as the plain `.` it
+is. The same input still gives the same output — presence is a proof from the source,
+not a guess about the data.
+
+Two expectations that arrived with the `$.name(…)` commits are brought up to the rules
+this branch already holds: `.mapValues` reads a receiver it cannot prove present through
+the `{}` neutral, and `.toUpperCase()` on a field tests it first and answers null.
 
 ---
 
@@ -807,6 +837,16 @@ reader no longer guards on its own and the binding's presence was already thread
 
 ---
 
+## 2026-09-18 — fix: a parameter value from another realm is the value it is
+
+A `jsmql.compile` parameter holding a Date compiled to `{ $match: { $expr: { $gt: ["$updatedAt", date] } } }` instead of the indexable `{ $match: { updatedAt: { $gt: date } } }` — but only when the Date came from another realm: a `vm` context, a test runner's sandbox, a worker. Each realm has its own `Date`, so `instanceof Date` was false for a real Date, and the filter road's constant test (`isQueryConstant` in [src/compiler/emit/filter.ts](src/compiler/emit/filter.ts)) sent it down the expression road. The same test was written at some twenty sites, and the plain-object test (`Object.getPrototypeOf(v) === Object.prototype`) at ten more — that one let a `$`-keyed object from another realm past the `$literal` gate and reach the server as an operator, which is the worse bug of the two.
+
+Recognition now reads what a value IS, never which realm made it: `isDate` / `isRegExp` / `isBytes` read the internal slot through `Object.prototype.toString`, and `isPlainObject` accepts a prototype that is null or the root of any realm (the one whose own prototype is null). They live in [src/registry/vocabulary.ts](src/registry/vocabulary.ts) beside `bsonTagOf`, for the same reason it does — a row reads them and the registry imports nothing outside itself — and [src/bson.ts](src/bson.ts) re-exports them so the compiler has one name for every kind of recognition. [src/stringify.ts](src/stringify.ts) holds twins of the three slot readers, as it already twins `tagOf`, so it stays a leaf. Node's `util.types.isDate` would have been the textbook answer, but the source also runs in the browser playground, where `node:util` does not exist.
+
+[test/cross-realm.test.ts](test/cross-realm.test.ts) holds the rule two ways: it builds every kind of value in a `vm` context beside the same value from this realm, compiles both down every road a parameter travels and holds the outcomes equal; and it scans `src/` for `instanceof Date|RegExp|Uint8Array` and for a comparison against `Object.prototype`, because the next such line reads as the obvious thing to write. See [docs/specs/bson-types.md § Recognition across realms](docs/specs/bson-types.md).
+
+---
+
 ## 2026-09-18 — fix: a reader of a whole object answers its empty value, not null
 
 `$objectToArray` answers null for a missing field, and `$arrayToObject` passes that
@@ -832,16 +872,6 @@ A guard that read `present` made the family cell and `uncertain` answer differen
 because a dispatch branch's `$type` test proves the receiver, and the compiler emits a
 `$switch` when they differ. The three copies are now one `pairsRead` whose receiver
 cells do not read `present` at all, the same shape `lastIndexOfArray` took.
-
----
-
-## 2026-09-18 — fix: a parameter value from another realm is the value it is
-
-A `jsmql.compile` parameter holding a Date compiled to `{ $match: { $expr: { $gt: ["$updatedAt", date] } } }` instead of the indexable `{ $match: { updatedAt: { $gt: date } } }` — but only when the Date came from another realm: a `vm` context, a test runner's sandbox, a worker. Each realm has its own `Date`, so `instanceof Date` was false for a real Date, and the filter road's constant test (`isQueryConstant` in [src/compiler/emit/filter.ts](src/compiler/emit/filter.ts)) sent it down the expression road. The same test was written at some twenty sites, and the plain-object test (`Object.getPrototypeOf(v) === Object.prototype`) at ten more — that one let a `$`-keyed object from another realm past the `$literal` gate and reach the server as an operator, which is the worse bug of the two.
-
-Recognition now reads what a value IS, never which realm made it: `isDate` / `isRegExp` / `isBytes` read the internal slot through `Object.prototype.toString`, and `isPlainObject` accepts a prototype that is null or the root of any realm (the one whose own prototype is null). They live in [src/registry/vocabulary.ts](src/registry/vocabulary.ts) beside `bsonTagOf`, for the same reason it does — a row reads them and the registry imports nothing outside itself — and [src/bson.ts](src/bson.ts) re-exports them so the compiler has one name for every kind of recognition. [src/stringify.ts](src/stringify.ts) holds twins of the three slot readers, as it already twins `tagOf`, so it stays a leaf. Node's `util.types.isDate` would have been the textbook answer, but the source also runs in the browser playground, where `node:util` does not exist.
-
-[test/cross-realm.test.ts](test/cross-realm.test.ts) holds the rule two ways: it builds every kind of value in a `vm` context beside the same value from this realm, compiles both down every road a parameter travels and holds the outcomes equal; and it scans `src/` for `instanceof Date|RegExp|Uint8Array` and for a comparison against `Object.prototype`, because the next such line reads as the obvious thing to write. See [docs/specs/bson-types.md § Recognition across realms](docs/specs/bson-types.md).
 
 ---
 
