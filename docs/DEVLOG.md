@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — docs: a cheap sub-agent checks new and edited prose against STE
+
+The root [CLAUDE.md](../CLAUDE.md) now has one more step in § Write in Simplified
+Technical English. Before a commit that adds or edits prose, the session starts
+one sub-agent on the cheapest model (`model: "haiku"`). The sub-agent reads
+[docs/STE.md](STE.md), then checks the prose lines of the staged diff and the
+draft commit message. It reports each sentence that does not obey the digest,
+with a replacement. The session corrects each real problem, and it rejects each
+report on text that the digest exempts.
+
+An author who follows the digest still makes errors, and does not always see
+them. The first STE pass over [docs/LANG_RULES.md](LANG_RULES.md) kept four
+headlines that STE does not allow, and only
+[a second pass](#2026-09-26--docs-rewrite-lang_rulesmd-in-ste-and-correct-it-against-the-compiler)
+found them. The check compares each sentence with the rules of the digest. This
+is a simple task, so the cheapest model is enough. The sub-agent does not edit a
+file, because only the session that wrote the prose knows its context. That
+context includes each Technical Name, each heading that other files link to, and
+each phrase that a test pins.
+
+In [the 2026-09-19 entry](#2026-09-19--docs-all-prose-follows-asd-ste100), we
+decided to ship no mechanical checker. A heuristic for the passive voice or an
+`-ing` verb often gives false results. That decision does not change. The
+sub-agent is not a pattern match: it reads each sentence in its context. A false
+report costs one rejection, and it needs no allowlist.
+
+No behaviour of the compiler changes.
+
+---
+
 ## 2026-09-26 — docs: rewrite LANG_RULES.md in STE, and correct it against the compiler
 
 The first STE pass over [docs/LANG_RULES.md](docs/LANG_RULES.md) kept each

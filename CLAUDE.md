@@ -151,6 +151,15 @@ Excluded: [docs/DEVLOG.md](docs/DEVLOG.md) history (new entries still follow the
 rule), generated files, and code itself — a code block, an inline code span and a
 `// →` claim pair stay exact.
 
+**Check new and edited prose with a cheap sub-agent.** Before you commit a change
+that adds or edits prose, start one sub-agent on the cheapest model
+(`model: "haiku"`). The sub-agent reads [docs/STE.md](docs/STE.md), then checks
+the prose lines of the staged diff (`git diff --cached`) and the draft commit
+message that you give it. It reports each sentence that does not obey the digest,
+with the file, the line, the rule and a replacement. It does not edit a file.
+Correct each real problem yourself, and reject each report on text that the
+digest exempts, for example a Technical Name.
+
 ### Plans must include worked examples
 Every implementation plan that touches the language surface MUST give both a
 **simple** and a **complex** JSMQL input example, each with its exact emitted
