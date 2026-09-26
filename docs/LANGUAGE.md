@@ -4234,6 +4234,17 @@ jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
 
 A "compile-time constant" is any pure, deterministic expression over literals and earlier constants: arithmetic, `new Date("2020-01-01")` and the date methods on it, an ObjectId literal and its `.toString()`, an array or object literal, a constant computed key (`{ [k]: 1 }`), and (see the method sections) a string or array transform. A binding whose right side reads the document (`$.x`), the clock (`new Date()`), or the RNG (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. So a constant folds the same way in every entry point — a Filter, a pipeline stage, an expression — including per call in [`jsmql.compile`](#parameterised-queries-jsmqlcompile), where a constant built from a parameter folds against each call's arguments.
 
+An escape-hatch call `$op(…)` is your own MQL, so JSMQL does not fold it. The size of a constant array is the exception: `$size([1, 2, 3])` is `3`, as `[1, 2, 3].size()` is. A raw document stays as you wrote it (HR1).
+
+```js
+jsmql.expr("$size([1, 2, 3])");
+// → 3
+jsmql.expr("$add(1, 2)");
+// → { $add: [1, 2] }
+jsmql.expr("({ $size: [[1, 2, 3]] })");
+// → { $size: [[1, 2, 3]] }
+```
+
 A folded value is what the **server** would compute, not what JavaScript computes, where the two differ. A month added to 31 January lands on the last day of February, as `$dateAdd` does. `.startOf("week")` gives the Sunday, as `$dateTrunc` does. `.diff(other, "day")` counts the midnights crossed, as `$dateDiff` does. So a date range built from constants is two literal dates, and the `$match` can use the index on the field:
 
 ```js

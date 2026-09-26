@@ -9,6 +9,7 @@
 // See docs/specs/emit-pass.md § The method cells for the cells that use these.
 
 import type { Expr } from "./ast.ts";
+import { isDate, isPlainObject } from "./vocabulary.ts";
 
 // ── a field name the DEVELOPER chose ─────────────────────────────────────────
 //
@@ -233,9 +234,25 @@ export function dateOptions(arg: Expr | undefined, value: (e: Expr) => unknown):
 
 // ── arrays ───────────────────────────────────────────────────────────────────
 
+/**
+ * A value the server reads as itself in an expression: a number, a boolean, null, a
+ * Date, a string that does not start with `$`, or an array or a plain object made only
+ * of such values, under keys that do not start with `$`. Anything else answers false,
+ * so a builder that settles on it keeps its runtime form.
+ */
+export function readsAsItself(v: unknown): boolean {
+  if (v === null || typeof v === "number" || typeof v === "boolean" || isDate(v)) return true;
+  if (typeof v === "string") return !v.startsWith("$");
+  if (Array.isArray(v)) return v.every(readsAsItself);
+  if (isPlainObject(v)) return Object.entries(v).every(([k, x]) => !k.startsWith("$") && readsAsItself(x));
+  return false;
+}
+
 /** A literal array as ONE operand. The server reads `{ $size: [1, 2] }` as two operands, and `{ $size: [[1, 2]] }` as one. */
 export const singleArrayArg = (operand: unknown): unknown => (Array.isArray(operand) ? [operand] : operand);
-export const sizeOf = (a: unknown): Record<string, unknown> => ({ $size: singleArrayArg(a) });
+/** The size of an array. A constant array needs no count at run time: `["a", "b"]` is 2. */
+export const sizeOf = (a: unknown): unknown =>
+  Array.isArray(a) && readsAsItself(a) ? a.length : { $size: singleArrayArg(a) };
 export const firstOf = (a: unknown): Record<string, unknown> => ({ $first: singleArrayArg(a) });
 export const lastOf = (a: unknown): Record<string, unknown> => ({ $last: singleArrayArg(a) });
 export const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $reverseArray: singleArrayArg(a) });

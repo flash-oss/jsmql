@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat: the size of a constant array is a constant, in both spellings
+
+`[1, 2, 3].size()` already folded to 3, but `$size([1, 2, 3])` emitted
+`{ $size: [[1, 2, 3]] }`: the evaluator never reads an escape-hatch call,
+because the escape hatch is the developer's MQL. The developer decided that
+both spellings lower to 3, because the array is a constant. The same held for a
+`const` array, a `jsmql.compile` parameter and a template value.
+
+The fact sits on the row, not in the compiler: the `$size` row states
+`foldsAs: "size"`, and the evaluator settles a call to such a row with the fold
+of that method, over the operand the lowering reads. A list of ONE element is
+the operand list, so `$size([[1, 2]])` is 2. An empty list is no operand, and
+the count still refuses it. Any other array literal is the value. The fold pass
+now asks an `OperatorCall`, so the constant settles before the filter picks its
+shape: `$.n === $size([1, 2, 3])` is `{ n: 3 }`, as the `.size()` spelling is.
+A raw document stays as written (HR1), and `test/compiler-returns-agrees.test.ts`
+holds each fold against mongod's answer for the call left alone. The fold also
+repairs `$size([...[1, 2]])`, which emitted `{ $size: [1, 2] }`, a document the
+server refuses. The registry's `sizeOf` settles a constant array too, so a
+lowering that counts one writes the number: `["a", "b"].map((k, i) => …)` counts
+with `$range: [0, 2]`.
+
+---
+
 ## 2026-09-26 — fix: a list operator takes one operand wherever the server does
 
 The compiler refused every list-only operator with one operand that is not an

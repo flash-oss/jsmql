@@ -322,6 +322,29 @@ describe("operator arity validation (array / flex shapes)", () => {
     );
   });
 
+  it("$size of a constant array is a constant, as `.size()` is", () => {
+    expect(jsmql.expr("$size([1, 2, 3])")).toBe(3);
+    expect(jsmql.expr("[1, 2, 3].size()")).toBe(3);
+    // a list of ONE element is the operand list (HR2): `$size([[1, 2]])` reads `[1, 2]`
+    expect(jsmql.expr("$size([[1, 2]])")).toBe(2);
+    // a spread makes the literal one array value
+    expect(jsmql.expr("$size([...[1, 2]])")).toBe(2);
+    expect(jsmql.pipeline("const a = [1, 2, 3]; $.n = $size(a);")).toEqual([{ $set: { n: 3 } }]);
+    expect(jsmql.expr`$size(${[1, 2, 3]})`).toBe(3);
+    // the constant settles before the filter chooses its shape, as `.size()` does
+    expect(jsmql("$.n === $size([1, 2, 3])")).toEqual({ n: 3 });
+    expect(jsmql("$.n === [1, 2, 3].size()")).toEqual({ n: 3 });
+  });
+
+  it("$size of an array that is not constant keeps its count, and an empty list is no operand", () => {
+    expect(jsmql.expr("$size([$.a, $.b])")).toEqual({ $size: [["$a", "$b"]] });
+    expect(jsmql.expr("$size($.a)")).toEqual({ $size: "$a" });
+    expect(() => jsmql.expr("$size([])")).toThrow("'$size(operand)' requires exactly 1 argument, got 0");
+    expect(() => jsmql.expr("$size([1])")).toThrow("'$size' expects an array, but got a number.");
+    // raw MQL is not evaluated (HR1)
+    expect(jsmql.expr("({ $size: [[1, 2, 3]] })")).toEqual({ $size: [[1, 2, 3]] });
+  });
+
   it("one operand to a two-operand list operator is the count refusal, in both spellings", () => {
     const refusal = "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1";
     expect(() => jsmql.expr("$divide(10)")).toThrow(refusal);
@@ -2050,12 +2073,11 @@ describe("lambda element-type inference (array-method param typed from a provabl
   it("types only the element param — the index param is a number and keeps the guard", () => {
     // `(element, index)`: `element` is string, `index` is a number, so `$.m[i]`
     // must NOT collapse to $getField.
-    // `$size: [["a","b"]]` — the literal receiver is wrapped one level so MongoDB
-    // reads it as $size's single argument. Bare (`$size: ["a","b"]`) it is spliced
-    // into two arguments and the server rejects the pipeline.
+    // The receiver is a constant array, so its size is a constant: `$range: [0, 2]`,
+    // with no `$size` to count it at run time.
     expect(jsmql.expr('["a", "b"].map((k, i) => $.m[i])')).toEqual({
       $map: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: [["a", "b"]] }] }, ["a", "b"]] } },
+        input: { $zip: { inputs: [{ $range: [0, 2] }, ["a", "b"]] } },
         as: "jsmqlPair",
         in: {
           $let: {

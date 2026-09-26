@@ -215,8 +215,15 @@ function dateOptions(arg, value) {
   }
   return out;
 }
+function readsAsItself(v) {
+  if (v === null || typeof v === "number" || typeof v === "boolean" || isDate(v)) return true;
+  if (typeof v === "string") return !v.startsWith("$");
+  if (Array.isArray(v)) return v.every(readsAsItself);
+  if (isPlainObject(v)) return Object.entries(v).every(([k, x]) => !k.startsWith("$") && readsAsItself(x));
+  return false;
+}
 var singleArrayArg = (operand) => Array.isArray(operand) ? [operand] : operand;
-var sizeOf = (a) => ({ $size: singleArrayArg(a) });
+var sizeOf = (a) => Array.isArray(a) && readsAsItself(a) ? a.length : { $size: singleArrayArg(a) };
 var firstOf = (a) => ({ $first: singleArrayArg(a) });
 var lastOf = (a) => ({ $last: singleArrayArg(a) });
 var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
@@ -2469,6 +2476,8 @@ var NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
+    // MEASURED: `{ $size: [[1, 2, 3]] }` → 3. The size of a constant array is a constant.
+    foldsAs: "size",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" }, nullRefused: [0] }, emit: single },
     group: unsupported("'$size' is not valid in a $group output position \u2014 see its 'where'."),
@@ -9575,7 +9584,7 @@ var NAMES = {
         // missing is read as the empty array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
-          emit: ({ recv, present: present2 }) => Array.isArray(recv) ? { $size: [recv] } : sizeOf(present2 ? recv : arrayOrEmpty(recv))
+          emit: ({ recv, present: present2 }) => sizeOf(present2 || Array.isArray(recv) ? recv : arrayOrEmpty(recv))
         },
         // `$$.size()` has no inline count: it places a materialiser ahead of the
         // statement and reads the field it wrote. See docs/specs/stream-size.md.
@@ -14596,6 +14605,9 @@ function operandShapeOf(name2) {
   const shape = emitRow(name2)?.shape;
   if (shape === void 0) return void 0;
   return typeof shape === "string" ? shape : "object";
+}
+function foldsAsOf(name2) {
+  return emitRow(name2)?.foldsAs;
 }
 function spreadAlternativeOf(name2) {
   return emitRow(name2)?.spreadAlternative;
@@ -21456,6 +21468,20 @@ function methodCall(node, env, depth) {
   if (!withinSize(result.value)) return NOT_CONSTANT2;
   return spellable(result.value);
 }
+function operatorCall(node, env, depth) {
+  const method = foldsAsOf(node.name);
+  const args = node.args;
+  if (method === void 0 || args.length !== 1 || args[0].type === "SpreadElement") return NOT_CONSTANT2;
+  const written2 = args[0];
+  const list = written2.type === "ArrayLiteral" ? written2.elements : null;
+  if (list !== null && list.length === 0) return NOT_CONSTANT2;
+  const operand = list !== null && list.length === 1 && list[0].type !== "SpreadElement" ? list[0] : written2;
+  const receiver = at(operand, env, depth + 1);
+  if (!receiver.ok) return propagate(receiver);
+  if (!acceptsArgumentCount(method, 0, familyOfValue(receiver.value))) return NOT_CONSTANT2;
+  const result = foldInstanceCall(receiver.value, method, []);
+  return result.ok ? spellable(result.value) : propagate(result);
+}
 function applyHere(lambda, argNodes, env, depth) {
   if (argNodes.some((a) => a.type === "SpreadElement")) return NOT_CONSTANT2;
   const values = [];
@@ -21589,6 +21615,8 @@ function at(node, env, depth) {
     }
     case "MethodCall":
       return methodCall(node, env, depth);
+    case "OperatorCall":
+      return operatorCall(node, env, depth);
     case "CallExpression": {
       const callee = node.callee;
       if (callee.type === "Lambda") return applyHere(callee, node.args, env, depth);
@@ -21914,7 +21942,10 @@ var EVALUABLE_TYPES = [
   "IndexAccess",
   "MethodCall",
   "CallExpression",
-  "NewExpression"
+  "NewExpression",
+  // The escape hatch is the developer's MQL. The evaluator answers "not a constant"
+  // for every operator but one whose row states `foldsAs` (`$size([1, 2, 3])` → 3).
+  "OperatorCall"
 ];
 var EVALUABLE = new Set(EVALUABLE_TYPES);
 function refuseParameterRedeclaration(program) {
@@ -26346,7 +26377,7 @@ function arrayCallback(cb, recv, recvNode, env, read, name2, present2 = false) {
     vars[a.as] = recv;
     bodyEnv = a.env;
   }
-  const size = { $size: Array.isArray(recv) ? [recv] : recv };
+  const size = sizeOf(recv);
   return {
     input: { $zip: { inputs: [{ $range: [0, size] }, recv] } },
     as: pair.as,
@@ -26766,7 +26797,7 @@ function lowerValue(node, env) {
     case "NewExpression":
       return newExpression(node, env);
     case "OperatorCall":
-      return operatorCall(node, env);
+      return operatorCall2(node, env);
     case "UnaryExpr":
       return unary2(node, env);
     case "BinaryExpr":
@@ -27246,7 +27277,7 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
   const body = lowerValue(lambda.body, childEnv(bodyEnv, lambda, "body"));
   return Object.keys(vars).length === 0 ? body : { $let: { vars, in: body } };
 }
-function operatorCall(node, env) {
+function operatorCall2(node, env) {
   const position = positionIn(env);
   const verdict = consult(node.name, position);
   if (verdict.kind === "unknown") return unknownOperator(node, node.args, env);

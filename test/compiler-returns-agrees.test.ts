@@ -532,6 +532,30 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     expect(gated.length, `not on this server: ${gated.join(", ")}`).toBeLessThan(checked / 4);
   });
 
+  it("settles a `foldsAs` row to what mongod answers for the call left alone", async () => {
+    // A fold must not change the answer. So the constant `$size([1, 2, 3])` settles to
+    // is held against the server's own count of the same operand, `{ $size: [[1, 2, 3]] }`.
+    const disagree: string[] = [];
+    let checked = 0;
+    const OPERANDS: readonly unknown[][] = [[1, 2, 3], ["a", "b"], [[1, 2]], [{ a: 1 }, null], [], [7]];
+    for (const [name, row] of Object.entries(NAMES) as [string, Row & { foldsAs?: string }][]) {
+      if (row.foldsAs === undefined) continue;
+      for (const operand of OPERANDS) {
+        // the list of ONE element names the operand unambiguously, whatever it holds
+        const folded = jsmql.expr(`${name}([${JSON.stringify(operand)}])`);
+        const [out] = await coll.aggregate([{ $limit: 1 }, { $addFields: { __v: { [name]: [operand] } } }]).toArray();
+        checked++;
+        if (JSON.stringify(folded) !== JSON.stringify(out.__v)) {
+          disagree.push(
+            `${name}([${JSON.stringify(operand)}]): fold ${JSON.stringify(folded)}, mongod ${JSON.stringify(out.__v)}`,
+          );
+        }
+      }
+    }
+    expect(disagree).toEqual([]);
+    expect(checked).toBeGreaterThanOrEqual(OPERANDS.length);
+  });
+
   it("cannot measure exactly the operators it says it cannot", async () => {
     // The names in CANNOT_MEASURE are claims about the SERVER. If one starts
     // working, the entry is stale and the row should be measured like the rest.

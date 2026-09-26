@@ -419,6 +419,14 @@ type MongoSpec<
    */
   spreadAlternative?: string;
   /**
+   * The method whose constant fold this operator shares. The escape hatch is the
+   * developer's MQL, and the evaluator never reads it, except here: over a constant
+   * operand, `$size(x)` answers what `x.size()` answers, so `$size([1, 2, 3])` is 3.
+   * The operand is the one the server reads (HR2): a list of ONE element is the
+   * operand list, so `$size([[1, 2]])` reads `[1, 2]`.
+   */
+  foldsAs?: string;
+  /**
    * The type of the value this name produces, or absent when it produces none —
    * a stage, or a query fragment like `$box`. Stated exactly on the rows whose
    * `where` includes `value`, `group` or `window`; a test holds both directions.
@@ -3048,6 +3056,8 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
+    // MEASURED: `{ $size: [[1, 2, 3]] }` → 3. The size of a constant array is a constant.
+    foldsAs: "size",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" }, nullRefused: [0] }, emit: single },
     group: unsupported("'$size' is not valid in a $group output position — see its 'where'."),
@@ -10485,8 +10495,7 @@ export const NAMES = {
         // missing is read as the empty array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
-          emit: ({ recv, present }) =>
-            Array.isArray(recv) ? { $size: [recv] } : sizeOf(present ? recv : arrayOrEmpty(recv)),
+          emit: ({ recv, present }) => sizeOf(present || Array.isArray(recv) ? recv : arrayOrEmpty(recv)),
         },
         // `$$.size()` has no inline count: it places a materialiser ahead of the
         // statement and reads the field it wrote. See docs/specs/stream-size.md.

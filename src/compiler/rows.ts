@@ -339,6 +339,7 @@ type EmitRow = {
   shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
   family?: Family;
   spreadAlternative?: string;
+  foldsAs?: string;
   newKeyword?: "required" | "optional" | "forbidden";
   provides?: unknown;
   token?: string;
@@ -460,6 +461,11 @@ export function operandShapeOf(name: string): "single" | "array" | "none" | "fle
   const shape = emitRow(name)?.shape;
   if (shape === undefined) return undefined;
   return typeof shape === "string" ? shape : "object";
+}
+
+/** The method whose constant fold an operator shares (`$size` → `size`), or undefined. See `foldsAs`. */
+export function foldsAsOf(name: string): string | undefined {
+  return emitRow(name)?.foldsAs;
 }
 
 /** The JavaScript form that takes a spread and lowers to this operator, or undefined. */

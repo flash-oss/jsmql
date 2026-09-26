@@ -303,12 +303,15 @@ const EVALUABLE_TYPES = [
   "MethodCall",
   "CallExpression",
   "NewExpression",
+  // The escape hatch is the developer's MQL. The evaluator answers "not a constant"
+  // for every operator but one whose row states `foldsAs` (`$size([1, 2, 3])` → 3).
+  "OperatorCall",
 ] as const;
 /**
  * The expression types deliberately NOT asked about, each for a stated reason. A
  * literal is already the answer, and re-spelling it would rebuild the node every
  * round, so the fixpoint would never settle. A reference, a lambda and a block
- * are not values. `OperatorCall` is the escape hatch above. Together with
+ * are not values. Together with
  * `EVALUABLE_TYPES` this must cover every `Expr` type. The two lines below turn a
  * new node type into a compile error here, instead of a subexpression that fold
  * silently never folds.
@@ -330,7 +333,6 @@ const NOT_ASKED_TYPES = [
   "DatabaseRef",
   "ClusterRef",
   "Ident",
-  "OperatorCall",
   "Lambda",
   "ExprBlock",
 ] as const;

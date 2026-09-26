@@ -220,6 +220,17 @@ literal and its `.toString()`, a literal array or object and a read out of it.
 A binding that reads the document, the clock or the RNG stays the runtime
 `__jsmql.var.<name>` field of [let-bindings.md](let-bindings.md).
 
+**An operator call is not a constant, unless its row states `foldsAs`.** The
+escape hatch is the developer's MQL. A row that states `foldsAs` names the
+method whose fold it shares, and over a constant operand the call answers what
+that method answers: `$size([1, 2, 3])` is 3, as `[1, 2, 3].size()` is. The
+operand is the one the lowering reads. A list of ONE element is the operand
+list (`$size([[1, 2]])` reads `[1, 2]`), an EMPTY list is no operand (the count
+refuses it), and any other array literal is the value. A raw document
+(`{ $size: [[1, 2, 3]] }`) is an object literal, not a call, and is never
+settled. `test/compiler-returns-agrees.test.ts` holds each fold against the
+server's answer for the call left alone.
+
 **The invariant: a fold must not change the answer.** Every rule computes what
 the SERVER computes for the same expression, measured on mongod, not what
 JavaScript computes where the two differ. That is why a month added to 31

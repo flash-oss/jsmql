@@ -40,6 +40,8 @@ jsmql.expr('$abs($.cents / 100)');           // → { $abs: { $divide: ["$cents"
 jsmql.expr('{ year: $abs(1900 + $.age) }');  // → { year: { $abs: { $add: [1900, "$age"] } } }
 ```
 
+A constant array is an exception. Its size is a constant, so `$size([1, 2, 3])` lowers to `3`, as `[1, 2, 3].size()` does. The raw document `{ $size: [[1, 2, 3]] }` stays as you wrote it (HR1).
+
 **HR3 — JSMQL never emits MQL that it knows is invalid.** The registry gives the compiler the shape of each operator and each stage. When a shape shows that the server rejects an output, the compiler does not emit that output. It throws an error that names the fix.
 
 The count of operands is one such shape. `$divide` takes exactly two operands, so the server rejects one. `$add` takes one or more, so one operand is valid MQL:

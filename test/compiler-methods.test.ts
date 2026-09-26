@@ -794,7 +794,7 @@ describe("compiler/emit — array methods", () => {
     expect(compiled('["k1", "k2"].zipObject($.b)', () => ({ k1: 2, k2: 5 }))).toMatchObject({
       $arrayToObject: {
         $map: {
-          input: { $range: [0, { $size: [["k1", "k2"]] }] },
+          input: { $range: [0, 2] },
           as: "jsmqlI",
           in: {
             k: { $toString: { $arrayElemAt: [["k1", "k2"], "$$jsmqlI"] } },

@@ -40,7 +40,7 @@ import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, cannotBe, flattenOnce, maybeAbsent, of } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
-import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
+import { indexedPairs, mongoRegexOptions, sizeOf } from "../../registry/mql.ts";
 import { edge } from "../passes/position.ts";
 
 /** The two readings of an expression, supplied by lower.ts. */
@@ -146,7 +146,7 @@ function arrayCallback(
     vars[a.as] = recv;
     bodyEnv = a.env;
   }
-  const size = { $size: Array.isArray(recv) ? [recv] : recv };
+  const size = sizeOf(recv);
   return {
     input: { $zip: { inputs: [{ $range: [0, size] }, recv] } },
     as: pair.as,

@@ -125,7 +125,8 @@ export function lowerValue(node: Expr, env: Env): unknown {
   // A constant is its VALUE, before any row is read. The fold writes back what has
   // a source spelling. A Date, an ObjectId or a Set has none and stays a node, so
   // the evaluator is asked here — with its own exclusions (an operator call is the
-  // developer's MQL and is never evaluated).
+  // developer's MQL: only a row that states `foldsAs` settles it, and the fold pass
+  // has done that already).
   if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
     const settled = evaluate(node, new Map());
     if (settled.ok) {
