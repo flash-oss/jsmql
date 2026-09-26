@@ -124,7 +124,7 @@ Two more facts belong to this rule:
    1. When the compiler knows the type of the receiver, that type selects the operator.
    2. If not, the argument can select the operator. `$indexOfCP` searches only for a string, so an argument that is not a string selects the array operator.
    3. If neither selects the operator, the emitted MQL tests the type when it runs.
-2. Each value that JSMQL computes from a receiver is a method call, never a property. Write `.length()`, `.size()` and `$$.size()`. So `$.a.length` always reads the field `length` of your document.
+2. Each value that JSMQL computes from a receiver is a method call, never a property. Write `.length()`, `.size()` and `$$.size()`. So `$.a.length` reads a field named `length`, never a count. Only an object has fields. When the compiler proves that the value before the dot cannot hold the field, the read is a compile error. The message names the fix: for `$.tags.uniq().length`, it names `.size()`.
 
 ## SOFT RULES
 

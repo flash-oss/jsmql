@@ -482,7 +482,7 @@ JSMQL threads the root-document read through `$lookup.let` for you; see
 
 ### Bracket Access
 
-> **JSMQL interprets dot access; it reads bracket access raw.** A `.member` access is a field read, and a `.method()` call after it is a JSMQL method: `$.x.length` is the field named `length` inside `x`, and `$.x.length()` is the character count of `x`. Square brackets never carry compiler meaning: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. JSMQL does not interpret what sits inside the brackets — whatever you write is the property you get. So when you mean "the data at this key, exactly as written" (including a field literally named `length`), use brackets.
+> **JSMQL interprets dot access; it reads bracket access raw.** A `.member` access is a field read, and a `.method()` call after it is a JSMQL method: `$.x.length` is the field named `length` inside `x`, and `$.x.length()` is the character count of `x`. Square brackets never carry compiler meaning: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. JSMQL does not interpret what sits inside the brackets — whatever you write is the property you get. So when you mean "the data at this key, exactly as written" (including a field literally named `length`), use brackets. When JSMQL proves that the value has no such field, for example an array or a string, the read is a compile error: see [A read that gives no value](#a-read-that-gives-no-value).
 
 Use square brackets for computed index/key access. The compiled MQL depends on the receiver type:
 
@@ -1432,6 +1432,36 @@ JSMQL cannot evaluate (`$limit($.pageSize)`, `$bucket({ boundaries: $.bounds })`
 emits the MQL as-is — it never blocks a query it cannot *prove* is wrong. JSMQL also leaves
 constraints that depend on your deployment (sharding, transactions, memory limits, Atlas
 availability) to the server.
+
+### A read that gives no value
+
+A field read that can give no value on the server is a compile error too. Only an object has fields, and a closed object has only the fields that it names:
+
+```js
+jsmql.expr("$.tags.uniq().size")
+// ✗ '.size' reads a field, and an array has no fields. Write '.size()' to call the method.
+
+jsmql.expr("$.name.trim().length")
+// ✗ '.length' reads a field, and a string has no fields. Write '.length()' to call the method.
+
+jsmql.expr("$.items.uniq().total")
+// ✗ '.total' reads a field, and an array has no fields. To read the field of each element, write '.map(e => e.total)'.
+
+jsmql("$group({ _id: $.dept, n: $sum(1) }); $.y = $.total;")
+// ✗ '$.total' reads a field that the document does not have. It holds '_id', 'n'.
+
+jsmql("$group({ _id: $.dept, n: $sum(1) }); $$.filter(d => d.total > 5);")
+// ✗ '.total' reads a field that 'd' does not have. It holds '_id', 'n'.
+
+jsmql('$.a = "x"; $unset("a"); $.n = $.a.length();')
+// ✗ '$.a' is always null or missing here, so '.length()' has no value to read. Remove the read, or write a value before the read.
+```
+
+- **A field of an array, a string, a number or a date.** JSMQL refuses the read when it proves the kind of the value. The message names the method that you probably mean, or `.map(e => e.<field>)` for the field of each element. **This is a surprise for a JavaScript developer.** `"abc".length` is `3` in JavaScript, and a compile error in JSMQL. In JSMQL, a count is always a method call: `.length()`.
+- **A field that a closed object does not hold.** After `$group`, an inclusion `$project` or `$ = { … }`, the document holds only the fields that the stage names. An object from `.pick([...])` or from an object literal holds only its keys. The message lists the fields that are there. The same check applies to a sort key (`$$.sortBy("total")`) and to a callback's parameter.
+- **A value that is always null or missing.** A field that `$unset`, `delete` or an exclusion `$project` removed, or that you set to `null`, has nothing to read. A method call on it is refused too.
+- **Where JSMQL cannot prove the kind, the read compiles.** `$.a.length` reads the field `length` of `a`, and the server judges the value.
+- **A query keeps MongoDB's path through an array.** After `$.orders = $$$.orders.filter(o => o.uid === $._id)`, the filter `$match($.orders.status === "open")` is `{ "orders.status": "open" }`, and it matches a document with an open order. In an expression, the same read of a known array is a compile error that names `.map(e => e.status)`.
 
 ---
 

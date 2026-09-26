@@ -15036,6 +15036,14 @@ function mutatorFormOf(name2) {
 function onlyInsideOf(name2, position) {
   return row(name2)?.onlyInside?.[position];
 }
+var VALUE_FAMILIES = /* @__PURE__ */ new Set(["array", "string", "number", "object", "date", "regexp", "set"]);
+function methodRows() {
+  return Object.keys(ROWS).filter((n2) => {
+    if (n2.startsWith("$") || !isCallable(n2) || isGlobalName(n2)) return false;
+    const on = families(row(n2)?.on);
+    return on === "any" || on !== void 0 && on.some((f) => VALUE_FAMILIES.has(f));
+  });
+}
 function streamReceiverNames() {
   return Object.keys(ROWS).filter((n2) => lists(n2, "stream") || familiesOf(n2)?.includes("stream") === true);
 }
@@ -15049,6 +15057,9 @@ function constructibleNames() {
     const k = newKeywordOf(n2);
     return k === "required" || k === "optional";
   });
+}
+function valueMethodNames() {
+  return methodRows().filter((n2) => lists(n2, "value") || row(n2).expr !== void 0);
 }
 
 // src/registry/tokens.ts
@@ -22733,7 +22744,7 @@ var packSpread = {
   }
 };
 function pathOn(param, path, pos) {
-  let out = { type: "Ident", name: param, pos };
+  let out = { type: "Ident", name: param, pos, minted: true };
   for (const segment of path.split(".")) {
     out = { type: "MemberAccess", object: out, name: segment, optional: false, pos };
   }
@@ -22756,7 +22767,7 @@ function asArrow(arg, forms, pos) {
   if (arg === void 0) {
     if (!accepts("omitted")) return void 0;
     const param2 = "x";
-    return { type: "Lambda", params: [param2], body: { type: "Ident", name: param2, pos }, pos };
+    return { type: "Lambda", params: [param2], body: { type: "Ident", name: param2, pos, minted: true }, pos };
   }
   const a = arg;
   const param = freshParam("x", arg);
@@ -22817,7 +22828,7 @@ function matchTests(param, prefix, entries, pos) {
 }
 var CONSTANT_LITERALS = /* @__PURE__ */ new Set(["NumberLiteral", "StringLiteral", "BooleanLiteral", "NullLiteral", "BigIntLiteral"]);
 function bareCall(callee, param, pos) {
-  const arg = { type: "Ident", name: param, pos };
+  const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {
     if (!isGlobalName(callee.name) || !isCallable(callee.name) || newKeywordOf(callee.name) === "required")
       return void 0;
@@ -23189,6 +23200,21 @@ function propOf(t, name2) {
   const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name2)) : NOTHING;
   const own = isNothing(asArray) ? asObject2 : isNothing(asObject2) ? asArray : join(asObject2, asArray);
   return t.absent ? maybeAbsent(own) : own;
+}
+function unreadable(t, name2, throughArrays) {
+  if (t.kinds === "any" || t.kinds.has("stream")) return null;
+  if (throughArrays && t.kinds.has("array")) return null;
+  if (!t.kinds.has("object")) return { kind: "noFields", kinds: [...t.kinds] };
+  if (t.kinds.size > 1 || t.open || t.props?.has(name2) === true) return null;
+  return { kind: "closed", keys: [...t.props?.keys() ?? []] };
+}
+function unreadableAt(t, path, throughArrays) {
+  const segments = path.split(".");
+  for (let i = 0; i < segments.length; i++) {
+    const why = unreadable(at2(t, segments.slice(0, i).join(".")), segments[i], throughArrays);
+    if (why !== null) return { index: i, why };
+  }
+  return null;
 }
 function ownProp(t, name2) {
   const known = t.props?.get(name2);
@@ -23618,6 +23644,73 @@ var unknownFunction = (name2, known, pos) => new CodegenError(
   `Unknown function '${name2}(...)'.${didYouMean(name2, known, (s) => `${s}(...)`)} Declare it first with \`const ${name2} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${name2}(...)\`; for a method, \`receiver.${name2}(...)\`.`,
   pos
 );
+var SUBJECT = {
+  string: "a string",
+  array: "an array",
+  number: "a number",
+  object: "an object",
+  date: "a date",
+  bool: "a boolean",
+  stream: "the stream",
+  objectId: "an ObjectId",
+  binData: "a binary value",
+  minKey: "MinKey",
+  maxKey: "MaxKey"
+};
+var FAMILY_OF = {
+  string: "string",
+  array: "array",
+  number: "number",
+  object: "object",
+  date: "date",
+  stream: "stream"
+};
+var EXAMPLE_METHOD = {
+  string: "trim",
+  number: "round",
+  date: "getFullYear",
+  object: "keys"
+};
+var spelledField = (name2) => /^[A-Za-z_$][\w$]*$/.test(name2) ? `.${name2}` : `[${JSON.stringify(name2)}]`;
+var methodsOf = (family) => valueMethodNames().filter((n2) => familiesOf(n2)?.includes(family) === true);
+function methodFix(name2, family) {
+  if (methodsOf(family).includes(name2)) return `Write '.${name2}()' to call the method.`;
+  const sibling = siblingOf(name2, family);
+  if (sibling !== null) return sibling;
+  if (family === "array") return `To read the field of each element, write '.map(e => e${spelledField(name2)})'.`;
+  return null;
+}
+function readFix(name2, kinds) {
+  const family = kinds.length === 1 ? FAMILY_OF[kinds[0]] : void 0;
+  if (family === void 0) return "Read the field from an object instead.";
+  const near = methodFix(name2, family) ?? didYouMean(name2, methodsOf(family)).trim();
+  if (near !== "") return near;
+  const example = EXAMPLE_METHOD[family];
+  return example === void 0 ? "Read the field from an object instead." : `Call a method instead, for example '.${example}()'.`;
+}
+function unreadableField(name2, why, read, holder, pos) {
+  if (why.kind === "closed") {
+    const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
+    const holds = why.keys.length === 0 ? "It holds no fields." : `It holds ${shown.join(", ")}${why.keys.length > 6 ? ", \u2026" : ""}.`;
+    const fix = methodFix(name2, "object") ?? didYouMean(name2, why.keys, (k) => spelledField(k)).trim();
+    const subject2 = holder ?? "this object";
+    return new CodegenError(
+      `'${read}' reads a field that ${subject2} does not have. ${holds}${fix === "" ? "" : ` ${fix}`}`,
+      pos
+    );
+  }
+  if (why.kinds.length === 0) return alwaysAbsent(read, holder, pos);
+  const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");
+  return new CodegenError(`'${read}' reads a field, and ${subject} has no fields. ${readFix(name2, why.kinds)}`, pos);
+}
+function alwaysAbsent(read, holder, pos) {
+  const subject = holder ?? "this value";
+  const sentence = subject.charAt(0).toUpperCase() + subject.slice(1);
+  return new CodegenError(
+    `${sentence} is always null or missing here, so '${read}' has no value to read. Remove the read, or write a value before the read.`,
+    pos
+  );
+}
 var newOnFunction = (name2, pos) => new CodegenError(`'${name2}' is not a constructor in JSMQL. Call it without 'new': '${name2}(\u2026)'.`, pos);
 var unknownClass = (name2, known, pos) => new CodegenError(
   name2 === null ? "'new' takes the name of a class, as in 'new Date(\u2026)'." : `Unknown class '${name2}' in 'new ${name2}(\u2026)'.${didYouMean(name2, known, (s) => `new ${s}(\u2026)`)} MQL has no classes of its own. Write the value as an object literal ('{ \u2026 }'), or declare a function that returns one and call it without 'new'.`,
@@ -25913,7 +26006,7 @@ function lookupOf(node, env, S, over = "$lookup") {
   }
   const { from, links, pos } = foreignChain(head);
   const capture = over === "$lookup" ? new Capture(env.level) : null;
-  const body = env.enter({ stage: over, path: ["pipeline"], capture }, new Chain());
+  let body = env.enter({ stage: over, path: ["pipeline"], capture }, new Chain());
   let one = false;
   let yields = "array";
   let peeledTo = links.length > 0 ? links[0].object : node;
@@ -25937,8 +26030,10 @@ function lookupOf(node, env, S, over = "$lookup") {
     if (streamBodyOf(link.name) === "document" && !documentBody(link, body)) break;
     const stages2 = S.link(link, body, first);
     if (stages2 === null) break;
+    const start = body.chain.emitted.length;
     body.chain.flush();
     body.chain.emitted.push(...stages2);
+    body = body.document(documentsOf(body.chain.emitted.slice(start), body.documents[body.level]));
     peeledTo = link;
     const c = collapsesOf(link.name);
     const collapsed = c === true || c === "unlessRawBody" && link.args[0]?.type !== "ObjectLiteral";
@@ -26611,7 +26706,11 @@ function extractHasChain(node, env) {
 function pathOfIn(e, env) {
   const elements = env.site.boundaries.filter((b) => b.stage === "$elemMatch");
   const innermost = elements.length === 0 ? null : elements[elements.length - 1];
-  if (e.type === "FieldRef") return e.path === "" || innermost !== null || env.level > 0 ? null : e.path;
+  if (e.type === "FieldRef") {
+    if (e.path === "" || innermost !== null || env.level > 0) return null;
+    readablePath(e, env, true);
+    return e.path;
+  }
   if (e.type === "Ident" && env.scope.has(e.name)) {
     const b = env.lookup(e.name, e.pos);
     if (b.ref.kind !== "document" || b.level !== env.level) return null;
@@ -26624,6 +26723,10 @@ function pathOfIn(e, env) {
       const b = env.lookup(e.object.name, e.object.pos);
       if (b.ref.kind === "document" && b.level === env.level) {
         if (innermost !== null && innermost.element !== e.object.name) return null;
+        const why = unreadable(typeOf(e.object, env), e.name, true);
+        if (why !== null) {
+          throw unreadableField(e.name, why, `${e.optional ? "?." : "."}${e.name}`, holderOf(e.object, env), e.pos);
+        }
         return b.ref.path === "" ? e.name : `${b.ref.path}.${e.name}`;
       }
     }
@@ -26747,6 +26850,17 @@ var isAlwaysTrue = (d) => Object.keys(d).length === 1 && d.$expr === true;
 var isAlwaysFalse = (d) => Object.keys(d).length === 1 && d.$expr === false;
 
 // src/compiler/emit/inputs.ts
+function readableSort(ask, t, holder, pos) {
+  if (ask.kind !== "keys") return ask;
+  for (const key of Object.keys(ask.spec)) {
+    const bad = unreadableAt(t, key, true);
+    if (bad === null) continue;
+    const segments = key.split(".");
+    const prefix = segments.slice(0, bad.index).join(".");
+    throw unreadableField(segments[bad.index], bad.why, key, prefix === "" ? holder : `'${prefix}'`, pos);
+  }
+  return ask;
+}
 var childEnv = (env, node, key) => {
   const at3 = env.at(edge(node, key, env.site.where));
   const n2 = node;
@@ -26889,6 +27003,7 @@ function elementsCallback(cb, count, env, read, name2) {
 function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map(), recvNode, present2 = false) {
   const argEnv = childEnv(env, node, "args");
   const value = (e) => overrides.has(e) ? overrides.get(e) : read.value(e, argEnv);
+  const elementOfRecv = () => recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
   return {
     name: name2,
     recv,
@@ -26905,8 +27020,8 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2, present2),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name2),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
-    sortSpec: (e, objects) => sortSpecOf(e, name2, objects),
-    orderBy: (keys2, orders) => orderBySpec(keys2, orders, name2),
+    sortSpec: (e, objects) => readableSort(sortSpecOf(e, name2, objects), elementOfRecv(), "the element", e.pos),
+    orderBy: (keys2, orders) => readableSort(orderBySpec(keys2, orders, name2), elementOfRecv(), "the element", keys2.pos),
     objIteratee: (cb, mode) => {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name2, cb.pos);
@@ -27009,13 +27124,19 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
 function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = name2) {
   const argEnv = childEnv(env, node, "args");
   const before = [...env.chain.emitted, ...soFar];
+  const readableKeys = (ask, pos) => readableSort(
+    ask,
+    env.typeAt(env.chain.element),
+    env.chain.element === "" ? "the document" : `'$.${env.chain.element}'`,
+    pos
+  );
   const bound = (cb) => {
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;
     let e = argEnv;
     if (cb.params.length >= 1) {
       e = e.bind(cb.params[0], {
         ref: { kind: "document", path: env.chain.element },
-        type: ANY,
+        type: env.typeAt(env.chain.element),
         mutable: false,
         pos: cb.pos
       });
@@ -27112,8 +27233,8 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
       if (stages === void 0) throw valueWhereBlockExpected(written2, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name2, objects), name2, env.chain.element, e.pos),
-    orderBy: (keys2, orders) => streamSortAsk(orderBySpec(keys2, orders, name2), name2, env.chain.element, keys2.pos),
+    sortSpec: (e, objects = true) => streamSortAsk(readableKeys(sortSpecOf(e, name2, objects), e.pos), name2, env.chain.element, e.pos),
+    orderBy: (keys2, orders) => streamSortAsk(readableKeys(orderBySpec(keys2, orders, name2), keys2.pos), name2, env.chain.element, keys2.pos),
     slot: () => env.chain.slot().path,
     bind: (hint2) => {
       const b = env.fresh(hint2);
@@ -27213,6 +27334,7 @@ function lowerValue(node, env) {
     case "Injected":
       return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
     case "FieldRef": {
+      readablePath(node, env);
       const path = reachable(env.render(locate(node, env), node.pos));
       return node.optional === true ? { $ifNull: [path, null] } : path;
     }
@@ -27488,11 +27610,55 @@ function reachable(path) {
 function isPropertyRow(node) {
   return sourceFamily(node.object) !== null || !isCallable(node.name);
 }
+function readablePath(node, env, throughArrays = false) {
+  if (node.path === "") return;
+  const bad = unreadableAt(env.typeAt("", 0), node.path, throughArrays);
+  if (bad === null) return;
+  const holder = bad.index === 0 ? "the document" : `'${spelledPath(node, bad.index)}'`;
+  throw unreadableField(node.path.split(".")[bad.index], bad.why, spelledPath(node, bad.index + 1), holder, node.pos);
+}
+function spelledPath(node, count) {
+  const segments = node.path.split(".").slice(0, count);
+  const tested = node.optional !== true ? count : node.optionalAt === void 0 ? 0 : node.optionalAt.split(".").length;
+  if (tested >= segments.length) return `$.${segments.join(".")}`;
+  const tail = segments.slice(tested).join(".");
+  return tested === 0 ? `$?.${tail}` : `$.${segments.slice(0, tested).join(".")}?.${tail}`;
+}
+function spelledRead(e) {
+  if (e.type === "FieldRef") return e.path === "" ? "$" : spelledPath(e, e.path.split(".").length);
+  if (e.type === "Ident") return e.minted === true ? null : e.name;
+  if (e.type !== "MemberAccess" && e.type !== "IndexAccess") return null;
+  const object = spelledRead(e.object);
+  if (object === null) return null;
+  if (e.type === "MemberAccess") return `${object}${e.optional ? "?." : "."}${e.name}`;
+  if (e.index.type !== "NumberLiteral" && e.index.type !== "StringLiteral") return null;
+  return `${object}${e.optional ? "?." : ""}[${JSON.stringify(e.index.value)}]`;
+}
+function holderOf(e, env) {
+  if (e.type === "FieldRef" && e.path === "") return "the document";
+  if (e.type === "Ident" && e.minted === true && env.scope.has(e.name)) {
+    const ref = env.lookup(e.name, e.pos).ref;
+    if (ref.kind !== "document") return "the element";
+    return ref.path === "" ? "the document" : `'$.${ref.path}'`;
+  }
+  const spelled3 = spelledRead(e);
+  return spelled3 === null ? null : `'${spelled3}'`;
+}
 function memberAccess(node, env) {
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
     throw unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
+  const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
+  if (why !== null) {
+    throw unreadableField(
+      node.name,
+      why,
+      `${node.optional ? "?." : "."}${node.name}`,
+      holderOf(node.object, env),
+      node.pos
+    );
+  }
   const path = pathOf(node, env);
   if (path !== null) return path;
   const raw = lowerValue(node.object, childEnv(env, node, "object"));
@@ -27501,6 +27667,13 @@ function memberAccess(node, env) {
 }
 function indexAccess(node, env) {
   const objEnv = childEnv(env, node, "object");
+  if (node.index.type === "StringLiteral") {
+    const name2 = node.index.value;
+    const why = unreadable(typeOf(node.object, objEnv), name2, false);
+    if (why !== null) {
+      throw unreadableField(name2, why, `[${JSON.stringify(name2)}]`, holderOf(node.object, env), node.pos);
+    }
+  }
   {
     const loc = locate(node, env);
     if (loc !== null) return env.render(loc, node.pos);
@@ -27568,6 +27741,10 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const chainOnStream = recvNode.type === "MethodCall" && chainBase(recvNode).type === "StreamRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw streamAsValue(node.pos);
+  if (isNothing(typeOf(recvNode, recvEnv))) {
+    const call = node.type === "MethodCall" ? `.${wroteName(node, name2)}()` : `.${name2}`;
+    throw alwaysAbsent(call, holderOf(recvNode, recvEnv), node.pos);
+  }
   const receiver = receiverOf(recvNode, recvEnv);
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name2)) {
     throw streamAsValue(node.pos);

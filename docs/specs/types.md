@@ -117,7 +117,10 @@ whose body is the peeled links, and the value is the rest of the chain over the
 the other collection's, `DOCUMENT`, run through the body's stages by
 `documentAfter` — so a `.pick([...])` link (a `$project`) closes the element, a
 `.flatMap("f")` link (an `$unwind`) types it by the field, and a `.countBy()`
-link (two `$group`s and a `$replaceWith`) makes it a record of numbers. The
+link (two `$group`s and a `$replaceWith`) makes it a record of numbers. Each link
+of the body runs over the documents that the link before it made, so its callback
+parameter holds that proof. The outer bindings stay: the body reads them through
+`let`, never off the foreign document. The
 joined value is then the array of those documents, present, because the server
 always writes `as`; one such document, maybe absent, after a `.find`; or the one
 collapsed document, present, because the unwrap answers `{}` for nothing. The
@@ -129,8 +132,10 @@ the same way.
 ```js
 const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.has("x");
 // → [{ $lookup: { from: "orders", pipeline: [{ $match: { status: "a" } }], as: "__jsmql.tmp.0" } }, { $set: { "__jsmql.var.ids": { $setUnion: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.pid" } } } } }, { $set: { hit: { $in: ["x", "$__jsmql.var.ids"] } } }, { $unset: "__jsmql" }]
-$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price ? 1 : 2;   // `price` was not kept: certainly missing
-// → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: 2 } }]
+$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].name;
+// → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: { $getField: { field: "name", input: { $arrayElemAt: ["$p", 0] } } } } }]
+$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price;
+// ✗ '.price' reads a field that '$.p[0]' does not have. It holds '_id', 'name'.
 ```
 
 ### A row's `returns`
@@ -407,6 +412,58 @@ message names every kind the value can be (`nounOfKinds` in
 is refused as "a string or a number is not one", while `$.f ? { a: 1 } : 5` passes.
 A spread of a value proven a string keeps its own message, which names the
 character-wise spelling.
+
+### A read that gives no value
+
+A property read that the proof shows can give no value is a compile error.
+`unreadable` in [type.ts](../../src/compiler/emit/type.ts) states the rule, and
+`unreadableAt` walks a dotted path with it:
+
+- Only an object has fields. A read of a field of an array, a string, a number, a
+  date or another scalar gives no value. MEASURED: `$getField` answers missing for
+  an input that is not an object, and a field path through a scalar is missing.
+- A closed object holds only the fields that it names. A read of another field
+  gives no value. MEASURED: `{ $getField: { field: "b", input: { a: 1 } } }` is
+  missing, and so is `"$total"` after a `$group` that did not make `total`.
+- A value that is always null or missing (`NOTHING`) has no value to read. A method
+  call on it is refused with the same message (`alwaysAbsent` in
+  [errors.ts](../../src/compiler/emit/errors.ts)).
+- A value of several kinds, an open object, and a value that nothing is proven
+  about pass. The proof cannot rule the field out there.
+- A read on the stream keeps its own refusal, which names the stream form.
+
+| Read | Where | Through an array |
+|---|---|---|
+| A folded path, `$.a.b` | `readablePath` in [lower.ts](../../src/compiler/emit/lower.ts) | value: no; query: yes |
+| A member read, `x.b` or `x["b"]` | `memberAccess` and `indexAccess` in lower.ts | no |
+| A query path off a callback's document parameter | `pathOfIn` in [filter.ts](../../src/compiler/emit/filter.ts) | yes |
+| A sort key by name | `readableSort` in [inputs.ts](../../src/compiler/emit/inputs.ts) | yes |
+| A method call on a value that is always absent | `dispatchOn` in lower.ts | — |
+
+A query and a sort key keep MongoDB's path through an array (SR2): `{ "items.sku":
+"a" }` matches an element's `sku`, and `{ $sort: { "items.qty": 1 } }` sorts by
+the elements' `qty`. So an array in the path passes there. The value road reads a
+member as JavaScript does: an array has no fields, and the message names
+`.map(e => e.<field>)`.
+
+A stream callback's first parameter holds the document's proof at the chain's
+element (`stageInputs` in inputs.ts). So a read inside `$$.filter(d => …)` of a
+field that a `$group` did not make is refused too. A parameter that the desugar
+pass wrote for a short spelling (`{ type: "a" }`) carries `minted` on its `Ident`.
+The message then names what the parameter stands for: the document, or the element.
+
+An exclusion `$project` leaves the document open, with the excluded field
+`NOTHING`. A field written null is `NOTHING` too, and the proof cannot tell the two
+apart. So a bare read of such a field passes, and a read or a call after it is refused.
+
+```js
+$.tags.uniq().size
+// ✗ '.size' reads a field, and an array has no fields. Write '.size()' to call the method.
+$group({ _id: $.k, n: $sum(1) });  $$.filter(d => d.total > 5);
+// ✗ '.total' reads a field that 'd' does not have. It holds '_id', 'n'.
+$.orders = $$$.orders.filter(o => o.uid === $._id);  $match($.orders.status === "open");
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "orders" } }, { $match: { "orders.status": "open" } }]
+```
 
 ### The null guard
 

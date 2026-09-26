@@ -54,7 +54,7 @@ import { cond, letOne, readsRef, switchOn, switchOver } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
-import { ANY, cannotBe, isOnly, kindsOf, maybeAbsent } from "./type.ts";
+import { ANY, cannotBe, isNothing, isOnly, kindsOf, maybeAbsent, unreadable, unreadableAt } from "./type.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
 import { injectedNeedsLiteral } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
@@ -182,6 +182,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
       // HR1: a value the call supplied is a VALUE — never an operator or a field reference
       return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
     case "FieldRef": {
+      readablePath(node, env);
       const path = reachable(env.render(locate(node, env) as Located, node.pos));
       // `$.user?.name` is JavaScript's `undefined` when `user` is not there, and a document
       // written with it holds the key: `x: null`. A bare path would leave the key out.
@@ -566,12 +567,73 @@ function isPropertyRow(node: Extract<Expr, { type: "MemberAccess" }>): boolean {
   return sourceFamily(node.object) !== null || !isCallable(node.name);
 }
 
+/**
+ * A folded path `$.a.b.c` reads each segment off the one before. The first segment
+ * that the document's proof shows can give no value is refused: a field of a string,
+ * of an array, or one that a closed document does not hold. See `unreadable` in type.ts.
+ * A QUERY keeps MongoDB's path through an array (`throughArrays`): `{ "items.sku": "a" }`.
+ */
+export function readablePath(node: Extract<Expr, { type: "FieldRef" }>, env: Env, throughArrays = false): void {
+  if (node.path === "") return;
+  const bad = unreadableAt(env.typeAt("", 0), node.path, throughArrays);
+  if (bad === null) return;
+  const holder = bad.index === 0 ? "the document" : `'${spelledPath(node, bad.index)}'`;
+  throw E.unreadableField(node.path.split(".")[bad.index], bad.why, spelledPath(node, bad.index + 1), holder, node.pos);
+}
+
+/** The first `count` segments of a folded path as the source spells them, with its last `?.`: `$.a?.b`. */
+function spelledPath(node: Extract<Expr, { type: "FieldRef" }>, count: number): string {
+  const segments = node.path.split(".").slice(0, count);
+  const tested = node.optional !== true ? count : node.optionalAt === undefined ? 0 : node.optionalAt.split(".").length;
+  if (tested >= segments.length) return `$.${segments.join(".")}`;
+  const tail = segments.slice(tested).join(".");
+  return tested === 0 ? `$?.${tail}` : `$.${segments.slice(0, tested).join(".")}?.${tail}`;
+}
+
+/** A simple read as the source spells it (`$.p[0]`, `row.a`), or null for any other node. */
+function spelledRead(e: Expr): string | null {
+  if (e.type === "FieldRef") return e.path === "" ? "$" : spelledPath(e, e.path.split(".").length);
+  if (e.type === "Ident") return e.minted === true ? null : e.name;
+  if (e.type !== "MemberAccess" && e.type !== "IndexAccess") return null;
+  const object = spelledRead(e.object);
+  if (object === null) return null;
+  if (e.type === "MemberAccess") return `${object}${e.optional ? "?." : "."}${e.name}`;
+  if (e.index.type !== "NumberLiteral" && e.index.type !== "StringLiteral") return null;
+  return `${object}${e.optional ? "?." : ""}[${JSON.stringify(e.index.value)}]`;
+}
+
+/**
+ * How a message names the value before a read. A name that the desugar pass wrote
+ * for a short spelling (`{ type: "a" }`) is named by what it stands for: the
+ * document, or the element.
+ */
+export function holderOf(e: Expr, env: Env): string | null {
+  if (e.type === "FieldRef" && e.path === "") return "the document";
+  if (e.type === "Ident" && e.minted === true && env.scope.has(e.name)) {
+    const ref = env.lookup(e.name, e.pos).ref;
+    if (ref.kind !== "document") return "the element";
+    return ref.path === "" ? "the document" : `'$.${ref.path}'`;
+  }
+  const spelled = spelledRead(e);
+  return spelled === null ? null : `'${spelled}'`;
+}
+
 function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): unknown {
   // `Math.abs` on its own names a function. Only a call or a callback slot gives it a value.
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
     throw E.unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
+  const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
+  if (why !== null) {
+    throw E.unreadableField(
+      node.name,
+      why,
+      `${node.optional ? "?." : "."}${node.name}`,
+      holderOf(node.object, env),
+      node.pos,
+    );
+  }
   const path = pathOf(node, env);
   if (path !== null) return path;
   const raw = lowerValue(node.object, childEnv(env, node, "object"));
@@ -597,6 +659,13 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
  */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
+  if (node.index.type === "StringLiteral") {
+    const name = node.index.value;
+    const why = unreadable(typeOf(node.object, objEnv), name, false);
+    if (why !== null) {
+      throw E.unreadableField(name, why, `[${JSON.stringify(name)}]`, holderOf(node.object, env), node.pos);
+    }
+  }
   // `$["a.b"]` — a field whose name is not a bare identifier.
   {
     const loc = locate(node, env);
@@ -695,6 +764,11 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "StreamRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw E.streamAsValue(node.pos);
+  // A receiver that the proof shows is always null or missing gives the call nothing to read.
+  if (isNothing(typeOf(recvNode, recvEnv))) {
+    const call = node.type === "MethodCall" ? `.${wroteName(node, name)}()` : `.${name}`;
+    throw E.alwaysAbsent(call, holderOf(recvNode, recvEnv), node.pos);
+  }
   const receiver = receiverOf(recvNode, recvEnv);
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name)) {
     throw E.streamAsValue(node.pos);

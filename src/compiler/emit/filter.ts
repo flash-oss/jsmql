@@ -28,11 +28,11 @@ import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { childEnv, filterInputs } from "./inputs.ts";
-import { lowerTruth, lowerValue } from "./lower.ts";
+import { holderOf, lowerTruth, lowerValue, readablePath } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { FALSE, or } from "./mode.ts";
 import { typeOf } from "./prove.ts";
-import { isNothing } from "./type.ts";
+import { isNothing, unreadable } from "./type.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import {
   isCallable,
@@ -440,7 +440,11 @@ export function pathOfIn(e: Expr, env: Env): string | null {
   // Inside a sub-pipeline over ANOTHER collection, `$.x` still names the OUTER
   // document (HR4). The server reaches it only through the stage's `let`, so it
   // has no query path. The `$expr` road reads it and captures it instead.
-  if (e.type === "FieldRef") return e.path === "" || innermost !== null || env.level > 0 ? null : e.path;
+  if (e.type === "FieldRef") {
+    if (e.path === "" || innermost !== null || env.level > 0) return null;
+    readablePath(e, env, true);
+    return e.path;
+  }
   // The element itself, when it is an unwound FIELD: `.flatMap("tags").filter(t => t === "x")` becomes `{ tags: "x" }`.
   // The whole document has no query path. The `$expr` road captures a shallower level's element.
   if (e.type === "Ident" && env.scope.has(e.name)) {
@@ -465,6 +469,10 @@ export function pathOfIn(e: Expr, env: Env): string | null {
         // because `$elemMatch` sees only its own element, so the body takes the
         // `$expr` road.
         if (innermost !== null && innermost.element !== e.object.name) return null;
+        const why = unreadable(typeOf(e.object, env), e.name, true);
+        if (why !== null) {
+          throw E.unreadableField(e.name, why, `${e.optional ? "?." : "."}${e.name}`, holderOf(e.object, env), e.pos);
+        }
         return b.ref.path === "" ? e.name : `${b.ref.path}.${e.name}`;
       }
     }

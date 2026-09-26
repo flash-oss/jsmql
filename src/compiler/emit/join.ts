@@ -153,7 +153,7 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" 
   const { from, links, pos } = foreignChain(head);
   // A `$unionWith` body has no `let`. Its capture is null, and the compiler refuses a read of the outer document inside it.
   const capture = over === "$lookup" ? new Capture(env.level) : null;
-  const body = env.enter({ stage: over, path: ["pipeline"], capture }, new Chain());
+  let body = env.enter({ stage: over, path: ["pipeline"], capture }, new Chain());
   let one: Lookup["one"] = false;
   let yields: "array" | "object" = "array";
   let peeledTo: Expr = links.length > 0 ? links[0].object : node;
@@ -178,8 +178,12 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" 
     if (streamBodyOf(link.name) === "document" && !documentBody(link, body)) break;
     const stages = S.link(link, body, first);
     if (stages === null) break;
+    const start = body.chain.emitted.length;
     body.chain.flush();
     body.chain.emitted.push(...stages);
+    // The next link runs over the documents this link made. The outer bindings stay:
+    // the body reads them through `let`, never off the foreign document.
+    body = body.document(documentsOf(body.chain.emitted.slice(start), body.documents[body.level]));
     peeledTo = link;
     // A link that folds the stream into one document leaves one document in the array.
     const c = collapsesOf(link.name);

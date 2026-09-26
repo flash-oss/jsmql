@@ -7,19 +7,22 @@
 
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
-import type { Arity, Kind, Position, SlotForm, Type } from "../../registry/vocabulary.ts";
+import type { Arity, Family, Kind, Position, SlotForm, Type } from "../../registry/vocabulary.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
+import type { Unreadable } from "./type.ts";
 import {
   callbackParamsOf,
   diagnosticOf,
+  familiesOf,
   isFieldProperty,
   isKnownName,
   siblingOf,
   spreadAlternativeOf,
   stageBodyRuleOf,
   streamReceiverNames,
+  valueMethodNames,
 } from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
@@ -284,6 +287,118 @@ export const unknownFunction = (name: string, known: readonly string[], pos: num
     `Unknown function '${name}(...)'.${didYouMean(name, known, (s) => `${s}(...)`)} Declare it first with \`const ${name} = (…) => …;\` at the top level of a pipeline; for a MongoDB operator write \`$${name}(...)\`; for a method, \`receiver.${name}(...)\`.`,
     pos,
   );
+
+/** What a value of each kind is called in a message. */
+const SUBJECT: Readonly<Record<Kind, string>> = {
+  string: "a string",
+  array: "an array",
+  number: "a number",
+  object: "an object",
+  date: "a date",
+  bool: "a boolean",
+  stream: "the stream",
+  objectId: "an ObjectId",
+  binData: "a binary value",
+  minKey: "MinKey",
+  maxKey: "MaxKey",
+};
+
+/** The receiver family whose methods a value of this kind has, or null. */
+const FAMILY_OF: Readonly<Partial<Record<Kind, Family>>> = {
+  string: "string",
+  array: "array",
+  number: "number",
+  object: "object",
+  date: "date",
+  stream: "stream",
+};
+
+/** One method of each family, for a message that has no nearer one to name. */
+const EXAMPLE_METHOD: Readonly<Partial<Record<Family, string>>> = {
+  string: "trim",
+  number: "round",
+  date: "getFullYear",
+  object: "keys",
+};
+
+/** `.x`, or `["x-y"]` for a name that is not an identifier. */
+const spelledField = (name: string): string =>
+  /^[A-Za-z_$][\w$]*$/.test(name) ? `.${name}` : `[${JSON.stringify(name)}]`;
+
+/** The methods a value of this family has. */
+const methodsOf = (family: Family): string[] =>
+  valueMethodNames().filter((n) => familiesOf(n)?.includes(family) === true);
+
+/**
+ * What the reader of `name` most likely means on a value of `family`: the method of
+ * that name, the row's own sentence for this family (`.length` on an array names
+ * `.size()`), or a read of each element's field. Null when none of these applies.
+ */
+function methodFix(name: string, family: Family): string | null {
+  if (methodsOf(family).includes(name)) return `Write '.${name}()' to call the method.`;
+  const sibling = siblingOf(name, family);
+  if (sibling !== null) return sibling;
+  if (family === "array") return `To read the field of each element, write '.map(e => e${spelledField(name)})'.`;
+  return null;
+}
+
+/** The way forward for a read of `name` on a value of `kinds`, which has no fields. */
+function readFix(name: string, kinds: readonly Kind[]): string {
+  const family = kinds.length === 1 ? FAMILY_OF[kinds[0]] : undefined;
+  if (family === undefined) return "Read the field from an object instead.";
+  const near = methodFix(name, family) ?? didYouMean(name, methodsOf(family)).trim();
+  if (near !== "") return near;
+  const example = EXAMPLE_METHOD[family];
+  return example === undefined
+    ? "Read the field from an object instead."
+    : `Call a method instead, for example '.${example}()'.`;
+}
+
+/**
+ * A property read that the proof shows gives no value: `$.tags.uniq().size`,
+ * `$.name.trim().length`, `$.o.pick(["a"]).b`, or a field that the document does not
+ * have after a `$group`. `read` spells the read as the source wrote it (`.size`,
+ * `["length"]`, `$.total`). `holder` names the value before the read, or is null
+ * when the value has no short spelling.
+ */
+export function unreadableField(
+  name: string,
+  why: Unreadable,
+  read: string,
+  holder: string | null,
+  pos: number,
+): CodegenError {
+  if (why.kind === "closed") {
+    const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
+    const holds =
+      why.keys.length === 0
+        ? "It holds no fields."
+        : `It holds ${shown.join(", ")}${why.keys.length > 6 ? ", …" : ""}.`;
+    const fix = methodFix(name, "object") ?? didYouMean(name, why.keys, (k) => spelledField(k)).trim();
+    const subject = holder ?? "this object";
+    return new CodegenError(
+      `'${read}' reads a field that ${subject} does not have. ${holds}${fix === "" ? "" : ` ${fix}`}`,
+      pos,
+    );
+  }
+  if (why.kinds.length === 0) return alwaysAbsent(read, holder, pos);
+  const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");
+  return new CodegenError(`'${read}' reads a field, and ${subject} has no fields. ${readFix(name, why.kinds)}`, pos);
+}
+
+/**
+ * A read or a call on a value that the proof shows is always null or missing:
+ * `$.a = null; $.b = $.a.c`, or `$unset("a"); $.n = $.a.trim()`. `holder` names the
+ * value, or is null when the value has no short spelling.
+ */
+export function alwaysAbsent(read: string, holder: string | null, pos: number): CodegenError {
+  const subject = holder ?? "this value";
+  const sentence = subject.charAt(0).toUpperCase() + subject.slice(1);
+  return new CodegenError(
+    `${sentence} is always null or missing here, so '${read}' has no value to read. Remove the read, or write a value before the read.`,
+    pos,
+  );
+}
 
 /** `new Number(5)`, or `new f(1)` for a declared function: a function, not a constructor. */
 export const newOnFunction = (name: string, pos: number): CodegenError =>

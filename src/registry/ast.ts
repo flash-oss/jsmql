@@ -185,7 +185,16 @@ export type Expr =
    * declared function — all of them. WHICH it is comes from scope and from
    * `names.ts`, never from the parser.
    */
-  | { type: "Ident"; name: string; pos: number }
+  | {
+      type: "Ident";
+      name: string;
+      pos: number;
+      /**
+       * The desugar pass wrote this name for a short spelling (`"name"`, `{ type: "a" }`).
+       * No source spells it, so a message names what it stands for, not the name.
+       */
+      minted?: true;
+    }
 
   // ── access and application ────────────────────────────────────────────────
   | { type: "MemberAccess"; object: Expr; name: string; optional: boolean; pos: number }

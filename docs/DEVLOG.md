@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat!: a read that gives no value is a compile error
+
+The developer asked for a compile error when a program reads a field after a known
+array. The same rule applies to a string, an object and the other kinds. Such a read
+gives no value on the server. `$getField` answers missing for an input that is not an
+object, and for a closed object without the key. So `$.tags.uniq().size` compiled to a
+`$getField` over a `$setUnion`, and it never gave a value. The compiler now refuses the
+read, and the message names the fix: `.size()`, `.length()`, `.map(e => e.total)`, or
+the fields that a closed document holds. `unreadable` in
+[type.ts](../src/compiler/emit/type.ts) states the rule. Only an object has fields, and
+a closed object holds only the fields that it names. A query and a sort key keep
+MongoDB's path through an array (SR2), so `$match($.orders.status === "open")` after a
+join still compiles. See [docs/specs/types.md](specs/types.md) § A read that gives no value.
+
+A read or a call on a value that is always null or missing now gets one message. It
+replaces a broken refusal, "'.trim()' is not available on a ''", for a method on such
+a value. A stream callback's first parameter now carries the document's proof, and each
+link of a join body reads what the link before it made. So the rule also reaches
+`$$.filter(d => d.total > 5)` after a `$group`. A parameter that the desugar pass writes
+for a shorthand carries `minted` on its `Ident`, so a message names "the document" or
+"the element", never an `x` that no source spells. An exclusion `$project` and a
+written null both leave a field `NOTHING`, so a bare read of that field still compiles.
+The proof does not split null from missing, by the decision of 2026-09-21.
+
+Some programs that compiled are now refused, and each one read a field that no document
+holds: `$.csv.split(",")["length"]`, `$.a = 1, $.b = $.a.c`, a `$group` on `$.dept` after
+a `$project` that dropped `dept`, a read of `price` after `.pick(["_id", "name"])`, and
+13 permutation chains whose second link reads a field that the first link removed.
+`$.a.size()` on a value that is always null or missing is refused too; it gave `0`.
+`$$$.users.filter(o => o)` folds its truth test to `true`, because a document is always
+truthy.
+
+---
+
 ## 2026-09-26 — fix: each link of a stream chain reads the document that the link before it made
 
 The links of a stream chain ran under the Env from before the chain. So each link read

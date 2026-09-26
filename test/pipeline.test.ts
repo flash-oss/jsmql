@@ -97,14 +97,14 @@ describe("pipeline — stage-call form", () => {
   it("$project, $group, $sort, $limit", () => {
     expect(
       jsmql(`[
-        $project({ name: 1, total: $.price * $.qty }),
-        $group({ _id: $.dept, total: $sum($.salary) }),
+        $project({ dept: 1, total: $.price * $.qty }),
+        $group({ _id: $.dept, total: $sum($.total) }),
         $sort({ total: -1 }),
         $limit(10)
       ]`),
     ).toEqual([
-      { $project: { name: 1, total: { $multiply: ["$price", "$qty"] } } },
-      { $group: { _id: "$dept", total: { $sum: "$salary" } } },
+      { $project: { dept: 1, total: { $multiply: ["$price", "$qty"] } } },
+      { $group: { _id: "$dept", total: { $sum: "$total" } } },
       { $sort: { total: -1 } },
       { $limit: 10 },
     ]);

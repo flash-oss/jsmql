@@ -918,8 +918,10 @@ $.a = $.b + 1
 `undefined` (compare with it instead), a regex outside its methods, a lambda
 outside a callback, `$$`/`$$$`/`$$$$` (the root rows' own texts), a declared
 function read without a call, and a `let` a document-replacing stage dropped.
-Each refusal lives in `errors.ts`, worded once, and every rejection that
-comes from a row quotes the row.
+A field read that the proof shows gives no value has none either, and neither has
+a call on a value that is always null or missing. See docs/specs/types.md § A read
+that gives no value. Each refusal lives in `errors.ts`, worded once, and every
+rejection that comes from a row quotes the row.
 
 A refusal that names a spelling to write instead names one that runs on every
 document: a present value, an empty one, a null one and a missing field. For

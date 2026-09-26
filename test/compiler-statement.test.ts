@@ -76,7 +76,7 @@ describe("compiler/emit/statement — the writes", () => {
   it("ends a group where one $set would say something else", () => {
     // A later write that READS what an earlier one wrote must read the NEW value.
     expect(compiled("$.x = 1, $.z = $.x;")).toEqual([{ $set: { x: 1 } }, { $set: { z: "$x" } }]);
-    expect(compiled("$.a = 1, $.b = $.a.c;")).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a.c" } }]);
+    expect(compiled("$.a = $.q, $.b = $.a.c;")).toEqual([{ $set: { a: "$q" } }, { $set: { b: "$a.c" } }]);
     // Writing what an earlier value READ needs no split: one `$set` evaluates
     // every value against the document it received.
     expect(compiled("$.a = $.b, $.b = 1;")).toEqual([{ $set: { a: "$b", b: 1 } }]);

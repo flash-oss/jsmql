@@ -1856,21 +1856,10 @@ describe("bracket access", () => {
     expect(jsmql.expr("$[$.fieldName]")).toEqual({
       $getField: { field: { $toString: { $ifNull: ["$fieldName", ""] } }, input: "$$ROOT" },
     });
-    // Indexing the root by a value read from a const map
-    // (`$[SSTM_PROP[party]]`). The const map folds and inlines; both getters
-    // still resolve to a string field name.
-    expect(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toEqual([
-      {
-        $replaceWith: {
-          v: {
-            $getField: {
-              field: { $toString: { $ifNull: [{ $getField: { field: "k", input: { a: "x" } } }, ""] } },
-              input: "$$ROOT",
-            },
-          },
-        },
-      },
-    ]);
+    // A const map folds to a closed object. A key that it does not hold names no field.
+    expect(() => jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toThrow(
+      `'["k"]' reads a field that this object does not have. It holds 'a'.`,
+    );
   });
   it("computed key on an object literal → $getField (object literals are never arrays)", () => {
     expect(jsmql.expr("({ a: 1, b: 2 })[$.k]")).toEqual({
@@ -2340,12 +2329,11 @@ describe("string methods", () => {
     // "length" like any other key. "length" is a string literal, so it cannot be
     // a numeric array index → $getField directly (no $isArray dispatch).
     expect(jsmql.expr('$.items["length"]')).toEqual({ $getField: { field: "length", input: "$items" } });
-    // Even a known-array receiver takes $getField for a string key: the
-    // $arrayElemAt-with-string shape is server-rejected, while $getField on an
-    // array input is accepted and yields missing (matches JS property lookup).
-    expect(jsmql.expr('$.csv.split(",")["length"]')).toEqual({
-      $getField: { field: "length", input: { $split: ["$csv", ","] } },
-    });
+    // On a known array the same read gives no value: an array has no fields, and
+    // `$getField` on an array answers missing. So the compiler refuses it, and names `.size()`.
+    expect(() => jsmql.expr('$.csv.split(",")["length"]')).toThrow(
+      `'["length"]' reads a field, and an array has no fields. For the number of elements, write '.size()'.`,
+    );
   });
   it("chained trim then toLowerCase", () => {
     expect(jsmql.expr("$.name.trim().toLowerCase()")).toEqual({
