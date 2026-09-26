@@ -8,7 +8,7 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 
 - **MongoDB docs:** https://www.mongodb.com/docs/manual/reference/mql/aggregation-stages/
 - **Spec YAML:** `vendor/mql-specifications/definitions/stage/`
-- **Registry:** every stage is a `$name: mongo({ … })` row in [src/registry/names.ts](../../src/registry/names.ts) with a `statement` cell, a `body` rule, a `position` / `pipelineOver` fact, and the description the globals generator reads.
+- **Registry:** every stage is a `$name: mongo({ … })` row in [src/registry/names.ts](../../src/registry/names.ts) with a `statement` cell, a body layout (`bodyPositions`), its `document` and `evaluates` facts, a `position` / `pipelineOver` fact, and the description the globals generator reads.
 - **Detection + lowering:** [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts).
 
 ## Two pipeline forms
@@ -90,7 +90,7 @@ The shape rule in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape
 
 ## Lowering
 
-`stageStatement` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers a stage call or stage document through its row. The body lowers through the row's `body` rule ([emit-pass.md § stage bodies](emit-pass.md)). A stage that the developer names is the developer's own MQL (HR2), and HR3 does not apply to it. So the compiler checks no key, count or value of its body, and the server checks it: `$limit(0)` → `[{ $limit: 0 }]`. The compiler checks the place of every stage through the row's `position` fact.
+`stageStatement` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers a stage call or stage document through its row. The body lowers in the positions that the row's `bodyPositions` states ([emit-pass.md § stage bodies](emit-pass.md)). A stage that the developer names is the developer's own MQL (HR2), and HR3 does not apply to it. So the compiler checks no key, count or value of its body, and the server checks it: `$limit(0)` → `[{ $limit: 0 }]`. The compiler checks the place of every stage through the row's `position` fact.
 
 The server limits a sort spec to `SORT_KEY_LIMIT` keys ([src/registry/mql.ts](../../src/registry/mql.ts), where the measured slots are listed). A JavaScript sort spelling is the compiler's lowering, so the stream sort methods refuse a longer sort through `streamSortAsk` in `src/compiler/emit/sort-spec.ts`; see [stream-methods.md](stream-methods.md). A `$sort` stage that the developer writes passes through, and the server checks its keys.
 

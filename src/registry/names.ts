@@ -315,8 +315,37 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
 };
 
 /**
- * A stage row states `body`, `document` and `evaluates`; a row that is not a stage
- * states none of the three. They are one type, so they cannot come apart.
+ * A stage row states `bodyPositions`, `document` and `evaluates`; a row that is not a
+ * stage states none of the three. They are one type, so they cannot come apart.
+ *
+ * `bodyPositions` states which POSITION each path inside the stage's body stands in.
+ * Each key is a DOTTED PATH from the body. `""` is the body itself, a `*` segment
+ * means "every key at this level", and the longest key that matches wins. So `""`
+ * states the default for the whole body, and a deeper key overrides it for its own
+ * subtree. A flat key list could not reach $rankFusion's pipelines, which sit two
+ * levels down and carry the user's own names:
+ *   $lookup           → { "": "value", pipeline: "statement" }
+ *   $merge            → { "": "value", whenMatched: { list: "statement", otherwise: "value" } }
+ *   $rankFusion       → { "": "value", "input.pipelines.*": "statement" }
+ *   $facet            → { "": "value", "*": "statement" }
+ *   $setWindowFields  → { "": "value", "output.*": "window" }
+ *
+ * STATED, never derived, because a body can mix positions and only the row knows
+ * how. `$group`'s `_id` is an ordinary expression, but every OTHER key of the same
+ * body is an accumulator — and the two differ on mongod:
+ *   { $group: { _id: { $sum: ["$x","$y"] }, s: "…" } }   accepted
+ *   { $group: { _id: null, s: { $sum: ["$x","$y"] } } }
+ *     → "The $sum accumulator is a unary operator"
+ * A body position that states nothing emits a document mongod refuses: `$group`
+ * output (above), `$geoNear.query` and `$graphLookup.restrictSearchWithMatch` (both →
+ * "unknown top level operator: $eq", because a query slot is not an expression slot).
+ *
+ * A slot that holds TWO shapes states both. `$merge.whenMatched` takes one of four
+ * WORDS or an update pipeline, and the server reads the two differently:
+ *   { $merge: { into: "x", whenMatched: "replace" } }        accepted
+ *   { $merge: { into: "x", whenMatched: [{ $set: … }] } }    accepted
+ * `list` is what a bracketed list means there, `otherwise` what anything else means.
+ * A bare position is the same rule with one answer for every shape.
  *
  * `evaluates` lists the body paths whose value the server EVALUATES as an
  * aggregation expression. The paths use the vocabulary of `bodyPositions`: `""` is
@@ -334,8 +363,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
  *   { $sort: { a: { $literal: 1 } } }                        → "$meta is the only expression supported by $sort right now"
  */
 export type StageFacts =
-  | { readonly body: BodyRule; readonly document: DocumentEffect; readonly evaluates: readonly string[] }
-  | { readonly body?: undefined; readonly document?: undefined; readonly evaluates?: undefined };
+  | {
+      readonly bodyPositions: Readonly<Record<string, SlotPosition>> & { readonly "": SlotPosition };
+      readonly document: DocumentEffect;
+      readonly evaluates: readonly string[];
+    }
+  | { readonly bodyPositions?: undefined; readonly document?: undefined; readonly evaluates?: undefined };
 
 type MongoSpec<
   W extends readonly Position[],
@@ -368,9 +401,9 @@ type MongoSpec<
    *   "none"      `{ $op: {} }`
    *   "verbatim"  the operand is a VALUE, never a list: `$literal([a, b])` is
    *               `{ $literal: [a, b] }`, whatever the array holds
-   *   { object }  a body of named keys
+   *   "object"    a body of named keys, which `keys` orders for the positional form
    */
-  shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
+  shape?: "single" | "array" | "none" | "flex" | "verbatim" | "object";
   /**
    * An operator whose MQL body is a document of named keys: the keys, in the order
    * that the POSITIONAL form fills them:
@@ -394,59 +427,11 @@ type MongoSpec<
    */
   takesLet?: true;
   /**
-   * Stage-position facts. Meaningful when `where` includes "stream". A row with a
-   * `body` is a stage, and a stage states its `document` effect: `StageFacts`
-   * pairs the two, so a stage row without the effect does not type-check.
-   */
-  body?: BodyRule;
-  /**
    * The operator that does this stage's job on a VALUE, for the refusal of a stage
    * called on one: `$.items.$match(…)` has no MQL, because a stage runs on a stream,
    * and `$filter` filters an array. Stated only where such an operator exists.
    */
   valueTwin?: string;
-  /**
-   * The smallest CORRECT call of this stage. The message quotes it back when the
-   * body has the wrong type — `$sample(5)` answers with
-   * "…, e.g. '$sample({ size: 10 })'". Each stage states its own, because the
-   * shortest right answer for `$group` is not the one for `$sample`. The row gives
-   * the WHOLE call, so the message quotes it as it stands. Each string COMPILES, as
-   * a statement of its own and inside a bracketed pipeline.
-   */
-  bodyExample?: string;
-  /**
-   * Which POSITION each path inside this stage's body stands in.
-   *
-   * Each key is a DOTTED PATH from the body. `""` is the body itself, a `*` segment
-   * means "every key at this level", and the longest key that matches wins. So `""`
-   * states the default for the whole body, and a deeper key overrides it for its
-   * own subtree. A flat key list could not reach $rankFusion's pipelines, which
-   * sit two levels down and carry the user's own names:
-   *   $lookup           → { "": "value", pipeline: "statement" }
-   *   $merge            → { "": "value", whenMatched: { list: "statement", otherwise: "value" } }
-   *   $rankFusion       → { "": "value", "input.pipelines.*": "statement" }
-   *   $facet            → { "": "value", "*": "statement" }
-   *   $setWindowFields  → { "": "value", "output.*": "window" }
-   *
-   * STATED, never derived, because a body can mix positions and only the row
-   * knows how. `$group`'s `_id` is an ordinary expression, but every OTHER key
-   * of the same body is an accumulator — and the two differ on mongod:
-   *   { $group: { _id: { $sum: ["$x","$y"] }, s: "…" } }   accepted
-   *   { $group: { _id: null, s: { $sum: ["$x","$y"] } } }
-   *     → "The $sum accumulator is a unary operator"
-   * A body position that states nothing emits a document mongod refuses:
-   * `$group` output (above), `$geoNear.query` and
-   * `$graphLookup.restrictSearchWithMatch` (both → "unknown top level operator:
-   * $eq", because a query slot is not an expression slot).
-   *
-   * A slot that holds TWO shapes states both. `$merge.whenMatched` takes one of
-   * four WORDS or an update pipeline, and the server reads the two differently:
-   *   { $merge: { into: "x", whenMatched: "replace" } }        accepted
-   *   { $merge: { into: "x", whenMatched: [{ $set: … }] } }    accepted
-   * `list` is what a bracketed list means there, `otherwise` what anything else
-   * means. A bare position is the same rule with one answer for every shape.
-   */
-  bodyPositions?: Readonly<Record<string, SlotPosition>> & { readonly "": SlotPosition };
   /** What this operator's callback parameters bind. See `CallbackParams`. */
   params?: CallbackParams;
   /**
@@ -1255,7 +1240,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $add: mongo({
@@ -1265,10 +1250,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number-or-date" },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
   }),
 
   $ceil: mongo({
@@ -1278,7 +1260,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $divide: mongo({
@@ -1289,7 +1271,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number", nonZero: [1] },
+      args: { sig: "dividend, divisor", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
   }),
@@ -1301,7 +1283,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $floor: mongo({
@@ -1311,7 +1293,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $ln: mongo({
@@ -1321,7 +1303,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $log: mongo({
@@ -1331,10 +1313,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "number, base", exact: 2, slotType: { 0: "number" }, elementType: "number" },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "number, base", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
   }),
 
   $log10: mongo({
@@ -1344,7 +1323,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $mod: mongo({
@@ -1355,7 +1334,7 @@ export const NAMES = {
     shape: "array",
     filter: { args: { sig: "field, [divisor, remainder]", exact: 2 }, emit: fieldClause },
     expr: {
-      args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number", nonZero: [1] },
+      args: { sig: "dividend, divisor", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
   }),
@@ -1367,10 +1346,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number" },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
   }),
 
   $pow: mongo({
@@ -1380,10 +1356,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "base, exponent", exact: 2, slotType: { 0: "number" }, elementType: "number" },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "base, exponent", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
   }),
 
   $round: mongo({
@@ -1394,7 +1367,7 @@ export const NAMES = {
     shape: "flex",
     filter: viaFallback,
     expr: {
-      args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number", 1: "int" } },
+      args: { sig: "number[, place]", allowed: [1, 2] },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
   }),
@@ -1406,7 +1379,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $sqrt: mongo({
@@ -1416,7 +1389,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $subtract: mongo({
@@ -1427,7 +1400,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "minuend, subtrahend", exact: 2, slotType: { 0: "number-or-date" }, elementType: "number-or-date" },
+      args: { sig: "minuend, subtrahend", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
   }),
@@ -1440,7 +1413,7 @@ export const NAMES = {
     shape: "flex",
     filter: viaFallback,
     expr: {
-      args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number", 1: "int" } },
+      args: { sig: "number[, place]", allowed: [1, 2] },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
   }),
@@ -1452,10 +1425,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
   }),
 
   $bitNot: mongo({
@@ -1465,7 +1435,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $bitOr: mongo({
@@ -1475,10 +1445,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
   }),
 
   $bitXor: mongo({
@@ -1488,10 +1455,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
   }),
 
   $sin: mongo({
@@ -1501,7 +1465,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $cos: mongo({
@@ -1511,7 +1475,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $tan: mongo({
@@ -1521,7 +1485,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $asin: mongo({
@@ -1531,7 +1495,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $acos: mongo({
@@ -1541,7 +1505,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $atan: mongo({
@@ -1551,7 +1515,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $atan2: mongo({
@@ -1561,10 +1525,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "y, x", exact: 2, slotType: { 0: "number" }, elementType: "number" },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "y, x", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
   }),
 
   $sinh: mongo({
@@ -1574,7 +1535,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $cosh: mongo({
@@ -1584,7 +1545,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $tanh: mongo({
@@ -1594,7 +1555,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $asinh: mongo({
@@ -1604,7 +1565,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $acosh: mongo({
@@ -1614,7 +1575,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $atanh: mongo({
@@ -1624,7 +1585,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $degreesToRadians: mongo({
@@ -1634,7 +1595,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $radiansToDegrees: mongo({
@@ -1644,7 +1605,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $cmp: mongo({
@@ -1791,7 +1752,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     keys: ["if", "then", "else"],
-    shape: { object: { required: ["if", "then", "else"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "if, then, else", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -1815,7 +1776,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     keys: ["branches", "default"],
-    shape: { object: { required: ["branches"], optional: ["default"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "branches, default", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -1862,7 +1823,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     keys: ["input", "chars"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -1873,7 +1834,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     keys: ["input", "chars"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -1884,7 +1845,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     keys: ["input", "chars"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -1895,9 +1856,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     keys: ["input", "regex", "options"],
-    shape: {
-      object: { required: ["input", "regex"], optional: ["options"], closed: true, charSets: { options: "imxsu" } },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -1908,9 +1867,7 @@ export const NAMES = {
     returns: { arrayOf: "object" },
     where: ["value"],
     keys: ["input", "regex", "options"],
-    shape: {
-      object: { required: ["input", "regex"], optional: ["options"], closed: true, charSets: { options: "imxsu" } },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -1921,9 +1878,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     keys: ["input", "regex", "options"],
-    shape: {
-      object: { required: ["input", "regex"], optional: ["options"], closed: true, charSets: { options: "imxsu" } },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -1934,7 +1889,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     keys: ["input", "find", "replacement"],
-    shape: { object: { required: ["input", "find", "replacement"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -1945,7 +1900,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     keys: ["input", "find", "replacement"],
-    shape: { object: { required: ["input", "find", "replacement"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -1958,19 +1913,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: {
-        sig: "string, delimiter",
-        exact: 2,
-        // MEASURED: the server refuses an empty delimiter ("$split requires a non-empty
-        // separator"), the same fact the '.split()' row states.
-        nonEmpty: {
-          1: {
-            noun: "separator character",
-            instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))'.",
-          },
-        },
-      },
+      args: { sig: "string, delimiter", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
   }),
@@ -1992,7 +1935,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $strcasecmp: mongo({
@@ -2070,7 +2013,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     keys: ["input", "substring"],
-    shape: { object: { required: [], optional: ["input", "substring"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, substring", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -2081,7 +2024,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     keys: ["input", "suffix"],
-    shape: { object: { required: [], optional: ["input", "suffix"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, suffix", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -2092,7 +2035,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     keys: ["input", "string"],
-    shape: { object: { required: [], optional: ["input", "string"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, string", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -2103,7 +2046,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     keys: ["input", "prefix"],
-    shape: { object: { required: [], optional: ["input", "prefix"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, prefix", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -2149,7 +2092,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     keys: ["input", "as", "cond", "limit"],
-    shape: { object: { required: ["input", "cond"], optional: ["as", "limit"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, as, cond, limit", allowed: [1, 2, 3, 4] }, emit: objectBody },
   }),
@@ -2172,7 +2115,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     keys: ["input", "n"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -2234,7 +2177,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     keys: ["input", "n"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -2248,7 +2191,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     keys: ["input", "as", "in"],
-    shape: { object: { required: ["input", "in"], optional: ["as"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, as, in", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -2259,7 +2202,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     keys: ["input", "n"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -2272,7 +2215,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     keys: ["input", "n"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -2286,7 +2229,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "object" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $range: mongo({
@@ -2311,7 +2254,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     keys: ["input", "initialValue", "in"],
-    shape: { object: { required: ["input", "initialValue", "in"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, initialValue, in", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -2323,7 +2266,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $size: mongo({
@@ -2333,7 +2276,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" }, nullRefused: [0] }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $slice: mongo({
@@ -2348,10 +2291,7 @@ export const NAMES = {
       args: { sig: "array, [position, ]count", allowed: [2, 3] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
-    updateDoc: {
-      args: { sig: "count", exact: 1, slotType: { 0: "int" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "count", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $sortArray: mongo({
@@ -2360,7 +2300,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     keys: ["input", "sortBy"],
-    shape: { object: { required: ["input", "sortBy"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, sortBy", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -2371,7 +2311,7 @@ export const NAMES = {
     returns: { arrayOf: "array" },
     where: ["value"],
     keys: ["inputs", "useLongestLength", "defaults"],
-    shape: { object: { required: ["inputs"], optional: ["useLongestLength", "defaults"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "inputs, useLongestLength, defaults", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -2383,7 +2323,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $anyElementTrue: mongo({
@@ -2457,7 +2397,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     keys: ["field", "input"],
-    shape: { object: { required: ["field"], optional: ["input"], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -2471,7 +2411,7 @@ export const NAMES = {
     shape: "flex",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "object" },
+      args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: { args: { sig: "operand", exact: 1 }, emit: single },
@@ -2483,7 +2423,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     keys: ["field", "input", "value"],
-    shape: { object: { required: ["field", "input", "value"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "field, input, value", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -2494,7 +2434,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     keys: ["field", "input"],
-    shape: { object: { required: ["field", "input"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -2505,15 +2445,7 @@ export const NAMES = {
     returns: "date",
     where: ["value"],
     keys: ["startDate", "unit", "amount", "timezone"],
-    shape: {
-      object: {
-        required: ["startDate", "unit", "amount"],
-        optional: ["timezone"],
-        closed: true,
-        enums: { unit: TIME_UNIT },
-        keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
-      },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody },
   }),
@@ -2524,16 +2456,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     keys: ["startDate", "endDate", "unit", "startOfWeek", "timezone"],
-    shape: {
-      object: {
-        required: ["startDate", "endDate", "unit"],
-        optional: ["startOfWeek", "timezone"],
-        closed: true,
-        enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
-        caseInsensitiveKeys: ["startOfWeek"],
-        keyTypes: { startDate: "date", endDate: "date", timezone: "string" },
-      },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: {
       args: { sig: "startDate, endDate, unit, startOfWeek, timezone", allowed: [1, 2, 3, 4, 5] },
@@ -2547,45 +2470,7 @@ export const NAMES = {
     returns: "date",
     where: ["value"],
     keys: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"],
-    shape: {
-      object: {
-        required: [],
-        optional: [
-          "year",
-          "isoWeekYear",
-          "month",
-          "isoWeek",
-          "day",
-          "isoDayOfWeek",
-          "hour",
-          "minute",
-          "second",
-          "millisecond",
-          "timezone",
-        ],
-        closed: true,
-        // MEASURED: `{}` → "requires either 'year' or 'isoWeekYear'"; both →
-        // "does not allow mixing natural dates with ISO dates". The wider rule —
-        // no natural part beside an ISO anchor — has no BodyRule field and stays
-        // the server's to report.
-        exactlyOneOf: [["year", "isoWeekYear"]],
-        keyTypes: {
-          year: "int-or-long",
-          isoWeekYear: "int-or-long",
-          month: "int-or-long",
-          isoWeek: "int-or-long",
-          day: "int-or-long",
-          isoDayOfWeek: "int-or-long",
-          hour: "int-or-long",
-          minute: "int-or-long",
-          second: "int-or-long",
-          millisecond: "int-or-long",
-          timezone: "string",
-        },
-        // Positional stays the natural order — JSMQL's public commitment. Only the
-        // object style reaches the ISO keys.
-      },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: {
       args: { sig: "year, month, day, hour, minute, second, millisecond, timezone", allowed: [1, 2, 3, 4, 5, 6, 7, 8] },
@@ -2599,9 +2484,7 @@ export const NAMES = {
     returns: "date",
     where: ["value"],
     keys: ["dateString", "format", "timezone", "onError", "onNull"],
-    shape: {
-      object: { required: ["dateString"], optional: ["format", "timezone", "onError", "onNull"], closed: true },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: {
       args: { sig: "dateString, format, timezone, onError, onNull", allowed: [1, 2, 3, 4, 5] },
@@ -2615,15 +2498,7 @@ export const NAMES = {
     returns: "date",
     where: ["value"],
     keys: ["startDate", "unit", "amount", "timezone"],
-    shape: {
-      object: {
-        required: ["startDate", "unit", "amount"],
-        optional: ["timezone"],
-        closed: true,
-        enums: { unit: TIME_UNIT },
-        keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
-      },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody },
   }),
@@ -2634,14 +2509,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     keys: ["date", "timezone", "iso8601"],
-    shape: {
-      object: {
-        required: ["date"],
-        optional: ["timezone", "iso8601"],
-        closed: true,
-        keyTypes: { date: "date", timezone: "string", iso8601: "bool" },
-      },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "date, timezone, iso8601", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -2652,14 +2520,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     keys: ["date", "format", "timezone", "onNull"],
-    shape: {
-      object: {
-        required: ["date"],
-        optional: ["format", "timezone", "onNull"],
-        closed: true,
-        keyTypes: { date: "date", timezone: "string" },
-      },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "date, format, timezone, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody },
   }),
@@ -2670,16 +2531,7 @@ export const NAMES = {
     returns: "date",
     where: ["value"],
     keys: ["date", "unit", "binSize", "timezone", "startOfWeek"],
-    shape: {
-      object: {
-        required: ["date", "unit"],
-        optional: ["binSize", "timezone", "startOfWeek"],
-        closed: true,
-        enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
-        caseInsensitiveKeys: ["startOfWeek"],
-        keyTypes: { date: "date", binSize: "int-or-long", timezone: "string" },
-      },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "date, unit, binSize, timezone, startOfWeek", allowed: [1, 2, 3, 4, 5] }, emit: objectBody },
   }),
@@ -2691,7 +2543,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $dayOfWeek: mongo({
@@ -2701,7 +2553,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $dayOfYear: mongo({
@@ -2711,7 +2563,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $hour: mongo({
@@ -2721,7 +2573,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $isoDayOfWeek: mongo({
@@ -2731,7 +2583,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $isoWeek: mongo({
@@ -2741,7 +2593,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $isoWeekYear: mongo({
@@ -2751,7 +2603,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $millisecond: mongo({
@@ -2761,7 +2613,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $minute: mongo({
@@ -2771,7 +2623,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $month: mongo({
@@ -2781,7 +2633,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $second: mongo({
@@ -2791,7 +2643,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $toDate: mongo({
@@ -2811,7 +2663,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $year: mongo({
@@ -2821,7 +2673,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $tsIncrement: mongo({
@@ -2831,7 +2683,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "timestamp" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $tsSecond: mongo({
@@ -2841,7 +2693,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "timestamp" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1 }, emit: single },
   }),
 
   $convert: mongo({
@@ -2850,38 +2702,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     keys: ["input", "to", "onError", "onNull"],
-    shape: {
-      object: {
-        required: ["input", "to"],
-        optional: ["onError", "onNull", "format", "byteOrder"],
-        closed: true,
-        enums: {
-          to: [
-            "double",
-            "string",
-            "object",
-            "array",
-            "binData",
-            "objectId",
-            "bool",
-            "date",
-            "null",
-            "regex",
-            "dbPointer",
-            "javascript",
-            "symbol",
-            "javascriptWithScope",
-            "int",
-            "timestamp",
-            "long",
-            "decimal",
-            "minKey",
-            "maxKey",
-            "undefined",
-          ],
-        },
-      },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, to, onError, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody },
   }),
@@ -3024,7 +2845,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     keys: ["vars", "in"],
-    shape: { object: { required: ["vars", "in"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "vars, in", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -3035,13 +2856,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["group"],
     keys: ["init", "initArgs", "accumulate", "accumulateArgs", "merge", "finalize", "lang"],
-    shape: {
-      object: {
-        required: ["init", "accumulate", "accumulateArgs", "merge", "lang"],
-        optional: ["initArgs", "finalize"],
-        closed: true,
-      },
-    },
+    shape: "object",
     group: {
       args: {
         sig: "init, initArgs, accumulate, accumulateArgs, merge, finalize, lang",
@@ -3057,7 +2872,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     keys: ["body", "args", "lang"],
-    shape: { object: { required: ["body", "args", "lang"], optional: [], closed: true, enums: { lang: ["js"] } } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "body, args, lang", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -3108,7 +2923,7 @@ export const NAMES = {
     returns: "binData",
     where: ["value"],
     keys: ["input", "algorithm"],
-    shape: { object: { required: ["input", "algorithm"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -3119,7 +2934,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     keys: ["input", "algorithm"],
-    shape: { object: { required: ["input", "algorithm"], optional: [], closed: true } },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -3141,10 +2956,7 @@ export const NAMES = {
     shape: "single",
     // The server requires a constant here, and a query document holds values. A rate read
     // at run time has no query form in this cell, so the call takes HR2's plain form.
-    filter: {
-      args: { sig: "rate", exact: 1, constant: [0], slotType: { 0: "number" }, slotRange: { 0: [0, 1] } },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "rate", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $toHashedIndexKey: mongo({
@@ -3167,10 +2979,7 @@ export const NAMES = {
     shape: "single",
     group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: { args: { sig: "operand", exact: 1 }, emit: single },
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $avg: mongo({
@@ -3199,20 +3008,12 @@ export const NAMES = {
     evaluates: [],
     where: ["group", "window", "stream", "statement"],
     shape: "none",
-    // MEASURED: { $count: "" } → the count field must be a non-empty string (the operand rule is in `args`)
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     group: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "fieldName" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "fieldName" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $max: mongo({
@@ -3229,10 +3030,7 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: { args: { sig: "operand", exact: 1 }, emit: single },
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $median: mongo({
@@ -3241,9 +3039,7 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group", "window"],
     keys: ["input", "method"],
-    shape: {
-      object: { required: ["input", "method"], optional: [], closed: true, enums: { method: ["approximate"] } },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
@@ -3264,10 +3060,7 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: { args: { sig: "operand", exact: 1 }, emit: single },
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $percentile: mongo({
@@ -3276,9 +3069,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     keys: ["input", "p", "method"],
-    shape: {
-      object: { required: ["input", "p", "method"], optional: [], closed: true, enums: { method: ["approximate"] } },
-    },
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
     group: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
@@ -3295,10 +3086,7 @@ export const NAMES = {
     shape: "single",
     group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: { args: { sig: "operand", exact: 1 }, emit: single },
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $stdDevPop: mongo({
@@ -3354,14 +3142,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["group", "window"],
     keys: ["output", "sortBy"],
-    shape: {
-      object: {
-        required: ["output", "sortBy"],
-        optional: [],
-        closed: true,
-        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
-      },
-    },
+    shape: "object",
     group: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -3372,14 +3153,7 @@ export const NAMES = {
     returns: "array",
     where: ["group", "window"],
     keys: ["output", "sortBy", "n"],
-    shape: {
-      object: {
-        required: ["output", "sortBy", "n"],
-        optional: [],
-        closed: true,
-        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
-      },
-    },
+    shape: "object",
     group: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
     window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -3390,14 +3164,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["group", "window"],
     keys: ["output", "sortBy"],
-    shape: {
-      object: {
-        required: ["output", "sortBy"],
-        optional: [],
-        closed: true,
-        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
-      },
-    },
+    shape: "object",
     group: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
   }),
@@ -3408,14 +3175,7 @@ export const NAMES = {
     returns: "array",
     where: ["group", "window"],
     keys: ["output", "sortBy", "n"],
-    shape: {
-      object: {
-        required: ["output", "sortBy", "n"],
-        optional: [],
-        closed: true,
-        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
-      },
-    },
+    shape: "object",
     group: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
     window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
   }),
@@ -3461,7 +3221,7 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     keys: ["input", "unit"],
-    shape: { object: { required: ["input"], optional: ["unit"], closed: true, enums: { unit: WINDOW_TIME_UNIT } } },
+    shape: "object",
     window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody },
   }),
 
@@ -3480,7 +3240,7 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     keys: ["input", "N", "alpha"],
-    shape: { object: { required: ["input"], optional: ["N", "alpha"], closed: true, exactlyOneOf: [["N", "alpha"]] } },
+    shape: "object",
     window: { args: { sig: "input, N, alpha", allowed: [1, 2, 3] }, emit: objectBody },
   }),
 
@@ -3490,7 +3250,7 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     keys: ["input", "unit"],
-    shape: { object: { required: ["input"], optional: ["unit"], closed: true, enums: { unit: WINDOW_TIME_UNIT } } },
+    shape: "object",
     window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody },
   }),
 
@@ -3527,31 +3287,23 @@ export const NAMES = {
     returns: "unknown",
     where: ["window"],
     keys: ["output", "by", "default"],
-    shape: { object: { required: ["output", "by"], optional: ["default"], closed: true } },
+    shape: "object",
     window: { args: { sig: "output, by, default", allowed: [1, 2, 3] }, emit: objectBody },
   }),
 
   $addFields: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
     valueTwin: "$mergeObjects",
-    bodyExample: "$addFields({ total: $.price })",
     where: ["stream", "statement"],
     preservesCount: true,
     only: ["update"],
     // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
     document: "keeps",
     evaluates: ["*"],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $bucket: mongo({
@@ -3561,24 +3313,10 @@ export const NAMES = {
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
     evaluates: ["groupBy", "default"],
-    body: {
-      required: ["groupBy", "boundaries"],
-      optional: ["default", "output"],
-      closed: true,
-      keyTypes: { boundaries: "array", output: "object" },
-      constantKeys: ["boundaries", "default"],
-      sortedList: { boundaries: 2 },
-    },
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $bucketAuto: mongo({
@@ -3588,27 +3326,10 @@ export const NAMES = {
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
     evaluates: ["groupBy"],
-    body: {
-      required: ["groupBy", "buckets"],
-      optional: ["output", "granularity"],
-      closed: true,
-      keyTypes: { buckets: "int", granularity: "string", output: "object" },
-      constantKeys: ["buckets", "granularity"],
-      minimums: { buckets: 1 },
-      enums: {
-        granularity: ["R5", "R10", "R20", "R40", "R80", "1-2-5", "E6", "E12", "E24", "E48", "E96", "E192", "POWERSOF2"],
-      },
-    },
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $changeStream: mongo({
@@ -3618,29 +3339,6 @@ export const NAMES = {
     // MEASURED: { $changeStream: { zzz: 1 } } → BSON field '$changeStream.zzz' is an unknown field
     document: "unknown",
     evaluates: [],
-    body: {
-      required: [],
-      optional: [
-        "allChangesForCluster",
-        "fullDocument",
-        "fullDocumentBeforeChange",
-        "resumeAfter",
-        "showExpandedEvents",
-        "startAfter",
-        "startAtOperationTime",
-      ],
-      closed: true,
-      enums: {
-        fullDocument: ["default", "updateLookup", "whenAvailable", "required"],
-        fullDocumentBeforeChange: ["off", "whenAvailable", "required"],
-      },
-      keyTypes: {
-        allChangesForCluster: "bool",
-        showExpandedEvents: "bool",
-        startAfter: "object",
-        resumeAfter: "object",
-      },
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -3654,7 +3352,6 @@ export const NAMES = {
     // MEASURED: { $changeStreamSplitLargeEvent: { zzz: 1 } } → $changeStreamSplitLargeEvent spec should be an empty object
     document: "unknown",
     evaluates: [],
-    body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -3668,23 +3365,10 @@ export const NAMES = {
     only: ["stageFirst"],
     document: "unknown",
     evaluates: [],
-    body: {
-      required: [],
-      optional: ["latencyStats", "storageStats", "count", "queryExecStats"],
-      closed: true,
-      keyTypes: { latencyStats: "object", storageStats: "object", count: "object", queryExecStats: "object" },
-      constantKeys: ["latencyStats", "storageStats", "count", "queryExecStats"],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $currentOp: mongo({
@@ -3694,47 +3378,10 @@ export const NAMES = {
     only: ["stageFirst"],
     document: "unknown",
     evaluates: [],
-    body: {
-      required: [],
-      optional: [
-        "allUsers",
-        "idleConnections",
-        "idleCursors",
-        "idleSessions",
-        "localOps",
-        "truncateOps",
-        "targetAllNodes",
-      ],
-      closed: true,
-      keyTypes: {
-        allUsers: "bool",
-        idleConnections: "bool",
-        idleCursors: "bool",
-        idleSessions: "bool",
-        localOps: "bool",
-        truncateOps: "bool",
-        targetAllNodes: "bool",
-      },
-      constantKeys: [
-        "allUsers",
-        "idleConnections",
-        "idleCursors",
-        "idleSessions",
-        "localOps",
-        "truncateOps",
-        "targetAllNodes",
-      ],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $densify: mongo({
@@ -3744,13 +3391,6 @@ export const NAMES = {
     // MEASURED: range.bounds: "everything" → Bounds string must either be 'full' or 'partition' (a nested key; not stated here)
     document: "keeps",
     evaluates: [],
-    body: {
-      required: ["field", "range"],
-      optional: ["partitionByFields"],
-      closed: true,
-      keyTypes: { field: "string", range: "object", partitionByFields: "array" },
-      constantKeys: ["field", "partitionByFields"],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -3764,7 +3404,6 @@ export const NAMES = {
     // MEASURED: { $documents: { a: 1 } } → '$documents' can only be run with database or cluster-level aggregation
     document: "unknown",
     evaluates: [""],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     // MEASURED: the server takes `$documents` inside a `$unionWith` that names NO
@@ -3775,6 +3414,9 @@ export const NAMES = {
       container:
         "Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];').",
     },
+    // The `$$ = [ … ]` and `$$$.<coll>.push(…)` sugars are JSMQL code, and they read this
+    // rule (`documentsStages` in statement.ts): a written element that is not a document
+    // has no MQL in them. A `$documents(…)` call is the developer's own, and is not checked.
     stream: {
       args: { sig: "body", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "object" } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
@@ -3791,7 +3433,6 @@ export const NAMES = {
     where: ["stream", "statement"],
     document: "fields",
     evaluates: [],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
     // MEASURED: `$documents` reaches through a `$unionWith` that a `$lookup` or another
@@ -3800,14 +3441,8 @@ export const NAMES = {
     // A `$unionWith` that NAMES a collection is fine in a branch, so the ban is the
     // literal-documents form alone.
     bansNested: ["$documents"],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $fill: mongo({
@@ -3818,31 +3453,6 @@ export const NAMES = {
     // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
     document: "keeps",
     evaluates: ["partitionBy", "output.*.value"],
-    body: {
-      // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
-      // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
-      nested: {
-        sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT },
-        output: {
-          required: [],
-          optional: [],
-          closed: false,
-          eachValue: {
-            required: [],
-            optional: ["value", "method"],
-            closed: true,
-            exactlyOneOf: [["value", "method"]],
-            enums: { method: ["locf", "linear"] },
-          },
-        },
-      },
-      requiresWhen: [{ path: ["output", "*", "method"], equals: ["linear"], requires: "sortBy" }],
-      required: ["output"],
-      optional: ["partitionBy", "partitionByFields", "sortBy"],
-      closed: true,
-      keyTypes: { output: "object", sortBy: "object", partitionByFields: "array" },
-      notTogether: [[["partitionBy"], ["partitionByFields"]]],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -3856,30 +3466,6 @@ export const NAMES = {
     // MEASURED: { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } } → Unknown argument to $geoNear: zzz
     document: "keeps",
     evaluates: ["near"],
-    body: {
-      required: ["near"],
-      optional: [
-        "distanceField",
-        "distanceMultiplier",
-        "includeLocs",
-        "key",
-        "maxDistance",
-        "minDistance",
-        "query",
-        "spherical",
-      ],
-      closed: true,
-      keyTypes: {
-        distanceField: "string",
-        distanceMultiplier: "number",
-        includeLocs: "string",
-        key: "string",
-        maxDistance: "number",
-        minDistance: "number",
-        query: "object",
-        spherical: "bool",
-      },
-    },
     bodyPositions: { "": "value", query: "filter" },
     forbiddenIn: ["$facet"],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -3891,43 +3477,21 @@ export const NAMES = {
     where: ["stream", "statement"],
     document: "keeps",
     evaluates: ["startWith"],
-    body: {
-      required: ["from", "startWith", "connectFromField", "connectToField", "as"],
-      optional: ["maxDepth", "depthField", "restrictSearchWithMatch"],
-      closed: true,
-      constantKeys: ["from", "connectFromField", "connectToField", "as", "depthField", "maxDepth"],
-      keyTypes: { maxDepth: "int-or-long", restrictSearchWithMatch: "object" },
-      minimums: { maxDepth: 0 },
-    },
     bodyPositions: { "": "value", restrictSearchWithMatch: "filter" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $group: mongo({
     doc: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
-    bodyExample: "$group({ _id: $.category })",
     where: ["stream", "statement"],
     document: "fields",
     evaluates: ["_id"],
-    body: { required: ["_id"], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $indexStats: mongo({
@@ -3937,17 +3501,10 @@ export const NAMES = {
     only: ["stageFirst"],
     document: "unknown",
     evaluates: [],
-    body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $limit: mongo({
@@ -3957,29 +3514,10 @@ export const NAMES = {
     // MEASURED: { $limit: 0 } → the limit must be positive (the operand rule is in `args`)
     document: "keeps",
     evaluates: [],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: "int-or-long" },
-        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
-      },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: "int-or-long" },
-        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
-      },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $listLocalSessions: mongo({
@@ -3989,23 +3527,10 @@ export const NAMES = {
     only: ["stageFirst"],
     document: "unknown",
     evaluates: [],
-    body: {
-      required: [],
-      optional: ["users", "allUsers"],
-      closed: true,
-      keyTypes: { users: "array", allUsers: "bool" },
-      constantKeys: ["users", "allUsers"],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $listSampledQueries: mongo({
@@ -4016,7 +3541,6 @@ export const NAMES = {
     // MEASURED: not supported on a standalone mongod; the key set is the manual's
     document: "unknown",
     evaluates: [],
-    body: { required: [], optional: ["namespace"], closed: true, keyTypes: { namespace: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4031,7 +3555,6 @@ export const NAMES = {
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
     evaluates: [],
-    body: { required: [], optional: ["id", "name"], closed: true, keyTypes: { id: "string", name: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4045,23 +3568,10 @@ export const NAMES = {
     only: ["stageFirst"],
     document: "unknown",
     evaluates: [],
-    body: {
-      required: [],
-      optional: ["users", "allUsers"],
-      closed: true,
-      keyTypes: { users: "array", allUsers: "bool" },
-      constantKeys: ["users", "allUsers"],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $lookup: mongo({
@@ -4073,26 +3583,11 @@ export const NAMES = {
     document: "keeps",
     evaluates: ["let"],
     takesLet: true,
-    body: {
-      required: ["as"],
-      optional: ["from", "localField", "foreignField", "let", "pipeline"],
-      closed: true,
-      constantKeys: ["from", "localField", "foreignField", "as"],
-      together: [["localField", "foreignField"]],
-      atLeastOneOf: [["localField", "pipeline"]],
-      keyTypes: { let: "object", pipeline: "array" },
-    },
     bodyPositions: { "": "value", pipeline: "statement" },
     binds: { keysOf: "let", visibleIn: ["pipeline"] },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $match: mongo({
@@ -4102,7 +3597,6 @@ export const NAMES = {
     // MEASURED: { $match: [1] } → the match filter must be an expression in an object
     document: "narrows",
     evaluates: [],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4122,29 +3616,10 @@ export const NAMES = {
     document: "keeps",
     evaluates: ["let"],
     takesLet: true,
-    body: {
-      required: ["into"],
-      optional: ["on", "let", "whenMatched", "whenNotMatched"],
-      closed: true,
-      keyTypes: { let: "object" },
-      // MEASURED: whenMatched: "pipeline" → Enumeration value 'pipeline' for field
-      // 'whenMatched' is not a valid value. The pipeline form is the ARRAY, not a word.
-      enums: {
-        whenMatched: ["replace", "keepExisting", "merge", "fail"],
-        whenNotMatched: ["insert", "discard", "fail"],
-      },
-      literalKeys: ["whenMatched", "whenNotMatched"],
-    },
     bodyPositions: { "": "value", whenMatched: { list: "statement", otherwise: "value" } },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $out: mongo({
@@ -4154,23 +3629,10 @@ export const NAMES = {
     // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → BSON field '$out.zzz' is an unknown field; { $out: 1 } → $out only supports a string or object argument
     document: "keeps",
     evaluates: [],
-    body: {
-      required: ["coll"],
-      optional: ["db", "timeseries"],
-      closed: true,
-      keyTypes: { db: "string", coll: "string", timeseries: "object" },
-      constantKeys: ["db", "coll"],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $planCacheStats: mongo({
@@ -4180,45 +3642,23 @@ export const NAMES = {
     only: ["stageFirst"],
     document: "unknown",
     evaluates: [],
-    body: {
-      required: [],
-      optional: ["allHosts"],
-      closed: true,
-      keyTypes: { allHosts: "bool" },
-      constantKeys: ["allHosts"],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $project: mongo({
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
     valueTwin: "$getField",
-    bodyExample: "$project({ name: 1 })",
     document: "projection",
     evaluates: ["*"],
     where: ["stream", "statement"],
     only: ["update"],
-    // MEASURED: { $project: {} } → projection specification must have at least one field
-    body: { required: [], optional: [], closed: false, onePolarity: true, nonEmpty: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $rankFusion: mongo({
@@ -4229,12 +3669,6 @@ export const NAMES = {
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
     evaluates: [],
-    body: {
-      required: ["input"],
-      optional: ["combination", "scoreDetails"],
-      closed: true,
-      keyTypes: { input: "object", combination: "object", scoreDetails: "bool" },
-    },
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4249,7 +3683,6 @@ export const NAMES = {
     // The developer's own expression decides what it prunes; the fields it does not name survive.
     document: "keeps",
     evaluates: [""],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4262,25 +3695,10 @@ export const NAMES = {
     document: "value",
     evaluates: ["newRoot"],
     only: ["update"],
-    body: {
-      required: ["newRoot"],
-      optional: [],
-      closed: true,
-      // Measured: the server refuses `{ newRoot: 5 }` ("'replacement document' must
-      // evaluate to an object"). It accepts a path, because only the run can tell
-      // what the path holds, and it refuses an unknown key by name.
-      keyTypes: { newRoot: "object" },
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $replaceWith: mongo({
@@ -4289,44 +3707,21 @@ export const NAMES = {
     document: "value",
     evaluates: [""],
     only: ["update"],
-    // MEASURED: { $replaceWith: 1 } → 'replacement document' must evaluate to an object
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $sample: mongo({
     doc: "Randomly selects the specified number of documents from its input.",
-    bodyExample: "$sample({ size: 10 })",
     where: ["stream", "statement"],
     document: "keeps",
     evaluates: [],
-    body: {
-      required: ["size"],
-      optional: [],
-      closed: true,
-      keyTypes: { size: "number" },
-      constantKeys: ["size"],
-      minimums: { size: 1 },
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $scoreFusion: mongo({
@@ -4337,12 +3732,6 @@ export const NAMES = {
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
     evaluates: ["combination.expression"],
-    body: {
-      required: ["input"],
-      optional: ["combination", "scoreDetails"],
-      closed: true,
-      keyTypes: { input: "object", combination: "object", scoreDetails: "bool" },
-    },
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4356,7 +3745,6 @@ export const NAMES = {
     // MEASURED: Atlas only; the operators inside a $search body are its own language and pass through
     document: "keeps",
     evaluates: [],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4370,7 +3758,6 @@ export const NAMES = {
     // MEASURED: Atlas only; the operators inside a $searchMeta body are its own language and pass through
     document: "unknown",
     evaluates: [],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4380,28 +3767,17 @@ export const NAMES = {
   $set: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
     valueTwin: "$mergeObjects",
-    bodyExample: "$set({ total: $.price })",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     only: ["update"],
     // MEASURED: { $set: {} } → accepted, the stage is a no-op
     document: "keeps",
     evaluates: ["*"],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $setWindowFields: mongo({
@@ -4412,44 +3788,10 @@ export const NAMES = {
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
     document: "keeps",
     evaluates: ["partitionBy"],
-    body: {
-      // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
-      nested: {
-        sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT },
-        output: {
-          required: [],
-          optional: [],
-          closed: false,
-          eachValue: {
-            required: [],
-            optional: [],
-            closed: false,
-            nested: {
-              window: {
-                required: [],
-                optional: ["documents", "range", "unit"],
-                closed: false,
-                exactlyOneOf: [["documents", "range"]],
-              },
-            },
-          },
-        },
-      },
-      required: ["output"],
-      optional: ["partitionBy", "sortBy"],
-      closed: true,
-      keyTypes: { output: "object", sortBy: "object" },
-    },
     bodyPositions: { "": "value", "output.*": "window" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $shardedDataDistribution: mongo({
@@ -4460,7 +3802,6 @@ export const NAMES = {
     // MEASURED: sharded clusters only; the manual takes an empty document
     document: "unknown",
     evaluates: [],
-    body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4474,59 +3815,24 @@ export const NAMES = {
     // MEASURED: { $skip: -1 } → Expected a non-negative number; { $skip: 1.5 } → Expected an integer (the operand rule is in `args`)
     document: "keeps",
     evaluates: [],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: "int-or-long" },
-        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
-      },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: "int-or-long" },
-        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
-      },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $sort: mongo({
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
     valueTwin: "$sortArray",
-    bodyExample: "$sort({ createdAt: -1 })",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },
     document: "keeps",
     evaluates: [],
-    body: {
-      required: [],
-      optional: [],
-      // The keys are the developer's own field names, so this row closes nothing.
-      // The server fixes every VALUE.
-      closed: false,
-      everyValueIn: [1, -1],
-      maxSortKeys: SORT_KEY_LIMIT,
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: { args: { sig: "spec", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
@@ -4537,8 +3843,6 @@ export const NAMES = {
     document: "unknown",
     evaluates: [""],
     where: ["stream", "statement"],
-    // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -4554,25 +3858,10 @@ export const NAMES = {
     pipelineOver: "foreign",
     statementBody: "pipeline",
     where: ["stream", "statement"],
-    body: {
-      required: [],
-      optional: ["coll", "pipeline"],
-      closed: true,
-      // MEASURED: { $unionWith: {} } → stage without explicit collection must have a pipeline with $documents as first stage
-      atLeastOneOf: [["coll", "pipeline"]],
-      constantKeys: ["coll"],
-      keyTypes: { pipeline: "array" },
-    },
     bodyPositions: { "": "value", pipeline: "statement" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "object"] } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "object"] } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $unset: mongo({
@@ -4583,33 +3872,11 @@ export const NAMES = {
     // MEASURED: { $unset: 1 } → $unset specification must be a string or an array; { $unset: [] } → … with at least one field
     document: "keeps",
     evaluates: [],
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: ["string", "array"] },
-        nonEmpty: { 0: { noun: "field name", instead: 'Name the fields to remove: \'$unset(["a", "b"])\'.' } },
-      },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: ["string", "array"] },
-        nonEmpty: { 0: { noun: "field name", instead: 'Name the fields to remove: \'$unset(["a", "b"])\'.' } },
-      },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $unwind: mongo({
@@ -4617,23 +3884,10 @@ export const NAMES = {
     where: ["stream", "statement"],
     document: "element",
     evaluates: [],
-    body: {
-      required: ["path"],
-      optional: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
-      closed: true,
-      keyTypes: { path: "fieldPath", includeArrayIndex: "fieldName", preserveNullAndEmptyArrays: "bool" },
-      constantKeys: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: ["fieldPath", "object"] } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: ["fieldPath", "object"] } },
-      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
   }),
 
   $vectorSearch: mongo({
@@ -4643,19 +3897,6 @@ export const NAMES = {
     // MEASURED: Atlas only; the key set is the manual's
     document: "keeps",
     evaluates: [],
-    body: {
-      required: ["index", "path", "queryVector", "limit"],
-      optional: ["numCandidates", "exact", "filter"],
-      closed: true,
-      keyTypes: {
-        index: "string",
-        path: "string",
-        limit: "int",
-        numCandidates: "int",
-        exact: "bool",
-        filter: "object",
-      },
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
@@ -9972,10 +9213,7 @@ export const NAMES = {
   $inc: mongo({
     doc: "Increments a field by a number. JSMQL also writes it as JavaScript: '$.views++', '++$.views', '$.views += 2'.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   // ── names that are valid ONLY inside another operator's body. A test proves each
@@ -9984,90 +9222,63 @@ export const NAMES = {
     doc: "A rectangle, by its bottom-left and top-right corners.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $center: mongo({
     doc: "A circle on a flat plane, by centre and radius.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $centerSphere: mongo({
     doc: "A circle on a sphere, by centre and radius in radians.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $polygon: mongo({
     doc: "A polygon, by its list of points.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $geometry: mongo({
     doc: "A GeoJSON shape.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin", "$geoIntersects", "$near", "$nearSphere"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $maxDistance: mongo({
     doc: "The furthest a match may be, in metres or radians.",
     where: ["filter"],
     onlyInside: { filter: ["$near", "$nearSphere", "$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $minDistance: mongo({
     doc: "The nearest a match may be, in metres or radians.",
     where: ["filter"],
     onlyInside: { filter: ["$near", "$nearSphere"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $each: mongo({
     doc: "Adds several values at once instead of one.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push", "$addToSet"] },
-    updateDoc: {
-      args: { sig: "values", exact: 1, slotType: { 0: "array" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "values", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $position: mongo({
     doc: "The index to insert at, rather than appending.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
-    updateDoc: {
-      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "index", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $case: mongo({
@@ -10085,73 +9296,49 @@ export const NAMES = {
   $currentDate: mongo({
     doc: "Sets a field to the current date.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $mul: mongo({
     doc: "Multiplies a field by a number. JSMQL also writes it as JavaScript: '$.price *= 1.1', '$.price /= 2'.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $rename: mongo({
     doc: "Renames a field. JSMQL also writes it as JavaScript: '$.b = $.a; delete $.a;'.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $setOnInsert: mongo({
     doc: "Sets a field only when an upsert inserts a new document.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $pop: mongo({
     doc: "Removes the first or last element of an array. JSMQL also writes it as JavaScript: '$.tags.pop()'.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $pull: mongo({
     doc: "Removes every array element matching a condition.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $pullAll: mongo({
     doc: "Removes every listed value from an array.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $bit: mongo({
     doc: "Applies a bitwise and / or / xor to an integer field.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   // ── the query language: operators with a filter form and no expression form.
@@ -10162,45 +9349,42 @@ export const NAMES = {
     doc: "Matches arrays that contain all elements specified in the query.",
     category: "array",
     where: ["filter"],
-    filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
+    filter: { args: { sig: "field, values", exact: 2 }, emit: queryOnlyClause },
   }),
 
   $bitsAllClear: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 0.",
     category: "bitwise",
     where: ["filter"],
-    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
+    filter: { args: { sig: "field, mask", exact: 2 }, emit: queryOnlyClause },
   }),
 
   $bitsAllSet: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 1.",
     category: "bitwise",
     where: ["filter"],
-    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
+    filter: { args: { sig: "field, mask", exact: 2 }, emit: queryOnlyClause },
   }),
 
   $bitsAnyClear: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 0.",
     category: "bitwise",
     where: ["filter"],
-    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
+    filter: { args: { sig: "field, mask", exact: 2 }, emit: queryOnlyClause },
   }),
 
   $bitsAnySet: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 1.",
     category: "bitwise",
     where: ["filter"],
-    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
+    filter: { args: { sig: "field, mask", exact: 2 }, emit: queryOnlyClause },
   }),
 
   $comment: mongo({
     doc: "Adds a comment to a query predicate.",
     category: "miscellaneous",
     where: ["filter"],
-    filter: {
-      args: { sig: "text", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "text", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $elemMatch: mongo({
@@ -10221,7 +9405,7 @@ export const NAMES = {
     category: "type",
     where: ["filter"],
     filter: {
-      args: { sig: "field[, exists]", allowed: [1, 2], constant: [1], slotType: { 1: "bool" } },
+      args: { sig: "field[, exists]", allowed: [1, 2] },
       emit: ({ args, fieldPath, literal }) => ({
         [fieldPath(args[0])]: { $exists: args[1] === undefined ? true : literal(args[1]) },
       }),
@@ -10260,10 +9444,7 @@ export const NAMES = {
     doc: "Validate documents against the given JSON Schema.",
     category: "miscellaneous",
     where: ["filter"],
-    filter: {
-      args: { sig: "schema", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    filter: { args: { sig: "schema", exact: 1 }, emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }) },
   }),
 
   $near: mongo({
@@ -10291,7 +9472,7 @@ export const NAMES = {
     category: "comparison",
     where: ["filter"],
     liftsTo: { op: "$in", negated: true },
-    filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
+    filter: { args: { sig: "field, values", exact: 2 }, emit: queryOnlyClause },
   }),
 
   $nor: mongo({
@@ -10301,19 +9482,7 @@ export const NAMES = {
     // MEASURED: the server refuses `find({ $nor: [] })` ("$nor argument must be a
     // non-empty array"), and `$nor` has no expression form to fall back to. So this
     // row refuses the empty list and emits nothing.
-    filter: {
-      args: {
-        sig: "predicates",
-        atLeast: 1,
-        nonEmpty: {
-          0: {
-            noun: "predicate",
-            instead: "'none of nothing' is every document, which an empty filter ('{}') already says.",
-          },
-        },
-      },
-      emit: norList,
-    },
+    filter: { args: { sig: "predicates", atLeast: 1 }, emit: norList },
   }),
 
   $regex: mongo({
@@ -10351,7 +9520,7 @@ export const NAMES = {
         "A branch has no text score to read. Run the '$text' match as the pipeline's first stage, ahead of the branch.",
     },
     filter: {
-      args: { sig: "search", exact: 1, constant: [0] },
+      args: { sig: "search", exact: 1 },
       emit: ({ args, literal }) => {
         const v = literal(args[0]);
         return { $text: typeof v === "string" ? { $search: v } : v };

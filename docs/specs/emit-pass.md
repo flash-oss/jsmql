@@ -177,15 +177,11 @@ carry the spelling of one variable encoder: `$let({ v_x: 1 }, (v_x) => v_x)` →
 and a production. A `$op(…)` call and a `$stage(…)` call meet only the two
 refusals for a spread or a computed key inside an object body
 (`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check
-reads a `BodyRule` or `Arity` field the row states: required and closed keys (with a suggestion),
-enums, flag sets, key and slot types, `elementType` over every operand,
-`nullRefused` slots (a per-row fact: the server refuses `$size(null)`, but
-`$reverseArray(null)` answers null), `constant` slots and `constantKeys`, and
-the two refusals for a spread or a computed key inside an operator body. The
-checks also cover the body facts the server enforces — `nonEmpty`,
-`minimums`, `sortedList`, `atLeastOneOf` / `exactlyOneOf`, `requiresWhen` (a
-key required once another holds a given value), and `nested` bodies whose
-every value is checked (`eachValue`). A method row's `elements: "scalar"`
+reads an `Arity` field the row states — slot types, ranges, enums, `constant`
+slots, a non-empty or non-zero slot — or a `BodyRule` field of a method's
+options document (`args.body`): required and closed keys (with a suggestion),
+enums, key types, `constantKeys`, and keys that never come together
+(`notTogether`). A method row's `elements: "scalar"`
 refuses a receiver that provably holds arrays (a literal of literals,
 `.partition(…)`) before its rule runs. The checks never judge a slot that is a
 field path, an expression or a spread. The checks run on every rule of a
@@ -404,8 +400,9 @@ This is how `$match`'s predicate becomes a query document and a `$group`
 output key becomes an accumulator, without either cell knowing which reading
 it asked for. `readIn` is that hub.
 
-The compiler applies four facts the row states where the statement stands,
-each because the server enforces it and no renderer implies it.
+The compiler applies these facts the row states where the statement stands,
+each because the server enforces it and no renderer implies it. Each applies to
+a stage that the developer names too, because the place of a stage stays checked.
 
 | the row says | the target does | measured |
 |---|---|---|
@@ -415,7 +412,6 @@ each because the server enforces it and no renderer implies it.
 | `bodyPositions` | reads each body key in the position it names | `$geoNear`'s `query` as an aggregation expression: "unknown top level operator: $eq" |
 | `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
 | `statementBody` | says what a `statement` slot HOLDS: a pipeline of its own, or an update spec and the stages it runs | "$sort is not allowed to be used within an update" |
-| `literalKeys` | judges a `$`-led string against the closed set, because the server reads the key as a word | `{ $merge: { whenMatched: "$g" } }` → "Enumeration value '$g' for field 'whenMatched' is not a valid value" |
 
 A stage's own body sub-pipeline runs under its OWN chain, with the container
 recorded as a boundary. Without the chain, a stage filed as LAST files onto

@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — refactor: drop the check facts that only the escape hatch read
+
+A `$op(…)` or `$stage(…)` call meets no check (HR3 does not apply to it), so the
+facts that only its checks read had no reader. They are gone from the `mongo` rows:
+
+- the body rule of each stage (`body`) and its example call (`bodyExample`);
+- the object rule inside an operator's `shape`, which is now the word `"object"` —
+  `keys` orders the positional form;
+- the check fields of each `args`: `slotType`, `constant`, `slotRange`,
+  `nonZero`, `nonEmpty`, `arrayOf`, and the two that only `$op` rows stated,
+  `elementType` and `nullRefused`.
+
+Fourteen `BodyRule` fields that only a stage or an operator body stated left the
+type with their readers in [src/compiler/emit/check.ts](../src/compiler/emit/check.ts),
+for example `maxSortKeys`, `onePolarity` and `requiresWhen`. The rest stays for the
+options document of a JavaScript method (`args.body`). `StageFacts` now pairs
+`bodyPositions` with `document` and `evaluates`, because a layout is what makes a
+row a stage (`isStageName`). One `$op` row keeps its rule: `$documents`, because
+the `$$ = [ … ]` and `$$$.<coll>.push(…)` sugars check each written element through
+it. The `takesLet` audit reads the vendored stage spec now, and the returns audit
+builds each object call from it. No output changes.
+
+---
+
 ## 2026-09-26 — refactor: a `$op` row states no refusal
 
 A `$op(…)` call is the developer's own MQL, and it takes HR2's plain form wherever

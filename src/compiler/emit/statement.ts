@@ -33,7 +33,6 @@ import {
   receiverFamiliesOf,
   documentOf,
   restoresDocumentsOf,
-  stageBodyRuleOf,
   pipelineOverOf,
   mergesIntoOf,
   unionsOf,
@@ -44,7 +43,7 @@ import {
   streamReceiverNames,
 } from "../rows.ts";
 import { consult, everyName, listedIn } from "./consult.ts";
-import { checkBody, checkBodyKeys, checkSlots } from "./check.ts";
+import { checkBodyKeys, checkSlots } from "./check.ts";
 import { Chain, Env } from "./env.ts";
 import { Capture, fieldSlot, type Declared } from "./names.ts";
 import { bindingSlot, JSMQL_NS } from "../../namespace.ts";
@@ -134,8 +133,8 @@ function stageBody(node: Expr, env: Env): unknown {
 }
 
 /** A `[ … ]` of statements as a list of stages, under the chain `env` already carries. */
-function subPipeline(node: Expr, env: Env, slot: { stage: string; key: string } | null = null): Stage[] {
-  if (node.type !== "ArrayLiteral") throw E.needsStageList(slot, node.pos);
+function subPipeline(node: Expr, env: Env): Stage[] {
+  if (node.type !== "ArrayLiteral") throw E.needsStageList(node.pos);
   const out: Stage[] = [];
   let scope = childEnv(env, node, "elements");
   for (const el of node.elements) {
@@ -168,8 +167,7 @@ function pipelineBody(node: Expr, env: Env, stage: string, path: BodyPath, captu
   const capture = pipelineOverOf(stage) === "foreign" ? (hasLet(stage) ? new Capture(env.level) : null) : undefined;
   if (capture) captures.push(capture);
   const body = env.enter({ stage, path, capture }, new Chain());
-  const key = path[path.length - 1];
-  body.chain.emitted.push(...subPipeline(node, body, stage !== "" && typeof key === "string" ? { stage, key } : null));
+  body.chain.emitted.push(...subPipeline(node, body));
   return body.chain.close();
 }
 
@@ -1236,11 +1234,6 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
   } else {
     if (sel.kind !== "rule") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
     checkSlots(node.name, sel.rule.args, args, false);
-    // A stage spelled on a reference meets the same body rule as the stage statement.
-    const bodyRule = stageBodyRuleOf(name);
-    if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
-      checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
-    }
     stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   }
   const out: Stage[] = [];
@@ -1304,12 +1297,7 @@ function streamLink(
         : [plainStage(name, link, args, env)];
   } else {
     if (sel.kind !== "rule") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-    const bodyRule = stageBodyRuleOf(name);
-    checkSlots(link.name, sel.rule.args, args, bodyRule !== undefined);
-    // A stage link's body meets the same rule as the stage statement's body.
-    if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
-      checkBody(name, bodyRule, args, positionalKeysOf(name), link.pos);
-    }
+    checkSlots(link.name, sel.rule.args, args, false);
     // `name` is the row that runs; `link.name` is what the developer typed. A message
     // that swaps them tells the reader about a method they did not write.
     stages = sel.rule.emit(
@@ -1502,11 +1490,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
     throw E.refusalFor(sel, name, "", "statement", node.pos, [], (s) => s);
   }
-  const bodyRule = stageBodyRuleOf(name);
-  checkSlots(name, sel.rule.args, args, bodyRule !== undefined);
-  if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
-    checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
-  }
+  checkSlots(name, sel.rule.args, args, false);
   const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   // A cell answers with the stages its name means. Where they may
   // STAND is the row's other fact, and the compiler applies that fact

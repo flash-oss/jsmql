@@ -23,7 +23,6 @@ import {
   newKeywordOf,
   siblingOf,
   spreadAlternativeOf,
-  stageBodyRuleOf,
   streamReceiverNames,
 } from "../rows.ts";
 
@@ -481,22 +480,12 @@ export const notAWriteTarget = (pos: number): CodegenError =>
     pos,
   );
 
-/** A stage body, or one key of it, that must be a bracketed list of stages. */
-export const needsStageList = (slot: { stage: string; key: string } | null, pos: number): CodegenError => {
-  if (slot === null) {
-    return new CodegenError(
-      "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
-      pos,
-    );
-  }
-  const words = stageBodyRuleOf(slot.stage)?.enums?.[slot.key];
-  return new CodegenError(
-    words === undefined
-      ? `'${slot.stage}' ${slot.key} is a sub-pipeline: write it as a bracketed list of stages, '${slot.key}: [$match(…), $sort(…)]'.`
-      : `'${slot.stage}' ${slot.key} is a bracketed list of stages, '${slot.key}: [$set({ … })]', or one of: ${words.join(", ")}.`,
+/** A body that must be a bracketed list of stages: `.aggregate(5)` on another collection. */
+export const needsStageList = (pos: number): CodegenError =>
+  new CodegenError(
+    "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
     pos,
   );
-};
 
 /** A spread inside a stage list: the pipeline is written out, stage by stage. */
 export const spreadInStageList = (pos: number): CodegenError =>

@@ -87,6 +87,8 @@ const FOR_TYPE: Readonly<Record<string, string>> = {
   resolvesToNull: "$nul",
   resolvesToAny: "$int",
   any: "$int",
+  // an enum type takes one of its own words, as a literal
+  timeUnit: "day",
 };
 
 /** A mongod `$type` string → the coarse kind the registry states. */
@@ -313,12 +315,7 @@ function loadSpecs(): Map<string, Spec> {
   return out;
 }
 
-type Shape = "single" | "array" | "none" | "flex" | { object: BodyShape };
-type BodyShape = {
-  required: readonly string[];
-  optional: readonly string[];
-  enums?: Record<string, readonly string[]>;
-};
+type Shape = "single" | "array" | "none" | "flex" | "verbatim" | "object";
 type Row = { kind?: string; where?: readonly Position[]; shape?: Shape; returns?: TypeExpr };
 
 /** The kind a row's `returns` states for the server to confirm: the term's top kind. */
@@ -335,14 +332,11 @@ function buildCall(name: string, row: Row, spec: Spec | undefined): unknown {
   const required = (spec?.arguments ?? []).filter((a) => a.optional !== true);
   const shape = row.shape;
   if (shape === "none") return { [name]: {} };
-  if (typeof shape === "object") {
-    const keys = shape.object.required.length > 0 ? shape.object.required : shape.object.optional;
+  if (shape === "object") {
+    // The body's keys and their types come from the vendored spec: every required key,
+    // or every key when the spec requires none.
     const body: Record<string, unknown> = {};
-    for (const k of keys) {
-      const enums = shape.object.enums?.[k];
-      const arg = (spec?.arguments ?? []).find((a) => a.name === k);
-      body[k] = enums !== undefined ? enums[0] : arg !== undefined ? operandFor(arg) : "$int";
-    }
+    for (const a of required.length > 0 ? required : (spec?.arguments ?? [])) body[a.name] = operandFor(a);
     return { [name]: body };
   }
   if (required.length === 0) return { [name]: "$int" };

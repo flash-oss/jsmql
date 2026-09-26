@@ -61,9 +61,10 @@ $$$$.listSampledQueries({ namespace:"x" })→ [{ $listSampledQueries: { namespac
 $$$$.shardedDataDistribution()           → [{ $shardedDataDistribution: {} }]
 ```
 
-The options-object argument is optional. It lowers through the stage's own
-`body` rule, like every other stage body. With no argument, the body is an
-empty `{}`. The options are literal config — booleans, strings, `{user, db}`
+The options-object argument is optional. It lowers as the stage's body, in the
+position that the stage's `bodyPositions` states, like every other stage body. The
+sugar checks that the argument is a document, and the server checks its keys. With
+no argument, the body is an empty `{}`. The options are literal config — booleans, strings, `{user, db}`
 arrays. The compiler does not translate a `$.field` reference here.
 
 `options: false` in the `diagnostic` metadata marks the three stages that take

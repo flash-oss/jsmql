@@ -83,20 +83,16 @@ export const notASlot: FieldSlot = { path: "__jsmql.tmp.1", ref: "$__jsmql.tmp.1
 export const minted: MongoVar = mongoVarName("_id");
 export const read: VarRef = Scope.root([]).param("x", ANY, 0, 0).ref;
 
-// ── a stage row states its `document` effect and its evaluated paths with its `body`, never one alone ──
+// ── a stage row states its `document` effect and its evaluated paths with its layout, never one alone ──
 
-export const stageRow: StageFacts = {
-  body: { required: [], optional: [], closed: false },
-  document: "keeps",
-  evaluates: [],
-};
+export const stageRow: StageFacts = { bodyPositions: { "": "value" }, document: "keeps", evaluates: [] };
 export const valueRow: StageFacts = {};
-// @ts-expect-error — a body without the document effect: the scope tracker would have to guess
-export const bodyAlone: StageFacts = { body: { required: [], optional: [], closed: false }, evaluates: [] };
+// @ts-expect-error — a layout without the document effect: the scope tracker would have to guess
+export const layoutAlone: StageFacts = { bodyPositions: { "": "value" }, evaluates: [] };
 // @ts-expect-error — a document effect on a row that is not a stage
 export const effectAlone: StageFacts = { document: "keeps" };
 // @ts-expect-error — a stage without its evaluated paths: HR1's gate then guesses which slots it may wrap
-export const noEvaluates: StageFacts = { body: { required: [], optional: [], closed: false }, document: "keeps" };
+export const noEvaluates: StageFacts = { bodyPositions: { "": "value" }, document: "keeps" };
 // @ts-expect-error — evaluated paths on a row that is not a stage
 export const evaluatesAlone: StageFacts = { evaluates: [""] };
 

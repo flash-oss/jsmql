@@ -7,6 +7,8 @@
 // facts over the whole table, so they live here — and each one was made to fail
 // before it was trusted.
 
+import { readFileSync, readdirSync } from "node:fs";
+import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 import { NAMES } from "../src/registry/names.ts";
 import type { Only, Position } from "../src/registry/vocabulary.ts";
@@ -23,7 +25,6 @@ type Row = {
   params?: unknown;
   iterateeSlots?: Readonly<Record<string, unknown>>;
   document?: string;
-  body?: unknown;
 };
 
 const rows = Object.entries(NAMES) as [string, Row][];
@@ -105,13 +106,13 @@ describe("registry — `only` and the positions it qualifies", () => {
 
   it("states `document` on every stage row, and on no other", () => {
     // The document `Type` changes at a STAGE — `$group`, `$replaceRoot`, `$set` —
-    // and a stage is the row with a `body`. On a value row the fact would tell the
-    // scope tracker to drop bindings after an expression; on a stage row without
-    // it the tracker would have to guess. So the two fields come as a pair.
+    // and a stage is the row with a body layout (`bodyPositions`). On a value row the
+    // fact would tell the scope tracker to drop bindings after an expression; on a
+    // stage row without it the tracker would have to guess. So the two come as a pair.
     const wrong: string[] = [];
     for (const [name, row] of rows) {
-      const isStage = row.body !== undefined;
-      if (isStage !== (row.document !== undefined)) wrong.push(`${name}: body=${isStage} document=${row.document}`);
+      const isStage = row.bodyPositions !== undefined;
+      if (isStage !== (row.document !== undefined)) wrong.push(`${name}: stage=${isStage} document=${row.document}`);
       if (row.document !== undefined && row.where?.includes("stream") !== true)
         wrong.push(`${name}: not a stream link`);
     }
@@ -183,14 +184,7 @@ describe("registry — each `valueTwin` names an operator with a value form", ()
 });
 
 describe("registry — `keys` and `takesLet` sit on the rows they describe", () => {
-  type Facts = {
-    kind?: string;
-    keys?: readonly string[];
-    takesLet?: true;
-    body?: { required?: readonly string[]; optional?: readonly string[] };
-    shape?: unknown;
-    bodyPositions?: unknown;
-  };
+  type Facts = { kind?: string; keys?: readonly string[]; takesLet?: true; shape?: unknown; bodyPositions?: unknown };
   const facts = Object.entries(NAMES) as [string, Facts][];
 
   it("states `keys` on an operator whose body is a document of named keys, and never on a stage", () => {
@@ -205,17 +199,29 @@ describe("registry — `keys` and `takesLet` sit on the rows they describe", () 
     expect(wrong).toEqual([]);
   });
 
-  it("states `takesLet` on a stage exactly when its body has a `let` key", () => {
+  it("states `takesLet` on a stage exactly when its vendored spec has a `let` argument", () => {
+    // The spec YAML holds the stage's arguments; its `tests:` block uses BSON tags that
+    // the default schema rejects, and nothing here reads it.
+    const dir = new URL("../vendor/mql-specifications/definitions/stage/", import.meta.url);
+    const withLet = new Set<string>();
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith(".yaml")) continue;
+      let txt = readFileSync(new URL(file, dir), "utf8");
+      const cut = txt.indexOf("\ntests:");
+      if (cut >= 0) txt = txt.slice(0, cut);
+      const doc = yaml.load(txt) as { name?: string; arguments?: readonly { name: string }[] } | undefined;
+      if (doc?.name !== undefined && (doc.arguments ?? []).some((a) => a.name === "let")) withLet.add(doc.name);
+    }
     const wrong: string[] = [];
     for (const [name, row] of facts) {
-      if (row.body === undefined) {
+      if (row.bodyPositions === undefined) {
         if (row.takesLet !== undefined) wrong.push(`${name}: takesLet on a row that is not a stage`);
         continue;
       }
-      const hasLet = [...(row.body.required ?? []), ...(row.body.optional ?? [])].includes("let");
-      if (hasLet !== (row.takesLet === true))
-        wrong.push(`${name}: body let=${hasLet} takesLet=${row.takesLet === true}`);
+      if (withLet.has(name) !== (row.takesLet === true))
+        wrong.push(`${name}: spec let=${withLet.has(name)} takesLet=${row.takesLet === true}`);
     }
     expect(wrong).toEqual([]);
+    expect(withLet.size).toBeGreaterThan(0);
   });
 });

@@ -345,7 +345,7 @@ export function lists(name: string, where: Position): boolean {
 
 // ── the facts the emit phase reads ───────────────────────────────────────────
 
-import type { Binds, BodyRule, DocumentEffect, TypeExpr } from "../registry/vocabulary.ts";
+import type { Binds, DocumentEffect, TypeExpr } from "../registry/vocabulary.ts";
 import type { CallbackParams } from "../registry/vocabulary.ts";
 import { PRODUCTIONS } from "../registry/productions.ts";
 
@@ -353,7 +353,7 @@ type EmitRow = {
   returns?: TypeExpr;
   params?: CallbackParams;
   binds?: Binds;
-  shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
+  shape?: "single" | "array" | "none" | "flex" | "verbatim" | "object";
   family?: Family;
   spreadAlternative?: string;
   newKeyword?: "required" | "optional" | "forbidden";
@@ -447,12 +447,6 @@ export function takesLetOf(stage: string): boolean {
   return (row(stage) as { takesLet?: true } | undefined)?.takesLet === true;
 }
 
-/** The object-shaped operator's body rule, or undefined for any other shape. */
-export function bodyRuleOf(name: string): BodyRule | undefined {
-  const shape = emitRow(name)?.shape;
-  return typeof shape === "object" && shape !== null ? (shape.object as BodyRule) : undefined;
-}
-
 /** The position a row states for its OPERAND, where it is not the row's own language. */
 export function operandPositionOf(name: string): Position | undefined {
   return (row(name) as { operandPosition?: Position } | undefined)?.operandPosition;
@@ -463,29 +457,14 @@ export function liftsToOf(name: string): { op: string; negated?: true } | undefi
   return (row(name) as { liftsTo?: { op: string; negated?: true } } | undefined)?.liftsTo;
 }
 
-/**
- * A STAGE's stated body rule, or undefined when the row states none.
- * A stage's body is its own field, not the `shape.object` an operator uses.
- */
-export function stageBodyRuleOf(name: string): BodyRule | undefined {
-  return (row(name) as { body?: BodyRule } | undefined)?.body;
-}
-
 /** The operator that does a STAGE's job on a value (`$match` → `$filter`), or undefined. */
 export function valueTwinOf(name: string): string | undefined {
   return (row(name) as { valueTwin?: string } | undefined)?.valueTwin;
 }
 
-/** A STAGE's own smallest correct call, for the refusal of a wrong-type body; undefined when the row states none. */
-export function bodyExampleOf(name: string): string | undefined {
-  return (row(name) as { bodyExample?: string } | undefined)?.bodyExample;
-}
-
 /** How a MongoDB operator's operand list is written, or undefined for a stage or a name. */
 export function operandShapeOf(name: string): "single" | "array" | "none" | "flex" | "verbatim" | "object" | undefined {
-  const shape = emitRow(name)?.shape;
-  if (shape === undefined) return undefined;
-  return typeof shape === "string" ? shape : "object";
+  return emitRow(name)?.shape;
 }
 
 /** The JavaScript form that takes a spread and lowers to this operator, or undefined. */
