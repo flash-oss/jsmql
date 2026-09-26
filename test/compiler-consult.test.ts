@@ -97,7 +97,9 @@ describe("compiler/emit/consult — the other verdicts", () => {
     // A production has four cells and a name has six, and both are right. Only a
     // MongoDB operator is ever specific to an update document, and a production is
     // never an accumulator: `$cond` inside `$group` sits in an accumulator's
-    // ARGUMENT, which is value position, not the accumulator slot itself.
+    // ARGUMENT, which is value position, not the accumulator slot itself. A `$op` row
+    // has a cell exactly where its `where` lists the position: a call anywhere else
+    // is the developer's own MQL, and it takes HR2's plain form.
     const allowed: Readonly<Record<string, readonly Position[]>> = {
       production: ["group", "window", "updateDoc"],
       name: ["updateDoc"],
@@ -105,9 +107,10 @@ describe("compiler/emit/consult — the other verdicts", () => {
     const odd = pairs()
       .filter(([n, p]) => consult(n, p).kind === "noCell")
       .filter(([n, p]) => {
+        const row = (NAMES as Record<string, { kind?: string; where?: readonly string[] }>)[n];
+        if (row?.kind === "mongo") return row.where?.includes(p) === true;
         const kind = n in PRODUCTIONS ? "production" : "name";
-        const mongo = (NAMES as Record<string, { kind?: string }>)[n]?.kind === "mongo";
-        return mongo || !allowed[kind].includes(p);
+        return !allowed[kind].includes(p);
       })
       .map(([n, p]) => `${n} @ ${p}`);
     expect(odd).toEqual([]);

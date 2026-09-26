@@ -1959,13 +1959,17 @@ describe("chained stage calls on the current stream", () => {
 
     it("rejects a stage link whose receiver is a value, not a stream", () => {
       expect(() => jsmql("$.out = $.items.$match({ a: 1 });")).toThrow(
-        "'$match' is a pipeline stage, not an expression — MongoDB has no '$match' expression operator, so '{ $match: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$match(…);') or as a chain link ('$$.$match(…)'). For the value-position equivalent, use '$filter(…)'.",
+        "'.$match()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.$match(…)') or as a pipeline statement ('$match(…);'). For the value form, use '$filter(…)'.",
+      );
+      // A stage with no value twin names the two stream spellings alone.
+      expect(() => jsmql("$.out = $.items.$bucket({ groupBy: 1 });")).toThrow(
+        "'.$bucket()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.$bucket(…)') or as a pipeline statement ('$bucket(…);').",
       );
     });
 
     it("rejects a stage link after the chain has collapsed to a value", () => {
       expect(() => jsmql("$.out = $$$.orders.filter({ a: 1 }).map('x').uniq().$limit(5);")).toThrow(
-        "'$limit' is a pipeline stage, not an expression — MongoDB has no '$limit' expression operator, so '{ $limit: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(…);') or as a chain link ('$$.$limit(…)'). For the value-position equivalent, use '$slice(…)'.",
+        "'.$limit()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.$limit(…)') or as a pipeline statement ('$limit(…);'). For the value form, use '$slice(…)'.",
       );
     });
   });

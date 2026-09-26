@@ -471,6 +471,11 @@ export function stageBodyRuleOf(name: string): BodyRule | undefined {
   return (row(name) as { body?: BodyRule } | undefined)?.body;
 }
 
+/** The operator that does a STAGE's job on a value (`$match` → `$filter`), or undefined. */
+export function valueTwinOf(name: string): string | undefined {
+  return (row(name) as { valueTwin?: string } | undefined)?.valueTwin;
+}
+
 /** A STAGE's own smallest correct call, for the refusal of a wrong-type body; undefined when the row states none. */
 export function bodyExampleOf(name: string): string | undefined {
   return (row(name) as { bodyExample?: string } | undefined)?.bodyExample;

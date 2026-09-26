@@ -10,7 +10,7 @@
 import type { Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
 import { unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
-import type { StageFacts } from "../../src/registry/names.ts";
+import type { MongoRow, StageFacts } from "../../src/registry/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
 import { ANY } from "../../src/compiler/emit/type.ts";
 import { Chain, Env, type Site } from "../../src/compiler/emit/env.ts";
@@ -99,6 +99,22 @@ export const effectAlone: StageFacts = { document: "keeps" };
 export const noEvaluates: StageFacts = { body: { required: [], optional: [], closed: false }, document: "keeps" };
 // @ts-expect-error — evaluated paths on a row that is not a stage
 export const evaluatesAlone: StageFacts = { evaluates: [""] };
+
+// ── a `$op` row states the rule of each listed position, and no refusal ──────
+// A `$op(…)` call is the developer's own MQL: a position that `where` omits takes
+// HR2's plain form, so a refusal there would state a message that nobody sees.
+
+const operand = { args: { sig: "operand", exact: 1 }, emit: () => ({}) } as const;
+export const mongoRow: MongoRow<readonly ["value"]> = { doc: "d", where: ["value"], expr: operand };
+// @ts-expect-error — a listed position without its rule
+export const mongoRuleMissing: MongoRow<readonly ["value"]> = { doc: "d", where: ["value"] };
+export const mongoRefusal: MongoRow<readonly ["value"]> = {
+  doc: "d",
+  where: ["value"],
+  expr: operand,
+  // @ts-expect-error — a refusal on a position that `where` omits
+  group: unsupported("x"),
+};
 
 // ── the environment record: nothing optional, no literal, no spread ──────────
 

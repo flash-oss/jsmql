@@ -163,6 +163,25 @@ describe("registry — a `statement` body slot says WHAT it holds", () => {
   });
 });
 
+describe("registry — each `valueTwin` names an operator with a value form", () => {
+  // `$.items.$match(…)` names the twin in its refusal, so the twin must be a real
+  // operator that a value takes, and the fact must sit on a stage.
+  it("states `valueTwin` on a stage, naming an operator whose row lists `value`", () => {
+    const wrong: string[] = [];
+    let stated = 0;
+    for (const [name, row] of Object.entries(NAMES) as [string, { valueTwin?: string; bodyPositions?: unknown }][]) {
+      if (row.valueTwin === undefined) continue;
+      stated++;
+      if (row.bodyPositions === undefined) wrong.push(`${name}: valueTwin on a row that is not a stage`);
+      const twin = (NAMES as Record<string, { kind?: string; where?: readonly string[] }>)[row.valueTwin];
+      if (twin?.kind !== "mongo" || twin.where?.includes("value") !== true)
+        wrong.push(`${name}: valueTwin '${row.valueTwin}' is not an operator with a value form`);
+    }
+    expect(wrong).toEqual([]);
+    expect(stated).toBeGreaterThan(0);
+  });
+});
+
 describe("registry — `keys` and `takesLet` sit on the rows they describe", () => {
   type Facts = {
     kind?: string;

@@ -119,8 +119,8 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
   (`BINARY_OPS` in ast.ts, `EVALUABLE_TYPES` and `NOT_ASKED_TYPES` in fold.ts).
   Never keep a hand copy of it in a second file.
 - **Every rejection quotes the registry.** A message is either a row's own
-  `unsupported(...)` text or built from a row's `args.sig`. No phase writes prose
-  the registry could have carried.
+  `unsupported(...)` text or built from a row's facts (`args.sig`, `valueTwin`).
+  No phase writes prose the registry could have carried.
 - **Positions come from `where`, never from a tree probe.** If a construct is
   legal somewhere, its row says so, and phase 4 reads this. A stage body can mix
   positions. The row states the layout in `bodyPositions`; never derive the

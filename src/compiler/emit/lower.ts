@@ -24,7 +24,9 @@ import {
   flattensChain,
   isCallable,
   isGlobalName,
+  isStageName,
   namespaceNames,
+  valueTwinOf,
   newKeywordOf,
   positionalKeysOf,
   productionForNode,
@@ -662,6 +664,10 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   const receiver = receiverOf(recvNode, recvEnv);
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name)) {
     throw E.streamAsValue(node.pos);
+  }
+  // `$.items.$match(…)` is JSMQL code with no MQL: a stage runs on a stream.
+  if (node.type === "MethodCall" && receiver.kind !== "stream" && isStageName(name)) {
+    throw E.stageOnValue(name, valueTwinOf(name), node.pos);
   }
   const exprArgs = args.filter(isExpr);
   // What each argument PROVABLY is. A branch whose slot cannot take it drops out

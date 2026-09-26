@@ -250,7 +250,7 @@ A breaking API change must use `feat!:` or `fix!:`, and must bump the major vers
 
 ### Adding a new MongoDB operator
 1. Check that the operator exists in `vendor/mql-specifications/definitions/expression/<name>.yaml`, or in `definitions/accumulator/` or `definitions/query/`. When it does not exist there, bump the pinned commit in `vendor/fetch-mql-specs.mjs`, or add the operator to `REGISTRY_ONLY` in `test/operator-spec-coverage.test.ts` with a comment.
-2. Add a `$name: mongo({ … })` row to `src/registry/names.ts`: its `where`, one cell per position (a rule, or a refusal that names the alternative), a `returns` value measured on a running `mongod`, and the one-sentence description taken from the spec YAML. Every fact the emitter needs must sit on the row; see src/registry/CLAUDE.md.
+2. Add a `$name: mongo({ … })` row to `src/registry/names.ts`: its `where`, one rule cell per position that `where` lists (a position that `where` omits states no cell, because a call there takes HR2's plain form), a `returns` value measured on a running `mongod`, and the one-sentence description taken from the spec YAML. Every fact the emitter needs must sit on the row; see src/registry/CLAUDE.md.
 3. Add a case to the matching `test/compiler-*.test.ts` suite. Run the case on `mongod` when a shape's validity is in doubt.
 4. When the operator has user-visible syntax, update `docs/LANGUAGE.md`. The drift tests (`test/operator-spec-coverage.test.ts`, `test/registry-agrees.test.ts`) catch a missing description or category.
 

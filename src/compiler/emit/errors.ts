@@ -634,6 +634,13 @@ export const spreadOfString = (pos: number): CodegenError =>
     pos,
   );
 
+/** `$.items.$match(…)` — a stage called on a value. A stage runs on a stream, and no MQL holds a stage over a value. */
+export const stageOnValue = (name: string, twin: string | undefined, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name}(…)') or as a pipeline statement ('${name}(…);').${twin === undefined ? "" : ` For the value form, use '${twin}(…)'.`}`,
+    pos,
+  );
+
 /** A statement after the stage that writes the pipeline's output. */
 export const afterTerminalStage = (already: string, pos: number): CodegenError =>
   new CodegenError(

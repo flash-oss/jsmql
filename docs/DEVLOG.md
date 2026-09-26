@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — refactor: a `$op` row states no refusal
+
+A `$op(…)` call is the developer's own MQL, and it takes HR2's plain form wherever
+its row states no rule (HR3 does not apply to it). So the 1329 `unsupported(…)`
+cells on the `mongo` rows stated messages that nobody saw. They are gone, and
+[src/registry/names.ts](../src/registry/names.ts) is about 2600 lines shorter.
+
+The types hold the new rule. A `$op` row must state the rule of each position that
+its `where` lists (`ListedCells`), and a position that `where` omits states no cell,
+except the filter's `viaFallback`. [test/types/registry-contracts.ts](../test/types/registry-contracts.ts)
+holds a pair for each half.
+
+One refusal read a stage row's text: a stage called on a value,
+`$.items.$match({ a: 1 })`. That call is JSMQL code with no MQL, so it stays
+refused, and a stage-row fact, `valueTwin`, names the operator that does the same
+job on a value: "… For the value form, use '$filter(…)'." Ten stage rows state it,
+and [test/registry-agrees.test.ts](../test/registry-agrees.test.ts) holds each one
+against a row with a value form. No output changes.
+
+---
+
 ## 2026-09-26 — feat: the TypeScript globals never refuse a `$` call
 
 A `$op(…)` or `$stage(…)` call is the developer's own MQL, and the compiler takes it
