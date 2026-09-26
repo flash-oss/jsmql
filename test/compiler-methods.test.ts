@@ -1976,6 +1976,46 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         },
       },
     });
+    // A list of pairs written in the source is the `$map` input itself, with no extra array level.
+    expect(
+      compiled('Object.fromEntries([["a", 1], ["b", $.n]])', (d) =>
+        Object.fromEntries([
+          ["a", 1],
+          ["b", d.n],
+        ]),
+      ),
+    ).toEqual({
+      $arrayToObject: {
+        $map: {
+          input: [
+            ["a", 1],
+            ["b", "$n"],
+          ],
+          as: "jsmqlP",
+          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+        },
+      },
+    });
+    // A number key becomes a string key, as in JavaScript.
+    expect(
+      compiled('Object.fromEntries([[7, $.neg], ["b", 1]])', (d) =>
+        Object.fromEntries([
+          [7, d.neg],
+          ["b", 1],
+        ]),
+      ),
+    ).toEqual({
+      $arrayToObject: {
+        $map: {
+          input: [
+            [7, "$neg"],
+            ["b", 1],
+          ],
+          as: "jsmqlP",
+          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+        },
+      },
+    });
   });
 
   it("applies a bare callable global to each element", () => {

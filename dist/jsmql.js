@@ -12177,7 +12177,8 @@ var NAMES = {
         array: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
         Object: {
           args: { sig: "entries", exact: 1 },
-          emit: ({ args, value, bind }) => pairsToObject(singleArrayArg(value(args[0])), bind("p"))
+          // `$map.input` is an expression slot, where a literal array is the list itself.
+          emit: ({ args, value, bind }) => pairsToObject(value(args[0]), bind("p"))
         }
       }
     },

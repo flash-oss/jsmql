@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: `Object.fromEntries` reads the pairs that you wrote
+
+`Object.fromEntries([["a", 1], ["b", $.x]])` gave the wrong document. On
+`{ x: 7 }` the server answered `{ '["a",1]': ["b", 7] }`, and JavaScript
+answers `{ a: 1, b: 7 }`. The `Object` cell of the `fromEntries` row in
+[src/registry/names.ts](../src/registry/names.ts) wrapped the list with
+`singleArrayArg`. That helper adds one array level for an operator's operand
+slot, where the server reads a literal array as the argument list. But the list
+goes into `$map.input`, which is an expression slot, and there a literal array
+is the array itself. So `$map` saw one element, the whole list.
+
+The cell now gives the list to `pairsToObject` as it is. A list from a field
+(`Object.fromEntries($.pairs)`) did not change, because the helper does not
+change a value that is not an array. [test/compiler-methods.test.ts](../test/compiler-methods.test.ts)
+compares two written lists with JavaScript's answer on mongod, one of them with
+a number key.
+
+---
+
 ## 2026-09-26 — docs: a cheap sub-agent checks new and edited prose against STE
 
 The root [CLAUDE.md](../CLAUDE.md) now has one more step in § Write in Simplified
