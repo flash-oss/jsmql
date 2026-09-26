@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a regex keeps its dotAll flag, and a JavaScript `g` stays out of it
+
+The driver writes a JavaScript RegExp through `bson`'s `serializeRegExp`, and that
+writes only `i`, `m`, and the `global` flag as `s`. So two regexes that the compiler
+built from a regex literal gave the wrong answer on the server. MEASURED over
+`"a\nb"` and `"axb"`:
+
+```js
+jsmql("$.s.match(/a.b/s)")   // → { s: { $regex: /a.b/s } }: dotAll never arrived, and "a\nb" did not match
+jsmql("$.s.match(/a.b/g)")   // → { s: { $regex: /a.b/g } }: `g` arrived as dotAll, and "a\nb" matched
+```
+
+JavaScript answers the opposite in both cases. `regexValue` in
+[src/bson.ts](../src/bson.ts) now builds each such regex from MongoDB's options
+(`mongoRegexOptions`), and a regex whose options hold `s` is a `BSONRegExp`, which
+carries its options as written: `{ s: { $regex: new BSONRegExp("a.b", "s") } }`.
+Every other regex stays a JavaScript RegExp. This covers a regex literal in MQL
+that you write, the `.match()` query cell, and the `literal` service of a query
+cell. A regex that the caller passes at run time stays as the caller wrote it.
+[test/compiler-bson.test.ts](../test/compiler-bson.test.ts) holds the answers
+against JavaScript's own on a live mongod.
+
+---
+
 ## 2026-09-26 — fix: a JavaScript aggregate on an array literal runs in a `$group` slot
 
 A JavaScript aggregate in an accumulator slot gave MQL that the server refuses, when

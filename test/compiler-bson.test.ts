@@ -5,7 +5,7 @@
 // because a `toEqual` proves what jsmql emits and never that the server accepts it
 // (HR3). This suite self-skips (green) without a server. See docs/specs/bson-types.md.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID, type Collection } from "mongodb";
+import { BSONRegExp, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID, type Collection } from "mongodb";
 import { jsmql } from "../src/index.ts";
 import { liveClient, liveUp } from "./fixtures/live.ts";
 
@@ -206,6 +206,40 @@ describe.skipIf(!up)("compiler — each constant finds the stored document", () 
         found.map((d) => d._id),
         src,
       ).toEqual([1]);
+    }
+  });
+});
+
+describe("compiler — a regex keeps its MongoDB options on the wire", () => {
+  // The driver writes a JavaScript RegExp through `bson`, which writes only `i`, `m`,
+  // and the `global` flag as `s`. So the compiler emits a BSONRegExp where the options
+  // hold `s`, and it drops a JavaScript `g` before the regex reaches `bson`.
+  it("emits a BSONRegExp for dotAll, and a RegExp otherwise", () => {
+    expect(jsmql.filter("$.s.match(/a.b/s)")).toEqual({ s: { $regex: new BSONRegExp("a.b", "s") } });
+    expect(jsmql.filter("$.s.match(/a/gi)")).toEqual({ s: { $regex: /a/i } });
+    expect(jsmql.filter("{ s: /a.b/s }")).toEqual({ s: new BSONRegExp("a.b", "s") });
+    expect(jsmql.expr("$regexMatch({ input: $.s, regex: /a.b/is })")).toEqual({
+      $regexMatch: { input: "$s", regex: new BSONRegExp("a.b", "is") },
+    });
+  });
+
+  it.skipIf(!up)("selects the documents that JavaScript selects", async () => {
+    const texts = client!.db("jsmql_compiler_bson").collection("regex");
+    await texts.deleteMany({});
+    await texts.insertMany([
+      { _id: 1, s: "a\nb" },
+      { _id: 2, s: "axb" },
+    ]);
+    for (const [src, re] of [
+      ["$.s.match(/a.b/s)", /a.b/s],
+      ["$.s.match(/a.b/g)", /a.b/g],
+      ["{ s: /a.b/s }", /a.b/s],
+    ] as const) {
+      const found = await texts.find(jsmql.filter(src) as Record<string, unknown>).toArray();
+      const js = ["a\nb", "axb"].flatMap((t, i) =>
+        new RegExp(re.source, re.flags.replace("g", "")).test(t) ? [i + 1] : [],
+      );
+      expect([src, found.map((d) => d._id)]).toEqual([src, js]);
     }
   });
 });

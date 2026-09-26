@@ -120,13 +120,25 @@ banned tests.
 | file | what it does |
 |---|---|
 | `src/registry/vocabulary.ts` | `bsonTagOf` and the realm-independent recognisers — `isDate`, `isRegExp`, `isBytes`, `isPlainObject` |
-| `src/bson.ts` | the classes, `isBsonType`, `isUUID`, `isObjectId`, `objectIdHex`; re-exports the vocabulary's recognisers |
+| `src/bson.ts` | the classes, `isBsonType`, `isUUID`, `isObjectId`, `objectIdHex`, `regexValue`; re-exports the vocabulary's recognisers |
 | `src/compiler/passes/literal.ts` | a value ⇄ the AST literal that spells it |
 | `src/compiler/passes/fold-methods.ts` | the exact reads a fold may run on a constant |
 | `src/compiler/emit/prove.ts` | the type a value proves |
 | `src/compiler/emit/filter.ts` | whether the query language compares it as written |
 | `src/compiler/emit/lower.ts` | a literal to the value the driver sends |
 | `src/stringify.ts` | the value as the JavaScript that rebuilds it — tag-keyed, never `instanceof` |
+
+## A regex the source spells
+
+`regexValue` in `src/bson.ts` builds each regex that the compiler makes from a regex
+literal: in MQL that the developer writes, in a query cell (`.match(/x/)` →
+`{ $regex: … }`), and through the `literal` service of a query cell. The driver writes
+a JavaScript RegExp through `bson`'s `serializeRegExp`, which writes only `i`, `m`, and
+the `global` flag as `s`. MEASURED: `{ s: /a.b/s }` does not match `"a\nb"`, and
+`{ s: /a.b/g }` does. So the options go through `mongoRegexOptions` first, which drops
+every JavaScript flag with no MongoDB option (`g`, `y`, `d`, `u`, `v`), and a regex whose options hold `s` is a `BSONRegExp`, which
+carries its options as written. Every other regex stays a JavaScript RegExp. A regex
+that the caller passes at run time is the caller's own value, and stays as it is (HR1).
 
 ## The nine the source can spell
 

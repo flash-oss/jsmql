@@ -296,6 +296,13 @@ jsmql.expr(`$regexMatch({ input: $.name, regex: /^a/ })`)    // → { $regexMatc
 jsmql(`$.name.match(/^a/i)`)                                 // → { name: { $regex: /^a/i } }   (the JavaScript method)
 ```
 
+A regex with the dotAll flag `s` comes out as a `BSONRegExp`, because the driver drops `s` from a JavaScript RegExp on the way to the server. The JavaScript flags `g` and `y` go, because MongoDB has no such option:
+
+```js
+jsmql(`({ note: /a.b/s })`)                                  // → { note: new BSONRegExp("a.b", "s") }
+jsmql(`$.note.match(/a.b/gi)`)                               // → { note: { $regex: /a.b/i } }
+```
+
 There is one exception, for safety. A **runtime-injected** value (a `jsmql.compile`
 parameter or a template-tag `${…}` interpolation) that looks like `"$x"` *is*
 wrapped in `$literal` in expression position. This stops untrusted input from

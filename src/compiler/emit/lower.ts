@@ -12,7 +12,7 @@
 import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId } from "../../bson.ts";
+import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
@@ -170,7 +170,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
       // Inside MQL the developer wrote — an argument of a `$`-named call, a value under a
       // `$` key — a regex literal is a BSON regex, as HR1 says. JavaScript code reads a
       // regex only through the regex methods.
-      if (env.site.inside !== null) return new RegExp(node.pattern, mongoRegexOptions(node.flags));
+      if (env.site.inside !== null) return regexValue(node.pattern, mongoRegexOptions(node.flags));
       throw E.regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);

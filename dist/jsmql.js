@@ -3461,11 +3461,11 @@ var NAMES = {
     // argument to `.match` and its siblings, never an element of a written list.
     filter: {
       args: { sig: "regexp", exact: 1 },
-      emit: ({ recv, args, pathOf: pathOf3 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, literal: literal2 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
-        return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) });
+        return queryOwnValue(path, { $regex: literal2(re) });
       }
     },
     expr: {
@@ -15230,6 +15230,9 @@ var MAXSIZE = 1024 * 1024 * 17;
 var buffer = ByteUtils.allocate(MAXSIZE);
 
 // src/bson.ts
+function regexValue(pattern, options) {
+  return options.includes("s") ? new BSONRegExp(pattern, options) : new RegExp(pattern, options);
+}
 function isBsonType(v, cls, tag) {
   return v instanceof cls || bsonTagOf(v) === tag;
 }
@@ -22760,7 +22763,7 @@ function rawValue(e, env) {
     return { [e.name]: rawValue(e.args[0], env) };
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
-  if (e.type === "RegexLiteral") return e.injected ?? new RegExp(e.pattern, mongoRegexOptions(e.flags));
+  if (e.type === "RegexLiteral") return e.injected ?? regexValue(e.pattern, mongoRegexOptions(e.flags));
   if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
     throw expressionInQueryValue(e.pos);
   }
@@ -23252,7 +23255,7 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
       return path;
     },
     literal: (e) => {
-      if (e.type === "RegexLiteral") return new RegExp(e.pattern, mongoRegexOptions(e.flags));
+      if (e.type === "RegexLiteral") return regexValue(e.pattern, mongoRegexOptions(e.flags));
       const c = literalIn(e);
       if (c === null) throw needsLiteral(name2, e.pos);
       return c.value;
@@ -23464,7 +23467,7 @@ function lowerValue(node, env) {
       throw undefinedAsValue(node.pos);
     case "RegexLiteral":
       if (node.injected !== void 0) return node.injected;
-      if (env.site.inside !== null) return new RegExp(node.pattern, mongoRegexOptions(node.flags));
+      if (env.site.inside !== null) return regexValue(node.pattern, mongoRegexOptions(node.flags));
       throw regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);

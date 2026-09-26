@@ -7,6 +7,7 @@
 // type, and there is exactly one constructor, so a renderer cannot be handed a
 // record with a service missing.
 
+import { regexValue } from "../../bson.ts";
 import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth } from "../../registry/vocabulary.ts";
 import type { Pipeline } from "../../registry/ast.ts";
 import { orderBySpec, sortSpecOf, streamSortAsk } from "./sort-spec.ts";
@@ -433,7 +434,7 @@ export function filterInputs(
       return path;
     },
     literal: (e) => {
-      if (e.type === "RegexLiteral") return new RegExp(e.pattern, mongoRegexOptions(e.flags));
+      if (e.type === "RegexLiteral") return regexValue(e.pattern, mongoRegexOptions(e.flags));
       const c = literalIn(e);
       if (c === null) throw needsLiteral(name, (e as { pos: number }).pos);
       return c.value;

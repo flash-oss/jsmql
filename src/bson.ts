@@ -21,6 +21,7 @@ export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from 
 import { bsonTagOf, isBytes, isPlainObject } from "./registry/vocabulary.ts";
 import {
   Binary,
+  BSONRegExp,
   Decimal128 as Decimal128Class,
   Double as DoubleClass,
   Int32 as Int32Class,
@@ -34,6 +35,19 @@ import {
 // The tag reader needs no `bson` import, so it lives in the registry's vocabulary,
 // where a ROW can read it too. This file re-exports it, so the compiler has one name.
 export { bsonTagOf, BSON_KIND, isBytes, isDate, isPlainObject, isRegExp } from "./registry/vocabulary.ts";
+
+/**
+ * A regex that the compiler builds from the source, as the server must read it.
+ * `options` holds MongoDB's options (`mongoRegexOptions` in src/registry/mql.ts). The
+ * driver writes a JavaScript RegExp through `bson`'s `serializeRegExp`, and that writes
+ * only `i`, `m`, and the `global` flag as `s`: a dotAll `s` never arrives. MEASURED:
+ * `{ s: /a.b/s }` does not match "a\nb", and `{ s: /a.b/g }` does. So a regex whose
+ * options hold `s` is a `BSONRegExp`, which carries its options as written, and every
+ * other regex stays the RegExp the developer wrote.
+ */
+export function regexValue(pattern: string, options: string): RegExp | BSONRegExp {
+  return options.includes("s") ? new BSONRegExp(pattern, options) : new RegExp(pattern, options);
+}
 
 /**
  * Is `v` the named BSON type? `cls` is the class from THIS copy of `bson`. `tag` is

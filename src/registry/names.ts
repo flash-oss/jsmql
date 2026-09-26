@@ -4298,11 +4298,13 @@ export const NAMES = {
     // argument to `.match` and its siblings, never an element of a written list.
     filter: {
       args: { sig: "regexp", exact: 1 },
-      emit: ({ recv, args, pathOf }) => {
+      emit: ({ recv, args, pathOf, literal }) => {
         const path = recv === null ? null : pathOf(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
-        return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) });
+        // `literal` builds the regex with MongoDB's options, so a JavaScript `g` does not
+        // reach the wire as dotAll, and a dotAll `s` does not go missing (src/bson.ts).
+        return queryOwnValue(path, { $regex: literal(re) });
       },
     },
     expr: {

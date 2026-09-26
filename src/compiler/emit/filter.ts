@@ -24,7 +24,7 @@ import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
 import { isMqlShaped } from "../passes/inject.ts";
-import { bsonTagOf, isDate, isPlainObject, isRegExp, longsWithin, ObjectId } from "../../bson.ts";
+import { bsonTagOf, isDate, isPlainObject, isRegExp, longsWithin, ObjectId, regexValue } from "../../bson.ts";
 import { consult, listedIn } from "./consult.ts";
 import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
@@ -339,7 +339,7 @@ function rawValue(e: Expr, env: Env): unknown {
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
   // A regex literal in the developer's own query document is a BSON regex, as HR1 says:
   // `{ name: /^a/ }`, `{ name: { $regex: /^a/ } }`, `{ name: { $not: /^a/ } }`.
-  if (e.type === "RegexLiteral") return e.injected ?? new RegExp(e.pattern, mongoRegexOptions(e.flags));
+  if (e.type === "RegexLiteral") return e.injected ?? regexValue(e.pattern, mongoRegexOptions(e.flags));
   // A computed expression is neither a value nor a query operator. `{ a: $.b > 1 }`
   // becomes `{ a: { $gt: ["$b", 1] } }`, which the server ACCEPTS and matches
   // nothing. This is the silent kind of wrong answer. A constant that happens
