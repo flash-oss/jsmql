@@ -310,7 +310,7 @@ const NOT_ASKED_TYPES = [
   "ArrayLiteral",
   "ObjectLiteral",
   "FieldRef",
-  "CollectionRef",
+  "StreamRef",
   "DatabaseRef",
   "ClusterRef",
   "Ident",

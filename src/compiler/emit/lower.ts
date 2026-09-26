@@ -36,7 +36,7 @@ import {
   elementsOf,
   soleFieldFamilyOf,
   hasStreamValueCell,
-  emptyCollectionOf,
+  emptyValueOf,
   bareCallableNames,
   constructibleNames,
   positionsOf,
@@ -186,7 +186,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
       // written with it holds the key: `x: null`. A bare path would leave the key out.
       return node.optional === true ? { $ifNull: [path, null] } : path;
     }
-    case "CollectionRef":
+    case "StreamRef":
     case "DatabaseRef":
     case "ClusterRef":
       return rootAsValue(node, env);
@@ -382,7 +382,7 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       const t = typeOf(el.argument, inner);
       if (isOnly(t, "string")) throw E.spreadOfString(el.argument.pos);
       if (cannotBe(t, "array")) throw E.spreadNotAnArray(E.nounOfKinds(t), el.argument.pos);
-      // HR5 reads a missing collection as the empty one: `[...$.a, 1]` is `[1]` when `a`
+      // HR5 reads a missing array as the empty one: `[...$.a, 1]` is `[1]` when `a`
       // is not there. `$concatArrays` answers null for a null operand, and the mutator
       // templates (`.pop()`, `.fill()`) spread the receiver into a `$size`, which aborts
       // on a missing value. A value the proof shows present takes no wrap. The list the
@@ -413,16 +413,28 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
     for (const e of list) {
       if (e.type !== "KeyValueEntry" || e.key.kind !== "static")
         internalError("a non-static entry reached the static path");
-      // `{ $setUnion: $.x }` — a list-only operator with a lone non-array operand is the
-      // shape the server refuses, on this spelling as on the call.
       // In an update document an operator key is that operator's own cell: `{ $each: [...], $slice: -3 }` under `$push`.
       if (e.key.name.startsWith("$") && positionIn(inner) === "updateDoc") {
         const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
         if (doc !== null && typeof doc === "object") Object.assign(out, doc as Record<string, unknown>);
         continue;
       }
-      if (e.key.name.startsWith("$") && operandShapeOf(e.key.name) === "array" && e.value.type !== "ArrayLiteral") {
-        throw E.listOperand(e.key.name, e.value.pos);
+      // `{ $add: "$x" }` — a list-only operator with ONE operand that is not an array
+      // literal — and `{ $size: [1, 2] }` — a one-operand operator with a written operand
+      // list. The call spelling lowers each, so the row's count judges both spellings
+      // (HR2): `{ $add: "$x" }` and `{ $size: [[1, 2]] }` stay as written, and
+      // `{ $divide: 10 }` and `{ $size: [1, 2] }` are refused as their calls are, because
+      // the server refuses them.
+      const keyShape = e.key.name.startsWith("$") ? operandShapeOf(e.key.name) : undefined;
+      if (
+        (keyShape === "array" && e.value.type !== "ArrayLiteral") ||
+        (keyShape === "single" && e.value.type === "ArrayLiteral")
+      ) {
+        const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
+        const own = doc !== null && typeof doc === "object" ? (doc as Record<string, unknown>)[e.key.name] : undefined;
+        if (own === undefined) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
+        setKey(out, e.key.name, own);
+        continue;
       }
       setKey(out, e.key.name, lowerValue(e.value, inner));
     }
@@ -631,7 +643,7 @@ function receiverOf(recv: Expr, env: Env): Receiver {
   const src = sourceFamily(recv);
   if (src !== null && NAMESPACES.has(src))
     return { kind: "namespace", name: src as Receiver extends { name: infer N } ? N : never };
-  if (recv.type === "CollectionRef" || onOwnStream(recv, env)) return { kind: "stream" };
+  if (recv.type === "StreamRef" || onOwnStream(recv, env)) return { kind: "stream" };
   // A regex has no value of its own: its row reads the pattern and flags off the
   // source node, so the node itself is handed over.
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
@@ -680,7 +692,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   // A value the stream itself answers (`$$.size()`, the document count) is a value of
   // its own and passes: the row states a stream cell in its VALUE position.
   const chainOnStream =
-    recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "CollectionRef";
+    recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "StreamRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw E.streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
@@ -704,15 +716,15 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     }
     checkSlots(name, sel.rule.args, exprArgs);
     checkSlotKinds(name, sel.rule.args, exprArgs, kinds);
-    // HR5: under a dot, a method on a collection that may be null or missing runs on
-    // the EMPTY collection of its family — `[]` for an array method, `{}` for an object
+    // HR5: under a dot, a method on a receiver that may be null or missing runs on
+    // the EMPTY value of its family — `[]` for an array method, `{}` for an object
     // method — so the operator answers what it answers there, and the cell sees a
     // receiver that is present. A receiver the proof shows present takes no wrap. A
     // `?.` never reaches here with an absent receiver: the chain stopped above and
     // proved the path. A string method keeps its receiver, and answers null itself.
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : (sel.family ?? soleFieldFamilyOf(name));
-    const empty = emptyCollectionOf(name, family);
+    const empty = emptyValueOf(name, family);
     // Only where the receiver is a VALUE of the document: inside `$group` or a window
     // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
     // each document's `a` as it is.
@@ -904,8 +916,10 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   const hosts = onlyInsideOf(node.name, position);
   if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(node.name, hosts, node.pos);
   // The operand LIST of a list-only operator may be written as one array literal:
-  // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone scalar there is the shape the
-  // server refuses, and is refused here in the same words.
+  // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone operand that is not an array
+  // literal is ONE operand (HR1, HR2): `$add($.x)` is `{ $add: "$x" }`, as the server
+  // reads it. The row's count decides whether one operand is enough — `$divide`
+  // takes exactly two. MEASURED on every list-only row.
   // The operand shape is the EXPRESSION form's. In an update document the row's updateDoc cell states its own.
   const shape = position === "updateDoc" ? undefined : operandShapeOf(node.name);
   const first = node.args[0];
@@ -917,17 +931,7 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   let operands: readonly Expr[] = node.args.filter(isExpr);
   let count = node.args.length;
   const overrides = new Map<Expr, unknown>();
-  if (
-    lone !== null &&
-    shape === "single" &&
-    !lone.elements.some((el) => el.type === "SpreadElement") &&
-    lone.elements.length >= 2
-  ) {
-    // A 1-operand operator given a two-or-more-element array can only mean the
-    // array VALUE — the server would read the literal as two arguments — so it is
-    // wrapped once: `$arrayToObject([[k, v], [k, v]])` → `{ $arrayToObject: [[…]] }`.
-    overrides.set(lone, [lowerValue(lone, childEnv(env, node, "args"))]);
-  } else if (lone !== null && shape !== undefined && shape !== "object" && shape !== "verbatim") {
+  if (lone !== null && shape !== undefined && shape !== "object" && shape !== "verbatim") {
     if (lone.elements.some((el) => el.type === "SpreadElement")) {
       // A list with a spread is one array-valued expression: the operand list at runtime.
       if (shape === "array") return { [node.name]: lowerValue(lone, childEnv(env, node, "args")) };
@@ -943,18 +947,14 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
       // A list operator renders the elements. A single or flex one renders the array as written.
       if (shape === "array") args = operands;
     }
-  } else if (
-    shape === "array" &&
-    node.args.length === 1 &&
-    first.type !== "SpreadElement" &&
-    verdict.kind !== "refused"
-  ) {
-    throw E.listOperand(node.name, first.pos);
   }
+  const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr);
   const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
+    // `$size([1, 2])` is two operands, not one array: say so, where the count alone would not.
+    if (sel.kind === "wrongCount" && lone !== null) throw E.operandListCount(node.name, sel.args, sel.got, node.pos);
     throw E.refusalFor(sel, node.name, "", position, node.pos, []);
   }
   const body = bodyRuleOf(node.name);
@@ -964,7 +964,20 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   // them, so `$let({ x: 1 }, (x) => x + 1)` reads `x` as `$$x`.
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
   const inputs = exprInputs(node.name, null, exprArgs, positionalKeysOf(node.name), env, node, READ, overrides);
-  return sel.rule.emit(inputs);
+  const out = sel.rule.emit(inputs);
+  return loneOperand ? asWritten(node.name, out) : out;
+}
+
+/**
+ * A list operator's one operand, as the developer wrote it (HR2): the rule renders
+ * the list `{ $add: ["$x"] }`, and `$add($.x)` is `{ $add: "$x" }`. A rule that
+ * renders another shape keeps it.
+ */
+function asWritten(name: string, out: unknown): unknown {
+  if (out === null || typeof out !== "object" || Array.isArray(out)) return out;
+  const keys = Object.keys(out);
+  const list = (out as Record<string, unknown>)[name];
+  return keys.length === 1 && keys[0] === name && Array.isArray(list) && list.length === 1 ? { [name]: list[0] } : out;
 }
 
 /** The `$let(vars, arrow)` form: the arrow's parameters must name the vars, and its body is the `in`. */

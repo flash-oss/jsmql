@@ -532,7 +532,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("rejects `delete $$` with the two forms that empty or narrow the stream", () => {
     expect(() => jsmql("delete $$;")).toThrow(
-      "'delete $$' would delete the stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'.",
+      "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'.",
     );
     // Both named forms compile.
     expect(jsmql("$$ = [];")).toEqual([{ $match: { $expr: false } }]);
@@ -2140,7 +2140,7 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
 
   it("rejects `$$ = …` and names $match", () => {
     expect(() => jsmql(wrap("$$ = $$.filter(d => d.a > 1)"))).toThrow(
-      "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'.",
+      "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, stream) => { stream.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'.",
     );
   });
 
@@ -2159,8 +2159,9 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
 
 describe("a lookup inside a literal sub-pipeline array", () => {
   // A hoist out of a sub-pipeline would be wrong: the `$lookup` would land in the outer
-  // pipeline while the reference to its result stayed inside, where the stream is a
-  // different collection whose documents never carry the outer scratch slot.
+  // pipeline while the reference to its result stayed inside, where the stream reads a
+  // different collection whose documents never carry the outer scratch slot. The field
+  // would read as missing, on every document, silently.
   const OUTER_WRITE =
     "The outer document cannot be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'). Write the outer field after the join.";
   it("is refused in a $unionWith or $lookup body (an outer write), and runs inside a $facet branch", () => {

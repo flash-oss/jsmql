@@ -62,13 +62,13 @@ $.x.indexOf(1)
 // → { $indexOfArray: [{ $ifNull: ["$x", []] }, 1] }
 ```
 
-**HR5 — a dot runs an array or object method on the empty collection.**
+**HR5 — a dot runs an array or object method on `[]` or `{}`.**
 `dispatchOn` (`emit/lower.ts`) wraps a receiver the proof does not show present
 in `{ $ifNull: [<recv>, []] }` for an array rule and `{ $ifNull: [<recv>, {}] }`
 for an object rule, before the cell runs, and hands the cell `present: true`.
 The family is the receiver's proven family, else the family the selected rule
 runs on (`Selected.family`, from a per-family cell), else the row's one field
-family. The operator then answers what it answers on the empty collection —
+family. The operator then answers what it answers on `[]` or `{}` —
 `[]`, `0`, `false`, `true`, missing — and every array or object method under a
 dot answers a value that is there. `statedPresence` (`emit/prove.ts`) says so:
 such a call is present when no `?.` sits on its spine, so a chain pays the one
@@ -86,7 +86,7 @@ test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
 `isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
 array, a `let` of a present value through the binding's proof, a `neverNull`
 row over present operands, a written field whose value was present, a path a
-`?.` proved through `Env.proving`, or a wrapped collection receiver), or proven
+`?.` proved through `Env.proving`, or an array or object receiver that `dispatchOn` wrapped), or proven
 at run time by the `$type` test of the dispatch branch the cell runs under. A
 row that dispatches on the receiver's type (`.indexOf`) lets null and missing
 fall to its `uncertain` default, which answers `-1`. The `neverNull` fact is
@@ -152,15 +152,16 @@ A MongoDB operator's `shape` is applied at the call, not in the renderer:
 ```js
 $setUnion([$.a, $.b])   // → {$setUnion:["$a","$b"]}     one array literal IS the operand list (HR2)
 $eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex operator; counted by its elements
-$setUnion($.a)          // refused: a list operator with one scalar (the server refuses it too)
+$setUnion($.a)          // → {$setUnion:"$a"}               one operand, as the server reads it: the row's count takes one
+$divide(10)             // refused: the row's count takes two, and the server refuses one too
 $and([])                // → {$and:[]}                    an explicit empty list passes where the row states `emptyList`
 $divide([])             // refused: nothing was written, and `$divide` states no empty list
 $concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:[{$ifNull:["$a",[]]},[[1]]]}}  a list with a spread is one array-valued expression
 $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto the first positional key
 $size([$.a])            // → {$size:["$a"]}               a 1-operand operator: one element is the operand list as written
-$size([$.a, 2])         // → {$size:[["$a",2]]}           two or more can only be the array VALUE — wrapped once
+$size([$.a, 2])         // refused: two operands — the array literal is the operand list, as in MQL
 $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       shape "verbatim": the operand is a value, never a list
-[$.a, 2].size()         // → {$size:[["$a",2]]}           a JavaScript lowering wraps an array LITERAL receiver itself
+[$.a, 2].size()         // → 2                            an array LITERAL holds one element per entry (`sizeOf`)
 ```
 
 `$let(vars, arrow)` binds the arrow's parameters to the vars, and both sides
@@ -490,7 +491,7 @@ $$.take(0);                       // → [{"$match":{"$expr":false}}]           
 A callback's FIRST parameter IS the stream's document: `d.x` is the path "x"
 in a predicate and `"$x"` in a reshape, and the bare `d` is `"$$ROOT"`. `$.x`
 inside the callback names the same document — the root — as HR4 says it does
-everywhere. The compiler binds the index and collection parameters lodash
+everywhere. The compiler binds the index and receiver parameters that lodash
 allows, and a READ of either says what to write instead (a stream has no
 per-document index; `$$.size()` is its size).
 
@@ -533,7 +534,7 @@ stage, rather than emitting a read of a field the stage took away. The way
 back is the one JavaScript allows: `x = …` on a dropped `let` writes its slot
 again, and the next statement reads it. A dropped `const` can only be carried
 as a field of the new document. Every name that has no value here — a
-dropped binding, a callback's index or collection parameter the stream
+dropped binding, a callback's index or receiver parameter that the stream
 cannot fill, a function inside its own body — is one `dropped` marker
 carrying the wording its read throws. This way the reason is worded where
 the name was taken away, and not guessed where it is read. `$$ = [ … ]`
@@ -671,12 +672,12 @@ refuses a read of the outer document inside it, and names the way out.
 **Inside the body.** The callback's parameter IS the body's document: `o.x`
 reads it, `o.x = …` / `delete o.x` write it (`$set` / `$unset`), `o = { … }`
 replaces it. The callback's THIRD parameter is the body's own stream:
-`coll.filter(…)` is a `$match` there, and `coll.size()` its count (a
+`stream.filter(…)` is a `$match` there, and `stream.size()` its count (a
 `$setWindowFields` inside the body). `$.` is the OUTER document and `$$` the
 ROOT stream at every depth (HR4): `$.x` is read-only from inside — the
 compiler refuses `$.x = …`, naming `o.x = …` — `$$.size()` is the root
 count, materialised on the root pipeline and carried in by `let`, and the
-compiler refuses `$$.filter(…)` inside a body, naming `coll`. A nested
+compiler refuses `$$.filter(…)` inside a body, naming `stream`. A nested
 `$$$.items.filter(…)` inside a predicate is hoisted inside the body's own
 chain, whose close runs its own cleanup, so no `__jsmql.tmp` scratch leaks
 into the joined array.

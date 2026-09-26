@@ -27,7 +27,7 @@ const _fromString: object | object[] = jsmql("$.age > 18");
 void [_pipeline, _either, _fromString];
 
 // ── Stream methods on the `$$` collection ref ────────────────────────────────
-// `$$` is an ambient `var $$: JsmqlCollectionRef`; every method returns the ref,
+// `$$` is an ambient `var $$: JsmqlStreamRef`; every method returns the ref,
 // so a chain stays completable. `.reject` is the special-cased complement of
 // `.filter` (it bypasses the STREAM_METHODS registry) — guard it explicitly.
 const _stream = $$.filter((d) => d.active)

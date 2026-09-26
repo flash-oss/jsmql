@@ -243,7 +243,7 @@ function received(program: Program): { what: string; hint: string } {
   }
   if (program.type === "UpdateFilter") {
     const target = program.ops[0]?.type === "AssignExpr" ? program.ops[0].target.type : null;
-    if (target === "CollectionRef") {
+    if (target === "StreamRef") {
       return {
         what: "a stream-replace `$$ = <expr>` (the pipeline stages its chain describes)",
         hint: "jsmql.pipeline(); for a Filter, pass the predicate to jsmql.filter() directly",

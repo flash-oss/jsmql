@@ -3,7 +3,7 @@
 ## Overview
 
 `$$.push(args...)` is the JSMQL surface for MongoDB's `$unionWith` stage. The
-receiver `$$` is the current-collection context-reference (`CollectionRef`).
+receiver `$$` is the root stream (`StreamRef`).
 `.push(...)` is the JS array-mutation idiom — append items to the end. This
 is also the semantic of `$unionWith` itself: take documents from another source
 and append them to the current stream.
@@ -78,7 +78,7 @@ server answered `{}` for, in silence.
 ## AST and parser
 
 No AST changes. `$$.push(...)` parses as a `MethodCall` whose `object` is a
-`CollectionRef`. Spread arguments (`...$$$.coll`) use the existing
+`StreamRef`. Spread arguments (`...$$$.coll`) use the existing
 `SpreadElement` in `CallArg`. Block-body lambdas inside spreads
 (`...$$$.coll.filter(o => { ... })`) work because `parsePostfix` already
 threads `allowBlockBody` when the method receiver chain is rooted at
@@ -97,7 +97,7 @@ or `[` after `$$` already accommodates `.push(...)`.
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (an outer read) | the no-`let` refusal above |
 | `$$.push(...$$$$.<db>.<coll>…)` (cross-database) | the cross-database refusal ([lookup-stage.md](lookup-stage.md)) |
 | `$$.push({ n: $$$.<coll>.find(p).<field> })` / `$$ = [{ n: … }]` — a value needing a stage | "'.push({ … })' writes the documents out as the program spells them, and this value needs a '$lookup' stage of its own to produce it … Append the other collection's documents themselves … or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter." |
-| `$$.push(...)` inside a `$lookup` body | "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'." |
+| `$$.push(...)` inside a `$lookup` body | "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, stream) => { stream.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'." |
 | `jsmql.filter("$$.push(...)")` | "jsmql.filter() expects a Filter (the document \`db.coll.find(filter)\` takes), but received a top-level 'push' stage call. Use jsmql.pipeline()." |
 | `jsmql.update("$$.push(...)")` | "An update document is made of writes … This is neither." |
 

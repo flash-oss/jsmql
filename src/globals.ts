@@ -2694,7 +2694,7 @@ declare global {
     [Symbol.iterator](): Iterator<any>;
     [key: string]: any;
   }
-  interface JsmqlCollectionRef extends JsmqlForeignRef {
+  interface JsmqlStreamRef extends JsmqlForeignRef {
     /**
      * Returns statistics regarding a collection or view.
      *
@@ -2729,313 +2729,313 @@ declare global {
      */
     planCacheStats(): any;
     /** Append documents to the stream → `$unionWith`. */
-    push(...docs: any[]): JsmqlCollectionRef;
+    push(...docs: any[]): JsmqlStreamRef;
     /** Take a window of the stream → `$skip` / `$limit`. */
-    slice(start: number, end?: number): JsmqlCollectionRef;
+    slice(start: number, end?: number): JsmqlStreamRef;
     /** Append documents / union collections → `$unionWith`. */
-    concat(...sources: any[]): JsmqlCollectionRef;
+    concat(...sources: any[]): JsmqlStreamRef;
     /** Order the stream → `$sort` (equivalent to `.sort` on a stream). */
     toSorted(
       sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
-    ): JsmqlCollectionRef;
+    ): JsmqlStreamRef;
     /** Ascending sort by a key → `$sort` (lodash `_.sortBy`). */
-    sortBy(key: string | string[]): JsmqlCollectionRef;
+    sortBy(key: string | string[]): JsmqlStreamRef;
     /** Multi-key sort → `$sort` (lodash `_.orderBy`). Parallel `keys` + `orders`, or a `{ field: dir }` object (directions inline). */
     orderBy(
       keys: string | string[] | Record<string, 1 | -1 | "asc" | "desc">,
       orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[],
-    ): JsmqlCollectionRef;
+    ): JsmqlStreamRef;
     /** After `.flatMap` of an array of arrays: unwind the element once more → `$unwind`. */
-    flat(): JsmqlCollectionRef;
+    flat(): JsmqlStreamRef;
     /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
-    flatMap(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
+    flatMap(transform: ((doc: any) => any) | string): JsmqlStreamRef;
     /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
-    map(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
+    map(transform: ((doc: any) => any) | string): JsmqlStreamRef;
     /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
-    filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
+    filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlStreamRef;
     /** Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator. */
     sort(
       sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
-    ): JsmqlCollectionRef;
+    ): JsmqlStreamRef;
     /** One document per distinct WHOLE document → `$group` + `$replaceWith`. */
-    uniq(): JsmqlCollectionRef;
+    uniq(): JsmqlStreamRef;
     /** One document per distinct key → `$group` + `$replaceWith`. */
-    uniqBy(field: string): JsmqlCollectionRef;
+    uniqBy(field: string): JsmqlStreamRef;
     /** Alias of `.uniq()` — MongoDB's `$group` needs no sorted input. */
-    sortedUniq(): JsmqlCollectionRef;
+    sortedUniq(): JsmqlStreamRef;
     /** Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input. */
-    sortedUniqBy(field: string): JsmqlCollectionRef;
+    sortedUniqBy(field: string): JsmqlStreamRef;
     /** After `.flatMap`: drop the given values → `$match` (lodash `_.without`). */
-    without(...values: unknown[]): JsmqlCollectionRef;
+    without(...values: unknown[]): JsmqlStreamRef;
     /** After `.flatMap`: drop the elements whose key is among the list's keys → `$match` (lodash `_.differenceBy`). */
-    differenceBy(list: unknown[], key: string): JsmqlCollectionRef;
+    differenceBy(list: unknown[], key: string): JsmqlStreamRef;
     /** After `.flatMap`: keep the elements whose key is among the list's keys, one per distinct key → `$match` + `$group` (lodash `_.intersectionBy`). */
-    intersectionBy(list: unknown[], key: string): JsmqlCollectionRef;
+    intersectionBy(list: unknown[], key: string): JsmqlStreamRef;
     /** After `.flatMap`: drop the falsy values (null, missing, 0, false, "") → `$match`. */
-    compact(): JsmqlCollectionRef;
+    compact(): JsmqlStreamRef;
     /** First `n` documents → `$limit`. */
-    take(n: number): JsmqlCollectionRef;
+    take(n: number): JsmqlStreamRef;
     /** Skip the first `n` documents → `$skip`. */
-    drop(n: number): JsmqlCollectionRef;
+    drop(n: number): JsmqlStreamRef;
     /** All but the first document → `$skip: 1` (lodash `_.tail`). */
-    tail(): JsmqlCollectionRef;
+    tail(): JsmqlStreamRef;
     /** Keep the leading run where the predicate holds, stopping at the first failure → `$setWindowFields` running flag + `$match` (lodash `_.takeWhile`). Needs a preceding sort. */
-    takeWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlCollectionRef;
+    takeWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlStreamRef;
     /** Drop the leading run where the predicate holds, keeping from the first failure on → `$setWindowFields` running flag + `$match` (lodash `_.dropWhile`). Needs a preceding sort. */
-    dropWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlCollectionRef;
+    dropWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlStreamRef;
     /** One random document → `$sample: { size: 1 }` (lodash `_.sample`; use `.sampleSize(n)` for more). */
-    sample(): JsmqlCollectionRef;
+    sample(): JsmqlStreamRef;
     /** `n` random documents → `$sample`. */
-    sampleSize(n: number): JsmqlCollectionRef;
+    sampleSize(n: number): JsmqlStreamRef;
     /** Key documents by a field → the lodash object `{ <key>: <last doc> }`. */
-    keyBy(field: string): JsmqlCollectionRef;
+    keyBy(field: string): JsmqlStreamRef;
     /** Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage. */
-    groupBy(spec: string | Record<string, any>): JsmqlCollectionRef;
+    groupBy(spec: string | Record<string, any>): JsmqlStreamRef;
     /** Tally documents per distinct key → the lodash object `{ <key>: <count> }` (for the count-descending stream, use the `$sortByCount` stage). */
-    countBy(field: string): JsmqlCollectionRef;
+    countBy(field: string): JsmqlStreamRef;
     /** Drop matching documents → `$match` (`.filter` negated). Pass an arrow predicate or a matches-object. */
-    reject(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
+    reject(predicate: ((doc: any) => any) | Record<string, any>): JsmqlStreamRef;
     /** Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named). */
-    pick(fields: string[]): JsmqlCollectionRef;
+    pick(fields: string[]): JsmqlStreamRef;
     /** Drop the named fields from each document → exclusion `$project` (lodash `_.omit`). */
-    omit(fields: string[]): JsmqlCollectionRef;
+    omit(fields: string[]): JsmqlStreamRef;
     /** After `.flatMap`: keep the unwound values that are in the list, one document per distinct value → `$match` + `$group` (lodash `_.intersection`). */
-    intersection(list: unknown[]): JsmqlCollectionRef;
+    intersection(list: unknown[]): JsmqlStreamRef;
     /** After `.flatMap`: drop the unwound values that are in the list → `$match` (lodash `_.difference`). */
-    difference(list: unknown[]): JsmqlCollectionRef;
+    difference(list: unknown[]): JsmqlStreamRef;
     /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
-    shuffle(): JsmqlCollectionRef;
+    shuffle(): JsmqlStreamRef;
     /** Run a sub-pipeline block against the stream. On a foreign collection it becomes the `$lookup` sub-pipeline; on the current stream its statements are simply the chain's stages. */
-    aggregate(pipeline: ((doc: any, index?: number, coll?: any) => void) | object[]): JsmqlCollectionRef;
+    aggregate(pipeline: ((doc: any, index?: number, coll?: any) => void) | object[]): JsmqlStreamRef;
     /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
-    filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
+    filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlStreamRef;
     /** Drop matching documents → `$match` (`.filter` negated). Pass an arrow predicate or a matches-object. */
-    reject(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
+    reject(predicate: ((doc: any) => any) | Record<string, any>): JsmqlStreamRef;
     /**
      * Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/addFields/
      */
-    $addFields(body: any): JsmqlCollectionRef;
+    $addFields(body: any): JsmqlStreamRef;
     /**
      * Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/bucket/
      */
-    $bucket(body: any): JsmqlCollectionRef;
+    $bucket(body: any): JsmqlStreamRef;
     /**
      * Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/bucketAuto/
      */
-    $bucketAuto(body: any): JsmqlCollectionRef;
+    $bucketAuto(body: any): JsmqlStreamRef;
     /**
      * Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/changeStream/
      */
-    $changeStream(body: any): JsmqlCollectionRef;
+    $changeStream(body: any): JsmqlStreamRef;
     /**
      * Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/changeStreamSplitLargeEvent/
      */
-    $changeStreamSplitLargeEvent(body: any): JsmqlCollectionRef;
+    $changeStreamSplitLargeEvent(body: any): JsmqlStreamRef;
     /**
      * Returns a count of the number of documents at this stage of the aggregation pipeline.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/count/
      */
-    $count(body: any): JsmqlCollectionRef;
+    $count(body: any): JsmqlStreamRef;
     /**
      * Creates new documents in a sequence of documents where certain values in a field are missing.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/densify/
      */
-    $densify(body: any): JsmqlCollectionRef;
+    $densify(body: any): JsmqlStreamRef;
     /**
      * Returns literal documents from input values.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/documents/
      */
-    $documents(body: any): JsmqlCollectionRef;
+    $documents(body: any): JsmqlStreamRef;
     /**
      * Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/facet/
      */
-    $facet(body: any): JsmqlCollectionRef;
+    $facet(body: any): JsmqlStreamRef;
     /**
      * Populates null and missing field values within documents.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/fill/
      */
-    $fill(body: any): JsmqlCollectionRef;
+    $fill(body: any): JsmqlStreamRef;
     /**
      * Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/geoNear/
      */
-    $geoNear(body: any): JsmqlCollectionRef;
+    $geoNear(body: any): JsmqlStreamRef;
     /**
      * Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/graphLookup/
      */
-    $graphLookup(body: any): JsmqlCollectionRef;
+    $graphLookup(body: any): JsmqlStreamRef;
     /**
      * Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/group/
      */
-    $group(body: any): JsmqlCollectionRef;
+    $group(body: any): JsmqlStreamRef;
     /**
      * Passes the first n documents unmodified to the pipeline where n is the specified limit.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/limit/
      */
-    $limit(body: any): JsmqlCollectionRef;
+    $limit(body: any): JsmqlStreamRef;
     /**
      * Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/lookup/
      */
-    $lookup(body: any): JsmqlCollectionRef;
+    $lookup(body: any): JsmqlStreamRef;
     /**
      * Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/match/
      */
-    $match(body: any): JsmqlCollectionRef;
+    $match(body: any): JsmqlStreamRef;
     /**
      * Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/merge/
      */
-    $merge(body: any): JsmqlCollectionRef;
+    $merge(body: any): JsmqlStreamRef;
     /**
      * Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/out/
      */
-    $out(body: any): JsmqlCollectionRef;
+    $out(body: any): JsmqlStreamRef;
     /**
      * Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/project/
      */
-    $project(body: any): JsmqlCollectionRef;
+    $project(body: any): JsmqlStreamRef;
     /**
      * Combines multiple pipelines using rank-based fusion to create hybrid search results.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/rankFusion/
      */
-    $rankFusion(body: any): JsmqlCollectionRef;
+    $rankFusion(body: any): JsmqlStreamRef;
     /**
      * Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/redact/
      */
-    $redact(body: any): JsmqlCollectionRef;
+    $redact(body: any): JsmqlStreamRef;
     /**
      * Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/replaceRoot/
      */
-    $replaceRoot(body: any): JsmqlCollectionRef;
+    $replaceRoot(body: any): JsmqlStreamRef;
     /**
      * Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/replaceWith/
      */
-    $replaceWith(body: any): JsmqlCollectionRef;
+    $replaceWith(body: any): JsmqlStreamRef;
     /**
      * Randomly selects the specified number of documents from its input.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/sample/
      */
-    $sample(body: any): JsmqlCollectionRef;
+    $sample(body: any): JsmqlStreamRef;
     /**
      * Combines multiple pipelines using relative score fusion to create hybrid search results.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/scoreFusion/
      */
-    $scoreFusion(body: any): JsmqlCollectionRef;
+    $scoreFusion(body: any): JsmqlStreamRef;
     /**
      * Performs a full-text search of the field or fields in an Atlas collection.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/search/
      */
-    $search(body: any): JsmqlCollectionRef;
+    $search(body: any): JsmqlStreamRef;
     /**
      * Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/searchMeta/
      */
-    $searchMeta(body: any): JsmqlCollectionRef;
+    $searchMeta(body: any): JsmqlStreamRef;
     /**
      * Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/set/
      */
-    $set(body: any): JsmqlCollectionRef;
+    $set(body: any): JsmqlStreamRef;
     /**
      * Groups documents into windows and applies one or more operators to the documents in each window.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/setWindowFields/
      */
-    $setWindowFields(body: any): JsmqlCollectionRef;
+    $setWindowFields(body: any): JsmqlStreamRef;
     /**
      * Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/skip/
      */
-    $skip(body: any): JsmqlCollectionRef;
+    $skip(body: any): JsmqlStreamRef;
     /**
      * Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/sort/
      */
-    $sort(body: any): JsmqlCollectionRef;
+    $sort(body: any): JsmqlStreamRef;
     /**
      * Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/sortByCount/
      */
-    $sortByCount(body: any): JsmqlCollectionRef;
+    $sortByCount(body: any): JsmqlStreamRef;
     /**
      * Performs a union of two collections; combines pipeline results from two collections into a single result set.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/unionWith/
      */
-    $unionWith(body: any): JsmqlCollectionRef;
+    $unionWith(body: any): JsmqlStreamRef;
     /**
      * Removes or excludes fields from documents.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/unset/
      */
-    $unset(body: any): JsmqlCollectionRef;
+    $unset(body: any): JsmqlStreamRef;
     /**
      * Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/unwind/
      */
-    $unwind(body: any): JsmqlCollectionRef;
+    $unwind(body: any): JsmqlStreamRef;
     /**
      * Performs an ANN or ENN search on a vector in the specified field.
      *
      * @see https://www.mongodb.com/docs/manual/reference/operator/aggregation/vectorSearch/
      */
-    $vectorSearch(body: any): JsmqlCollectionRef;
+    $vectorSearch(body: any): JsmqlStreamRef;
     /** @deprecated Not a stream method — a pipeline is an array. Use `.filter(p).slice(0, 1)`. */
     find(...args: never[]): never;
   }
   /**
-   * jsmql current-collection context reference (`$$`, run on `db.coll.aggregate()`). Names a collection-scoped diagnostic source stage, or heads collection sugar (`$$.push(...)` → `$unionWith`, `$$.filter(...)`, stream methods, `$$ = ...`).
+   * jsmql root-stream context reference (`$$`, run on `db.coll.aggregate()`). Names a diagnostic source stage of the current collection, or heads stream sugar (`$$.push(...)` → `$unionWith`, `$$.filter(...)`, stream methods, `$$ = ...`).
    *
    * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md
    */
-  var $$: JsmqlCollectionRef;
+  var $$: JsmqlStreamRef;
   /**
    * jsmql current-database context reference (`$$$`, run on `db.aggregate()`). Heads cross-collection joins (`$$$.coll.find/filter(...)` → `$lookup`) and `$out` writes (`$$$.coll = ...`). Has no diagnostic source stages of its own — `$currentOp` & friends run on the admin database, reached via `$$$$`.
    *

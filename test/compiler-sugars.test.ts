@@ -547,7 +547,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
                       in: {
                         $slice: [
                           "$$jsmqlArr",
-                          { $add: [{ $size: { $slice: [{ $ifNull: ["$ys", []] }, 2] } }, { $size: [[]] }] },
+                          { $add: [{ $size: { $slice: [{ $ifNull: ["$ys", []] }, 2] } }, 0] },
                           { $max: [1, { $size: "$$jsmqlArr" }] },
                         ],
                       },

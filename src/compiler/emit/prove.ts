@@ -30,7 +30,7 @@ import {
   productionForOperator,
   returnsOf,
   soleFieldFamilyOf,
-  emptyCollectionOf,
+  emptyValueOf,
 } from "../rows.ts";
 import { bsonTagOf, BSON_KIND, isDate, isPlainObject, isRegExp } from "../../bson.ts";
 import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
@@ -106,12 +106,12 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       const name = namedRow(node) ?? node.name;
       if (!neverNullOf(name)) return false;
       // A namespace (`Object.keys(o)`) is not a value; its arguments carry the answer.
-      // HR5: under a dot, an array or object method runs on the EMPTY collection when
+      // HR5: under a dot, an array or object method runs on `[]` or `{}` when
       // its receiver is null or missing (`lower.ts` wraps it), so its receiver counts as
       // there. A `?.` anywhere on the spine below stops the chain instead, and the value
       // is then null when the tested link is.
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name);
-      const wrapped = !spineHasOptional(node) && emptyCollectionOf(name, family) !== null;
+      const wrapped = !spineHasOptional(node) && emptyValueOf(name, family) !== null;
       const receiver =
         node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES.has(node.object.name)
           ? true
@@ -147,7 +147,7 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       return null;
     case "FieldRef":
     case "Ident":
-    case "CollectionRef":
+    case "StreamRef":
     case "IndexAccess":
     case "TernaryExpr":
     case "ExprBlock":
@@ -219,7 +219,7 @@ export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(t
 export function receiverFamilyOf(node: Expr, env: Env): FieldFamily | "regexp" | "set" | string | null {
   const src = sourceFamily(node);
   if (src !== null) return src;
-  if (node.type === "CollectionRef") return "stream";
+  if (node.type === "StreamRef") return "stream";
   return familyOfKind(kindOf(node, env));
 }
 
@@ -255,7 +255,7 @@ function siteOf(name: string, receiver: Type, family: string | null, args: reado
 /**
  * What the n-th callback argument RETURNS, its parameters bound as the row's
  * `params` say: the element (`value`), the index (a number), the key (a string),
- * the whole receiver (`collection`), the seed (`accumulator`). Each carries its
+ * the whole receiver (`receiver`), the seed (`accumulator`). Each carries its
  * own presence: an element the receiver proves present is present, the index and
  * the key always are. A callback that is not an arrow with a body proves nothing.
  */
@@ -280,7 +280,7 @@ function callbackAnswer(
           ? of("number")
           : kind === "key"
             ? of("string")
-            : kind === "collection"
+            : kind === "receiver"
               ? receiver
               : kind === "accumulator"
                 ? arg(n + 1)
@@ -416,7 +416,7 @@ function kindsOf(node: Expr, env: Env): Type {
       return env.typeAt(node.path, 0);
     case "Ident":
       return env.scope.has(node.name) ? env.lookup(node.name, node.pos).type : ANY;
-    case "CollectionRef":
+    case "StreamRef":
       return of("stream");
     case "MemberAccess": {
       // A property row (`Math.PI`) states its result; a field read is the object's property.

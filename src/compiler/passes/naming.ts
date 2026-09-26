@@ -65,7 +65,7 @@ export function chainBase(node: object): object {
 /** Is this node one of the three context references — `$$`, `$$$`, `$$$$`? */
 export function isContextRef(node: object): boolean {
   const t = (node as Any).type;
-  return t === "CollectionRef" || t === "DatabaseRef" || t === "ClusterRef";
+  return t === "StreamRef" || t === "DatabaseRef" || t === "ClusterRef";
 }
 
 /**

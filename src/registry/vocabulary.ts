@@ -577,10 +577,10 @@ export type DocumentEffect = "keeps" | "narrows" | "fields" | "value" | "project
 /**
  * What one positional parameter of a callback BINDS.
  *
- * The names come from JavaScript and from lodash, and not from this project.
- * `Array.map` gives `(value, index, collection)`. `Array.reduce` gives
- * `(accumulator, value, index, collection)`. The `mapValues` of lodash gives
- * `(value, key, object)`. A row records the list that its own API defines.
+ * The names follow JavaScript and lodash. `Array.map` gives `(value, index, array)`.
+ * `Array.reduce` gives `(accumulator, value, index, array)`. The `mapValues` of lodash
+ * gives `(value, key, object)`. The last parameter of each is the receiver itself, so
+ * this list calls it `receiver`. A row records the list that its own API defines.
  */
 type ParamKind =
   /** The value that reduce carries. It becomes the fixed `$$value` of MongoDB. */
@@ -591,8 +591,8 @@ type ParamKind =
   | "index"
   /** An object entry's key. */
   | "key"
-  /** The whole collection that the operator walks. */
-  | "collection"
+  /** The whole receiver that the operator walks: the array, the object or the stream. */
+  | "receiver"
   /**
    * A variable DECLARED in a sibling argument, not drawn from a receiver:
    *   $let({ x: 1, y: 2 }, (p, q) => p + q)   p binds x, q binds y

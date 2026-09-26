@@ -23,7 +23,7 @@ JSMQL targets both **Filters** (`db.coll.find(filter)`) and **Pipelines** (`db.c
 
 ## #0 priority: the language axioms
 
-[docs/LANG_RULES.md](docs/LANG_RULES.md) holds the language axioms: the HARD RULES (HR1–HR4) and the SOFT RULES. The HARD RULES outrank every other document, spec, and `CLAUDE.md` file here. The compiler upholds them **at all times**; a build that breaks one has a bug, never a new feature. Read them before any change to lexing, parsing, codegen, the operator registry, or stage lowering. On a conflict, **LANG_RULES wins**: fix the conformance bug, and do not weaken the rule. When you cannot fix the bug in the same change, keep the rule stated as law and flag the gap as open work.
+[docs/LANG_RULES.md](docs/LANG_RULES.md) holds the language axioms: all HARD RULES and all SOFT RULES. The HARD RULES outrank every other document, spec, and `CLAUDE.md` file here. The compiler upholds them **at all times**; a build that breaks one has a bug, never a new feature. Read them before any change to lexing, parsing, codegen, the operator registry, or stage lowering. On a conflict, **LANG_RULES wins**: fix the conformance bug, and do not weaken the rule. When you cannot fix the bug in the same change, keep the rule stated as law and flag the gap as open work.
 
 ### Verify MQL against a running MongoDB
 
@@ -151,6 +151,15 @@ Excluded: [docs/DEVLOG.md](docs/DEVLOG.md) history (new entries still follow the
 rule), generated files, and code itself — a code block, an inline code span and a
 `// →` claim pair stay exact.
 
+**Check new and edited prose with a cheap sub-agent.** Before you commit a change
+that adds or edits prose, start one sub-agent on the cheapest model
+(`model: "haiku"`). The sub-agent reads [docs/STE.md](docs/STE.md), then checks
+the prose lines of the staged diff (`git diff --cached`) and the draft commit
+message that you give it. It reports each sentence that does not obey the digest,
+with the file, the line, the rule and a replacement. It does not edit a file.
+Correct each real problem yourself, and reject each report on text that the
+digest exempts, for example a Technical Name.
+
 ### Plans must include worked examples
 Every implementation plan that touches the language surface MUST give both a
 **simple** and a **complex** JSMQL input example, each with its exact emitted
@@ -164,7 +173,7 @@ Every fact has **one** true home. Everywhere else, write a one-line pointer (`Se
 
 | Fact type | Canonical home |
 |---|---|
-| Language axioms (HR1–HR4, SOFT rules) | `docs/LANG_RULES.md` |
+| Language axioms (all HARD RULES and all SOFT RULES) | `docs/LANG_RULES.md` |
 | User-facing behaviour + examples | `docs/LANGUAGE.md` |
 | Per-feature implementation detail / lowering rules | `docs/specs/<feature>.md` |
 | Module invariants, "where do I add X" | `src/CLAUDE.md` |

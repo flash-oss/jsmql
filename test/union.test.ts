@@ -231,7 +231,7 @@ describe("$$.push — error cases", () => {
 
   it("push inside a lookup `.aggregate` block → reject with hoist hint", () => {
     expect(() => jsmql("$.users = $$$.users.aggregate(u => { $$.push(...$$$.archive); })")).toThrow(
-      "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'.",
+      "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, stream) => { stream.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'.",
     );
   });
 

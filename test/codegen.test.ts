@@ -91,27 +91,44 @@ describe("array-shape operators", () => {
     expect(jsmql.expr("$add($.a, $.b, $.c)")).toEqual({ $add: ["$a", "$b", "$c"] });
   });
 
-  // List-only operators (no single-value form) — HR2/HR3:
-  //   2+ args → array; 1 array literal → the array IS the operand list; 1 non-array → error.
+  // List-only operators — HR1/HR2/HR3:
+  //   2+ args → array; 1 array literal → the array IS the operand list; 1 other operand →
+  //   that one operand as written, where the row's count takes one (MEASURED: the server
+  //   reads `{ $add: "$x" }` as one operand), and the count's refusal where it does not.
   it("list-only op: a single array literal is the operand list (HR2 round-trip)", () => {
     expect(jsmql.expr("$setUnion([$.a, $.b])")).toEqual({ $setUnion: ["$a", "$b"] });
     expect(jsmql.expr("$setUnion($.a, $.b)")).toEqual({ $setUnion: ["$a", "$b"] });
     expect(jsmql.expr("$divide([10, 2])")).toEqual({ $divide: [10, 2] });
   });
 
-  it("list-only op: rejects a single non-array operand (HR3)", () => {
-    expect(() => jsmql.expr("$setUnion($.a)")).toThrow(/\$setUnion operates on a list of operands/);
-    expect(() => jsmql.expr("$divide(10)")).toThrow(/\$divide operates on a list of operands/);
-    expect(() => jsmql.expr("$and(true)")).toThrow(/\$and operates on a list of operands/);
+  it("list-only op: one operand stays as written where the row takes one (HR2)", () => {
+    expect(jsmql.expr("$setUnion($.a)")).toEqual({ $setUnion: "$a" });
+    expect(jsmql.expr("$and(true)")).toEqual({ $and: true });
+    expect(jsmql.expr("$concat($.s)")).toEqual({ $concat: "$s" });
   });
 
-  // HR3 governs raw MQL too: the same rejection applies to the `{ $op: value }`
-  // raw-object form, not just the `$op(...)` call form.
-  it("list-only op: rejects a raw `{ $op: <non-array> }` object (HR3)", () => {
-    expect(() => jsmql.expr("({ $setUnion: $.x })")).toThrow(/\$setUnion operates on a list of operands/);
-    expect(() => jsmql.expr("({ $add: 5 })")).toThrow(/\$add operates on a list of operands/);
-    // ...but the valid array-operand form passes through verbatim (HR1).
+  // HR1 governs raw MQL: a document the server takes passes unchanged, and one it
+  // refuses gets the same count refusal as the call spelling (HR3).
+  it("list-only op: a raw `{ $op: <one operand> }` object passes unchanged (HR1)", () => {
+    expect(jsmql.expr("({ $setUnion: $.x })")).toEqual({ $setUnion: "$x" });
+    expect(jsmql.expr("({ $add: 5 })")).toEqual({ $add: 5 });
+    // the output of `.uniq()` pastes back in and round-trips
+    const uniq = jsmql.expr("$.a.uniq()");
+    expect(uniq).toEqual({ $setUnion: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr('({ $setUnion: { $ifNull: ["$a", []] } })')).toEqual(uniq);
     expect(jsmql.expr("({ $setUnion: [$.a, $.b] })")).toEqual({ $setUnion: ["$a", "$b"] });
+    expect(() => jsmql.expr("({ $divide: 10 })")).toThrow(
+      "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1",
+    );
+  });
+
+  it("list-only op: one operand of a `$group` accumulator is its own shape", () => {
+    expect(jsmql.pipeline("$group({ _id: null, s: $setUnion($.x) })")).toEqual([
+      { $group: { _id: null, s: { $setUnion: "$x" } } },
+    ]);
+    expect(jsmql.pipeline('$group({ _id: null, s: { $setUnion: "$x" } })')).toEqual([
+      { $group: { _id: null, s: { $setUnion: "$x" } } },
+    ]);
   });
 
   it("$and logical", () => {
@@ -263,6 +280,36 @@ describe("operator arity validation (array / flex shapes)", () => {
     expect(() => jsmql.expr("$ifNull([$.x])")).toThrow(
       "'$ifNull(expr, replacement[, …])' requires at least 2 arguments, got 1",
     );
+  });
+
+  it("$size(…) is the MQL you wrote: an array literal is its operand list, and nothing folds", () => {
+    expect(jsmql.expr("$size([[1, 2, 3]])")).toEqual({ $size: [[1, 2, 3]] });
+    expect(jsmql.expr("({ $size: [[1, 2, 3]] })")).toEqual({ $size: [[1, 2, 3]] });
+    expect(jsmql.expr("$size($.a)")).toEqual({ $size: "$a" });
+    // three spellings of the one document `{ $size: [1, 2] }`: two operands, which the server refuses
+    expect(() => jsmql.expr("$size([1, 2])")).toThrow(
+      "'$size(operand)' requires exactly 1 argument, got 2: one array literal is the operand list, as in MQL. To pass the array as one operand, write '$size([[…]])'.",
+    );
+    expect(() => jsmql.expr("({ $size: [1, 2] })")).toThrow(
+      "'$size(operand)' requires exactly 1 argument, got 2: one array literal is the operand list, as in MQL. To pass the array as one operand, write '$size([[…]])'.",
+    );
+    expect(() => jsmql.expr("$size(1, 2)")).toThrow("'$size(operand)' requires exactly 1 argument, got 2");
+    expect(() => jsmql.expr("$size([])")).toThrow("'$size(operand)' requires exactly 1 argument, got 0");
+    expect(() => jsmql.expr("$size([1])")).toThrow("'$size' expects an array, but got a number.");
+  });
+
+  it("`.size()` of an array literal is its element count, whatever the elements hold", () => {
+    expect(jsmql.expr("[1, 2, 3].size()")).toBe(3);
+    expect(jsmql.expr("[$.a, $.b].size()")).toBe(2);
+    expect(jsmql("$.n === [1, 2, 3].size()")).toEqual({ n: 3 });
+    // a spread makes the count a runtime one
+    expect(jsmql.expr("[...$.a, 1].size()")).toEqual({ $size: { $concatArrays: [{ $ifNull: ["$a", []] }, [1]] } });
+  });
+
+  it("one operand to a two-operand list operator is the count refusal, in both spellings", () => {
+    const refusal = "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1";
+    expect(() => jsmql.expr("$divide(10)")).toThrow(refusal);
+    expect(() => jsmql.expr("({ $divide: 10 })")).toThrow(refusal);
   });
 
   it("variadic operators stay unconstrained ($add / $setUnion / $concat)", () => {
@@ -1981,12 +2028,11 @@ describe("lambda element-type inference (array-method param typed from a provabl
   it("types only the element param — the index param is a number and keeps the guard", () => {
     // `(element, index)`: `element` is string, `index` is a number, so `$.m[i]`
     // must NOT collapse to $getField.
-    // `$size: [["a","b"]]` — the literal receiver is wrapped one level so MongoDB
-    // reads it as $size's single argument. Bare (`$size: ["a","b"]`) it is spliced
-    // into two arguments and the server rejects the pipeline.
+    // The receiver is a constant array, so its size is a constant: `$range: [0, 2]`,
+    // with no `$size` to count it at run time.
     expect(jsmql.expr('["a", "b"].map((k, i) => $.m[i])')).toEqual({
       $map: {
-        input: { $zip: { inputs: [{ $range: [0, { $size: [["a", "b"]] }] }, ["a", "b"]] } },
+        input: { $zip: { inputs: [{ $range: [0, 2] }, ["a", "b"]] } },
         as: "jsmqlPair",
         in: {
           $let: {
@@ -8258,8 +8304,8 @@ describe("Object.groupBy — refused; the receiver form is the one spelling", ()
     "Object.groupBy($.items, (a, b) => a)",
   ]) {
     it(`refuses ${src}`, () => {
-      expect(() => jsmql.expr(src)).toThrow(/'Object\.groupBy\(collection, discriminator\)' is not part of jsmql/);
-      expect(() => jsmql.expr(src)).toThrow(/Write '<collection>\.groupBy\(<discriminator>\)'/);
+      expect(() => jsmql.expr(src)).toThrow(/'Object\.groupBy\(items, discriminator\)' is not part of JSMQL/);
+      expect(() => jsmql.expr(src)).toThrow(/Write '<array>\.groupBy\(<discriminator>\)'/);
     });
   }
 
@@ -9425,7 +9471,7 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
       },
     });
     expect(jsmql.expr("$range(0, 5).size()")).toEqual({ $size: { $range: [0, 5] } });
-    expect(jsmql.expr("[$.a, $.b].size()")).toEqual({ $size: [["$a", "$b"]] });
+    expect(jsmql.expr("[$.a, $.b].size()")).toBe(2);
     // an optional chain reads a missing receiver as [] — which is there
     expect(jsmql.expr("$.a?.map(x => x + 1).size()")).toEqual({
       $cond: {
@@ -9642,8 +9688,8 @@ describe("computed object keys", () => {
   it("single computed key", () => {
     expect(jsmql.expr("$foo({ [$.k]: 1 })")).toEqual({ $foo: { $arrayToObject: [[{ k: "$k", v: 1 }]] } });
   });
-  it("$arrayToObject escape hatch with a literal pairs array wraps the same way", () => {
-    expect(jsmql.expr(`$arrayToObject([["a", 1], ["b", 2]])`)).toEqual({
+  it("$arrayToObject escape hatch: the array literal is the operand list, as in MQL", () => {
+    expect(jsmql.expr(`$arrayToObject([[["a", 1], ["b", 2]]])`)).toEqual({
       $arrayToObject: [
         [
           ["a", 1],
@@ -9651,6 +9697,10 @@ describe("computed object keys", () => {
         ],
       ],
     });
+    // two pairs written bare are two operands, which the server refuses
+    expect(() => jsmql.expr(`$arrayToObject([["a", 1], ["b", 2]])`)).toThrow(
+      "'$arrayToObject(operand)' requires exactly 1 argument, got 2: one array literal is the operand list",
+    );
     // A field-ref / expression argument already resolves to one array — left as-is.
     expect(jsmql.expr("$arrayToObject($.pairs)")).toEqual({ $arrayToObject: "$pairs" });
   });
@@ -10699,10 +10749,10 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   // Tests use the string form because `$$` / `$$$` / `$$$$` are not yet declared
   // as ambient globals — that's part of the future-API surface.
 
-  describe("$$ — current collection", () => {
+  describe("$$ — the root stream", () => {
     // $$ lights up the `$$.push(...)` → `$unionWith` shape. Any other use of $$
     // (`.foo` member access, `["foo"]` index access, `.bar()` method call,
-    // bare reference, RHS use) is rejected by the CollectionRef codegen case
+    // bare reference, RHS use) is rejected by the StreamRef codegen case
     // with a precise "statement-only / only .push(...)" message. See
     // docs/specs/union-stage.md.
     it("dot-ident form reads as a Filter, so jsmql.expr refuses it", () => {
@@ -10785,7 +10835,7 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 
   describe("parser sanity-guards", () => {
-    it("bare $$ without . or [ → CollectionRef codegen error (statement-only message)", () => {
+    it("bare $$ without . or [ → StreamRef codegen error (statement-only message)", () => {
       // Once `$out` sugar allows bare `$$` as the RHS of `$$$.coll = $$`, the
       // parser stops pre-rejecting bare `$$` and codegen surfaces the
       // actionable "statement-only" message when `$$` lands somewhere

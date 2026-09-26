@@ -10,183 +10,109 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-09-26 — fix: an error names the fix in the user's words
+## 2026-09-26 — docs: a cheap sub-agent checks new and edited prose against STE
 
-Several refusals named an internal node type, a wrong receiver, or a fix that
-did not compile:
+The root [CLAUDE.md](../CLAUDE.md) now has one more step in § Write in Simplified
+Technical English. Before a commit that adds or edits prose, the session starts
+one sub-agent on the cheapest model (`model: "haiku"`). The sub-agent reads
+[docs/STE.md](STE.md), then checks the prose lines of the staged diff and the
+draft commit message. It reports each sentence that does not obey the digest,
+with a replacement. The session corrects each real problem, and it rejects each
+report on text that the digest exempts.
 
-```
-1++;                  → "Cannot apply '++' to a NumberLiteral. … collection. at position 1"
-$.y = [$.x++];        → "Assignment is a statement, not a value. …"   (no position, no fix)
-$.y = $$++;           → suggests '$$ += 1;', which the compiler also refuses
-$$ -= 1;              → "… on '$$' — it is the whole document, not a scalar."
-delete $$;            → "'delete $' would delete the document itself. …"
-Set([1]);             → "Unknown function 'Set(...)'. …"
-Map([]);              → "… Did you mean 'Math(...)'?"
-new Foo(1);           → "Direct call '(...)(args)' is only supported when …"
-```
+An author who follows the digest still makes errors, and does not always see
+them. The first STE pass over [docs/LANG_RULES.md](LANG_RULES.md) kept four
+headlines that STE does not allow, and only
+[a second pass](#2026-09-26--docs-rewrite-lang_rulesmd-in-ste-and-correct-it-against-the-compiler)
+found them. The check compares each sentence with the rules of the digest. This
+is a simple task, so the cheapest model is enough. The sub-agent does not edit a
+file, because only the session that wrote the prose knows its context. That
+context includes each Technical Name, each heading that other files link to, and
+each phrase that a test pins.
 
-Each one now says what the developer wrote. `requirePlace` quotes the target as
-the source spells it (`Cannot apply '++' to '1' at position 1.`). A write in an
-array that is a value gets the refusal the parser gives `$.y = $.x++`: the
-parser cannot know that position, so the desugar pass refuses the write in one
-walk before any rule rewrites it. `delete` inside a value (`f(delete $.a)`,
-valid JavaScript) and a function in a value array get the same kind of message.
-The arithmetic-write check on `$` and `$$` moved from the desugar pass into the
-parser's `requireWriteTarget`, so the value form and the statement form give
-one answer. It names `$$` as the stream, and `delete $$` names `$$ = []` and
-`$$.filter(d => …)`.
+In [the 2026-09-19 entry](#2026-09-19--docs-all-prose-follows-asd-ste100), we
+decided to ship no mechanical checker. A heuristic for the passive voice or an
+`-ing` verb often gives false results. That decision does not change. The
+sub-agent is not a pattern match: it reads each sentence in its context. A false
+report costs one rejection, and it needs no allowlist.
 
-The constructor messages read their rows. `Set(…)` names `new Set(…)`, because
-its row states `newKeyword: "required"`. `new Number(5)` names the call without
-`new`, and an unknown class takes `didYouMean` over the names `new` can build.
-New `Map` and `RegExp` rows refuse both spellings and name the JSMQL form: an
-object or `Object.fromEntries(pairs)`, a regex literal or `$regexMatch`.
-`bareCallableNames()` leaves out a row that lists no position, so no suggestion
-names `Math(…)`. `constructorGlobals()` leaves out the same rows, so the
-generated globals do not declare `RegExp`.
-
-A `ParseError` whose message ends with a full stop now takes its position before
-the stop, so no message reads "…. at position N". Each call site that ended with
-a suggestion states the position in its first sentence instead, e.g.
-`'.fill(value[, start[, end]])' at position 3 takes 1 to 3 arguments, got 0.`
+No behaviour of the compiler changes.
 
 ---
 
-## 2026-09-26 — fix: `.concat()` reads each argument as JavaScript does, and a set method reads a missing list as empty
+## 2026-09-26 — docs: name all HARD RULES and all SOFT RULES, not a numbered range
 
-JavaScript's `concat` adds the elements of an array argument, and adds any other
-argument as one element. A spread passes each element of its array as an
-argument of its own. The `concat` cell kept an argument that proved nothing as
-written, and took the desugar pass's packed list as ONE argument:
-
-```
-$.a.concat($.b, 1)     → { $concatArrays: [{ $ifNull: ["$a", []] }, "$b", [1]] }
-                         no b → null for the whole value; b: 5 → the server aborts
-$.a.concat(...$.b, 1)  → { $concatArrays: [{ $ifNull: ["$a", []] }, { $concatArrays: ["$b", [1]] }] }
-                         b: [[2]] → [1, [2], 1], where JavaScript gives [1, 2, 1]
-```
-
-The cell now unpacks the packed list, and a new `type` service on `ExprIn`
-gives it the proof of each argument. A proven array stays as written, an array
-that can be null takes `{ $ifNull: [x, [null]] }`, a proven scalar becomes
-`[x]`, and any other argument becomes `{ $cond: [{ $isArray: x }, x, [x]] }`.
-A spread lowers through `[...x]` and a `$reduce` that applies the same rule to
-each element, so a missing `x` spreads nothing. Measured on :27018 against
-`node -e`, over `a: [1]`: `b` = `[2]`, `5`, `"xy"`, `null` and missing give
-`[1, 2, 1]`, `[1, 5, 1]`, `[1, "xy", 1]`, `[1, null, 1]` and `[1, null, 1]`
-(JavaScript's `undefined` is null in MongoDB); a spread of `[[2], 3]` gives
-`[1, 2, 3, 1]`, and of a missing field `[1, 1]`. The size cost is stated in
-docs/specs/emit-pass.md § The method cells.
-
-The fold had the same gap: `[1].concat(...[[2], 3])` folded to `[1, [2], 3]`.
-`evaluate.ts` now reads a packed list as the call's arguments, one per element,
-and the `concat` fold follows JavaScript for a scalar argument too
-(`[1].concat(2)` folds to `[1, 2]`). `Math.max(...[1, 5], 7)` now folds to `7`.
-
-The sibling check found the same symptom on the set methods: a missing list
-argument made the whole value null. `.union()`, `.intersection()`, `.xor()`,
-`.unionBy()`, and the Set forms `.difference()` and `.symmetricDifference()`
-now read the argument through `arrayOrEmpty`, as `.difference()` on an array and
-`.isSubsetOf()` already did: `$.a.union($.b)` gives `a`'s elements when `b` is
-not there, as `new Set(a).union(new Set(undefined))` does. The in-document
-`.push()` write spreads its receiver and appends each argument as one element,
-which is JavaScript's `push` rule, so it needed no change.
+The root [CLAUDE.md](../CLAUDE.md) (two times) and [docs/CLAUDE.md](CLAUDE.md)
+wrote "HR1–HR4" to mean all the hard rules, and HR5 already exists. The number
+of rules changes, so a range goes stale at the next rule, exactly as a count
+does. The developer decided that prose says "all HARD RULES" or "all SOFT
+RULES". A sentence about one rule still names that rule by its ID.
 
 ---
 
-## 2026-09-26 — fix: the `.split("")` hint names a spelling that runs on a missing field
+## 2026-09-26 — docs: rewrite LANG_RULES.md in STE, and correct it against the compiler
 
-`$.s.split("")` is refused, because MongoDB's `$split` needs a non-empty
-separator. The refusal named `$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))`.
-On a document that lacks `s`, `.length()` answers null (HR5: a string method
-keeps null), and the server aborts: "$range requires a numeric ending value,
-found value of type: null". So the hint led to a spelling that does not run.
+The first STE pass over [docs/LANG_RULES.md](docs/LANG_RULES.md) kept each
+code block byte-identical, and it kept four headlines that STE does not allow:
+a passive with "vice-versa" (HR2), "knowingly" (HR3), "each mean exactly one
+scope, always" (HR4), and "brevity and better DX" (SR3). This pass rewrites
+these headlines, each prose sentence, and the notes inside the code blocks.
+The code and each `// →` claim stay exact. A note after a claim now comes after
+a second `//`, so `scripts/check-doc-claims.mjs` compares 19 claims, not 15.
 
-The four hints that name this spelling now read `….length() ?? 0`: the
-`.split()` and `$split` rows in `src/registry/names.ts`, and the string-spread
-and string-not-a-list refusals in `src/compiler/emit/errors.ts`. Measured on
-:27018, `$range(0, $.s.length() ?? 0).map(i => $.s.charAt(i))` gives
-`["a", "b", "c"]` for `"abc"` (JavaScript's `"abc".split("")`), and `[]` for
-`""`, for `null` and for a missing `s`. It reads code points: `"a😀"` gives
-`["a", "😀"]`, where `"a😀".split("")` gives three UTF-16 units.
-
-A new live case in `test/compiler-methods.test.ts` reads each hint out of its
-message, fills in the placeholder, and runs it on four documents. A sweep of
-every other concrete spelling in the refusal texts of `names.ts`, `errors.ts`,
-the parser and the passes found no other hint that aborts on a missing field.
-
----
-
-## 2026-09-26 — fix: a misspelled call names the nearest working name of its kind
-
-`$$.pushh({ a: 1 });` gave "'.pushh()' is not a method of the stream '$$'." with
-no suggestion, although `$$.push(…)` works (the union road). The stream-link
-refusal drew its candidates from the rows that list the `stream` position, and
-that set leaves out `.push()` and `.size()`. The candidates are now every row a
-`$$` receiver accepts in some position: `streamReceiverNames()` in
-`src/compiler/rows.ts` reads `where` and `on`, so `$$.pushh(…)` names `.push()`
-and `$$.sizee()` names `.size()`. `test/union.test.ts` held the old gap as a
-rule ("names no method for a near-miss of '.push'"), with the reason that
-`.push` is no chain method. `$$ = $$.push(…)` and `$$.filter(p).push(…)` both
-compile, so that reason no longer held, and the test now asserts the suggestion.
-
-The sibling refusals had three more gaps of the same kind:
-
-- `$$ = $$$.orders.filterr(p)` said "'.filterr()' makes a value, and the stream
-  must stay documents". A name no row knows makes no value, so it now gets
-  "Unknown method '.filterr()' at position 15. Did you mean '.filter()'?".
-- A statement that calls an unknown method or static gave "Unknown name 'popp'
-  at position 6." with no suggestion. It now reads as the value road does:
-  `$.tags.popp();` names `.pop()`, and `Object.assignn(…);` names
-  `Object.assign`.
-- "Unknown function" suggested from the declared functions only, so
-  `Numberr($.s)` and `assertt(…)` got no suggestion. The candidates now add every
-  global that a program calls by its bare name (`bareCallableNames()`).
-
-A value receiver (`$.a.sizee()`), `Math.maxx(…)` in a value, and a stage name
-(`$matc(…)`) already named the nearest name, and keep their messages.
+The rewrite also found text that disagreed with the compiler, and the developer
+confirmed each correction. HR2 said that an argument that is not plain MQL gets
+an array wrap, but `$abs($.cents / 100)` lowers to
+`{ $abs: { $divide: ["$cents", 100] } }`. HR5 said that `.lastIndexOf()` reads a
+string, but the compiler refuses it on a string, so the rule names `.indexOf()`
+only. HR5 also said that the type of the argument decides, but a string argument
+does not decide. SR3 named Temporal for `.plus()`, `.minus()` and `.diff()`, but
+these are the names of Luxon. The `$round` note gave a field reference as the
+reason, but the reason is its optional `place` operand. The `$eq(1)` quote now
+agrees with the real message. `(o, _i, coll) => { coll.size() }` did not
+compile, and `$$ = $$.uniqBy("t")` becomes the default bare chain
+`$$.uniqBy("t")`.
 
 ---
 
-## 2026-09-26 — fix: `++` / `--` read with JavaScript's precedence, and a write inside a value names the statement to write
+## 2026-09-26 — feat: the size of a constant array is a constant, in both spellings
 
-The `increment` and `decrement` rows had no precedence, so the Pratt loop never
-bound `++` inside an expression. `1 + $.x++` then parsed as the write
-`(1 + $.x)++`, and the refusal said "Cannot apply '++' to a '+' expression".
-That message describes a grouping that JavaScript never makes: JavaScript binds
-a postfix `++` tighter than every prefix and binary operator, so `1 + $.x++` is
-`1 + ($.x++)` and `-$.x++` is `-($.x++)`. The value forms `$.y = $.x++;`,
-`$.y = ($.x++);` and `$.y = -$.x++;` failed with a stray-token message:
-"Expected ';' but got '++'". An assignment inside a value had the same gap:
-`1 + ($.a = 5)` gave "Expected ')' but got '='", and `$.a += $.b += 1` gave
-"Expected ';' but got '+='".
+`[1, 2, 3].size()` already folded to 3, but `$size([1, 2, 3])` emitted
+`{ $size: [[1, 2, 3]] }`: the evaluator never reads an escape-hatch call,
+because the escape hatch is the developer's MQL. The developer decided that
+both spellings lower to 3, because the array is a constant. The same held for a
+`const` array, a `jsmql.compile` parameter and a template value.
 
-Both rows now state `precedence: 14` and a new `asStatement` field (`"+= 1"`,
-`"-= 1"`) in `src/registry/productions.ts`. The parser reads JavaScript's
-grouping from the rows. A write that stands inside a value is refused at its
-operator, with `.pos` and "at position N", in one message shared by `++`,
-`--`, `=` and every compound operator:
+The fact sits on the row, not in the compiler: the `$size` row states
+`foldsAs: "size"`, and the evaluator settles a call to such a row with the fold
+of that method, over the operand the lowering reads. A list of ONE element is
+the operand list, so `$size([[1, 2]])` is 2. An empty list is no operand, and
+the count still refuses it. Any other array literal is the value. The fold pass
+now asks an `OperatorCall`, so the constant settles before the filter picks its
+shape: `$.n === $size([1, 2, 3])` is `{ n: 3 }`, as the `.size()` spelling is.
+A raw document stays as written (HR1), and `test/compiler-returns-agrees.test.ts`
+holds each fold against mongod's answer for the call left alone. The fold also
+repairs `$size([...[1, 2]])`, which emitted `{ $size: [1, 2] }`, a document the
+server refuses. The registry's `sizeOf` settles a constant array too, so a
+lowering that counts one writes the number: `["a", "b"].map((k, i) => …)` counts
+with `$range: [0, 2]`.
 
-```
-$.y = $.x++;   ✗ '$.x++' is a write inside a value at position 9. A write stands only as a
-                 statement. Write '$.x += 1;' as its own statement after the statement that
-                 uses the value, and read '$.x' there.
-1 + ($.a = 5); ✗ '$.a = 5' is a write inside a value at position 9. … Write '$.a = 5;' as its
-                 own statement before the statement that uses the value, and read '$.a' there.
-```
+---
 
-The side comes from JavaScript's value order: a postfix write gives the value
-from before the write, so its statement goes after the read; a prefix write
-and an assignment give the value from after it, so theirs goes before. The
-named rewrite `$.y = $.x; $.x += 1;` gives `{ x: 2, y: 1 }` on the fixture
-`mongod` for `{ x: 1 }`, which is JavaScript's answer. The statement forms
-`$.x++;`, `++$.x;`, `$.x--;`, `($.a++);` and `[$.a++, …]` emit the same MQL as
-before. A callback parameter default (`(x = 1) => x`) would otherwise read as
-an assignment inside a value, so the parser refuses it with its own message,
-which names `x => x ?? <default>`. `docs/specs/update-filter.md` also loses
-three stale lines: `ArrayElement` lists no `LetDecl`, the parenthesised chain
-`($.a = $.b = 5);` compiles, and the parser method is `writeGroup`.
+## 2026-09-26 — feat!: `in` takes a list on its right, and the key test goes
+
+`in` had two meanings: with a list on the right it was MongoDB's `$in`, and
+with anything else it was JavaScript's key test (`"k" in $.o` →
+`{ "o.k": { $exists: true } }`, `$.x in { a: 1 }` → the literal's keys). The
+developer decided that `in` keeps the element test only, because that is the
+meaning a query reads, and one operator gets one meaning. The emitter now
+accepts one right side, an `ArrayLiteral` (a constant, a `jsmql.compile`
+parameter and a `${…}` interpolation each arrive as one), and refuses every
+other one with the spelling for the intent: `.has(x)` for an element of an
+array value, `.key !== undefined` or `.keys().has(k)` for a key of an object.
+The filter road's key-test branch in `membershipQuery` and the two old
+refusals (`inOnArray`, `scalarInOperand`) are gone. DEFERRED.md § B records
+the decision; LANGUAGE.md § Comparison and grammar.md state the rule.
 
 ---
 
@@ -243,6 +169,48 @@ was incidental use the statement spelling and keep their MQL. Docs:
 
 ---
 
+## 2026-09-26 — fix: `.concat()` reads each argument as JavaScript does, and a set method reads a missing list as empty
+
+JavaScript's `concat` adds the elements of an array argument, and adds any other
+argument as one element. A spread passes each element of its array as an
+argument of its own. The `concat` cell kept an argument that proved nothing as
+written, and took the desugar pass's packed list as ONE argument:
+
+```
+$.a.concat($.b, 1)     → { $concatArrays: [{ $ifNull: ["$a", []] }, "$b", [1]] }
+                         no b → null for the whole value; b: 5 → the server aborts
+$.a.concat(...$.b, 1)  → { $concatArrays: [{ $ifNull: ["$a", []] }, { $concatArrays: ["$b", [1]] }] }
+                         b: [[2]] → [1, [2], 1], where JavaScript gives [1, 2, 1]
+```
+
+The cell now unpacks the packed list, and a new `type` service on `ExprIn`
+gives it the proof of each argument. A proven array stays as written, an array
+that can be null takes `{ $ifNull: [x, [null]] }`, a proven scalar becomes
+`[x]`, and any other argument becomes `{ $cond: [{ $isArray: x }, x, [x]] }`.
+A spread lowers through `[...x]` and a `$reduce` that applies the same rule to
+each element, so a missing `x` spreads nothing. Measured on :27018 against
+`node -e`, over `a: [1]`: `b` = `[2]`, `5`, `"xy"`, `null` and missing give
+`[1, 2, 1]`, `[1, 5, 1]`, `[1, "xy", 1]`, `[1, null, 1]` and `[1, null, 1]`
+(JavaScript's `undefined` is null in MongoDB); a spread of `[[2], 3]` gives
+`[1, 2, 3, 1]`, and of a missing field `[1, 1]`. The size cost is stated in
+docs/specs/emit-pass.md § The method cells.
+
+The fold had the same gap: `[1].concat(...[[2], 3])` folded to `[1, [2], 3]`.
+`evaluate.ts` now reads a packed list as the call's arguments, one per element,
+and the `concat` fold follows JavaScript for a scalar argument too
+(`[1].concat(2)` folds to `[1, 2]`). `Math.max(...[1, 5], 7)` now folds to `7`.
+
+The sibling check found the same symptom on the set methods: a missing list
+argument made the whole value null. `.union()`, `.intersection()`, `.xor()`,
+`.unionBy()`, and the Set forms `.difference()` and `.symmetricDifference()`
+now read the argument through `arrayOrEmpty`, as `.difference()` on an array and
+`.isSubsetOf()` already did: `$.a.union($.b)` gives `a`'s elements when `b` is
+not there, as `new Set(a).union(new Set(undefined))` does. The in-document
+`.push()` write spreads its receiver and appends each argument as one element,
+which is JavaScript's `push` rule, so it needed no change.
+
+---
+
 ## 2026-09-26 — fix: `.pickBy` / `.omitBy` read the predicate with JavaScript's truth rules
 
 `$.o.pickBy(v => v)` lowered its predicate as a raw value in `$filter.cond`:
@@ -267,23 +235,101 @@ answer on a live mongod, over a document of falsy values.
 
 ---
 
-## 2026-09-26 — fix: the fold gives `Object.entries` as [key, value] pairs
+## 2026-09-26 — fix: `++` / `--` read with JavaScript's precedence, and a write inside a value names the statement to write
 
-`Object.entries({ a: 1 })` folded to `[{ k: "a", v: 1 }]`, the raw
-`$objectToArray` answer. JavaScript gives `[["a", 1]]`, and so does the
-runtime lowering (`Object.entries($.o)` is a `$map` over `$objectToArray`,
-measured on :27018), and so does docs/LANGUAGE.md. So one expression gave two
-answers: a constant operand gave documents, a field operand gave pairs. The
-fold in [src/compiler/passes/fold-methods.ts](../src/compiler/passes/fold-methods.ts)
-now gives `Object.entries(o)` as it stands. The sibling folds (`Object.keys`,
-`Object.values`, `Object.fromEntries`, `.toPairs()`) already agreed, and
-`.keys()` / `.values()` / `.entries()` on a literal do not fold.
+The `increment` and `decrement` rows had no precedence, so the Pratt loop never
+bound `++` inside an expression. `1 + $.x++` then parsed as the write
+`(1 + $.x)++`, and the refusal said "Cannot apply '++' to a '+' expression".
+That message describes a grouping that JavaScript never makes: JavaScript binds
+a postfix `++` tighter than every prefix and binary operator, so `1 + $.x++` is
+`1 + ($.x++)` and `-$.x++` is `-($.x++)`. The value forms `$.y = $.x++;`,
+`$.y = ($.x++);` and `$.y = -$.x++;` failed with a stray-token message:
+"Expected ';' but got '++'". An assignment inside a value had the same gap:
+`1 + ($.a = 5)` gave "Expected ')' but got '='", and `$.a += $.b += 1` gave
+"Expected ';' but got '+='".
 
-The `DISAGREE` table of `test/compiler-fold-agrees.test.ts` held this one
-case. It is empty now, so the table and its "still disagrees" guard are gone,
-and every folded expression must agree with the server. A consequence:
-`$$ = Object.entries({ a: 1 })` is refused (its elements are arrays), as
-`$$ = Object.entries($.scores)` already was.
+Both rows now state `precedence: 14` and a new `asStatement` field (`"+= 1"`,
+`"-= 1"`) in `src/registry/productions.ts`. The parser reads JavaScript's
+grouping from the rows. A write that stands inside a value is refused at its
+operator, with `.pos` and "at position N", in one message shared by `++`,
+`--`, `=` and every compound operator:
+
+```
+$.y = $.x++;   ✗ '$.x++' is a write inside a value at position 9. A write stands only as a
+                 statement. Write '$.x += 1;' as its own statement after the statement that
+                 uses the value, and read '$.x' there.
+1 + ($.a = 5); ✗ '$.a = 5' is a write inside a value at position 9. … Write '$.a = 5;' as its
+                 own statement before the statement that uses the value, and read '$.a' there.
+```
+
+The side comes from JavaScript's value order: a postfix write gives the value
+from before the write, so its statement goes after the read; a prefix write
+and an assignment give the value from after it, so theirs goes before. The
+named rewrite `$.y = $.x; $.x += 1;` gives `{ x: 2, y: 1 }` on the fixture
+`mongod` for `{ x: 1 }`, which is JavaScript's answer. The statement forms
+`$.x++;`, `++$.x;`, `$.x--;`, `($.a++);` and `[$.a++, …]` emit the same MQL as
+before. A callback parameter default (`(x = 1) => x`) would otherwise read as
+an assignment inside a value, so the parser refuses it with its own message,
+which names `x => x ?? <default>`. `docs/specs/update-filter.md` also loses
+three stale lines: `ArrayElement` lists no `LetDecl`, the parenthesised chain
+`($.a = $.b = 5);` compiles, and the parser method is `writeGroup`.
+
+---
+
+## 2026-09-26 — fix: a list operator takes one operand wherever the server does
+
+The compiler refused every list-only operator with one operand that is not an
+array literal: `{ $add: 5 }`, `{ $setUnion: "$a" }`, `$and(true)`, and the
+`$group` accumulator `$setUnion($.x)`. The comments said that the server refuses
+this shape. MEASURED on the project's mongod, it does not: the server reads a
+lone operand as ONE operand, so `{ $add: 5 }` answers 5. Only an operator with a
+count of two or more refuses it (`{ $divide: 10 }`: "takes exactly 2
+arguments"). So the compiler broke HR1, and it even refused its own output: the
+`{ $setUnion: { $ifNull: ["$a", []] } }` that `$.a.uniq()` emits did not paste
+back in. The developer decided that valid raw MQL is accepted in all cases.
+
+The row's count now decides, as it does for every other call. The one-operand
+refusal is gone from the value road in [lower.ts](../src/compiler/emit/lower.ts).
+The call keeps its operand as written (`$add($.x)` → `{ $add: "$x" }`, HR2), and
+the raw document takes the call's lowering, so both spellings get one answer:
+`$divide(10)` and `{ $divide: 10 }` both get "'$divide(dividend, divisor)'
+requires exactly 2 arguments, got 1". The registry's count agreed with mongod on
+all 33 list-only rows, and `test/compiler-returns-agrees.test.ts` now asks the
+server again for each row. A filter keeps its refusal: in a query document,
+`$and`, `$or` and `$mod` take a list, and the server refuses `{ $and: true }`.
+The HR3 example in [LANG_RULES.md](LANG_RULES.md) moves to `$divide(10)`, a
+case that the server does refuse.
+
+---
+
+## 2026-09-26 — fix: a misspelled call names the nearest working name of its kind
+
+`$$.pushh({ a: 1 });` gave "'.pushh()' is not a method of the stream '$$'." with
+no suggestion, although `$$.push(…)` works (the union road). The stream-link
+refusal drew its candidates from the rows that list the `stream` position, and
+that set leaves out `.push()` and `.size()`. The candidates are now every row a
+`$$` receiver accepts in some position: `streamReceiverNames()` in
+`src/compiler/rows.ts` reads `where` and `on`, so `$$.pushh(…)` names `.push()`
+and `$$.sizee()` names `.size()`. `test/union.test.ts` held the old gap as a
+rule ("names no method for a near-miss of '.push'"), with the reason that
+`.push` is no chain method. `$$ = $$.push(…)` and `$$.filter(p).push(…)` both
+compile, so that reason no longer held, and the test now asserts the suggestion.
+
+The sibling refusals had three more gaps of the same kind:
+
+- `$$ = $$$.orders.filterr(p)` said "'.filterr()' makes a value, and the stream
+  must stay documents". A name no row knows makes no value, so it now gets
+  "Unknown method '.filterr()' at position 15. Did you mean '.filter()'?".
+- A statement that calls an unknown method or static gave "Unknown name 'popp'
+  at position 6." with no suggestion. It now reads as the value road does:
+  `$.tags.popp();` names `.pop()`, and `Object.assignn(…);` names
+  `Object.assign`.
+- "Unknown function" suggested from the declared functions only, so
+  `Numberr($.s)` and `assertt(…)` got no suggestion. The candidates now add every
+  global that a program calls by its bare name (`bareCallableNames()`).
+
+A value receiver (`$.a.sizee()`), `Math.maxx(…)` in a value, and a stage name
+(`$matc(…)`) already named the nearest name, and keep their messages.
 
 ---
 
@@ -317,20 +363,163 @@ rule is refused, with the statement form's message.
 
 ---
 
-## 2026-09-26 — feat!: `in` takes a list on its right, and the key test goes
+## 2026-09-26 — fix: an error names the fix in the user's words
 
-`in` had two meanings: with a list on the right it was MongoDB's `$in`, and
-with anything else it was JavaScript's key test (`"k" in $.o` →
-`{ "o.k": { $exists: true } }`, `$.x in { a: 1 }` → the literal's keys). The
-developer decided that `in` keeps the element test only, because that is the
-meaning a query reads, and one operator gets one meaning. The emitter now
-accepts one right side, an `ArrayLiteral` (a constant, a `jsmql.compile`
-parameter and a `${…}` interpolation each arrive as one), and refuses every
-other one with the spelling for the intent: `.has(x)` for an element of an
-array value, `.key !== undefined` or `.keys().has(k)` for a key of an object.
-The filter road's key-test branch in `membershipQuery` and the two old
-refusals (`inOnArray`, `scalarInOperand`) are gone. DEFERRED.md § B records
-the decision; LANGUAGE.md § Comparison and grammar.md state the rule.
+Several refusals named an internal node type, a wrong receiver, or a fix that
+did not compile:
+
+```
+1++;                  → "Cannot apply '++' to a NumberLiteral. … collection. at position 1"
+$.y = [$.x++];        → "Assignment is a statement, not a value. …"   (no position, no fix)
+$.y = $$++;           → suggests '$$ += 1;', which the compiler also refuses
+$$ -= 1;              → "… on '$$' — it is the whole document, not a scalar."
+delete $$;            → "'delete $' would delete the document itself. …"
+Set([1]);             → "Unknown function 'Set(...)'. …"
+Map([]);              → "… Did you mean 'Math(...)'?"
+new Foo(1);           → "Direct call '(...)(args)' is only supported when …"
+```
+
+Each one now says what the developer wrote. `requirePlace` quotes the target as
+the source spells it (`Cannot apply '++' to '1' at position 1.`). A write in an
+array that is a value gets the refusal the parser gives `$.y = $.x++`: the
+parser cannot know that position, so the desugar pass refuses the write in one
+walk before any rule rewrites it. `delete` inside a value (`f(delete $.a)`,
+valid JavaScript) and a function in a value array get the same kind of message.
+The arithmetic-write check on `$` and `$$` moved from the desugar pass into the
+parser's `requireWriteTarget`, so the value form and the statement form give
+one answer. It names `$$` as the stream, and `delete $$` names `$$ = []` and
+`$$.filter(d => …)`.
+
+The constructor messages read their rows. `Set(…)` names `new Set(…)`, because
+its row states `newKeyword: "required"`. `new Number(5)` names the call without
+`new`, and an unknown class takes `didYouMean` over the names `new` can build.
+New `Map` and `RegExp` rows refuse both spellings and name the JSMQL form: an
+object or `Object.fromEntries(pairs)`, a regex literal or `$regexMatch`.
+`bareCallableNames()` leaves out a row that lists no position, so no suggestion
+names `Math(…)`. `constructorGlobals()` leaves out the same rows, so the
+generated globals do not declare `RegExp`.
+
+A `ParseError` whose message ends with a full stop now takes its position before
+the stop, so no message reads "…. at position N". Each call site that ended with
+a suggestion states the position in its first sentence instead, e.g.
+`'.fill(value[, start[, end]])' at position 3 takes 1 to 3 arguments, got 0.`
+
+---
+
+## 2026-09-26 — fix: every example names the third callback parameter `stream`
+
+"`collection` names only a MongoDB collection" (below) renamed the third
+callback parameter in two examples, but LANGUAGE.md, four specs and one error
+hint still spelled it `(o, _i, coll)`. That parameter is the body's own
+stream, not a collection, so each example now reads `(o, _i, stream)` and
+`stream.size()`. The hint for `$$` inside a body over another collection reads
+"'(o, _i, stream) => { stream.filter(…); }'". A `coll` that is MQL
+(`{ $unionWith: { coll: … } }`, `{ db, coll }`) or a collection name
+(`$$$.<coll>`) stays as it is.
+
+---
+
+## 2026-09-26 — fix: the `.split("")` hint names a spelling that runs on a missing field
+
+`$.s.split("")` is refused, because MongoDB's `$split` needs a non-empty
+separator. The refusal named `$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))`.
+On a document that lacks `s`, `.length()` answers null (HR5: a string method
+keeps null), and the server aborts: "$range requires a numeric ending value,
+found value of type: null". So the hint led to a spelling that does not run.
+
+The four hints that name this spelling now read `….length() ?? 0`: the
+`.split()` and `$split` rows in `src/registry/names.ts`, and the string-spread
+and string-not-a-list refusals in `src/compiler/emit/errors.ts`. Measured on
+:27018, `$range(0, $.s.length() ?? 0).map(i => $.s.charAt(i))` gives
+`["a", "b", "c"]` for `"abc"` (JavaScript's `"abc".split("")`), and `[]` for
+`""`, for `null` and for a missing `s`. It reads code points: `"a😀"` gives
+`["a", "😀"]`, where `"a😀".split("")` gives three UTF-16 units.
+
+A new live case in `test/compiler-methods.test.ts` reads each hint out of its
+message, fills in the placeholder, and runs it on four documents. A sweep of
+every other concrete spelling in the refusal texts of `names.ts`, `errors.ts`,
+the parser and the passes found no other hint that aborts on a missing field.
+
+---
+
+## 2026-09-26 — fix: the fold gives `Object.entries` as [key, value] pairs
+
+`Object.entries({ a: 1 })` folded to `[{ k: "a", v: 1 }]`, the raw
+`$objectToArray` answer. JavaScript gives `[["a", 1]]`, and so does the
+runtime lowering (`Object.entries($.o)` is a `$map` over `$objectToArray`,
+measured on :27018), and so does docs/LANGUAGE.md. So one expression gave two
+answers: a constant operand gave documents, a field operand gave pairs. The
+fold in [src/compiler/passes/fold-methods.ts](../src/compiler/passes/fold-methods.ts)
+now gives `Object.entries(o)` as it stands. The sibling folds (`Object.keys`,
+`Object.values`, `Object.fromEntries`, `.toPairs()`) already agreed, and
+`.keys()` / `.values()` / `.entries()` on a literal do not fold.
+
+The `DISAGREE` table of `test/compiler-fold-agrees.test.ts` held this one
+case. It is empty now, so the table and its "still disagrees" guard are gone,
+and every folded expression must agree with the server. A consequence:
+`$$ = Object.entries({ a: 1 })` is refused (its elements are arrays), as
+`$$ = Object.entries($.scores)` already was.
+
+---
+
+## 2026-09-26 — fix!: "collection" names only a MongoDB collection
+
+The word had four meanings. It named a MongoDB collection, and also `[]` and
+`{}` (HR5 said "a dot runs the method on an empty collection"), the root stream
+`$$` ("the current collection, as a stream"), and the third parameter of a
+callback (lodash's `(value, index, collection)`). The developer decided that a
+"collection" is only a MongoDB collection, or the current collection: the
+collection that the MQL starts to run from. An array, an object and a stream are
+never collections.
+
+So HR5 now reads "a dot runs the method on an empty array or object", in
+[LANG_RULES.md](LANG_RULES.md), the README, LANGUAGE.md and the specs. `$$` is
+"the root stream" everywhere, as HR4 already says. The refusal of a bare `$$`
+value now says "'$$' (the root stream) is statement-only", and a system stage
+spelled on `$$` says "the root stream, run on 'db.coll.aggregate()'". The
+`Object.groupBy` refusal names its parameters `(items, discriminator)`, as MDN
+does, and its fix `<array>.groupBy(…)`. The examples call the third callback
+parameter `stream`, and the lodash "Collection" group is "the lodash array
+vocabulary". A word that names the scope of `$$` stays: `$$.indexStats()`
+reports on the current collection.
+
+The names in the code follow the same rule: the AST node of `$$` is `StreamRef`
+(it was `CollectionRef`), the callback parameter kind is `receiver`, the HR5
+helper is `emptyValueOf`, and the ambient type of `$$` in
+`@koresar/jsmql/globals` is `JsmqlStreamRef` (it was `JsmqlCollectionRef`). The
+type rename and the new message text are why this entry carries a `!`.
+
+---
+
+## 2026-09-26 — fix!: the escape hatch is the MQL you wrote: no fold, and no wrap
+
+This supersedes "feat: the size of a constant array is a constant, in both
+spellings" below. The developer decided that `$size([1, 2])`, `$size(1, 2)` and
+`{ $size: [1, 2] }` are the escape hatch to actual MQL, so the compiler must not
+touch them. Only the JavaScript method computes a count: `[1, 2].size()` is 2,
+and `[$.a, $.b].size()` is 2 as well.
+
+So the `foldsAs` row fact and the evaluator's case for an operator call are
+gone, and the fold pass does not ask an `OperatorCall` again. The emitter's
+old wrap is gone too: a one-operand operator given an array literal of two or
+more elements read the literal as ONE array value (`$size([$.a, 2])` →
+`{ $size: [["$a", 2]] }`, `$arrayToObject([[k, v], [k, v]])` → one pairs
+array). That also touched the MQL, because in MQL the literal is the operand
+list. Now all three spellings of `{ $size: [1, 2] }` get one count refusal,
+because the server refuses two operands: the raw document takes the call's
+lowering, as a list operator's already does. Where one array literal is the
+operand list, the refusal adds "one array literal is the operand list, as in
+MQL", and it names `$size([[…]])`, the spelling of one array operand.
+
+`.size()` of an array literal is its element count, whatever each entry holds:
+`sizeOf` in [mql.ts](../src/registry/mql.ts) writes the count of a literal, so
+`[$.a, $.b].size()` is 2 and `["a", "b"].map((k, i) => …)` counts with
+`$range: [0, 2]`. MEASURED: `{ $size: [["$nope", "$x"]] }` → 2, because a
+missing field is still an element, and `test/compiler-returns-agrees.test.ts`
+holds each count against the server's own. A filter keeps the runtime
+comparison for such a count (`$.n === [$.a, $.b].size()` →
+`{ $expr: { $eq: ["$n", 2] } }`). The fold pass would drop the entries before the
+emitter checks them, so a typo in an entry would disappear.
 
 ---
 

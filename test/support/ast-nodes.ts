@@ -22,7 +22,7 @@ export const EVERY_NODE: Record<Node["type"], true> & Record<NodeName, true> = {
   ArrayLiteral: true,
   ObjectLiteral: true,
   FieldRef: true,
-  CollectionRef: true,
+  StreamRef: true,
   DatabaseRef: true,
   ClusterRef: true,
   Ident: true,

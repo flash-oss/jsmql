@@ -403,7 +403,7 @@ describe("compiler/parse — name-blind", () => {
   });
 
   it("gives the three context references three node types", () => {
-    expect(parseExpression("$$").type).toBe("CollectionRef");
+    expect(parseExpression("$$").type).toBe("StreamRef");
     expect(parseExpression("$$$.orders").type).toBe("MemberAccess");
     expect((parseExpression("$$$.orders") as { object: { type: string } }).object.type).toBe("DatabaseRef");
     expect((parseExpression("$$$$.db.c") as { object: { object: { type: string } } }).object.object.type).toBe(
@@ -829,7 +829,7 @@ describe("compiler/parse — a write target is a place, and an optional chain is
     const WHOLE = (op: string, target: string, what: string, field: string, pos: number): string =>
       `Cannot use '${op}' on '${target}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`;
     const DOC = "'$' is the whole document";
-    const STREAM = "'$$' is the stream of documents";
+    const STREAM = "'$$' is the root stream";
     const refused: [string, string][] = [
       ["$ += 1;", WHOLE("+=", "$", DOC, "$.<field> += …", 2)],
       ["$ -= 1;", WHOLE("-=", "$", DOC, "$.<field> -= …", 2)],

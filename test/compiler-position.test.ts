@@ -170,7 +170,7 @@ describe("compiler/passes/position — what is named, and what is a stream", () 
   it("puts the top link of `$$ = <chain>` at stream, so a chained stage reads its layout", () => {
     const lines = census("$$ = $$.filter(d => d.x).map(d => d.y);");
     expect(lines.filter((l) => l.startsWith("stream "))).toEqual([
-      "stream CollectionRef",
+      "stream StreamRef",
       "stream filter(…)",
       "stream map(…)",
     ]);

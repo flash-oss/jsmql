@@ -164,7 +164,7 @@ export type Expr =
       pos: number;
     }
   /**
-   * `$$` — the current collection, as a stream of documents.
+   * `$$` — the root stream: the documents of the pipeline (HR4).
    *
    * Three spellings, three node types, never one node with a level. They are
    * three different things: `$$` is a stream you can filter and replace, `$$$`
@@ -175,7 +175,7 @@ export type Expr =
    * The postfix `.name` and `[expr]` compose on top through MemberAccess and
    * IndexAccess, so none of the three carries a path of its own.
    */
-  | { type: "CollectionRef"; pos: number }
+  | { type: "StreamRef"; pos: number }
   /** `$$$` — database scope. `$$$.<coll>` names another collection. */
   | { type: "DatabaseRef"; pos: number }
   /** `$$$$` — cluster scope. Writes work; cross-database reads are refused. */

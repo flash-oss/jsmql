@@ -10,14 +10,18 @@ A test checks that the rows and the vendored spec agree: `test/registry-agrees.t
 
 A row's `args` states what the call takes. The shapes below are what the rows say, with an example for each. Every refusal names the way out.
 
-**A list operator** (`$add`, `$setUnion`, `$concat`, …) takes two or more operands, or ONE array literal that IS the operand list (HR2's round-trip of `{ $op: [ … ] }`). The row refuses a lone scalar:
+**A list operator** (`$add`, `$setUnion`, `$concat`, …) takes its operands one by one, or ONE array literal that IS the operand list (HR2's round-trip of `{ $op: [ … ] }`). One operand that is not an array literal is ONE operand, as the server reads it. The row's count decides if one is enough: `$add` and `$setUnion` state `atLeast: 1`, and `$divide` states `exact: 2`. MEASURED on every list-only row, and `test/compiler-returns-agrees.test.ts` asks the server again for each row. The raw document and the call take one lowering, so they agree:
 
 ```
 $add($.a, $.b, $.c)     →  { $add: ["$a", "$b", "$c"] }
 $setUnion([$.a, $.b])   →  { $setUnion: ["$a", "$b"] }
-$add($.x)               →  ✗ "$add operates on a list of operands — pass two or more ($add(a, b)) or a single array ($add([a, b]))."
-({ $setUnion: $.x })    →  ✗ the same sentence: HR3 governs raw MQL too
+$add($.x)               →  { $add: "$x" }
+({ $setUnion: $.x })    →  { $setUnion: "$x" }          raw MQL passes unchanged (HR1)
+$divide(10)             →  ✗ "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1"
+({ $divide: 10 })       →  ✗ the same sentence: HR3 governs raw MQL too
 ```
+
+A query document follows the query language: `$and`, `$or` and `$mod` take a list there. So `{ $and: true }` in a filter is refused. MEASURED: "$and argument must be an array".
 
 **A comparison operator** takes exactly two operands in an expression and has a query form in a filter:
 

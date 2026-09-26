@@ -61,7 +61,7 @@ A body that opens with a correlated equality is the `localField` / `foreignField
 
 The number is the level the read comes FROM. So a nested body captures an ancestor under a distinct name, and MQL's lexical `$$` scoping never shadows it.
 
-The callback's first parameter is the foreign document (`o.total` → `"$total"`). The compiler refuses the second parameter as a read, because a stream has no index. The third parameter is the joined stream itself (`coll.size()`, `coll.filter(…)`). `$.` is the outer document at every depth (HR4). A write inside the body goes through the parameter (`o.x = …`).
+The callback's first parameter is the foreign document (`o.total` → `"$total"`). The compiler refuses the second parameter as a read, because a stream has no index. The third parameter is the joined stream itself (`stream.size()`, `stream.filter(…)`). `$.` is the outer document at every depth (HR4). A write inside the body goes through the parameter (`o.x = …`).
 
 **A value terminal gives ONE DOCUMENT.** The `$lookup.as` array holds the foreign collection's documents. So the binding for the slot states `elements: "object"`. A method whose row answers `returns: "element"` — `.head()`, `.first()`, `.last()`, `.at(i)`, `.nth(i)`, `.find(p)`, `.findLast(p)`, `.min()`, `.max()`, `.minBy(k)`, `.maxBy(k)` — is typed `"object"` over it. The compiler then refuses every array method on that document, and it names the field read as the way out.
 

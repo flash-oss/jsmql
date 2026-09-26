@@ -175,13 +175,13 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     // members and never through its index signature. Drop the `extends` and
     // `$$$.coll = $$` stops type-checking.
     expect(src).toContain("interface JsmqlForeignRef {");
-    expect(src).toContain("interface JsmqlCollectionRef extends JsmqlForeignRef {");
+    expect(src).toContain("interface JsmqlStreamRef extends JsmqlForeignRef {");
     // `$$` must be `var`, not `const`: it is reassigned wholesale by the
     // `$$ = …` replace-stream / `$facet` sugar, and `const $$` makes TS reject
     // that valid jsmql (TS2588). `$$$` / `$$$$` stay `const` — they only take
     // property writes (`$$$.coll = …` → `$out`), which `const` permits.
-    expect(src).toContain("var $$: JsmqlCollectionRef;");
-    expect(src).not.toContain("const $$: JsmqlCollectionRef;");
+    expect(src).toContain("var $$: JsmqlStreamRef;");
+    expect(src).not.toContain("const $$: JsmqlStreamRef;");
     // `$$$` indexes to the foreign ref — that is what gives a foreign chain
     // completion. `$$$$`'s second level is a database, so it keeps a plain tail.
     expect(src).toContain("const $$$: { [collection: string]: JsmqlForeignRef };");
@@ -203,11 +203,11 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     // keeps the identity of its root, which is the rule jsmql enforces for
     // `.find` (legal anywhere on a foreign chain, nowhere on a `$$` chain).
     const src = generateGlobalsSource();
-    const foreign = src.slice(src.indexOf("interface JsmqlForeignRef {"), src.indexOf("interface JsmqlCollectionRef"));
-    const collection = src.slice(src.indexOf("interface JsmqlCollectionRef"), src.indexOf("var $$:"));
+    const foreign = src.slice(src.indexOf("interface JsmqlForeignRef {"), src.indexOf("interface JsmqlStreamRef"));
+    const collection = src.slice(src.indexOf("interface JsmqlStreamRef"), src.indexOf("var $$:"));
     for (const [block, ref] of [
       [foreign, "JsmqlForeignRef"],
-      [collection, "JsmqlCollectionRef"],
+      [collection, "JsmqlStreamRef"],
     ] as const) {
       expect(block).toContain(`filter(predicate: ((doc: any) => any) | Record<string, any>): ${ref};`);
       expect(block).toContain(`map(transform: ((doc: any) => any) | string): ${ref};`);
@@ -226,7 +226,7 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
       }
     }
     // `.push` is the statement-level `$unionWith` — current stream only.
-    expect(collection).toContain("push(...docs: any[]): JsmqlCollectionRef;");
+    expect(collection).toContain("push(...docs: any[]): JsmqlStreamRef;");
     expect(foreign).not.toContain("push(...docs: any[])");
     // A stream is an array where it genuinely is one: the count, the value
     // terminals, and enough iterability for `$$.push(...$$$.other)` to spread.

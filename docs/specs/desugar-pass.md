@@ -228,6 +228,10 @@ literal and its `.toString()`, a literal array or object and a read out of it.
 A binding that reads the document, the clock or the RNG stays the runtime
 `__jsmql.var.<name>` field of [let-bindings.md](let-bindings.md).
 
+**An operator call is never a constant.** The escape hatch is the developer's
+MQL, so `$size([[1, 2, 3]])` stays as written. Only the JavaScript spelling
+folds: `[1, 2, 3].size()` is 3.
+
 **The invariant: a fold must not change the answer.** Every rule computes what
 the SERVER computes for the same expression, measured on mongod, not what
 JavaScript computes where the two differ. That is why a month added to 31

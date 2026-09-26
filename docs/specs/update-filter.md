@@ -31,8 +31,8 @@ on the discriminant. `Pipeline` (from `aggregation-stages.md`) wraps a sequence 
 
 `ArrayElement` is `Expr | SpreadElement | FuncDecl | UpdateOp | UpdateFilter`
 ([src/registry/ast.ts](../../src/registry/ast.ts)), so an update op can sit inside a
-pipeline-array literal. Non-pipeline `ArrayLiteral` codegen rejects an update-op
-element with a clear error.
+pipeline-array literal. In an array that is a value, the desugar pass refuses an
+update-op element before any rule rewrites it (see § Error message conventions).
 
 ## Lexemes
 
@@ -251,7 +251,7 @@ target (`Object.assign({}, $.a)`), it is a value. In an expression it is
 | Function in a value array (`$.y = [function f(x) { … }]`) | desugar, before any rule | "'function f(…)' is a function inside a value at position N. MQL has no function values. …" |
 | Target that is not a place (`1 = 2`, `$.a + 1 = 2`, `1++`) | parser | "Cannot apply '=' to '$.a + 1' at position N. You can write only to a field, a binding, '$', '$$' or a collection." The message quotes the target as the source spells it. |
 | Arithmetic write on `$` or `$$` (`$ += 1`, `$$++`) | parser | "Cannot use '+=' on '$' at position N. '$' is the whole document, not a field. Write to a field: '$.<field> += …'." A `=` replaces either one, and `$$$.<coll> += …` is a `$merge`, so both stay legal. |
-| `delete $` / `delete $$` | codegen | "'delete $' would delete the document itself. …" / "'delete $$' would delete the stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'." |
+| `delete $` / `delete $$` | codegen | "'delete $' would delete the document itself. …" / "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'." |
 | Empty update op program          | codegen      | "Update op program must contain at least one assignment or delete" (defensive — parser should not produce this) |
 
 `AssignExpr.pos` / `DeleteStmt.pos` come from the target's source offset (for

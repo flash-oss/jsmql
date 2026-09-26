@@ -348,22 +348,22 @@ export function functionInValueOf(node: FuncDecl): ParseError {
 
 /**
  * `$ += 1` and `$$++`: an arithmetic write needs a field. `$` is the whole
- * document and `$$` is the stream of documents, so neither can take one.
+ * document and `$$` is the root stream, so neither can take one.
  * A `=` replaces either one, and a collection (`$$$.<coll> += …`) takes the
  * write as a `$merge`, so both of those stay legal.
  */
 function refuseWholeTarget(target: Expr, op: string, pos: number): void {
   if (op === "=" || op === "delete") return;
   const what =
-    target.type === "CollectionRef"
-      ? "'$$' is the stream of documents"
+    target.type === "StreamRef"
+      ? "'$$' is the root stream"
       : target.type === "FieldRef" && target.path === ""
         ? "'$' is the whole document"
         : null;
   if (what === null) return;
   const field = asStatementOf(op) === null ? `$.<field> ${op} …` : `$.<field>${op}`;
   throw new ParseError(
-    `Cannot use '${op}' on '${target.type === "CollectionRef" ? "$$" : "$"}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`,
+    `Cannot use '${op}' on '${target.type === "StreamRef" ? "$$" : "$"}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`,
     pos,
   );
 }
@@ -959,7 +959,7 @@ class Parser {
       t === "Ident" ||
       t === "MemberAccess" ||
       t === "IndexAccess" ||
-      t === "CollectionRef" ||
+      t === "StreamRef" ||
       t === "DatabaseRef" ||
       t === "ClusterRef";
     if (isPlace) return;
@@ -1277,7 +1277,7 @@ class Parser {
         return this.dollar();
       case "DoubleDollar":
         this.c.next();
-        return { type: "CollectionRef", pos: t.pos };
+        return { type: "StreamRef", pos: t.pos };
       case "TripleDollar":
         this.c.next();
         return { type: "DatabaseRef", pos: t.pos };

@@ -248,7 +248,12 @@ export const SORT_KEY_LIMIT = 32;
 
 /** A literal array as ONE operand. The server reads `{ $size: [1, 2] }` as two operands, and `{ $size: [[1, 2]] }` as one. */
 export const singleArrayArg = (operand: unknown): unknown => (Array.isArray(operand) ? [operand] : operand);
-export const sizeOf = (a: unknown): Record<string, unknown> => ({ $size: singleArrayArg(a) });
+/**
+ * The size of an array. An array LITERAL holds one element per entry, whatever each
+ * entry holds, so it needs no count at run time: `["$a", "$b"]` is 2. MEASURED:
+ * `{ $size: [["$nope", "$x"]] }` → 2, because a missing field is still an element.
+ */
+export const sizeOf = (a: unknown): unknown => (Array.isArray(a) ? a.length : { $size: a });
 export const firstOf = (a: unknown): Record<string, unknown> => ({ $first: singleArrayArg(a) });
 export const lastOf = (a: unknown): Record<string, unknown> => ({ $last: singleArrayArg(a) });
 export const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $reverseArray: singleArrayArg(a) });

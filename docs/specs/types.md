@@ -153,7 +153,7 @@ that may be several kinds proves several.
 **A callback's answer** (`{ callback: n }`) is the body's proof under the
 parameters the row's `params` bind: `value` is one element of the receiver (or a
 property value of an object receiver), `index` a number, `key` a string,
-`collection` the receiver, `accumulator` the seed argument. A parameter is never
+`receiver` the receiver itself, `accumulator` the seed argument. A parameter is never
 proven present. So `.map(t => t.trim())` over an array proves an array of strings
 that may be null, `.flatMap(f)` flattens one level of the callback's answer
 (`elementOf`), and `.reduce(f, seed)` is one of the seed and the callback's
@@ -187,7 +187,7 @@ value arguments are present; an `Injected` value is present unless it is null. A
 `? :` is present when both branches are; a property read carries the object's
 proof; a binding carries what its value proved. `a ?? b` is present exactly when
 `b` is. An array or object method under a dot is present whatever its receiver:
-HR5 reads a missing receiver as the empty collection (`dispatchOn` in
+HR5 reads a missing receiver as `[]` or `{}` (`dispatchOn` in
 [lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()`
 guards `a` once and `.size()` adds nothing. A `?.` on the spine takes that away:
 the chain stops, and the value may be null. MEASURED: `{ $size: null }` and

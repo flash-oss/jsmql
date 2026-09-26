@@ -229,7 +229,7 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * what each accepts in place of the arrow. One entry per receiver family `on`
    * lists, because the SLOT LAYOUT is a property of the receiver:
    *   $.items.groupBy(fn)            the iteratee is the first argument
-   *   Object.groupBy($.items, fn)    the collection is, and the arrow is second
+   *   Object.groupBy($.items, fn)    the array is, and the arrow is second
    * One row serves both, so a single layout would misplace one of them. Absent
    * means no slot on any receiver takes one.
    *
@@ -345,12 +345,10 @@ type MongoSpec<
    * How the row writes the operand list, for the expression positions. Omitted for
    * a name that is only ever a stage: its `body` is its shape.
    *
-   *   "single"    one operand — `{ $abs: <operand> }`; a lone array literal with
-   *               one element is the operand list as the user wrote it (`$size([$.a])` →
-   *               `{ $size: ["$a"] }`, HR2), with two or more it can only be the
-   *               array VALUE and the emitter wraps it once (`$arrayToObject([[k, v], …])` →
-   *               `{ $arrayToObject: [[…]] }` — the server reads a literal array in
-   *               the slot as its argument list)
+   *   "single"    one operand — `{ $abs: <operand> }`; a lone array literal is the
+   *               operand list as the user wrote it (HR2): `$size([$.a])` →
+   *               `{ $size: ["$a"] }`, and `$size([1, 2])` is two operands, which the
+   *               count refuses as the server does
    *   "array"     a list of two or more, or one array literal that IS the list
    *   "flex"      one operand bare, two or more as a list
    *   "none"      `{ $op: {} }`
@@ -1071,8 +1069,8 @@ const pairsRead = (
  * `body` runs on a receiver that the test proved, so it needs no guard of its own. A
  * path is cheap to read twice, and this function binds anything else once. A receiver
  * that is `present` skips the test — a literal, a `$lookup`'s array, a path that an
- * earlier `?.` test proved, or an array or object receiver the compiler read as its
- * empty collection (`dispatchOn` in src/compiler/emit/lower.ts), which is why an
+ * earlier `?.` test proved, or an array or object receiver the compiler read as `[]`
+ * or `{}` (`dispatchOn` in src/compiler/emit/lower.ts), which is why an
  * array cell that calls this never emits the test under a dot.
  */
 const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r: unknown) => unknown): unknown => {
@@ -7880,7 +7878,7 @@ export const NAMES = {
     doc: "'.flatMap()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // $unwind needs a field path, and a matcher is provably a boolean.
@@ -7928,7 +7926,7 @@ export const NAMES = {
     doc: "'.map()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // $replaceWith needs a document, and a matcher is provably a boolean.
@@ -7962,7 +7960,7 @@ export const NAMES = {
     on: ["array", "stream"],
     // MEASURED: three parameters as a value, exactly one as a chain link —
     // `$$ = $$.filter((d, i) => …)` is "must take exactly one parameter".
-    params: { value: ["value", "index", "collection"], stream: ["value"] },
+    params: { value: ["value", "index", "receiver"], stream: ["value"] },
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element is a document.
@@ -7998,7 +7996,7 @@ export const NAMES = {
     // On another collection (`$$$.c.find(p)`) it is the `filter` row's cell plus
     // `$limit: 1`, and yields ONE document. See src/compiler/emit/join.ts.
     picksOne: "filter",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "element",
     where: ["value"],
@@ -8059,7 +8057,7 @@ export const NAMES = {
     doc: "'.findLast()' — see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "element",
     where: ["value"],
@@ -8153,7 +8151,7 @@ export const NAMES = {
     doc: "'.some()' — see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
     where: ["value", "filter"],
@@ -8202,7 +8200,7 @@ export const NAMES = {
     doc: "'.every()' — see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
     where: ["value"],
@@ -10573,8 +10571,7 @@ export const NAMES = {
         // missing is read as the empty array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
-          emit: ({ recv, present }) =>
-            Array.isArray(recv) ? { $size: [recv] } : sizeOf(present ? recv : arrayOrEmpty(recv)),
+          emit: ({ recv, present }) => sizeOf(present || Array.isArray(recv) ? recv : arrayOrEmpty(recv)),
         },
         // `$$.size()` has no inline count: it places a materialiser ahead of the
         // statement and reads the field it wrote. See docs/specs/stream-size.md.
@@ -11054,7 +11051,7 @@ export const NAMES = {
         // The parser accepts the name so it gets an answer, and this cell refuses it: the
         // receiver form is the one spelling, and it emits the identical MQL.
         Object: unsupported(
-          "'Object.groupBy(collection, discriminator)' is not part of jsmql — the collection's own method says the same thing, and one capability gets one spelling. Write '<collection>.groupBy(<discriminator>)': '$.items.groupBy(d => d.k)' emits the identical MQL.",
+          "'Object.groupBy(items, discriminator)' is not part of JSMQL — the array's own method says the same thing, and one capability gets one spelling. Write '<array>.groupBy(<discriminator>)': '$.items.groupBy(d => d.k)' emits the identical MQL.",
         ),
       },
     },
@@ -13133,7 +13130,7 @@ export const NAMES = {
     doc: "'.aggregate(pipeline)' — splices raw stages into the chain. Takes an array or a block body.",
     call: true,
     on: "stream",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: {
       stream: {
         arrowOnly:
@@ -14018,18 +14015,18 @@ export const NAMES = {
   }),
 
   $$: root({
-    doc: "The current collection, as a stream of documents. Every value-position use is refused as statement-only.",
+    doc: "The root stream: the documents of the pipeline. Every value-position use is refused as statement-only.",
     token: "DoubleDollar",
     provides: "collection",
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
-    // value slot gets a refusal — "'$$' (current collection) is statement-only" —
+    // value slot gets a refusal — "'$$' (the root stream) is statement-only" —
     // so `expr` is a refusal even though `$$.size()` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
     filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => …)'."),
     expr: unsupported(
-      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.size()'.",
+      "'$$' (the root stream) is statement-only. In a value slot, use a method on it, for example '$$.size()'.",
     ),
     stream: inCode("src/compiler/emit/statement.ts"),
     statement: inCode("src/compiler/emit/statement.ts"),

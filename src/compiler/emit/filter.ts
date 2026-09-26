@@ -267,9 +267,10 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
     if (e.type === "SpreadElement") throw E.spreadInOperatorBody(e.pos);
     const key = staticKey(e);
     if (key === null) throw E.computedKeyInOperatorBody(e.pos);
-    // `{ $setUnion: "$x" }` — a list operator with one scalar is a document the
-    // server refuses. It refuses this on the call spelling too, and at the top
-    // of the document as well as below it.
+    // `{ $and: true }` — in a query document a list operator takes a list. MEASURED:
+    // "$and argument must be an array", and "malformed mod, needs to be an array".
+    // An expression reads one operand instead: `{ $expr: { $add: "$x" } }` is valid,
+    // and `$expr`'s operand takes the value road below.
     if (key.startsWith("$") && operandShapeOf(key) === "array" && e.value.type !== "ArrayLiteral") {
       throw E.listOperand(key, e.value.pos);
     }
