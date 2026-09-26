@@ -570,6 +570,21 @@ var logicalList = ({ name: name2, args, query }) => {
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
 var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
+var mayBeArray = (t) => t.kinds === "any" || t.kinds.has("array");
+var onlyArray = (t) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has("array");
+var arrayOrOne = (ref) => ({ $cond: [{ $isArray: ref }, ref, [ref]] });
+function concatOperand(v, t, bind) {
+  if (!mayBeArray(t)) return [v];
+  if (onlyArray(t)) return t.absent ? { $ifNull: [v, [null]] } : v;
+  if (typeof v === "string" && v.startsWith("$")) return arrayOrOne(v);
+  const item = bind("item");
+  return { $let: { vars: { [item.as]: v }, in: arrayOrOne(item.ref) } };
+}
+function concatSpread(list, element2) {
+  if (element2 !== void 0 && !mayBeArray(element2)) return list;
+  const each = element2 !== void 0 && onlyArray(element2) && !element2.absent ? "$$this" : arrayOrOne("$$this");
+  return { $reduce: { input: list, initialValue: [], in: { $concatArrays: ["$$value", each] } } };
+}
 var lastIndexOfArray = ({ recv, args, value, bind }) => {
   const needle = value(args[0]);
   const arr = bind("arr");
@@ -6649,23 +6664,25 @@ var NAMES = {
           "'.concat()' on '$$' is a chain of stages, not a value: write it as a statement ('$$.concat(\u2026);')."
         ),
         // JavaScript's `Array.prototype.concat` SPLICES an array argument and APPENDS any
-        // other one; `$concatArrays` takes arrays only. An argument PROVEN to be something
-        // else becomes the one-element array it stands for — JavaScript's own answer, and
-        // the only operand the operator accepts. MEASURED: the server folds a run of
-        // ADJACENT constant operands during the optimisation and raises there on a wrong
-        // type. So an operand without the wrap stops the pipeline before the branch runs.
-        // An argument that proves nothing stays as written, and the server decides it.
+        // other one; `$concatArrays` takes arrays only. Each argument takes the shape its
+        // proof allows (`concatOperand`), and each element of a spread argument follows
+        // the same rule (`concatSpread`). MEASURED: the server folds a run of ADJACENT
+        // constant operands during the optimisation and raises there on a wrong type. So
+        // a constant without the `[x]` wrap stops the pipeline before any branch runs.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value, kind }) => ({
-            $concatArrays: [
-              recv,
-              ...args.map((a) => {
-                const k = kind(a);
-                return k === "array" || k === "unknown" ? value(a) : [value(a)];
-              })
-            ]
-          })
+          emit: ({ recv, args, value, type, bind }) => {
+            const first = args[0];
+            const list = args.length === 1 && first.type === "ArrayLiteral" && first.packed === true ? first.elements : args;
+            return {
+              $concatArrays: [
+                recv,
+                ...list.map(
+                  (a) => a.type === "SpreadElement" ? concatSpread(value({ type: "ArrayLiteral", elements: [a], pos: a.pos }), type(a.argument).element) : concatOperand(value(a), type(a), bind)
+                )
+              ]
+            };
+          }
         }
       }
     },
@@ -9088,7 +9105,7 @@ var NAMES = {
     expr: {
       args: { sig: "other", exact: 1 },
       emit: ({ recv, args, value }) => {
-        const other = value(args[0]);
+        const other = arrayOrEmpty(value(args[0]));
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
       }
     },
@@ -9209,7 +9226,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => uniqByReduce({ $concatArrays: [recv, value(args[0])] }, iteratee(args[1]), bind)
+      emit: ({ recv, args, value, iteratee, bind }) => uniqByReduce({ $concatArrays: [recv, arrayOrEmpty(value(args[0]))] }, iteratee(args[1]), bind)
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
     statement: unsupported(
@@ -10836,7 +10853,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setIntersection: [recv, value(args[0])] })
+      emit: ({ recv, args, value }) => ({ $setIntersection: [recv, arrayOrEmpty(value(args[0]))] })
     },
     stream: {
       args: { sig: "other", exact: 1 },
@@ -10868,7 +10885,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setUnion: [recv, value(args[0])] })
+      emit: ({ recv, args, value }) => ({ $setUnion: [recv, arrayOrEmpty(value(args[0]))] })
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
     statement: unsupported(
@@ -10896,7 +10913,7 @@ var NAMES = {
         // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a JavaScript Set gives.
         set: {
           args: { sig: "other", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $setDifference: [recv, value(args[0])] })
+          emit: ({ recv, args, value }) => ({ $setDifference: [recv, arrayOrEmpty(value(args[0]))] })
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
       },
@@ -12261,7 +12278,7 @@ var NAMES = {
         const b = bind("b");
         return {
           $let: {
-            vars: { [a.as]: recv, [b.as]: value(args[0]) },
+            vars: { [a.as]: recv, [b.as]: arrayOrEmpty(value(args[0])) },
             in: { $setDifference: [{ $setUnion: [a.ref, b.ref] }, { $setIntersection: [a.ref, b.ref] }] }
           }
         };
@@ -21059,7 +21076,6 @@ function arrayMethod(xs, name2, args) {
     case "toReversed":
       return ok2([...xs].reverse());
     case "concat":
-      if (!args.every((x) => Array.isArray(valueOf(x)))) return NO2;
       return ok2(xs.concat(...args.map(valueOf)));
     // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
     // identity would answer false for `[[1]].includes([1])`, where the server
@@ -21608,13 +21624,20 @@ function methodCall(node, env, depth) {
   }
   const family = onNamespace ? receiverNode.name : familyOfValue(receiverValue);
   if (!isCallable(name2)) return NOT_CONSTANT2;
-  if (!acceptsArgumentCount(name2, argNodes.length, family)) return NOT_CONSTANT2;
+  const packed = argNodes.length === 1 && argNodes[0].packed === true;
   const args = [];
-  for (const argNode of argNodes) {
-    const arg = asArg(argNode, env, depth);
-    if (arg === null) return NOT_CONSTANT2;
-    args.push(arg);
+  if (packed) {
+    const list = at(argNodes[0], env, depth + 1);
+    if (!list.ok || !Array.isArray(list.value)) return NOT_CONSTANT2;
+    for (const value of list.value) args.push({ value });
+  } else {
+    for (const argNode of argNodes) {
+      const arg = asArg(argNode, env, depth);
+      if (arg === null) return NOT_CONSTANT2;
+      args.push(arg);
+    }
   }
+  if (!acceptsArgumentCount(name2, args.length, family)) return NOT_CONSTANT2;
   let result;
   try {
     result = onNamespace ? foldNamespaceCall(receiverNode.name, name2, args) : foldInstanceCall(receiverValue, name2, args);
@@ -26560,6 +26583,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     value,
     present: present2,
     kind: (e) => kindOf3(e, argEnv),
+    type: (e) => typeOf(e, argEnv),
     optionalArg: (e) => chainHasOptional(e),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),

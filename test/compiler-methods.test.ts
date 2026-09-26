@@ -1447,9 +1447,13 @@ describe("compiler/emit — array methods", () => {
       },
     });
     // `$concatArrays` takes arrays only, so a scalar argument becomes the one-element
-    // array it stands for, as JavaScript's `Array.prototype.concat` reads it.
+    // array it stands for, as JavaScript's `Array.prototype.concat` reads it. An argument
+    // the proof cannot place tests `$isArray` when it runs.
     expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toEqual({
-      $concatArrays: [{ $ifNull: ["$a", []] }, "$b"],
+      $concatArrays: [{ $ifNull: ["$a", []] }, { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }],
+    });
+    expect(compiled("$.a.concat($.n)", (d) => d.a.concat(d.n))).toEqual({
+      $concatArrays: [{ $ifNull: ["$a", []] }, { $cond: [{ $isArray: "$n" }, "$n", ["$n"]] }],
     });
     expect(compiled('$.a.concat("!", "?")', (d) => d.a.concat("!", "?"))).toEqual({
       $concatArrays: [{ $ifNull: ["$a", []] }, ["!"], ["?"]],
@@ -1461,7 +1465,7 @@ describe("compiler/emit — array methods", () => {
       $concatArrays: [{ $ifNull: ["$a", []] }, [2], [3]],
     });
     expect(compiled('$.a.concat($.b, "!", "?")', (d) => d.a.concat(d.b, "!", "?"))).toEqual({
-      $concatArrays: [{ $ifNull: ["$a", []] }, "$b", ["!"], ["?"]],
+      $concatArrays: [{ $ifNull: ["$a", []] }, { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }, ["!"], ["?"]],
     });
     expect(compiled('$.csv.split(",").concat("!", "?")', (d) => d.csv.split(",").concat("!", "?"))).toEqual({
       $concatArrays: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, ["!"], ["?"]],
@@ -1734,7 +1738,7 @@ describe("compiler/emit — array methods", () => {
       },
     });
     expect(unordered("$.a.intersection($.b)", () => [2])).toEqual({
-      $setIntersection: [{ $ifNull: ["$a", []] }, "$b"],
+      $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
     expect(compiled("$.a.difference($.b)", () => [3, 1])).toEqual({
       $filter: {
@@ -1743,14 +1747,16 @@ describe("compiler/emit — array methods", () => {
         cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
       },
     });
-    expect(unordered("$.a.union($.b)", () => [3, 1, 2, 5])).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, "$b"] });
+    expect(unordered("$.a.union($.b)", () => [3, 1, 2, 5])).toEqual({
+      $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    });
     expect(compiled("$.a.without(1)", () => [3, 2])).toEqual({
       $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [1]] }] } },
     });
     expect(unordered("$.a.xor($.b)", () => [3, 1, 5])).toEqual({
       $setUnion: [
-        { $setDifference: [{ $ifNull: ["$a", []] }, "$b"] },
-        { $setDifference: ["$b", { $ifNull: ["$a", []] }] },
+        { $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] },
+        { $setDifference: [{ $ifNull: ["$b", []] }, { $ifNull: ["$a", []] }] },
       ],
     });
     expect(compiled('$.docs.keyBy("k")', () => ({ x: { k: "x", v: 3 }, y: { k: "y", v: 1 } }))).toEqual({
@@ -2180,23 +2186,71 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       ]),
     ).toEqual({
       $let: {
-        vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: "$b" },
+        vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } },
         in: {
           $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }],
         },
       },
     });
     expect(unordered("new Set($.a).union(new Set($.b))", () => [...new Set(DOC.a).union(new Set(DOC.b))])).toEqual({
-      $setUnion: [{ $ifNull: ["$a", []] }, "$b"],
+      $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
   });
 
   it("packs a spread into the one list a variadic method reads", () => {
+    // a constant spread folds to the call JavaScript makes: one argument per element
+    expect(expr("[1].concat(...[[2], 3])")).toEqual([1, 2, 3]);
+    expect(expr("Math.max(...[1, 5], 7)")).toBe(7);
+    // each element of a spread is an argument of its own, and follows concat's rule
     expect(compiled("$.a.concat(...$.b, 1)", () => DOC.a.concat(...DOC.b, 1))).toEqual({
-      $concatArrays: [{ $ifNull: ["$a", []] }, { $concatArrays: ["$b", [1]] }],
+      $concatArrays: [
+        { $ifNull: ["$a", []] },
+        {
+          $reduce: {
+            input: { $ifNull: ["$b", []] },
+            initialValue: [],
+            in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+          },
+        },
+        [1],
+      ],
+    });
+    expect(compiled("$.a.concat(...$.nested)", () => DOC.a.concat(...DOC.nested))).toEqual({
+      $concatArrays: [
+        { $ifNull: ["$a", []] },
+        {
+          $reduce: {
+            input: { $ifNull: ["$nested", []] },
+            initialValue: [],
+            in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+          },
+        },
+      ],
+    });
+    // the proof shows each element is an array, so the `$reduce` splices it with no test
+    expect(compiled("$.a.concat(...$.b.map(x => [x]))", () => DOC.a.concat(...DOC.b.map((x) => [x])))).toEqual({
+      $concatArrays: [
+        { $ifNull: ["$a", []] },
+        {
+          $reduce: {
+            input: { $map: { input: { $ifNull: ["$b", []] }, as: "x", in: ["$$x"] } },
+            initialValue: [],
+            in: { $concatArrays: ["$$value", "$$this"] },
+          },
+        },
+      ],
     });
     expect(compiled('$.csv.split(",").concat(...$.a)', () => DOC.csv.split(",").concat(...DOC.a))).toEqual({
-      $concatArrays: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, "$a"],
+      $concatArrays: [
+        { $ifNull: [{ $split: ["$csv", ","] }, []] },
+        {
+          $reduce: {
+            input: { $ifNull: ["$a", []] },
+            initialValue: [],
+            in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+          },
+        },
+      ],
     });
     expect(() => expr("$.a.indexOf(...$.b)")).toThrow(/Spread \(\.\.\.\) is not supported/);
   });
@@ -2269,6 +2323,15 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ["$.a.initial()", [], [1]],
   ["$.o.pick($.b)", {}, {}],
   ["$.o.omit($.b)", {}, { x: 1 }],
+  // a missing list ARGUMENT of a set operation is the empty set: `new Set(undefined)` is empty
+  ["$.a.union($.b)", [], [1, 2]],
+  ["$.a.intersection($.b)", [], []],
+  ["$.a.xor($.b)", [], [1, 2]],
+  ["$.a.unionBy($.b, x => x)", [], [1, 2]],
+  ["new Set($.a).union(new Set($.b))", [], [1, 2]],
+  ["new Set($.a).intersection(new Set($.b))", [], []],
+  ["new Set($.a).difference(new Set($.b))", [], [1, 2]],
+  ["new Set($.a).symmetricDifference(new Set($.b))", [], [1, 2]],
 ];
 
 /**
@@ -2368,6 +2431,61 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
     }
     expect(problems, problems.join("\n")).toEqual([]);
     expect(compared).toBe(OBJECT_EMPTY.length);
+  });
+});
+
+/**
+ * `.concat()` against JavaScript's own `concat`, one document per kind of argument.
+ *
+ * JavaScript adds the elements of an array argument, and adds any other argument as one
+ * element. A spread passes each element of its array as an argument of its own. MongoDB
+ * has no `undefined`, so a missing argument adds null — `canonical` writes JavaScript's
+ * `undefined` in an array as null too. JavaScript throws for a spread of a missing or a
+ * null value; JSMQL spreads nothing there, as `[...$.b]` does. Those rows state the
+ * answer instead of a JavaScript function.
+ */
+const CONCAT_DOCS = [
+  { _id: 1, a: [1], b: [2] },
+  { _id: 2, a: [1], b: 5 },
+  { _id: 3, a: [1] },
+  { _id: 4, a: [1], b: null },
+  { _id: 5, a: [1], b: "xy" },
+  { _id: 6, a: [1], b: [[2], 3] },
+];
+type ConcatDoc = { _id: number; a: number[]; b?: unknown };
+const CONCAT: readonly (readonly [string, readonly number[], (d: ConcatDoc) => unknown])[] = [
+  ["$.a.concat($.b, 1)", [1, 2, 3, 4, 5, 6], (d) => d.a.concat(d.b as number, 1)],
+  ["$.a.concat(1, $.b)", [1, 2, 3, 4, 5, 6], (d) => d.a.concat(1, d.b as number)],
+  [
+    "$.a.concat($.b?.filter(x => true))",
+    [1, 3, 4, 6],
+    (d) => d.a.concat((d.b as number[] | undefined)?.filter(() => true) as number[]),
+  ],
+  ["$.a.concat(...$.b, 1)", [1, 6], (d) => d.a.concat(...(d.b as number[]), 1)],
+  ["$.a.concat(...$.b, 1)", [3, 4], () => [1, 1]],
+  ["$.a.concat(...$.b.map(x => [x]))", [1, 6], (d) => d.a.concat(...(d.b as number[]).map((x) => [x]))],
+  ["$.a.concat(...[[2], 3])", [3], (d) => d.a.concat(...[[2], 3])],
+];
+
+describe.skipIf(!up)("compiler/emit — .concat() adds each argument as JavaScript does", () => {
+  let docs: Collection;
+  beforeAll(async () => {
+    docs = client!.db("jsmql_compiler_methods").collection("concat");
+    await docs.deleteMany({});
+    await docs.insertMany(CONCAT_DOCS.map((d) => ({ ...d })));
+  });
+
+  it("answers what JavaScript answers for an array, a number, a string, null and a missing field", async () => {
+    let compared = 0;
+    for (const [src, ids, js] of CONCAT) {
+      const got = await docs
+        .aggregate([{ $match: { _id: { $in: ids } } }, { $addFields: { __v: expr(src) } }, { $sort: { _id: 1 } }])
+        .toArray();
+      const want = CONCAT_DOCS.filter((d) => ids.includes(d._id)).map((d) => js(d));
+      expect([src, canonical(got.map((d) => d.__v))]).toEqual([src, canonical(want)]);
+      compared++;
+    }
+    expect(compared).toBe(CONCAT.length);
   });
 });
 

@@ -206,8 +206,14 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
     // An index the server cannot take as a 32-bit integer.
     expect(valueOf('"abc".charAt(1.5)')).toBe("(not constant)");
     expect(valueOf("[1, 2, 3].at(2.5)")).toBe("(not constant)");
-    // `$concatArrays` takes arrays; JavaScript's `concat` takes anything.
-    expect(valueOf("[1].concat(2)")).toBe("(not constant)");
+  });
+
+  // JavaScript's rule, which the lowering keeps: an array argument adds its elements,
+  // and any other argument adds itself.
+  it("folds .concat with JavaScript's rule", () => {
+    expect(valueOf("[1].concat(2)")).toEqual([1, 2]);
+    expect(valueOf('[1].concat(2, null, [3], "xy")')).toEqual([1, 2, null, 3, "xy"]);
+    expect(valueOf("[1].concat([[2]])")).toEqual([1, [2]]);
   });
 
   it("stops before the stack does, and before the value gets absurd", () => {

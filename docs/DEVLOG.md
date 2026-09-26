@@ -10,6 +10,48 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: `.concat()` reads each argument as JavaScript does, and a set method reads a missing list as empty
+
+JavaScript's `concat` adds the elements of an array argument, and adds any other
+argument as one element. A spread passes each element of its array as an
+argument of its own. The `concat` cell kept an argument that proved nothing as
+written, and took the desugar pass's packed list as ONE argument:
+
+```
+$.a.concat($.b, 1)     → { $concatArrays: [{ $ifNull: ["$a", []] }, "$b", [1]] }
+                         no b → null for the whole value; b: 5 → the server aborts
+$.a.concat(...$.b, 1)  → { $concatArrays: [{ $ifNull: ["$a", []] }, { $concatArrays: ["$b", [1]] }] }
+                         b: [[2]] → [1, [2], 1], where JavaScript gives [1, 2, 1]
+```
+
+The cell now unpacks the packed list, and a new `type` service on `ExprIn`
+gives it the proof of each argument. A proven array stays as written, an array
+that can be null takes `{ $ifNull: [x, [null]] }`, a proven scalar becomes
+`[x]`, and any other argument becomes `{ $cond: [{ $isArray: x }, x, [x]] }`.
+A spread lowers through `[...x]` and a `$reduce` that applies the same rule to
+each element, so a missing `x` spreads nothing. Measured on :27018 against
+`node -e`, over `a: [1]`: `b` = `[2]`, `5`, `"xy"`, `null` and missing give
+`[1, 2, 1]`, `[1, 5, 1]`, `[1, "xy", 1]`, `[1, null, 1]` and `[1, null, 1]`
+(JavaScript's `undefined` is null in MongoDB); a spread of `[[2], 3]` gives
+`[1, 2, 3, 1]`, and of a missing field `[1, 1]`. The size cost is stated in
+docs/specs/emit-pass.md § The method cells.
+
+The fold had the same gap: `[1].concat(...[[2], 3])` folded to `[1, [2], 3]`.
+`evaluate.ts` now reads a packed list as the call's arguments, one per element,
+and the `concat` fold follows JavaScript for a scalar argument too
+(`[1].concat(2)` folds to `[1, 2]`). `Math.max(...[1, 5], 7)` now folds to `7`.
+
+The sibling check found the same symptom on the set methods: a missing list
+argument made the whole value null. `.union()`, `.intersection()`, `.xor()`,
+`.unionBy()`, and the Set forms `.difference()` and `.symmetricDifference()`
+now read the argument through `arrayOrEmpty`, as `.difference()` on an array and
+`.isSubsetOf()` already did: `$.a.union($.b)` gives `a`'s elements when `b` is
+not there, as `new Set(a).union(new Set(undefined))` does. The in-document
+`.push()` write spreads its receiver and appends each argument as one element,
+which is JavaScript's `push` rule, so it needed no change.
+
+---
+
 ## 2026-09-26 — fix: the `.split("")` hint names a spelling that runs on a missing field
 
 `$.s.split("")` is refused, because MongoDB's `$split` needs a non-empty

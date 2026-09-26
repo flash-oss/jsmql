@@ -804,10 +804,9 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     case "toReversed":
       return ok([...xs].reverse());
     case "concat":
-      // `$concatArrays` takes ARRAYS. `[1].concat(2)` is `[1,2]` in JavaScript
-      // and an error on the server.
-      if (!args.every((x) => Array.isArray(valueOf(x)))) return NO;
-      return ok(xs.concat(...(args.map(valueOf) as unknown[][])));
+      // JavaScript's rule, which the lowering keeps: an array argument adds its
+      // elements, and any other argument adds itself. `[1].concat(2, [3])` is `[1, 2, 3]`.
+      return ok(xs.concat(...args.map(valueOf)));
     // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
     // identity would answer false for `[[1]].includes([1])`, where the server
     // answers true, and every literal here is a fresh object.

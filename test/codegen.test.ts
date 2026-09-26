@@ -5831,7 +5831,9 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     // lodash documents `.intersection` as returning UNIQUE values. A `$filter` would
     // keep duplicates from the receiver, matching neither lodash nor MongoDB, so
     // `$setIntersection` is what holds the documented contract — only order differs.
-    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({ $setIntersection: [{ $ifNull: ["$a", []] }, "$b"] });
+    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({
+      $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    });
     // `.difference` is NOT `$setDifference`: lodash keeps the receiver's duplicates, and
     // dropping them would change the SET rather than the order.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
@@ -5941,7 +5943,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
         in: { $getField: { field: "v", input: { $arrayElemAt: ["$$jsmqlSorted", 0] } } },
       },
     });
-    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, "$b"] });
+    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] });
     expect(jsmql.expr("$.a.zipObject($.b)")).toEqual({
       $arrayToObject: {
         $map: {
@@ -6654,8 +6656,10 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
       },
     });
-    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({ $setIntersection: [{ $ifNull: ["$a", []] }, "$b"] });
-    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, "$b"] });
+    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({
+      $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    });
+    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] });
   });
   it("the type error beats the mutator shim when the receiver is a known non-array", () => {
     // "use '.toSorted()'" is the wrong advice for a string, so the family
@@ -6853,8 +6857,8 @@ describe("lodash set-ops & By-iteratee value methods", () => {
     // it means. Order is not preserved and was never asked for (SR2).
     expect(jsmql.expr("$.a.xor($.b)")).toEqual({
       $setUnion: [
-        { $setDifference: [{ $ifNull: ["$a", []] }, "$b"] },
-        { $setDifference: ["$b", { $ifNull: ["$a", []] }] },
+        { $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] },
+        { $setDifference: [{ $ifNull: ["$b", []] }, { $ifNull: ["$a", []] }] },
       ],
     });
   });
@@ -6906,7 +6910,7 @@ describe("lodash set-ops & By-iteratee value methods", () => {
       },
     });
     expect(jsmql.expr('$.a.unionBy($.b, "id")')).toEqual(
-      dedupeById({ $concatArrays: [{ $ifNull: ["$a", []] }, "$b"] }),
+      dedupeById({ $concatArrays: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }),
     );
     // the other list is `$ifNull`-guarded: its keys feed an `$in`, which aborts on a null operand
     expect(jsmql.expr('$.a.xorBy($.b, "id")')).toEqual({
@@ -7700,16 +7704,18 @@ describe("iterator / void / locale DX shims", () => {
 describe("ES2025 Set methods", () => {
   it("intersection", () => {
     expect(jsmql.expr("new Set($.a).intersection(new Set($.b))")).toEqual({
-      $setIntersection: [{ $ifNull: ["$a", []] }, "$b"],
+      $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
   });
   it("union", () => {
-    expect(jsmql.expr("new Set($.a).union(new Set($.b))")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, "$b"] });
+    expect(jsmql.expr("new Set($.a).union(new Set($.b))")).toEqual({
+      $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    });
   });
   it("difference — a Set holds each value once, so the set operator answers", () => {
     // MEASURED: { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a Set gives.
     expect(jsmql.expr("new Set($.a).difference(new Set($.b))")).toEqual({
-      $setDifference: [{ $ifNull: ["$a", []] }, "$b"],
+      $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
     // lodash keeps the receiver's duplicates, so an ARRAY receiver stays a filter.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
@@ -7741,7 +7747,7 @@ describe("ES2025 Set methods", () => {
   it("symmetricDifference composes $setDifference of the union and the intersection", () => {
     expect(jsmql.expr("new Set($.a).symmetricDifference(new Set($.b))")).toEqual({
       $let: {
-        vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: "$b" },
+        vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } },
         in: {
           $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }],
         },
@@ -7749,7 +7755,9 @@ describe("ES2025 Set methods", () => {
     });
   });
   it("a plain array argument reads as a Set", () => {
-    expect(jsmql.expr("new Set($.a).intersection($.b)")).toEqual({ $setIntersection: [{ $ifNull: ["$a", []] }, "$b"] });
+    expect(jsmql.expr("new Set($.a).intersection($.b)")).toEqual({
+      $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    });
   });
 });
 
@@ -9224,7 +9232,9 @@ describe("array .concat", () => {
     expect(jsmql.expr("$.first.trim() + $.last")).toEqual({ $concat: [{ $trim: { input: "$first" } }, "$last"] });
   });
   it("on a bare field → $concatArrays, with no runtime dispatch", () => {
-    expect(jsmql.expr("$.parts.concat($.tail)")).toEqual({ $concatArrays: [{ $ifNull: ["$parts", []] }, "$tail"] });
+    expect(jsmql.expr("$.parts.concat($.tail)")).toEqual({
+      $concatArrays: [{ $ifNull: ["$parts", []] }, { $cond: [{ $isArray: "$tail" }, "$tail", ["$tail"]] }],
+    });
   });
 });
 
@@ -9334,7 +9344,7 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
     });
     // an argument that may be missing makes the whole chain uncertain
     expect(jsmql.expr("[1, 2].concat($.b).size()")).toEqual({
-      $size: { $ifNull: [{ $concatArrays: [[1, 2], "$b"] }, []] },
+      $size: { $ifNull: [{ $concatArrays: [[1, 2], { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }] }, []] },
     });
     expect(jsmql.expr("$range(0, $.n).size()")).toEqual({ $size: { $ifNull: [{ $range: [0, "$n"] }, []] } });
     expect(jsmql.expr("Object.keys($.o).size()")).toEqual({

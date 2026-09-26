@@ -1081,6 +1081,14 @@ export type ExprIn = {
    */
   kind: (e: Expr) => Kind | "unknown";
   /**
+   * The whole proof of an ARGUMENT: its kinds, whether it can be null or missing,
+   * and what its elements are. `kind` gives one kind of it. A cell reads this when
+   * the answer turns on more than one fact. `.concat(x)` splices `x` when the proof
+   * shows an array that is there, wraps `x` as `[x]` when the proof shows no array,
+   * and tests `$isArray` when the run decides.
+   */
+  type: (e: Expr) => Type;
+  /**
    * Is the receiver certainly THERE — never null, and never missing? It is true for
    * the array of a `$lookup`, a literal, `$range(…)`, the keys of the root document,
    * a chain of `neverNull` rows over one of those, and a runtime family dispatch

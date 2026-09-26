@@ -61,6 +61,7 @@ import {
   wordsExpr,
   atPrecision,
 } from "./mql.ts";
+import type { CallArg } from "./ast.ts";
 import type {
   Expr,
   Binds,
@@ -89,6 +90,7 @@ import type {
   SlotPosition,
   QueryDoc,
   Refusal,
+  Type,
   TypeExpr,
   DocumentEffect,
   Rule,
@@ -941,6 +943,52 @@ const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement
  * emitter passes it through unchanged.
  */
 const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
+
+/** Can the value be an array, by its proof? A proof that shows nothing can be anything. */
+const mayBeArray = (t: Type): boolean => t.kinds === "any" || t.kinds.has("array");
+/** Is the value an array and nothing else, by its proof? */
+const onlyArray = (t: Type): boolean => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has("array");
+/** `x` is an array → `x`, else `[x]`: one argument of `.concat()` when only the run can tell. */
+const arrayOrOne = (ref: unknown): unknown => ({ $cond: [{ $isArray: ref }, ref, [ref]] });
+
+/**
+ * One argument of `.concat()`, as the array that `$concatArrays` splices in.
+ *
+ * JavaScript's rule: an array argument adds its elements, and any other argument adds
+ * itself as ONE element — `[1].concat(5)` is `[1, 5]`, `[1].concat(undefined, 1)` is
+ * `[1, undefined, 1]`. `$concatArrays` takes arrays only, and it answers null for a null
+ * operand. So the proof of the argument picks the shape:
+ *
+ *   an array that is there          "$b"                                  as written
+ *   an array, or null or missing    { $ifNull: ["$b", [null]] }
+ *   no array — `5`, `"xy"`, `null`  [5]
+ *   the proof shows nothing         { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }
+ *
+ * MongoDB has no `undefined`, so a missing argument adds a null element. MEASURED:
+ * `{ $concatArrays: [[1], <operand>] }` answers `[1, 2]` for `b: [2]`, `[1, 5]` for
+ * `b: 5`, `[1, "xy"]` for `b: "xy"`, and `[1, null]` for `b: null` and for no `b`.
+ * A path is cheap to read three times, and anything else is bound once.
+ */
+function concatOperand(v: unknown, t: Type, bind: ExprIn["bind"]): unknown {
+  if (!mayBeArray(t)) return [v];
+  if (onlyArray(t)) return t.absent ? { $ifNull: [v, [null]] } : v;
+  if (typeof v === "string" && v.startsWith("$")) return arrayOrOne(v);
+  const item = bind("item");
+  return { $let: { vars: { [item.as]: v }, in: arrayOrOne(item.ref) } };
+}
+
+/**
+ * A spread argument `...x` of `.concat()`. JavaScript passes each element of `x` as an
+ * argument of its own, so each element follows the rule of `concatOperand`: a `$reduce`
+ * that splices an array element and adds any other element as one. `list` is the
+ * lowering of `[...x]`, so a missing `x` spreads nothing, as the array literal does.
+ * An `x` whose elements the proof shows are no arrays splices as it is.
+ */
+function concatSpread(list: unknown, element: Type | undefined): unknown {
+  if (element !== undefined && !mayBeArray(element)) return list;
+  const each = element !== undefined && onlyArray(element) && !element.absent ? "$$this" : arrayOrOne("$$this");
+  return { $reduce: { input: list, initialValue: [], in: { $concatArrays: ["$$value", each] } } };
+}
 
 /**
  * `.lastIndexOf(x)` over an ARRAY: reverse, find, and normalise the index back.
@@ -7423,23 +7471,32 @@ export const NAMES = {
           "'.concat()' on '$$' is a chain of stages, not a value: write it as a statement ('$$.concat(…);').",
         ),
         // JavaScript's `Array.prototype.concat` SPLICES an array argument and APPENDS any
-        // other one; `$concatArrays` takes arrays only. An argument PROVEN to be something
-        // else becomes the one-element array it stands for — JavaScript's own answer, and
-        // the only operand the operator accepts. MEASURED: the server folds a run of
-        // ADJACENT constant operands during the optimisation and raises there on a wrong
-        // type. So an operand without the wrap stops the pipeline before the branch runs.
-        // An argument that proves nothing stays as written, and the server decides it.
+        // other one; `$concatArrays` takes arrays only. Each argument takes the shape its
+        // proof allows (`concatOperand`), and each element of a spread argument follows
+        // the same rule (`concatSpread`). MEASURED: the server folds a run of ADJACENT
+        // constant operands during the optimisation and raises there on a wrong type. So
+        // a constant without the `[x]` wrap stops the pipeline before any branch runs.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value, kind }) => ({
-            $concatArrays: [
-              recv,
-              ...args.map((a) => {
-                const k = kind(a);
-                return k === "array" || k === "unknown" ? value(a) : [value(a)];
-              }),
-            ],
-          }),
+          emit: ({ recv, args, value, type, bind }) => {
+            // A call with a spread reaches the cell as ONE list, packed by the desugar pass.
+            // Its elements are the call's own arguments: an expression, or a spread.
+            const first = args[0];
+            const list: readonly CallArg[] =
+              args.length === 1 && first.type === "ArrayLiteral" && first.packed === true
+                ? (first.elements as readonly CallArg[])
+                : args;
+            return {
+              $concatArrays: [
+                recv,
+                ...list.map((a) =>
+                  a.type === "SpreadElement"
+                    ? concatSpread(value({ type: "ArrayLiteral", elements: [a], pos: a.pos }), type(a.argument).element)
+                    : concatOperand(value(a), type(a), bind),
+                ),
+              ],
+            };
+          },
         },
       },
     },
@@ -9978,7 +10035,7 @@ export const NAMES = {
     expr: {
       args: { sig: "other", exact: 1 },
       emit: ({ recv, args, value }) => {
-        const other = value(args[0]);
+        const other = arrayOrEmpty(value(args[0]));
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
       },
     },
@@ -10103,7 +10160,7 @@ export const NAMES = {
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
       emit: ({ recv, args, value, iteratee, bind }) =>
-        uniqByReduce({ $concatArrays: [recv, value(args[0])] }, iteratee(args[1]), bind),
+        uniqByReduce({ $concatArrays: [recv, arrayOrEmpty(value(args[0]))] }, iteratee(args[1]), bind),
     },
     stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
     statement: unsupported(
@@ -11793,7 +11850,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setIntersection: [recv, value(args[0])] }),
+      emit: ({ recv, args, value }) => ({ $setIntersection: [recv, arrayOrEmpty(value(args[0]))] }),
     },
     stream: {
       args: { sig: "other", exact: 1 },
@@ -11826,7 +11883,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setUnion: [recv, value(args[0])] }),
+      emit: ({ recv, args, value }) => ({ $setUnion: [recv, arrayOrEmpty(value(args[0]))] }),
     },
     stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
     statement: unsupported(
@@ -11855,7 +11912,7 @@ export const NAMES = {
         // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a JavaScript Set gives.
         set: {
           args: { sig: "other", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $setDifference: [recv, value(args[0])] }),
+          emit: ({ recv, args, value }) => ({ $setDifference: [recv, arrayOrEmpty(value(args[0]))] }),
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value — see its 'stream' cell."),
       },
@@ -13293,7 +13350,7 @@ export const NAMES = {
         const b = bind("b");
         return {
           $let: {
-            vars: { [a.as]: recv, [b.as]: value(args[0]) },
+            vars: { [a.as]: recv, [b.as]: arrayOrEmpty(value(args[0])) },
             in: { $setDifference: [{ $setUnion: [a.ref, b.ref] }, { $setIntersection: [a.ref, b.ref] }] },
           },
         };

@@ -277,6 +277,7 @@ export function exprInputs(
     value,
     present,
     kind: (e) => kindOf(e, argEnv),
+    type: (e) => typeOf(e, argEnv),
     optionalArg: (e) => chainHasOptional(e),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),

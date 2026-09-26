@@ -1767,6 +1767,12 @@ $.csv.split(",").concat(2, 3)
                            //   it stands for, which is what JavaScript's `.concat` does and
                            //   the only operand `$concatArrays` accepts
                            //   — `.concat()` is an array method: a string joins with `+`
+$.tags.concat($.extra)     // { $concatArrays: [{ $ifNull: ["$tags", []] },
+                           //   { $cond: [{ $isArray: "$extra" }, "$extra", ["$extra"]] }] }
+                           //   — the run decides: an array adds its elements, any other value
+                           //   adds itself as one element, and a missing field adds null
+$.tags.concat(...$.lists)  // each element of `lists` is an argument of its own and follows
+                           //   the same rule, through a `$reduce`; a missing `lists` adds nothing
 [1, 2, 3].has($.x)         // { $in: ["$x", [1, 2, 3]] }            — membership; a string tests a substring with `.includes()`
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
 $.items.lastIndexOf($.x)   // last index of $.x, or -1 (array-only — strings rejected)
@@ -1782,6 +1788,21 @@ $.items.toString()         // same as .join(",") for arrays; no-op for strings; 
 $.nested.flat()            // flatten one level via $reduce + $concatArrays
 $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```
+
+**`.concat()` reads each argument as JavaScript does.** An array argument adds its elements, and
+any other argument adds itself as one element. A spread `...x` passes each element of `x` as an
+argument of its own. `$concatArrays` takes arrays only, so the compiler's proof of each argument
+picks the shape: a proven array stays as written, a proven scalar becomes `[x]`, and any other
+argument tests `$isArray` when the query runs. Over `$.a = [1]`:
+
+```js
+$.a.concat($.b, 1)     // b: [2] → [1, 2, 1]    b: 5 → [1, 5, 1]    b: "xy" → [1, "xy", 1]
+                       // b: null → [1, null, 1]    no b → [1, null, 1]
+$.a.concat(...$.b, 1)  // b: [[2], 3] → [1, 2, 3, 1]    no b → [1, 1]
+```
+
+MongoDB has no `undefined`, so a missing argument adds `null`, where JavaScript adds `undefined`.
+A spread of a missing field adds nothing, as `[...$.b]` does; JavaScript throws there.
 
 #### Type-aware dispatch
 
@@ -2168,18 +2189,18 @@ The bare form is for **arrays of values**. A pipeline stream carries documents, 
 Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper is a JS-syntax tag; MQL has no Set type, so the underlying arrays go straight into the operator.
 
 ```js
-new Set($.a).intersection(new Set($.b))   // { $setIntersection: ["$a", "$b"] }
-new Set($.a).union(new Set($.b))          // { $setUnion: ["$a", "$b"] }
-new Set($.a).difference(new Set($.b))     // { $setDifference: ["$a", "$b"] }
+new Set($.a).intersection(new Set($.b))   // { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
+new Set($.a).union(new Set($.b))          // { $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
+new Set($.a).difference(new Set($.b))     // { $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
 new Set($.a).isSubsetOf(new Set($.b))     // { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setIsSubset: ["$a", { $ifNull: ["$b", []] }] } } }
 new Set($.a).isSupersetOf(new Set($.b))   // { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setIsSubset: [{ $ifNull: ["$b", []] }, "$a"] } } }
 ```
 
-The first three pass a null operand straight through and answer null. `$setIsSubset` refuses a null operand and aborts the command. So JSMQL tests the receiver first and answers null when it is not there, as every JavaScript method does (see [the rule](#type-aware-dispatch)); a missing *argument* reads as the empty set.
+A missing field reads as the empty set, as `new Set(undefined)` does in JavaScript: `new Set($.a).union(new Set($.b))` answers the elements of `a` when `b` is not there. The operators themselves answer null for a null operand, so JSMQL wraps each operand in `$ifNull`. `$setIsSubset` refuses a null operand and aborts the command. So `.isSubsetOf()` and `.isSupersetOf()` test the receiver first and answer null when it is not there, as every JavaScript method does (see [the rule](#type-aware-dispatch)); a missing *argument* reads as the empty set there too.
 
 ```js
 new Set($.a).symmetricDifference(new Set($.b))
-// → { $let: { vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: "$b" }, in: { $setDifference: [ { $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] } ] } } }
+// → { $let: { vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } }, in: { $setDifference: [ { $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] } ] } } }
 new Set($.a).isDisjointFrom(new Set($.b))
 // → { $eq: [ { $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0 ] }
 ```

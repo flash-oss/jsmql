@@ -802,7 +802,42 @@ A rule that reads its arguments as ONE list states `spread: true` on its
 literal for it (see [desugar-pass.md](desugar-pass.md)): `Math.max(...$.a, 1)`
 reaches its cell as one operand, `{ $max: { $concatArrays: ["$a", [1]] } }`,
 and `Object.assign({}, ...$.docs)` reaches it as `{ $mergeObjects: <one list> }`
-— the server reads a single array operand for both (measured).
+— the server reads a single array operand for both (measured). The fold reads a
+packed list as the call's own arguments, one per element, as JavaScript passes
+them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`, and `Math.max(...[1, 5], 7)`
+to `7`.
+
+**`.concat()` reads each argument on its own.** JavaScript adds the elements
+of an array argument, and adds any other argument as one element. So the
+`concat` cell unpacks the packed list, and the proof of each argument (the
+`type` service) picks its operand:
+
+```
+$.a.concat([2], 5)     → {"$concatArrays":[{"$ifNull":["$a",[]]},[2],[5]]}     a proven array, a proven scalar
+$.a.concat($.b)        → {"$concatArrays":[{"$ifNull":["$a",[]]},
+                           {"$cond":[{"$isArray":"$b"},"$b",["$b"]]}]}           the run decides
+$.a.concat($.b?.map(f))  an array that can be null → {"$ifNull":[<it>,[null]]}
+$.a.concat(...$.b)     → {"$concatArrays":[{"$ifNull":["$a",[]]},
+                           {"$reduce":{"input":{"$ifNull":["$b",[]]},"initialValue":[],
+                             "in":{"$concatArrays":["$$value",
+                               {"$cond":[{"$isArray":"$$this"},"$$this",["$$this"]]}]}}}]}
+```
+
+A missing argument adds `null`, because MongoDB has no `undefined`. A spread
+lowers through the array literal `[...x]`, so a missing `x` spreads nothing,
+and a provable string refuses as `[..."ab"]` does. When the proof shows each
+element is an array, the `$reduce` splices `$$this` with no test; when it shows
+none is, the list splices as it is. This costs MQL size: an argument the proof
+cannot place grows from `"$b"` to a `$cond` of three reads, and each spread of
+such a list grows to a `$reduce`. The smaller shape answers null for the whole
+value on a missing argument, and aborts the query on a scalar, so correctness
+decides (a path is read three times; any other expression is bound once).
+
+A set method reads its list argument as `[]` when it is missing, as
+`new Set(undefined)` is empty: `$.a.union($.b)` is
+`{ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }`. The set
+operators answer null for a null operand, so without the wrap a missing
+argument makes the whole value null.
 
 The globals follow JavaScript where the two number differently or the server
 holds a different equality. `new Date(y, m, d, …)` and `Date.UTC(…)` count
