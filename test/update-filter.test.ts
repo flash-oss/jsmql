@@ -193,12 +193,13 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
   });
 
   it("rejects inc/dec used as a value (postfix in expression context)", () => {
-    // `1 + $.x++` — $.x++ is a statement, not a value
+    // JavaScript reads `1 + $.x++` as `1 + ($.x++)`: a write inside a value.
     const result = jsmql.validate("1 + $.x++");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toBe(
-      "Cannot apply '++' to a '+' expression. You can write only to a field, a binding, '$', '$$' or a collection. at position 7",
+      "'$.x++' is a write inside a value at position 7. A write stands only as a statement. Write '$.x += 1;' as its own statement after the statement that uses the value, and read '$.x' there.",
     );
+    expect(result.errors[0].pos).toBe(7);
   });
 
   it("regression: `5 - -3` still parses (whitespace separates the minuses)", () => {
@@ -500,13 +501,20 @@ describe("update filters: validation errors", () => {
   it("rejects assignment inside lambda body", () => {
     const result = jsmql.validate("$.list.map(x => $.a = x)");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toBe("Expected ')' but got '=' at position 20");
+    expect(result.errors[0].message).toBe(
+      "'$.a = x' is a write inside a value at position 20. A write stands only as a statement. Write '$.a = x;' as its own statement before the statement that uses the value, and read '$.a' there.",
+    );
+    expect(result.errors[0].pos).toBe(20);
   });
 
   it("rejects compound chained assignment", () => {
+    // JavaScript reads `$.a += $.b += 1` as `$.a += ($.b += 1)`: the inner write is a value.
     const result = jsmql.validate("$.a += $.b += 1");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch("Expected ';' but got '+=' at position 11");
+    expect(result.errors[0].message).toBe(
+      "'$.b += 1' is a write inside a value at position 11. A write stands only as a statement. Write '$.b += 1;' as its own statement before the statement that uses the value, and read '$.b' there.",
+    );
+    expect(result.errors[0].pos).toBe(11);
   });
 
   it("rejects missing RHS", () => {

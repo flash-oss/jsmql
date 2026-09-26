@@ -77,7 +77,7 @@ function assertPlausibleObjectId(hex: string, pos: number): void {
 }
 
 export function parse(source: string): Program {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const program = p.program();
   p.finish();
   return program;
@@ -98,7 +98,7 @@ export function parse(source: string): Program {
 export type EntryForm = { params: readonly ParamBinding[]; toolbox: readonly ParamBinding[]; program: Program };
 
 export function parseEntry(source: string): EntryForm {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const entry = p.entry();
   p.finish();
   return entry;
@@ -106,7 +106,7 @@ export function parseEntry(source: string): EntryForm {
 
 /** This is exposed for the tests, and for phases that already hold tokens. */
 export function parseExpression(source: string): Expr {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const e = p.expression();
   p.expectEnd();
   p.finish();
@@ -214,6 +214,14 @@ function notAPlainPattern(pos: number, wrote?: string): ParseError {
   );
 }
 
+/** `(x = 1) => …`: a parameter with a default value. The callback reads the element that MQL gives it. */
+function parameterDefault(name: Token): ParseError {
+  return new ParseError(
+    `A callback parameter is a plain name, and a default value ('${name.text} = …') is not one, at position ${name.pos}. Name the parameter, and write the default where the body reads it: '${name.text} => ${name.text} ?? <default>'.`,
+    name.pos,
+  );
+}
+
 /** One name that a scope binds: a parameter, or a declaration at the top of a block. */
 type Binder = { readonly name: string; readonly pos: number };
 
@@ -285,6 +293,26 @@ function trailingComma(comma: Token, next: Token): ParseError {
   );
 }
 
+/**
+ * A write where JavaScript reads a value: `1 + $.x++`, `$.y = ($.a = 5)`.
+ * JavaScript gives the write a value, but a write stands only as a statement.
+ * The message names the statement to write instead, and which side of the read
+ * it goes on: a postfix `++` gives the value from before the write, and every
+ * other write gives the value from after it.
+ */
+function writeInValue(
+  wrote: string,
+  statement: string,
+  place: string,
+  side: "before" | "after",
+  pos: number,
+): ParseError {
+  return new ParseError(
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value, and read '${place}' there.`,
+    pos,
+  );
+}
+
 class Parser {
   private readonly c: Cursor;
   /**
@@ -297,8 +325,12 @@ class Parser {
    */
   private readonly unclaimedStages = new Map<Lambda, number>();
 
-  constructor(toks: readonly Token[]) {
+  /** The source text. A refusal quotes the span that the developer wrote. */
+  private readonly src: string;
+
+  constructor(toks: readonly Token[], src: string) {
     this.c = new Cursor(toks);
+    this.src = src;
   }
 
   expectEnd(): void {
@@ -755,9 +787,16 @@ class Parser {
       this.requirePlace(target, kw.pos, "delete");
       return [{ type: "DeleteStmt", target: target.expr, pos: kw.pos }];
     }
-    // `++$.a` and `$.a++` mean the same write. The row says `prefixOrPostfix`.
-    const prefix = this.c.is("PlusPlus") || this.c.is("MinusMinus") ? this.c.next() : null;
-    const target = this.pratt(1);
+    // `++$.a` and `$.a++` mean the same write. The row says `prefixOrPostfix`,
+    // and its `asStatement` says that the rule is a write.
+    const lead = PREFIX.get(this.c.type);
+    const prefix = lead !== undefined && lead.asStatement !== null ? this.c.next() : null;
+    const start = prefix?.pos ?? this.c.peek().pos;
+    const placeStart = this.c.peek().pos;
+    // A prefix write reads its operand at its own level, so `++$.a + 1` is
+    // `(++$.a) + 1`. A postfix write ends the target: the Pratt loop stops at it.
+    const target = prefix !== null && lead !== undefined ? this.pratt(lead.prec) : this.pratt(1, true);
+    const placeEnd = this.c.lastEnd();
     const op = prefix ?? this.c.next();
     if (!ASSIGN_TRIGGERS.has(op.type)) {
       throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
@@ -766,21 +805,48 @@ class Parser {
     // a token type back to the operator it was lexed from.
     const spelling = op.text as AssignOp;
     this.requireWriteTarget(target, op.pos, spelling);
+    const update = PREFIX.get(op.type)?.asStatement ?? null;
+    if (update !== null) {
+      // `$.a++ + 1;` is `($.a++) + 1` to JavaScript: a value around the write.
+      if (INFIX.has(this.c.type) || ASSIGN_TRIGGERS.has(this.c.type)) {
+        const place = this.src.slice(placeStart, placeEnd);
+        const wrote = this.src.slice(start, prefix !== null ? placeEnd : op.end);
+        throw writeInValue(wrote, `${place} ${update}`, place, prefix !== null ? "before" : "after", op.pos);
+      }
+      return [{ type: "AssignExpr", target: target.expr, op: spelling, value: target.expr, pos: op.pos }];
+    }
     // `$.a = $.b = 1`: every target in the chain takes the SAME value. So the
     // chain is one write per target, not a nested assignment expression.
     if (spelling === "=") {
       const targets = [target.expr];
+      let valueStart = this.c.peek().pos;
       let value = this.pratt(1);
       while (this.c.is("Eq")) {
         const eq = this.c.next();
         this.requireWriteTarget(value, eq.pos, "=");
         targets.push(value.expr);
+        valueStart = this.c.peek().pos;
         value = this.pratt(1);
       }
+      // `$.a = $.b += 1`: a compound write is not a link of the chain.
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(value, valueStart);
       return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=" as const, value: value.expr, pos: op.pos }));
     }
-    const value = spelling === "++" || spelling === "--" ? target.expr : this.expression();
-    return [{ type: "AssignExpr", target: target.expr, op: spelling, value, pos: op.pos }];
+    return [{ type: "AssignExpr", target: target.expr, op: spelling, value: this.expression(), pos: op.pos }];
+  }
+
+  /**
+   * `1 + ($.a = 5)`: an assignment where JavaScript reads a value. The cursor
+   * stands at the operator. This method reads the right side too, so the message
+   * quotes the whole write.
+   */
+  private refuseAssignInValue(target: Parsed, start: number): never {
+    const place = this.src.slice(start, this.c.lastEnd());
+    const op = this.c.next();
+    this.requireWriteTarget(target, op.pos, op.text);
+    this.expression();
+    const wrote = this.src.slice(start, this.c.lastEnd());
+    throw writeInValue(wrote, wrote, place, "before", op.pos);
   }
 
   /** The `;` form: a `,` continues the run until the `;` or the end of input. */
@@ -886,20 +952,38 @@ class Parser {
       );
     }
     try {
-      return this.pratt(1).expr;
+      const start = this.c.peek().pos;
+      const out = this.pratt(1);
+      // A value ends here, so an assignment operator after it is a write inside the value.
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(out, start);
+      return out.expr;
     } finally {
       this.depth--;
     }
   }
 
-  private pratt(minPrec: number): Parsed {
+  /**
+   * One Pratt level. `endsAtWrite` is true only where a statement reads the
+   * target of a write. There a postfix write (`$.a++`) ends the target, and the
+   * caller reads the operator. Everywhere else, the write stands inside a value.
+   */
+  private pratt(minPrec: number, endsAtWrite = false): Parsed {
+    const start = this.c.peek().pos;
     let left = this.unary();
     for (;;) {
       const rule = INFIX.get(this.c.type);
       // A level of 0 means the row declares no precedence, so it never binds
-      // inside an expression. `$.b++` in a value slot is a parse error, not a
-      // silently-accepted increment.
+      // inside an expression.
       if (rule === undefined || rule.prec === 0 || rule.prec < minPrec) return left;
+
+      // `$.y = $.x++`: JavaScript reads the postfix write as a value.
+      if (rule.asStatement !== null) {
+        if (endsAtWrite) return left;
+        const place = this.src.slice(start, this.c.lastEnd());
+        const op = this.c.next();
+        this.requireWriteTarget(left, op.pos, op.text);
+        throw writeInValue(this.src.slice(start, op.end), `${place} ${rule.asStatement}`, place, "after", op.pos);
+      }
 
       // JavaScript forbids the pair outright, at any precedence level.
       if (mixingRefused(rule, left.rule, "left")) {
@@ -958,7 +1042,20 @@ class Parser {
     const rule = PREFIX.get(this.c.type);
     if (rule !== undefined && rule.prec > 0) {
       const op = this.c.next();
+      const placeStart = this.c.peek().pos;
       const argument = this.pratt(rule.prec);
+      // `$.y = ++$.x`: JavaScript reads the prefix write as a value.
+      if (rule.asStatement !== null) {
+        this.requireWriteTarget(argument, op.pos, op.text);
+        const place = this.src.slice(placeStart, this.c.lastEnd());
+        throw writeInValue(
+          this.src.slice(op.pos, this.c.lastEnd()),
+          `${place} ${rule.asStatement}`,
+          place,
+          "before",
+          op.pos,
+        );
+      }
       // A prefix operator's operand stands on its RIGHT side.
       if (mixingRefused(rule, argument.rule, "right")) {
         throw new ParseError(
@@ -1254,6 +1351,11 @@ class Parser {
   private param(): ParamRead {
     if (this.c.is("Ident")) {
       const t = this.c.next();
+      // `(x = 1) => …`: a default value. Without an arrow, `(x = 1)` is a write in parentheses.
+      if (this.c.is("Eq")) {
+        if (!this.skipPatternPart()) return null;
+        return { kind: "refused", error: parameterDefault(t) };
+      }
       return { kind: "name", name: t.text, pos: t.pos };
     }
     if (this.c.is("LBracket")) {
@@ -1339,7 +1441,9 @@ class Parser {
     for (;;) {
       const t = this.c.peek();
       if (t.type === "EOF") return false;
-      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace")) return true;
+      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace" || t.type === "RParen")) {
+        return true;
+      }
       if (t.type === "LParen" || t.type === "LBracket" || t.type === "LBrace") depth++;
       if (t.type === "RParen" || t.type === "RBracket" || t.type === "RBrace") depth--;
       this.c.next();

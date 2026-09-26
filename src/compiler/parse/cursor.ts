@@ -101,6 +101,11 @@ export class Cursor {
     return this.next();
   }
 
+  /** The offset just after the last token that the cursor consumed. A message quotes the source span up to it. */
+  lastEnd(): number {
+    return this.at === 0 ? 0 : this.toks[this.at - 1].end;
+  }
+
   /** Rewinds the cursor. Only one place needs this: to tell an arrow from a group. */
   mark(): number {
     return this.at;

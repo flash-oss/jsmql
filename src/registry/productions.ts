@@ -7,8 +7,9 @@
 //
 // `precedence` goes from 1 (loosest, `conditional`) to 14 (tightest, postfix). It
 // follows the order of the 14 cascade methods of the parser. It is absent on a row
-// that is not an operator. `++` and `--` are statement-level and appear nowhere in
-// that cascade, so a number for them has no source.
+// that is not an operator. `++` and `--` sit at 14, because JavaScript binds a
+// postfix `++` tighter than every prefix and binary operator: `-$.x++` is
+// `-($.x++)`, and `1 + $.x++` is `1 + ($.x++)`.
 //
 // `becomes` holds a LIST where one rule builds more than one node (`namespacedCall`
 // covers seven). It holds `{ notANode: … }` where a rule makes something that the
@@ -113,6 +114,14 @@ export type ProductionSpec<
    * does not cover `delete`, because `delete a?.b` is legal.
    */
   neverAWriteTarget?: { instead: string };
+  /**
+   * The rule builds a write that JavaScript also reads as a VALUE: `$.y = $.x++`.
+   * A write stands only as a statement, so the parser refuses the value reading.
+   * The refusal names this compound write as the statement to write instead:
+   * `$.x += 1;`. A postfix spelling gives the value from before the write, so the
+   * refusal places the statement after the read. A prefix spelling places it before.
+   */
+  asStatement?: string;
   filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, FilterOut<Lists<W, "value">>, C>;
   expr: Cell<Lists<W, "value">, Of<O>, ExprIn, OutOf["value"], C>;
   /** A link in a `$$ = $$…` chain. */
@@ -1411,11 +1420,13 @@ export const PRODUCTIONS = {
   }),
 
   increment: production({
-    doc: "Adds one to a field. `++$.a` and `$.a++` are the same.",
+    doc: "Adds one to a field. As a statement, `++$.a` and `$.a++` are the same write. Inside a value, the parser refuses both.",
     tokens: ["++"],
     spelling: "++",
     becomes: ["AssignExpr", "UpdateFilter"],
+    precedence: 14,
     fixity: "prefixOrPostfix",
+    asStatement: "+= 1",
     on: "any",
     returns: "unknown",
     where: ["statement"],
@@ -1426,11 +1437,13 @@ export const PRODUCTIONS = {
   }),
 
   decrement: production({
-    doc: "Subtracts one from a field. `--$.a` and `$.a--` are the same.",
+    doc: "Subtracts one from a field. As a statement, `--$.a` and `$.a--` are the same write. Inside a value, the parser refuses both.",
     tokens: ["--"],
     spelling: "--",
     becomes: ["AssignExpr", "UpdateFilter"],
+    precedence: 14,
     fixity: "prefixOrPostfix",
+    asStatement: "-= 1",
     on: "any",
     returns: "unknown",
     where: ["statement"],

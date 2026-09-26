@@ -10,6 +10,47 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: `++` / `--` read with JavaScript's precedence, and a write inside a value names the statement to write
+
+The `increment` and `decrement` rows had no precedence, so the Pratt loop never
+bound `++` inside an expression. `1 + $.x++` then parsed as the write
+`(1 + $.x)++`, and the refusal said "Cannot apply '++' to a '+' expression".
+That message describes a grouping that JavaScript never makes: JavaScript binds
+a postfix `++` tighter than every prefix and binary operator, so `1 + $.x++` is
+`1 + ($.x++)` and `-$.x++` is `-($.x++)`. The value forms `$.y = $.x++;`,
+`$.y = ($.x++);` and `$.y = -$.x++;` failed with a stray-token message:
+"Expected ';' but got '++'". An assignment inside a value had the same gap:
+`1 + ($.a = 5)` gave "Expected ')' but got '='", and `$.a += $.b += 1` gave
+"Expected ';' but got '+='".
+
+Both rows now state `precedence: 14` and a new `asStatement` field (`"+= 1"`,
+`"-= 1"`) in `src/registry/productions.ts`. The parser reads JavaScript's
+grouping from the rows. A write that stands inside a value is refused at its
+operator, with `.pos` and "at position N", in one message shared by `++`,
+`--`, `=` and every compound operator:
+
+```
+$.y = $.x++;   ✗ '$.x++' is a write inside a value at position 9. A write stands only as a
+                 statement. Write '$.x += 1;' as its own statement after the statement that
+                 uses the value, and read '$.x' there.
+1 + ($.a = 5); ✗ '$.a = 5' is a write inside a value at position 9. … Write '$.a = 5;' as its
+                 own statement before the statement that uses the value, and read '$.a' there.
+```
+
+The side comes from JavaScript's value order: a postfix write gives the value
+from before the write, so its statement goes after the read; a prefix write
+and an assignment give the value from after it, so theirs goes before. The
+named rewrite `$.y = $.x; $.x += 1;` gives `{ x: 2, y: 1 }` on the fixture
+`mongod` for `{ x: 1 }`, which is JavaScript's answer. The statement forms
+`$.x++;`, `++$.x;`, `$.x--;`, `($.a++);` and `[$.a++, …]` emit the same MQL as
+before. A callback parameter default (`(x = 1) => x`) would otherwise read as
+an assignment inside a value, so the parser refuses it with its own message,
+which names `x => x ?? <default>`. `docs/specs/update-filter.md` also loses
+three stale lines: `ArrayElement` lists no `LetDecl`, the parenthesised chain
+`($.a = $.b = 5);` compiles, and the parser method is `writeGroup`.
+
+---
+
 ## 2026-09-26 — feat!: a program is JavaScript syntax — three forms that `node --check` refuses are refused
 
 The corpus gate in `test/compiler-parse.test.ts` held a `NOT_JS` table: twelve

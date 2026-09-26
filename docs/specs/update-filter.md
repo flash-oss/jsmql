@@ -29,9 +29,10 @@ on the discriminant. `Pipeline` (from `aggregation-stages.md`) wraps a sequence 
 `;`-separated top-level statements, and each statement is itself an `Expr` or an
 `UpdateFilter`.
 
-`ArrayElement` is `Expr | SpreadElement | LetDecl | FuncDecl | UpdateOp | UpdateFilter`,
-so an update op can sit inside a pipeline-array literal. Non-pipeline `ArrayLiteral`
-codegen rejects an update-op element with a clear error.
+`ArrayElement` is `Expr | SpreadElement | FuncDecl | UpdateOp | UpdateFilter`
+([src/registry/ast.ts](../../src/registry/ast.ts)), so an update op can sit inside a
+pipeline-array literal. Non-pipeline `ArrayLiteral` codegen rejects an update-op
+element with a clear error.
 
 ## Lexemes
 
@@ -88,12 +89,12 @@ for free.
 
 ### Increment / decrement
 
-`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. Each one desugars
-through `makeIncDecUpdateOp(target, op)` to the same `AssignExpr` shape as a compound
-assignment with a `NumberLiteral(1)` right-hand side. All four forms compile to the
-same `$set` stage. The prefix/postfix distinction (return then mutate, or mutate then
-return) matters in JavaScript, but not in a pipeline, where a stage-level update op
-returns no value.
+`x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. The desugar pass
+(`incDec` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts))
+rewrites each one to the same `AssignExpr` shape as a compound assignment with a
+`NumberLiteral(1)` right-hand side. As statements, all four forms compile to the same
+`$set` stage. JavaScript gives a prefix and a postfix write different values, but a
+statement gives no value, so the difference has no effect there.
 
 `++` and `--` are rows in [src/registry/tokens.ts](../../src/registry/tokens.ts) like
 every other lexeme, and the lexer derives the punctuator order from key length, so it
@@ -101,33 +102,63 @@ matches `++` before `+=` before `+`. `1--2` (no whitespace) therefore lexes as `
 `--`, `2`, and target validation rejects it, while `1 - -2` lexes as `1`, `-`, `-`,
 `2` and parses as `1 - (-2)`.
 
-Both spellings mean one write, so both reach the same road. At the top level, inside a
-bracketed pipeline, and inside parentheses, a leading `++`/`--` opens an update run and
-a trailing one closes it over the target just read.
+The `increment` and `decrement` rows in
+[src/registry/productions.ts](../../src/registry/productions.ts) state JavaScript's
+precedence: level 14, the tightest level, so `1 + $.x++` groups as `1 + ($.x++)` and
+`-$.x++` as `-($.x++)`. A prefix `++` reads its operand at the same level, so
+`++$.x + 1` groups as `(++$.x) + 1`. At the top level, inside a bracketed pipeline,
+and inside parentheses, a leading `++`/`--` opens an update run, and a trailing one
+closes it over the target just read. Anywhere else, the write stands inside a value.
+The parser then refuses it at the operator. The message names the statement to write
+instead, from the row's `asStatement` field:
 
-A target here validates the same way as for an assignment: only a `FieldRef` or a
-chained `MemberAccess`. `1++` and `$.items[0]++` are rejected at parse time; `1 + $.x++`
-falls through to the codegen-level "Assignment is a statement, not a value" error.
+```js
+jsmql("$.y = $.x++;")
+// ✗ '$.x++' is a write inside a value at position 9. A write stands only as a statement.
+//   Write '$.x += 1;' as its own statement after the statement that uses the value,
+//   and read '$.x' there.
+
+jsmql("$.y = $.x; $.x += 1;")
+// → [{ $set: { y: "$x" } }, { $set: { x: { $add: ["$x", 1] } } }]
+```
+
+A postfix write gives the value from before the write, so the message places the
+statement after the read. A prefix write gives the value from after it, so the message
+places the statement before the read. The same refusal covers a statement-level
+`$.x++ + 1;`, because JavaScript reads the `+ 1` as a value around the write.
+
+A target here validates the same way as for an assignment: a place, which is a field
+path, a binding, or a chain of accesses on one. `1++` and `f()++` are rejected at parse
+time. `$.items[0]++` parses, and the emit phase refuses its computed destination.
 
 ### Parenthesized assignments
 
-A formatter wraps an assignment expression in parens when it appears in array element
-position (`[($.a = 5)]`). Without parser support, `jsmql(({ $ }) => [($.a = 5)])` would
-fail outside Vite's or Vitest's transform, which silently strips the parens. To match
-what a user expects, `parseGrouped` recognises an assignment operator after the inner
-expression. It parses the assignment chain inside the parens, validates the target, and
-returns the resulting `AssignExpr` cast as `Expr` (one localised type assertion). It
-accepts a single chain only — `($.a = $.b = 5)` is rejected with a precise error.
+A formatter wraps an assignment in parentheses when it stands as an array element
+(`[($.a = 5)]`). `writeGroup` in
+[src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts) reads a `(` that
+holds a write as the write itself, a chain and a `,`-group included:
+`($.a = $.b = 5);` and `(($.a = 1), ($.b = 2));` each give one `$set`.
 
 Downstream:
 
-- **Top level**: the parser wraps a lone `AssignExpr` in an `UpdateFilter`, so
-  `jsmql("($.a = 5)")` works the same way as `jsmql("$.a = 5")` — a pipeline by the
-  shape rule.
+- **Top level**: `jsmql("($.a = 5)")` works the same way as `jsmql("$.a = 5")` — a
+  pipeline by the shape rule.
 - **Pipeline element**: an array literal takes the write as an element
   (`[$.a = 1, $sort({ a: 1 })]`), and the write road coalesces it with its neighbours.
-- **Inside a real expression** (`1 + ($.a = 5)`): a write is a statement, and the
-  parser refuses the `=` where an expression is expected (`Expected ')' but got '='`).
+- **Inside a value** (`1 + ($.a = 5)`, `f($.a = 5)`, `$.y = $.a += 1`): the parser
+  refuses the assignment operator with the same message as a `++` inside a value.
+  JavaScript gives an assignment the value from after the write, so the message places
+  the statement before the read:
+
+```js
+jsmql("1 + ($.a = 5);")
+// ✗ '$.a = 5' is a write inside a value at position 9. A write stands only as a statement.
+//   Write '$.a = 5;' as its own statement before the statement that uses the value,
+//   and read '$.a' there.
+```
+
+A callback parameter with a default value (`(x = 1) => x`) is not a write. The parser
+refuses it with its own message, which names `x => x ?? <default>`.
 
 ## Lowering
 
@@ -214,8 +245,9 @@ target (`Object.assign({}, $.a)`), it is a value. In an expression it is
 | Bare identifier as target       | codegen      | A bare-identifier target is validated at codegen: in a pipeline it may reassign an in-scope `let` (see [let-bindings.md § Reassignment](let-bindings.md)); otherwise "Cannot assign to bare identifier 'x' …" |
 | `IndexAccess` as target         | parser       | "Update op target must be a static field path; computed/index access ('[…]') is not supported" |
 | Lambda or compound-shape target | parser       | "Update op target must be a field path like '$.x' or '$.x.y'" |
-| Compound chain                  | parser       | "Compound assignment cannot be chained — split into separate statements" |
-| Update op in a value array       | codegen      | "Assignment is a statement, not a value, and is only valid at the top level or as a pipeline-array element" |
+| Compound chain (`$.a += $.b += 1`) | parser     | The write-inside-a-value message for the inner `$.b += 1` |
+| Write inside a value (`1 + $.x++`, `1 + ($.a = 5)`) | parser | "'$.x++' is a write inside a value at position N. A write stands only as a statement. Write '$.x += 1;' as its own statement after the statement that uses the value, …" |
+| Update op in a value array       | codegen      | "Assignment is a statement, not a value. It is only valid at the top level or as a pipeline-array element." |
 | Empty update op program          | codegen      | "Update op program must contain at least one assignment or delete" (defensive — parser should not produce this) |
 
 `AssignExpr.pos` / `DeleteStmt.pos` come from the target's source offset (for

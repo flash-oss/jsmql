@@ -67,7 +67,8 @@ assignment_chain
                = target "=" assignment_chain          (* right-associative *)
                | target "=" expression
                | target compound_op expression
-               (* compound_op chains are rejected: `a += b += 1` is a parse error *)
+               (* compound_op chains are rejected: in `a += b += 1`, the inner
+                  write stands inside a value, and the parser refuses it *)
 
 compound_op    = "+=" | "-=" | "*=" | "/="
 
@@ -108,7 +109,14 @@ power          = unary ("**" power)?                     (* right-associative *)
 
 unary          = "typeof" unary
                | ("!" | "-" | "~") unary
-               | postfix
+               | update
+
+update         = ("++" | "--") unary
+               | postfix ("++" | "--")?
+               (* JavaScript's grouping: `1 + $.x++` is `1 + ($.x++)`. A write
+                  stands only as a statement, so inside a value the parser
+                  refuses it and names the statement to write instead. See
+                  update-filter.md § Increment / decrement. *)
 
 postfix        = primary (
                    "[" expression "]"
@@ -417,7 +425,8 @@ Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse erro
 | Level | Operators | Associativity |
 |---|---|---|
 | Postfix | `[index]` `.prop` `.method()` | left |
-| Unary | `typeof` `!` `-` `~` | right |
+| Postfix update | `x++` `x--` | — |
+| Unary | `typeof` `!` `-` `~` `++x` `--x` | right |
 | Power | `**` | right |
 | Multiplicative | `*` `/` `%` | left |
 | Additive | `+` `-` | left |

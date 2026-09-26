@@ -3227,7 +3227,18 @@ jsmql("--$.lives")
 // → [{ $set: { lives: { $subtract: ["$lives", 1] } } }]
 ```
 
-Like other update ops, increment/decrement is a statement. You cannot use it as a value (`1 + $.x++` is rejected), and it works only on a field-path target.
+Like other update ops, increment/decrement is a statement, and it works only on a field or a `let` binding. JavaScript groups `1 + $.x++` as `1 + ($.x++)` and `-$.x++` as `-($.x++)`, so JSMQL reads each one the same way. The write then stands inside a value, and JSMQL refuses it. The message names the statement that gives JavaScript's answer. A postfix `++` gives the value from before the write, so the write goes after the read:
+
+```js
+jsmql("$.y = $.x++;")
+// ✗ '$.x++' is a write inside a value at position 9. A write stands only as a statement.
+//   Write '$.x += 1;' as its own statement after the statement that uses the value, and read '$.x' there.
+
+jsmql("$.y = $.x; $.x += 1;")
+// → [{ $set: { y: "$x" } }, { $set: { x: { $add: ["$x", 1] } } }]
+```
+
+A prefix `++$.x` gives the value from after the write, so its message puts `$.x += 1;` before the read. An assignment inside a value (`1 + ($.a = 5)`, `f($.a = 5)`) gets the same refusal, with the write before the read.
 
 ### Chained assignment
 

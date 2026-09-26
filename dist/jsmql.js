@@ -6544,7 +6544,7 @@ var NAMES = {
         if (target === null) return null;
         const values = [];
         for (const el of recv.elements) {
-          const c = el.type === "SpreadElement" || el.type === "LetDecl" || el.type === "FuncDecl" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "UpdateFilter" ? null : constant(el);
+          const c = el.type === "SpreadElement" || el.type === "FuncDecl" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "UpdateFilter" ? null : constant(el);
           if (c === null) return null;
           values.push(c.value);
         }
@@ -14249,7 +14249,7 @@ var PRODUCTIONS = {
     statement: unsupported("'{ return \u2026 }' is not a statement \u2014 see its 'where'.")
   }),
   constantBinding: production({
-    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration.",
+    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration. A statement, never an array element: JavaScript refuses `[const x = \u2026]`. One scope declares a name once, its function's parameters included.",
     tokens: ["const", "=", "identifier", ","],
     spelling: "const x = \u2026",
     becomes: "LetDecl",
@@ -14262,7 +14262,7 @@ var PRODUCTIONS = {
     stream: unsupported("'const x = \u2026' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   mutableBinding: production({
-    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration.",
+    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration. A statement, never an array element: JavaScript refuses `[let x = \u2026]`. One scope declares a name once, its function's parameters included.",
     tokens: ["let", "=", "identifier", ","],
     spelling: "let x = \u2026",
     becomes: "LetDecl",
@@ -14302,7 +14302,7 @@ var PRODUCTIONS = {
     stream: unsupported("'delete $.field' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   fieldAssignment: production({
-    doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node.",
+    doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node. A `,` joins two writes; it cannot end the run, because JavaScript refuses `$.a = 1,`.",
     tokens: ["=", "+=", "-=", "*=", "/=", ",", "(", ")"],
     spelling: "$.field = \u2026",
     becomes: ["AssignExpr", "UpdateFilter"],
@@ -14315,11 +14315,13 @@ var PRODUCTIONS = {
     stream: unsupported("'$.field = \u2026' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   increment: production({
-    doc: "Adds one to a field. `++$.a` and `$.a++` are the same.",
+    doc: "Adds one to a field. As a statement, `++$.a` and `$.a++` are the same write. Inside a value, the parser refuses both.",
     tokens: ["++"],
     spelling: "++",
     becomes: ["AssignExpr", "UpdateFilter"],
+    precedence: 14,
     fixity: "prefixOrPostfix",
+    asStatement: "+= 1",
     on: "any",
     returns: "unknown",
     where: ["statement"],
@@ -14329,11 +14331,13 @@ var PRODUCTIONS = {
     stream: unsupported("'++' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   decrement: production({
-    doc: "Subtracts one from a field. `--$.a` and `$.a--` are the same.",
+    doc: "Subtracts one from a field. As a statement, `--$.a` and `$.a--` are the same write. Inside a value, the parser refuses both.",
     tokens: ["--"],
     spelling: "--",
     becomes: ["AssignExpr", "UpdateFilter"],
+    precedence: 14,
     fixity: "prefixOrPostfix",
+    asStatement: "-= 1",
     on: "any",
     returns: "unknown",
     where: ["statement"],
@@ -15273,6 +15277,10 @@ var Cursor = class {
       throw new ParseError(`Expected ${spell(type)} but got ${found(this.peek())}`, this.peek().pos);
     }
     return this.next();
+  }
+  /** The offset just after the last token that the cursor consumed. A message quotes the source span up to it. */
+  lastEnd() {
+    return this.at === 0 ? 0 : this.toks[this.at - 1].end;
   }
   /** Rewinds the cursor. Only one place needs this: to tell an arrow from a group. */
   mark() {
@@ -18867,7 +18875,8 @@ function build(want) {
         fixity: row2.fixity,
         noMixWith: row2.noMixWith ?? [],
         leftOperandNot: row2.leftOperandNot ?? [],
-        neverAWriteTarget: row2.neverAWriteTarget !== void 0
+        neverAWriteTarget: row2.neverAWriteTarget !== void 0,
+        asStatement: row2.asStatement ?? null
       });
       continue;
     }
@@ -18881,7 +18890,8 @@ function build(want) {
       rules: [...seen.rules, name2],
       noMixWith: [...seen.noMixWith, ...row2.noMixWith ?? []],
       leftOperandNot: [...seen.leftOperandNot, ...row2.leftOperandNot ?? []],
-      neverAWriteTarget: seen.neverAWriteTarget || row2.neverAWriteTarget !== void 0
+      neverAWriteTarget: seen.neverAWriteTarget || row2.neverAWriteTarget !== void 0,
+      asStatement: seen.asStatement ?? row2.asStatement ?? null
     });
   }
   return out;
@@ -18935,19 +18945,19 @@ function assertPlausibleObjectId(hex, pos) {
   if (typo !== null) throw new ParseError(typo, pos);
 }
 function parse2(source) {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const program = p.program();
   p.finish();
   return program;
 }
 function parseEntry(source) {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const entry = p.entry();
   p.finish();
   return entry;
 }
 function parseExpression(source) {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const e = p.expression();
   p.expectEnd();
   p.finish();
@@ -19002,8 +19012,63 @@ function notAPlainPattern(pos, wrote) {
     pos
   );
 }
+function parameterDefault(name2) {
+  return new ParseError(
+    `A callback parameter is a plain name, and a default value ('${name2.text} = \u2026') is not one, at position ${name2.pos}. Name the parameter, and write the default where the body reads it: '${name2.text} => ${name2.text} ?? <default>'.`,
+    name2.pos
+  );
+}
+function refuseDuplicateParams(binders) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const b of binders) {
+    if (seen.has(b.name)) {
+      throw new ParseError(
+        `The parameter name '${b.name}' appears twice in one parameter list, at position ${b.pos}. JavaScript refuses a duplicate parameter name here. Give each parameter its own name, for example '(x, i) => \u2026'.`,
+        b.pos
+      );
+    }
+    seen.add(b.name);
+  }
+}
+function declare(scope, stmt) {
+  if (stmt.type !== "LetDecl" && stmt.type !== "FuncDecl") return;
+  const wrote = `${stmt.type === "FuncDecl" && stmt.form === "function" ? "function" : stmt.kind} ${stmt.name}`;
+  const earlier = scope.get(stmt.name);
+  if (earlier === "parameter") {
+    throw new ParseError(
+      `\`${wrote}\` re-declares the parameter \`${stmt.name}\` at position ${stmt.pos}, which JavaScript refuses. Pick a different name.`,
+      stmt.pos
+    );
+  }
+  if (earlier === "declaration") {
+    throw new ParseError(
+      `\`${wrote}\` at position ${stmt.pos} is already declared earlier in this block, which JavaScript refuses. Pick a different name.`,
+      stmt.pos
+    );
+  }
+  scope.set(stmt.name, "declaration");
+}
+function declarationAsElement(kw, name2) {
+  const wrote = `${kw.text} ${name2.type === "Ident" ? name2.text : "x"} = \u2026`;
+  return new ParseError(
+    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${kw.pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(\u2026);\`. In a stage's sub-pipeline, write the value inline in the stage that reads it.`,
+    kw.pos
+  );
+}
+function trailingComma(comma, next) {
+  return new ParseError(
+    `A ',' with no write after it, before ${found(next)} at position ${comma.pos}. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( \u2026 )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').`,
+    comma.pos
+  );
+}
+function writeInValue(wrote, statement, place2, side, pos) {
+  return new ParseError(
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value, and read '${place2}' there.`,
+    pos
+  );
+}
 var Parser = class _Parser {
-  constructor(toks) {
+  constructor(toks, src) {
     /**
      * Every lambda whose `{ … }` body had no `return`, and so the parser read it as
      * pipeline STAGES, minus the ones a stages-taking callee has claimed. Whatever
@@ -19015,6 +19080,7 @@ var Parser = class _Parser {
     this.unclaimedStages = /* @__PURE__ */ new Map();
     this.depth = 0;
     this.c = new Cursor(toks);
+    this.src = src;
   }
   expectEnd() {
     if (!this.c.is("EOF")) {
@@ -19069,8 +19135,10 @@ var Parser = class _Parser {
     }
     const toolbox = slots.find(isToolbox) ?? [];
     const params = slots.find((sl) => sl !== toolbox && isParams(sl)) ?? [];
+    const binders = slots.flat();
+    refuseDuplicateParams(binders);
     if (!isFunction) this.c.expect("Arrow");
-    const program = this.c.is("LBrace") ? this.entryBlock() : this.program();
+    const program = this.c.is("LBrace") ? this.entryBlock(binders) : this.program();
     return { params, toolbox, program };
   }
   /** `{ a, b: alias, $, $$, $name }` — one slot of the entry parameter list. */
@@ -19137,9 +19205,9 @@ var Parser = class _Parser {
     return { ...dollar, text: "$" + name2.text, end: name2.end };
   }
   /** `{ … }` as an entry body: statements, with an optional trailing `return`. */
-  entryBlock() {
+  entryBlock(params) {
     this.c.expect("LBrace");
-    const { stmts, ret, retPos, sawSemi } = this.block("RBrace");
+    const { stmts, ret, retPos, sawSemi } = this.block("RBrace", params);
     if (ret !== null) {
       if (stmts.length > 0) {
         throw new ParseError(
@@ -19183,8 +19251,9 @@ var Parser = class _Parser {
    * A `return` may appear only where a `}` closes the block. At the top level it
    * reaches `statement()`, and the parser refuses it as an unexpected token.
    */
-  block(terminator) {
+  block(terminator, params = []) {
     const stmts = [];
+    const scope = new Map(params.map((p) => [p.name, "parameter"]));
     let sawSemi = false;
     let endPos = this.c.peek().pos;
     for (; ; ) {
@@ -19207,6 +19276,7 @@ var Parser = class _Parser {
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
+      for (const stmt of run) declare(scope, stmt);
       stmts.push(...run);
       const blockBodied = st.type === "FuncDecl" && st.form === "function";
       if (this.c.is("Semi")) sawSemi = true;
@@ -19264,7 +19334,7 @@ var Parser = class _Parser {
     this.refuseGenerator();
     const name2 = this.c.expect("Ident");
     const params = this.paramList();
-    const lambda = this.lambdaOf(params, kw.pos);
+    const lambda = this.lambdaOf(params, kw.pos, false);
     return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
   /** `(a, [b, c], { d },)`: a parenthesised parameter list. Names and patterns match the arrow's, and a trailing comma is allowed. */
@@ -19292,7 +19362,7 @@ var Parser = class _Parser {
     this.refuseGenerator();
     if (this.c.is("Ident")) this.c.next();
     const params = this.paramList();
-    return this.lambdaOf(params, kw.pos);
+    return this.lambdaOf(params, kw.pos, false);
   }
   /**
    * `let x = …, y = …` / `const x = …, y = …`: JavaScript's declaration list,
@@ -19308,11 +19378,6 @@ var Parser = class _Parser {
     const out = [this.declarator(kind, kw.pos, kw.pos)];
     while (this.c.eat("Comma")) out.push(this.declarator(kind, null, kw.pos));
     return out;
-  }
-  /** `let x = …` / `const x = …`, one declarator: a bracketed pipeline's element, where `,` separates elements. */
-  binding() {
-    const kw = this.c.next();
-    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
   }
   /**
    * One declarator, after the keyword. `kwPos` places the FIRST declarator at the
@@ -19403,9 +19468,12 @@ var Parser = class _Parser {
     if (this.c.is("LParen") && this.parenWriteAhead()) {
       this.c.next();
       const ops = [];
-      do {
+      for (; ; ) {
         ops.push(...this.writeGroup());
-      } while (this.c.eat("Comma") && !this.c.is("RParen"));
+        if (!this.c.is("Comma")) break;
+        const comma = this.c.next();
+        if (this.c.is("RParen")) throw trailingComma(comma, this.c.peek());
+      }
       this.c.expect("RParen");
       return ops;
     }
@@ -19415,35 +19483,66 @@ var Parser = class _Parser {
       this.requirePlace(target2, kw.pos, "delete");
       return [{ type: "DeleteStmt", target: target2.expr, pos: kw.pos }];
     }
-    const prefix = this.c.is("PlusPlus") || this.c.is("MinusMinus") ? this.c.next() : null;
-    const target = this.pratt(1);
+    const lead = PREFIX.get(this.c.type);
+    const prefix = lead !== void 0 && lead.asStatement !== null ? this.c.next() : null;
+    const start = prefix?.pos ?? this.c.peek().pos;
+    const placeStart = this.c.peek().pos;
+    const target = prefix !== null && lead !== void 0 ? this.pratt(lead.prec) : this.pratt(1, true);
+    const placeEnd = this.c.lastEnd();
     const op = prefix ?? this.c.next();
     if (!ASSIGN_TRIGGERS.has(op.type)) {
       throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
     }
     const spelling = op.text;
     this.requireWriteTarget(target, op.pos, spelling);
+    const update = PREFIX.get(op.type)?.asStatement ?? null;
+    if (update !== null) {
+      if (INFIX.has(this.c.type) || ASSIGN_TRIGGERS.has(this.c.type)) {
+        const place2 = this.src.slice(placeStart, placeEnd);
+        const wrote = this.src.slice(start, prefix !== null ? placeEnd : op.end);
+        throw writeInValue(wrote, `${place2} ${update}`, place2, prefix !== null ? "before" : "after", op.pos);
+      }
+      return [{ type: "AssignExpr", target: target.expr, op: spelling, value: target.expr, pos: op.pos }];
+    }
     if (spelling === "=") {
       const targets = [target.expr];
-      let value2 = this.pratt(1);
+      let valueStart = this.c.peek().pos;
+      let value = this.pratt(1);
       while (this.c.is("Eq")) {
         const eq = this.c.next();
-        this.requireWriteTarget(value2, eq.pos, "=");
-        targets.push(value2.expr);
-        value2 = this.pratt(1);
+        this.requireWriteTarget(value, eq.pos, "=");
+        targets.push(value.expr);
+        valueStart = this.c.peek().pos;
+        value = this.pratt(1);
       }
-      return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=", value: value2.expr, pos: op.pos }));
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(value, valueStart);
+      return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=", value: value.expr, pos: op.pos }));
     }
-    const value = spelling === "++" || spelling === "--" ? target.expr : this.expression();
-    return [{ type: "AssignExpr", target: target.expr, op: spelling, value, pos: op.pos }];
+    return [{ type: "AssignExpr", target: target.expr, op: spelling, value: this.expression(), pos: op.pos }];
+  }
+  /**
+   * `1 + ($.a = 5)`: an assignment where JavaScript reads a value. The cursor
+   * stands at the operator. This method reads the right side too, so the message
+   * quotes the whole write.
+   */
+  refuseAssignInValue(target, start) {
+    const place2 = this.src.slice(start, this.c.lastEnd());
+    const op = this.c.next();
+    this.requireWriteTarget(target, op.pos, op.text);
+    this.expression();
+    const wrote = this.src.slice(start, this.c.lastEnd());
+    throw writeInValue(wrote, wrote, place2, "before", op.pos);
   }
   /** The `;` form: a `,` continues the run until the `;` or the end of input. */
   writes() {
     const pos = this.c.peek().pos;
     const ops = [];
-    do {
+    for (; ; ) {
       ops.push(...this.writeGroup());
-    } while (this.c.eat("Comma") && !this.c.is("EOF") && !this.c.is("Semi") && !this.c.is("RBrace"));
+      if (!this.c.is("Comma")) break;
+      const comma = this.c.next();
+      if (this.c.is("EOF") || this.c.is("Semi") || this.c.is("RBrace")) throw trailingComma(comma, this.c.peek());
+    }
     return { type: "UpdateFilter", ops, pos };
   }
   /**
@@ -19521,16 +19620,32 @@ var Parser = class _Parser {
       );
     }
     try {
-      return this.pratt(1).expr;
+      const start = this.c.peek().pos;
+      const out = this.pratt(1);
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(out, start);
+      return out.expr;
     } finally {
       this.depth--;
     }
   }
-  pratt(minPrec) {
+  /**
+   * One Pratt level. `endsAtWrite` is true only where a statement reads the
+   * target of a write. There a postfix write (`$.a++`) ends the target, and the
+   * caller reads the operator. Everywhere else, the write stands inside a value.
+   */
+  pratt(minPrec, endsAtWrite = false) {
+    const start = this.c.peek().pos;
     let left = this.unary();
     for (; ; ) {
       const rule = INFIX.get(this.c.type);
       if (rule === void 0 || rule.prec === 0 || rule.prec < minPrec) return left;
+      if (rule.asStatement !== null) {
+        if (endsAtWrite) return left;
+        const place2 = this.src.slice(start, this.c.lastEnd());
+        const op2 = this.c.next();
+        this.requireWriteTarget(left, op2.pos, op2.text);
+        throw writeInValue(this.src.slice(start, op2.end), `${place2} ${rule.asStatement}`, place2, "after", op2.pos);
+      }
       if (mixingRefused(rule, left.rule, "left")) {
         throw new ParseError(
           `You cannot combine '${this.c.peek().text}' with '${spelled(left.rule)}' without parentheses. JavaScript rejects it.`,
@@ -19580,7 +19695,19 @@ var Parser = class _Parser {
     const rule = PREFIX.get(this.c.type);
     if (rule !== void 0 && rule.prec > 0) {
       const op = this.c.next();
+      const placeStart = this.c.peek().pos;
       const argument = this.pratt(rule.prec);
+      if (rule.asStatement !== null) {
+        this.requireWriteTarget(argument, op.pos, op.text);
+        const place2 = this.src.slice(placeStart, this.c.lastEnd());
+        throw writeInValue(
+          this.src.slice(op.pos, this.c.lastEnd()),
+          `${place2} ${rule.asStatement}`,
+          place2,
+          "before",
+          op.pos
+        );
+      }
       if (mixingRefused(rule, argument.rule, "right")) {
         throw new ParseError(
           `You cannot combine '${op.text}' with '${spelled(argument.rule)}' without parentheses. JavaScript rejects it.`,
@@ -19801,7 +19928,7 @@ var Parser = class _Parser {
     const t = this.c.next();
     if (this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaBody([t.text], arrow.pos);
+      return this.lambdaBody([t.text], arrow.pos, [{ name: t.text, pos: t.pos }]);
     }
     return { type: "Ident", name: t.text, pos: t.pos };
   }
@@ -19824,7 +19951,7 @@ var Parser = class _Parser {
     }
     if (looksLikeParams && this.c.eat("RParen") && this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaOf(params, arrow.pos);
+      return this.lambdaOf(params, arrow.pos, true);
     }
     this.c.reset(save);
     this.c.expect("LParen");
@@ -19845,7 +19972,14 @@ var Parser = class _Parser {
    * `([...a, b])` is a legal expression.
    */
   param() {
-    if (this.c.is("Ident")) return { kind: "name", name: this.c.next().text };
+    if (this.c.is("Ident")) {
+      const t = this.c.next();
+      if (this.c.is("Eq")) {
+        if (!this.skipPatternPart()) return null;
+        return { kind: "refused", error: parameterDefault(t) };
+      }
+      return { kind: "name", name: t.text, pos: t.pos };
+    }
     if (this.c.is("LBracket")) {
       const open = this.c.next();
       const parts = [];
@@ -19927,7 +20061,9 @@ var Parser = class _Parser {
     for (; ; ) {
       const t = this.c.peek();
       if (t.type === "EOF") return false;
-      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace")) return true;
+      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace" || t.type === "RParen")) {
+        return true;
+      }
       if (t.type === "LParen" || t.type === "LBracket" || t.type === "LBrace") depth++;
       if (t.type === "RParen" || t.type === "RBracket" || t.type === "RBrace") depth--;
       this.c.next();
@@ -19941,17 +20077,24 @@ var Parser = class _Parser {
    * its shape for every reader (a sort key sees the minus, a filter sees the
    * comparison).
    */
-  lambdaOf(params, pos) {
+  lambdaOf(params, pos, arrow) {
     for (const p of params) if (p !== null && p.kind === "refused") throw p.error;
     const named = params;
+    const binders = [];
+    for (const p of named) {
+      if (p.kind === "name") binders.push({ name: p.name, pos: p.pos });
+      else for (const part of p.parts) if (part !== null) binders.push(part);
+    }
+    if (arrow || named.some((p) => p.kind !== "name")) refuseDuplicateParams(binders);
     if (named.every((p) => p.kind === "name")) {
       return this.lambdaBody(
         named.map((p) => p.name),
-        pos
+        pos,
+        binders
       );
     }
     const plain = named.map((p) => p.kind === "name" ? p.name : "");
-    const parsed = this.lambdaBody(plain, pos);
+    const parsed = this.lambdaBody(plain, pos, binders);
     const taken = [parsed, ...plain.filter((n2) => n2 !== "").map((n2) => ({ type: "Ident", name: n2 }))];
     const names = [...plain];
     const parts = /* @__PURE__ */ new Map();
@@ -19989,12 +20132,12 @@ var Parser = class _Parser {
    * `blockBody: "stages"`. The callee claims it in `args()`, and `finish()`
    * refuses a stages body that nobody claimed.
    */
-  lambdaBody(params, pos) {
+  lambdaBody(params, pos, binders) {
     if (!this.c.is("LBrace")) {
       return { type: "Lambda", params, body: this.expression(), pos };
     }
     const open = this.c.next();
-    const { stmts, ret, retPos, endPos } = this.block("RBrace");
+    const { stmts, ret, retPos, endPos } = this.block("RBrace", binders);
     if (ret !== null) {
       const decls = stmts.filter((st) => st.type === "LetDecl");
       if (decls.length !== stmts.length) {
@@ -20061,11 +20204,12 @@ var Parser = class _Parser {
     return { type: "ObjectLiteral", entries, pos: open.pos };
   }
   /**
-   * One element of an array literal. A declaration or a write makes the literal a
-   * bracketed pipeline. Anything else is a value.
+   * One element of an array literal. A write or a `function` makes the literal a
+   * bracketed pipeline. Anything else is a value. A `let` or a `const` is not an
+   * element at all: JavaScript refuses it there.
    */
   arrayElement() {
-    if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    if (this.c.is("Let") || this.c.is("Const")) throw declarationAsElement(this.c.peek(), this.c.peek(1));
     if (this.functionAhead()) return this.functionDecl();
     if (this.writeAhead()) return this.writeRun();
     return this.expression();
@@ -21530,7 +21674,7 @@ function at(node, env, depth) {
           out.push(...spread.value);
           continue;
         }
-        if (element2.type === "LetDecl" || element2.type === "FuncDecl") return NOT_CONSTANT2;
+        if (element2.type === "FuncDecl") return NOT_CONSTANT2;
         if (element2.type === "AssignExpr" || element2.type === "DeleteStmt") return NOT_CONSTANT2;
         if (element2.type === "UpdateFilter") return NOT_CONSTANT2;
         const value = at(element2, env, depth + 1);
@@ -21786,19 +21930,6 @@ function mapTreeIn(root2, seed, edge2, fn) {
 
 // src/compiler/passes/fold.ts
 var isNode3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
-function* nodesIn(value) {
-  if (Array.isArray(value)) {
-    for (const v of value) yield* nodesIn(v);
-  } else if (isNode3(value)) {
-    yield value;
-  } else if (typeof value === "object" && value !== null) {
-    for (const v of Object.values(value)) yield* nodesIn(v);
-  }
-}
-function* everyNode(root2) {
-  yield root2;
-  for (const child of nodesIn(Object.values(root2))) yield* everyNode(child);
-}
 function rootName(node) {
   let cursor = node;
   while (isNode3(cursor) && (cursor.type === "MemberAccess" || cursor.type === "IndexAccess")) {
@@ -21937,24 +22068,7 @@ var EVALUABLE_TYPES = [
   "NewExpression"
 ];
 var EVALUABLE = new Set(EVALUABLE_TYPES);
-function refuseParameterRedeclaration(program) {
-  for (const node of everyNode(program)) {
-    const lambda = node;
-    const body = lambda.stages;
-    if (lambda.type !== "Lambda" || body?.type !== "Pipeline") continue;
-    const params = new Set(lambda.params);
-    for (const stmt of body.stmts) {
-      if ((stmt.type === "LetDecl" || stmt.type === "FuncDecl") && params.has(stmt.name)) {
-        throw new ParseError(
-          `\`${stmt.type === "LetDecl" ? String(stmt.kind) : "function"} ${String(stmt.name)}\` re-declares the parameter \`${String(stmt.name)}\` of this callback, which JavaScript refuses. Pick a different name.`,
-          stmt.pos
-        );
-      }
-    }
-  }
-}
 function fold(program) {
-  refuseParameterRedeclaration(program);
   const foldNested = (node) => {
     const n2 = node;
     if (n2.type !== "Pipeline") return node;
@@ -22598,10 +22712,9 @@ var Capture = class {
   }
 };
 var Scope = class _Scope {
-  constructor(bound, taken, own) {
+  constructor(bound, taken) {
     this.bound = bound;
     this.taken = taken;
-    this.own = own;
   }
   /**
    * The root scope. `introduced` is every name the program binds anywhere — the
@@ -22611,15 +22724,7 @@ var Scope = class _Scope {
   static root(introduced) {
     const taken = new Set(SYSTEM_VARS);
     for (const js of introduced) taken.add(mongoVarName(js));
-    return new _Scope(/* @__PURE__ */ new Map(), taken, /* @__PURE__ */ new Set());
-  }
-  /** A nested block: every outer name is still visible, and none of them are declared HERE. */
-  block() {
-    return new _Scope(this.bound, this.taken, /* @__PURE__ */ new Set());
-  }
-  /** Did this block itself declare the name? JavaScript refuses a second declaration in one block. */
-  declaredHere(js) {
-    return this.own.has(js);
+    return new _Scope(/* @__PURE__ */ new Map(), taken);
   }
   /** Is this JavaScript name bound here? */
   has(js) {
@@ -22642,9 +22747,7 @@ var Scope = class _Scope {
   declare(js, binding) {
     const bound = new Map(this.bound);
     bound.set(js, binding);
-    const own = new Set(this.own);
-    own.add(js);
-    return new _Scope(bound, this.taken, own);
+    return new _Scope(bound, this.taken);
   }
   /**
    * Every binding carried in a document FIELD, turned into a name whose read says
@@ -22656,7 +22759,7 @@ var Scope = class _Scope {
       if (b.ref.kind === "field")
         bound.set(js, { ...b, ref: { kind: "dropped", message: message(js, b.mutable), replaced: true } });
     }
-    return new _Scope(bound, this.taken, this.own);
+    return new _Scope(bound, this.taken);
   }
   /**
    * The developer's own variable binder — a lambda parameter, a `$let` var.
@@ -22669,9 +22772,7 @@ var Scope = class _Scope {
     bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
-    const own = new Set(this.own);
-    own.add(js);
-    return { as, ref, scope: new _Scope(bound, taken, own) };
+    return { as, ref, scope: new _Scope(bound, taken) };
   }
   /**
    * A compiler mint — `bind("arr")` is `jsmqlArr`, or `jsmqlArr2`, `jsmqlArr3`
@@ -22684,7 +22785,7 @@ var Scope = class _Scope {
     for (let n2 = 2; this.taken.has(as); n2++) as = base + String(n2);
     const taken = new Set(this.taken);
     taken.add(as);
-    return { as, ref: refOf(as), scope: new _Scope(this.bound, taken, this.own) };
+    return { as, ref: refOf(as), scope: new _Scope(this.bound, taken) };
   }
 };
 var scratchSlot = (n2) => fieldSlot(tmpSlot(n2));
@@ -23185,10 +23286,6 @@ var notCallable = (pos) => new CodegenError(
 );
 var letParamsMustNameVars = (params, keys, pos) => new CodegenError(
   `$let's arrow parameters must name its variables: got (${params.join(", ")}) for vars { ${keys.join(", ")} }.`,
-  pos
-);
-var redeclared = (kind, name2, pos) => new CodegenError(
-  `\`${kind} ${name2}\` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.`,
   pos
 );
 var listOperand = (name2, pos) => new CodegenError(
@@ -23956,10 +24053,6 @@ var Env = class _Env {
    */
   dropFields(by, message) {
     return new _Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
-  }
-  /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
-  block() {
-    return new _Env(this.scope.block(), this.site, this.chain, this.documents);
   }
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js, type, pos) {
@@ -25030,7 +25123,7 @@ function callbackAnswer(name2, receiver, args, n2, arg, env) {
   const cb = args[n2];
   if (cb === void 0 || cb.type !== "Lambda" || cb.body === void 0) return ANY;
   const kinds = callbackParamsOf(name2, "value") ?? [];
-  let bodyEnv = env.block();
+  let bodyEnv = env;
   cb.params.forEach((p, i) => {
     const kind = kinds[i];
     const t = kind === "value" ? flattenOnce(receiver) : kind === "index" ? of("number") : kind === "key" ? of("string") : kind === "collection" ? receiver : kind === "accumulator" ? arg(n2 + 1) : ANY;
@@ -26574,7 +26667,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
   const before = [...env.chain.emitted, ...soFar];
   const bound = (cb) => {
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;
-    let e = argEnv.block();
+    let e = argEnv;
     if (cb.params.length >= 1) {
       e = e.bind(cb.params[0], {
         ref: { kind: "document", path: env.chain.element },
@@ -26698,7 +26791,6 @@ var READ = { value: lowerValue, truth: lowerTruth };
 var positionIn = (env) => positionOf(env.site.where) ?? "value";
 var NOT_EXPR = /* @__PURE__ */ new Set([
   "SpreadElement",
-  "LetDecl",
   "FuncDecl",
   "AssignExpr",
   "DeleteStmt",
@@ -26906,7 +26998,6 @@ function arrayLiteral(node, elements, env) {
   for (const el of elements) {
     if (el.type === "AssignExpr" || el.type === "UpdateFilter") throw statementInValue("Assignment", el.pos);
     if (el.type === "DeleteStmt") throw statementInValue("delete", el.pos);
-    if (el.type === "LetDecl") throw statementInValue("`let`", el.pos);
     if (el.type === "FuncDecl") throw statementInValue("A function declaration", el.pos);
   }
   if (!elements.some((el) => el.type === "SpreadElement"))
@@ -27480,7 +27571,6 @@ function membership2(node, env) {
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 function exprBlock(node, env, ret) {
-  const seen = /* @__PURE__ */ new Set();
   const step = (i, e, carried) => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
     const vars = {};
@@ -27490,11 +27580,9 @@ function exprBlock(node, env, ret) {
     let carry = carried;
     for (; ; ) {
       const d = node.decls[j];
-      if (seen.has(d.name)) throw redeclared(d.kind, d.name, d.pos);
       const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
       carry = null;
       if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
-      seen.add(d.name);
       const bound = scope.param(d.name, maybeAbsent(typeOf(d.value, scope)), d.pos);
       vars[bound.as] = value;
       refs.push(`$$${bound.as}`);
@@ -27848,7 +27936,7 @@ function stageBody(node, env) {
 function subPipeline(node, env, slot = null) {
   if (node.type !== "ArrayLiteral") throw needsStageList(slot, node.pos);
   const out = [];
-  let scope = childEnv(env, node, "elements").block();
+  let scope = childEnv(env, node, "elements");
   for (const el of node.elements) {
     if (el.type === "SpreadElement") throw spreadInStageList(el.pos);
     if (env.chain.terminal !== null) throw afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
@@ -27916,7 +28004,6 @@ function statementStages(stmt, env, first) {
   if (stmt.type === "LetDecl") return letStages(stmt, env);
   if (stmt.type === "FuncDecl") {
     const decl = stmt;
-    if (env.scope.declaredHere(decl.name)) throw redeclared("function", decl.name, decl.pos);
     const lambda = decl.lambda;
     return {
       stages: [],
@@ -27986,7 +28073,6 @@ function declStages(run, env) {
   return { stages: out, env: scope, consumed };
 }
 function letStages(decl, env) {
-  if (env.scope.declaredHere(decl.name)) throw redeclared(decl.kind, decl.name, decl.pos);
   const innermost = env.site.boundaries[env.site.boundaries.length - 1];
   const ownDocuments = innermost !== void 0 && pipelineOverOf(innermost.stage) === "foreign";
   if (!ownDocuments && env.scope.has(decl.name) && env.lookup(decl.name, decl.pos).ref.kind === "field")

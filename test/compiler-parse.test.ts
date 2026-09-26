@@ -232,6 +232,83 @@ describe("compiler/parse — the forms JavaScript itself refuses", () => {
   });
 });
 
+describe("compiler/parse — a write inside a value: JavaScript's grouping, one refusal", () => {
+  // JavaScript binds a postfix `++` tighter than every prefix and binary operator,
+  // so `1 + $.x++` is `1 + ($.x++)`. Each source is valid JavaScript; the write sits
+  // inside a value, and a write stands only as a statement.
+  const IN_VALUE = (wrote: string, statement: string, place: string, side: string, pos: number): string =>
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value, and read '${place}' there.`;
+  const refused: [string, string, number][] = [
+    ["1 + $.x++", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 7), 7],
+    ["$.y = $.x++;", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 9), 9],
+    ["$.y = ($.x++);", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 10), 10],
+    ["$.y = -$.x++;", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 10), 10],
+    ["$.y = $.x-- * 2;", IN_VALUE("$.x--", "$.x -= 1", "$.x", "after", 9), 9],
+    ["$match($.n++ > 1);", IN_VALUE("$.n++", "$.n += 1", "$.n", "after", 10), 10],
+    ["$.x++ + 1;", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 3), 3],
+    ["let n = 1; $.y = n++;", IN_VALUE("n++", "n += 1", "n", "after", 18), 18],
+    ["$.y = ++$.x;", IN_VALUE("++$.x", "$.x += 1", "$.x", "before", 6), 6],
+    ["$.y = 1 + --$.a.b;", IN_VALUE("--$.a.b", "$.a.b -= 1", "$.a.b", "before", 10), 10],
+    ["++$.x + 1;", IN_VALUE("++$.x", "$.x += 1", "$.x", "before", 0), 0],
+    // The assignment operators are the same rule: JavaScript gives the value after the write.
+    ["1 + ($.a = 5);", IN_VALUE("$.a = 5", "$.a = 5", "$.a", "before", 9), 9],
+    ["$.y = ($.a += 1);", IN_VALUE("$.a += 1", "$.a += 1", "$.a", "before", 11), 11],
+    ["$.y = $.a *= 2;", IN_VALUE("$.a *= 2", "$.a *= 2", "$.a", "before", 10), 10],
+    ["$.y = f($.a = 5);", IN_VALUE("$.a = 5", "$.a = 5", "$.a", "before", 12), 12],
+    ["$.y = { k: $.a = 5 };", IN_VALUE("$.a = 5", "$.a = 5", "$.a", "before", 15), 15],
+  ];
+  const jsAccepts = (src: string): boolean => {
+    try {
+      new Script(src);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (const [src, message, pos] of refused) {
+    it(`refuses ${src}`, () => {
+      expect(jsAccepts(src)).toBe(true);
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toBe(message);
+      expect(result.errors[0].pos).toBe(pos);
+    });
+  }
+
+  it("gives the JavaScript answer for the statement the refusal names", () => {
+    // `$.y = $.x++` in JavaScript: y gets the old x, then x grows by one.
+    const doc = { x: 1, y: 0 };
+    doc.y = doc.x++;
+    expect(doc).toEqual({ x: 2, y: 1 });
+    // The two statements the refusal names emit the same order: read first, then write.
+    expect(jsmql("$.y = $.x; $.x += 1;")).toEqual([{ $set: { y: "$x" } }, { $set: { x: { $add: ["$x", 1] } } }]);
+  });
+
+  it("keeps each statement form of the write", () => {
+    const kept: [string, unknown][] = [
+      ["$.x++;", [{ $set: { x: { $add: ["$x", 1] } } }]],
+      ["++$.x;", [{ $set: { x: { $add: ["$x", 1] } } }]],
+      ["$.x--;", [{ $set: { x: { $subtract: ["$x", 1] } } }]],
+      ["$.x ++;", [{ $set: { x: { $add: ["$x", 1] } } }]],
+      ["($.a++);", [{ $set: { a: { $add: ["$a", 1] } } }]],
+      ["$.a++, --$.b;", [{ $set: { a: { $add: ["$a", 1] }, b: { $subtract: ["$b", 1] } } }]],
+      ["[$.a++, $match($.b > 1)]", [{ $set: { a: { $add: ["$a", 1] } } }, { $match: { b: { $gt: 1 } } }]],
+      ["$.y = $.a = 5;", [{ $set: { y: 5, a: 5 } }]],
+    ];
+    for (const [src, mql] of kept) expect(jsmql(src), src).toEqual(mql);
+  });
+
+  it("refuses a callback parameter default, which is not a write", () => {
+    const src = "$.v = $.a.map((x = 1) => x);";
+    expect(jsAccepts(src)).toBe(true);
+    const result = jsmql.validate(src);
+    expect(result.errors[0].message).toBe(
+      "A callback parameter is a plain name, and a default value ('x = …') is not one, at position 15. Name the parameter, and write the default where the body reads it: 'x => x ?? <default>'.",
+    );
+    expect(result.errors[0].pos).toBe(15);
+  });
+});
+
 describe("compiler/parse — precedence and associativity come from the rows", () => {
   it("refuses a chain where the row says associativity none", () => {
     for (const src of ["$.a < $.b < $.c", "$.a === $.b === $.c", "$.a > $.b >= $.c"]) {
@@ -695,7 +772,7 @@ describe("compiler/parse — a write target is a place, and an optional chain is
   });
 
   it("refuses a target that is not a place", () => {
-    for (const src of ["$.a + 1 = 2;", "1 = 2;", '"x" = 1;', "$.a = 1 = 2;", "++$.a + 1;", "f() = 1;"]) {
+    for (const src of ["$.a + 1 = 2;", "1 = 2;", '"x" = 1;', "$.a = 1 = 2;", "++(1 + $.a);", "f() = 1;", "f()++;"]) {
       expect(() => parse(src), src).toThrow(/Cannot apply|cannot be assigned/);
     }
   });
