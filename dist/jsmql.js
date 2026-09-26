@@ -23469,7 +23469,7 @@ var runtimeInQueryOperator = (op, pos) => new CodegenError(
   pos
 );
 var rootStreamInForeign = (pos) => new CodegenError(
-  "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter \u2014 '(o, _i, coll) => { coll.filter(\u2026); }' \u2014 or write the stage: '$match(\u2026)', '$sort(\u2026)'.",
+  "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter \u2014 '(o, _i, stream) => { stream.filter(\u2026); }' \u2014 or write the stage: '$match(\u2026)', '$sort(\u2026)'.",
   pos
 );
 var streamAsValue = (pos) => new CodegenError(

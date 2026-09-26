@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: every example names the third callback parameter `stream`
+
+"`collection` names only a MongoDB collection" (below) renamed the third
+callback parameter in two examples, but LANGUAGE.md, four specs and one error
+hint still spelled it `(o, _i, coll)`. That parameter is the body's own
+stream, not a collection, so each example now reads `(o, _i, stream)` and
+`stream.size()`. The hint for `$$` inside a body over another collection reads
+"'(o, _i, stream) => { stream.filter(…); }'". A `coll` that is MQL
+(`{ $unionWith: { coll: … } }`, `{ db, coll }`) or a collection name
+(`$$$.<coll>`) stays as it is.
+
+---
+
 ## 2026-09-26 — fix!: the escape hatch is the MQL you wrote: no fold, and no wrap
 
 This supersedes "feat: the size of a constant array is a constant, in both

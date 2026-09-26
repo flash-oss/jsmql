@@ -97,7 +97,7 @@ or `[` after `$$` already accommodates `.push(...)`.
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (an outer read) | the no-`let` refusal above |
 | `$$.push(...$$$$.<db>.<coll>…)` (cross-database) | the cross-database refusal ([lookup-stage.md](lookup-stage.md)) |
 | `$$.push({ n: $$$.<coll>.find(p).<field> })` / `$$ = [{ n: … }]` — a value needing a stage | "'.push({ … })' writes the documents out as the program spells them, and this value needs a '$lookup' stage of its own to produce it … Append the other collection's documents themselves … or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter." |
-| `$$.push(...)` inside a `$lookup` body | "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'." |
+| `$$.push(...)` inside a `$lookup` body | "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, stream) => { stream.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'." |
 | `jsmql.filter("$$.push(...)")` | "jsmql.filter() expects a Filter (the document \`db.coll.find(filter)\` takes), but received a top-level 'push' stage call. Use jsmql.pipeline()." |
 | `jsmql.update("$$.push(...)")` | "An update document is made of writes … This is neither." |
 

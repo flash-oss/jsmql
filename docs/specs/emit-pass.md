@@ -672,12 +672,12 @@ refuses a read of the outer document inside it, and names the way out.
 **Inside the body.** The callback's parameter IS the body's document: `o.x`
 reads it, `o.x = …` / `delete o.x` write it (`$set` / `$unset`), `o = { … }`
 replaces it. The callback's THIRD parameter is the body's own stream:
-`coll.filter(…)` is a `$match` there, and `coll.size()` its count (a
+`stream.filter(…)` is a `$match` there, and `stream.size()` its count (a
 `$setWindowFields` inside the body). `$.` is the OUTER document and `$$` the
 ROOT stream at every depth (HR4): `$.x` is read-only from inside — the
 compiler refuses `$.x = …`, naming `o.x = …` — `$$.size()` is the root
 count, materialised on the root pipeline and carried in by `let`, and the
-compiler refuses `$$.filter(…)` inside a body, naming `coll`. A nested
+compiler refuses `$$.filter(…)` inside a body, naming `stream`. A nested
 `$$$.items.filter(…)` inside a predicate is hoisted inside the body's own
 chain, whose close runs its own cleanup, so no `__jsmql.tmp` scratch leaks
 into the joined array.

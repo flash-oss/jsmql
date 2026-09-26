@@ -102,9 +102,9 @@ count.
 
 ## Sub-stream length: the lookup-chain `.map` 3rd-arg handle
 
-A `$$$.<coll>.filter(p).map((o, _i, coll) => …)` chain runs its `.map` as a
-per-foreign-doc transform *inside* the `$lookup.pipeline`. There, `coll` (the 3rd
-callback param) names the **filtered foreign sub-stream**, and `coll.size()` is
+A `$$$.<coll>.filter(p).map((o, _i, stream) => …)` chain runs its `.map` as a
+per-foreign-doc transform *inside* the `$lookup.pipeline`. There, `stream` (the 3rd
+callback param) names the **filtered foreign sub-stream**, and `stream.size()` is
 its document count — the same `$setWindowFields` `$count` → `__jsmql.size` stamp
 (the single shape in [`src/namespace.ts`](../../src/namespace.ts)), placed on the
 chain of the body that BOUND the handle, ahead of the stage that reads it.
@@ -156,7 +156,7 @@ and belongs to the top-most chain, which is not the chain of whatever body reads
 run over the stamped documents, so they read the field directly; a `$lookup` body
 reads it through the `let` capture, one hop per lookup level.
 
-**Empty sub-stream + `assert`.** An in-block `assert(coll.size() > 0, …)` is a
+**Empty sub-stream + `assert`.** An in-block `assert(stream.size() > 0, …)` is a
 per-document `$match` *inside* the `$lookup.pipeline`. On a foreign sub-stream
 with zero matches there are no documents to evaluate, so the assert cannot fire —
 the `as` array is simply `[]`. This comes from `$lookup` itself (not from a JSMQL choice):

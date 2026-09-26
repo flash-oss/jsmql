@@ -887,7 +887,7 @@ export const runtimeInQueryOperator = (op: string, pos: number): CodegenError =>
 /** `$$.filter(…)` inside a body over another collection — the root stream is out of reach there. */
 export const rootStreamInForeign = (pos: number): CodegenError =>
   new CodegenError(
-    "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'.",
+    "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, stream) => { stream.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'.",
     pos,
   );
 
