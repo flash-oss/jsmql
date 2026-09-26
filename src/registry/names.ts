@@ -2411,7 +2411,7 @@ export const NAMES = {
           1: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.",
+              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))'.",
           },
         },
       },
@@ -6903,7 +6903,7 @@ export const NAMES = {
           0: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.",
+              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))'.",
           },
         },
       },

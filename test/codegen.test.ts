@@ -566,7 +566,7 @@ describe("array spread", () => {
   // and answering the bare string "abc" for `[..."abc"]` would be wrong. See docs/DEFERRED.md § B.
   it("refuses to spread a PROVABLE string, in an array literal and in an object literal", () => {
     const message =
-      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
+      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
     expect(() => jsmql.expr('[..."abc"]')).toThrow(message);
     expect(() => jsmql.expr('[..."abc", "d"]')).toThrow(message);
     expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(message);
@@ -2463,22 +2463,22 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   // and MongoDB has no operator that splits a string into its characters (HR3).
   it(".split() refuses an empty separator on both roads, and names a spelling that works", () => {
     const message =
-      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'.";
+      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))'.";
     expect(() => jsmql.expr('$.s.split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('"abc".split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('$split($.s, "")')).toThrow(`'$split' ${message}`);
     // the spelling the refusal names does compile, and answers per code point
-    expect(jsmql.expr("$range(0, $.s.length()).map(i => $.s.charAt(i))")).toEqual({
+    expect(jsmql.expr("$range(0, $.s.length() ?? 0).map(i => $.s.charAt(i))")).toEqual({
       $map: {
         input: {
-          $ifNull: [
+          $range: [
+            0,
             {
-              $range: [
-                0,
+              $ifNull: [
                 { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } } },
+                0,
               ],
             },
-            [],
           ],
         },
         as: "i",

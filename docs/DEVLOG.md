@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: the `.split("")` hint names a spelling that runs on a missing field
+
+`$.s.split("")` is refused, because MongoDB's `$split` needs a non-empty
+separator. The refusal named `$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))`.
+On a document that lacks `s`, `.length()` answers null (HR5: a string method
+keeps null), and the server aborts: "$range requires a numeric ending value,
+found value of type: null". So the hint led to a spelling that does not run.
+
+The four hints that name this spelling now read `….length() ?? 0`: the
+`.split()` and `$split` rows in `src/registry/names.ts`, and the string-spread
+and string-not-a-list refusals in `src/compiler/emit/errors.ts`. Measured on
+:27018, `$range(0, $.s.length() ?? 0).map(i => $.s.charAt(i))` gives
+`["a", "b", "c"]` for `"abc"` (JavaScript's `"abc".split("")`), and `[]` for
+`""`, for `null` and for a missing `s`. It reads code points: `"a😀"` gives
+`["a", "😀"]`, where `"a😀".split("")` gives three UTF-16 units.
+
+A new live case in `test/compiler-methods.test.ts` reads each hint out of its
+message, fills in the placeholder, and runs it on four documents. A sweep of
+every other concrete spelling in the refusal texts of `names.ts`, `errors.ts`,
+the parser and the passes found no other hint that aborts on a missing field.
+
+---
+
 ## 2026-09-26 — fix: a misspelled call names the nearest working name of its kind
 
 `$$.pushh({ a: 1 });` gave "'.pushh()' is not a method of the stream '$$'." with

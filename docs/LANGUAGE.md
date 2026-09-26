@@ -1626,7 +1626,7 @@ $.name.substr(-3)                  // the last three characters — a negative s
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
                                    // has no split-into-characters form. For one character per element
-                                   // write `$range(0, $.csv.length()).map(i => $.csv.charAt(i))`.
+                                   // write `$range(0, $.csv.length() ?? 0).map(i => $.csv.charAt(i))`.
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
@@ -1679,6 +1679,20 @@ is expected fails as the server reports it.
 
 Note: the emitted length of a **literal** folds at compile time. It counts **code points**, the way
 `$strLenCP` does, not JS's UTF-16 units. So `"a👍b"` is 3, not 4.
+
+**One element per character.** MongoDB has no operator that splits a string into its characters,
+so JSMQL refuses `.split("")` and the spread of a string. Write the characters with `$range` and
+`.charAt()` instead:
+
+```js
+$range(0, $.s.length() ?? 0).map(i => $.s.charAt(i))
+// { s: "abc" } → ["a", "b", "c"]     { s: "" } → []     { s: null } → []     no `s` → []
+```
+
+`.length()` answers `null` for a missing or a null field, and `$range` aborts the query on a `null`
+end. The `?? 0` gives the range the end `0`, so a missing or a null field gives `[]`. JavaScript
+throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
+gives `["a", "😀"]`, where JavaScript's `"a😀".split("")` gives three UTF-16 units.
 
 **Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent. So JSMQL drops them from the emitted `options` and keeps only `i`/`m`/`s`. Dropping `g` causes no problem: `$regexFindAll` is always global, and `g` has no effect on `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex, matching JS, which throws without one. But `g` itself does not appear in the output.
 

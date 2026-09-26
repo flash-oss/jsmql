@@ -881,6 +881,13 @@ function read without a call, and a `let` a document-replacing stage dropped.
 Each refusal lives in `errors.ts`, worded once, and every rejection that
 comes from a row quotes the row.
 
+A refusal that names a spelling to write instead names one that runs on every
+document: a present value, an empty one, a null one and a missing field. For
+example, the `.split("")` hint is `$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))`.
+The `?? 0` matters: `.length()` answers null for a missing string, and `$range`
+aborts the query on a null end. `test/compiler-methods.test.ts` reads each such
+hint out of its message, fills in the placeholder, and runs it on the server.
+
 ## What proves the value target
 
 Three suites run it on a live mongod and compare the server's answer with

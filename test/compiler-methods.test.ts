@@ -2371,6 +2371,48 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
   });
 });
 
+/**
+ * The refusals that name a spelling to write instead of the refused one.
+ *
+ * The test reads the spelling out of the message itself, fills in its placeholder, and
+ * runs the result. So a hint that aborts on a missing field fails here, and the hint
+ * text cannot drift from the spelling this test proves.
+ *
+ * Each row: the refused source, the placeholder in its hint, and the text that fills it.
+ */
+const HINTS: readonly (readonly [string, string, string])[] = [
+  ['$.s.split("")', "$.<field>", "$.s"],
+  ['$split($.s, "")', "$.<field>", "$.s"],
+  ["[...$.s.trim()]", "<string>", "$.s.trim()"],
+  ["$.s.trim().uniq()", "<string>", "$.s.trim()"],
+];
+
+describe.skipIf(!up)("compiler/emit — the spelling a refusal names runs on every document", () => {
+  let hinted: Collection;
+  beforeAll(async () => {
+    hinted = client!.db("jsmql_compiler_methods").collection("hinted");
+    await hinted.deleteMany({});
+    await hinted.insertMany([{ _id: 1 }, { _id: 2, s: null }, { _id: 3, s: "" }, { _id: 4, s: "abc" }]);
+  });
+
+  it("gives the characters of a string, and [] for an empty, a null or a missing field", async () => {
+    for (const [refused, placeholder, fill] of HINTS) {
+      let message = "";
+      try {
+        expr(refused);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      const hint = /write '([^']+)'/.exec(message)?.[1];
+      expect(hint, `${refused} names no spelling: ${message}`).toBeDefined();
+      const src = hint!.split(placeholder).join(fill);
+      const docs = await hinted.aggregate([{ $addFields: { __v: expr(src) } }, { $sort: { _id: 1 } }]).toArray();
+      // JavaScript throws for a missing or a null receiver; the spelling answers the empty list
+      expect([src, docs.map((d) => d.__v)]).toEqual([src, [[], [], "".split(""), "abc".split("")]]);
+    }
+  });
+});
+
 describe("compiler/emit — the server answers each method as JavaScript would", () => {
   it("ran each one, or none", async () => {
     // The cases above register their sources whether a server runs or not.

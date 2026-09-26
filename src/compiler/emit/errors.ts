@@ -140,7 +140,7 @@ export function refusalFor(
                   : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
                     ? ` A stream is not an array. Chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
                     : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString
-                      ? ` A string is not a list. For one element per character, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
+                      ? ` A string is not a list. For one element per character, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
                       : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
                         ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.`
                         : sel.got === "bool"
@@ -632,7 +632,7 @@ export const spreadNotADocument = (noun: string, pos: number): CodegenError =>
 
 export const spreadOfString = (pos: number): CodegenError =>
   new CodegenError(
-    "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+    "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
     pos,
   );
 
