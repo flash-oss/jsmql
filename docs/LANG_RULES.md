@@ -40,7 +40,13 @@ jsmql.expr('$abs($.cents / 100)');           // → { $abs: { $divide: ["$cents"
 jsmql.expr('{ year: $abs(1900 + $.age) }');  // → { year: { $abs: { $add: [1900, "$age"] } } }
 ```
 
-A constant array is an exception. Its size is a constant, so `$size([1, 2, 3])` lowers to `3`, as `[1, 2, 3].size()` does. The raw document `{ $size: [[1, 2, 3]] }` stays as you wrote it (HR1).
+In the escape hatch, one array literal is the operand list, as in MQL. The compiler does not read it as one array value, and it does not compute an answer from it:
+
+```js
+$size([[1, 2, 3]])              // → { $size: [[1, 2, 3]] }
+$size([1, 2, 3])                // ✗ "'$size(operand)' requires exactly 1 argument, got 3: one array literal is the operand list, as in MQL." → write $size([[1, 2, 3]])
+[1, 2, 3].size()                // the JavaScript method counts the array, and gives 3
+```
 
 **HR3 — JSMQL never emits MQL that it knows is invalid.** The registry gives the compiler the shape of each operator and each stage. When a shape shows that the server rejects an output, the compiler does not emit that output. It throws an error that names the fix.
 

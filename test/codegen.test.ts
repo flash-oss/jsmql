@@ -322,27 +322,28 @@ describe("operator arity validation (array / flex shapes)", () => {
     );
   });
 
-  it("$size of a constant array is a constant, as `.size()` is", () => {
-    expect(jsmql.expr("$size([1, 2, 3])")).toBe(3);
-    expect(jsmql.expr("[1, 2, 3].size()")).toBe(3);
-    // a list of ONE element is the operand list (HR2): `$size([[1, 2]])` reads `[1, 2]`
-    expect(jsmql.expr("$size([[1, 2]])")).toBe(2);
-    // a spread makes the literal one array value
-    expect(jsmql.expr("$size([...[1, 2]])")).toBe(2);
-    expect(jsmql.pipeline("const a = [1, 2, 3]; $.n = $size(a);")).toEqual([{ $set: { n: 3 } }]);
-    expect(jsmql.expr`$size(${[1, 2, 3]})`).toBe(3);
-    // the constant settles before the filter chooses its shape, as `.size()` does
-    expect(jsmql("$.n === $size([1, 2, 3])")).toEqual({ n: 3 });
-    expect(jsmql("$.n === [1, 2, 3].size()")).toEqual({ n: 3 });
-  });
-
-  it("$size of an array that is not constant keeps its count, and an empty list is no operand", () => {
-    expect(jsmql.expr("$size([$.a, $.b])")).toEqual({ $size: [["$a", "$b"]] });
+  it("$size(…) is the MQL you wrote: an array literal is its operand list, and nothing folds", () => {
+    expect(jsmql.expr("$size([[1, 2, 3]])")).toEqual({ $size: [[1, 2, 3]] });
+    expect(jsmql.expr("({ $size: [[1, 2, 3]] })")).toEqual({ $size: [[1, 2, 3]] });
     expect(jsmql.expr("$size($.a)")).toEqual({ $size: "$a" });
+    // three spellings of the one document `{ $size: [1, 2] }`: two operands, which the server refuses
+    expect(() => jsmql.expr("$size([1, 2])")).toThrow(
+      "'$size(operand)' requires exactly 1 argument, got 2: one array literal is the operand list, as in MQL. To pass the array as one operand, write '$size([[…]])'.",
+    );
+    expect(() => jsmql.expr("({ $size: [1, 2] })")).toThrow(
+      "'$size(operand)' requires exactly 1 argument, got 2: one array literal is the operand list, as in MQL. To pass the array as one operand, write '$size([[…]])'.",
+    );
+    expect(() => jsmql.expr("$size(1, 2)")).toThrow("'$size(operand)' requires exactly 1 argument, got 2");
     expect(() => jsmql.expr("$size([])")).toThrow("'$size(operand)' requires exactly 1 argument, got 0");
     expect(() => jsmql.expr("$size([1])")).toThrow("'$size' expects an array, but got a number.");
-    // raw MQL is not evaluated (HR1)
-    expect(jsmql.expr("({ $size: [[1, 2, 3]] })")).toEqual({ $size: [[1, 2, 3]] });
+  });
+
+  it("`.size()` of an array literal is its element count, whatever the elements hold", () => {
+    expect(jsmql.expr("[1, 2, 3].size()")).toBe(3);
+    expect(jsmql.expr("[$.a, $.b].size()")).toBe(2);
+    expect(jsmql("$.n === [1, 2, 3].size()")).toEqual({ n: 3 });
+    // a spread makes the count a runtime one
+    expect(jsmql.expr("[...$.a, 1].size()")).toEqual({ $size: { $concatArrays: [{ $ifNull: ["$a", []] }, [1]] } });
   });
 
   it("one operand to a two-operand list operator is the count refusal, in both spellings", () => {
@@ -8374,7 +8375,7 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
       },
     });
     expect(jsmql.expr("$range(0, 5).size()")).toEqual({ $size: { $range: [0, 5] } });
-    expect(jsmql.expr("[$.a, $.b].size()")).toEqual({ $size: [["$a", "$b"]] });
+    expect(jsmql.expr("[$.a, $.b].size()")).toBe(2);
     // an optional chain reads a missing receiver as [] — which is there
     expect(jsmql.expr("$.a?.map(x => x + 1).size()")).toEqual({
       $cond: {
@@ -8591,8 +8592,8 @@ describe("computed object keys", () => {
   it("single computed key", () => {
     expect(jsmql.expr("$foo({ [$.k]: 1 })")).toEqual({ $foo: { $arrayToObject: [[{ k: "$k", v: 1 }]] } });
   });
-  it("$arrayToObject escape hatch with a literal pairs array wraps the same way", () => {
-    expect(jsmql.expr(`$arrayToObject([["a", 1], ["b", 2]])`)).toEqual({
+  it("$arrayToObject escape hatch: the array literal is the operand list, as in MQL", () => {
+    expect(jsmql.expr(`$arrayToObject([[["a", 1], ["b", 2]]])`)).toEqual({
       $arrayToObject: [
         [
           ["a", 1],
@@ -8600,6 +8601,10 @@ describe("computed object keys", () => {
         ],
       ],
     });
+    // two pairs written bare are two operands, which the server refuses
+    expect(() => jsmql.expr(`$arrayToObject([["a", 1], ["b", 2]])`)).toThrow(
+      "'$arrayToObject(operand)' requires exactly 1 argument, got 2: one array literal is the operand list",
+    );
     // A field-ref / expression argument already resolves to one array — left as-is.
     expect(jsmql.expr("$arrayToObject($.pairs)")).toEqual({ $arrayToObject: "$pairs" });
   });

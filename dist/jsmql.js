@@ -215,15 +215,8 @@ function dateOptions(arg, value) {
   }
   return out;
 }
-function readsAsItself(v) {
-  if (v === null || typeof v === "number" || typeof v === "boolean" || isDate(v)) return true;
-  if (typeof v === "string") return !v.startsWith("$");
-  if (Array.isArray(v)) return v.every(readsAsItself);
-  if (isPlainObject(v)) return Object.entries(v).every(([k, x]) => !k.startsWith("$") && readsAsItself(x));
-  return false;
-}
 var singleArrayArg = (operand) => Array.isArray(operand) ? [operand] : operand;
-var sizeOf = (a) => Array.isArray(a) && readsAsItself(a) ? a.length : { $size: singleArrayArg(a) };
+var sizeOf = (a) => Array.isArray(a) ? a.length : { $size: a };
 var firstOf = (a) => ({ $first: singleArrayArg(a) });
 var lastOf = (a) => ({ $last: singleArrayArg(a) });
 var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
@@ -2476,8 +2469,6 @@ var NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    // MEASURED: `{ $size: [[1, 2, 3]] }` → 3. The size of a constant array is a constant.
-    foldsAs: "size",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" }, nullRefused: [0] }, emit: single },
     group: unsupported("'$size' is not valid in a $group output position \u2014 see its 'where'."),
@@ -14606,9 +14597,6 @@ function operandShapeOf(name2) {
   if (shape === void 0) return void 0;
   return typeof shape === "string" ? shape : "object";
 }
-function foldsAsOf(name2) {
-  return emitRow(name2)?.foldsAs;
-}
 function spreadAlternativeOf(name2) {
   return emitRow(name2)?.spreadAlternative;
 }
@@ -21468,20 +21456,6 @@ function methodCall(node, env, depth) {
   if (!withinSize(result.value)) return NOT_CONSTANT2;
   return spellable(result.value);
 }
-function operatorCall(node, env, depth) {
-  const method = foldsAsOf(node.name);
-  const args = node.args;
-  if (method === void 0 || args.length !== 1 || args[0].type === "SpreadElement") return NOT_CONSTANT2;
-  const written2 = args[0];
-  const list = written2.type === "ArrayLiteral" ? written2.elements : null;
-  if (list !== null && list.length === 0) return NOT_CONSTANT2;
-  const operand = list !== null && list.length === 1 && list[0].type !== "SpreadElement" ? list[0] : written2;
-  const receiver = at(operand, env, depth + 1);
-  if (!receiver.ok) return propagate(receiver);
-  if (!acceptsArgumentCount(method, 0, familyOfValue(receiver.value))) return NOT_CONSTANT2;
-  const result = foldInstanceCall(receiver.value, method, []);
-  return result.ok ? spellable(result.value) : propagate(result);
-}
 function applyHere(lambda, argNodes, env, depth) {
   if (argNodes.some((a) => a.type === "SpreadElement")) return NOT_CONSTANT2;
   const values = [];
@@ -21615,8 +21589,6 @@ function at(node, env, depth) {
     }
     case "MethodCall":
       return methodCall(node, env, depth);
-    case "OperatorCall":
-      return operatorCall(node, env, depth);
     case "CallExpression": {
       const callee = node.callee;
       if (callee.type === "Lambda") return applyHere(callee, node.args, env, depth);
@@ -21942,10 +21914,7 @@ var EVALUABLE_TYPES = [
   "IndexAccess",
   "MethodCall",
   "CallExpression",
-  "NewExpression",
-  // The escape hatch is the developer's MQL. The evaluator answers "not a constant"
-  // for every operator but one whose row states `foldsAs` (`$size([1, 2, 3])` → 3).
-  "OperatorCall"
+  "NewExpression"
 ];
 var EVALUABLE = new Set(EVALUABLE_TYPES);
 function refuseParameterRedeclaration(program) {
@@ -23200,6 +23169,10 @@ var letParamsMustNameVars = (params, keys, pos) => new CodegenError(
 );
 var redeclared = (kind, name2, pos) => new CodegenError(
   `\`${kind} ${name2}\` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.`,
+  pos
+);
+var operandListCount = (name2, args, got, pos) => new CodegenError(
+  `'${signature(name2, args)}' ${countWord(args)}, got ${got}: one array literal is the operand list, as in MQL. To pass the array as one operand, write '${name2}([[\u2026]])'.`,
   pos
 );
 var listOperand = (name2, pos) => new CodegenError(
@@ -26797,7 +26770,7 @@ function lowerValue(node, env) {
     case "NewExpression":
       return newExpression(node, env);
     case "OperatorCall":
-      return operatorCall2(node, env);
+      return operatorCall(node, env);
     case "UnaryExpr":
       return unary2(node, env);
     case "BinaryExpr":
@@ -26951,7 +26924,8 @@ function objectLiteral(node, entries, env) {
         if (doc !== null && typeof doc === "object") Object.assign(out, doc);
         continue;
       }
-      if (e.key.name.startsWith("$") && operandShapeOf(e.key.name) === "array" && e.value.type !== "ArrayLiteral") {
+      const keyShape = e.key.name.startsWith("$") ? operandShapeOf(e.key.name) : void 0;
+      if (keyShape === "array" && e.value.type !== "ArrayLiteral" || keyShape === "single" && e.value.type === "ArrayLiteral") {
         const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
         const own = doc !== null && typeof doc === "object" ? doc[e.key.name] : void 0;
         if (own === void 0) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
@@ -27277,7 +27251,7 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
   const body = lowerValue(lambda.body, childEnv(bodyEnv, lambda, "body"));
   return Object.keys(vars).length === 0 ? body : { $let: { vars, in: body } };
 }
-function operatorCall2(node, env) {
+function operatorCall(node, env) {
   const position = positionIn(env);
   const verdict = consult(node.name, position);
   if (verdict.kind === "unknown") return unknownOperator(node, node.args, env);
@@ -27290,9 +27264,7 @@ function operatorCall2(node, env) {
   let operands = node.args.filter(isExpr2);
   let count = node.args.length;
   const overrides = /* @__PURE__ */ new Map();
-  if (lone !== null && shape === "single" && !lone.elements.some((el) => el.type === "SpreadElement") && lone.elements.length >= 2) {
-    overrides.set(lone, [lowerValue(lone, childEnv(env, node, "args"))]);
-  } else if (lone !== null && shape !== void 0 && shape !== "object" && shape !== "verbatim") {
+  if (lone !== null && shape !== void 0 && shape !== "object" && shape !== "verbatim") {
     if (lone.elements.some((el) => el.type === "SpreadElement")) {
       if (shape === "array") return { [node.name]: lowerValue(lone, childEnv(env, node, "args")) };
     } else {
@@ -27309,6 +27281,7 @@ function operatorCall2(node, env) {
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), count);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
+    if (sel.kind === "wrongCount" && lone !== null) throw operandListCount(node.name, sel.args, sel.got, node.pos);
     throw refusalFor(sel, node.name, "", position, node.pos, []);
   }
   const body = bodyRuleOf(node.name);

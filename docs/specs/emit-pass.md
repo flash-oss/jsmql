@@ -159,9 +159,9 @@ $divide([])             // refused: nothing was written, and `$divide` states no
 $concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:[{$ifNull:["$a",[]]},[[1]]]}}  a list with a spread is one array-valued expression
 $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto the first positional key
 $size([$.a])            // → {$size:["$a"]}               a 1-operand operator: one element is the operand list as written
-$size([$.a, 2])         // → {$size:[["$a",2]]}           two or more can only be the array VALUE — wrapped once
+$size([$.a, 2])         // refused: two operands — the array literal is the operand list, as in MQL
 $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       shape "verbatim": the operand is a value, never a list
-[$.a, 2].size()         // → {$size:[["$a",2]]}           a JavaScript lowering wraps an array LITERAL receiver itself
+[$.a, 2].size()         // → 2                            an array LITERAL holds one element per entry (`sizeOf`)
 ```
 
 `$let(vars, arrow)` binds the arrow's parameters to the vars, and both sides

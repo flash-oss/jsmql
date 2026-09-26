@@ -307,6 +307,17 @@ export const redeclared = (kind: string, name: string, pos: number): CodegenErro
     pos,
   );
 
+/**
+ * `$size([1, 2])` — one array literal is the operand list of the escape hatch (HR2),
+ * so the count reads its elements. The count alone says "got 2" to a developer who
+ * wrote one array, so the message says why, and names the spelling of ONE array operand.
+ */
+export const operandListCount = (name: string, args: Arity, got: number, pos: number): CodegenError =>
+  new CodegenError(
+    `'${signature(name, args)}' ${countWord(args)}, got ${got}: one array literal is the operand list, as in MQL. To pass the array as one operand, write '${name}([[…]])'.`,
+    pos,
+  );
+
 /** In a query document, a list operator whose operand is not a list: `{ $and: true }`. */
 export const listOperand = (name: string, pos: number): CodegenError =>
   new CodegenError(

@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix!: the escape hatch is the MQL you wrote: no fold, and no wrap
+
+This supersedes "feat: the size of a constant array is a constant, in both
+spellings" below. The developer decided that `$size([1, 2])`, `$size(1, 2)` and
+`{ $size: [1, 2] }` are the escape hatch to actual MQL, so the compiler must not
+touch them. Only the JavaScript method computes a count: `[1, 2].size()` is 2,
+and `[$.a, $.b].size()` is 2 as well.
+
+So the `foldsAs` row fact and the evaluator's case for an operator call are
+gone, and the fold pass does not ask an `OperatorCall` again. The emitter's
+old wrap is gone too: a one-operand operator given an array literal of two or
+more elements read the literal as ONE array value (`$size([$.a, 2])` →
+`{ $size: [["$a", 2]] }`, `$arrayToObject([[k, v], [k, v]])` → one pairs
+array). That also touched the MQL, because in MQL the literal is the operand
+list. Now all three spellings of `{ $size: [1, 2] }` get one count refusal,
+because the server refuses two operands: the raw document takes the call's
+lowering, as a list operator's already does. Where one array literal is the
+operand list, the refusal adds "one array literal is the operand list, as in
+MQL", and it names `$size([[…]])`, the spelling of one array operand.
+
+`.size()` of an array literal is its element count, whatever each entry holds:
+`sizeOf` in [mql.ts](../src/registry/mql.ts) writes the count of a literal, so
+`[$.a, $.b].size()` is 2 and `["a", "b"].map((k, i) => …)` counts with
+`$range: [0, 2]`. MEASURED: `{ $size: [["$nope", "$x"]] }` → 2, because a
+missing field is still an element, and `test/compiler-returns-agrees.test.ts`
+holds each count against the server's own. A filter keeps the runtime
+comparison for such a count (`$.n === [$.a, $.b].size()` →
+`{ $expr: { $eq: ["$n", 2] } }`). The fold pass would drop the entries before the
+emitter checks them, so a typo in an entry would disappear.
+
+---
+
 ## 2026-09-26 — feat: the size of a constant array is a constant, in both spellings
 
 `[1, 2, 3].size()` already folded to 3, but `$size([1, 2, 3])` emitted

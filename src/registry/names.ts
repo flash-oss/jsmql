@@ -342,12 +342,10 @@ type MongoSpec<
    * How the row writes the operand list, for the expression positions. Omitted for
    * a name that is only ever a stage: its `body` is its shape.
    *
-   *   "single"    one operand — `{ $abs: <operand> }`; a lone array literal with
-   *               one element is the operand list as the user wrote it (`$size([$.a])` →
-   *               `{ $size: ["$a"] }`, HR2), with two or more it can only be the
-   *               array VALUE and the emitter wraps it once (`$arrayToObject([[k, v], …])` →
-   *               `{ $arrayToObject: [[…]] }` — the server reads a literal array in
-   *               the slot as its argument list)
+   *   "single"    one operand — `{ $abs: <operand> }`; a lone array literal is the
+   *               operand list as the user wrote it (HR2): `$size([$.a])` →
+   *               `{ $size: ["$a"] }`, and `$size([1, 2])` is two operands, which the
+   *               count refuses as the server does
    *   "array"     a list of two or more, or one array literal that IS the list
    *   "flex"      one operand bare, two or more as a list
    *   "none"      `{ $op: {} }`
@@ -418,14 +416,6 @@ type MongoSpec<
    *   $max(...$.scores)   → "Spread (...) is not supported in $max(...) — use the JS form Math.max(...arr), …"
    */
   spreadAlternative?: string;
-  /**
-   * The method whose constant fold this operator shares. The escape hatch is the
-   * developer's MQL, and the evaluator never reads it, except here: over a constant
-   * operand, `$size(x)` answers what `x.size()` answers, so `$size([1, 2, 3])` is 3.
-   * The operand is the one the server reads (HR2): a list of ONE element is the
-   * operand list, so `$size([[1, 2]])` reads `[1, 2]`.
-   */
-  foldsAs?: string;
   /**
    * The type of the value this name produces, or absent when it produces none —
    * a stage, or a query fragment like `$box`. Stated exactly on the rows whose
@@ -3056,8 +3046,6 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    // MEASURED: `{ $size: [[1, 2, 3]] }` → 3. The size of a constant array is a constant.
-    foldsAs: "size",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" }, nullRefused: [0] }, emit: single },
     group: unsupported("'$size' is not valid in a $group output position — see its 'where'."),

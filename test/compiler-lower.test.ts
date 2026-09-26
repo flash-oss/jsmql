@@ -135,8 +135,8 @@ describe("compiler/emit/lower — access", () => {
   it("reads a count from the method's one family, and proves a literal's count", () => {
     expect(expr("[1, 2].size()")).toBe(2);
     expect(expr('"abc".length()')).toBe(3);
-    // an array LITERAL receiver is the value, wrapped once — `{ $size: ["$a", 2] }` would be two operands
-    expect(expr("[$.a, 2].size()")).toEqual({ $size: [["$a", 2]] });
+    // an array LITERAL receiver holds one element per entry, whatever each entry holds
+    expect(expr("[$.a, 2].size()")).toBe(2);
     // an unproven receiver takes the method's one family, and the server judges the value:
     // `.length()` reads a string under a null guard, `.size()` reads a missing array as empty
     expect(expr("$.x.length()")).toEqual({
@@ -161,9 +161,9 @@ describe("compiler/emit/lower — calls", () => {
     // HR2: one array literal is the operand list as written, counted by its elements
     expect(expr("$eq([$.n, 4])")).toEqual({ $eq: ["$n", 4] });
     expect(expr("$size([$.a])")).toEqual({ $size: ["$a"] });
-    // a 1-operand operator given two elements can only mean the array VALUE: wrapped once
-    expect(expr("$size([$.a, 1])")).toEqual({ $size: [["$a", 1]] });
-    expect(expr('$arrayToObject([["a", 1], ["b", 2]])')).toEqual({
+    // a 1-operand operator given two elements is given two operands, and the count refuses them
+    expect(() => expr("$size([$.a, 1])")).toThrow("one array literal is the operand list");
+    expect(expr('$arrayToObject([[["a", 1], ["b", 2]]])')).toEqual({
       $arrayToObject: [
         [
           ["a", 1],

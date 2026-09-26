@@ -125,8 +125,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
   // A constant is its VALUE, before any row is read. The fold writes back what has
   // a source spelling. A Date, an ObjectId or a Set has none and stays a node, so
   // the evaluator is asked here — with its own exclusions (an operator call is the
-  // developer's MQL: only a row that states `foldsAs` settles it, and the fold pass
-  // has done that already).
+  // developer's MQL and is never evaluated).
   if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
     const settled = evaluate(node, new Map());
     if (settled.ok) {
@@ -420,10 +419,16 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
         continue;
       }
       // `{ $add: "$x" }` — a list-only operator with ONE operand that is not an array
-      // literal. The call spelling lowers it, so the row's count judges both spellings
-      // (HR2): `{ $add: "$x" }` stays as written, and `{ $divide: 10 }` is refused as
-      // `$divide(10)` is, because the server refuses it.
-      if (e.key.name.startsWith("$") && operandShapeOf(e.key.name) === "array" && e.value.type !== "ArrayLiteral") {
+      // literal — and `{ $size: [1, 2] }` — a one-operand operator with a written operand
+      // list. The call spelling lowers each, so the row's count judges both spellings
+      // (HR2): `{ $add: "$x" }` and `{ $size: [[1, 2]] }` stay as written, and
+      // `{ $divide: 10 }` and `{ $size: [1, 2] }` are refused as their calls are, because
+      // the server refuses them.
+      const keyShape = e.key.name.startsWith("$") ? operandShapeOf(e.key.name) : undefined;
+      if (
+        (keyShape === "array" && e.value.type !== "ArrayLiteral") ||
+        (keyShape === "single" && e.value.type === "ArrayLiteral")
+      ) {
         const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
         const own = doc !== null && typeof doc === "object" ? (doc as Record<string, unknown>)[e.key.name] : undefined;
         if (own === undefined) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
@@ -916,17 +921,7 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   let operands: readonly Expr[] = node.args.filter(isExpr);
   let count = node.args.length;
   const overrides = new Map<Expr, unknown>();
-  if (
-    lone !== null &&
-    shape === "single" &&
-    !lone.elements.some((el) => el.type === "SpreadElement") &&
-    lone.elements.length >= 2
-  ) {
-    // A 1-operand operator given a two-or-more-element array can only mean the
-    // array VALUE — the server would read the literal as two arguments — so it is
-    // wrapped once: `$arrayToObject([[k, v], [k, v]])` → `{ $arrayToObject: [[…]] }`.
-    overrides.set(lone, [lowerValue(lone, childEnv(env, node, "args"))]);
-  } else if (lone !== null && shape !== undefined && shape !== "object" && shape !== "verbatim") {
+  if (lone !== null && shape !== undefined && shape !== "object" && shape !== "verbatim") {
     if (lone.elements.some((el) => el.type === "SpreadElement")) {
       // A list with a spread is one array-valued expression: the operand list at runtime.
       if (shape === "array") return { [node.name]: lowerValue(lone, childEnv(env, node, "args")) };
@@ -948,6 +943,8 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
+    // `$size([1, 2])` is two operands, not one array: say so, where the count alone would not.
+    if (sel.kind === "wrongCount" && lone !== null) throw E.operandListCount(node.name, sel.args, sel.got, node.pos);
     throw E.refusalFor(sel, node.name, "", position, node.pos, []);
   }
   const body = bodyRuleOf(node.name);

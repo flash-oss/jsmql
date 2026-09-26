@@ -24,9 +24,6 @@ type Row = {
   iterateeSlots?: Readonly<Record<string, unknown>>;
   document?: string;
   body?: unknown;
-  shape?: unknown;
-  foldsAs?: string;
-  call?: boolean;
 };
 
 const rows = Object.entries(NAMES) as [string, Row][];
@@ -66,26 +63,6 @@ describe("registry — every callback-taking name states its slot layout", () =>
       }
     }
     expect(missing).toEqual([]);
-  });
-});
-
-describe("registry — a `foldsAs` names the method that settles the operator", () => {
-  it("states it on a one-operand MongoDB row, and names an array method that takes no argument", () => {
-    const wrong: string[] = [];
-    let stated = 0;
-    for (const [name, row] of rows) {
-      if (row.foldsAs === undefined) continue;
-      stated++;
-      if (row.kind !== "mongo" || row.shape !== "single") wrong.push(`${name}: not a one-operand MongoDB row`);
-      const method = (NAMES as Record<string, Row>)[row.foldsAs];
-      if (method === undefined || method.kind !== "name" || method.call !== true) {
-        wrong.push(`${name}: '${row.foldsAs}' is not a callable method row`);
-      } else if (!(Array.isArray(method.on) ? method.on : [method.on]).includes("array")) {
-        wrong.push(`${name}: '.${row.foldsAs}()' is not an array method`);
-      }
-    }
-    expect(wrong).toEqual([]);
-    expect(stated).toBeGreaterThan(0);
   });
 });
 

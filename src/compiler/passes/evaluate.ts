@@ -26,7 +26,7 @@ import {
   foldNamespaceConstant,
 } from "./fold-methods.ts";
 import type { Family } from "../../registry/vocabulary.ts";
-import { acceptsArgumentCount, foldsAsOf, isCallable, namespaceNames } from "../rows.ts";
+import { acceptsArgumentCount, isCallable, namespaceNames } from "../rows.ts";
 import { isMqlShaped } from "./inject.ts";
 import { isDate, isRegExp } from "../../bson.ts";
 
@@ -592,29 +592,6 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
   return spellable(result.value);
 }
 
-/**
- * `$size([1, 2, 3])` — an escape-hatch call. The escape hatch is the developer's MQL,
- * so only a row that states `foldsAs` settles, and it answers what that method answers
- * on the one operand the lowering reads. A list of ONE element is the operand list
- * (HR2), so `$size([[1, 2]])` reads `[1, 2]`. An EMPTY list is no operand at all, and
- * the count refuses it. Any other array literal is the value. Every other operator
- * is not a constant.
- */
-function operatorCall(node: Any, env: Constants, depth: number): Evaluation {
-  const method = foldsAsOf(node.name as string);
-  const args = node.args as readonly Any[];
-  if (method === undefined || args.length !== 1 || args[0].type === "SpreadElement") return NOT_CONSTANT;
-  const written = args[0];
-  const list = written.type === "ArrayLiteral" ? (written.elements as readonly Any[]) : null;
-  if (list !== null && list.length === 0) return NOT_CONSTANT;
-  const operand = list !== null && list.length === 1 && list[0].type !== "SpreadElement" ? list[0] : written;
-  const receiver = at(operand as unknown as Expr, env, depth + 1);
-  if (!receiver.ok) return propagate(receiver);
-  if (!acceptsArgumentCount(method, 0, familyOfValue(receiver.value))) return NOT_CONSTANT;
-  const result = foldInstanceCall(receiver.value, method, []);
-  return result.ok ? spellable(result.value) : propagate(result);
-}
-
 /** Apply a lambda to constant arguments, with the same gates a rule gets. */
 function applyHere(lambda: Any, argNodes: readonly Expr[], env: Constants, depth: number): Evaluation {
   if (argNodes.some((a) => (a as Any).type === "SpreadElement")) return NOT_CONSTANT;
@@ -785,9 +762,6 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
 
     case "MethodCall":
       return methodCall(node as unknown as Any, env, depth);
-
-    case "OperatorCall":
-      return operatorCall(node as unknown as Any, env, depth);
 
     case "CallExpression": {
       const callee = node.callee as unknown as Any;
