@@ -45,6 +45,14 @@ describe("jsmql.filter() — strict Filter shape", () => {
     );
     expect(() => jsmql.filter("{ $match: $.x > 0 }")).toThrow(/top-level '\$match' stage call/);
   });
+  it("reads a stage on a value as a value, so each entry names the stage's value twin", () => {
+    // `$.items.$sort(…)` is no top-level stage call: a stage runs on a stream.
+    const onValue = /^'\.\$sort\(\)' is a pipeline stage, and a stage runs on a stream, not on a value\./;
+    for (const entry of [jsmql, jsmql.filter, jsmql.expr, jsmql.pipeline]) {
+      expect(() => entry("$.items.$sort({ a: 1 })")).toThrow(onValue);
+    }
+    expect(jsmql.validate("$.items.$sort({ a: 1 })").errors[0]).toMatchObject({ pos: 7 });
+  });
   it("refuses a bracketed list, which is a Pipeline", () => {
     expect(() => jsmql.filter("[{ $match: $.x > 0 }]")).toThrow(/a bracketed list, which is a Pipeline/);
     expect(() => jsmql.filter("[1, 2]")).toThrow(/a bracketed list, which is a Pipeline/);

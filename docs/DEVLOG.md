@@ -10,6 +10,46 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — fix: the compiler refuses a stage, an operator or a global function on a value
+
+A MongoDB operator, a stage and a global function read no receiver: each one is
+a call. Their rows state no receiver family, so `select` let any receiver pass,
+and each cell built its document from the arguments alone. The document lost
+the receiver, in all three roads:
+
+```
+$.items.$sort({ a: 1 });        → [{ $sort: { a: 1 } }]           the stream sorts, not the array
+$.items.$match($.x > 1)         → [{ $match: { x: { $gt: 1 } } }]
+$.tags.$size(2)                 → { $expr: { $size: 2 } }
+jsmql.expr("$.a.$size($.b)")    → { $size: "$b" }
+jsmql.expr('$.a.Number("7")')   → { $toDouble: "7" }
+$.items.assert($.x > 1);        → the guard stage of assert($.x > 1)
+```
+
+Only the value road refused a stage on a value (`$.o = $.items.$match(…)`). Now
+every road refuses the method spelling before it reads the row: the value road
+(`dispatchOn`), the filter road (`leaf`) and the statement road (`stageStatement`).
+`takesNoReceiver` in `src/compiler/rows.ts` reads the fact from the row kind (`mongo`
+or `global`), and a `$` name that no row holds counts too. One message, `noReceiver`
+in `errors.ts`, names the call form, and a stage names its value twin:
+
+```
+$.items.$sort({ a: 1 })   ✗ '.$sort()' is a pipeline stage, and a stage runs on a stream, not on a value. … For the value form, use '$sortArray(…)'.
+$.a.$size($.b)            ✗ '.$size()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '$size(…)' with every operand inside the parentheses.
+$.a.Number("7")           ✗ '.Number()' takes no receiver. 'Number' is a global function: write 'Number(…)' with the value inside the parentheses.
+$$.$sort({ a: 1 });       → [{ $sort: { a: 1 } }]   the stream is the one receiver that a stage takes
+```
+
+The shape rule changes with it ([filter-mode.md § The decision](specs/filter-mode.md)):
+a method on a value is a value, whatever its name, so `$.items.$sort(…)` with no
+`;` is a filter. Before, the strict entries called it "a top-level '$sort' stage
+call", and `jsmql.expr` sent the developer to `jsmql.pipeline()`, which dropped the
+receiver. Each entry now gives the refusal above. Tests:
+`test/compiler-lower.test.ts`, `test/compiler-statement.test.ts`,
+`test/strict-api.test.ts`.
+
+---
+
 ## 2026-09-26 — docs: `Date(…)` without `new` is a date, and `.map(Date)` converts
 
 LANGUAGE.md § Bare built-in callbacks said that JSMQL refuses a bare `Date`,

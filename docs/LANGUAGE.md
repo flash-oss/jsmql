@@ -3009,6 +3009,20 @@ $group({ _id: $.cat, top3: $topN({ output: $.score, sortBy: { score: -1 }, n: 3 
                                    //   top-N accumulator over a group — no JS equivalent
 ```
 
+**The escape hatch is a call, not a method.** A MongoDB operator takes each operand inside its
+parentheses, and MQL gives it no receiver. So JSMQL refuses a `$` name in the method position,
+because the receiver has no place in the document. A global function such as `Number` follows
+the same rule:
+
+```js
+$size($.items)                     // { $size: "$items" }
+$.items.$size()                    // ❌ '.$size()' takes no receiver. … write '$size(…)'
+                                   //    with every operand inside the parentheses.
+$.items.$sort({ a: 1 })            // ❌ '.$sort()' is a pipeline stage, and a stage runs on a
+                                   //    stream, not on a value. … For the value form, use '$sortArray(…)'.
+$.s.Number()                       // ❌ '.Number()' takes no receiver. 'Number' is a global function
+```
+
 ### String
 
 ```js

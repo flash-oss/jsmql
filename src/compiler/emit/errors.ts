@@ -20,9 +20,11 @@ import {
   diagnosticOf,
   isFieldProperty,
   isKnownName,
+  isStageName,
   siblingOf,
   spreadAlternativeOf,
   streamReceiverNames,
+  valueTwinOf,
 } from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
@@ -618,12 +620,26 @@ export const spreadOfString = (pos: number): CodegenError =>
     pos,
   );
 
-/** `$.items.$match(…)` — a stage called on a value. A stage runs on a stream, and no MQL holds a stage over a value. */
-export const stageOnValue = (name: string, twin: string | undefined, pos: number): CodegenError =>
-  new CodegenError(
-    `'.${name}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name}(…)') or as a pipeline statement ('${name}(…);').${twin === undefined ? "" : ` For the value form, use '${twin}(…)'.`}`,
+/**
+ * A call that reads no receiver, spelled as a method on a value: a stage
+ * (`$.items.$match(…)`), a MongoDB operator (`$.a.$size()`) or a global function
+ * (`$.a.Number()`). No MQL holds the receiver, so the message names the call form.
+ */
+export function noReceiver(name: string, pos: number): CodegenError {
+  if (isStageName(name)) {
+    const twin = valueTwinOf(name);
+    return new CodegenError(
+      `'.${name}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name}(…)') or as a pipeline statement ('${name}(…);').${twin === undefined ? "" : ` For the value form, use '${twin}(…)'.`}`,
+      pos,
+    );
+  }
+  return new CodegenError(
+    name.startsWith("$")
+      ? `'.${name}()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '${name}(…)' with every operand inside the parentheses.`
+      : `'.${name}()' takes no receiver. '${name}' is a global function: write '${name}(…)' with the value inside the parentheses.`,
     pos,
   );
+}
 
 /** A statement after the stage that writes the pipeline's output. */
 export const afterTerminalStage = (already: string, pos: number): CodegenError =>

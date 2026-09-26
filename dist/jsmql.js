@@ -11214,6 +11214,10 @@ function operandPositionOf(name2) {
 function liftsToOf(name2) {
   return row(name2)?.liftsTo;
 }
+function takesNoReceiver(name2) {
+  const kind = row(name2)?.kind;
+  return name2.startsWith("$") || kind === "mongo" || kind === "global";
+}
 function valueTwinOf(name2) {
   return row(name2)?.valueTwin;
 }
@@ -19265,6 +19269,7 @@ function statementShaped(node) {
   if (name2 === "assign" && writesItsTarget(node)) return true;
   if (lists(name2, "value")) return false;
   if (node.type === "MethodCall" && isMutator(name2) && !couldWriteItsReceiver(node)) return false;
+  if (node.type === "MethodCall" && !isMutator(name2)) return false;
   return lists(name2, "statement") || lists(name2, "stream");
 }
 function isBareAssignWrite(program) {
@@ -20248,10 +20253,19 @@ var spreadOfString = (pos) => new CodegenError(
   "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
   pos
 );
-var stageOnValue = (name2, twin, pos) => new CodegenError(
-  `'.${name2}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name2}(\u2026)') or as a pipeline statement ('${name2}(\u2026);').${twin === void 0 ? "" : ` For the value form, use '${twin}(\u2026)'.`}`,
-  pos
-);
+function noReceiver(name2, pos) {
+  if (isStageName(name2)) {
+    const twin = valueTwinOf(name2);
+    return new CodegenError(
+      `'.${name2}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name2}(\u2026)') or as a pipeline statement ('${name2}(\u2026);').${twin === void 0 ? "" : ` For the value form, use '${twin}(\u2026)'.`}`,
+      pos
+    );
+  }
+  return new CodegenError(
+    name2.startsWith("$") ? `'.${name2}()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '${name2}(\u2026)' with every operand inside the parentheses.` : `'.${name2}()' takes no receiver. '${name2}' is a global function: write '${name2}(\u2026)' with the value inside the parentheses.`,
+    pos
+  );
+}
 var afterTerminalStage = (already, pos) => new CodegenError(
   `Nothing can follow '${already}': it writes the pipeline's output and the server requires it last. Move this statement above it.`,
   pos
@@ -22745,6 +22759,9 @@ function leaf(node, env) {
     name2 = productionForOperator("BinaryExpr", node.op);
     args = [node.left, node.right];
   } else if (node.type === "MethodCall") {
+    if (takesNoReceiver(node.name) && node.object.type !== "StreamRef" && !onOwnStream(node.object, env)) {
+      throw noReceiver(node.name, node.pos);
+    }
     name2 = node.name;
     recv = node.object;
     args = node.args.filter(isExpr);
@@ -23779,8 +23796,8 @@ function dispatchOn(node, name2, recvNode, args, env) {
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name2)) {
     throw streamAsValue(node.pos);
   }
-  if (node.type === "MethodCall" && receiver.kind !== "stream" && isStageName(name2)) {
-    throw stageOnValue(name2, valueTwinOf(name2), node.pos);
+  if (node.type === "MethodCall" && receiver.kind !== "stream" && takesNoReceiver(name2)) {
+    throw noReceiver(name2, node.pos);
   }
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
@@ -25231,6 +25248,7 @@ function stageStatement(node, env, first) {
     throw notAStatement(node.pos);
   }
   if (node.type === "MethodCall" && isMutator(name2)) throw mutatorNeedsField(name2, node.pos);
+  if (node.type === "MethodCall" && takesNoReceiver(name2)) throw noReceiver(name2, node.pos);
   const verdict = consult(name2, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
   if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);

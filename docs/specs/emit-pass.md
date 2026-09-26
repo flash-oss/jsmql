@@ -145,6 +145,22 @@ arrays — `.sort()` says to write `.toSorted()`, which is right for an array
 and wrong for `$.s.trim()`, a string that has neither method. There the proof
 answers first.
 
+**A call that reads no receiver refuses one.** A `mongo` row (an operator or a
+stage) and a `global` row (a function such as `Number`) take no receiver. A `$`
+name that no row holds is a MongoDB name too (`takesNoReceiver` in
+`src/compiler/rows.ts`). The cell of such a row reads its arguments alone, so a
+method spelling on a value loses the receiver. Each road refuses the method
+spelling before it reads the row: the value road in `dispatchOn`, the filter road
+in `leaf`, and the statement road in `stageStatement`. One message covers the
+three roads (`noReceiver` in `errors.ts`). A stage names its value twin, and an
+operator or a function names its call:
+
+```js
+$.items.$sort({ a: 1 })   // ❌ '.$sort()' is a pipeline stage … For the value form, use '$sortArray(…)'.
+$.a.$size($.b)            // ❌ '.$size()' takes no receiver. … write '$size(…)' with every operand inside the parentheses.
+$$.$sort({ a: 1 });       // [{ $sort: { a: 1 } }] — the stream is the one receiver that a stage takes
+```
+
 ## Operand shapes and the checks
 
 A MongoDB operator's `shape` is applied at the call, not in the renderer. A

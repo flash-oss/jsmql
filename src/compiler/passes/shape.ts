@@ -46,6 +46,9 @@ function statementShaped(node: Any): boolean {
   // lists one, so `$.items.filter(p)` standing alone is an expression.
   if (lists(name, "value")) return false;
   if (node.type === "MethodCall" && isMutator(name) && !couldWriteItsReceiver(node)) return false;
+  // Any other method on a value is a value too. A statement form belongs to the
+  // bare call: `$.items.$sort(…)` sorts no stream, so the value road refuses it by name.
+  if (node.type === "MethodCall" && !isMutator(name)) return false;
   return lists(name, "statement") || lists(name, "stream");
 }
 

@@ -24,9 +24,7 @@ import {
   flattensChain,
   isCallable,
   isGlobalName,
-  isStageName,
   namespaceNames,
-  valueTwinOf,
   newKeywordOf,
   positionalKeysOf,
   productionForNode,
@@ -39,6 +37,7 @@ import {
   bareCallableNames,
   constructibleNames,
   positionsOf,
+  takesNoReceiver,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBodyKeys, checkSlotKinds, checkSlots } from "./check.ts";
@@ -664,9 +663,10 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name)) {
     throw E.streamAsValue(node.pos);
   }
-  // `$.items.$match(…)` is JSMQL code with no MQL: a stage runs on a stream.
-  if (node.type === "MethodCall" && receiver.kind !== "stream" && isStageName(name)) {
-    throw E.stageOnValue(name, valueTwinOf(name), node.pos);
+  // `$.items.$match(…)` and `$.a.$size($.b)` are JSMQL code with no MQL: a stage runs
+  // on a stream, and an operator or a global function reads no receiver.
+  if (node.type === "MethodCall" && receiver.kind !== "stream" && takesNoReceiver(name)) {
+    throw E.noReceiver(name, node.pos);
   }
   const exprArgs = args.filter(isExpr);
   // What each argument PROVABLY is. A branch whose slot cannot take it drops out

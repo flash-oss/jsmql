@@ -29,7 +29,7 @@ import { consult, listedIn } from "./consult.ts";
 import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
-import { childEnv, filterInputs } from "./inputs.ts";
+import { childEnv, filterInputs, onOwnStream } from "./inputs.ts";
 import { lowerTruth, lowerValue } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { FALSE, mongoTruthy, or } from "./mode.ts";
@@ -43,6 +43,7 @@ import {
   positionalKeysOf,
   productionForOperator,
   liftsToOf,
+  takesNoReceiver,
 } from "../rows.ts";
 
 /**
@@ -381,6 +382,10 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     name = productionForOperator("BinaryExpr", node.op);
     args = [node.left, node.right];
   } else if (node.type === "MethodCall") {
+    // `$.tags.$size(2)` has no MQL: an operator, a stage or a global function reads no receiver.
+    if (takesNoReceiver(node.name) && node.object.type !== "StreamRef" && !onOwnStream(node.object, env)) {
+      throw E.noReceiver(node.name, node.pos);
+    }
     name = node.name;
     recv = node.object;
     args = node.args.filter(isExpr);

@@ -457,6 +457,16 @@ export function liftsToOf(name: string): { op: string; negated?: true } | undefi
   return (row(name) as { liftsTo?: { op: string; negated?: true } } | undefined)?.liftsTo;
 }
 
+/**
+ * Is `name` a call that reads no receiver: a MongoDB operator or stage, or a global
+ * function? A `$` name that no row holds is a MongoDB name too (HR2). So a method
+ * spelling on a value, as in `$.a.$size()`, has no MQL.
+ */
+export function takesNoReceiver(name: string): boolean {
+  const kind = (row(name) as { kind?: string } | undefined)?.kind;
+  return name.startsWith("$") || kind === "mongo" || kind === "global";
+}
+
 /** The operator that does a STAGE's job on a value (`$match` → `$filter`), or undefined. */
 export function valueTwinOf(name: string): string | undefined {
   return (row(name) as { valueTwin?: string } | undefined)?.valueTwin;

@@ -55,7 +55,7 @@ import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, typ
 import { documentAfter, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
-import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf, takesLetOf } from "../rows.ts";
+import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf, takesLetOf, takesNoReceiver } from "../rows.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
@@ -1468,6 +1468,9 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   }
   // A mutator writes its receiver; one on a receiver that is neither a field nor a binding has nowhere to write.
   if (node.type === "MethodCall" && isMutator(name)) throw E.mutatorNeedsField(name, node.pos);
+  // A stage, an operator or a global function reads no receiver, and its statement form
+  // is the bare call. The stage document of `$.items.$sort(…);` has no place for `$.items`.
+  if (node.type === "MethodCall" && takesNoReceiver(name)) throw E.noReceiver(name, node.pos);
   const verdict = consult(name, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
   if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);

@@ -5,7 +5,7 @@
 // family takes, and the `jsmql`-prefixed mint every expression variable carries.
 
 import { describe, expect, it } from "vitest";
-import { expr } from "../src/compiler/index.ts";
+import { expr, filter, pipeline } from "../src/compiler/index.ts";
 import { Long } from "../src/bson.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { operandShapeOf } from "../src/compiler/rows.ts";
@@ -229,6 +229,28 @@ describe("compiler/emit/lower — calls", () => {
     });
     expect(expr("(() => $.a * 2)()")).toEqual({ $multiply: ["$a", 2] });
     expect(expr("((x) => x * $.a)(2)")).toEqual({ $let: { vars: { x: 2 }, in: { $multiply: ["$$x", "$a"] } } });
+  });
+
+  it("refuses a MongoDB operator or a global function on a receiver, because neither one reads it", () => {
+    // HR2's escape hatch is the call, and no MQL holds a receiver for it. A document
+    // that holds only the arguments computes from the wrong value.
+    const sizeOnValue =
+      "'.$size()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '$size(…)' with every operand inside the parentheses.";
+    expect(() => expr("$.a.$size($.b)")).toThrow(sizeOnValue);
+    expect(() => expr("$.a.$size()")).toThrow(sizeOnValue);
+    expect(() => filter("$.tags.$size(2)")).toThrow(sizeOnValue);
+    expect(() => filter("$.a.$size($.b) > 1")).toThrow(sizeOnValue);
+    expect(() => pipeline("$.n = $.a.$size($.b);")).toThrow(sizeOnValue);
+    // A `$` name that no row holds is a MongoDB name too.
+    expect(() => expr("$.a.$foo()")).toThrow(/^'\.\$foo\(\)' takes no receiver\./);
+    expect(() => expr('$.a.Number("7")')).toThrow(
+      "'.Number()' takes no receiver. 'Number' is a global function: write 'Number(…)' with the value inside the parentheses.",
+    );
+    // A stage on a value names its value twin.
+    expect(() => expr("$.items.$sort({ a: 1 })")).toThrow(/For the value form, use '\$sortArray\(…\)'/);
+    // The call spellings stay as they are.
+    expect(expr("$size($.a)")).toEqual({ $size: "$a" });
+    expect(expr('Number("7")')).toEqual({ $toDouble: "7" });
   });
 
   it("refuses a name from a closed set with a suggestion", () => {

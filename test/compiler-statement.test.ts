@@ -674,6 +674,25 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(pipeline("$not(true);")).toEqual([{ $not: true }]);
   });
 
+  it("refuses a stage, an operator or a global function on a value, and keeps no part of the call", () => {
+    // Each of these names reads no receiver, and its statement form is the bare call.
+    // A stage document that holds only the body runs on the wrong documents.
+    const sortOnValue =
+      "'.$sort()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.$sort(…)') or as a pipeline statement ('$sort(…);'). For the value form, use '$sortArray(…)'.";
+    expect(() => pipeline("$.items.$sort({ a: 1 });")).toThrow(sortOnValue);
+    expect(() => pipeline("$match({ a: 1 }); $.items.$sort({ a: 1 });")).toThrow(sortOnValue);
+    expect(() => pipeline('"abc".$sort({ a: 1 });')).toThrow(sortOnValue);
+    expect(() => pipeline("$.items.$match({ a: 1 }).$sort({ b: 1 });")).toThrow(sortOnValue);
+    expect(() => pipeline("$.items.$foo();")).toThrow(
+      "'.$foo()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '$foo(…)' with every operand inside the parentheses.",
+    );
+    expect(() => pipeline("$.items.assert($.x > 1);")).toThrow(
+      "'.assert()' takes no receiver. 'assert' is a global function: write 'assert(…)' with the value inside the parentheses.",
+    );
+    // The stream is the one receiver a stage takes.
+    expect(pipeline("$$.$match({ a: 1 }).$sort({ b: 1 });")).toEqual([{ $match: { a: 1 } }, { $sort: { b: 1 } }]);
+  });
+
   it("names the nearest working name for a misspelled call, from the names of its kind", () => {
     const refusal = (src: string): string => {
       try {
