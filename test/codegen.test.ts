@@ -5722,7 +5722,20 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
         $filter: {
           input: { $objectToArray: { $ifNull: ["$o", {}] } },
           as: "jsmqlKv",
-          cond: { $let: { vars: { v: "$$jsmqlKv.v" }, in: "$$v" } },
+          // the JavaScript truth rules: "", 0, false, null and missing are false
+          cond: {
+            $let: {
+              vars: { v: "$$jsmqlKv.v" },
+              in: {
+                $and: [
+                  { $ne: [{ $ifNull: ["$$v", null] }, null] },
+                  { $ne: ["$$v", false] },
+                  { $ne: ["$$v", ""] },
+                  { $ne: ["$$v", 0] },
+                ],
+              },
+            },
+          },
         },
       },
     });
@@ -5731,7 +5744,23 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
         $filter: {
           input: { $objectToArray: { $ifNull: ["$o", {}] } },
           as: "jsmqlKv",
-          cond: { $not: [{ $let: { vars: { v: "$$jsmqlKv.v" }, in: "$$v" } }] },
+          cond: {
+            $not: [
+              {
+                $let: {
+                  vars: { v: "$$jsmqlKv.v" },
+                  in: {
+                    $and: [
+                      { $ne: [{ $ifNull: ["$$v", null] }, null] },
+                      { $ne: ["$$v", false] },
+                      { $ne: ["$$v", ""] },
+                      { $ne: ["$$v", 0] },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
         },
       },
     });

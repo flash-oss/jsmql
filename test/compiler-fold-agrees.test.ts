@@ -255,6 +255,8 @@ const EXPRESSIONS: readonly string[] = [
   "({ a: 'x', b: 'y' }).invert()",
   "({ a: 1, b: 2 }).toPairs()",
   "({ a: 1, b: 2 }).pickBy(v => v > 1)",
+  "({ a: '', b: 1, c: 0, d: null, e: 'x' }).pickBy(v => v)",
+  "({ a: '', b: 1, c: 0, d: null, e: 'x' }).omitBy(v => v)",
   "({ a: 1, b: 2 }).mapKeys((v, k) => k + '!')",
   // the strings `$toString` writes as JavaScript does
   "String(42)",

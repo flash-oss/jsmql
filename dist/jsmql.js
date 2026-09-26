@@ -10193,7 +10193,7 @@ var NAMES = {
     expr: {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "value");
         return {
           $arrayToObject: {
             $map: { input: pairsOfObject(recv, present2), as: it.as, in: { k: `${it.ref}.k`, v: it.body } }
@@ -10226,7 +10226,7 @@ var NAMES = {
     expr: {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "value");
         return {
           $arrayToObject: {
             $map: {
@@ -10358,7 +10358,7 @@ var NAMES = {
     expr: {
       args: { sig: "predicate", exact: 1 },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "truth");
         return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: it.body } } };
       }
     },
@@ -10385,7 +10385,7 @@ var NAMES = {
     expr: {
       args: { sig: "predicate", exact: 1 },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "truth");
         return {
           $arrayToObject: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: { $not: [it.body] } } }
         };
@@ -20776,9 +20776,7 @@ function objectMethod(o, name2, args) {
       if (fn === void 0) return NO2;
       const out = {};
       for (const [k, v] of Object.entries(o)) {
-        const verdict = fn(v, k, o);
-        if (typeof verdict !== "boolean") return NO2;
-        if (verdict === (name2 === "pickBy")) setKey(out, k, v);
+        if (truthy(fn(v, k, o)) === (name2 === "pickBy")) setKey(out, k, v);
       }
       return ok2(out);
     }
@@ -26472,7 +26470,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
     sortSpec: (e, objects) => sortSpecOf(e, name2, objects),
     orderBy: (keys2, orders) => orderBySpec(keys2, orders, name2),
-    objIteratee: (cb) => {
+    objIteratee: (cb, mode) => {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name2, cb.pos);
       }
@@ -26490,7 +26488,9 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
       return {
         as: kv.as,
         ref: kv.ref,
-        body: { $let: { vars, in: read.value(cb.body, childEnv(bodyEnv, cb, "body")) } }
+        body: {
+          $let: { vars, in: (mode === "value" ? read.value : read.truth)(cb.body, childEnv(bodyEnv, cb, "body")) }
+        }
       };
     },
     bind: (hint2) => {

@@ -594,12 +594,8 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
       if (fn === undefined) return NO;
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(o)) {
-        const verdict = fn(v, k, o);
-        // A predicate that answers with something other than a boolean is where
-        // JavaScript's truthiness and MongoDB's part company: `""` and `0` are
-        // false there and true here. So it does not fold.
-        if (typeof verdict !== "boolean") return NO;
-        if (verdict === (name === "pickBy")) setKey(out, k, v);
+        // The lowering reads the predicate with the JavaScript truth rules, so the fold does too.
+        if (truthy(fn(v, k, o)) === (name === "pickBy")) setKey(out, k, v);
       }
       return ok(out);
     }
@@ -749,8 +745,7 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
    * checks the lowering spells out in the emitted condition: not missing, not
    * null, not `false`, not `""`, not `0`. `.filter("ok")` over `{ ok: "" }` drops
    * the element on the server for exactly that reason, so it does here. The
-   * OBJECT family is not this: `.pickBy` lowers to a raw condition, which is
-   * MongoDB's truthiness, and keeps `""`.
+   * OBJECT family (`.pickBy`, `.omitBy`) reads its predicate the same way.
    */
   const predicate =
     (f: Callable) =>

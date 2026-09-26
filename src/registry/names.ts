@@ -11122,7 +11122,7 @@ export const NAMES = {
     expr: {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ recv, args, objIteratee, present }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "value");
         return {
           $arrayToObject: {
             $map: { input: pairsOfObject(recv, present), as: it.as, in: { k: `${it.ref}.k`, v: it.body } },
@@ -11156,7 +11156,7 @@ export const NAMES = {
     expr: {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ recv, args, objIteratee, present }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "value");
         return {
           $arrayToObject: {
             $map: {
@@ -11293,7 +11293,7 @@ export const NAMES = {
     expr: {
       args: { sig: "predicate", exact: 1 },
       emit: ({ recv, args, objIteratee, present }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "truth");
         return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: it.body } } };
       },
     },
@@ -11321,7 +11321,7 @@ export const NAMES = {
     expr: {
       args: { sig: "predicate", exact: 1 },
       emit: ({ recv, args, objIteratee, present }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "truth");
         return {
           $arrayToObject: { $filter: { input: pairsOfObject(recv, present), as: it.as, cond: { $not: [it.body] } } },
         };

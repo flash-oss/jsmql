@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: `.pickBy` / `.omitBy` read the predicate with JavaScript's truth rules
+
+`$.o.pickBy(v => v)` lowered its predicate as a raw value in `$filter.cond`:
+`{ $let: { vars: { v: "$$jsmqlKv.v" }, in: "$$v" } }`. That is MongoDB's
+truthiness, where `""` and `[]` are true, so `{ a: "" }` kept `a`, and lodash
+drops it. The developer's decision (2026-09-04) is that a JavaScript spelling
+reads JavaScript's truth, and only a raw `$op(...)` keeps MongoDB's. The
+`objIteratee` service now takes a mode, as `callback` does, and the two
+predicate rows ask for `"truth"`, so `truthOf` gives the four tests. The fold
+in `fold-methods.ts` did not fold a non-boolean verdict, because the two
+readings disagreed; it now folds with JavaScript's truth, as the lowering does.
+
+The sweep compiled every row that takes a callback with a `v => v` predicate,
+in each position it has: the array value methods (`.filter`, `.find`,
+`.findIndex`, `.findLast`, `.findLastIndex`, `.some`, `.every`, `.reject`,
+`.partition`, the `While` family), their shorthand spellings, the stream
+links (`$$.filter`, `$$.reject`, a sorted `.takeWhile` / `.dropWhile`), the
+join road, the filter road, `assert`, `?:`, `!` and `Boolean`. Each one
+already read its condition through `truthOf`. Only `.pickBy` and `.omitBy`
+did not. `test/compiler-methods.test.ts` compares both with JavaScript's own
+answer on a live mongod, over a document of falsy values.
+
+---
+
 ## 2026-09-26 — fix: the fold gives `Object.entries` as [key, value] pairs
 
 `Object.entries({ a: 1 })` folded to `[{ k: "a", v: 1 }]`, the raw

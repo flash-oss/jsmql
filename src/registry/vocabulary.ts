@@ -1127,8 +1127,10 @@ export type ExprIn = {
    * the name of the pair variable, and the body that reads `value` and `key` from
    * it:
    * `{ as: "kv", ref: "$$kv", body: { $let: { vars: { v: "$$kv.v", k: "$$kv.k" }, in: … } } }`.
+   * `mode` reads the body as a value, or as a condition with the JavaScript truth rules:
+   *   $.o.pickBy(v => v)   in: { $and: [{ $ne: [{ $ifNull: ["$$v", null] }, null] }, …, { $ne: ["$$v", ""] }, …] }
    */
-  objIteratee: (cb: Expr) => { as: string; ref: string; body: unknown };
+  objIteratee: (cb: Expr, mode: "value" | "truth") => { as: string; ref: string; body: unknown };
   /**
    * A REDUCER — `(acc, x[, i]) => …` with its seed — as what a `$reduce` takes.
    * The accumulator reads `$value`, and the element reads `$this`. An index makes

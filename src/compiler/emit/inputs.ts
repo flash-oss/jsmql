@@ -287,7 +287,7 @@ export function exprInputs(
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name),
     sortSpec: (e, objects) => sortSpecOf(e, name, objects),
     orderBy: (keys, orders) => orderBySpec(keys, orders, name),
-    objIteratee: (cb) => {
+    objIteratee: (cb, mode) => {
       if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name, (cb as { pos: number }).pos);
       }
@@ -306,7 +306,9 @@ export function exprInputs(
       return {
         as: kv.as,
         ref: kv.ref,
-        body: { $let: { vars, in: read.value(cb.body, childEnv(bodyEnv, cb, "body")) } },
+        body: {
+          $let: { vars, in: (mode === "value" ? read.value : read.truth)(cb.body, childEnv(bodyEnv, cb, "body")) },
+        },
       };
     },
     bind: (hint) => {

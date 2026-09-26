@@ -42,6 +42,8 @@ const DOC = {
   nested: [[1, 2], [3]],
   pairs: [["k", 1]],
   mixed: [0, 1, "", "a", null, false, true],
+  // a document whose values are falsy in JavaScript, and truthy on the server but for `false`, `null` and `0`
+  mo: { a: "", b: 1, c: 0, d: null, e: "x", f: false, g: [] },
 };
 
 type Case = { src: string; js: (d: typeof DOC) => unknown; note?: string; unordered?: true };
@@ -439,6 +441,46 @@ describe("compiler/emit — date methods", () => {
 });
 
 describe("compiler/emit — object methods", () => {
+  it("reads a .pickBy / .omitBy predicate with the JavaScript truth rules", () => {
+    // `""` and `[]` split the two languages: `""` is false in JavaScript and true to a
+    // raw MongoDB condition. The server answer must be JavaScript's for both methods.
+    const truth = {
+      $and: [
+        { $ne: [{ $ifNull: ["$$v", null] }, null] },
+        { $ne: ["$$v", false] },
+        { $ne: ["$$v", ""] },
+        { $ne: ["$$v", 0] },
+      ],
+    };
+    const pairs = { $objectToArray: { $ifNull: ["$mo", {}] } };
+    expect(
+      compiled("$.mo.pickBy(v => v)", (d) => Object.fromEntries(Object.entries(d.mo).filter(([, v]) => v))),
+    ).toEqual({
+      $arrayToObject: {
+        $filter: { input: pairs, as: "jsmqlKv", cond: { $let: { vars: { v: "$$jsmqlKv.v" }, in: truth } } },
+      },
+    });
+    expect(
+      compiled("$.mo.omitBy(v => v)", (d) => Object.fromEntries(Object.entries(d.mo).filter(([, v]) => !v))),
+    ).toEqual({
+      $arrayToObject: {
+        $filter: { input: pairs, as: "jsmqlKv", cond: { $not: [{ $let: { vars: { v: "$$jsmqlKv.v" }, in: truth } }] } },
+      },
+    });
+    // A predicate that answers a boolean needs no test.
+    expect(
+      compiled("$.mo.pickBy(v => v === 0)", (d) => Object.fromEntries(Object.entries(d.mo).filter(([, v]) => v === 0))),
+    ).toEqual({
+      $arrayToObject: {
+        $filter: {
+          input: pairs,
+          as: "jsmqlKv",
+          cond: { $let: { vars: { v: "$$jsmqlKv.v" }, in: { $eq: ["$$v", 0] } } },
+        },
+      },
+    });
+  });
+
   it("maps, filters and reshapes a document's pairs", () => {
     expect(compiled("$.o.mapValues(v => v * 2)", (d) => ({ a: 2, b: 4, _c: 6 }))).toEqual({
       $arrayToObject: {
@@ -628,6 +670,7 @@ describe("compiler/emit — object methods", () => {
                     "nested",
                     "pairs",
                     "mixed",
+                    "mo",
                   ],
                 ],
               },

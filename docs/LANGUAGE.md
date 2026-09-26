@@ -1543,7 +1543,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 ### Truthy and falsy
 
-`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position use **JavaScript** truthy/falsy semantics, not MongoDB's. A predicate position is: an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, or a bare-expression Filter. This rule holds for every way you write the predicate: an arrow, a `_.matches` object, a field-name string, a `["field", value]` pair, or a bare `Boolean`. The values below are falsy:
+`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position use **JavaScript** truthy/falsy semantics, not MongoDB's. A predicate position is: an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), an object predicate method (e.g. `.pickBy`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, or a bare-expression Filter. This rule holds for every way you write the predicate: an arrow, a `_.matches` object, a field-name string, a `["field", value]` pair, or a bare `Boolean`. The values below are falsy:
 
 | Value | Falsy? |
 |---|---|
@@ -2198,6 +2198,7 @@ $.user.omit(["password"])             // all keys except those
 $.user.pick($.visibleFields)          // the key list read from the document itself
 $.pick(["name", "age"])               // the document itself is a receiver too — bare $ is $$ROOT
 $.o.pickBy(v => v != null)            // keep entries whose value passes
+$.o.pickBy(v => v)                    // keep the truthy entries: JavaScript's rule, so "" and 0 drop out (see Truthy and falsy)
 $.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
 $.o.invert()                          // swap keys/values (new keys stringified, last wins)
 $.o.toPairs()                         // [[k, v], …]

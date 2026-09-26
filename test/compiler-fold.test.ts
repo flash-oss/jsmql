@@ -273,6 +273,12 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
     expect(valueOf('Object.fromEntries(Object.entries({ a: 1, b: "x" }))')).toEqual({ a: 1, b: "x" });
   });
 
+  it("folds a `.pickBy` / `.omitBy` predicate with the JavaScript truth rules", () => {
+    // node -e: pickBy keeps { b: 1, e: "x" }; omitBy keeps { a: "", c: 0, d: null }
+    expect(valueOf('({ a: "", b: 1, c: 0, d: null, e: "x" }).pickBy(v => v)')).toEqual({ b: 1, e: "x" });
+    expect(valueOf('({ a: "", b: 1, c: 0, d: null, e: "x" }).omitBy(v => v)')).toEqual({ a: "", c: 0, d: null });
+  });
+
   it("does not fold a name the language does not have", () => {
     // Folding one would ADD it: `.lastIndexOf()` on a string is refused because
     // `$indexOfCP` only searches forward.

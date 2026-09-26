@@ -764,6 +764,13 @@ document's keys, types and `notTogether` families), `reject` (a count with a
 message of its own). So what the cell then reads is already known to be
 well-formed.
 
+A callback service that reads a body as a value or as a condition takes the
+mode as an argument: `callback(cb, "truth")`, `objIteratee(cb, "truth")`. A
+predicate cell always asks for `"truth"`, so `truthOf` reads the body with
+the JavaScript truth rules of [LANGUAGE.md § Truthy and
+falsy](../LANGUAGE.md#truthy-and-falsy). `$.o.pickBy(v => v)` drops a `""`
+value, as lodash does.
+
 Where JavaScript and MongoDB number differently, the cell follows
 JavaScript: `getMonth()` and `getDay()` count from 0 (`$month` and
 `$dayOfWeek` count from 1), so each subtracts 1. The local-time accessors
