@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — docs: rewrite LANG_RULES.md in STE, and correct it against the compiler
+
+The first STE pass over [docs/LANG_RULES.md](docs/LANG_RULES.md) kept each
+code block byte-identical, and it kept four headlines that STE does not allow:
+a passive with "vice-versa" (HR2), "knowingly" (HR3), "each mean exactly one
+scope, always" (HR4), and "brevity and better DX" (SR3). This pass rewrites
+these headlines, each prose sentence, and the notes inside the code blocks.
+The code and each `// →` claim stay exact. A note after a claim now comes after
+a second `//`, so `scripts/check-doc-claims.mjs` compares 19 claims, not 15.
+
+The rewrite also found text that disagreed with the compiler, and the developer
+confirmed each correction. HR2 said that an argument that is not plain MQL gets
+an array wrap, but `$abs($.cents / 100)` lowers to
+`{ $abs: { $divide: ["$cents", 100] } }`. HR5 said that `.lastIndexOf()` reads a
+string, but the compiler refuses it on a string, so the rule names `.indexOf()`
+only. HR5 also said that the type of the argument decides, but a string argument
+does not decide. SR3 named Temporal for `.plus()`, `.minus()` and `.diff()`, but
+these are the names of Luxon. The `$round` note gave a field reference as the
+reason, but the reason is its optional `place` operand. The `$eq(1)` quote now
+agrees with the real message. `(o, _i, coll) => { coll.size() }` did not
+compile, and `$$ = $$.uniqBy("t")` becomes the default bare chain
+`$$.uniqBy("t")`.
+
+---
+
 ## 2026-09-26 — feat!: `in` takes a list on its right, and the key test goes
 
 `in` had two meanings: with a list on the right it was MongoDB's `$in`, and
