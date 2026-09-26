@@ -28884,15 +28884,23 @@ function streamStages(chain, env, first) {
 }
 function linkStages(links, env, first) {
   const out = [];
+  let here = env;
   for (const link of links) {
     if (link.optional) throw optionalOnStream(link.pos);
-    const stages = streamLink(link, env, first && out.length === 0, void 0, out);
+    const stages = streamLink(link, here, first && out.length === 0, void 0, out);
     if (stages === null) {
       throw notAStreamLink(link.name, streamReceiverNames(), link.pos);
     }
-    out.push(...env.chain.ahead(), ...stages);
+    const made = [...env.chain.ahead(), ...stages];
+    out.push(...made);
+    here = afterLink(link, made, here);
   }
   return out;
+}
+function afterLink(link, made, env) {
+  if (!restoresDocumentsOf(namedRow(link) ?? link.name)) return afterStages(made, env);
+  env.chain.advance(made);
+  return env;
 }
 function refStatement(node, ref, env, first) {
   const name2 = namedRow(node) ?? node.name;

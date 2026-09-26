@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: each link of a stream chain reads the document that the link before it made
+
+The links of a stream chain ran under the Env from before the chain. So each link read
+the document's proof from before the links ahead of it.
+`$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }))` proved `a` a present
+string, and it emitted `{ $strLenCP: "$a" }` with no guard. But the `$set` link made `a` a
+field that can be missing, and mongod refused the pipeline: "$strLenCP requires a string
+argument, found: missing". The same stale Env let a link read a `let` binding that an
+earlier link destroyed. `let t = $.a; $$.map(d => ({ x: 1 })).filter(d => d.x === t)` read
+`$__jsmql.var.t` after `$replaceWith`, and matched no document. The statement form of the
+same program refuses the read.
+
+`afterLink` in [statement.ts](../src/compiler/emit/statement.ts) now gives the next link the
+Env that a statement gets after the same stages. That Env holds the document's proof after
+those stages, and only the bindings that are still there. A link whose row states `restoresDocuments` (`.uniq()`)
+keeps both, because the documents come back as they were. See
+[docs/specs/types.md](specs/types.md) § The document after a stage.
+
+---
+
 ## 2026-09-26 — feat: no `$ifNull` guards a value that is there
 
 The developer asked for every `$ifNull` that changes no answer to go, in the array,

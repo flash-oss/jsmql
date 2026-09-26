@@ -250,11 +250,21 @@ states `neverNull`, whatever its operand.
 Inside one statement the same reader runs at each replacing stage, so a write
 after `$ = …` lands on what that stage made.
 
+A stream chain applies the same reader after each link. The next link runs under
+the Env that a statement gets after the same stages. That Env holds the document's
+proof after them, and no field-carried binding that a replaced document took with
+it. A link
+whose row states `restoresDocuments` (`.uniq()`) gives the documents back as they
+were, so it keeps both. See `afterLink` in
+[statement.ts](../../src/compiler/emit/statement.ts).
+
 ```js
 $group({ _id: $.k, total: $sum($.amount), items: $push($.item) });  $.t = $.total ? 1 : 2;
 // → …, { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } }
 $.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length();
 // → …, { $replaceWith: "$p" }, { $set: { c: { $strLenCP: "$b" } } }
+$.a = "x";  $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));
+// → …, { $replaceWith: { n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } } } }
 ```
 
 ### A filter narrows the document

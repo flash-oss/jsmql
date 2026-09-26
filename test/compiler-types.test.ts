@@ -374,6 +374,25 @@ describe("types — the document after a stage, read off the stage itself", () =
       $set: { n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } } },
     });
   });
+
+  it("each link of a stream chain reads the document that the link before it made", () => {
+    // The `$set` link wrote `a` from a field the proof cannot show, so the `.map` link guards the read.
+    expect(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));')).toEqual([
+      { $set: { a: "x" } },
+      { $set: { a: "$label" } },
+      {
+        $replaceWith: {
+          n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } },
+        },
+      },
+    ]);
+    // A link that replaced the document took the `let` field with it, as a stage statement does.
+    expect(() => jsmql("let t = $.a; $$.map(d => ({ x: 1 })).filter(d => d.x === t);")).toThrow(
+      "`t` is a `let` binding. It cannot be read after `$replaceWith`, because that stage replaced the document that carried it.",
+    );
+    // `.uniq()` gives the documents back as they were, so the `let` field is still there.
+    expect(() => jsmql("let t = $.a; $$.uniq().filter(d => d.x === t);")).not.toThrow();
+  });
 });
 
 describe.skipIf(up === null)("types — the server agrees with the stage effects", () => {
@@ -416,6 +435,14 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
       ])
       .toArray();
     expect(out).toEqual([{ a: "x", n: 1, m: 2 }]);
+  });
+
+  it("the chain link after a `$set` answers as JavaScript would", async () => {
+    // No fixture document has `label`, so `a` is missing after the `$set`, and `.length()` answers null.
+    const out = await coll
+      .aggregate(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));') as object[])
+      .toArray();
+    expect(out).toEqual([{ n: null }, { n: null }, { n: null }]);
   });
 });
 

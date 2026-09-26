@@ -1163,22 +1163,37 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
 
 type Link = Extract<Expr, { type: "MethodCall" }>;
 
-/** The links of a chain, base first, as their stages. */
+/** The links of a chain, base first, as their stages. Each link runs over what the link before it made. */
 function linkStages(links: readonly Link[], env: Env, first: boolean): Stage[] {
   const out: Stage[] = [];
+  let here = env;
   for (const link of links) {
     // `$$?.filter(…)` — the stream is never null; the `?.` is a misreading of `$$`.
     if (link.optional) throw E.optionalOnStream(link.pos);
-    const stages = streamLink(link, env, first && out.length === 0, undefined, out);
+    const stages = streamLink(link, here, first && out.length === 0, undefined, out);
     if (stages === null) {
       throw E.notAStreamLink(link.name, streamReceiverNames(), link.pos);
     }
     // What this link's own callbacks hoisted stands directly ahead of the link, not
     // ahead of the chain: `g` in `.$sortByCount(k).map(g => …)` is the document
     // `$sortByCount` MADE, and a `$lookup` placed before it would read the other one.
-    out.push(...env.chain.ahead(), ...stages);
+    const made = [...env.chain.ahead(), ...stages];
+    out.push(...made);
+    here = afterLink(link, made, here);
   }
   return out;
+}
+
+/**
+ * The Env the next link of a chain runs under. It is the Env a statement gets after
+ * the same stages: the document's proof after them, and no binding that a replaced
+ * document carried. A link whose row gives the documents back as they were
+ * (`.uniq()`) keeps both.
+ */
+function afterLink(link: Link, made: readonly Stage[], env: Env): Env {
+  if (!restoresDocumentsOf(namedRow(link) ?? link.name)) return afterStages(made, env);
+  env.chain.advance(made);
+  return env;
 }
 
 /**
