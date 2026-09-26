@@ -21007,6 +21007,15 @@ function objectMethod(o, name2, args) {
   }
 }
 var deepIncludes = (haystack, needle) => haystack.some((h) => sameValue(h, needle));
+function firstPerKey(items, keyOf) {
+  const seen = [];
+  return items.filter((v, i) => {
+    const k = keyOf(v, i, items);
+    if (deepIncludes(seen, k)) return false;
+    seen.push(k);
+    return true;
+  });
+}
 function keyedBy(xs, fn) {
   const keys = xs.map((v, i) => fn(v, i, xs));
   return keys;
@@ -21192,30 +21201,18 @@ function arrayMethod(xs, name2, args) {
     }
     // ── the set family, compared the way MongoDB compares ───────────────────
     case "uniq":
-    case "sortedUniq": {
-      const out = [];
-      for (const v of xs) if (!deepIncludes(out, v)) out.push(v);
-      return ok2(out);
-    }
+    case "sortedUniq":
+      return ok2(firstPerKey(xs, (v) => v));
     case "uniqBy":
-    case "sortedUniqBy": {
-      if (fn === void 0) return NO2;
-      const seen = [];
-      const out = [];
-      xs.forEach((v, i) => {
-        const k = fn(v, i, xs);
-        if (deepIncludes(seen, k)) return;
-        seen.push(k);
-        out.push(v);
-      });
-      return ok2(out);
-    }
+    case "sortedUniqBy":
+      return fn === void 0 ? NO2 : ok2(firstPerKey(xs, fn));
     case "without":
       return ok2(xs.filter((v) => !deepIncludes(args.map(valueOf), v)));
     case "xor": {
       if (!Array.isArray(a)) return NO2;
       const other = a;
-      return ok2([...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))]);
+      const kept = [...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))];
+      return ok2(firstPerKey(kept, (v) => v));
     }
     case "differenceBy":
     case "intersectionBy":
@@ -21232,16 +21229,8 @@ function arrayMethod(xs, name2, args) {
       if (name2 === "intersectionBy") return ok2(mine);
       const myKeys = xs.map(keyOf);
       const extra = other.filter((v, i) => !deepIncludes(myKeys, keyOf(v, i, other)));
-      if (name2 === "xorBy") return ok2([...notMine, ...extra]);
-      const seen = [];
-      const union = [];
-      [...xs, ...other].forEach((v, i, all2) => {
-        const k = keyOf(v, i, all2);
-        if (deepIncludes(seen, k)) return;
-        seen.push(k);
-        union.push(v);
-      });
-      return ok2(union);
+      if (name2 === "xorBy") return ok2(firstPerKey([...notMine, ...extra], keyOf));
+      return ok2(firstPerKey([...xs, ...other], keyOf));
     }
     // ── slicing by count ────────────────────────────────────────────────────
     case "take":

@@ -243,6 +243,15 @@ lowering, not of the nearest raw operator. So `Object.entries({ a: 1 })` folds
 to `[["a", 1]]`, which its `$map` over `$objectToArray` gives. Only a raw
 `$objectToArray(…)` gives `{ k, v }` documents.
 
+**A set answer has no order.** A set operator such as `$setUnion` gives each
+value once, in an order that MongoDB does not specify (see
+[LANGUAGE.md § Set operations on arrays](../LANGUAGE.md#set-operations-on-arrays)).
+So the fold of a set method, for example `.xor()`, gives each value once, at the
+position where the value first occurs. The same input always gives the same
+order. That order is not part of the answer.
+[`test/compiler-fold-agrees.test.ts`](../../test/compiler-fold-agrees.test.ts)
+compares the fold with the server by the values of a set answer, not by their order.
+
 The pass leaves a form to the server when it cannot reproduce the answer with
 certainty: a date method with a timezone or another option (a named zone
 shifts with daylight saving), a number in `String(n)` or a template slot

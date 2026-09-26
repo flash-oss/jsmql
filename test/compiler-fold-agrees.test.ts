@@ -174,6 +174,9 @@ const EXPRESSIONS: readonly string[] = [
   "[1, 2, 3, 2].without(2)",
   "[1, 2, 3, 2].without(2, 3)",
   "[1, 2].xor([2, 3])",
+  // a value that one side holds twice: the server gives it once
+  "[3, 1, 3].xor([1])",
+  "[5].xor([2, 2])",
   "[0, 1, '', null, 2, false].compact()",
   "[1, [2, [3]]].flatten()",
   "[1, 2, 3, 4, 5].chunk(2)",
@@ -206,6 +209,9 @@ const EXPRESSIONS: readonly string[] = [
   "[{ n: 1 }, { n: 2 }].differenceBy([{ n: 2 }], o => o.n)",
   "[{ n: 1 }, { n: 2 }].intersectionBy([{ n: 2 }], o => o.n)",
   "[{ n: 1 }].unionBy([{ n: 1 }, { n: 2 }], o => o.n)",
+  // a key that one side holds twice: the server keeps the first element with that key
+  "[{ n: 3, t: 'a' }, { n: 1 }, { n: 3, t: 'b' }].xorBy([{ n: 1 }], o => o.n)",
+  "[{ n: 1 }].xorBy([{ n: 2, t: 'x' }, { n: 2, t: 'y' }], o => o.n)",
   // named conversions and constructors
   'String("a")',
   "String(true)",
@@ -353,6 +359,22 @@ function lowerTree(tree: Node): unknown {
 const readsSeed = (mql: unknown): boolean => JSON.stringify(mql).includes('"$f0');
 
 /**
+ * Does the server answer with the output of a set operator? `$setUnion`, `$setIntersection`
+ * and `$setDifference` promise no element order (SR2). So the suite compares the elements of
+ * such an answer, not their sequence.
+ */
+const answersSet = (mql: unknown): boolean =>
+  typeof mql === "object" &&
+  mql !== null &&
+  Object.keys(mql).some((k) => /^\$set(Union|Intersection|Difference)$/.test(k));
+
+/**
+ * It gives the elements of a list in sorted order, so two orders of the same elements compare equal.
+ * A duplicate still counts, so `[3, 3]` and `[3]` stay different.
+ */
+const inAnyOrder = (v: unknown): unknown => (Array.isArray(v) ? v.map((x) => JSON.stringify(x)).sort() : v);
+
+/**
  * The expression with its first constant operand moved into a document.
  *
  * The compiler folds a constant expression before it lowers it, so `jsmql.expr("1 + 2")`
@@ -446,7 +468,8 @@ describe.skipIf(!up)("compiler/passes/fold — the value it computes is the valu
       // A Date compares by the instant it names; the driver hands back its own.
       const mine = folded.value instanceof Date ? folded.value.toISOString() : folded.value;
       const theirs = server instanceof Date ? server.toISOString() : server;
-      if (JSON.stringify(mine) !== JSON.stringify(theirs)) {
+      const [left, right] = answersSet(mql) ? [inAnyOrder(mine), inAnyOrder(theirs)] : [mine, theirs];
+      if (JSON.stringify(left) !== JSON.stringify(right)) {
         disagree.push(`${src}  fold=${JSON.stringify(mine)}  server=${JSON.stringify(theirs)}`);
       }
     }
