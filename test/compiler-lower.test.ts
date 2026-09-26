@@ -7,6 +7,8 @@
 import { describe, expect, it } from "vitest";
 import { expr } from "../src/compiler/index.ts";
 import { Long } from "../src/bson.ts";
+import { NAMES } from "../src/registry/names.ts";
+import { operandShapeOf } from "../src/compiler/rows.ts";
 
 const TRUTHY = (v: unknown) => ({
   $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
@@ -163,8 +165,9 @@ describe("compiler/emit/lower — calls", () => {
     // HR2: one array literal is the operand list as written, counted by its elements
     expect(expr("$eq([$.n, 4])")).toEqual({ $eq: ["$n", 4] });
     expect(expr("$size([$.a])")).toEqual({ $size: ["$a"] });
-    // a 1-operand operator given two elements is given two operands, and the count refuses them
-    expect(() => expr("$size([$.a, 1])")).toThrow("one array literal is the operand list");
+    // A 1-operand operator given two elements is given two operands, as written.
+    // DELIBERATELY invalid: mongod says "Expression $size takes exactly 1 arguments. 2 were passed in."
+    expect(expr("$size([$.a, 1])")).toEqual({ $size: ["$a", 1] });
     expect(expr('$arrayToObject([[["a", 1], ["b", 2]]])')).toEqual({
       $arrayToObject: [
         [
@@ -182,6 +185,27 @@ describe("compiler/emit/lower — calls", () => {
     expect(expr("$cond($.a, 1, 2)")).toEqual({ $cond: { if: "$a", then: 1, else: 2 } });
     expect(expr('$literal("$x")')).toEqual({ $literal: "$x" });
     expect(expr("$foo($.a)")).toEqual({ $foo: "$a" });
+  });
+
+  it("passes ONE operand of a list operator through as written, in both spellings (HR1, HR2)", () => {
+    // MEASURED: the server reads a lone operand that is not an array as one operand.
+    // `{ $add: "$x" }` answers `$x`, and `{ $divide: 10 }` is refused ("takes exactly 2
+    // arguments"). Both are your own MQL, so the compiler takes each one unchanged, and
+    // the call spelling gives the same document.
+    const disagree: string[] = [];
+    let checked = 0;
+    for (const [name, row] of Object.entries(NAMES)) {
+      if (row.kind !== "mongo" || operandShapeOf(name) !== "array" || !row.where?.includes("value")) continue;
+      checked++;
+      const raw = { [name]: "$nope" };
+      const written = expr(`{ ${name}: "$nope" }`);
+      const called = expr(`${name}($.nope)`);
+      if (JSON.stringify(written) !== JSON.stringify(raw)) disagree.push(`${name}: written ${JSON.stringify(written)}`);
+      if (JSON.stringify(called) !== JSON.stringify(raw)) disagree.push(`${name}: called ${JSON.stringify(called)}`);
+    }
+    expect(disagree).toEqual([]);
+    // A check that silently compares nothing is worse than no check.
+    expect(checked).toBeGreaterThanOrEqual(30);
   });
 
   it("binds a `$let` arrow's parameters to its vars, and refuses one that names something else", () => {

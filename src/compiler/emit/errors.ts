@@ -76,8 +76,14 @@ const NO_CELL: Readonly<Record<Position, (quoted: string, bare: string) => strin
   group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
   window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
   updateDoc: (q, b) =>
-    `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${b}…;")'). 'updateOne' also accepts this form. Or pass the value from your code.`,
+    `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${valueStart(b)};")'). 'updateOne' also accepts this form. Or pass the value from your code.`,
 };
+
+/** A refused name as the start of a value: `$abs…`, `typeof…`, `<value>.trim(…)`, `<a> > <b>`. */
+function valueStart(bare: string): string {
+  if (bare.startsWith(".")) return `<value>${bare}(…)`;
+  return /^[A-Za-z$_]/.test(bare) ? `${bare}…` : `<a> ${bare} <b>`;
+}
 
 /**
  * The error for a final `Selected` answer that is not a rule. `spelled` is
@@ -316,24 +322,6 @@ export const notCallable = (pos: number): CodegenError =>
 export const letParamsMustNameVars = (params: readonly string[], keys: readonly string[], pos: number): CodegenError =>
   new CodegenError(
     `$let's arrow parameters must name its variables: got (${params.join(", ")}) for vars { ${keys.join(", ")} }.`,
-    pos,
-  );
-
-/**
- * `$size([1, 2])` — one array literal is the operand list of the escape hatch (HR2),
- * so the count reads its elements. The count alone says "got 2" to a developer who
- * wrote one array, so the message says why, and names the spelling of ONE array operand.
- */
-export const operandListCount = (name: string, args: Arity, got: number, pos: number): CodegenError =>
-  new CodegenError(
-    `'${signature(name, args)}' ${countWord(args)}, got ${got}: one array literal is the operand list, as in MQL. To pass the array as one operand, write '${name}([[…]])'.`,
-    pos,
-  );
-
-/** In a query document, a list operator whose operand is not a list: `{ $and: true }`. */
-export const listOperand = (name: string, pos: number): CodegenError =>
-  new CodegenError(
-    `${name} operates on a list of operands — pass two or more (${name}(a, b)) or a single array (${name}([a, b])).`,
     pos,
   );
 
@@ -1351,16 +1339,23 @@ export const mutatorNeedsField = (name: string, pos: number): CodegenError =>
     pos,
   );
 
+/**
+ * A query form that cannot take these arguments. For a JavaScript spelling it is the
+ * refusal. For a `$`-named call the filter road catches it and emits the call as
+ * written instead (HR3 does not apply to the escape hatch).
+ */
+export class QueryFormError extends CodegenError {}
+
 /** `$exists(1)` — a query operator's call form tests a FIELD. */
 export const needsFieldPath = (name: string, pos: number): CodegenError =>
-  new CodegenError(
+  new QueryFormError(
     `'${name}(field, …)' tests a field: its first argument is a field path ('$.a'), as in '${name}($.a, …)' or the document form '{ a: ${name}(…) }'.`,
     pos,
   );
 
 /** `$all($.tags, $.other)` — a query operator compares against a constant. */
 export const needsLiteral = (name: string, pos: number): CodegenError =>
-  new CodegenError(
+  new QueryFormError(
     `'${name}' compares against a compile-time constant in a query document, and this argument is read at run time. Give it a literal, or write the test as an expression ('$expr(…)').`,
     pos,
   );
@@ -1369,13 +1364,6 @@ export const needsLiteral = (name: string, pos: number): CodegenError =>
 export const elementNeedsQuery = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `'${name}(field, predicate)' takes a one-parameter arrow over the element whose body is a query test of the element alone ('x => x.q > 1'). A body that reads the outer document, or computes a value, has no query form here.`,
-    pos,
-  );
-
-/** `$box([[0, 0], [1, 1]])` on its own — a fragment of another operator's operand. */
-export const onlyInside = (name: string, hosts: readonly string[], pos: number): CodegenError =>
-  new CodegenError(
-    `'${name}' is a fragment of ${hosts.map((h) => `'${h}'`).join(" / ")} and has no meaning on its own — write it as that operator's operand: '${hosts[0]}(…, ${name}(…))'.`,
     pos,
   );
 
@@ -1425,8 +1413,12 @@ export const updateKeyNotOperator = (key: string | null, pos: number): CodegenEr
     pos,
   );
 
-export const updateNeedsFields = (op: string, pos: number): CodegenError =>
-  new CodegenError(`'${op}' takes a document of fields to write ('${op}({ field: value })').`, pos);
+/** `{ $foo: 1 }` twice in one update: the compiler cannot merge an operand that is not a document of fields. */
+export const updateOperatorTwice = (op: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${op}' stands twice in one update, and one of its operands is not a document of fields, so the two cannot merge. Write '${op}' once.`,
+    pos,
+  );
 
 export const updateTargetNeedsField = (pos: number): CodegenError =>
   new CodegenError(

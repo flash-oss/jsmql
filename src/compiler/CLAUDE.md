@@ -85,7 +85,8 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
   prove.ts     what a node PROVABLY is: a literal's type, a row's `returns` at its
                call site, a binding's type, the document's proof at a field path.
   inputs.ts    the one constructor of the `In` record a renderer receives.
-  check.ts     the literal-gated argument checks. Each check reads a stated rule.
+  check.ts     the literal-gated argument checks on JSMQL code. Each check reads a
+               stated rule. A `$op(…)` or `$stage(…)` call meets none of them (HR3).
   errors.ts    every message the phase can produce, worded once.
   lower.ts     the value and truth readings over every node type. See
                docs/specs/emit-pass.md.

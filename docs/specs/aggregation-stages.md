@@ -42,12 +42,12 @@ nesting an `.aggregate((o) => { … })` block.
 
 - **Receiver** — a stream: `$$`, `$$$.<coll>`, a callback's third parameter, or any chain link off one of those. Stage links and the lodash chain methods ([stream-methods.md](stream-methods.md)) interleave freely while the chain is still stream-shaped.
 - **Name** — any row with a `statement` cell. `$count` resolves as the *stage*, matching statement position. The compiler refuses an unknown `$`-name and names the nearest stage (`didYouMean`), instead of falling through to value-mode method dispatch. An unknown name without a `$` names the nearest name of its own kind, as value position does: a method (`$.tags.popp();` names `.pop()`), a static (`Object.assignn(…);` names `Object.assign`), or a global (`assertt(…);` names `assert(...)`).
-- **Arity** — exactly one argument, the stage body (the row's `args`).
+- **Arity** — one argument, the stage body. A `$`-named link is the developer's own MQL, so any other count takes HR2's plain form: `$$.$limit(5, 6)` → `{ $limit: [5, 6] }`.
 - **Not a stage link** — a bare `.$name` with no call, and `?.$name(…)`. Both are parse errors; see [grammar.md](grammar.md).
 - Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), the compiler refuses a following stage link, because a value has no stream for a stage to run over (`streamStages` in `src/compiler/emit/statement.ts`).
 - **Placement reads a chain link as a stage.** A link carries the same `position` fact as the statement it stands for, and `place` checks it per link against what the chain has emitted. This is what makes `.$out("a").$limit(1)` fail exactly like `$out("a"); $limit(1);` does.
 
-**Lowering — one equivalence, by construction.** A stage link has no lowering of its own. `streamLink` (and `refStatement`, for a link spelled directly on `$$`) hands it to the same `statement` cell and the same `checkBody` rule its statement form uses, in whichever chain it stands in: the root stream, a `$facet` branch, a `$lookup` body (`$$$.<coll>.$match(…)` and `.aggregate((o) => { $match(…); })` are the same program), a `$unionWith` body, or the stages before a `$out`. The two spellings cannot drift.
+**Lowering — one equivalence, by construction.** A stage link has no lowering of its own. `streamLink` (and `refStatement`, for a link spelled directly on `$$`) hands it to the same `statement` cell that its statement form uses, in whichever chain it stands in: the root stream, a `$facet` branch, a `$lookup` body (`$$$.<coll>.$match(…)` and `.aggregate((o) => { $match(…); })` are the same program), a `$unionWith` body, or the stages before a `$out`. The two spellings cannot drift.
 
 ```js
 $$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });
@@ -90,9 +90,9 @@ The shape rule in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape
 
 ## Lowering
 
-`stageStatement` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers a stage call or stage document through its row. The body lowers through the row's `body` rule ([emit-pass.md § stage bodies](emit-pass.md)); the literal-gated checks in `check.ts` refuse what the server would — a `$limit: 0`, an unknown `$group` key, a `$project` that mixes inclusion and exclusion. Placement lowers through its `position` fact.
+`stageStatement` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers a stage call or stage document through its row. The body lowers through the row's `body` rule ([emit-pass.md § stage bodies](emit-pass.md)). A stage that the developer names is the developer's own MQL (HR2), and HR3 does not apply to it. So the compiler checks no key, count or value of its body, and the server checks it: `$limit(0)` → `[{ $limit: 0 }]`. The compiler checks the place of every stage through the row's `position` fact.
 
-A body rule's `maxSortKeys` fact marks a sort spec that the server limits to `SORT_KEY_LIMIT` keys ([src/registry/mql.ts](../../src/registry/mql.ts), where the measured slots are listed). The `$sort` body states it, and so does the nested `sortBy` rule of each other row that sorts documents. A `nested` rule reads its key in both call forms, so `$top($.a, { … })` meets the same check as `$top({ output: $.a, sortBy: { … } })`. The stream sort methods reach the same limit through `streamSortAsk` in `src/compiler/emit/sort-spec.ts`; see [stream-methods.md](stream-methods.md).
+The server limits a sort spec to `SORT_KEY_LIMIT` keys ([src/registry/mql.ts](../../src/registry/mql.ts), where the measured slots are listed). A JavaScript sort spelling is the compiler's lowering, so the stream sort methods refuse a longer sort through `streamSortAsk` in `src/compiler/emit/sort-spec.ts`; see [stream-methods.md](stream-methods.md). A `$sort` stage that the developer writes passes through, and the server checks its keys.
 
 The one stage-aware body rule is `$match`'s. An object literal is a query document, and it passes through verbatim (the escape hatch: `$match({ $expr: … })` forces the aggregation form). Anything else lowers through the filter road ([filter-mode.md § The filter road](filter-mode.md)), so `find()` and `$match` produce the same document for the same input. Other bodies lower through the value road, where accumulators, operators, field references and method chains compose.
 
@@ -118,12 +118,12 @@ The compiler accepts `$ = "$sub"`, a field path that resolves to a document at r
 
 ## Accumulator / window operator positions
 
-An operator's row says where it may stand (`where`), so a position that is not listed is refused at compile time with the position that is:
+An operator's row says where it may stand (`where`), and it states the lowering for each of those positions. A `$op(…)` call is the developer's own MQL, so a call in a position that the row does not list takes HR2's plain form, and the server judges it:
 
-- A **window** operator (`$rank`, `$derivative`, …) stands only in a `$setWindowFields` output slot: "$rank is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $rank(...) } }) …".
-- An **accumulator-only** operator (`$push`, `$addToSet`, `$top`, …) stands in a `$group` field slot, a `$setWindowFields` output slot, or as an update operator in `jsmql.update`: "$push is an accumulator operator — valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. …".
+- A **window** operator (`$rank`, `$derivative`, …) stands in a `$setWindowFields` output slot. Elsewhere it passes through: `jsmql.expr("$rank()")` → `{ $rank: {} }`, and mongod answers "Unrecognized expression '$rank'".
+- An **accumulator-only** operator (`$push`, `$addToSet`, `$top`, …) stands in a `$group` field slot, a `$setWindowFields` output slot, or as an update operator in `jsmql.update`. Elsewhere it passes through the same way.
 
-The positions are the rows' facts, so a new operator is gated by its row alone.
+The positions are the rows' facts, and the generated globals read them too. See [globals-generation.md](globals-generation.md).
 
 ## Object-key syntax for `$<name>`
 
@@ -163,8 +163,3 @@ A realistic, multi-stage example that uses the canonical `;`-separated form live
 
 - [Update filters](update-filter.md) — how `$.x = ...` / `delete $.x` lower to `$set` / `$unset` stages and coalesce.
 - [Let bindings](let-bindings.md) — pipeline-scoped local variables (`let x = ...`) that materialise under a single namespace field and auto-clean up.
-
-## Out of scope (future work)
-
-- **Query-predicate operators inside `$match` object-literal bodies.** Today the body passes through verbatim, and the compiler does not validate `$gt`, `$in`, and other query operators, at the query layer. Will get its own spec when work begins; see the "future work areas" note in [docs/CLAUDE.md](../CLAUDE.md#docsspecs).
-- **Stage-call typo detection.** `$abs(1)` as the first array element triggers pipeline mode and fails strictly. That same mechanism catches a typo like `$prject({...})`: a mistyped stage name still produces a clear error. did-you-mean catches an object-form typo the same way.

@@ -92,13 +92,13 @@ describe("$out — composes with preceding stages", () => {
 describe("$out — last-stage enforcement", () => {
   it("a statement after the $out sugar throws an actionable trailing-stage error", () => {
     expect(() => jsmql("$$$.x = $$; $.y = 1;")).toThrow(
-      "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "Nothing can follow '$$$.x = …': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
   });
 
   it("two $out statements in one pipeline throw through the same guard", () => {
     expect(() => jsmql("$$$.a = $$; $$$.b = $$;")).toThrow(
-      "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "Nothing can follow '$$$.a = …': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
   });
 });
@@ -300,7 +300,7 @@ describe("$out — validate() carries meaningful positions", () => {
     const v = jsmql.validate("$$$.x = $$; $.y = 1;");
     expect(v.valid).toBe(false);
     expect(v.errors[0].message).toMatch(
-      "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "Nothing can follow '$$$.x = …': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
     expect(v.errors[0].pos).toBeGreaterThan(0);
   });
@@ -345,7 +345,7 @@ describe("$out RHS accepts chained stage calls", () => {
     // The `$out` always follows, so a second write stage can never be last.
     it("rejects a write stage in the chain", () => {
       expect(() => jsmql('$$$.archive = $$.$out("other");')).toThrow(
-        "'$out' writes the pipeline's output and has to be its last stage, and '$out' already is. A pipeline writes to one destination — keep one of them.",
+        "'$$$.archive = …' writes the pipeline's output and has to be its last stage, and '$out' already is. A pipeline writes to one destination — keep one of them.",
       );
     });
     it("rejects a source stage that is not first", () => {
@@ -428,9 +428,9 @@ describe("$merge — adding to a collection", () => {
 
   it("nothing may follow the write, and the message names the stage that is there", () => {
     expect(() => jsmql("$$$.metrics.concat($$); $.a = 1;")).toThrow(
-      "Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "Nothing can follow '$$$.metrics.concat(…)': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
-    expect(() => jsmql("$$$.metrics = $$; $.a = 1;")).toThrow("Nothing can follow '$out':");
+    expect(() => jsmql("$$$.metrics = $$; $.a = 1;")).toThrow("Nothing can follow '$$$.metrics = …':");
   });
 
   it("refuses the writes that name no documents, each naming a spelling that works", () => {

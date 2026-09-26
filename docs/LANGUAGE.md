@@ -1360,52 +1360,49 @@ jsmql("$match($.x > 1); $$.indexStats();");
 
 ## Mistakes caught at compile time
 
-The MongoDB server validates your pipeline before running it and rejects malformed
-ones with terse errors. JSMQL is a compiler, so it catches these *as you compile* —
-you get an actionable message with a position instead of a runtime surprise:
+JSMQL checks two things at compile time:
+
+- **Where each stage is in the pipeline.** A source stage, for example `$collStats`, `$geoNear` or `$changeStream`, must be the first stage. `$out` and `$merge` must be the last stage. A sub-pipeline of `$facet`, `$lookup` or `$unionWith` can hold only the stages that the server allows in it. `$text` must be in the first `$match` of the pipeline, at any depth of its body. An aggregation `$match` cannot hold `$near`, `$nearSphere` or `$where`. Use these operators in a `find()` filter.
+- **A method on the wrong type of value.** See [A method chained on the wrong type](#a-method-chained-on-the-wrong-type) below.
+
+JSMQL checks the place of each stage, and your own stages are included:
 
 ```js
 jsmql("[ { $merge: 'archive' }, $sort({ date: -1 }) ]")
-// ✗ '$merge' must be the last stage in a pipeline — nothing can run after it.
+// ✗ Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.
 
 jsmql("[ $match($.active), { $collStats: {} } ]")
-// ✗ '$collStats' must be the first stage in a pipeline — it produces the source documents.
+// ✗ '$collStats' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.
 
 jsmql("[ { $facet: { recent: [ { $out: 'tmp' } ] } } ]")
-// ✗ '$out' is not allowed inside a '$facet' sub-pipeline.
-
-jsmql("[ $project({ name: 1, ssn: 0 }) ]")
-// ✗ '$project' cannot mix field inclusion ('name: 1') and exclusion ('ssn: 0') —
-//   only '_id' may be excluded in an inclusion projection.
-
-jsmql("[ $limit(-5) ]")
-// ✗ '$limit' must be a positive integer, but got -5.
+// ✗ '$out' cannot stand inside '$facet' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.
 
 jsmql("[ $sort({ x: 1 }), $match({ $text: { $search: 'mongo' } }) ]")
 // ✗ '$text' reads the text index, and the server reads that index at the START of a
 //   pipeline. Put the '$match' that uses it first and filter further in a later '$match'.
 
-jsmql.expr("$dateAdd({ startDate: $.t, unit: 'fortnight' })")
-// ✗ '$dateAdd' requires the 'amount' field, but it is missing.   (+ unit enum, on the next pass)
-
-jsmql.expr("$dateAdd({ startdate: $.t, unit: 'day', amount: 1 })")
-// ✗ '$dateAdd' has no parameter 'startdate'. Did you mean 'startDate'? Valid keys: startDate, unit, amount, timezone.
-
-jsmql.expr("$divide(6, 2, 1)")
-// ✗ $divide(dividend, divisor) requires exactly 2 arguments, got 3.
-
-jsmql.expr("$year('2020-01-01')")
-// ✗ '$year' expects a date, but got a string. Use a field path or new Date(…).
+jsmql("$match({ loc: { $near: [0, 0] } });")
+// ✗ '$near' is not allowed inside an aggregation '$match' — the server refuses it there. Use the
+//   '$geoNear' stage as the first stage instead (…), or run the proximity query with 'find()'.
 ```
 
-JSMQL checks four things during a compile:
+JSMQL does not check the MQL that you write yourself: a `$op(…)` call, a `$stage(…)` call, or a raw MQL document. The server checks this MQL before it reads a document. The error of the server tells you the problem:
 
-- **Stage placement.** A source stage such as `$collStats`, `$geoNear`, or `$changeStream` must come first. `$out` and `$merge` must come last. JSMQL forbids some stages inside a `$facet`, `$lookup`, or `$unionWith` sub-pipeline.
-- **Stage body shape.** JSMQL checks the literal type, range, enum, required-key, and mutual-exclusivity rules — for example `$count('')`, `$bucket` boundaries out of order, or a typo in a `$merge` `whenMatched` value.
-- **`$match` query operators.** JSMQL checks `$text` placement at any depth of the body, the `$near` ban, and the `$where` call form.
-- **Operator arguments.** JSMQL checks the operand count (`$divide` takes 2 arguments), required and unknown object keys (with a `Did you mean '…'?` hint), enum slots such as `unit`, `startOfWeek`, `$convert.to`, and regex flags, and literal types — for example a non-date value in a date slot, or a non-number value in `$abs`.
+```js
+$group({ total: $sum($.amount) });
+// → [{ $group: { total: { $sum: "$amount" } } }]
+//   mongod: "a group specification must include an _id"
 
-Call `jsmql.validate(...)` to get these as a list of `{ message, pos }` objects instead of a throw.
+$limit(-5);
+// → [{ $limit: -5 }]
+//   mongod: "invalid argument to $limit stage: Expected a non-negative number in: $limit: -5"
+
+$dateAdd({ startdate: $.t, unit: "day", amount: 1 })
+// → { $dateAdd: { startdate: "$t", unit: "day", amount: 1 } }
+//   mongod: "Unrecognized argument to $dateAdd: startdate. Expected arguments are startDate, unit, amount, and optionally timezone."
+```
+
+Call `jsmql.validate(...)` to get the compile-time errors as a list of `{ message, pos }` objects instead of a throw.
 
 ### A method chained on the wrong type
 
@@ -1436,11 +1433,8 @@ Where JSMQL does not know the type, it rejects nothing and emits the MQL: a fiel
 
 **This check follows JavaScript, not MongoDB's coercions.** MongoDB would happily run `$toUpper` on a date and hand back the stringified date; JavaScript throws on `date.toUpperCase()`, and so does JSMQL, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it still passes through untouched — raw MQL is yours.
 
-**Only certain mistakes throw.** If the offending value is a field reference or expression
-JSMQL cannot evaluate (`$limit($.pageSize)`, `$bucket({ boundaries: $.bounds })`), JSMQL
-emits the MQL as-is — it never blocks a query it cannot *prove* is wrong. JSMQL also leaves
-constraints that depend on your deployment (sharding, transactions, memory limits, Atlas
-availability) to the server.
+JSMQL leaves each constraint that depends on your deployment to the server, for example
+sharding, transactions, memory limits and Atlas availability.
 
 ---
 
@@ -2780,7 +2774,7 @@ $.t.plus(2, "hour", "America/New_York")
 // { $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" } }
 ```
 
-On a constant date the call folds to the instant the server would compute. See [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below). JSMQL rejects a literal typo with a suggestion (`.plus(30, "days")` → *"unit must be one of: … — got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer, and a literal `timezone` must be a string. Otherwise you get the same compile-time error that the `$dateAdd(…)` operator form gives. A field path or parameter in either slot passes through unchecked. The method name follows Temporal and Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)`: `amount` first, `unit` second.
+On a constant date the call folds to the instant the server would compute. See [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below). JSMQL rejects a literal typo with a suggestion (`.plus(30, "days")` → *"'plus' argument 2 must be one of: … It got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer, and a literal `timezone` must be a string. A field path or parameter in either slot passes through unchecked. The `$dateAdd(…)` operator form is your own MQL, so JSMQL does not check it, and the server gives the error. The method name follows Temporal and Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)`: `amount` first, `unit` second.
 
 **Date difference.** `.diff(other, unit)` gives the whole number of `unit`s between two dates:
 
@@ -2925,7 +2919,7 @@ Week numbering needs no adjustment at all: `week()` is `$week` (0–53, weeks be
 
 **Note:** the constructors use the same base, so a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the receiver's own month. See [the constructor note](#date-constructor-and-datenow).
 
-**Note:** these methods require a date receiver, so JSMQL rejects a literal non-date at compile time (`"2020-01-01".getFullYear()` → *"'.getFullYear' expects a date, but got a string. Use a field path or new Date(…)."*). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings or numbers.
+**Note:** these methods require a date receiver, so JSMQL rejects a literal non-date at compile time (`"2020-01-01".getFullYear()` → *"'.getFullYear()' is not available on a 'string' — it is defined on 'date'."*). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings or numbers.
 
 ### Date Operator Calls
 
@@ -2958,7 +2952,7 @@ Valid `$dateAdd` / `$dateDiff` units: `"year"`, `"quarter"`, `"week"`, `"month"`
 
 ## Escape Hatch (Direct Operator Form)
 
-For a MongoDB operator with no JavaScript equivalent, use the `$opName()` escape hatch: a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way. JSMQL passes an unknown operator through automatically, which keeps it compatible with new MongoDB releases.
+For a MongoDB operator with no JavaScript equivalent, use the `$opName()` escape hatch: a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way. JSMQL passes an unknown operator through automatically, which keeps it compatible with new MongoDB releases. The call is your own MQL, so JSMQL does not check it. The server checks it, and gives the error for a wrong shape. See [Mistakes caught at compile time](#mistakes-caught-at-compile-time).
 
 ### Examples:
 
@@ -2967,8 +2961,8 @@ $zip([$.weeks, $.amounts])         // { $zip: { inputs: ["$weeks", "$amounts"] }
                                    //   pairs parallel arrays element-wise — no JS equivalent
 $match($sampleRate(0.1));          // [{ $match: { $sampleRate: 0.1 } }]
                                    //   probabilistic match (10% sample) — no JS equivalent.
-                                   //   A query operator, so it goes in a $match body; written
-                                   //   bare it is refused with that position named.
+                                   //   A query operator, so it goes in a $match body or a
+                                   //   find() filter. In a value, the server refuses it.
 $stdDevPop($.measurements)         // { $stdDevPop: "$measurements" }
                                    //   population standard deviation — no JS equivalent
 $group({ _id: $.cat, top3: $topN({ output: $.score, sortBy: { score: -1 }, n: 3 }) });
@@ -3036,14 +3030,12 @@ $setEquals($.a, $.b)               // { $setEquals: ["$a", "$b"] }
 
 **Operand rules for list operators.** An operator whose operand is a list (the
 set operators, arithmetic `$add` / `$divide` / …, `$and` / `$or`, the bitwise
-operators) takes either two or more arguments, or a single array. Both forms
-produce the same `{ $op: […] }`. JSMQL rejects a single *non-array* value,
-because such an operator has no single-value form (write `$setUnion($.a, $.b)`
-or `$setUnion([$.a, $.b])`, not `$setUnion($.a)`). `$op(...)` does not accept the
-JS spread. Pass a single array instead, or use the JS-method form where it
-applies (`Math.max(...$.scores)`). The comparison operators are the exception:
-they *do* have a single-value form (`$gt($.x)` → `{ $gt: "$x" }`, the
-query-operator shape), so a lone argument is fine there.
+operators) takes two or more arguments, or one array literal. Both forms give
+the same `{ $op: […] }`. One argument that is not an array literal is one
+operand, as written: `$setUnion($.a)` gives `{ $setUnion: "$a" }`. The server
+reads it as one operand, and it refuses a count that the operator does not take.
+`$op(...)` does not accept the JS spread, because MQL has no spread. Pass one
+array instead, or use the JS-method form where it applies (`Math.max(...$.scores)`).
 
 ### Object Operations
 
@@ -3165,12 +3157,12 @@ $accumulator({
 
 ### Window Operators
 
-These operators are valid only in a `$setWindowFields` **output** slot, and JSMQL holds them to it. Write one anywhere else, and the refusal names the stage and the shape.
+These operators are valid only in a `$setWindowFields` **output** slot. A `$op(…)` call is your own MQL, so JSMQL passes one written anywhere else through, and the server refuses it:
 
 ```js
 $project({ r: $rank() });
-// ✗ $rank is a window operator — only valid inside '$setWindowFields' output slots.
-//   Use $setWindowFields({ partitionBy: …, sortBy: …, output: { <key>: $rank(…) } }) …
+// → [{ $project: { r: { $rank: {} } } }]
+//   mongod: "Invalid $project :: caused by :: Unknown expression $rank"
 
 $setWindowFields({ sortBy: { t: 1 }, output: { r: $rank() } });
 // → [{ $setWindowFields: { sortBy: { t: 1 }, output: { r: { $rank: {} } } } }]

@@ -186,6 +186,16 @@ The developer rejected this. In JSMQL, `x in [ … ]` is MongoDB's own `$in`, an
 
 The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`Math.max(...)`, `Object.assign(...)`, `[...a, ...b]`, `.concat()`).
 
+### Checks on the escape hatch (`$op(…)`, `$stage(…)`, a raw `{ $op: … }` document)
+
+The developer decided that the compiler does not check the MQL that you write yourself. HR3 does not apply to the escape hatches of HR1 and HR2. So `$eq(1)` compiles to `{ $eq: 1 }`, and the server gives the error. There are three reasons:
+
+- A check on raw MQL can refuse MQL that the server accepts, and that breaks HR1. For example, `{ $setUnion: "$a" }` is valid: the server reads one operand.
+- A check copies the validation of the server. The copy goes stale when a new server version adds a key or a value.
+- The server checks this MQL before it reads a document, and its message names the problem.
+
+Two checks stay, because the developer decided so. The first is the place of each stage in the pipeline, your stages too. The second is the list of query operators that an aggregation `$match` refuses (`$near`, `$nearSphere`, `$where`). The compiler also refuses a spread in `$op(…)`, because no MQL exists for it.
+
 ### Spreading a STRING into its characters (`[..."abc"]`)
 
 JavaScript spreads a string into one element per character. `[..."abc"]` is `["a","b","c"]`, and `{ ..."ab" }` is `{ 0: "a", 1: "b" }`. MongoDB has no operator that does this. `$concatArrays` takes only arrays, and `$mergeObjects` takes only documents, so there is nothing to lower the spread to.
@@ -202,7 +212,7 @@ When a downstream expression reads a `let` exactly once, with no reshape between
 
 ### Compile-time validation of runtime-dependent pipeline constraints
 
-The pre-flight validator (`docs/specs/emit-pass.md`) throws only on a violation that is 100% certain from the source. A whole class of server-enforced constraint depends on runtime state the compiler cannot know:
+The compiler checks the MQL that it makes from JSMQL code, and the place of each stage (HR3 in [docs/LANG_RULES.md](LANG_RULES.md)). It throws only on a violation that is certain from the source. A whole class of server-enforced constraint depends on runtime state the compiler cannot know:
 
 - sharding (`$out` to a sharded collection, `$unionWith` inside `$lookup` on a sharded `coll`)
 - transactions

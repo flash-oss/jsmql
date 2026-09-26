@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { consult, everyName, listedIn, positionOf, refusalSentence } from "../src/compiler/emit/consult.ts";
 import type { Arity, Position } from "../src/registry/vocabulary.ts";
 import { NAMES } from "../src/registry/names.ts";
-import { accumulated } from "../src/registry/vocabulary.ts";
+import { single } from "../src/registry/vocabulary.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 
 const POSITIONS: readonly Position[] = ["value", "filter", "stream", "statement", "group", "window", "updateDoc"];
@@ -340,14 +340,14 @@ describe("registry — an operator cannot accept more operands than it renders",
     expect(unbounded).toEqual([]);
   });
 
-  it("states `exact: 1` wherever the accumulator emitter renders the operand", () => {
-    // `accumulated` reads args[0] and nothing else. Any other count would drop
+  it("states `exact: 1` wherever an accumulator slot renders through `single`", () => {
+    // `single` reads args[0] and nothing else. Any other count would drop
     // an operand the row said it would accept.
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       for (const pos of ["group", "window"] as const) {
         const cell = row[pos];
-        if (cell === undefined || typeof cell !== "object" || cell.emit !== accumulated) continue;
+        if (cell === undefined || typeof cell !== "object" || cell.emit !== single) continue;
         if ((cell.args as { exact?: number } | undefined)?.exact !== 1) wrong.push(`${name}.${pos}`);
       }
     }

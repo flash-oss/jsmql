@@ -184,12 +184,11 @@ describe("pipeline — sub-pipelines", () => {
     ]);
   });
 
-  it("$lookup pipeline: a field ref is rejected (HR3 — pipeline must be a constant array)", () => {
-    // The server rejects `{ $lookup: { pipeline: "$someVar" } }` ("A pipeline must
-    // be an array of objects"), so a non-array pipeline slot throws at compile time.
-    expect(() => jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toThrow(
-      "'$lookup' pipeline is a sub-pipeline: write it as a bracketed list of stages, 'pipeline: [$match(…), $sort(…)]'.",
-    );
+  it("$lookup pipeline: a field ref passes through as written (HR1 — your own MQL)", () => {
+    // DELIBERATELY invalid: mongod says "A pipeline must be an array of objects".
+    expect(jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toEqual([
+      { $lookup: { from: "x", pipeline: "$someVar", as: "y" } },
+    ]);
   });
 
   it("$facet recurses into every value", () => {
@@ -1929,15 +1928,17 @@ describe("chained stage calls on the current stream", () => {
       );
     });
 
-    it("rejects an expression operator chained as a stage", () => {
-      expect(() => jsmql("$$.$abs(1);")).toThrow(
-        "'$abs' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $abs(…);'",
-      );
+    // A `$`-named link is your own MQL, so it passes through as the stage you named.
+    it("passes an expression operator chained as a stage through as written", () => {
+      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$abs'".
+      expect(jsmql("$$.$abs(1);")).toEqual([{ $abs: 1 }]);
     });
 
-    it("rejects the wrong argument count", () => {
-      expect(() => jsmql("$$.$limit();")).toThrow("'.$limit(body)' requires exactly 1 argument, got 0");
-      expect(() => jsmql("$$.$limit(5, 6);")).toThrow("'.$limit(body)' requires exactly 1 argument, got 2");
+    it("passes a stage link with any argument count through, in HR2's plain form", () => {
+      // DELIBERATELY invalid: mongod says "invalid argument to $limit stage: Expected a number in: $limit: {}".
+      expect(jsmql("$$.$limit();")).toEqual([{ $limit: {} }]);
+      // mongod: "invalid argument to $limit stage: Expected a number in: $limit: [ 5, 6 ]"
+      expect(jsmql("$$.$limit(5, 6);")).toEqual([{ $limit: [5, 6] }]);
     });
 
     it("rejects a bare `.$stage` with no call", () => {

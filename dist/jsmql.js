@@ -90,10 +90,6 @@ var FIELD_FAMILY_TYPES = {
   regexp: ["regex"],
   set: ["array"]
 };
-var accumulated = (input) => {
-  const operand = input.value(input.args[0]);
-  return { [input.name]: Array.isArray(operand) ? { $let: { vars: {}, in: operand } } : operand };
-};
 var single = (input) => ({
   [input.name]: input.value(input.args[0])
 });
@@ -677,7 +673,7 @@ var NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number-or-date", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "number-or-date" },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
     group: unsupported("'$add' is not valid in a $group output position \u2014 see its 'where'."),
@@ -851,7 +847,7 @@ var NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "number" },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
     group: unsupported("'$multiply' is not valid in a $group output position \u2014 see its 'where'."),
@@ -992,7 +988,7 @@ var NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
     group: unsupported("'$bitAnd' is not valid in a $group output position \u2014 see its 'where'."),
@@ -1031,7 +1027,7 @@ var NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
     group: unsupported("'$bitOr' is not valid in a $group output position \u2014 see its 'where'."),
@@ -1052,7 +1048,7 @@ var NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
     group: unsupported("'$bitXor' is not valid in a $group output position \u2014 see its 'where'."),
@@ -1495,10 +1491,7 @@ var NAMES = {
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
     group: unsupported("'$and' is not valid in a $group output position \u2014 see its 'where'."),
     window: unsupported("'$and' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: unsupported(
@@ -1516,10 +1509,7 @@ var NAMES = {
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
     group: unsupported("'$or' is not valid in a $group output position \u2014 see its 'where'."),
     window: unsupported("'$or' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: unsupported(
@@ -1628,10 +1618,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
     group: unsupported("'$concat' is not valid in a $group output position \u2014 see its 'where'."),
     window: unsupported("'$concat' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: unsupported(
@@ -2147,12 +2134,9 @@ var NAMES = {
     spreadAlternative: "use array spread ([...a, ...b]) or .concat()",
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$concatArrays' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $concatArrays(\u2026);'"
     ),
@@ -2190,8 +2174,8 @@ var NAMES = {
     shape: "single",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$first' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $first(\u2026);'"
     ),
@@ -2288,8 +2272,8 @@ var NAMES = {
     shape: "single",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$last' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $last(\u2026);'"
     ),
@@ -2617,10 +2601,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
     group: unsupported("'$setIntersection' is not valid in a $group output position \u2014 see its 'where'."),
     window: unsupported("'$setIntersection' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: unsupported(
@@ -2656,12 +2637,9 @@ var NAMES = {
     where: ["value", "group", "window"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$setUnion' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $setUnion(\u2026);'"
     ),
@@ -2701,7 +2679,7 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1, elementType: "object" },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: unsupported("'$mergeObjects' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: unsupported(
       "'$mergeObjects' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $mergeObjects(\u2026);'"
@@ -3778,11 +3756,11 @@ var NAMES = {
     category: "miscellaneous",
     where: ["filter"],
     shape: "single",
-    // The server requires a constant here, and a query document holds values. The slot states
-    // `constant`, so the compiler refuses an expression before this cell runs.
+    // The server requires a constant here, and a query document holds values. A rate read
+    // at run time has no query form in this cell, so the call takes HR2's plain form.
     filter: {
       args: { sig: "rate", exact: 1, constant: [0], slotType: { 0: "number" }, slotRange: { 0: [0, 1] } },
-      emit: ({ name: name2, args, constant }) => ({ [name2]: constant(args[0])?.value })
+      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
     },
     expr: unsupported(
       "$sampleRate is a query operator \u2014 it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'."
@@ -3829,8 +3807,8 @@ var NAMES = {
     expr: unsupported(
       "$addToSet is an accumulator operator \u2014 valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $addToSet(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form."
     ),
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$addToSet' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $addToSet(\u2026);'"
     ),
@@ -3853,8 +3831,8 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$avg' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $avg(\u2026);'"
     ),
@@ -3908,8 +3886,8 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$max' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $max(\u2026);'"
     ),
@@ -3954,8 +3932,8 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$min' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $min(\u2026);'"
     ),
@@ -4002,8 +3980,8 @@ var NAMES = {
     expr: unsupported(
       "$push is an accumulator operator \u2014 valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $push(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form."
     ),
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$push' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $push(\u2026);'"
     ),
@@ -4026,8 +4004,8 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$stdDevPop' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $stdDevPop(\u2026);'"
     ),
@@ -4047,8 +4025,8 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$stdDevSamp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $stdDevSamp(\u2026);'"
     ),
@@ -4070,8 +4048,8 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$sum' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $sum(\u2026);'"
     ),
@@ -4378,7 +4356,7 @@ var NAMES = {
       "$linearFill is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $linearFill(...) } }) to compute it per-document over a window."
     ),
     group: unsupported("'$linearFill' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$linearFill' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $linearFill(\u2026);'"
     ),
@@ -4400,7 +4378,7 @@ var NAMES = {
       "$locf is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $locf(...) } }) to compute it per-document over a window."
     ),
     group: unsupported("'$locf' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$locf' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $locf(\u2026);'"
     ),
@@ -14618,10 +14596,6 @@ function positionalKeysOf(name2) {
 function takesLetOf(stage) {
   return row(stage)?.takesLet === true;
 }
-function bodyRuleOf(name2) {
-  const shape = emitRow(name2)?.shape;
-  return typeof shape === "object" && shape !== null ? shape.object : void 0;
-}
 function operandPositionOf(name2) {
   return row(name2)?.operandPosition;
 }
@@ -14767,9 +14741,6 @@ function packsSpreadOf(name2) {
 }
 function mutatorFormOf(name2) {
   return row(name2)?.mutatorForm;
-}
-function onlyInsideOf(name2, position) {
-  return row(name2)?.onlyInside?.[position];
 }
 function streamReceiverNames() {
   return Object.keys(ROWS).filter((n2) => lists(n2, "stream") || familiesOf(n2)?.includes("stream") === true);
@@ -19571,17 +19542,17 @@ var Parser = class _Parser {
     }
     if (spelling === "=") {
       const targets = [target.expr];
-      let valueStart = this.c.peek().pos;
+      let valueStart2 = this.c.peek().pos;
       let value = this.pratt(1);
       while (this.c.is("Eq")) {
-        const wrote = this.src.slice(valueStart, this.c.lastEnd());
+        const wrote = this.src.slice(valueStart2, this.c.lastEnd());
         const eq = this.c.next();
         this.requireWriteTarget(value, eq.pos, "=", wrote);
         targets.push(value.expr);
-        valueStart = this.c.peek().pos;
+        valueStart2 = this.c.peek().pos;
         value = this.pratt(1);
       }
-      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(value, valueStart);
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(value, valueStart2);
       return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=", value: value.expr, pos: op.pos }));
     }
     return [{ type: "AssignExpr", target: target.expr, op: spelling, value: this.expression(), pos: op.pos }];
@@ -23394,8 +23365,12 @@ var NO_CELL = {
   statement: (q, b) => `${q} computes a value, and a statement writes one. Assign it to a field: '$.<field> = ${b};'`,
   group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
   window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
-  updateDoc: (q, b) => `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${b}\u2026;")'). 'updateOne' also accepts this form. Or pass the value from your code.`
+  updateDoc: (q, b) => `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${valueStart(b)};")'). 'updateOne' also accepts this form. Or pass the value from your code.`
 };
+function valueStart(bare) {
+  if (bare.startsWith(".")) return `<value>${bare}(\u2026)`;
+  return /^[A-Za-z$_]/.test(bare) ? `${bare}\u2026` : `<a> ${bare} <b>`;
+}
 function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`) {
   const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
@@ -23515,14 +23490,6 @@ var notCallable = (pos) => new CodegenError(
 );
 var letParamsMustNameVars = (params, keys, pos) => new CodegenError(
   `$let's arrow parameters must name its variables: got (${params.join(", ")}) for vars { ${keys.join(", ")} }.`,
-  pos
-);
-var operandListCount = (name2, args, got, pos) => new CodegenError(
-  `'${signature(name2, args)}' ${countWord(args)}, got ${got}: one array literal is the operand list, as in MQL. To pass the array as one operand, write '${name2}([[\u2026]])'.`,
-  pos
-);
-var listOperand = (name2, pos) => new CodegenError(
-  `${name2} operates on a list of operands \u2014 pass two or more (${name2}(a, b)) or a single array (${name2}([a, b])).`,
   pos
 );
 var rootIsArray = (pos) => new CodegenError(
@@ -24070,20 +24037,18 @@ var mutatorNeedsField = (name2, pos) => new CodegenError(
   `'.${name2}()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.${name2}(\u2026);'. For a value, use its immutable form.`,
   pos
 );
-var needsFieldPath = (name2, pos) => new CodegenError(
+var QueryFormError = class extends CodegenError {
+};
+var needsFieldPath = (name2, pos) => new QueryFormError(
   `'${name2}(field, \u2026)' tests a field: its first argument is a field path ('$.a'), as in '${name2}($.a, \u2026)' or the document form '{ a: ${name2}(\u2026) }'.`,
   pos
 );
-var needsLiteral = (name2, pos) => new CodegenError(
+var needsLiteral = (name2, pos) => new QueryFormError(
   `'${name2}' compares against a compile-time constant in a query document, and this argument is read at run time. Give it a literal, or write the test as an expression ('$expr(\u2026)').`,
   pos
 );
 var elementNeedsQuery = (name2, pos) => new CodegenError(
   `'${name2}(field, predicate)' takes a one-parameter arrow over the element whose body is a query test of the element alone ('x => x.q > 1'). A body that reads the outer document, or computes a value, has no query form here.`,
-  pos
-);
-var onlyInside = (name2, hosts, pos) => new CodegenError(
-  `'${name2}' is a fragment of ${hosts.map((h) => `'${h}'`).join(" / ")} and has no meaning on its own \u2014 write it as that operator's operand: '${hosts[0]}(\u2026, ${name2}(\u2026))'.`,
   pos
 );
 var needsPrecedingSort = (name2, pos) => new CodegenError(
@@ -24111,7 +24076,10 @@ var updateKeyNotOperator = (key, pos) => new CodegenError(
   `An update document's keys are update operators ('$set', '$inc', \u2026)${key === null ? "" : `, and '${key}' is not one`}. To set a field, write '$.${key ?? "field"} = \u2026' or '{ $set: { ${key ?? "field"}: \u2026 } }'.`,
   pos
 );
-var updateNeedsFields = (op, pos) => new CodegenError(`'${op}' takes a document of fields to write ('${op}({ field: value })').`, pos);
+var updateOperatorTwice = (op, pos) => new CodegenError(
+  `'${op}' stands twice in one update, and one of its operands is not a document of fields, so the two cannot merge. Write '${op}' once.`,
+  pos
+);
 var updateTargetNeedsField = (pos) => new CodegenError(
   "A document-form update writes a field of the document: '$.a = \u2026', '$.a.b += 1', 'delete $.a'.",
   pos
@@ -24152,7 +24120,8 @@ var Chain = class {
     /**
      * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
      * rather than emitting it, so nothing can land after it, and the cleanup
-     * always precedes it.
+     * always precedes it. `spelled` is how the source wrote it — `$out`, or the
+     * sugar `$$$.<coll> = …` — so a message names what the developer wrote.
      */
     this.terminal = null;
     /**
@@ -24269,7 +24238,7 @@ var Chain = class {
     this.flush();
     const out = [...this.emitted];
     if (this.dirty) out.push({ $unset: JSMQL_NS });
-    if (this.terminal !== null) out.push(this.terminal);
+    if (this.terminal !== null) out.push(this.terminal.stage);
     return out;
   }
 };
@@ -24762,6 +24731,13 @@ function checkCharSet(name2, key, e, set) {
         e.pos
       );
     }
+  }
+}
+function checkBodyKeys(body) {
+  if (body.type !== "ObjectLiteral") return;
+  for (const e of body.entries) {
+    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
+    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
   }
 }
 function checkBody(name2, rule, args, keys, pos) {
@@ -25532,7 +25508,7 @@ function documentAfter(stage, doc) {
       for (const [k, v] of Object.entries(body)) {
         props.set(
           k,
-          Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(documentsOf(v, DOCUMENT)) : accumulated2(v, doc)
+          Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(documentsOf(v, DOCUMENT)) : accumulated(v, doc)
         );
       }
       return objectOf(props, false);
@@ -25586,14 +25562,14 @@ function keptDocument(name2, body, doc) {
     return written(doc, body.as, arrayOf(documentsOf(pipeline, DOCUMENT)));
   }
   if (isPlainObject(body.output)) {
-    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, accumulated2(v, doc)), doc);
+    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, accumulated(v, doc)), doc);
   }
   return doc;
 }
 function documentsOf(pipeline, doc) {
   return pipeline.reduce((d, s) => isPlainObject(s) ? documentAfter(s, d) : DOCUMENT, doc);
 }
-function accumulated2(v, doc) {
+function accumulated(v, doc) {
   const t = typeOfEmitted(v, doc);
   const op = operatorKeyOf(v);
   return op !== null && neverNullOf(op) ? present(t) : t;
@@ -26338,9 +26314,6 @@ function rawDocument(node, env) {
       setKey(out, key, placed);
       continue;
     }
-    if (key.startsWith("$") && operandShapeOf(key) === "array" && e.value.type !== "ArrayLiteral") {
-      throw listOperand(key, e.value.pos);
-    }
     if (NEAR.has(key) && env.site.root !== "filter") throw nearInMatch(key, e.pos);
     if (LOGICAL.has(key) && e.value.type === "ArrayLiteral") {
       out[key] = e.value.elements.map((el) => {
@@ -26365,7 +26338,7 @@ function rawValue(e, env) {
     throw expressionInQueryValue(e.pos);
   }
   const value = lowerValue(e, env);
-  if (isObj4(value) && !Array.isArray(value)) {
+  if (e.type !== "OperatorCall" && isObj4(value) && !Array.isArray(value)) {
     for (const key of Object.keys(value)) {
       if (key.startsWith("$") && !listedIn(key, "filter")) throw aggregationOperatorInQuery(key, e.pos);
     }
@@ -26376,6 +26349,7 @@ function leaf(node, env) {
   let name2;
   let recv = null;
   let args;
+  const escape = node.type === "OperatorCall";
   if (node.type === "BinaryExpr") {
     name2 = productionForOperator("BinaryExpr", node.op);
     args = [node.left, node.right];
@@ -26386,13 +26360,12 @@ function leaf(node, env) {
   } else if (node.type === "OperatorCall") {
     name2 = node.name;
     args = node.args.filter(isExpr);
-    const hosts = onlyInsideOf(name2, "filter");
-    if (hosts !== void 0 && !hosts.includes(env.site.inside ?? "")) throw onlyInside(name2, hosts, node.pos);
     if (NEAR.has(name2) && env.site.root !== "filter") throw nearInMatch(name2, node.pos);
   } else return null;
   if (name2 === void 0) return null;
   const verdict = consult(name2, "filter");
-  if (verdict.kind === "refused")
+  if (verdict.kind === "refused") {
+    if (node.type === "OperatorCall") return plainQuery(node, env);
     throw refusalFor(
       { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject },
       spelled2(node, name2),
@@ -26401,21 +26374,47 @@ function leaf(node, env) {
       node.pos,
       []
     );
-  if (!listedIn(name2, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
+  }
+  if (!escape && !listedIn(name2, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
     throw queryOnlyInsideElement(name2, node.pos);
   }
-  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return null;
+  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") {
+    return node.type === "OperatorCall" ? plainQuery(node, env) : null;
+  }
   const receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
   const sel = select(verdict, receiver, shapeOf2(args), args.length);
-  if (sel.kind === "wrongCount" || sel.kind === "rejectedCount" || sel.kind === "spreadRefused") {
+  if (sel.kind === "spreadRefused") throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
+  if (sel.kind === "wrongCount" || sel.kind === "rejectedCount") {
+    if (node.type === "OperatorCall") return plainQuery(node, env);
     throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
   }
-  if (sel.kind !== "rule") return null;
-  checkSlots(name2, sel.rule.args, args);
-  const out = sel.rule.emit(
-    filterInputs(name2, recv, args, positionalKeysOf(name2), env, node, { lowerValue, lowerFilter, lowerNativeFilter })
-  );
+  if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
+  if (!escape) checkSlots(name2, sel.rule.args, args);
+  const inputs = filterInputs(name2, recv, args, positionalKeysOf(name2), env, node, {
+    lowerValue,
+    lowerFilter,
+    lowerNativeFilter
+  });
+  let out;
+  try {
+    out = sel.rule.emit(inputs);
+  } catch (e) {
+    if (node.type === "OperatorCall" && e instanceof QueryFormError) return plainQuery(node, env);
+    throw e;
+  }
   return out ?? null;
+}
+function plainQuery(node, env) {
+  if (!isKnownName(node.name) || listedIn(node.name, "value")) return null;
+  const spread = node.args.find((a) => a.type === "SpreadElement");
+  if (spread !== void 0) {
+    throw refusalFor({ kind: "spreadRefused", name: node.name, sig: "\u2026" }, node.name, "", "filter", spread.pos, []);
+  }
+  const args = node.args.filter(isExpr);
+  const inside = env.inside(node.name);
+  if (args.length === 0) return { [node.name]: {} };
+  if (args.length === 1) return { [node.name]: rawValue(args[0], inside) };
+  return { [node.name]: args.map((a) => rawValue(a, inside)) };
 }
 var spelled2 = (node, name2) => node.type === "MethodCall" ? `.${name2}` : node.type === "BinaryExpr" ? `'${node.op}'` : name2;
 function chainOf(node, op) {
@@ -27234,14 +27233,6 @@ function objectLiteral(node, entries, env) {
         if (doc !== null && typeof doc === "object") Object.assign(out, doc);
         continue;
       }
-      const keyShape = e.key.name.startsWith("$") ? operandShapeOf(e.key.name) : void 0;
-      if (keyShape === "array" && e.value.type !== "ArrayLiteral" || keyShape === "single" && e.value.type === "ArrayLiteral") {
-        const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
-        const own = doc !== null && typeof doc === "object" ? doc[e.key.name] : void 0;
-        if (own === void 0) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
-        setKey(out, e.key.name, own);
-        continue;
-      }
       const at3 = childEnv(inner, e, "value");
       setKey(out, e.key.name, lowerValue(e.value, e.key.name.startsWith("$") ? at3.inside(e.key.name) : at3));
     }
@@ -27572,39 +27563,25 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
 function operatorCall(node, env) {
   const position = positionIn(env);
   const verdict = consult(node.name, position);
-  if (verdict.kind === "unknown") return unknownOperator(node, node.args, env);
-  const hosts = onlyInsideOf(node.name, position);
-  if (hosts !== void 0 && !hosts.includes(env.site.inside ?? "")) throw onlyInside(node.name, hosts, node.pos);
+  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return plainOperator(node, env);
   const shape = position === "updateDoc" ? void 0 : operandShapeOf(node.name);
   const first = node.args[0];
   const lone = node.args.length === 1 && first.type === "ArrayLiteral" ? first : null;
   let args = node.args;
-  let operands = node.args.filter(isExpr2);
   let count = node.args.length;
   const overrides = /* @__PURE__ */ new Map();
-  if (lone !== null && shape !== void 0 && shape !== "object" && shape !== "verbatim") {
-    if (lone.elements.some((el) => el.type === "SpreadElement")) {
-      if (shape === "array") return { [node.name]: lowerValue(lone, childEnv(env, node, "args")) };
-    } else {
-      operands = lone.elements.filter(isExpr2);
-      count = operands.length;
-      if (count === 0 && shape === "array") {
-        if (ruleArgsOf(verdict)?.emptyList === true) return { [node.name]: [] };
-      }
-      if (shape === "array") args = operands;
-    }
+  if (lone !== null && shape === "array") {
+    if (lone.elements.some((el) => el.type === "SpreadElement")) return plainOperator(node, env);
+    args = lone.elements.filter(isExpr2);
+    count = args.length;
   }
   const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr2);
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), count);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
-    if (sel.kind === "wrongCount" && lone !== null) throw operandListCount(node.name, sel.args, sel.got, node.pos);
-    throw refusalFor(sel, node.name, "", position, node.pos, []);
-  }
-  const body = bodyRuleOf(node.name);
-  if (body !== void 0) checkBody(node.name, body, exprArgs, positionalKeysOf(node.name), node.pos);
-  checkSlots(node.name, sel.rule.args, operands);
+  if (sel.kind === "spreadRefused") throw refusalFor(sel, node.name, "", position, node.pos, []);
+  if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
+  if (sel.kind !== "rule") return plainOperator(node, env);
+  if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
   const inputs = exprInputs(node.name, null, exprArgs, positionalKeysOf(node.name), env, node, READ, overrides);
   const out = sel.rule.emit(inputs);
@@ -27642,14 +27619,8 @@ function boundArrowOverrides(node, args, env) {
   }
   return out;
 }
-function ruleArgsOf(verdict) {
-  if (verdict.kind !== "lower") return void 0;
-  const cell = verdict.cell;
-  return cell !== null && typeof cell === "object" ? cell.args : void 0;
-}
-function unknownOperator(node, all2, env) {
-  const spread = all2.find((a) => a.type === "SpreadElement");
-  const args = all2.filter(isExpr2);
+function plainOperator(node, env) {
+  const spread = node.args.find((a) => a.type === "SpreadElement");
   if (spread !== void 0) {
     throw refusalFor(
       { kind: "spreadRefused", name: node.name, sig: "\u2026" },
@@ -27660,6 +27631,7 @@ function unknownOperator(node, all2, env) {
       []
     );
   }
+  const args = node.args.filter(isExpr2);
   const inner = childEnv(env, node, "args");
   if (args.length === 0) return { [node.name]: {} };
   if (args.length === 1) return { [node.name]: lowerValue(args[0], inner) };
@@ -28131,13 +28103,15 @@ function stageBody(node, env) {
     setKey(
       out,
       key,
-      at3 === "statement" || at3 === "stream" ? pipelineBody(
+      // A slot that holds a pipeline takes a bracketed list of stages. Any other value
+      // is the developer's own MQL, and it lowers as a value: `pipeline: $.p` → "$p".
+      (at3 === "statement" || at3 === "stream") && entry.value.type === "ArrayLiteral" ? pipelineBody(
         entry.value,
         slot,
         env.site.where.at === "stageBody" ? env.site.where.stage : "",
         [...env.site.where.at === "stageBody" ? env.site.where.path : [], key],
         captures
-      ) : readIn(entry.value, slot)
+      ) : at3 === "statement" || at3 === "stream" ? lowerValue(entry.value, slot) : readIn(entry.value, slot)
     );
   }
   const captured = captures.filter((c) => c.any);
@@ -28153,7 +28127,7 @@ function subPipeline(node, env, slot = null) {
   let scope = childEnv(env, node, "elements");
   for (const el of node.elements) {
     if (el.type === "SpreadElement") throw spreadInStageList(el.pos);
-    if (env.chain.terminal !== null) throw afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
+    if (env.chain.terminal !== null) throw afterTerminalStage(env.chain.terminal.spelled, el.pos);
     const step = statementStages(el, scope, out.length === 0);
     out.push(...env.chain.ahead(), ...step.stages);
     scope = step.env;
@@ -28197,7 +28171,7 @@ function lowerProgram(program, env) {
   for (let i = 0; i < stmts.length; i++) {
     const stmt = stmts[i];
     if (env.chain.terminal !== null) {
-      throw afterTerminalStage(Object.keys(env.chain.terminal)[0], stmt.pos);
+      throw afterTerminalStage(env.chain.terminal.spelled, stmt.pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
     const run = declRun(stmts, i);
@@ -28364,7 +28338,7 @@ function namesWithin(stage, body, path = [], out = /* @__PURE__ */ new Map()) {
   }
   return out;
 }
-function place(name2, stage, env, first, pos) {
+function place(name2, stage, env, first, pos, spelled3 = name2) {
   const only = onlyOf(name2);
   const hoisted = env.chain.hoisted[0];
   const noPlacement = (held) => {
@@ -28395,9 +28369,9 @@ function place(name2, stage, env, first, pos) {
   }
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
-    if (already !== null) throw twoTerminalStages(name2, Object.keys(already)[0], pos);
+    if (already !== null) throw twoTerminalStages(spelled3, already.spelled, pos);
     if (readsScratch(stage)) throw terminalReadsScratch(name2, pos);
-    env.chain.terminal = stage;
+    env.chain.terminal = { stage, spelled: spelled3 };
     return [];
   }
   return [stage];
@@ -28467,6 +28441,10 @@ function outTarget(t) {
   for (const s of segments) if (s === "" || s.startsWith("$")) throw badOutTarget(s, t.pos);
   return need === 1 ? segments[0] : { db: segments[0], coll: segments[1] };
 }
+function targetSpelling2(target) {
+  const seg = (s) => /^[A-Za-z_$][\w$]*$/.test(s) ? `.${s}` : `[${JSON.stringify(s)}]`;
+  return typeof target === "string" ? `$$$${seg(target)}` : `$$$$${seg(target.db)}${seg(target.coll)}`;
+}
 function outStages(op, target, env, first) {
   if (op.op !== "=" && op.op !== "+=") throw writeToCollectionOp(op.op, op.pos);
   const name2 = op.op === "=" ? "$out" : "$merge";
@@ -28474,7 +28452,8 @@ function outStages(op, target, env, first) {
   const base = chainBase(rhs);
   if (base.type !== "StreamRef") throw outNeedsStream(rhs.pos);
   const stages = rhs.type === "StreamRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
-  return [...stages, ...place(name2, { [name2]: target }, env, first && stages.length === 0, op.pos)];
+  const spelled3 = `${targetSpelling2(target)} ${op.op} \u2026`;
+  return [...stages, ...place(name2, { [name2]: target }, env, first && stages.length === 0, op.pos, spelled3)];
 }
 function mergeStages(node, env, first) {
   const target = outTarget(node.object);
@@ -28499,7 +28478,8 @@ function mergeStages(node, env, first) {
       "Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or ONE document ('$$$.<coll>.push({ \u2026 });')."
     )
   );
-  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos)];
+  const spelled3 = `${targetSpelling2(target)}.${node.name}(\u2026)`;
+  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos, spelled3)];
 }
 function oneDocumentStages(value, env) {
   const t = typeOf(value, env);
@@ -28746,30 +28726,38 @@ function refStatement(node, ref, env, first) {
   if (ref === "DatabaseRef") throw noStageOnDatabase(node.name, node.pos);
   const receiver = ref === "StreamRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
   const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
-    const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-    throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
-  }
+  const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
+  if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
   const args = node.args;
-  checkSlots(node.name, sel.rule.args, args, false);
-  const bodyRule = stageBodyRuleOf(name2);
-  if (bodyRule !== void 0 && args.length === 1 && args[0].type === "ObjectLiteral") {
-    checkBody(name2, bodyRule, args, positionalKeysOf(name2), node.pos);
+  const escape = node.name.startsWith("$");
+  let stages;
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
+    if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
+    stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
+  } else {
+    if (sel.kind !== "rule") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
+    checkSlots(node.name, sel.rule.args, args, false);
+    const bodyRule = stageBodyRuleOf(name2);
+    if (bodyRule !== void 0 && args.length === 1 && args[0].type === "ObjectLiteral") {
+      checkBody(name2, bodyRule, args, positionalKeysOf(name2), node.pos);
+    }
+    stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   }
-  const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   const out = [];
   for (const stage of stages)
     out.push(...place(Object.keys(stage)[0], stage, env, first && out.length === 0, node.pos));
   return out;
 }
 function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar = []) {
-  if (env.chain.terminal !== null) throw afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
+  if (env.chain.terminal !== null) throw afterTerminalStage(env.chain.terminal.spelled, link.pos);
   const name2 = row2;
   if (diagnosticOf(name2) !== void 0) throw diagnosticIsNotALink(name2, link.pos);
   if (unionsOf(name2)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name2, "stream", "stream");
-  if (verdict.kind === "unknown" || verdict.kind === "noCell") return null;
+  if (verdict.kind === "unknown") return null;
+  const escape = link.name.startsWith("$");
+  if (verdict.kind === "noCell" && !escape) return null;
   const only = elementOnlyOf(name2);
   if (only !== null && env.chain.element === "" && (only.when === "always" || link.args.length === 0)) {
     throw refusalFor(
@@ -28782,19 +28770,24 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
     );
   }
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
-    throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-  }
+  if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
   const args = link.args;
-  const bodyRule = stageBodyRuleOf(name2);
-  checkSlots(link.name, sel.rule.args, args, bodyRule !== void 0);
-  if (bodyRule !== void 0 && args.length === 1 && args[0].type === "ObjectLiteral") {
-    checkBody(name2, bodyRule, args, positionalKeysOf(name2), link.pos);
+  let stages;
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
+    stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)) : [plainStage(name2, link, args, env)];
+  } else {
+    if (sel.kind !== "rule") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    const bodyRule = stageBodyRuleOf(name2);
+    checkSlots(link.name, sel.rule.args, args, bodyRule !== void 0);
+    if (bodyRule !== void 0 && args.length === 1 && args[0].type === "ObjectLiteral") {
+      checkBody(name2, bodyRule, args, positionalKeysOf(name2), link.pos);
+    }
+    stages = sel.rule.emit(
+      stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
+    );
   }
-  const stages = sel.rule.emit(
-    stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
-  );
   const out = [];
   for (const stage of stages) out.push(...place(name2, stage, env, first && out.length === 0, link.pos));
   if (!restoresDocumentsOf(name2) && out.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.placed(true);
@@ -28863,10 +28856,11 @@ function stageStatement(node, env, first) {
   if (node.type === "DatabaseRef") throw bareContextRef("$$$", node.pos);
   if (node.type === "ClusterRef") throw bareContextRef("$$$$", node.pos);
   if (name2 === null) throw notAStatement(node.pos);
+  const escape = name2.startsWith("$");
   let bodyEnv = null;
   let args;
   if (node.type === "ObjectLiteral") {
-    if (!isStageName(name2)) throw notAStage(name2, everyName().filter(isStageName), node.pos);
+    if (!escape && !isStageName(name2)) throw notAStage(name2, everyName().filter(isStageName), node.pos);
     const entries = childEnv(env, node, "entries");
     if (node.entries.length !== 1) throw multiKeyStageDocument(name2, node.entries.length, node.pos);
     const entry = node.entries[0];
@@ -28882,26 +28876,39 @@ function stageStatement(node, env, first) {
   if (node.type === "MethodCall" && isMutator(name2)) throw mutatorNeedsField(name2, node.pos);
   const verdict = consult(name2, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
+  if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
+    if (sel.kind === "unknown") {
+      const stages3 = everyName().filter((n2) => n2.startsWith("$") && listedIn(n2, "statement"));
+      throw refusalFor(sel, name2, "", "statement", node.pos, stages3, (s) => s);
+    }
+    if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
+    const stages2 = bodyEnv !== null ? [{ [name2]: readIn(args[0], bodyEnv) }] : sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
+    return stages2.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos));
+  }
   if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
-    if (sel.kind === "unknown" && !name2.startsWith("$")) throw unknownCall(sel, node, env);
-    throw refusalFor(
-      sel,
-      name2,
-      "",
-      "statement",
-      node.pos,
-      name2.startsWith("$") ? everyName().filter((n2) => n2.startsWith("$") && listedIn(n2, "statement")) : [],
-      (s) => s
-    );
+    if (sel.kind === "unknown") throw unknownCall(sel, node, env);
+    throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s);
   }
   const bodyRule = stageBodyRuleOf(name2);
   checkSlots(name2, sel.rule.args, args, bodyRule !== void 0);
   if (bodyRule !== void 0 && args.length === 1 && args[0].type === "ObjectLiteral") {
     checkBody(name2, bodyRule, args, positionalKeysOf(name2), node.pos);
   }
-  const stages = bodyEnv === null ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [{ [name2]: readIn(args[0], bodyEnv) }];
+  const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   return stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos));
+}
+function plainStage(name2, node, args, env) {
+  const all2 = "args" in node ? node.args : [];
+  const spread = all2.find((a) => a.type === "SpreadElement");
+  if (spread !== void 0) {
+    throw refusalFor({ kind: "spreadRefused", name: name2, sig: "\u2026" }, name2, "", "statement", spread.pos, []);
+  }
+  const inner = childEnv(env, node, "args");
+  if (args.length === 0) return { [name2]: {} };
+  if (args.length === 1) return { [name2]: readIn(args[0], inner) };
+  return { [name2]: args.map((a) => readIn(a, inner)) };
 }
 function arrayReduceStages(call, env, first) {
   const parts = arrayReduceParts(call);
@@ -28919,12 +28926,15 @@ function arrayReduceStages(call, env, first) {
 }
 
 // src/compiler/emit/update.ts
+var isFields = (v) => isPlainObject(v);
 function lowerUpdate(program, env) {
   const stmts = program.type === "Pipeline" ? program.stmts : [program];
   const scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
   const out = {};
+  const asWritten2 = /* @__PURE__ */ new Map();
   const claimed = /* @__PURE__ */ new Map();
   const put = (op, path, value, pos) => {
+    if (asWritten2.has(op)) throw updateOperatorTwice(op, pos);
     const held = claimed.get(path);
     if (held !== void 0) throw updateConflict(path, held, op, pos);
     claimed.set(path, op);
@@ -29034,12 +29044,18 @@ function lowerUpdate(program, env) {
     }
     throw notAnUpdate(node.pos);
   }
-  if (Object.keys(out).length === 0) throw notAnUpdate(program.pos);
-  return out;
-  function merge2(doc, pos) {
-    if (doc === null || typeof doc !== "object" || Array.isArray(doc)) throw notAnUpdate(pos);
-    for (const [op, fields] of Object.entries(doc)) {
-      if (fields === null || typeof fields !== "object" || Array.isArray(fields)) throw updateNeedsFields(op, pos);
+  const doc = { ...out };
+  for (const [op, operand] of asWritten2) setKey(doc, op, operand);
+  if (Object.keys(doc).length === 0) throw notAnUpdate(program.pos);
+  return doc;
+  function merge2(doc2, pos) {
+    if (doc2 === null || typeof doc2 !== "object" || Array.isArray(doc2)) throw notAnUpdate(pos);
+    for (const [op, fields] of Object.entries(doc2)) {
+      if (!isFields(fields)) {
+        if (asWritten2.has(op) || op in out) throw updateOperatorTwice(op, pos);
+        asWritten2.set(op, fields);
+        continue;
+      }
       for (const [path, value] of Object.entries(fields)) put(op, path, value, pos);
     }
   }

@@ -121,36 +121,24 @@ the second way is the dangerous one:
 { $setWindowFields: { …, output: { r: { $sum: "$x" } } } }        → 4
 ```
 
-So every operand-shaped accumulator cell states `exact: 1` and renders through one
-emitter, `accumulated`
-([vocabulary.ts](../../src/registry/vocabulary.ts)). Two audits hold the rule: a
-`group` or `window` cell may never state `atLeast`, because an accumulator slot has
-a ceiling, and a cell that uses `accumulated` must state `exact: 1`, because the
-emitter reads `args[0]` and nothing else.
+A `$op(…)` call in such a slot is the developer's own MQL (HR2), and HR3 does not
+apply to it. So the call renders as written, through the one emitter `single`
+([vocabulary.ts](../../src/registry/vocabulary.ts)), and its raw spelling gives the
+same document. The server judges the count:
+
+```
+$group({ _id: null, r: $push([$.x, $.y]) });     → [{ $group: { _id: null, r: { $push: ["$x","$y"] } } }]
+$group({ _id: null, r: { $push: [$.x, $.y] } }); → the same document: the server refuses it as "a unary operator"
+```
 
 `$covariancePop` and `$covarianceSamp` are the exception the registry states rather
 than derives: their window slot genuinely takes an array of two, and one operand
 answers `null`.
 
-### The array shield
-
-An operand that RENDERS as an array needs shielding, because MongoDB reads
-`{ acc: [ … ] }` as an operand list wherever it appears. For `$push([$.x, $.y])`,
-whose one argument is an array literal:
-
-```
-{ $group: { _id: null, r: { $push: ["$x","$y"] } } }                       refused
-{ $group: { _id: null, r: { $push: { $let: { vars: {}, in: ["$x","$y"] } } } } }  → [[1,2],[3,4]]
-```
-
-which gives the same answer the bare array already gives in a window slot. The
-shield is needed only in a `$group` slot; both cells use the one emitter anyway,
-so JSMQL states the rule once and the two slots cannot drift apart.
-
+A JavaScript aggregate in such a slot (`$.a.sum()`, `.first()`, `.sumBy(fn)`) is
+the compiler's own lowering, so HR3 applies to it: the cell must emit ONE operand.
 [test/compiler-accumulator-agrees.test.ts](../../test/compiler-accumulator-agrees.test.ts)
-runs each of these documents, emitted by the registry itself, on a live mongod, and
-checks that the shielded form answers exactly what the bare form answers wherever
-the bare form runs. A fix may not change an answer to buy a shape.
+compiles each of these spellings, and runs the result on a live mongod.
 
 ## A stream is a chain rooted in a context reference
 

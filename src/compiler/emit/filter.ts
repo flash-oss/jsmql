@@ -38,11 +38,10 @@ import { isNothing } from "./type.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import {
   isCallable,
+  isKnownName,
   operandPositionOf,
-  operandShapeOf,
   positionalKeysOf,
   productionForOperator,
-  onlyInsideOf,
   liftsToOf,
 } from "../rows.ts";
 
@@ -296,13 +295,6 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
       setKey(out, key, placed);
       continue;
     }
-    // `{ $and: true }` — in a query document a list operator takes a list. MEASURED:
-    // "$and argument must be an array", and "malformed mod, needs to be an array".
-    // An expression reads one operand instead: `{ $expr: { $add: "$x" } }` is valid,
-    // and `$expr`'s operand takes the value road below.
-    if (key.startsWith("$") && operandShapeOf(key) === "array" && e.value.type !== "ArrayLiteral") {
-      throw E.listOperand(key, e.value.pos);
-    }
     // A key whose row states a different position for its operand takes that
     // language instead of the query one — `$expr`'s operand is an expression.
     // `$near` and `$nearSphere` query only a `find()`. Inside an aggregation
@@ -355,8 +347,8 @@ function rawValue(e: Expr, env: Env): unknown {
   // compiler checks this HERE, and not on a raw document's keys, because a
   // document the developer TYPED is their own MQL and passes through — a query
   // operator newer than this build must still round-trip. This value is one
-  // the developer wrote as JavaScript.
-  if (isObj(value) && !Array.isArray(value)) {
+  // the developer wrote as JavaScript. A `$`-named call is the developer's own MQL.
+  if (e.type !== "OperatorCall" && isObj(value) && !Array.isArray(value)) {
     for (const key of Object.keys(value)) {
       if (key.startsWith("$") && !listedIn(key, "filter")) throw E.aggregationOperatorInQuery(key, e.pos);
     }
@@ -374,6 +366,10 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
   let name: string | undefined;
   let recv: Expr | null = null;
   let args: readonly Expr[];
+  // A `$`-named call is the developer's own MQL, and HR3 does not apply to it: a count
+  // or a shape that its query form does not take gives HR2's plain form, never a
+  // refusal. A JavaScript spelling keeps every check.
+  const escape = node.type === "OperatorCall";
   if (node.type === "BinaryExpr") {
     name = productionForOperator("BinaryExpr", node.op);
     args = [node.left, node.right];
@@ -384,13 +380,12 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
   } else if (node.type === "OperatorCall") {
     name = node.name;
     args = node.args.filter(isExpr);
-    const hosts = onlyInsideOf(name, "filter");
-    if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(name, hosts, node.pos);
     if (NEAR.has(name) && env.site.root !== "filter") throw E.nearInMatch(name, node.pos);
   } else return null;
   if (name === undefined) return null;
   const verdict = consult(name, "filter");
-  if (verdict.kind === "refused")
+  if (verdict.kind === "refused") {
+    if (node.type === "OperatorCall") return plainQuery(node, env);
     throw E.refusalFor(
       { kind: "refused", name, message: verdict.message, needsSubject: verdict.needsSubject },
       spelled(node, name),
@@ -399,24 +394,57 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
       node.pos,
       [],
     );
-  // A query-only operator applies to the top-level document. Inside an
-  // `$elemMatch` body the server refuses it ("can only be applied to the
-  // top-level document"), and it has no value form to fall back to.
-  if (!listedIn(name, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
+  }
+  // A query-only JavaScript spelling applies to the top-level document. Inside an
+  // `$elemMatch` body the server refuses it ("can only be applied to the top-level
+  // document"), and it has no value form that the compiler can use instead.
+  if (!escape && !listedIn(name, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
     throw E.queryOnlyInsideElement(name, node.pos);
   }
-  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return null;
+  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") {
+    return node.type === "OperatorCall" ? plainQuery(node, env) : null;
+  }
   const receiver: Receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
   const sel = select(verdict, receiver, shapeOf(args), args.length);
-  if (sel.kind === "wrongCount" || sel.kind === "rejectedCount" || sel.kind === "spreadRefused") {
+  if (sel.kind === "spreadRefused") throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, []);
+  if (sel.kind === "wrongCount" || sel.kind === "rejectedCount") {
+    if (node.type === "OperatorCall") return plainQuery(node, env);
     throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, []);
   }
-  if (sel.kind !== "rule") return null;
-  checkSlots(name, sel.rule.args, args);
-  const out = sel.rule.emit(
-    filterInputs(name, recv, args, positionalKeysOf(name), env, node, { lowerValue, lowerFilter, lowerNativeFilter }),
-  );
+  if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
+  if (!escape) checkSlots(name, sel.rule.args, args);
+  const inputs = filterInputs(name, recv, args, positionalKeysOf(name), env, node, {
+    lowerValue,
+    lowerFilter,
+    lowerNativeFilter,
+  });
+  let out: unknown;
+  try {
+    out = sel.rule.emit(inputs);
+  } catch (e) {
+    // The query form cannot take these arguments: the call stands as written.
+    if (node.type === "OperatorCall" && e instanceof E.QueryFormError) return plainQuery(node, env);
+    throw e;
+  }
   return (out as QueryDoc | null) ?? null;
+}
+
+/**
+ * HR2's plain form of a `$`-named call in a query. An operator with a value form
+ * takes the `$expr` road (null), where the value road gives its plain form. A
+ * query-only operator stands as written: `$exists(5)` is `{ $exists: 5 }`.
+ */
+function plainQuery(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): QueryDoc | null {
+  if (!isKnownName(node.name) || listedIn(node.name, "value")) return null;
+  const spread = node.args.find((a) => a.type === "SpreadElement");
+  if (spread !== undefined) {
+    throw E.refusalFor({ kind: "spreadRefused", name: node.name, sig: "…" }, node.name, "", "filter", spread.pos, []);
+  }
+  const args = node.args.filter(isExpr);
+  const inside = env.inside(node.name);
+  if (args.length === 0) return { [node.name]: {} };
+  if (args.length === 1) return { [node.name]: rawValue(args[0], inside) };
+  return { [node.name]: args.map((a) => rawValue(a, inside)) };
 }
 
 const spelled = (node: Expr, name: string): string =>

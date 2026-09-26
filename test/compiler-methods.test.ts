@@ -2540,7 +2540,6 @@ describe.skipIf(!up)("compiler/emit — .concat() adds each argument as JavaScri
  */
 const HINTS: readonly (readonly [string, string, string])[] = [
   ['$.s.split("")', "$.<field>", "$.s"],
-  ['$split($.s, "")', "$.<field>", "$.s"],
   ["[...$.s.trim()]", "<string>", "$.s.trim()"],
   ["$.s.trim().uniq()", "<string>", "$.s.trim()"],
 ];

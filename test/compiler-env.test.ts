@@ -92,7 +92,7 @@ describe("compiler/emit/env — a chain closes in one order", () => {
     expect(ref).toBe("$__jsmql.length");
     c.flush();
     c.emitted.push({ $set: { n: ref } });
-    c.terminal = { $out: "archive" };
+    c.terminal = { stage: { $out: "archive" }, spelled: "$$$.archive = …" };
     expect(c.close()).toEqual([
       { $match: { a: 1 } },
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },

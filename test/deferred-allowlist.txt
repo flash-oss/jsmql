@@ -34,11 +34,9 @@ docs/CLAUDE.md::"what did we decide against?"
 # Spec-section headers (categorical — their child bullets carry the tags)
 # -----------------------------------------------------------------------------
 docs/specs/union-stage.md::Out of scope — the explicit
-docs/specs/aggregation-stages.md::## Out of scope (future work)
 
 # -----------------------------------------------------------------------------
 # Doc wording that still names a shipped capability as future work. Drop each
 # entry as the wording is corrected.
 # -----------------------------------------------------------------------------
 docs/LANGUAGE.md::other richer body shapes are future work
-docs/specs/aggregation-stages.md::Will get its own spec when work begins

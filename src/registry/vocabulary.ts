@@ -687,13 +687,6 @@ export type Arity = {
    */
   nullRefused?: readonly number[];
   /**
-   * An explicit EMPTY operand list is valid — `$and([])` → `{ $and: [] }` (true),
-   * and `$concat([])` → "". This is a different fact from the positional count.
-   * `atLeast` still refuses `$and()` with no argument, because the developer wrote
-   * nothing. MEASURED per row: the server refuses `$divide([])` and `$ifNull([])`.
-   */
-  emptyList?: true;
-  /**
    * The literal type that EVERY operand must have, for a list operator.
    * `$multiply` takes numbers, and `$add` takes numbers or dates. The compiler
    * tests only a literal operand. So it refuses `$multiply($.a, "x")`, and it
@@ -1522,30 +1515,6 @@ export type On = Family | readonly Family[] | "any";
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * The rendering that every ACCUMULATOR slot shares: the output of `$group` and
- * `$setWindowFields.output`, both.
- *
- * It is ONE plain operand. It is never a list of one element, which every
- * accumulator refuses:
- *   {$group:{_id:null,r:{$push:["$a"]}}}  → "The $push accumulator is a unary operator"
- *   {$group:{_id:null,r:{$push:"$a"}}}    → accepted
- *
- * An operand that RENDERS as an array needs the shield, because a reader takes
- * `{acc: [ … ]}` there as an operand LIST. MEASURED for `$push([$.x, $.y])`, whose
- * one argument is an array literal:
- *   {$group:{_id:null,r:{$push:["$x","$y"]}}}                      refused, as above
- *   {$group:{_id:null,r:{$push:{$let:{vars:{},in:["$x","$y"]}}}}}   → [[1,2],[3,4]]
- * Only a $group slot NEEDS the shield. A window slot evaluates a bare array as an
- * expression, and answers the same [[1,2],[3,4]] without it. Both cells use this
- * one emitter, so the rule stays in one place and the two slots cannot drift
- * apart.
- */
-export const accumulated = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => {
-  const operand = input.value(input.args[0]);
-  return { [input.name]: Array.isArray(operand) ? { $let: { vars: {}, in: operand } } : operand };
-};
-
-/**
  * The rendering that every SINGLE-operand operator shares: `{ $op: <operand> }`,
  * with the operand as the developer wrote it. This is HR2. `$size([$.a])` is the
  * operand list of the developer, and it round-trips as `{ $size: ["$a"] }`, which
@@ -1553,6 +1522,12 @@ export const accumulated = (input: { name: string; args: readonly Expr[]; value:
  * lowering that hands an ARRAY LITERAL to such an operator (`[$.a, 2].length`)
  * adds the wrap itself, because there the array is the value and not a list. See
  * the `length` row.
+ *
+ * An accumulator slot (`$group`, `$setWindowFields.output`) renders the same way:
+ * `$push([$.x, $.y])` is `{ $push: ["$x", "$y"] }`, as its raw spelling is.
+ * MEASURED: the server refuses that operand list in a `$group` slot ("The $push
+ * accumulator is a unary operator"). The call is the developer's own MQL, so the
+ * server judges it.
  */
 export const single = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => ({
   [input.name]: input.value(input.args[0]),

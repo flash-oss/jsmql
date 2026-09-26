@@ -124,9 +124,10 @@ export class Chain {
   /**
    * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
    * rather than emitting it, so nothing can land after it, and the cleanup
-   * always precedes it.
+   * always precedes it. `spelled` is how the source wrote it — `$out`, or the
+   * sugar `$$$.<coll> = …` — so a message names what the developer wrote.
    */
-  terminal: Stage | null = null;
+  terminal: { readonly stage: Stage; readonly spelled: string } | null = null;
   /**
    * Where the stream's ELEMENT lives on its documents: `""` when the element IS
    * the document, or the unwound field's path after `.flatMap("items")` — a
@@ -249,7 +250,7 @@ export class Chain {
     this.flush();
     const out = [...this.emitted];
     if (this.dirty) out.push({ $unset: JSMQL_NS });
-    if (this.terminal !== null) out.push(this.terminal);
+    if (this.terminal !== null) out.push(this.terminal.stage);
     return out;
   }
 }

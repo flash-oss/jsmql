@@ -768,13 +768,6 @@ export function mutatorFormOf(name: string): MutatorForm | undefined {
   return (row(name) as { mutatorForm?: MutatorForm } | undefined)?.mutatorForm;
 }
 
-/** The operators this name is a FRAGMENT of at `position` — `$case` inside `$switch`, `$box` inside `$geoWithin` — or undefined when it stands on its own. */
-export function onlyInsideOf(name: string, position: Position): readonly string[] | undefined {
-  return (row(name) as { onlyInside?: Partial<Record<Position, readonly string[]>> } | undefined)?.onlyInside?.[
-    position
-  ];
-}
-
 // ── the vocabulary the globals generator reads ──────────────────────────────
 //
 // `scripts/generate-globals.mjs` types the ambient `$$` / `$$$` chains and the

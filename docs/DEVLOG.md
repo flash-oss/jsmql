@@ -10,6 +10,51 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat!: HR3 does not apply to the escape hatch
+
+HR3 now covers only the MQL that the compiler makes from JSMQL code. The developer
+decided this in the interview on the HR3 change. The MQL that you write yourself
+passes through as written: a `$op(…)` call, a `$stage(…)` call and a raw MQL
+document. The compiler checks no count, key, enum or literal type there, and the
+server judges the document. Each input below was refused before:
+
+```js
+$eq(1)                                                // → { $eq: 1 }
+$size([1, 2, 3])                                      // → { $size: [1, 2, 3] }
+$dateAdd({ startdate: $.t, unit: "day", amount: 1 })  // → { $dateAdd: { startdate: "$t", unit: "day", amount: 1 } }
+$group({ total: $sum($.amount) });                    // → [{ $group: { total: { $sum: "$amount" } } }]
+$limit(-5);                                           // → [{ $limit: -5 }]
+jsmql.expr("$sampleRate(0.1)")                        // → { $sampleRate: 0.1 }
+jsmql.update("$each([1])")                            // → { $each: [1] }
+$group({ _id: null, r: $push([$.x, $.y]) });          // → [{ $group: { _id: null, r: { $push: ["$x", "$y"] } } }]
+```
+
+The last line also changes a shape. The call put a `$let` shield around an
+array-literal operand in an accumulator slot, and its raw spelling did not. So the
+two spellings of one MQL document disagreed (HR2). The `accumulated` emitter is
+gone, and the call now renders through `single`. A call whose arguments do not fit
+the form of its row takes HR2's plain form (`plainOperator` in `lower.ts`,
+`plainQuery` in `filter.ts`, `plainStage` in `statement.ts`).
+
+Four things stay checked. The first is the place of each stage, your stages too.
+The second is `$near`, `$nearSphere` and `$where` in an aggregation `$match`. The
+third is JSMQL code inside a call: a JavaScript spread, a spread or a computed key
+in an object body, and an arrow. The fourth is the merge that the compiler makes in
+an update document: a field written twice, and two writes of one operator whose
+operand is not a document of fields (`$set(5); $set({ b: 2 })`). A statement after
+the `$out` sugar now names the sugar: "Nothing can follow '$$$.archive = …'". Three
+small fixes came with the change. The `$sampleRate` query cell no longer emits
+`undefined` for a rate that the compiler knows only at run time. The
+`jsmql.update` hint for an operator such as `>` no longer reads
+`$.<field> = >…`. `$$.$sort(…)` as a statement no longer checks its body. The
+`emptyList` field of `Arity` and the four `realistic.test.ts` examples of the
+removed stage checks are gone. `test/compiler-accumulator-agrees.test.ts` now runs
+the JavaScript accumulator spellings, which HR3 covers. The DEFERRED §B row
+"Checks on the escape hatch" records the decision. See
+[docs/LANG_RULES.md](LANG_RULES.md) (HR2, HR3).
+
+---
+
 ## 2026-09-26 — refactor: two lowering facts leave the check fields
 
 Two facts that a lowering reads sat inside fields that only a check should read.

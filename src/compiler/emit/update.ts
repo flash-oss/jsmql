@@ -12,18 +12,26 @@ import { staticKey } from "../passes/naming.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { setKey } from "../../registry/mql.ts";
+import { isPlainObject } from "../../bson.ts";
 import { childEnv } from "./inputs.ts";
 import { lowerValue } from "./lower.ts";
 
 type Update = Record<string, Record<string, unknown>>;
+
+/** A document of fields, which the merge reads path by path. */
+const isFields = (v: unknown): v is Record<string, unknown> => isPlainObject(v);
 
 /** The update document a program means. */
 export function lowerUpdate(program: Program, env: Env): QueryDoc {
   const stmts: readonly PipelineStmt[] = program.type === "Pipeline" ? program.stmts : [program as PipelineStmt];
   const scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
   const out: Update = {};
+  // An operand that is not a document of fields — `{ $foo: 1 }` — is the developer's own
+  // MQL. It stands as written, and HR3 does not apply to it.
+  const asWritten = new Map<string, unknown>();
   const claimed = new Map<string, string>();
   const put = (op: string, path: string, value: unknown, pos: number): void => {
+    if (asWritten.has(op)) throw E.updateOperatorTwice(op, pos);
     const held = claimed.get(path);
     if (held !== undefined) throw E.updateConflict(path, held, op, pos);
     claimed.set(path, op);
@@ -139,15 +147,21 @@ export function lowerUpdate(program: Program, env: Env): QueryDoc {
     }
     throw E.notAnUpdate(node.pos);
   }
-  if (Object.keys(out).length === 0) throw E.notAnUpdate((program as { pos: number }).pos);
-  return out;
+  const doc: Record<string, unknown> = { ...out };
+  for (const [op, operand] of asWritten) setKey(doc, op, operand);
+  if (Object.keys(doc).length === 0) throw E.notAnUpdate((program as { pos: number }).pos);
+  return doc;
 
   /** `{ $inc: { a: 1 } }` from a row's cell, merged path by path. */
   function merge(doc: unknown, pos: number): void {
     if (doc === null || typeof doc !== "object" || Array.isArray(doc)) throw E.notAnUpdate(pos);
     for (const [op, fields] of Object.entries(doc as Record<string, unknown>)) {
-      if (fields === null || typeof fields !== "object" || Array.isArray(fields)) throw E.updateNeedsFields(op, pos);
-      for (const [path, value] of Object.entries(fields as Record<string, unknown>)) put(op, path, value, pos);
+      if (!isFields(fields)) {
+        if (asWritten.has(op) || op in out) throw E.updateOperatorTwice(op, pos);
+        asWritten.set(op, fields);
+        continue;
+      }
+      for (const [path, value] of Object.entries(fields)) put(op, path, value, pos);
     }
   }
 }

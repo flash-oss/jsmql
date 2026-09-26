@@ -218,16 +218,25 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
     });
     expect(filter('$comment("c")')).toEqual({ $comment: "c" });
     expect(filter('$jsonSchema({ required: ["a"] })')).toEqual({ $jsonSchema: { required: ["a"] } });
-    // `$where` runs JavaScript on the server: the call form is refused with the JSMQL predicate; a raw document passes (HR1)
-    expect(() => filter('$where("this.n > 3")')).toThrow(/runs JavaScript on the server/);
+    // `$where` is your own MQL in both spellings (HR1, HR2), and a find() filter takes it.
+    expect(filter('$where("this.n > 3")')).toEqual({ $where: "this.n > 3" });
     expect(filter('{ $where: "this.n > 3" }')).toEqual({ $where: "this.n > 3" });
   });
 
-  it("refuses a non-field first argument, a run-time operand, and an element predicate with no query form", () => {
-    expect(() => filter("$exists(1)")).toThrow(/tests a field: its first argument is a field path/);
-    expect(() => filter("$all($.tags, $.other)")).toThrow(/must be a compile-time constant/);
+  it("takes HR2's plain form where the arguments do not fit the call form", () => {
+    // DELIBERATELY invalid: mongod says "unknown top level operator: $exists" (and $all, $box).
+    expect(filter("$exists(1)")).toEqual({ $exists: 1 });
+    expect(filter("$all($.tags, $.other)")).toEqual({ $all: ["$tags", "$other"] });
+    expect(filter("$box([[0, 0], [1, 1]])")).toEqual({
+      $box: [
+        [0, 0],
+        [1, 1],
+      ],
+    });
+  });
+
+  it("refuses an element predicate with no query form, because the arrow is JSMQL code", () => {
     expect(() => filter("$elemMatch($.items, x => x.q > $.min)")).toThrow(/query test of the element alone/);
-    expect(() => filter("$box([[0, 0], [1, 1]])")).toThrow(/\$geoWithin/);
   });
 });
 
@@ -319,14 +328,20 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
   });
 
-  it("lowers a query-only operator to its query form and refuses a non-constant", () => {
+  it("lowers a query-only operator to its query form, and passes the rest of your MQL through", () => {
     expect(filter("$.a === 1 && $sampleRate(0.5)")).toEqual({ a: 1, $sampleRate: 0.5 });
-    expect(() => filter("$sampleRate($.r)")).toThrow(/must be a compile-time constant/);
-    expect(() => filter("$sampleRate(2)")).toThrow(/from 0 to 1/);
-    expect(() => filter('$sampleRate("0.5")')).toThrow(/expects a number/);
-    expect(() => filter("$.items.some(i => $sampleRate(0.5))")).toThrow(/top-level document only/);
+    // DELIBERATELY invalid shapes. Each comment quotes mongod's answer.
+    // mongod: "argument to $sampleRate must be a numeric type"
+    expect(filter("$sampleRate($.r)")).toEqual({ $sampleRate: "$r" });
+    expect(filter('$sampleRate("0.5")')).toEqual({ $sampleRate: "0.5" });
+    // mongod: "numeric argument to $sampleRate must be in [0, 1]"
+    expect(filter("$sampleRate(2)")).toEqual({ $sampleRate: 2 });
+    // mongod: "$sampleRate can only be applied to the top-level document"
+    expect(filter("$.items.some(i => $sampleRate(0.5))")).toEqual({ items: { $elemMatch: { $sampleRate: 0.5 } } });
+    // `%` is JSMQL code, so the compiler owns its lowering and refuses a zero divisor.
     expect(() => filter("$.a % 0 === 1")).toThrow(/divide by zero/);
-    expect(() => filter("$divide($.a, 0) > 1")).toThrow(/divide by zero/);
+    // `$divide` is your own MQL. DELIBERATELY invalid: mongod says "can't $divide by zero".
+    expect(filter("$divide($.a, 0) > 1")).toEqual({ $expr: { $gt: [{ $divide: ["$a", 0] }, 1] } });
     expect(filter("$log10($.a) > 1")).toEqual({ $expr: { $gt: [{ $log10: "$a" }, 1] } });
   });
 
@@ -339,7 +354,8 @@ describe("compiler/emit/filter — methods and operators", () => {
     // a one-operand $op inside a raw document is the query operator, at any depth
     expect(filter("{ a: $not($gt(1)) }")).toEqual({ a: { $not: { $gt: 1 } } });
     expect(filter("{ a: $size(2) }")).toEqual({ a: { $size: 2 } });
-    expect(() => filter("({ $setUnion: $.x })")).toThrow(/operates on a list of operands/);
+    // DELIBERATELY invalid: mongod says "unknown top level operator: $setUnion".
+    expect(filter("({ $setUnion: $.x })")).toEqual({ $setUnion: "$x" });
   });
 
   it("drops a branch the fold settled, and keeps the rest as written", () => {

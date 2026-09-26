@@ -132,8 +132,14 @@ describe("literal pass-through — every $unwind spelling and its siblings", () 
     expect(jsmql(`$project({ x: $literal("$y") });`)).toEqual([{ $project: { x: { $literal: "$y" } } }]);
   });
 
-  it("a non-$ literal string is still rejected as a $replaceWith new-root", () => {
-    expect(() => jsmql(`$replaceWith("hello");`)).toThrow("'$replaceWith' expects a document, but got a string.");
+  it("a non-$ literal string passes through as a $replaceWith new-root, and `$ =` refuses it", () => {
+    // `$replaceWith` is your own MQL. DELIBERATELY invalid: mongod says "'replacement
+    // document'  must evaluate to an object, but resulting value was: "hello". …"
+    expect(jsmql(`$replaceWith("hello");`)).toEqual([{ $replaceWith: "hello" }]);
+    // `$ = …` is JSMQL code, so the compiler owns its lowering and refuses the string.
+    expect(() => jsmql(`$ = "hello";`)).toThrow(
+      "'$ = …' replaces the document, so the value has to BE a document — a string is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+    );
   });
 });
 

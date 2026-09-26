@@ -241,6 +241,20 @@ function checkCharSet(name: string, key: string, e: Expr, set: string): void {
 }
 
 /**
+ * A body of named keys — an object-form operator's, a stage's — is MQL syntax. A
+ * JavaScript spread or computed key there lowers to `$mergeObjects` or
+ * `$arrayToObject`, which the operator or the stage does not take as its body. That
+ * MQL is the compiler's own, so HR3 refuses it, inside the escape hatch too.
+ */
+export function checkBodyKeys(body: Expr): void {
+  if (body.type !== "ObjectLiteral") return;
+  for (const e of body.entries) {
+    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
+    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
+  }
+}
+
+/**
  * An object-shaped operator's body, in either call form: the keys it must have,
  * the keys it may not have (with a suggestion), and each key's enum, flag set
  * and type. `args` are the call's arguments; `keys` the row's positional order.

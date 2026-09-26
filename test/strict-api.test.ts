@@ -115,9 +115,16 @@ describe("jsmql.update() — the update document", () => {
   it("refuses a bare predicate", () => {
     expect(() => jsmql.update("$.age > 18")).toThrow(/An update document is made of writes/);
   });
-  it("refuses a fragment or a stage where an update operator belongs", () => {
-    expect(() => jsmql.update("$set({ x: 1 }); $sort({ x: 1 })")).toThrow(/'\$sort' is a fragment of '\$push'/);
-    expect(() => jsmql.update("$match($.x > 0)")).toThrow(/not valid in an update document/);
+  it("passes a fragment or a stage that you call through, and refuses what the compiler merges", () => {
+    // DELIBERATELY invalid: each call is your own MQL. mongod says "Unknown modifier: $sort. …"
+    expect(jsmql.update("$sort({ x: 1 })")).toEqual({ $sort: { x: 1 } });
+    expect(jsmql.update("$match({ x: 1 })")).toEqual({ $match: { x: 1 } });
+    // The compiler merges the statements into one document, so it refuses a field written twice.
+    expect(() => jsmql.update("$set({ x: 1 }); $sort({ x: 1 })")).toThrow(
+      "'x' is written twice in one update ('$set' and '$sort'). The server refuses this as a conflict. Write each field once.",
+    );
+    // `$.x > 0` is JSMQL code, and a document-form update takes constants only.
+    expect(() => jsmql.update("$match($.x > 0)")).toThrow(/^'>' is computed on the server/);
   });
   it("accepts the template-tag and arrow forms", () => {
     const bump = 5;

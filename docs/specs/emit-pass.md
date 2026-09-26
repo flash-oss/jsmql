@@ -147,19 +147,22 @@ answers first.
 
 ## Operand shapes and the checks
 
-A MongoDB operator's `shape` is applied at the call, not in the renderer:
+A MongoDB operator's `shape` is applied at the call, not in the renderer. A
+`$op(…)` call is the developer's own MQL, and HR3 does not apply to it. So the
+row's rule runs where the arguments fit it, and every other call takes HR2's
+plain form (`plainOperator` in `lower.ts`). The server judges the result:
 
 ```js
 $setUnion([$.a, $.b])   // → {$setUnion:["$a","$b"]}     one array literal IS the operand list (HR2)
-$eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex operator; counted by its elements
-$setUnion($.a)          // → {$setUnion:"$a"}               one operand, as the server reads it: the row's count takes one
-$divide(10)             // refused: the row's count takes two, and the server refuses one too
-$and([])                // → {$and:[]}                    an explicit empty list passes where the row states `emptyList`
-$divide([])             // refused: nothing was written, and `$divide` states no empty list
+$eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex operator
+$setUnion($.a)          // → {$setUnion:"$a"}               one operand, as the server reads it
+$divide(10)             // → {$divide:10}                 one operand, as written: the server refuses it
+$and([])                // → {$and:[]}                    an explicit empty list, as written
+$divide([])             // → {$divide:[]}                 an explicit empty list: the server refuses it
 $concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:[{$ifNull:["$a",[]]},[[1]]]}}  a list with a spread is one array-valued expression
 $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto the first positional key
-$size([$.a])            // → {$size:["$a"]}               a 1-operand operator: one element is the operand list as written
-$size([$.a, 2])         // refused: two operands — the array literal is the operand list, as in MQL
+$size([$.a])            // → {$size:["$a"]}               one element is the operand list as written
+$size([$.a, 2])         // → {$size:["$a",2]}             two operands, as written: the server refuses them
 $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       shape "verbatim": the operand is a value, never a list
 [$.a, 2].size()         // → 2                            an array LITERAL holds one element per entry (`sizeOf`)
 ```
@@ -170,8 +173,11 @@ carry the spelling of one variable encoder: `$let({ v_x: 1 }, (v_x) => v_x)` →
 (`ROOT`) becomes one it takes. The compiler never folds `Number(<constant>)`:
 `$toDouble("3")` is a double on the server, and a written `3` is an int.
 
-`check.ts` holds the literal-gated checks. Each one reads a `BodyRule` or
-`Arity` field the row states: required and closed keys (with a suggestion),
+`check.ts` holds the literal-gated checks for JSMQL code: a method, a global
+and a production. A `$op(…)` call and a `$stage(…)` call meet only the two
+refusals for a spread or a computed key inside an object body
+(`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check
+reads a `BodyRule` or `Arity` field the row states: required and closed keys (with a suggestion),
 enums, flag sets, key and slot types, `elementType` over every operand,
 `nullRefused` slots (a per-row fact: the server refuses `$size(null)`, but
 `$reverseArray(null)` answers null), `constant` slots and `constantKeys`, and
@@ -182,10 +188,9 @@ key required once another holds a given value), and `nested` bodies whose
 every value is checked (`eachValue`). A method row's `elements: "scalar"`
 refuses a receiver that provably holds arrays (a literal of literals,
 `.partition(…)`) before its rule runs. The checks never judge a slot that is a
-field path, an expression or a spread. The checks run on every rule — an
-operator's, a method's, a production's — and
-`test/registry-fields-read.test.ts` makes sure that every stated rule field
-has a reader.
+field path, an expression or a spread. The checks run on every rule of a
+method, a global and a production, and `test/registry-fields-read.test.ts`
+makes sure that every stated rule field has a reader.
 
 ## Truthiness
 
@@ -254,9 +259,9 @@ spells: the first argument is the field, and the rest is the operand. An
 operator that also has an expression form answers the clause when the field
 is a path and the operand a constant (a literal list or document of constants
 counts as one), and answers null otherwise, so `$gt($.a, $.b)` takes the
-expression road. A query-only operator must answer, so the compiler refuses by
-name a first argument that is not a field path, and an operand read at run
-time. The raw spelling keeps MongoDB's own reading — the compiler adds no
+expression road. A query-only operator whose arguments do not fit the clause
+takes HR2's plain form, because the call is the developer's own MQL:
+`$exists(1)` → `{"$exists":1}`, and the server refuses it. The raw spelling keeps MongoDB's own reading — the compiler adds no
 own-value clause — while an `$elemMatch` ARROW is a JavaScript spelling over
 the element and reads it as one. `$and` / `$or` / `$nor` list their
 predicates, each a filter of its own, as a call and as a key of a raw
@@ -266,10 +271,13 @@ is `{ $expr: <expression> }`. `$text`, `$comment`, `$where` and `$jsonSchema`
 take their literal.
 
 A FRAGMENT — `$box` inside `$geoWithin`, `$case` inside `$switch`, the row's
-`onlyInside` — is valid only as an argument of the operator it names. The
-Env's site records the operator whose arguments the compiler lowers now
-(`inside`); any other call boundary clears it. The compiler refuses by name a
-fragment met elsewhere, in both the filter and the value target. A literal
+`onlyInside` — has a meaning only as an argument of the operator it names. A
+fragment met elsewhere passes through, because the call is the developer's own
+MQL: `$box([[0, 0], [1, 1]])` → `{"$box":[[0,0],[1,1]]}`, and the server
+refuses it. The Env's site records the operator whose arguments the compiler
+lowers now (`inside`). An object, an entry and an array keep it, and every
+other node clears it. A regex literal reads it: under an operator it is a BSON
+regex, and in JavaScript code it is refused. A literal
 list or document of constants is a literal for the raw operators alone
 (`literalIn`). A JavaScript spelling reads it by reference — `$.tags === [1,
 2]` is never true in JavaScript — and takes the expression road, where `$eq`
@@ -328,12 +336,12 @@ A query cell is a row fact. The comparison productions carry
 `strictEqualityQuery` and its family (the type test, the presence test, the
 modulo test, the null test, a field against a constant — in that order), and
 `includes`/`startsWith`/`endsWith`/`match`/`some`/`inRange` carry theirs.
-`$sampleRate` states its one slot `constant`, a `number` in the range `[0,
-1]`. Each cell answers null where the operands are not a path and a constant,
-and null is the `FilterOut` contract for "wrap my value form". A row with no
-value form (a query-only operator) has nothing to wrap. So inside an
-`$elemMatch` boundary — where the server refuses it — the leaf throws a worded
-refusal before the cell runs. `FilterIn` hands a cell `pathOf` (a `.length()` call is
+`$sampleRate` reads its one slot through `literal`, and a rate read at run time
+takes HR2's plain form. Each cell answers null where the operands are not a
+path and a constant, and null is the `FilterOut` contract for "wrap my value
+form". A row with no value form (a query-only operator) has nothing to wrap.
+Inside an `$elemMatch` boundary the call is still the developer's own MQL, so
+it passes through there, and the server refuses it. `FilterIn` hands a cell `pathOf` (a `.length()` call is
 never a path segment; inside a `.some` callback the INNERMOST element is the
 root, and only its fields are paths — an outer callback's parameter read
 inside a nested one has no query form and takes the `$expr` road; the
@@ -459,15 +467,14 @@ The compiler asks which DOCUMENT the whole program becomes once, at the
 entry: a folded constant array (`[1,2].slice(2,2)` settles to `[]`) is a
 VALUE, and read as a program it would compile to no stages at all.
 
-The compiler checks a stage's BODY from the row's own facts, through the same
-two mechanisms an operator's arguments use: `args` for a body that is not an
-object (`slotType`, `constant`, `slotRange`), and `body` — a `BodyRule` — for
-one that is. The valuable half is `constant`: a slot the server reads before
-any document exists accepts a field path SILENTLY, and `$unionWith($.c)`
-unions a collection literally named `$c` rather than saying so. `fieldName`
-is the ArgType for a slot that NAMES a field to write, where a `$`-led string
-is the error rather than a run-time value — the one place the literal gate is
-bypassed, because the server refuses `{ $count: "$n" }`.
+A stage that the developer names — `$limit(…)`, a raw `{ $unwind: … }`
+document, a `$$.$sort(…)` link — is the developer's own MQL (HR2), and HR3
+does not apply to it. So the compiler checks no key, count or value of its
+body, and the server judges it: `$unionWith($.c)` → `[{"$unionWith":"$c"}]`
+unions a collection named `$c`. The body keeps two refusals, because a
+JavaScript spread or a computed key has no lowering there (`checkBodyKeys`).
+The place of the stage stays checked, by the table above. A JavaScript
+spelling that lowers to a stage keeps every check of its own row.
 
 ### The stream road
 
@@ -897,10 +904,13 @@ root), and names the pipeline form as the way to compute.
 | `$.tags.pop()` / `.shift()` | `$pop: 1` / `$pop: -1` |
 | `$inc({ n: 2 })`, `{ $inc: { n: 2 } }` | the row's `updateDoc` cell, as written |
 
-The compiler refuses a field written twice in one document, as the conflict
-the server would raise. The update operators' `updateDoc` cells pass their
-document through. The fragments (`$each`, `$slice`, `$sort`, `$position`) are
-valid only inside `$push` / `$addToSet`, which `onlyInside` enforces.
+The compiler merges the statements into one document, so it refuses a field
+written twice there, as the conflict the server raises. It also refuses two
+writes of one operator when one operand is not a document of fields, because
+the two cannot merge. An update operator that the developer calls is the
+developer's own MQL, and its operand passes through as written. So does a
+fragment outside its host: `$each([1])` → `{"$each":[1]}`, and the server
+answers "Unknown modifier: $each".
 
 ```
 $.n += 2; $.tags.push(3, 4); $.b = $.a; delete $.a;

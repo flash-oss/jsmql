@@ -101,7 +101,6 @@ import type {
   ViaFallback,
 } from "./vocabulary.ts";
 import {
-  accumulated,
   because,
   escapeForRegex,
   GROUP_SLOT,
@@ -1237,7 +1236,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number-or-date", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "number-or-date" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$add' is not valid in a $group output position — see its 'where'."),
@@ -1420,7 +1419,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "number" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$multiply' is not valid in a $group output position — see its 'where'."),
@@ -1568,7 +1567,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$bitAnd' is not valid in a $group output position — see its 'where'."),
@@ -1609,7 +1608,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$bitOr' is not valid in a $group output position — see its 'where'."),
@@ -1631,7 +1630,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$bitXor' is not valid in a $group output position — see its 'where'."),
@@ -2097,10 +2096,7 @@ export const NAMES = {
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$and' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$and' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported(
@@ -2119,10 +2115,7 @@ export const NAMES = {
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$or' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$or' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported(
@@ -2236,10 +2229,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$concat' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$concat' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported(
@@ -2782,12 +2772,9 @@ export const NAMES = {
     spreadAlternative: "use array spread ([...a, ...b]) or .concat()",
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$concatArrays' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $concatArrays(…);'",
     ),
@@ -2827,8 +2814,8 @@ export const NAMES = {
     shape: "single",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$first' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $first(…);'",
     ),
@@ -2930,8 +2917,8 @@ export const NAMES = {
     shape: "single",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$last' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $last(…);'",
     ),
@@ -3276,10 +3263,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setIntersection' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIntersection' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported(
@@ -3317,12 +3301,9 @@ export const NAMES = {
     where: ["value", "group", "window"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
-    },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$setUnion' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $setUnion(…);'",
     ),
@@ -3364,7 +3345,7 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1, elementType: "object" },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: unsupported("'$mergeObjects' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported(
       "'$mergeObjects' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $mergeObjects(…);'",
@@ -4492,11 +4473,11 @@ export const NAMES = {
     category: "miscellaneous",
     where: ["filter"],
     shape: "single",
-    // The server requires a constant here, and a query document holds values. The slot states
-    // `constant`, so the compiler refuses an expression before this cell runs.
+    // The server requires a constant here, and a query document holds values. A rate read
+    // at run time has no query form in this cell, so the call takes HR2's plain form.
     filter: {
       args: { sig: "rate", exact: 1, constant: [0], slotType: { 0: "number" }, slotRange: { 0: [0, 1] } },
-      emit: ({ name, args, constant }) => ({ [name]: constant(args[0])?.value }),
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
     },
     expr: unsupported(
       "$sampleRate is a query operator — it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'.",
@@ -4545,8 +4526,8 @@ export const NAMES = {
     expr: unsupported(
       "$addToSet is an accumulator operator — valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $addToSet(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$addToSet' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $addToSet(…);'",
     ),
@@ -4570,8 +4551,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$avg' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $avg(…);'",
     ),
@@ -4627,8 +4608,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$max' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $max(…);'",
     ),
@@ -4675,8 +4656,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$min' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $min(…);'",
     ),
@@ -4725,8 +4706,8 @@ export const NAMES = {
     expr: unsupported(
       "$push is an accumulator operator — valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $push(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$push' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $push(…);'",
     ),
@@ -4750,8 +4731,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$stdDevPop' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $stdDevPop(…);'",
     ),
@@ -4772,8 +4753,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$stdDevSamp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $stdDevSamp(…);'",
     ),
@@ -4796,8 +4777,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$sum' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $sum(…);'",
     ),
@@ -5116,7 +5097,7 @@ export const NAMES = {
       "$linearFill is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $linearFill(...) } }) to compute it per-document over a window.",
     ),
     group: unsupported("'$linearFill' is not valid in a $group output position — see its 'where'."),
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$linearFill' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $linearFill(…);'",
     ),
@@ -5139,7 +5120,7 @@ export const NAMES = {
       "$locf is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $locf(...) } }) to compute it per-document over a window.",
     ),
     group: unsupported("'$locf' is not valid in a $group output position — see its 'where'."),
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
     stream: unsupported(
       "'$locf' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $locf(…);'",
     ),
