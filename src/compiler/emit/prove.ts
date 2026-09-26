@@ -21,7 +21,6 @@ import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
 import {
   callbackParamsOf,
-  constructedFamilyOf,
   documentOf,
   familiesOf,
   isCallable,
@@ -200,12 +199,10 @@ export function familyOfKind(k: Known): FieldFamily | null {
   }
 }
 
-/** The receiver family a node names as SOURCE, before any kind: a namespace, a regex, a set — or null. */
-export function sourceFamily(node: Expr): FieldFamily | "regexp" | "set" | string | null {
+/** The receiver family a node names as SOURCE, before any kind: a namespace or a regex — or null. */
+export function sourceFamily(node: Expr): FieldFamily | "regexp" | string | null {
   if (node.type === "Ident" && NAMESPACES.has(node.name)) return node.name;
   if (node.type === "RegexLiteral") return "regexp";
-  if (node.type === "NewExpression" && node.callee.type === "Ident")
-    return constructedFamilyOf(node.callee.name) ?? null;
   return null;
 }
 
@@ -216,7 +213,7 @@ export const kindOf = (node: Expr, env: Env): Known => single(typeOf(node, env))
 export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(typeOf(node, env)));
 
 /** The receiver family a node has, for a row's per-family `returns`: a source family, else its kind's. */
-export function receiverFamilyOf(node: Expr, env: Env): FieldFamily | "regexp" | "set" | string | null {
+export function receiverFamilyOf(node: Expr, env: Env): FieldFamily | "regexp" | string | null {
   const src = sourceFamily(node);
   if (src !== null) return src;
   if (node.type === "StreamRef") return "stream";

@@ -116,6 +116,13 @@ const _histogram: Record<string, number> = nums.countBy();
 const _byValue: Record<string, number[]> = nums.groupBy();
 const _keyed: Record<string, number> = nums.keyBy();
 void [_sum, _chunks, _first, _byParity, _topNums, _histogram, _byValue, _keyed];
+// The set operations are array methods: an array of values, or a boolean for a relation.
+declare const more: number[];
+const _union: number[] = nums.union(more);
+const _common: number[] = nums.intersection(more).difference([0]);
+const _related: boolean = nums.isSubsetOf(more) && nums.isSupersetOf(more) && nums.isDisjointFrom(more);
+const _oneSide: number[] = nums.symmetricDifference(more).xor(more);
+void [_union, _common, _related, _oneSide];
 
 interface Order {
   total: number;
@@ -170,6 +177,8 @@ void [_month, _hours, _q, _sameDay, _reset, _iso, _bounded, _inYear, _epoch, _is
 nums.uniq().chunkz(2);
 // @ts-expect-error — an array method must not exist on a string result.
 label.capitalize().uniq();
+// @ts-expect-error — a set relation is a boolean, not an array.
+nums.isSubsetOf(more).uniq();
 // @ts-expect-error — a string method must not exist on a number result.
 price.clamp(0, 1).capitalize();
 // @ts-expect-error — a value method must not leak onto an object result.

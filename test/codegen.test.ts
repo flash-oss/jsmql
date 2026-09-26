@@ -2609,7 +2609,7 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
       $reduce: { input: { $ifNull: ["$a", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
   });
-  it("static-call families (Math./Object./Set./regex.) use the same formatter", () => {
+  it("static-call families (Math./Object./regex.) use the same formatter", () => {
     expect(() => jsmql.expr("Math.pow(2)")).toThrow("'Math.pow(base, exponent)' requires exactly 2 arguments, got 1");
     expect(() => jsmql.expr("Math.hypot()")).toThrow("'Math.hypot(...values)' requires at least 1 argument, got 0");
     expect(() => jsmql.expr("Math.random(1)")).toThrow("'Math.random()' takes no arguments, got 1");
@@ -5903,21 +5903,16 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
       "'chunk' argument 1 must be a number from 1 to Infinity. It got 0.",
     );
   });
-  it(".intersection is $setIntersection; .difference keeps duplicates, so it stays a $filter", () => {
-    // lodash documents `.intersection` as returning UNIQUE values. A `$filter` would
-    // keep duplicates from the receiver, matching neither lodash nor MongoDB, so
-    // `$setIntersection` is what holds the documented contract — only order differs.
+  it(".intersection and .difference are MongoDB's set operators: each value once", () => {
+    // A `$filter` would keep the receiver's duplicates. The set operators keep each value
+    // once, as a JavaScript Set does, and only the order differs.
     expect(jsmql.expr("$.a.intersection($.b)")).toEqual({
       $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
-    // `.difference` is NOT `$setDifference`: lodash keeps the receiver's duplicates, and
-    // dropping them would change the SET rather than the order.
+    // MEASURED: over { a: [3, 1, 3, 2, 1], b: [2, 4, 4] } this is [3, 1]; lodash's
+    // `_.difference` keeps the duplicates and gives [3, 1, 3, 1].
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
-      $filter: {
-        input: { $ifNull: ["$a", []] },
-        as: "jsmqlItem",
-        cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
-      },
+      $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
   });
   it(".keyBy(iteratee) → $arrayToObject (last wins, key stringified)", () => {
@@ -6637,10 +6632,10 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
     // .difference / .intersection / .union also have a plain-array form.
     expect(() => jsmql.expr("$.a.size().difference($.b)")).toThrow(
-      "'.difference()' is not available on a 'number' — it is defined on 'array', 'set', 'stream'.",
+      "'.difference()' is not available on a 'number' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql.expr("$.s.trim().union($.b)")).toThrow(
-      "'.union()' is not available on a 'string' — it is defined on 'array', 'set'.",
+      "'.union()' is not available on a 'string' — it is defined on 'array'.",
     );
     expect(() => jsmql.expr("$.s.trim().unzipWith((a, b) => a)")).toThrow(
       ".unzipWith(fn) isn't supported — its iteratee's argument count depends on the array's length at runtime. Write '.unzip().map(group => …)' instead, where 'group' is one unzipped column.",
@@ -6726,11 +6721,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       $reduce: { input: { $reverseArray: { $ifNull: ["$a", []] } }, initialValue: 0, in: "$$value" },
     });
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
-      $filter: {
-        input: { $ifNull: ["$a", []] },
-        as: "jsmqlItem",
-        cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
-      },
+      $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
     expect(jsmql.expr("$.a.intersection($.b)")).toEqual({
       $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
@@ -7777,51 +7768,47 @@ describe("iterator / void / locale DX shims", () => {
   });
 });
 
-describe("ES2025 Set methods", () => {
+describe("set operations on arrays", () => {
   it("intersection", () => {
-    expect(jsmql.expr("new Set($.a).intersection(new Set($.b))")).toEqual({
+    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({
       $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
   });
   it("union", () => {
-    expect(jsmql.expr("new Set($.a).union(new Set($.b))")).toEqual({
-      $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
-    });
+    expect(jsmql.expr("$.a.union($.b)")).toEqual({ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] });
   });
-  it("difference — a Set holds each value once, so the set operator answers", () => {
+  it("difference — each value once, as a Set holds it", () => {
     // MEASURED: { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a Set gives.
-    expect(jsmql.expr("new Set($.a).difference(new Set($.b))")).toEqual({
-      $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
-    });
-    // lodash keeps the receiver's duplicates, so an ARRAY receiver stays a filter.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
-      $filter: {
-        input: { $ifNull: ["$a", []] },
-        as: "jsmqlItem",
-        cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
-      },
+      $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
   });
   it("isSubsetOf", () => {
-    expect(jsmql.expr("new Set($.a).isSubsetOf(new Set($.b))")).toEqual({
+    expect(jsmql.expr("$.a.isSubsetOf($.b)")).toEqual({
       $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
   });
   it("isSupersetOf swaps args", () => {
-    expect(jsmql.expr("new Set($.a).isSupersetOf(new Set($.b))")).toEqual({
+    expect(jsmql.expr("$.a.isSupersetOf($.b)")).toEqual({
       $setIsSubset: [{ $ifNull: ["$b", []] }, { $ifNull: ["$a", []] }],
     });
   });
+  it("isDisjointFrom counts the intersection", () => {
+    expect(jsmql.expr("$.a.isDisjointFrom($.b)")).toEqual({
+      $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0],
+    });
+  });
   it("works with array literals", () => {
-    expect(jsmql.expr("new Set([1, 2, 3]).intersection(new Set([2, 3, 4]))")).toEqual({
+    expect(jsmql.expr("[1, 2, 3].intersection([2, 3, 4])")).toEqual({
       $setIntersection: [
         [1, 2, 3],
         [2, 3, 4],
       ],
     });
+    expect(jsmql.expr("[1, 2, 3].difference([2])")).toEqual({ $setDifference: [[1, 2, 3], [2]] });
   });
   it("symmetricDifference composes $setDifference of the union and the intersection", () => {
-    expect(jsmql.expr("new Set($.a).symmetricDifference(new Set($.b))")).toEqual({
+    expect(jsmql.expr("$.a.symmetricDifference($.b)")).toEqual({
       $let: {
         vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } },
         in: {
@@ -7830,9 +7817,12 @@ describe("ES2025 Set methods", () => {
       },
     });
   });
-  it("a plain array argument reads as a Set", () => {
-    expect(jsmql.expr("new Set($.a).intersection($.b)")).toEqual({
-      $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+  it("reads each relation through $expr in a Filter", () => {
+    expect(jsmql("$.a.isSubsetOf($.b)")).toEqual({
+      $expr: { $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] },
+    });
+    expect(jsmql("$.a.isDisjointFrom($.b)")).toEqual({
+      $expr: { $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0] },
     });
   });
 });
@@ -8487,10 +8477,28 @@ describe("error cases", () => {
 });
 
 describe("constructors — 'new' as JavaScript reads it, and the way forward", () => {
-  it("asks for 'new' where JavaScript requires it", () => {
-    // JavaScript: `Set([1])` throws "Constructor Set requires 'new'".
-    expect(() => jsmql.expr("Set([1, 2])")).toThrow("'Set(…)' needs 'new', as in JavaScript. Write 'new Set(…)'.");
-    expect(jsmql.expr("new Set([1, 2])")).toEqual([1, 2]);
+  it("refuses 'Set' in both spellings, and names the array methods", () => {
+    // MongoDB has no set type, so an array method does each set operation. The error
+    // stands at the node that names `Set`; a call without `new` stands at its `(`.
+    const set =
+      "'new Set(…)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'.";
+    const at = (pos: number) => ({ valid: false, errors: [{ message: set, pos, code: "CODEGEN_ERROR" }] });
+    expect(jsmql.validate("new Set($.a)")).toEqual(at(0));
+    expect(jsmql.validate("Set([1])")).toEqual(at(3));
+    expect(jsmql.validate("new Set($.a).union(new Set($.b))")).toEqual(at(0));
+    expect(jsmql.validate("$.shared = new Set($.a).intersection(new Set($.b)).size() > 0;")).toEqual(at(11));
+    expect(() => jsmql.expr("new Set([1, 2])")).toThrow(set);
+    expect(() => jsmql.update("$.x = new Set([1, 2])")).toThrow(set);
+    // Where an accumulator goes, the message names MongoDB's own operator.
+    expect(() => jsmql("$group({ _id: $.k, tags: new Set($.tag) });")).toThrow(
+      "'new Set(…)' is not an accumulator. Inside '$group', '$addToSet(<value>)' gathers the unique values.",
+    );
+    // The forms the messages name compile.
+    expect(jsmql.expr("$.a.uniq().size()")).toEqual({ $size: { $setUnion: { $ifNull: ["$a", []] } } });
+    expect(jsmql.update("$.x = [1, 2, 2].uniq()")).toEqual({ $set: { x: [1, 2] } });
+    expect(jsmql("$group({ _id: $.k, tags: $addToSet($.tag) });")).toEqual([
+      { $group: { _id: "$k", tags: { $addToSet: "$tag" } } },
+    ]);
   });
 
   it("names the call without 'new' for a function", () => {
@@ -8540,8 +8548,13 @@ describe("constructors — 'new' as JavaScript reads it, and the way forward", (
     expect(() => jsmql.expr("Mapp(1)")).toThrow(
       "Unknown function 'Mapp(...)'. Declare it first with `const Mapp = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Mapp(...)`; for a method, `receiver.Mapp(...)`.",
     );
-    // A constructor that requires 'new' is suggested with it.
-    expect(() => jsmql.expr("Sett([1])")).toThrow(/Did you mean 'new Set\(\.\.\.\)'\?/);
+    // A class that JSMQL refuses is never a suggestion.
+    expect(() => jsmql.expr("Sett([1])")).toThrow(
+      "Unknown function 'Sett(...)'. Declare it first with `const Sett = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Sett(...)`; for a method, `receiver.Sett(...)`.",
+    );
+    expect(() => jsmql.expr("new Sett([1])")).toThrow(
+      "Unknown class 'Sett' in 'new Sett(…)'. MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.",
+    );
   });
 });
 
@@ -10953,9 +10966,8 @@ describe("trailing commas (JS syntax)", () => {
     });
   });
 
-  it("new Date / new Set args", () => {
+  it("new Date args", () => {
     expect(jsmql.expr("new Date(2020, 1, 1,)")).toEqual(new Date("2020-02-01T00:00:00.000Z"));
-    expect(jsmql.expr("new Set([1, 2],)")).toEqual([1, 2]);
   });
 
   it("Date.UTC args", () => {
@@ -11254,23 +11266,6 @@ describe("internal expression-variable names never capture a user param", () => 
             $let: {
               vars: { jsmqlArr2: { $ifNull: ["$$jsmqlArr.l", []] } },
               in: { $slice: ["$$jsmqlArr2", "$$jsmqlArr.n", { $max: [1, { $size: "$$jsmqlArr2" }] }] },
-            },
-          },
-        },
-      },
-    ],
-    [
-      "$.r.map(jsmqlItem => jsmqlItem.l.difference(jsmqlItem.o))",
-      "jsmqlItem",
-      {
-        $map: {
-          input: { $ifNull: ["$r", []] },
-          as: "jsmqlItem",
-          in: {
-            $filter: {
-              input: { $ifNull: ["$$jsmqlItem.l", []] },
-              as: "jsmqlItem2",
-              cond: { $not: [{ $in: ["$$jsmqlItem2", { $ifNull: ["$$jsmqlItem.o", []] }] }] },
             },
           },
         },

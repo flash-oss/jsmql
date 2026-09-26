@@ -216,23 +216,14 @@ export function foldNamespaceConstant(namespace: string, name: string): Evaluati
 }
 
 /**
- * `new X(…)` with constant arguments.
- *
- * `new Set([…])` answers with the ARRAY, unchanged and un-deduplicated, because
- * that is what the language does — measured: `new Set([1,2,2,3])` reads back as
- * `[1,2,2,3]` from the server. jsmql has no set type; the constructor is a way
- * of writing an array that the set operators then read.
+ * `new X(…)` with constant arguments: a date, or a BSON value. Any other class is
+ * not a constant, so its row answers: `new Set([1])` reaches the refusal of its row.
  */
 export function foldConstructor(name: string, args: readonly Arg[]): Evaluation {
   const values = args.map(valueOf);
   switch (canonicalBsonName(name)) {
     case "Date":
       return foldNewDate(values);
-    case "Set": {
-      const [a] = values;
-      if (args.length === 0) return ok([]);
-      return Array.isArray(a) ? ok(a) : NO;
-    }
     default:
       return bsonValue(name, args.length, values);
   }

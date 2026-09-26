@@ -10,301 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-09-26 — fix: a regex keeps its dotAll flag, and a JavaScript `g` stays out of it
+## 2026-09-26 — docs: `Date(…)` without `new` is a date, and `.map(Date)` converts
 
-The driver writes a JavaScript RegExp through `bson`'s `serializeRegExp`, and that
-writes only `i`, `m`, and the `global` flag as `s`. So two regexes that the compiler
-built from a regex literal gave the wrong answer on the server. MEASURED over
-`"a\nb"` and `"axb"`:
+LANGUAGE.md § Bare built-in callbacks said that JSMQL refuses a bare `Date`,
+because `Date` without `new` returns a string. The compiler has not done that
+since the BSON-constructor rule ("`X(…)` and `new X(…)`" below): `Date(…)` means
+`new Date(…)`, as `ObjectId(…)` does. The developer confirmed the rule: `Date()`
+in JSMQL is a date, not a string.
 
-```js
-jsmql("$.s.match(/a.b/s)")   // → { s: { $regex: /a.b/s } }: dotAll never arrived, and "a\nb" did not match
-jsmql("$.s.match(/a.b/g)")   // → { s: { $regex: /a.b/g } }: `g` arrived as dotAll, and "a\nb" matched
+```
+Date()               → "$$NOW"
+Date($.s)            → { $toDate: "$s" }
+$.stamps.map(Date)   → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
 ```
 
-JavaScript answers the opposite in both cases. `regexValue` in
-[src/bson.ts](../src/bson.ts) now builds each such regex from MongoDB's options
-(`mongoRegexOptions`), and a regex whose options hold `s` is a `BSONRegExp`, which
-carries its options as written: `{ s: { $regex: new BSONRegExp("a.b", "s") } }`.
-Every other regex stays a JavaScript RegExp. This covers a regex literal in MQL
-that you write, the `.match()` query cell, and the `literal` service of a query
-cell. A regex that the caller passes at run time stays as the caller wrote it.
-[test/compiler-bson.test.ts](../test/compiler-bson.test.ts) holds the answers
-against JavaScript's own on a live mongod.
-
----
-
-## 2026-09-26 — fix: a JavaScript aggregate on an array literal runs in a `$group` slot
-
-A JavaScript aggregate in an accumulator slot gave MQL that the server refuses, when
-its receiver was an array literal:
-
-```js
-$group({ _id: null, r: [$.n, $.m].sum() });   // → { r: { $sum: [["$n", "$m"]] } }
-// mongod: "The $sum accumulator is a unary operator"; a window slot answered 0
-```
-
-The receiver held one array on each document, and the cell wrapped it one level
-deeper, as the value road does for `$size`. An accumulator slot reads any array as
-an operand list. Now the aggregate reduces the array on each document first, as
-`.sumBy(fn)` does, and the slot accumulates the result:
-`[$.n, $.m].sum()` → `{ $sum: { $sum: ["$n", "$m"] } }`. MEASURED over
-`{ n: 1, m: 2 }` and `{ n: 3, m: 4 }`: `.sum()` 10, `.mean()` 2.5, `.max()` 4,
-`.min()` 1, `.first()` 1, `.last()` 4, in both slots. A field receiver keeps its
-shape (`$.a.sum()` → `{ $sum: "$a" }`). The helper is `slotAggregate` in
-[src/registry/mql.ts](../src/registry/mql.ts), and
-[test/compiler-accumulator-agrees.test.ts](../test/compiler-accumulator-agrees.test.ts)
-runs the array-literal receiver for every cell.
-
----
-
-## 2026-09-26 — refactor: drop the check facts that only the escape hatch read
-
-A `$op(…)` or `$stage(…)` call meets no check (HR3 does not apply to it), so the
-facts that only its checks read had no reader. They are gone from the `mongo` rows:
-
-- the body rule of each stage (`body`) and its example call (`bodyExample`);
-- the object rule inside an operator's `shape`, which is now the word `"object"` —
-  `keys` orders the positional form;
-- the check fields of each `args`: `slotType`, `constant`, `slotRange`,
-  `nonZero`, `nonEmpty`, `arrayOf`, and the two that only `$op` rows stated,
-  `elementType` and `nullRefused`.
-
-Fourteen `BodyRule` fields that only a stage or an operator body stated left the
-type with their readers in [src/compiler/emit/check.ts](../src/compiler/emit/check.ts),
-for example `maxSortKeys`, `onePolarity` and `requiresWhen`. The rest stays for the
-options document of a JavaScript method (`args.body`). `StageFacts` now pairs
-`bodyPositions` with `document` and `evaluates`, because a layout is what makes a
-row a stage (`isStageName`). One `$op` row keeps its rule: `$documents`, because
-the `$$ = [ … ]` and `$$$.<coll>.push(…)` sugars check each written element through
-it. The `takesLet` audit reads the vendored stage spec now, and the returns audit
-builds each object call from it. No output changes.
-
----
-
-## 2026-09-26 — refactor: a `$op` row states no refusal
-
-A `$op(…)` call is the developer's own MQL, and it takes HR2's plain form wherever
-its row states no rule (HR3 does not apply to it). So the 1329 `unsupported(…)`
-cells on the `mongo` rows stated messages that nobody saw. They are gone, and
-[src/registry/names.ts](../src/registry/names.ts) is about 2600 lines shorter.
-
-The types hold the new rule. A `$op` row must state the rule of each position that
-its `where` lists (`ListedCells`), and a position that `where` omits states no cell,
-except the filter's `viaFallback`. [test/types/registry-contracts.ts](../test/types/registry-contracts.ts)
-holds a pair for each half.
-
-One refusal read a stage row's text: a stage called on a value,
-`$.items.$match({ a: 1 })`. That call is JSMQL code with no MQL, so it stays
-refused, and a stage-row fact, `valueTwin`, names the operator that does the same
-job on a value: "… For the value form, use '$filter(…)'." Ten stage rows state it,
-and [test/registry-agrees.test.ts](../test/registry-agrees.test.ts) holds each one
-against a row with a value form. No output changes.
-
----
-
-## 2026-09-26 — feat: the TypeScript globals never refuse a `$` call
-
-A `$op(…)` or `$stage(…)` call is the developer's own MQL, and the compiler takes it
-with any arguments. The generated globals still refused three such calls:
-
-```ts
-$trim(x, " ");        // TS2554 "Expected 1 arguments, but got 2" — the positional form
-$unwind("$items");    // TS2345 — a string is not the object form
-$size(1, 2);          // TS2554 — a count that the server refuses
-```
-
-The developer decided, in the interview on the HR3 change, to keep each documented
-signature and to add one catch-all overload, `(...args: any[]): any`, after it
-([scripts/generate-globals.mjs](../scripts/generate-globals.mjs)). The catch-all
-alone lost the key completion: TypeScript completes the keys from the overload that
-the call matches, and an incomplete object literal matched only the catch-all.
-MEASURED with the TypeScript language service: `$trim({ | })` completed global names.
-So every key of a documented object signature is now optional, and the doc of a key
-that the server requires starts with "Required.". `$trim({ | })` completes `input`
-and `chars` again. [test/types/globals-completion.ts](../test/types/globals-completion.ts)
-holds the three calls above.
-
----
-
-## 2026-09-26 — feat!: an unknown `$name` passes through, and a bracketed literal is a pipeline
-
-The developer decided, in the interview on the HR3 change, that an unknown `$name`
-passes through in every position, with no "Did you mean" suggestion. The position
-gives the name its role. Each input below was refused before:
-
-```js
-$mtach($.a > 1);                       // → [{ $mtach: { $gt: ["$a", 1] } }]
-[{ $macth: $.age > 18 }]               // → [{ $macth: { $gt: ["$age", 18] } }]
-$$.$prject({ a: 1 });                  // → [{ $prject: { a: 1 } }]
-$.t = $$$.orders.$sortt({ a: 1 });     // → [{ $lookup: { from: "orders", pipeline: [{ $sortt: { a: 1 } }], as: "t" } }]
-```
-
-A suggestion refuses each new MongoDB name that is near a known one, and many real
-names are near each other (`$gt` and `$gte`). A JavaScript name keeps its
-suggestion, because JSMQL owns that closed set: `$$.filterr(…)` names `.filter()`.
-The value-position check that refused a list of stages (`refuseStageList`) is gone
-with it. It was a near-miss check for a `$name`, and a stage in a value is a wrong
-role, which passes through.
-
-In a filter, a `$op(…)` call that stands as the predicate keeps MongoDB's own
-truthiness, known or unknown: `$foo($.a)` → `{ $expr: { $foo: "$a" } }`, and
-`$ifNull($.a, 0)` loses its JavaScript chain. MEASURED: `{ $expr: "$s" }` reads ""
-and [] as true. Under `&&`, `||` and `!`, and in a lambda body, the JavaScript
-spelling reads the call, so the JavaScript chain stays there (`jsRead` in
-`filter.ts`). This is the split by spelling of the 2026-09-04 truthiness ruling.
-
-A top-level bracketed literal is a pipeline, whatever it holds, as a raw MQL
-pipeline is. `jsmql("[]")` and `jsmql.pipeline("[]")` give `[]`, and
-`jsmql("[1, 2, 3]")` refuses element 0, where it gave `{ $expr: true }` before.
-`jsmql.filter("[1, 2]")` names the pipeline entry. `jsmql.expr` still reads a
-list as an array value, and refuses a stage list (`isStageList` in
-[src/compiler/passes/shape.ts](../src/compiler/passes/shape.ts)). A raw stage
-document with two keys gives its own refusal again. The DEFERRED §B row "A "Did
-you mean" refusal for an unknown `$name`" records the decision.
-
----
-
-## 2026-09-26 — feat!: HR3 does not apply to the escape hatch
-
-HR3 now covers only the MQL that the compiler makes from JSMQL code. The developer
-decided this in the interview on the HR3 change. The MQL that you write yourself
-passes through as written: a `$op(…)` call, a `$stage(…)` call and a raw MQL
-document. The compiler checks no count, key, enum or literal type there, and the
-server judges the document. Each input below was refused before:
-
-```js
-$eq(1)                                                // → { $eq: 1 }
-$size([1, 2, 3])                                      // → { $size: [1, 2, 3] }
-$dateAdd({ startdate: $.t, unit: "day", amount: 1 })  // → { $dateAdd: { startdate: "$t", unit: "day", amount: 1 } }
-$group({ total: $sum($.amount) });                    // → [{ $group: { total: { $sum: "$amount" } } }]
-$limit(-5);                                           // → [{ $limit: -5 }]
-jsmql.expr("$sampleRate(0.1)")                        // → { $sampleRate: 0.1 }
-jsmql.update("$each([1])")                            // → { $each: [1] }
-$group({ _id: null, r: $push([$.x, $.y]) });          // → [{ $group: { _id: null, r: { $push: ["$x", "$y"] } } }]
-```
-
-The last line also changes a shape. The call put a `$let` shield around an
-array-literal operand in an accumulator slot, and its raw spelling did not. So the
-two spellings of one MQL document disagreed (HR2). The `accumulated` emitter is
-gone, and the call now renders through `single`. A call whose arguments do not fit
-the form of its row takes HR2's plain form (`plainOperator` in `lower.ts`,
-`plainQuery` in `filter.ts`, `plainStage` in `statement.ts`).
-
-Four things stay checked. The first is the place of each stage, your stages too.
-The second is `$near`, `$nearSphere` and `$where` in an aggregation `$match`. The
-third is JSMQL code inside a call: a JavaScript spread, a spread or a computed key
-in an object body, and an arrow. The fourth is the merge that the compiler makes in
-an update document: a field written twice, and two writes of one operator whose
-operand is not a document of fields (`$set(5); $set({ b: 2 })`). A statement after
-the `$out` sugar now names the sugar: "Nothing can follow '$$$.archive = …'". Three
-small fixes came with the change. The `$sampleRate` query cell no longer emits
-`undefined` for a rate that the compiler knows only at run time. The
-`jsmql.update` hint for an operator such as `>` no longer reads
-`$.<field> = >…`. `$$.$sort(…)` as a statement no longer checks its body. The
-`emptyList` field of `Arity` and the four `realistic.test.ts` examples of the
-removed stage checks are gone. `test/compiler-accumulator-agrees.test.ts` now runs
-the JavaScript accumulator spellings, which HR3 covers. The DEFERRED §B row
-"Checks on the escape hatch" records the decision. See
-[docs/LANG_RULES.md](LANG_RULES.md) (HR2, HR3).
-
----
-
-## 2026-09-26 — refactor: two lowering facts leave the check fields
-
-Two facts that a lowering reads sat inside fields that only a check should read.
-The key order of the positional form of an object-form operator
-(`$trim($.name, " ")` → `{ $trim: { input: "$name", chars: " " } }`) was
-`BodyRule.positional`, inside the operator's `shape`. Whether a stage's body takes
-a `let` was a search for `"let"` in the body rule's key lists. The HR3 change
-removes the escape hatch's checks, and these two facts must stay. So each one is
-now a field of its own on the row: `keys` on the 50 object-form operators, and
-`takesLet` on `$lookup` and `$merge`
-([src/registry/names.ts](../src/registry/names.ts)). `BodyRule.positional` is gone.
-[test/registry-agrees.test.ts](../test/registry-agrees.test.ts) holds each fact on
-the rows that it describes. No output changes.
-
----
-
-## 2026-09-26 — fix: a regex literal in your MQL passes through
-
-HR1 says that a RegExp passes unchanged, but the compiler refused every regex
-literal outside the regex methods:
-
-```js
-{ s: /x/ }                                  // ✗ "Regex literals are only valid as arguments to .match(), …"
-{ tag: { $in: [/^a/, /^b/] } }              // ✗ the same message
-$regexMatch({ input: $.s, regex: /x/ })     // ✗ the same message
-```
-
-MEASURED on mongod, all three run and give the expected answer. The developer
-decided, in the interview on the HR3 change, that a regex literal in MQL that
-the developer writes is a BSON regex. This covers a query document, an argument of
-a `$`-named call, and a value under a `$` key. JavaScript code keeps the refusal
-(`$.a === /x/`, `$.a = /x/`). The regex keeps the options that MongoDB knows
-(`mongoRegexOptions`), as the regex methods do.
-
-`Site.inside` carries the answer. It stays set through a document, a list and a
-`$` key, and a JavaScript node now resets it, because that node lowers to MQL of its
-own. So `$match($.s === /^a/)` stays refused: the regex is an operand of `===`, not
-of `$match`. The refusal message now names both spellings. See
-[src/compiler/emit/lower.ts](../src/compiler/emit/lower.ts),
-[src/compiler/emit/filter.ts](../src/compiler/emit/filter.ts) and
-[src/compiler/emit/inputs.ts](../src/compiler/emit/inputs.ts).
-
----
-
-## 2026-09-26 — fix: a run-time value that reads as MQL goes only into an expression or a comparison
-
-A `${…}` value or a `jsmql.compile` parameter that reads as MQL — a string that
-starts with `$`, a document with a `$` key — is a value, never MQL (HR1). The
-compiler put such a value in `$literal` wherever the site was a value, and it put
-it as written everywhere else. Both halves went wrong in a stage body:
-
-```js
-jsmql`$group({ _id: null, t: ${{ $sum: "$secret" }} });`   // → { t: { $sum: "$secret" } }: the caller's document became an accumulator
-jsmql`$unwind(${"$items"});`                               // → { $unwind: { $literal: "$items" } }: the server refuses it
-jsmql`$unwind({ path: ${"$items"} });`                     // crash: "spec.path?.startsWith is not a function"
-jsmql`$match(${{ a: { $gt: 1 } }});`                       // → the truthiness of a $literal: every document matched
-jsmql`$set(${{ a: "$b" }});`                               // ✗ "must be a compile-time constant" (false)
-```
-
-The developer decided, in the interview on the HR3 change, that such a value goes
-only into an expression (inside `$literal`) or into a comparison (as the value),
-and that every other slot refuses it with the spelling to write in the source. The
-update document keeps its old answer, because it stores the value and evaluates
-nothing. A new stage-row fact, `evaluates`, names the body paths that the server
-evaluates. MEASURED: each path takes `{ $literal: … }`, and each other slot refuses
-it. The position pass marks a leaf that no path covers as `written`, and
-`injectedPlacement` in [src/compiler/emit/env.ts](../src/compiler/emit/env.ts)
-reads the mark. The query road applies the same rule in `injectedInQuery`
-([src/compiler/emit/filter.ts](../src/compiler/emit/filter.ts)): a field compares
-the value with `$eq`, and a comparison operator (a row with `liftsTo`) takes it as
-written. `$and`, `$not`, `$elemMatch` and a whole predicate refuse it.
-
-Two messages told a `jsmql.compile` user to use `jsmql.compile`: a collection name
-from a parameter that starts with `$`, and one that is not a string. Each now names
-the real problem. Both forms give one answer, because they share the `inject` pass.
-[test/security.test.ts](../test/security.test.ts) runs each case in both forms.
-
----
-
-## 2026-09-26 — fix: `Object.fromEntries` reads the pairs that you wrote
-
-`Object.fromEntries([["a", 1], ["b", $.x]])` gave the wrong document. On
-`{ x: 7 }` the server answered `{ '["a",1]': ["b", 7] }`, and JavaScript
-answers `{ a: 1, b: 7 }`. The `Object` cell of the `fromEntries` row in
-[src/registry/names.ts](../src/registry/names.ts) wrapped the list with
-`singleArrayArg`. That helper adds one array level for an operator's operand
-slot, where the server reads a literal array as the argument list. But the list
-goes into `$map.input`, which is an expression slot, and there a literal array
-is the array itself. So `$map` saw one element, the whole list.
-
-The cell now gives the list to `pairsToObject` as it is. A list from a field
-(`Object.fromEntries($.pairs)`) did not change, because the helper does not
-change a value that is not an array. [test/compiler-methods.test.ts](../test/compiler-methods.test.ts)
-compares two written lists with JavaScript's answer on mongod, one of them with
-a number key.
+The paragraph now flags the difference from JavaScript, the bare-callback list
+names `Date`, and the date section shows both spellings. No behaviour changes.
 
 ---
 
@@ -397,6 +118,30 @@ with `$range: [0, 2]`.
 
 ---
 
+## 2026-09-26 — feat: the TypeScript globals never refuse a `$` call
+
+A `$op(…)` or `$stage(…)` call is the developer's own MQL, and the compiler takes it
+with any arguments. The generated globals still refused three such calls:
+
+```ts
+$trim(x, " ");        // TS2554 "Expected 1 arguments, but got 2" — the positional form
+$unwind("$items");    // TS2345 — a string is not the object form
+$size(1, 2);          // TS2554 — a count that the server refuses
+```
+
+The developer decided, in the interview on the HR3 change, to keep each documented
+signature and to add one catch-all overload, `(...args: any[]): any`, after it
+([scripts/generate-globals.mjs](../scripts/generate-globals.mjs)). The catch-all
+alone lost the key completion: TypeScript completes the keys from the overload that
+the call matches, and an incomplete object literal matched only the catch-all.
+MEASURED with the TypeScript language service: `$trim({ | })` completed global names.
+So every key of a documented object signature is now optional, and the doc of a key
+that the server requires starts with "Required.". `$trim({ | })` completes `input`
+and `chars` again. [test/types/globals-completion.ts](../test/types/globals-completion.ts)
+holds the three calls above.
+
+---
+
 ## 2026-09-26 — feat!: `in` takes a list on its right, and the key test goes
 
 `in` had two meanings: with a list on the right it was MongoDB's `$in`, and
@@ -464,6 +209,158 @@ was incidental use the statement spelling and keep their MQL. Docs:
 `LANGUAGE.md` (trailing commas, sequencing, block bodies, local bindings),
 `specs/grammar.md`, `specs/let-bindings.md`, `specs/reusable-functions.md`,
 `specs/update-filter.md`.
+
+---
+
+## 2026-09-26 — feat!: an unknown `$name` passes through, and a bracketed literal is a pipeline
+
+The developer decided, in the interview on the HR3 change, that an unknown `$name`
+passes through in every position, with no "Did you mean" suggestion. The position
+gives the name its role. Each input below was refused before:
+
+```js
+$mtach($.a > 1);                       // → [{ $mtach: { $gt: ["$a", 1] } }]
+[{ $macth: $.age > 18 }]               // → [{ $macth: { $gt: ["$age", 18] } }]
+$$.$prject({ a: 1 });                  // → [{ $prject: { a: 1 } }]
+$.t = $$$.orders.$sortt({ a: 1 });     // → [{ $lookup: { from: "orders", pipeline: [{ $sortt: { a: 1 } }], as: "t" } }]
+```
+
+A suggestion refuses each new MongoDB name that is near a known one, and many real
+names are near each other (`$gt` and `$gte`). A JavaScript name keeps its
+suggestion, because JSMQL owns that closed set: `$$.filterr(…)` names `.filter()`.
+The value-position check that refused a list of stages (`refuseStageList`) is gone
+with it. It was a near-miss check for a `$name`, and a stage in a value is a wrong
+role, which passes through.
+
+In a filter, a `$op(…)` call that stands as the predicate keeps MongoDB's own
+truthiness, known or unknown: `$foo($.a)` → `{ $expr: { $foo: "$a" } }`, and
+`$ifNull($.a, 0)` loses its JavaScript chain. MEASURED: `{ $expr: "$s" }` reads ""
+and [] as true. Under `&&`, `||` and `!`, and in a lambda body, the JavaScript
+spelling reads the call, so the JavaScript chain stays there (`jsRead` in
+`filter.ts`). This is the split by spelling of the 2026-09-04 truthiness ruling.
+
+A top-level bracketed literal is a pipeline, whatever it holds, as a raw MQL
+pipeline is. `jsmql("[]")` and `jsmql.pipeline("[]")` give `[]`, and
+`jsmql("[1, 2, 3]")` refuses element 0, where it gave `{ $expr: true }` before.
+`jsmql.filter("[1, 2]")` names the pipeline entry. `jsmql.expr` still reads a
+list as an array value, and refuses a stage list (`isStageList` in
+[src/compiler/passes/shape.ts](../src/compiler/passes/shape.ts)). A raw stage
+document with two keys gives its own refusal again. The DEFERRED §B row "A "Did
+you mean" refusal for an unknown `$name`" records the decision.
+
+---
+
+## 2026-09-26 — feat!: HR3 does not apply to the escape hatch
+
+HR3 now covers only the MQL that the compiler makes from JSMQL code. The developer
+decided this in the interview on the HR3 change. The MQL that you write yourself
+passes through as written: a `$op(…)` call, a `$stage(…)` call and a raw MQL
+document. The compiler checks no count, key, enum or literal type there, and the
+server judges the document. Each input below was refused before:
+
+```js
+$eq(1)                                                // → { $eq: 1 }
+$size([1, 2, 3])                                      // → { $size: [1, 2, 3] }
+$dateAdd({ startdate: $.t, unit: "day", amount: 1 })  // → { $dateAdd: { startdate: "$t", unit: "day", amount: 1 } }
+$group({ total: $sum($.amount) });                    // → [{ $group: { total: { $sum: "$amount" } } }]
+$limit(-5);                                           // → [{ $limit: -5 }]
+jsmql.expr("$sampleRate(0.1)")                        // → { $sampleRate: 0.1 }
+jsmql.update("$each([1])")                            // → { $each: [1] }
+$group({ _id: null, r: $push([$.x, $.y]) });          // → [{ $group: { _id: null, r: { $push: ["$x", "$y"] } } }]
+```
+
+The last line also changes a shape. The call put a `$let` shield around an
+array-literal operand in an accumulator slot, and its raw spelling did not. So the
+two spellings of one MQL document disagreed (HR2). The `accumulated` emitter is
+gone, and the call now renders through `single`. A call whose arguments do not fit
+the form of its row takes HR2's plain form (`plainOperator` in `lower.ts`,
+`plainQuery` in `filter.ts`, `plainStage` in `statement.ts`).
+
+Four things stay checked. The first is the place of each stage, your stages too.
+The second is `$near`, `$nearSphere` and `$where` in an aggregation `$match`. The
+third is JSMQL code inside a call: a JavaScript spread, a spread or a computed key
+in an object body, and an arrow. The fourth is the merge that the compiler makes in
+an update document: a field written twice, and two writes of one operator whose
+operand is not a document of fields (`$set(5); $set({ b: 2 })`). A statement after
+the `$out` sugar now names the sugar: "Nothing can follow '$$$.archive = …'". Three
+small fixes came with the change. The `$sampleRate` query cell no longer emits
+`undefined` for a rate that the compiler knows only at run time. The
+`jsmql.update` hint for an operator such as `>` no longer reads
+`$.<field> = >…`. `$$.$sort(…)` as a statement no longer checks its body. The
+`emptyList` field of `Arity` and the four `realistic.test.ts` examples of the
+removed stage checks are gone. `test/compiler-accumulator-agrees.test.ts` now runs
+the JavaScript accumulator spellings, which HR3 covers. The DEFERRED §B row
+"Checks on the escape hatch" records the decision. See
+[docs/LANG_RULES.md](LANG_RULES.md) (HR2, HR3).
+
+---
+
+## 2026-09-26 — feat!: Set is not part of JSMQL; the array methods cover each set operation
+
+The developer decided that `Set` is not part of JSMQL. The compiler refuses
+`new Set(…)` and `Set(…)` in every position, and the message names the array
+methods: `'<array>.uniq()'` for the unique values, `'.uniq().size()'` for their
+count, `'.has(x)'`, `'.union(other)'`, `'.intersection(other)'`,
+`'.difference(other)'` and `'.xor(other)'`. Where an accumulator goes, in
+`$group` and in `$setWindowFields`, the message names `$addToSet(<value>)`. The
+error stands at the `new` of `new Set(…)`, and at the `(` of `Set(…)`, as for
+every call without `new`. [docs/DEFERRED.md](DEFERRED.md) §B records the
+decision.
+
+MongoDB has no set type, so `new Set(x)` lowered to `x` itself, and nothing
+removed a duplicate. `new Set($.a)` read back as `[3, 1, 3, 2, 1]` from the
+server, where JavaScript gives `[3, 1, 2]`. The two most common members did not
+compile: `.size()` and `.has(3)` were refused on a `set` receiver. `.add()` was
+an unknown method. The array methods already did each operation.
+
+The `Set` row in [src/registry/names.ts](../src/registry/names.ts) is now a
+refusal row, as `Map` and `RegExp` are, with `where: []`. The `set` receiver
+family goes from [src/registry/vocabulary.ts](../src/registry/vocabulary.ts).
+The fold of `new Set([…])` goes, and so do the "needs 'new'" refusal and its
+`new Set(...)` suggestion. The dispatch rule for two field families with one
+`$type` test also goes, because only `set` and `array` shared a test. A new test
+in [test/compiler-select.test.ts](../test/compiler-select.test.ts) holds that
+each field family has its own `$type` test. A test in
+[test/registry-agrees.test.ts](../test/registry-agrees.test.ts) holds that a
+row that demands `new` lists no position.
+
+`.difference()` on an array is now the set difference, `$setDifference`: each
+value once, as a JavaScript `Set` gives it. The developer asked for Set
+behaviour and short MQL, and rejected lodash's `_.difference`, which keeps the
+duplicates of the receiver. So `$.a.difference($.b)` over
+`{ a: [3, 1, 3, 2, 1], b: [2, 4, 4] }` gives `[3, 1]`, not `[3, 1, 3, 1]`, and
+the MQL is one operator in place of a `$filter`. This supersedes
+[2026-09-07 — fix(compiler): three answers the acceptance gate measured wrong](#2026-09-07--fixcompiler-three-answers-the-acceptance-gate-measured-wrong),
+which gave a `Set` receiver `$setDifference` and an array receiver the
+`$filter` of lodash. The stream form `$$.flatMap(…).difference(…)` and
+`.differenceBy()` keep lodash's reading, by the developer's choice. A stream
+holds documents, not a set of values, and lodash is the only source of the name
+`differenceBy`.
+
+The three relations `.isSubsetOf()`, `.isSupersetOf()` and `.isDisjointFrom()`
+stay on arrays, because lodash has no name for them, and a composition gives
+larger MQL. `.symmetricDifference()` stays beside `.xor()`, by the developer's
+choice. Two rows, `.isDisjointFrom()` and `.symmetricDifference()`, refused a
+Filter and each stage position with the false message "has no MongoDB
+equivalent". A Filter now reads them through `$expr`, as it reads their
+siblings, and the other positions give the usual messages. The generated
+`@koresar/jsmql/globals` types skipped the set methods as `Set` names, so a
+typed array reported `TS2551` on `.union()`. These methods are now `Array<T>`
+methods, as `.xor()` is.
+
+One MQL change follows with no new rule. The rows `.intersection()` and
+`.difference()` listed two field families, `array` and `set`. So the compiler
+could not prove the kind of their answer, and a truth test checked `null`,
+`false`, `""` and `0`. With one field family it proves an array, and an array is
+falsy only when it is null. So `$.a.intersection($.b) ? 1 : 2` tests
+`$ne: [{ $ifNull: [<the intersection>, null] }, null]` alone.
+
+The mapping from each `Set` member to its array method is in
+[docs/LANGUAGE.md § Set operations on arrays](LANGUAGE.md#set-operations-on-arrays).
+[test/compiler-methods.test.ts](../test/compiler-methods.test.ts) compares each
+array form with the answer of JavaScript's own `Set` on a live mongod. The `Set`
+surface came in with
+[2026-05-06 — ES2024/2025 set & object surface, regex helpers, BigInt, padding](#2026-05-06--es20242025-set--object-surface-regex-helpers-bigint-padding).
 
 ---
 
@@ -574,6 +471,68 @@ three stale lines: `ArrayElement` lists no `LetDecl`, the parenthesised chain
 
 ---
 
+## 2026-09-26 — fix: `Object.fromEntries` reads the pairs that you wrote
+
+`Object.fromEntries([["a", 1], ["b", $.x]])` gave the wrong document. On
+`{ x: 7 }` the server answered `{ '["a",1]': ["b", 7] }`, and JavaScript
+answers `{ a: 1, b: 7 }`. The `Object` cell of the `fromEntries` row in
+[src/registry/names.ts](../src/registry/names.ts) wrapped the list with
+`singleArrayArg`. That helper adds one array level for an operator's operand
+slot, where the server reads a literal array as the argument list. But the list
+goes into `$map.input`, which is an expression slot, and there a literal array
+is the array itself. So `$map` saw one element, the whole list.
+
+The cell now gives the list to `pairsToObject` as it is. A list from a field
+(`Object.fromEntries($.pairs)`) did not change, because the helper does not
+change a value that is not an array. [test/compiler-methods.test.ts](../test/compiler-methods.test.ts)
+compares two written lists with JavaScript's answer on mongod, one of them with
+a number key.
+
+---
+
+## 2026-09-26 — fix: a declaration in a sub-pipeline names the block that takes it
+
+A `let` or `const` in a stage's bracketed sub-pipeline is refused, because
+JavaScript refuses a declaration as an array element. The refusal told the
+developer to "write the value inline in the stage that reads it". That is not
+the only way out: each sub-pipeline container has an `.aggregate` block form,
+and a block takes statements, declarations included. The developer decided
+that no DEFERRED row is needed, and that the refusal names the three forms:
+
+```
+$ = { summary: $$.aggregate(() => { let avg = $avg($.score); $project({ avg }); }) };   // $facet
+$.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });              // $lookup
+$$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));             // $unionWith
+```
+
+Each form ran on the `:27018` mongod, and `test/let-bindings.test.ts` pins its MQL.
+
+---
+
+## 2026-09-26 — fix: a JavaScript aggregate on an array literal runs in a `$group` slot
+
+A JavaScript aggregate in an accumulator slot gave MQL that the server refuses, when
+its receiver was an array literal:
+
+```js
+$group({ _id: null, r: [$.n, $.m].sum() });   // → { r: { $sum: [["$n", "$m"]] } }
+// mongod: "The $sum accumulator is a unary operator"; a window slot answered 0
+```
+
+The receiver held one array on each document, and the cell wrapped it one level
+deeper, as the value road does for `$size`. An accumulator slot reads any array as
+an operand list. Now the aggregate reduces the array on each document first, as
+`.sumBy(fn)` does, and the slot accumulates the result:
+`[$.n, $.m].sum()` → `{ $sum: { $sum: ["$n", "$m"] } }`. MEASURED over
+`{ n: 1, m: 2 }` and `{ n: 3, m: 4 }`: `.sum()` 10, `.mean()` 2.5, `.max()` 4,
+`.min()` 1, `.first()` 1, `.last()` 4, in both slots. A field receiver keeps its
+shape (`$.a.sum()` → `{ $sum: "$a" }`). The helper is `slotAggregate` in
+[src/registry/mql.ts](../src/registry/mql.ts), and
+[test/compiler-accumulator-agrees.test.ts](../test/compiler-accumulator-agrees.test.ts)
+runs the array-literal receiver for every cell.
+
+---
+
 ## 2026-09-26 — fix: a list operator takes one operand wherever the server does
 
 The compiler refused every list-only operator with one operand that is not an
@@ -631,6 +590,93 @@ A value receiver (`$.a.sizee()`), `Math.maxx(…)` in a value, and a stage name
 
 ---
 
+## 2026-09-26 — fix: a regex keeps its dotAll flag, and a JavaScript `g` stays out of it
+
+The driver writes a JavaScript RegExp through `bson`'s `serializeRegExp`, and that
+writes only `i`, `m`, and the `global` flag as `s`. So two regexes that the compiler
+built from a regex literal gave the wrong answer on the server. MEASURED over
+`"a\nb"` and `"axb"`:
+
+```js
+jsmql("$.s.match(/a.b/s)")   // → { s: { $regex: /a.b/s } }: dotAll never arrived, and "a\nb" did not match
+jsmql("$.s.match(/a.b/g)")   // → { s: { $regex: /a.b/g } }: `g` arrived as dotAll, and "a\nb" matched
+```
+
+JavaScript answers the opposite in both cases. `regexValue` in
+[src/bson.ts](../src/bson.ts) now builds each such regex from MongoDB's options
+(`mongoRegexOptions`), and a regex whose options hold `s` is a `BSONRegExp`, which
+carries its options as written: `{ s: { $regex: new BSONRegExp("a.b", "s") } }`.
+Every other regex stays a JavaScript RegExp. This covers a regex literal in MQL
+that you write, the `.match()` query cell, and the `literal` service of a query
+cell. A regex that the caller passes at run time stays as the caller wrote it.
+[test/compiler-bson.test.ts](../test/compiler-bson.test.ts) holds the answers
+against JavaScript's own on a live mongod.
+
+---
+
+## 2026-09-26 — fix: a regex literal in your MQL passes through
+
+HR1 says that a RegExp passes unchanged, but the compiler refused every regex
+literal outside the regex methods:
+
+```js
+{ s: /x/ }                                  // ✗ "Regex literals are only valid as arguments to .match(), …"
+{ tag: { $in: [/^a/, /^b/] } }              // ✗ the same message
+$regexMatch({ input: $.s, regex: /x/ })     // ✗ the same message
+```
+
+MEASURED on mongod, all three run and give the expected answer. The developer
+decided, in the interview on the HR3 change, that a regex literal in MQL that
+the developer writes is a BSON regex. This covers a query document, an argument of
+a `$`-named call, and a value under a `$` key. JavaScript code keeps the refusal
+(`$.a === /x/`, `$.a = /x/`). The regex keeps the options that MongoDB knows
+(`mongoRegexOptions`), as the regex methods do.
+
+`Site.inside` carries the answer. It stays set through a document, a list and a
+`$` key, and a JavaScript node now resets it, because that node lowers to MQL of its
+own. So `$match($.s === /^a/)` stays refused: the regex is an operand of `===`, not
+of `$match`. The refusal message now names both spellings. See
+[src/compiler/emit/lower.ts](../src/compiler/emit/lower.ts),
+[src/compiler/emit/filter.ts](../src/compiler/emit/filter.ts) and
+[src/compiler/emit/inputs.ts](../src/compiler/emit/inputs.ts).
+
+---
+
+## 2026-09-26 — fix: a run-time value that reads as MQL goes only into an expression or a comparison
+
+A `${…}` value or a `jsmql.compile` parameter that reads as MQL — a string that
+starts with `$`, a document with a `$` key — is a value, never MQL (HR1). The
+compiler put such a value in `$literal` wherever the site was a value, and it put
+it as written everywhere else. Both halves went wrong in a stage body:
+
+```js
+jsmql`$group({ _id: null, t: ${{ $sum: "$secret" }} });`   // → { t: { $sum: "$secret" } }: the caller's document became an accumulator
+jsmql`$unwind(${"$items"});`                               // → { $unwind: { $literal: "$items" } }: the server refuses it
+jsmql`$unwind({ path: ${"$items"} });`                     // crash: "spec.path?.startsWith is not a function"
+jsmql`$match(${{ a: { $gt: 1 } }});`                       // → the truthiness of a $literal: every document matched
+jsmql`$set(${{ a: "$b" }});`                               // ✗ "must be a compile-time constant" (false)
+```
+
+The developer decided, in the interview on the HR3 change, that such a value goes
+only into an expression (inside `$literal`) or into a comparison (as the value),
+and that every other slot refuses it with the spelling to write in the source. The
+update document keeps its old answer, because it stores the value and evaluates
+nothing. A new stage-row fact, `evaluates`, names the body paths that the server
+evaluates. MEASURED: each path takes `{ $literal: … }`, and each other slot refuses
+it. The position pass marks a leaf that no path covers as `written`, and
+`injectedPlacement` in [src/compiler/emit/env.ts](../src/compiler/emit/env.ts)
+reads the mark. The query road applies the same rule in `injectedInQuery`
+([src/compiler/emit/filter.ts](../src/compiler/emit/filter.ts)): a field compares
+the value with `$eq`, and a comparison operator (a row with `liftsTo`) takes it as
+written. `$and`, `$not`, `$elemMatch` and a whole predicate refuse it.
+
+Two messages told a `jsmql.compile` user to use `jsmql.compile`: a collection name
+from a parameter that starts with `$`, and one that is not a string. Each now names
+the real problem. Both forms give one answer, because they share the `inject` pass.
+[test/security.test.ts](../test/security.test.ts) runs each case in both forms.
+
+---
+
 ## 2026-09-26 — fix: a sort of documents refuses more than 32 keys
 
 `$sort({ k0: 1, …, k32: 1 })` compiled, and the server refused it with "too
@@ -658,44 +704,6 @@ rule of its stage, so `$$.$sort({ a: 2 })` also compiled and failed on the
 server. `streamLink` and `refStatement` now run `checkBody` as the statement
 form does. This is a polarity change: a stage link whose body breaks its row's
 rule is refused, with the statement form's message.
-
----
-
-## 2026-09-26 — docs: `Date(…)` without `new` is a date, and `.map(Date)` converts
-
-LANGUAGE.md § Bare built-in callbacks said that JSMQL refuses a bare `Date`,
-because `Date` without `new` returns a string. The compiler has not done that
-since the BSON-constructor rule ("`X(…)` and `new X(…)`" below): `Date(…)` means
-`new Date(…)`, as `ObjectId(…)` does. The developer confirmed the rule: `Date()`
-in JSMQL is a date, not a string.
-
-```
-Date()               → "$$NOW"
-Date($.s)            → { $toDate: "$s" }
-$.stamps.map(Date)   → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
-```
-
-The paragraph now flags the difference from JavaScript, the bare-callback list
-names `Date`, and the date section shows both spellings. No behaviour changes.
-
----
-
-## 2026-09-26 — fix: a declaration in a sub-pipeline names the block that takes it
-
-A `let` or `const` in a stage's bracketed sub-pipeline is refused, because
-JavaScript refuses a declaration as an array element. The refusal told the
-developer to "write the value inline in the stage that reads it". That is not
-the only way out: each sub-pipeline container has an `.aggregate` block form,
-and a block takes statements, declarations included. The developer decided
-that no DEFERRED row is needed, and that the refusal names the three forms:
-
-```
-$ = { summary: $$.aggregate(() => { let avg = $avg($.score); $project({ avg }); }) };   // $facet
-$.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });              // $lookup
-$$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));             // $unionWith
-```
-
-Each form ran on the `:27018` mongod, and `test/let-bindings.test.ts` pins its MQL.
 
 ---
 
@@ -856,6 +864,67 @@ holds each count against the server's own. A filter keeps the runtime
 comparison for such a count (`$.n === [$.a, $.b].size()` →
 `{ $expr: { $eq: ["$n", 2] } }`). The fold pass would drop the entries before the
 emitter checks them, so a typo in an entry would disappear.
+
+---
+
+## 2026-09-26 — refactor: a `$op` row states no refusal
+
+A `$op(…)` call is the developer's own MQL, and it takes HR2's plain form wherever
+its row states no rule (HR3 does not apply to it). So the 1329 `unsupported(…)`
+cells on the `mongo` rows stated messages that nobody saw. They are gone, and
+[src/registry/names.ts](../src/registry/names.ts) is about 2600 lines shorter.
+
+The types hold the new rule. A `$op` row must state the rule of each position that
+its `where` lists (`ListedCells`), and a position that `where` omits states no cell,
+except the filter's `viaFallback`. [test/types/registry-contracts.ts](../test/types/registry-contracts.ts)
+holds a pair for each half.
+
+One refusal read a stage row's text: a stage called on a value,
+`$.items.$match({ a: 1 })`. That call is JSMQL code with no MQL, so it stays
+refused, and a stage-row fact, `valueTwin`, names the operator that does the same
+job on a value: "… For the value form, use '$filter(…)'." Ten stage rows state it,
+and [test/registry-agrees.test.ts](../test/registry-agrees.test.ts) holds each one
+against a row with a value form. No output changes.
+
+---
+
+## 2026-09-26 — refactor: drop the check facts that only the escape hatch read
+
+A `$op(…)` or `$stage(…)` call meets no check (HR3 does not apply to it), so the
+facts that only its checks read had no reader. They are gone from the `mongo` rows:
+
+- the body rule of each stage (`body`) and its example call (`bodyExample`);
+- the object rule inside an operator's `shape`, which is now the word `"object"` —
+  `keys` orders the positional form;
+- the check fields of each `args`: `slotType`, `constant`, `slotRange`,
+  `nonZero`, `nonEmpty`, `arrayOf`, and the two that only `$op` rows stated,
+  `elementType` and `nullRefused`.
+
+Fourteen `BodyRule` fields that only a stage or an operator body stated left the
+type with their readers in [src/compiler/emit/check.ts](../src/compiler/emit/check.ts),
+for example `maxSortKeys`, `onePolarity` and `requiresWhen`. The rest stays for the
+options document of a JavaScript method (`args.body`). `StageFacts` now pairs
+`bodyPositions` with `document` and `evaluates`, because a layout is what makes a
+row a stage (`isStageName`). One `$op` row keeps its rule: `$documents`, because
+the `$$ = [ … ]` and `$$$.<coll>.push(…)` sugars check each written element through
+it. The `takesLet` audit reads the vendored stage spec now, and the returns audit
+builds each object call from it. No output changes.
+
+---
+
+## 2026-09-26 — refactor: two lowering facts leave the check fields
+
+Two facts that a lowering reads sat inside fields that only a check should read.
+The key order of the positional form of an object-form operator
+(`$trim($.name, " ")` → `{ $trim: { input: "$name", chars: " " } }`) was
+`BodyRule.positional`, inside the operator's `shape`. Whether a stage's body takes
+a `let` was a search for `"let"` in the body rule's key lists. The HR3 change
+removes the escape hatch's checks, and these two facts must stay. So each one is
+now a field of its own on the row: `keys` on the 50 object-form operators, and
+`takesLet` on `$lookup` and `$merge`
+([src/registry/names.ts](../src/registry/names.ts)). `BodyRule.positional` is gone.
+[test/registry-agrees.test.ts](../test/registry-agrees.test.ts) holds each fact on
+the rows that it describes. No output changes.
 
 ---
 

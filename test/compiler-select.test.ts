@@ -12,7 +12,7 @@ import { consult } from "../src/compiler/emit/consult.ts";
 import { guardFor, select, shapeOf, type Receiver, kindFits } from "../src/compiler/emit/select.ts";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { NAMES } from "../src/registry/names.ts";
-import type { FieldFamily } from "../src/registry/vocabulary.ts";
+import { FIELD_FAMILY_TYPES, type FieldFamily } from "../src/registry/vocabulary.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const up = await liveUp();
@@ -67,7 +67,6 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
     expect(pick("Number", "f($.s)").kind).toBe("rule");
     expect(pick("ObjectId", "f($.id)").kind).toBe("rule");
     expect(pick("ObjectId", "f()").kind).toBe("rule");
-    expect(pick("Set", "f($.a)").kind).toBe("rule");
   });
 });
 
@@ -144,7 +143,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
 
 describe("compiler/emit/select — the table audits", () => {
   type Row = { kind?: string; on?: string | readonly string[]; expr?: unknown };
-  const FIELD: readonly string[] = ["string", "array", "number", "object", "date", "regexp", "set"];
+  const FIELD: readonly string[] = ["string", "array", "number", "object", "date", "regexp"];
   const fieldFamilies = (row: Row): readonly string[] =>
     row.on === undefined || row.on === "any"
       ? []
@@ -157,14 +156,9 @@ describe("compiler/emit/select — the table audits", () => {
       const branch = (row.expr as { perFamily: Record<string, unknown> }).perFamily[f];
       return !(typeof branch === "object" && branch !== null && "unsupported" in branch);
     };
-    // A `$switch` tells apart only what `$type` tells apart: `set` and `array` share
-    // one guard, so a row on both families has one runtime test, not two.
-    const tests = (row: Row): number =>
-      new Set(
-        fieldFamilies(row)
-          .filter((f) => lowers(row, f))
-          .map((f) => JSON.stringify(guardFor(f as FieldFamily)("$$v"))),
-      ).size;
+    // Each field family has a runtime test of its own (see the audit below), so a row
+    // has one test per field family that it lowers.
+    const tests = (row: Row): number => fieldFamilies(row).filter((f) => lowers(row, f)).length;
     // Each row is probed with the first argument count it accepts, so a row that
     // takes an argument is audited too, not passed as a count refusal.
     const probes = [
@@ -202,6 +196,15 @@ describe("compiler/emit/select — the table audits", () => {
   it("holds a guard for every field family — the type keeps the table complete", () => {
     for (const f of FIELD as readonly FieldFamily[]) expect(typeof guardFor(f)).toBe("function");
   });
+
+  it("gives each field family a runtime test of its own, so a dispatch can tell each one apart", () => {
+    // A `$switch` separates only what `$type` separates. Two families with one test would
+    // leave a branch that no document can reach, and the dispatch has no rule for that.
+    const families = Object.keys(FIELD_FAMILY_TYPES) as FieldFamily[];
+    const guards = families.map((f) => JSON.stringify(guardFor(f)("$$v")));
+    expect(new Set(guards).size).toBe(families.length);
+    expect([...families].sort()).toEqual([...FIELD].sort());
+  });
 });
 
 describe.skipIf(!up)("compiler/emit/select — the guards, measured on mongod", () => {
@@ -231,7 +234,6 @@ describe.skipIf(!up)("compiler/emit/select — the guards, measured on mongod", 
         object: ["object"],
         date: ["date"],
         regexp: ["regex"],
-        set: ["array"],
       };
       for (const family of Object.keys(EXPECT) as FieldFamily[]) {
         const rows = await coll

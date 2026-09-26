@@ -20,7 +20,6 @@ import {
   diagnosticOf,
   isFieldProperty,
   isKnownName,
-  newKeywordOf,
   siblingOf,
   spreadAlternativeOf,
   streamReceiverNames,
@@ -291,13 +290,9 @@ export const wrongCallCount = (label: string, params: readonly string[], got: nu
 
 export const unknownFunction = (name: string, known: readonly string[], pos: number): CodegenError =>
   new CodegenError(
-    `Unknown function '${name}(...)'.${didYouMean(name, known, (s) => (newKeywordOf(s) === "required" ? `new ${s}(...)` : `${s}(...)`))} Declare it first with \`const ${name} = (…) => …;\` at the top level of a pipeline; for a MongoDB operator write \`$${name}(...)\`; for a method, \`receiver.${name}(...)\`.`,
+    `Unknown function '${name}(...)'.${didYouMean(name, known, (s) => `${s}(...)`)} Declare it first with \`const ${name} = (…) => …;\` at the top level of a pipeline; for a MongoDB operator write \`$${name}(...)\`; for a method, \`receiver.${name}(...)\`.`,
     pos,
   );
-
-/** `Set([1, 2])`: the row states that the constructor needs `new`, as JavaScript does. */
-export const needsNew = (name: string, pos: number): CodegenError =>
-  new CodegenError(`'${name}(…)' needs 'new', as in JavaScript. Write 'new ${name}(…)'.`, pos);
 
 /** `new Number(5)`, or `new f(1)` for a declared function: a function, not a constructor. */
 export const newOnFunction = (name: string, pos: number): CodegenError =>

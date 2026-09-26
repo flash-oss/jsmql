@@ -182,6 +182,14 @@ Negation has subtle null/missing interactions in MongoDB. A silent flip between 
 
 The developer rejected this. In JSMQL, `x in [ … ]` is MongoDB's own `$in`, an element test, and that is the meaning a query reads. JavaScript's `in` tests a key, and an operator that means an element test with a list on the right and a key test with an object on the right has two meanings. The compiler accepts one right side, a list spelled in the source, and refuses every other one with the spelling for the intent: `.has(x)` for an element of an array value, `.key !== undefined` or `.keys().has(k)` for a key of an object. Both spellings emit the same MQL the key test did (`{ "o.k": { $exists: true } }` in a filter, `$objectToArray` over the keys for a computed key).
 
+### `Set` is not part of JSMQL (`new Set(…)`, `Set(…)`)
+
+The developer rejected this. MongoDB has no set type, so `new Set(x)` can only lower to `x` itself, and each duplicate stays. `new Set($.a)` reads back as `[3, 1, 3, 2, 1]`, where JavaScript gives `[3, 1, 2]`. The compiler refuses both spellings, and the message names the array methods.
+
+The array methods do each set operation, with the lodash name where lodash has one. `.uniq()` gives the unique values, and `.union()`, `.intersection()`, `.difference()`, `.xor()` and the three relations (`.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()`) compare two arrays. `.difference()` is the set difference, `$setDifference`, so it gives each value once, as a `Set` does. The mapping from each `Set` member to its array method is in [docs/LANGUAGE.md § Set operations on arrays](LANGUAGE.md#set-operations-on-arrays).
+
+Reconsider only if MongoDB gains a set type.
+
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 
 The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`Math.max(...)`, `Object.assign(...)`, `[...a, ...b]`, `.concat()`).

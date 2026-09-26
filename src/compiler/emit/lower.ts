@@ -124,7 +124,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     return joinRoad(node, env);
   }
   // A constant is its VALUE, before any row is read. The fold writes back what has
-  // a source spelling. A Date, an ObjectId or a Set has none and stays a node, so
+  // a source spelling. A Date or an ObjectId has none and stays a node, so
   // the evaluator is asked here — with its own exclusions (an operator call is the
   // developer's MQL and is never evaluated).
   if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
@@ -614,7 +614,6 @@ function receiverOf(recv: Expr, env: Env): Receiver {
   // source node, so the node itself is handed over.
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
-  if (src === "set") return { kind: "value", family: "set", lowered };
   const t = typeOf(recv, env);
   const kinds = kindsOf(t);
   if (kinds === null) return { kind: "opaque", lowered };
@@ -807,14 +806,8 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
       if (b.ref.kind === "dropped") throw E.droppedBinding(b.ref, node.pos);
       throw E.notCallable(node.pos);
     }
-    if (isGlobalName(callee.name)) {
-      // A constructor called without `new`, where the row requires one. A row that
-      // lists no position answers with its own refusal for either spelling.
-      if (newKeywordOf(callee.name) === "required" && (positionsOf(callee.name)?.length ?? 0) > 0) {
-        throw E.needsNew(callee.name, node.pos);
-      }
-      return dispatchBare(node, callee.name, node.args, env);
-    }
+    // With or without `new`, the row answers: a row that lists no position refuses both spellings.
+    if (isGlobalName(callee.name)) return dispatchBare(node, callee.name, node.args, env);
     throw E.unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
   }
   if (callee.type === "Lambda") return applyLambda(callee, node.args, env, node.pos, "IIFE", null);

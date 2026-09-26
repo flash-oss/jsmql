@@ -236,11 +236,9 @@ export type NodeName = AstNode["type"];
 
 /**
  * What can carry a name. The first group holds the JavaScript value types.
- * `stream` is the `$$` document stream, and `set` is a `new Set(...)` receiver.
- * The second group holds the namespace receivers. The parser folds
- * `Math.max(a, b)` into one node whose name is `max` and whose receiver is
- * `Math`, the same shape as `$.rows.max()`. There is no `Set` namespace, because
- * `Set.union(...)` is not valid jsmql. The set operations are names on a value.
+ * `stream` is the `$$` document stream. The second group holds the namespace
+ * receivers. The parser folds `Math.max(a, b)` into one node whose name is
+ * `max` and whose receiver is `Math`, the same shape as `$.rows.max()`.
  */
 export type Family =
   | "string"
@@ -249,7 +247,6 @@ export type Family =
   | "object"
   | "date"
   | "regexp"
-  | "set"
   | "stream"
   | "Math"
   | "Object"
@@ -1279,8 +1276,8 @@ export type Rule<In, Out> = {
  * `$type` names it covers. It is the ONE table that the runtime guards, the
  * receiver readers and their tests read. A bare name reaches `Math`, `Object`,
  * `Number`, `Date`, `Array` and `cluster`, and no field reaches them. `stream` is
- * `$$`. So a receiver of unprovable family is one of these seven and no other. A
- * `Set` folds to an array, so it is an array.
+ * `$$`. So a receiver of unprovable family is one of these and no other. Each
+ * family has its own `$type` names, so a runtime dispatch can tell them apart.
  */
 export const FIELD_FAMILY_TYPES = {
   string: ["string"],
@@ -1289,9 +1286,8 @@ export const FIELD_FAMILY_TYPES = {
   object: ["object"],
   date: ["date"],
   regexp: ["regex"],
-  set: ["array"],
 } as const satisfies Readonly<
-  Record<Extract<Family, "string" | "array" | "number" | "object" | "date" | "regexp" | "set">, readonly BsonType[]>
+  Record<Extract<Family, "string" | "array" | "number" | "object" | "date" | "regexp">, readonly BsonType[]>
 >;
 export type FieldFamily = keyof typeof FIELD_FAMILY_TYPES;
 

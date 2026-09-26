@@ -1452,19 +1452,7 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
   it("in a join, the same link on whole documents reads the joined array as a value", () => {
     expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).difference([{ a: 1 }]).size();")).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
-      {
-        $set: {
-          n: {
-            $size: {
-              $filter: {
-                input: "$__jsmql.tmp.0",
-                as: "jsmqlItem",
-                cond: { $not: [{ $in: ["$$jsmqlItem", [{ a: 1 }]] }] },
-              },
-            },
-          },
-        },
-      },
+      { $set: { n: { $size: { $setDifference: ["$__jsmql.tmp.0", [{ a: 1 }]] } } } },
       { $unset: "__jsmql" },
     ]);
     // after .flatMap inside the body the link is a stage of the body

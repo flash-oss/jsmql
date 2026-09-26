@@ -218,8 +218,6 @@ const EXPRESSIONS: readonly string[] = [
   'ObjectId("507f1f77bcf86cd799439011")',
   'new ObjectId("507f1f77bcf86cd799439011")',
   "Date.UTC(2020, 1, 1)",
-  "new Set([1, 2, 2, 3])",
-  "new Set([])",
   // dates: UTC, and MongoDB's own numbering
   'new Date("2020-03-05T20:30:40.123Z").getFullYear()',
   'new Date("2020-03-05T20:30:40.123Z").getMonth()',

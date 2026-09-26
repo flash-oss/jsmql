@@ -3505,6 +3505,8 @@ declare global {
     compact(): T[];
     /** Count elements by iteratee (omit for identity) — `_.countBy`. */
     countBy(iteratee?: string | ((value: T) => any)): Record<string, number>;
+    /** The values that `other` does not hold, each once. */
+    difference(other: any[]): T[];
     /** Difference by iteratee — `_.differenceBy`. */
     differenceBy(...args: any[]): T[];
     /** All but the first `n` elements — `_.drop`. */
@@ -3525,14 +3527,22 @@ declare global {
     fromPairs(): Record<string, any>;
     /** Group elements by iteratee (omit for identity) — `_.groupBy`. */
     groupBy(iteratee?: string | ((value: T) => any)): Record<string, T[]>;
-    /** Is `value` an element — `Set.has`; a string tests a substring with `.includes()`. */
+    /** Is `value` an element; a string tests a substring with `.includes()`. */
     has(value: any): boolean;
     /** First element — `_.head`. */
     head(): T;
     /** All but the last element — `_.initial`. */
     initial(): T[];
+    /** The values that both arrays hold, each once — `_.intersection`. */
+    intersection(other: any[]): T[];
     /** Intersection by iteratee — `_.intersectionBy`. */
     intersectionBy(...args: any[]): T[];
+    /** Do the two arrays share no element. */
+    isDisjointFrom(other: any[]): boolean;
+    /** Does `other` hold every element. */
+    isSubsetOf(other: any[]): boolean;
+    /** Does this array hold every element of `other`. */
+    isSupersetOf(other: any[]): boolean;
     /** Index elements by iteratee (omit for identity) — `_.keyBy`. */
     keyBy(iteratee?: string | ((value: T) => any)): Record<string, T>;
     /** Last element — `_.last`. */
@@ -3564,7 +3574,7 @@ declare global {
     sample(): T;
     /** `n` random elements — `_.sampleSize`. */
     sampleSize(n?: number): T[];
-    /** Element count — `Set.size`, `_.size`. */
+    /** Element count — `_.size`. */
     size(): number;
     /** Ascending sort by iteratee(s) — `_.sortBy`. */
     sortBy(iteratee?: string | string[] | ((value: T) => any)): T[];
@@ -3576,6 +3586,8 @@ declare global {
     sum(): number;
     /** Sum of iteratee values — `_.sumBy`. */
     sumBy(iteratee: string | ((value: T) => any)): number;
+    /** The values that only one of the two arrays holds — the same answer as `.xor()`. */
+    symmetricDifference(other: T[]): T[];
     /** All but the first element — `_.tail`. */
     tail(): T[];
     /** First `n` elements — `_.take`. */
@@ -3586,6 +3598,8 @@ declare global {
     takeRightWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
     /** Leading run matching the predicate — `_.takeWhile`. */
     takeWhile(predicate: string | [string, any] | Record<string, any> | ((value: T) => any)): T[];
+    /** The values of both arrays, each once — `_.union`. */
+    union(other: T[]): T[];
     /** Union by iteratee — `_.unionBy`. */
     unionBy(...args: any[]): T[];
     /** Duplicate-free copy — `_.uniq`. */

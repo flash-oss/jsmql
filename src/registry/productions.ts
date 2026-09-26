@@ -952,7 +952,7 @@ export const PRODUCTIONS = {
   }),
 
   constructorCall: production({
-    doc: "`new Date(…)`, `new Set(…)`, `new ObjectId(…)`. What each constructor means is in names.ts.",
+    doc: "`new Date(…)`, `new ObjectId(…)`, `new Decimal128(…)`. What each constructor means is in names.ts.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
     // One node for every `new X(…)`. names.ts says which constructor it is.

@@ -450,10 +450,11 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
     expect(valueOf("`id-${0.5}`")).toBe("(not constant)");
   });
 
-  it("reads `new Set([…])` as the array, because that is what the language does", () => {
-    // jsmql has no set type: the constructor is a way of writing an array that
-    // the set operators then read, and it does NOT de-duplicate.
-    expect(valueOf("new Set([1, 2, 2, 3])")).toEqual([1, 2, 2, 3]);
+  it("leaves `new Set([…])` unfolded, so the row refuses it", () => {
+    // A folded constant never reaches its row. So a fold here would hide the refusal
+    // and answer an array that holds the duplicates.
+    expect(valueOf("new Set([1, 2, 2, 3])")).toBe("(not constant)");
+    expect(valueOf("new Set()")).toBe("(not constant)");
   });
 });
 

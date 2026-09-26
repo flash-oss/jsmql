@@ -13,7 +13,7 @@ switch. Each case is one of three kinds.
 
 1. **A node that is its own document.** A literal, a field path (`$.a.b` →
    `"$a.b"`, the bare `$` → `"$$ROOT"`), an array or object literal. A constant
-   the fold could not write back as source — a `Date`, an `ObjectId`, a `Set` —
+   the fold could not write back as source — a `Date`, an `ObjectId` —
    is settled here by the evaluator before any row is read; a value holding a
    JavaScript `bigint` is not, because `$toLong` spells it.
 2. **A name.** The reading order is: `consult` (the row's answer for the
@@ -841,8 +841,8 @@ such a list grows to a `$reduce`. The smaller shape answers null for the whole
 value on a missing argument, and aborts the query on a scalar, so correctness
 decides (a path is read three times; any other expression is bound once).
 
-A set method reads its list argument as `[]` when it is missing, as
-`new Set(undefined)` is empty: `$.a.union($.b)` is
+A set method reads its list argument as `[]` when it is missing, as lodash
+reads a missing list: `$.a.union($.b)` is
 `{ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }`. The set
 operators answer null for a null operand, so without the wrap a missing
 argument makes the whole value null.
@@ -856,10 +856,12 @@ measured), and `Number.isInteger` excludes NaN and the infinities the same
 way. `Math.cbrt` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
 `Number` is the one numeric conversion: the compiler parses `parseInt` and
 `parseFloat` and refuses them, because a bare `parseInt` takes the element
-index as its radix, and `$toInt` refuses a fractional string. The Set
-relations (`isSubsetOf`, `isSupersetOf`, `isDisjointFrom`,
-`symmetricDifference`, and the three set operations) accept a Set or an array
-receiver: `new Set(x)` folds to `x`, since the server has no set type.
+index as its radix, and `$toInt` refuses a fractional string.
+
+The server has no set type, so the compiler parses `Set` and refuses it in both
+spellings. Each set operation is a method of an array, and the refusal names
+these methods. `.difference()` is the set difference, `$setDifference`. It is
+not the `$filter` of lodash's `_.difference`, which keeps each duplicate.
 
 A JavaScript aggregate written where a stage takes an ACCUMULATOR — a
 `$group` output field, a `$setWindowFields.output` entry — is the row's
