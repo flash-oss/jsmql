@@ -377,8 +377,9 @@ function logical(op: string, left: unknown, right: unknown): Evaluation {
 export const truthy = (v: unknown): boolean => Boolean(v);
 
 /**
- * `x in [ … ]` is MEMBERSHIP in JSMQL — `$in` — not JavaScript's key test. The
- * language settled that, so the fold answers the language's question.
+ * `x in [ … ]` is MEMBERSHIP in JSMQL — `$in` — not JavaScript's key test, so
+ * the fold answers the language's question. A right side that is not a list is
+ * not a constant here; the emitter refuses it with the spelling that works.
  */
 function membership(needle: unknown, haystack: unknown): Evaluation {
   if (!Array.isArray(haystack)) return NOT_CONSTANT;

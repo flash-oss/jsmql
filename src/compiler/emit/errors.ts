@@ -264,16 +264,10 @@ export const looseEqualityNotNull = (op: "==" | "!=", pos: number): CodegenError
     pos,
   );
 
-/** `x in <array>`: JavaScript's `in` tests a key, and an array's keys are its indexes, which no query needs. */
-export const inOnArray = (pos: number): CodegenError =>
+/** `x in <not a list>`: `in` takes a list spelled in the source, and the message names the spelling for every other right side. */
+export const inNeedsList = (pos: number): CodegenError =>
   new CodegenError(
-    "'in' tests a key of an object, and the value on its right is an array. For membership, write '<array>.has(x)'; for a bound on the count, write '<array>.size() > n'.",
-    pos,
-  );
-
-export const scalarInOperand = (pos: number): CodegenError =>
-  new CodegenError(
-    "The right side of 'in' must be an array literal, an object literal, or a field reference, not a scalar value.",
+    "The right side of 'in' must be a list, as in 'x in [1, 2, 3]'. For an element of an array value, write '<array>.has(x)'; for a key of an object, write '<object>.key !== undefined' or '<object>.keys().has(k)'.",
     pos,
   );
 

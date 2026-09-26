@@ -1162,64 +1162,17 @@ function logicalValue(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): un
   return fold(chain, inner);
 }
 
-/** `x in [...]` is membership; `k in { … }` is key presence, with the keys read off the literal. */
+/**
+ * `x in [ … ]` is MongoDB's own `$in`: true when the value is an element of the
+ * list. The right side is a list spelled in the source; a constant, a parameter
+ * and a `${…}` interpolation arrive as that literal. Every other right side is
+ * refused, and the message names the JavaScript spelling that does the job.
+ * See docs/LANGUAGE.md § Comparison.
+ */
 function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown {
   const { left, right } = node;
-  if (
-    right.type === "StringLiteral" ||
-    right.type === "NumberLiteral" ||
-    right.type === "BooleanLiteral" ||
-    right.type === "NullLiteral"
-  ) {
-    throw E.scalarInOperand(node.pos);
-  }
-  if (right.type === "ObjectLiteral") {
-    const entries = right.entries;
-    if (entries.every((e) => e.type === "KeyValueEntry" && e.key.kind === "static")) {
-      return { $in: [lowerValue(left, env), entries.map((e) => staticKey(e))] };
-    }
-    const operands: unknown[] = [];
-    let group: unknown[] = [];
-    const flush = () => {
-      if (group.length > 0) operands.push(group);
-      group = [];
-    };
-    for (const e of entries) {
-      if (e.type === "SpreadElement") {
-        flush();
-        const kv = env.fresh("kv");
-        operands.push({
-          $map: { input: { $objectToArray: lowerValue(e.argument, env) }, as: kv.as, in: `${kv.ref}.k` },
-        });
-      } else group.push(e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, env));
-    }
-    flush();
-    return { $in: [lowerValue(left, env), operands.length === 1 ? operands[0] : { $concatArrays: operands }] };
-  }
-  // `x in [ … ]` — a LIST spelled in the source is MongoDB's own `$in`: value membership,
-  // the spelling every query document reads. See docs/LANGUAGE.md § Comparison.
-  if (right.type === "ArrayLiteral") return { $in: [lowerValue(left, env), lowerValue(right, env)] };
-  // `key in obj` — JavaScript's key test. An array VALUE on the right has only its indexes
-  // for keys, which no query asks for, so a PROVEN array is refused and the message names
-  // `.has(x)`. A literal string key reads the field itself: `$getField` answers missing
-  // for a key that is not there, and `null` for one that holds null, as `in` does. Any
-  // other key is searched among the object's keys, which HR5 reads as `{}` when the
-  // object is missing. A right side the proof cannot place is an object, and the
-  // server judges an array.
-  const t = typeOf(right, env);
-  if (isOnly(t, "array")) throw E.inOnArray(node.pos);
-  const obj = lowerValue(right, env);
-  if (left.type === "StringLiteral") {
-    return { $ne: [{ $type: { $getField: { field: left.value, input: obj } } }, "missing"] };
-  }
-  const key = lowerValue(left, env);
-  const kv = env.fresh("kv");
-  return {
-    $in: [
-      kindOf(left, env) === "string" ? key : { $toString: key },
-      { $map: { input: { $objectToArray: ifNull(obj, {}) }, as: kv.as, in: `${kv.ref}.k` } },
-    ],
-  };
+  if (right.type !== "ArrayLiteral") throw E.inNeedsList(node.pos);
+  return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 
 // ── blocks ───────────────────────────────────────────────────────────────────

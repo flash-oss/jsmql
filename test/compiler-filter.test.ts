@@ -58,17 +58,9 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
     expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
-    // `in` on a value the proof cannot place is the key test, which has no query form for a computed key
-    expect(filter("$.a in $.list")).toEqual({
-      $expr: {
-        $in: [
-          { $toString: "$a" },
-          { $map: { input: { $objectToArray: { $ifNull: ["$list", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
-        ],
-      },
-    });
-    // a literal key on a path is the field's own existence
-    expect(filter('"k" in $.o')).toEqual({ "o.k": { $exists: true } });
+    // a key test has its own spelling, and `.has` is the element test on an array value
+    expect(filter("$.o.k !== undefined")).toEqual({ "o.k": { $exists: true } });
+    expect(filter('$.tags.has("red")')).toEqual({ tags: "red" });
   });
 
   it("tests the element itself inside $elemMatch, as one operator document", () => {
@@ -78,7 +70,7 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.nums.some(n => n > 1 && n < 5)")).toEqual({ nums: { $elemMatch: { $gt: 1, $lt: 5 } } });
     expect(filter('$.tags.some(t => t.startsWith("re"))')).toEqual({ tags: { $elemMatch: { $regex: /^re/ } } });
     expect(filter('$.tags.some(t => typeof t === "string")')).toEqual({ tags: { $elemMatch: { $type: "string" } } });
-    expect(filter('$.rows.some(r => "k" in r)')).toEqual({ rows: { $elemMatch: { k: { $exists: true } } } });
+    expect(filter("$.rows.some(r => r.k !== undefined)")).toEqual({ rows: { $elemMatch: { k: { $exists: true } } } });
     // MEASURED: `$and` and `$or` over operator-only clauses are refused inside `$elemMatch`,
     // and so is the same operator twice — those bodies take the expression road
     expect(filter("$.nums.some(n => n > 1 && n > 2)")).toEqual({

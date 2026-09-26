@@ -178,6 +178,10 @@ A key-sorting flag has no safe use here. MQL is order-sensitive in places: a `$p
 
 Negation has subtle null/missing interactions in MongoDB. A silent flip between an index and no index, driven only by data shape, is exactly the surprise JSMQL exists to prevent. `!expr` itself lowers to the query language's own negation, `$nor`. What is rejected is DISTRIBUTING the negation into each clause. `$op($not, …)` stays as the explicit escape. See [`docs/specs/emit-pass.md`](specs/emit-pass.md) § The filter target, and `feedback_no_silent_output_drift.md` in user memory for the broader principle.
 
+### `in` as JavaScript's key test (`"k" in $.o`, `$.x in { a: 1 }`)
+
+The developer rejected this. In JSMQL, `x in [ … ]` is MongoDB's own `$in`, an element test, and that is the meaning a query reads. JavaScript's `in` tests a key, and an operator that means an element test with a list on the right and a key test with an object on the right has two meanings. The compiler accepts one right side, a list spelled in the source, and refuses every other one with the spelling for the intent: `.has(x)` for an element of an array value, `.key !== undefined` or `.keys().has(k)` for a key of an object. Both spellings emit the same MQL the key test did (`{ "o.k": { $exists: true } }` in a filter, `$objectToArray` over the keys for a computed key).
+
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 
 The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`Math.max(...)`, `Object.assign(...)`, `[...a, ...b]`, `.concat()`).
