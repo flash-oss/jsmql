@@ -221,6 +221,7 @@ const fieldPath: Rule = {
       path?: string;
       pos?: number;
       optional?: boolean;
+      optionalAt?: string;
     };
     while (base.type === "MemberAccess") {
       const name = base.name as string;
@@ -241,6 +242,9 @@ const fieldPath: Rule = {
       if (before !== "") optionalAt = before;
       break;
     }
+    // The walk runs bottom-up, so the base can be a path that an earlier `?.` folded:
+    // the walk folds `$.a?.b` before `.c`. With no `?.` after it, its tested path stays the last one.
+    if (!members.some((m) => m.optional)) optionalAt = base.optionalAt;
     const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
     if (!optional) return folded as object;
     return (

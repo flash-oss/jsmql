@@ -102,7 +102,8 @@ for a null input. `.find` (a missing element), `.max` (of an empty array) and
 spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH and records
 the path the LAST `?.` tests (`FieldRef.optionalAt`), so the walk also checks the
 base `FieldRef`, and the guard tests `a` alone for `$.a?.b.uniq()`: `a.b` inside
-follows the dot rule. A `?.` with no call after it answers
+follows the dot rule. The fold runs bottom-up, so a member after a folded `?.` path
+keeps that path's `optionalAt`: `$.a?.b.c.uniq()` tests `a` too. A `?.` with no call after it answers
 null anyway, because a path through a missing field is missing. So the
 compiler emits no test there, and the consumer's neutral still describes it.
 

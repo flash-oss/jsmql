@@ -9007,6 +9007,16 @@ describe("optional chaining (?.)", () => {
       },
     });
   });
+  it("a `?.` with two members after it still tests the value that it guards", () => {
+    // The fold runs bottom-up: `$.user?.profile` is a path before `.posts` joins it.
+    expect(jsmql.expr("$.user?.profile.posts.map(p => p.id)")).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
+        then: null,
+        else: { $map: { input: { $ifNull: ["$user.profile.posts", []] }, as: "p", in: "$$p.id" } },
+      },
+    });
+  });
   it(".at on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.at(0)")).toEqual({
       $cond: {

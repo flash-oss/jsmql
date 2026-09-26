@@ -2473,6 +2473,23 @@ describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never 
     expect(problems, problems.join("\n")).toEqual([]);
     expect(compared).toBe(OBJECT_EMPTY.length);
   });
+
+  it("a `?.` guards the value before it alone, however many members follow it", async () => {
+    // Document 1 has no `o`, so the chain stops with null. Document 2 holds `o` and no
+    // `o.z`: the `?.` passes, and the dot rule runs `.uniq()` on `[]` (HR5).
+    for (const src of ["$.o?.z.uniq()", "$.o?.z.w.uniq()"]) {
+      const out = await guarded
+        .aggregate([{ $addFields: { __v: expr(src) } }, { $project: { __v: 1 } }, { $sort: { _id: 1 } }])
+        .toArray();
+      expect([src, out]).toEqual([
+        src,
+        [
+          { _id: 1, __v: null },
+          { _id: 2, __v: [] },
+        ],
+      ]);
+    }
+  });
 });
 
 /**

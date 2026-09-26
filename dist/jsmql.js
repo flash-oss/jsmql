@@ -22625,6 +22625,7 @@ var fieldPath = {
       if (before !== "") optionalAt = before;
       break;
     }
+    if (!members.some((m) => m.optional)) optionalAt = base.optionalAt;
     const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
     if (!optional) return folded;
     return optionalAt === void 0 ? { ...folded, optional: true } : { ...folded, optional: true, optionalAt };

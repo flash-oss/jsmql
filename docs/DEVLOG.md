@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a `?.` guards the value before it, however many members follow it
+
+`$.a?.b.uniq()` tests `a` alone, and inside the test `a.b` follows the dot rule, as HR5
+states. With two members after the `?.`, the fold forgot which path the `?.` tests. The
+walk runs bottom-up, so `$.a?.b` becomes a path first, and `.c` then joins it with no
+`optionalAt`. So `$.o?.z.w.uniq()` tested the whole path `o.z.w`, and it answered null
+for `{ o: { x: 1 } }`. HR5 gives `[]` there: `o` is there, so the `?.` passes, and the
+dot rule runs `.uniq()` on `[]`. The fold now keeps the base path's `optionalAt` when no
+`?.` follows it. A refusal message also quotes such a read as written (`$.a?.b.c`). See
+the `memberAccess` rule in [desugar.ts](../src/compiler/passes/desugar.ts) and
+[docs/specs/emit-pass.md](specs/emit-pass.md).
+
+---
+
 ## 2026-09-26 — fix: a computed string key that can be missing reads as the empty name
 
 `$getField` aborts the query on a null field name: "$getField requires 'field' to
