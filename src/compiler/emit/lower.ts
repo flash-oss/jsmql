@@ -64,7 +64,6 @@ const positionIn = (env: Env): Position => positionOf(env.site.where) ?? "value"
 /** The element and argument types that are NOT expressions, held against the tree's own names. */
 const NOT_EXPR: ReadonlySet<Exclude<CallArg | ArrayElement, Expr>["type"]> = new Set([
   "SpreadElement",
-  "LetDecl",
   "FuncDecl",
   "AssignExpr",
   "DeleteStmt",
@@ -359,7 +358,6 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
   for (const el of elements) {
     if (el.type === "AssignExpr" || el.type === "UpdateFilter") throw E.statementInValue("Assignment", el.pos);
     if (el.type === "DeleteStmt") throw E.statementInValue("delete", el.pos);
-    if (el.type === "LetDecl") throw E.statementInValue("`let`", el.pos);
     if (el.type === "FuncDecl") throw E.statementInValue("A function declaration", el.pos);
   }
   if (!elements.some((el) => el.type === "SpreadElement"))
@@ -1186,7 +1184,6 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
  * `$let` there. See docs/specs/let-bindings.md.
  */
 function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e: Expr, env: Env) => unknown): unknown {
-  const seen = new Set<string>();
   // Each declarator lowers ONCE. One that breaks its group is already lowered, so
   // it rides to the next `$let` rather than through `lowerValue` a second time —
   // a second call would mint a second compiler name for the same value.
@@ -1201,11 +1198,9 @@ function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e
     // that reads none of the vars already in it.
     for (;;) {
       const d = node.decls[j];
-      if (seen.has(d.name)) throw E.redeclared(d.kind, d.name, d.pos);
       const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
       carry = null;
       if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
-      seen.add(d.name);
       const bound = scope.param(d.name, maybeAbsent(typeOf(d.value, scope)), d.pos);
       vars[bound.as as string] = value;
       refs.push(`$$${bound.as as string}`);

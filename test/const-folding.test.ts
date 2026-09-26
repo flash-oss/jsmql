@@ -361,9 +361,26 @@ describe("const folding — inside lambda expr-blocks", () => {
     });
   });
 
-  it("a const shadowing the lambda param keeps its $let (correct shadow)", () => {
-    expect(jsmql.expr("$.items.map(x => { const x = 99; return x })")).toEqual({
-      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $let: { vars: { x: 99 }, in: "$$x" } } },
+  it("a const that re-declares the lambda param is refused, as JavaScript refuses it", () => {
+    // The fold would inline `99` and hide the clash, so the parser refuses it first.
+    expect(() => jsmql.expr("$.items.map(x => { const x = 99; return x })")).toThrow(
+      "`const x` re-declares the parameter `x` at position 19, which JavaScript refuses. Pick a different name.",
+    );
+  });
+
+  it("a const in a NESTED lambda shadows the outer param and keeps its $let (correct shadow)", () => {
+    expect(jsmql.expr("$.items.map(x => $.other.map(y => { const x = 99; return x + y }))")).toEqual({
+      $map: {
+        input: { $ifNull: ["$items", []] },
+        as: "x",
+        in: {
+          $map: {
+            input: { $ifNull: ["$other", []] },
+            as: "y",
+            in: { $let: { vars: { x: 99 }, in: { $add: ["$$x", "$$y"] } } },
+          },
+        },
+      },
     });
   });
 

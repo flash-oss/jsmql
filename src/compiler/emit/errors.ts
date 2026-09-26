@@ -301,12 +301,6 @@ export const letParamsMustNameVars = (params: readonly string[], keys: readonly 
     pos,
   );
 
-export const redeclared = (kind: string, name: string, pos: number): CodegenError =>
-  new CodegenError(
-    `\`${kind} ${name}\` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.`,
-    pos,
-  );
-
 /** A list-only operator handed one operand that is not an array literal. */
 export const listOperand = (name: string, pos: number): CodegenError =>
   new CodegenError(

@@ -199,7 +199,7 @@ type PatternPart = { readonly key: string; readonly name: string; readonly pos: 
  * a parameter at all.
  */
 type ParamRead =
-  | { readonly kind: "name"; readonly name: string }
+  | { readonly kind: "name"; readonly name: string; readonly pos: number }
   | { readonly kind: "array"; readonly parts: readonly (PatternPart | null)[]; readonly pos: number }
   | { readonly kind: "object"; readonly parts: readonly PatternPart[]; readonly pos: number }
   | { readonly kind: "refused"; readonly error: ParseError }
@@ -211,6 +211,77 @@ function notAPlainPattern(pos: number, wrote?: string): ParseError {
   return new ParseError(
     `A destructured parameter lists plain names only — '([id, count]) => …', '({ sku, qty: n }) => …'. A default value, a rest element, a nested pattern or a computed key${got} is not one of them, at position ${pos}. Name the parameter. Read its parts instead: 'x => x[0]', 'x => x.sku ?? 1', 'x => x.slice(1)'.`,
     pos,
+  );
+}
+
+/** One name that a scope binds: a parameter, or a declaration at the top of a block. */
+type Binder = { readonly name: string; readonly pos: number };
+
+/**
+ * `(x, x) => …`: JavaScript refuses one parameter name twice in an arrow's list,
+ * and in every list that holds a destructuring pattern. It allows the name twice
+ * only in a plain `function (x, x)` list, and so does this parser.
+ */
+function refuseDuplicateParams(binders: readonly Binder[]): void {
+  const seen = new Set<string>();
+  for (const b of binders) {
+    if (seen.has(b.name)) {
+      throw new ParseError(
+        `The parameter name '${b.name}' appears twice in one parameter list, at position ${b.pos}. JavaScript refuses a duplicate parameter name here. Give each parameter its own name, for example '(x, i) => …'.`,
+        b.pos,
+      );
+    }
+    seen.add(b.name);
+  }
+}
+
+/**
+ * JavaScript declares a name once per scope. A function's parameters and the
+ * declarations at the top of its block share one scope. So `x => { const x = 1; … }`
+ * is a SyntaxError ("Identifier 'x' has already been declared"), and so is a
+ * second `let a` in one block. A nested function opens a scope of its own, and a
+ * declaration there may shadow the outer name. The parser holds this rule, because
+ * the fold inlines a constant declaration before any later phase can see it.
+ */
+function declare(scope: Map<string, "parameter" | "declaration">, stmt: PipelineStmt): void {
+  if (stmt.type !== "LetDecl" && stmt.type !== "FuncDecl") return;
+  const wrote = `${stmt.type === "FuncDecl" && stmt.form === "function" ? "function" : stmt.kind} ${stmt.name}`;
+  const earlier = scope.get(stmt.name);
+  if (earlier === "parameter") {
+    throw new ParseError(
+      `\`${wrote}\` re-declares the parameter \`${stmt.name}\` at position ${stmt.pos}, which JavaScript refuses. Pick a different name.`,
+      stmt.pos,
+    );
+  }
+  if (earlier === "declaration") {
+    throw new ParseError(
+      `\`${wrote}\` at position ${stmt.pos} is already declared earlier in this block, which JavaScript refuses. Pick a different name.`,
+      stmt.pos,
+    );
+  }
+  scope.set(stmt.name, "declaration");
+}
+
+/**
+ * `[let x = $.a, $match(x > 5)]`: JavaScript refuses a declaration as an array
+ * element. The statement form says the same thing: `let x = $.a; $match(x > 5);`.
+ */
+function declarationAsElement(kw: Token, name: Token): ParseError {
+  const wrote = `${kw.text} ${name.type === "Ident" ? name.text : "x"} = …`;
+  return new ParseError(
+    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${kw.pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. In a stage's sub-pipeline, write the value inline in the stage that reads it.`,
+    kw.pos,
+  );
+}
+
+/**
+ * `$.a = 1,`: a `,` with no write after it. JavaScript allows a trailing `,` in a
+ * list, but an expression statement is not a list, so it refuses this one.
+ */
+function trailingComma(comma: Token, next: Token): ParseError {
+  return new ParseError(
+    `A ',' with no write after it, before ${found(next)} at position ${comma.pos}. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').`,
+    comma.pos,
   );
 }
 
@@ -290,10 +361,13 @@ class Parser {
     }
     const toolbox = slots.find(isToolbox) ?? [];
     const params = slots.find((sl) => sl !== toolbox && isParams(sl)) ?? [];
+    // A destructure is a pattern, so JavaScript refuses a name twice in either spelling of the entry.
+    const binders = slots.flat();
+    refuseDuplicateParams(binders);
     if (!isFunction) this.c.expect("Arrow");
     // The body is a whole program: an expression, or `{ … }` that holds statements.
     // A `function` body is always the block form.
-    const program = this.c.is("LBrace") ? this.entryBlock() : this.program();
+    const program = this.c.is("LBrace") ? this.entryBlock(binders) : this.program();
     return { params, toolbox, program };
   }
 
@@ -367,9 +441,9 @@ class Parser {
   }
 
   /** `{ … }` as an entry body: statements, with an optional trailing `return`. */
-  private entryBlock(): Program {
+  private entryBlock(params: readonly Binder[]): Program {
     this.c.expect("LBrace");
-    const { stmts, ret, retPos, sawSemi } = this.block("RBrace");
+    const { stmts, ret, retPos, sawSemi } = this.block("RBrace", params);
     if (ret !== null) {
       // A `return` in an entry block yields the expression itself. So a bare
       // predicate stays a predicate, and the position phase reads it as a Filter.
@@ -419,8 +493,9 @@ class Parser {
    * A `return` may appear only where a `}` closes the block. At the top level it
    * reaches `statement()`, and the parser refuses it as an unexpected token.
    */
-  private block(terminator: "RBrace" | "EOF"): Block {
+  private block(terminator: "RBrace" | "EOF", params: readonly Binder[] = []): Block {
     const stmts: PipelineStmt[] = [];
+    const scope = new Map<string, "parameter" | "declaration">(params.map((p) => [p.name, "parameter"]));
     let sawSemi = false;
     let endPos = this.c.peek().pos;
     for (;;) {
@@ -449,6 +524,7 @@ class Parser {
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
+      for (const stmt of run) declare(scope, stmt);
       stmts.push(...run);
       // `function f(x) { … }` ends with its closing brace, so the separator after
       // it is optional. This is the same rule that JavaScript uses.
@@ -513,7 +589,7 @@ class Parser {
     this.refuseGenerator();
     const name = this.c.expect("Ident");
     const params = this.paramList();
-    const lambda = this.lambdaOf(params, kw.pos);
+    const lambda = this.lambdaOf(params, kw.pos, false);
     return { type: "FuncDecl", name: name.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
 
@@ -543,7 +619,7 @@ class Parser {
     this.refuseGenerator();
     if (this.c.is("Ident")) this.c.next();
     const params = this.paramList();
-    return this.lambdaOf(params, kw.pos);
+    return this.lambdaOf(params, kw.pos, false);
   }
 
   /**
@@ -560,12 +636,6 @@ class Parser {
     const out = [this.declarator(kind, kw.pos, kw.pos)];
     while (this.c.eat("Comma")) out.push(this.declarator(kind, null, kw.pos));
     return out;
-  }
-
-  /** `let x = …` / `const x = …`, one declarator: a bracketed pipeline's element, where `,` separates elements. */
-  private binding(): LetDecl | FuncDecl {
-    const kw = this.c.next();
-    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
   }
 
   /**
@@ -667,9 +737,13 @@ class Parser {
     if (this.c.is("LParen") && this.parenWriteAhead()) {
       this.c.next();
       const ops: UpdateOp[] = [];
-      do {
+      for (;;) {
         ops.push(...this.writeGroup());
-      } while (this.c.eat("Comma") && !this.c.is("RParen"));
+        if (!this.c.is("Comma")) break;
+        const comma = this.c.next();
+        // `($.a = 1,)` is a SyntaxError too: a parenthesised expression is not a list.
+        if (this.c.is("RParen")) throw trailingComma(comma, this.c.peek());
+      }
       this.c.expect("RParen");
       return ops;
     }
@@ -713,11 +787,12 @@ class Parser {
   private writes(): UpdateFilter {
     const pos = this.c.peek().pos;
     const ops: UpdateOp[] = [];
-    do {
+    for (;;) {
       ops.push(...this.writeGroup());
-      // `}` ends the run as surely as `;` does. A callback block is a statement
-      // list too, and a formatter puts a trailing comma before its brace.
-    } while (this.c.eat("Comma") && !this.c.is("EOF") && !this.c.is("Semi") && !this.c.is("RBrace"));
+      if (!this.c.is("Comma")) break;
+      const comma = this.c.next();
+      if (this.c.is("EOF") || this.c.is("Semi") || this.c.is("RBrace")) throw trailingComma(comma, this.c.peek());
+    }
     return { type: "UpdateFilter", ops, pos };
   }
 
@@ -1128,7 +1203,7 @@ class Parser {
     const t = this.c.next();
     if (this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaBody([t.text], arrow.pos);
+      return this.lambdaBody([t.text], arrow.pos, [{ name: t.text, pos: t.pos }]);
     }
     return { type: "Ident", name: t.text, pos: t.pos };
   }
@@ -1152,7 +1227,7 @@ class Parser {
     }
     if (looksLikeParams && this.c.eat("RParen") && this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaOf(params, arrow.pos);
+      return this.lambdaOf(params, arrow.pos, true);
     }
     this.c.reset(save);
     this.c.expect("LParen");
@@ -1177,7 +1252,10 @@ class Parser {
    * `([...a, b])` is a legal expression.
    */
   private param(): ParamRead {
-    if (this.c.is("Ident")) return { kind: "name", name: this.c.next().text };
+    if (this.c.is("Ident")) {
+      const t = this.c.next();
+      return { kind: "name", name: t.text, pos: t.pos };
+    }
     if (this.c.is("LBracket")) {
       const open = this.c.next();
       const parts: (PatternPart | null)[] = [];
@@ -1276,17 +1354,25 @@ class Parser {
    * its shape for every reader (a sort key sees the minus, a filter sees the
    * comparison).
    */
-  private lambdaOf(params: readonly ParamRead[], pos: number): Lambda {
+  private lambdaOf(params: readonly ParamRead[], pos: number, arrow: boolean): Lambda {
     for (const p of params) if (p !== null && p.kind === "refused") throw p.error;
     const named = params as readonly Exclude<ParamRead, null | { kind: "refused" }>[];
+    // Every name the list binds, a pattern's parts included: the body's block shares their scope.
+    const binders: Binder[] = [];
+    for (const p of named) {
+      if (p.kind === "name") binders.push({ name: p.name, pos: p.pos });
+      else for (const part of p.parts) if (part !== null) binders.push(part);
+    }
+    if (arrow || named.some((p) => p.kind !== "name")) refuseDuplicateParams(binders);
     if (named.every((p) => p.kind === "name")) {
       return this.lambdaBody(
         named.map((p) => (p as { name: string }).name),
         pos,
+        binders,
       );
     }
     const plain = named.map((p) => (p.kind === "name" ? p.name : ""));
-    const parsed = this.lambdaBody(plain, pos);
+    const parsed = this.lambdaBody(plain, pos, binders);
     // The fresh names step aside from every name that the body mentions, and from
     // every other parameter. So no part can capture a name that the developer wrote.
     const taken: object[] = [parsed, ...plain.filter((n) => n !== "").map((n) => ({ type: "Ident", name: n }))];
@@ -1333,12 +1419,12 @@ class Parser {
    * `blockBody: "stages"`. The callee claims it in `args()`, and `finish()`
    * refuses a stages body that nobody claimed.
    */
-  private lambdaBody(params: readonly string[], pos: number): Lambda {
+  private lambdaBody(params: readonly string[], pos: number, binders: readonly Binder[]): Lambda {
     if (!this.c.is("LBrace")) {
       return { type: "Lambda", params, body: this.expression(), pos };
     }
     const open = this.c.next();
-    const { stmts, ret, retPos, endPos } = this.block("RBrace");
+    const { stmts, ret, retPos, endPos } = this.block("RBrace", binders);
     // A `return` makes the block JavaScript: declarations, then one result.
     if (ret !== null) {
       const decls = stmts.filter((st): st is LetDecl => st.type === "LetDecl");
@@ -1414,11 +1500,12 @@ class Parser {
   }
 
   /**
-   * One element of an array literal. A declaration or a write makes the literal a
-   * bracketed pipeline. Anything else is a value.
+   * One element of an array literal. A write or a `function` makes the literal a
+   * bracketed pipeline. Anything else is a value. A `let` or a `const` is not an
+   * element at all: JavaScript refuses it there.
    */
   private arrayElement(): ArrayElement {
-    if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    if (this.c.is("Let") || this.c.is("Const")) throw declarationAsElement(this.c.peek(), this.c.peek(1));
     // `[ function double(x) { … }, $set(…) ]`: a declaration, not a function
     // VALUE. Without this check it parsed as a lambda, and the lambda made the
     // literal look like an array of values rather than a pipeline.

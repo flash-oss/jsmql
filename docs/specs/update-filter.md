@@ -46,7 +46,10 @@ that operator, and everywhere else it opens a regular expression.
 
 A program is a `;`-separated statement loop. A statement is an `UpdateFilter` when it
 starts with `delete`, `++` or `--`, or when its expression is followed by an
-assignment operator. The `,` inside one continues the run and the `;` ends it. The
+assignment operator. The `,` inside one continues the run and the `;` ends it. A `,`
+must lead to the next write: `$.a = 1,` and `($.a = 1, $.b = 2,)` are JavaScript
+SyntaxErrors, so the parser refuses each one at the `,`, and names the comma-free form.
+The
 same per-element rule applies inside a bracketed pipeline (`[$match(…), $.a = 1,
 delete $.tmp]`), where `,` is the only separator. A parenthesised assignment
 (`($.a = 1), ($.b = 2)` — what a formatter writes) is read as the write it is, so it

@@ -144,8 +144,10 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
     expect(jsmql("$.a = 1, $.b = 2")).toEqual([{ $set: { a: 1, b: 2 } }]);
   });
 
-  it("trailing `,` (no `;`) wraps as a one-stage pipeline", () => {
-    expect(jsmql("$.a = 1,")).toEqual([{ $set: { a: 1 } }]);
+  it("a trailing `,` (no `;`) is refused, as JavaScript refuses it", () => {
+    expect(() => jsmql("$.a = 1,")).toThrow(
+      "A ',' with no write after it, before end of input at position 7. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').",
+    );
   });
 });
 

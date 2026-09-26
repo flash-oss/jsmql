@@ -74,8 +74,10 @@ describe("compiler/passes/fold — a name that cannot be folded keeps its bindin
     expect(stillDeclared("let a = 1; a = 2; $.x === a")).toBe(true);
   });
 
-  it("keeps a binding declared twice, so the redeclaration is still reported", () => {
-    expect(stillDeclared("const a = 1; const a = 2; $.x === a")).toBe(true);
+  it("never sees a binding declared twice: the parser refuses it before the fold can inline it", () => {
+    expect(() => parse("const a = 1; const a = 2; $.x === a")).toThrow(
+      "`const a` at position 13 is already declared earlier in this block, which JavaScript refuses. Pick a different name.",
+    );
   });
 
   it("keeps a binding `Object.assign` mutates in place", () => {
@@ -304,26 +306,6 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
     const t = JSON.stringify(desugar(parse("const a = 1; $$.aggregate(() => { const a = 2; $match({ b: a }) })")));
     expect(t).toContain('"value":2');
     expect(t).not.toContain('"value":1');
-  });
-
-  it("does not push a constant through a bracketed sub-pipeline", () => {
-    // The `$match` reads the INNER `a`. A fold of the outer `1` into it gives `{ b: 1 }`.
-    expect(tree("const a = 1; [const a = 2, $match({ b: a })]")).toEqual({
-      type: "ArrayLiteral",
-      elements: [
-        { type: "LetDecl", name: "a", value: { type: "NumberLiteral", value: 2 }, kind: "const" },
-        {
-          type: "OperatorCall",
-          name: "$match",
-          args: [
-            {
-              type: "ObjectLiteral",
-              entries: [{ type: "KeyValueEntry", key: { kind: "static", name: "b" }, value: ident("a") }],
-            },
-          ],
-        },
-      ],
-    });
   });
 
   it("does not let one block declaration shadow another's outer name", () => {

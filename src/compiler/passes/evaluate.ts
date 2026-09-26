@@ -669,7 +669,7 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
         }
         // A declaration or a write inside a literal makes it a pipeline, not a
         // value. `UpdateFilter` is how a `,`-joined run of writes arrives.
-        if (element.type === "LetDecl" || element.type === "FuncDecl") return NOT_CONSTANT;
+        if (element.type === "FuncDecl") return NOT_CONSTANT;
         if (element.type === "AssignExpr" || element.type === "DeleteStmt") return NOT_CONSTANT;
         if (element.type === "UpdateFilter") return NOT_CONSTANT;
         const value = at(element, env, depth + 1);

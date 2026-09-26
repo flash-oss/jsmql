@@ -429,7 +429,7 @@ The behaviour matches JavaScript exactly. A line comment ends at a LineTerminato
 
 ## Trailing commas
 
-As in JavaScript, JSMQL allows a single trailing comma after the last item of a comma-separated list, and ignores it. This works **everywhere** a list appears: call arguments, array and object literals, arrow / `function` parameter lists, and the in-stage update-op chain. So code your formatter has already touched — prettier and oxfmt add a trailing comma when they break a list across lines — pastes straight in.
+As in JavaScript, JSMQL allows a single trailing comma after the last item of a comma-separated list, and ignores it. This works **everywhere** a list appears: call arguments, array and object literals, and arrow / `function` parameter lists. So code your formatter has already touched — prettier and oxfmt add a trailing comma when they break a list across lines — pastes straight in.
 
 ```js
 Math.max($.a, $.b,)                       // call args
@@ -441,7 +441,14 @@ $match(
   ($.currency === "USD" || $.currency === "EUR") &&
   $.status === "active",                  // ← trailing comma on a multi-line stage body
 )
-$.a = 1, $.b = 2,                         // update-op chain
+```
+
+A statement is not a list, so a comma at its end is a JavaScript SyntaxError, and JSMQL refuses it too. A `,` joins two writes into one stage; it cannot end the run:
+
+```js
+$.a = 1, $.b = 2,     // ✗ error — "A ',' with no write after it, before end of input at position 16. …
+                      //            Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;')."
+$.a = 1, $.b = 2      // → [{ $set: { a: 1, b: 2 } }]
 ```
 
 A trailing comma never changes the result: the output is identical to the comma-free form. It is **not** a way to add an extra argument. `Number($.x, $.y)` still gives the "takes exactly 1 argument" error, while `Number($.x,)` is fine.
@@ -2302,6 +2309,18 @@ $.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; })
 
 A `$let` has no query-document form, so a predicate written this way rides entirely in `$expr`; JSMQL does not translate it to indexable query syntax. Note this when the predicate is one an index would otherwise serve. Everything else behaves as it does elsewhere: bindings nest, a `$.<field>` read still hoists into the `$lookup.let`, and `.reject` negates the `return` while it keeps the bindings.
 
+A lambda's parameters and the declarations at the top of its block share one scope, as in JavaScript. So a `const` that names a parameter again is an error. A nested lambda opens a scope of its own, and its `const` may shadow the outer name:
+
+```js
+$.items.map(x => { const x = 99; return x })
+// ✗ error — "`const x` re-declares the parameter `x` at position 19, which JavaScript refuses. Pick a different name."
+
+$.items.map(x => $.other.map(y => { const x = 99; return x + y }))
+// → { $map: { input: { $ifNull: ["$items", []] }, as: "x", in:
+//      { $map: { input: { $ifNull: ["$other", []] }, as: "y", in:
+//        { $let: { vars: { x: 99 }, in: { $add: ["$$x", "$$y"] } } } } } } }
+```
+
 > **⚠️ JavaScript pitfall — `=> {` always opens a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. Writing `x => { a: 1 }` is an error, because it has no `return`; JSMQL points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
 
 ### Immediately-invoked arrow functions (IIFE → `$let`)
@@ -3165,7 +3184,7 @@ db.users.updateOne({ _id: 1 }, jsmql("delete $.tmp"))
 
 ### Sequencing
 
-A `,` separates multiple update ops in the **same stage** (a trailing comma is allowed):
+A `,` separates multiple update ops in the **same stage**. A `,` after the last op is a JavaScript SyntaxError, so JSMQL refuses it (see [Trailing commas](#trailing-commas)):
 
 ```js
 jsmql("$.a = 1, $.b = 2")
@@ -4211,11 +4230,20 @@ jsmql`
 `;
 ```
 
-**Bracketed form.** `let` also works as an element of a `[…]`-form pipeline:
+**Not in the bracketed form.** JavaScript refuses a declaration as an array element, so a `[…]`-form pipeline cannot hold a `let` or a `const`. Write the pipeline as statements instead:
 
 ```js
 jsmql("[let big = $.score > 100, $match(big), $sort({ score: -1 })]");
+// ✗ error — "`let big = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1. …"
+
+jsmql("let big = $.score > 100; $match(big); $sort({ score: -1 });");
+// → [{ $set: { "__jsmql.var.big": { $gt: ["$score", 100] } } },
+//    { $match: { $expr: "$__jsmql.var.big" } },
+//    { $sort: { score: -1 } },
+//    { $unset: "__jsmql" }]
 ```
+
+A stage's own sub-pipeline, such as a `$facet` branch, is a `[…]` list too. Write the value inline in the stage that reads it: `$facet({ summary: [$project({ avg: $avg($.score) })] })`.
 
 **Sub-pipelines.** An outer let is not visible inside `$lookup.pipeline`, `$unionWith.pipeline`, or a `$facet.*` branch. Each sub-pipeline can declare its own lets independently; they live inside that sub-pipeline only.
 

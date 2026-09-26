@@ -39,27 +39,6 @@ const only = (src: string): { type: string } & Record<string, unknown> => {
 };
 
 describe("compiler/parse — every source the compiler accepts is JavaScript syntax", () => {
-  /**
-   * Sources the compiler accepts that `node --check` refuses. Each one breaks the
-   * strict-subset rule (CLAUDE.md § #2), and each row names its reason. The test
-   * asserts that each row still compiles AND still fails to parse as JavaScript, so a
-   * repair removes a row instead of passing silently.
-   */
-  const NOT_JS: Readonly<Record<string, string>> = {
-    "$.a = 1,": "a trailing comma ends an expression statement",
-    "$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1, ": "a trailing comma ends an expression statement",
-    "({ $ }) => { $.a = 1, $.b = 2, }": "a trailing comma ends an expression statement in a block",
-    "[let x = $.a + 1, $match(x > 5)]": "a declaration is not an array element",
-    "[let x = $.a, let y = x + 1, $match(y > 5)]": "a declaration is not an array element",
-    "[ const x = $.foo, $match($.parent === x) ]": "a declaration is not an array element",
-    "[ const double = (x) => x * 2, $set({ a: double($.price) }) ]": "a declaration is not an array element",
-    "[const double = (x) => x * 2, $set({ y: double($.x) })]": "a declaration is not an array element",
-    "[$match($.x > 0), let y = $.x * 2, $.flag = true, $sort({ y: 1 })]": "a declaration is not an array element",
-    "[ let x = $.a, x = x + 1, $project({ x }) ]": "a declaration is not an array element",
-    "[ let r = {}, Object.assign(r, { a: $.foo }), $ = r ]": "a declaration is not an array element",
-    "$.items.map(x => { const x = 99; return x })": "a `const` in an arrow body declares the parameter's name again",
-  };
-
   /** Does JavaScript parse the source, as a script or as one parenthesised expression? */
   const isJs = (src: string): boolean => {
     for (const text of [src, `(${src}\n)`]) {
@@ -85,16 +64,115 @@ describe("compiler/parse — every source the compiler accepts is JavaScript syn
     const accepted = harvestInputs().filter(compiles);
     // The harvest reads every suite in test/. A regex that stops matching reads nothing.
     expect(accepted.length).toBeGreaterThan(1000);
-    const failures = accepted.filter((src) => !isJs(src) && !(src in NOT_JS));
+    const failures = accepted.filter((src) => !isJs(src));
     expect(failures).toEqual([]);
   });
+});
 
-  it("still compiles each source of the NOT_JS table, and JavaScript still refuses it", () => {
-    for (const src of Object.keys(NOT_JS)) {
-      expect(compiles(src), src).toBe(true);
-      expect(isJs(src), src).toBe(false);
+describe("compiler/parse — a program is JavaScript syntax: the refusals, word for word", () => {
+  const TRAILING = (pos: number, next: string): string =>
+    `A ',' with no write after it, before ${next} at position ${pos}. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').`;
+  const ELEMENT = (wrote: string, pos: number): string =>
+    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. In a stage's sub-pipeline, write the value inline in the stage that reads it.`;
+  const PARAM = (wrote: string, name: string, pos: number): string =>
+    `\`${wrote}\` re-declares the parameter \`${name}\` at position ${pos}, which JavaScript refuses. Pick a different name.`;
+  const AGAIN = (wrote: string, pos: number): string =>
+    `\`${wrote}\` at position ${pos} is already declared earlier in this block, which JavaScript refuses. Pick a different name.`;
+  const TWICE = (name: string, pos: number): string =>
+    `The parameter name '${name}' appears twice in one parameter list, at position ${pos}. JavaScript refuses a duplicate parameter name here. Give each parameter its own name, for example '(x, i) => …'.`;
+
+  // [source, message, .pos]. JavaScript refuses each source too; the test asks `node:vm` for that answer.
+  const refused: [string, string, number][] = [
+    ["$.a = 1,", TRAILING(7, "end of input"), 7],
+    ["$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1, ", TRAILING(54, "end of input"), 54],
+    ["$.a = 1, $.b = 2,;", TRAILING(16, "';'"), 16],
+    ["({ $ }) => { $.a = 1, $.b = 2, }", TRAILING(29, "'}'"), 29],
+    ["($.a = 1, $.b = 2,);", TRAILING(17, "')'"), 17],
+    ["[let x = $.a + 1, $match(x > 5)]", ELEMENT("let x = …", 1), 1],
+    ["[ const double = (x) => x * 2, $set({ a: double($.price) }) ]", ELEMENT("const double = …", 2), 2],
+    ["[$match($.x > 0), let y = $.x * 2, $sort({ y: 1 })]", ELEMENT("let y = …", 18), 18],
+    ["$.v = $.items.map(x => { const x = 99; return x });", PARAM("const x", "x", 25), 25],
+    ["$.v = $.items.map(([a, b]) => { const a = 1; return a + b });", PARAM("const a", "a", 32), 32],
+    ["function g(x) { let x = 1; return x } $.v = g(1);", PARAM("let x", "x", 16), 16],
+    ["({ a }, { $ }) => { const a = 1; $.x = a; }", PARAM("const a", "a", 20), 20],
+    ["$$.aggregate((o) => { let o = 1; $.y = o; });", PARAM("let o", "o", 22), 22],
+    // The fold inlines a constant, so only the parser can see this pair.
+    ["$.v = [1, 2].map((x) => { const y = 1; const y = 2; return y });", AGAIN("const y", 39), 39],
+    ["let a = 1; let a = 2; $.x = a;", AGAIN("let a", 11), 11],
+    ["let x = $.a, x = $.b; $.c = x;", AGAIN("let x", 13), 13],
+    ["$.v = $.items.map((x, x) => x);", TWICE("x", 22), 22],
+    ["({ a, a }, { $ }) => $.x > a", TWICE("a", 6), 6],
+  ];
+  const jsRefuses = (src: string): boolean => {
+    for (const text of [src, `(${src}\n)`]) {
+      try {
+        new Script(text);
+        return false;
+      } catch {
+        // try the other reading
+      }
     }
-  });
+    return true;
+  };
+  for (const [src, message, pos] of refused) {
+    it(`refuses ${src}`, () => {
+      expect(jsRefuses(src)).toBe(true);
+      let thrown: unknown = null;
+      try {
+        jsmql(src);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toBe(message);
+      expect((thrown as { pos: number }).pos).toBe(pos);
+    });
+  }
+
+  // The legal neighbour of each refusal. JavaScript parses it, and so does jsmql.
+  const kept: [string, unknown][] = [
+    ["$.a = 1, $.b = 2", [{ $set: { a: 1, b: 2 } }]],
+    ["[$.a = 1, $.b = 2,]", [{ $set: { a: 1, b: 2 } }]],
+    [
+      "let x = $.a + 1; $match(x > 5);",
+      [
+        { $set: { "__jsmql.var.x": { $add: ["$a", 1] } } },
+        { $match: { $expr: { $gt: ["$__jsmql.var.x", 5] } } },
+        { $unset: "__jsmql" },
+      ],
+    ],
+    [
+      // A nested function opens a scope of its own, so its `const x` shadows the outer parameter.
+      "$.v = $.items.map((x) => $.other.map((y) => { const x = 2; return x + y }));",
+      [
+        {
+          $set: {
+            v: {
+              $map: {
+                input: { $ifNull: ["$items", []] },
+                as: "x",
+                in: {
+                  $map: {
+                    input: { $ifNull: ["$other", []] },
+                    as: "y",
+                    in: { $let: { vars: { x: 2 }, in: { $add: ["$$x", "$$y"] } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    ],
+    // A plain `function` list may name a parameter twice; the last one wins, as in JavaScript.
+    ["$.v = [5, 6].map(function (x, x) { return x });", [{ $set: { v: [0, 1] } }]],
+  ];
+  for (const [src, mql] of kept) {
+    it(`keeps ${src}`, () => {
+      expect(jsRefuses(src)).toBe(false);
+      expect(jsmql(src)).toEqual(mql);
+    });
+  }
 });
 
 describe("compiler/parse — the forms JavaScript itself refuses", () => {
@@ -334,9 +412,8 @@ describe("compiler/parse — a run of writes is ONE element, and keeps every op"
     expect(elements("[...$.a, ...$.b]")).toEqual(["SpreadElement", "SpreadElement"]);
   });
 
-  it("accepts the trailing comma a formatter leaves before a closing brace", () => {
-    const block = parseEntry("({ $ }) => { $.a = 1, $.b = 2, }").program as { ops: unknown[] };
-    expect(block.ops).toHaveLength(2);
+  it("accepts the trailing comma a formatter leaves before a closing bracket", () => {
+    // `[a, b,]` is a list, so JavaScript allows its trailing comma. A statement is not a list.
     expect((parse("[$.a = 1, $.b = 2,]") as { elements: { ops: unknown[] }[] }).elements[0].ops).toHaveLength(2);
   });
 

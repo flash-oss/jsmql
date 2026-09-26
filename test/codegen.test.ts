@@ -10852,11 +10852,13 @@ describe("trailing commas (JS syntax)", () => {
     expect(withComma).toEqual(without);
   });
 
-  it("update-op chain — trailing comma before a block-body's closing brace", () => {
-    // Only reachable through a source string: a real arrow cannot carry it (JS
-    // rejects `a = 1, b = 2,` as a statement), but the parser must still accept
-    // the trailing `,` before the block's closing `}`.
-    expect(jsmql.compile("({ $ }) => { $.a = 1, $.b = 2, }")()).toEqual([{ $set: { a: 1, b: 2 } }]);
+  it("update-op chain — a trailing comma before a block-body's closing brace is refused", () => {
+    // Only reachable through a source string: a real arrow cannot carry it, because
+    // JavaScript refuses `a = 1, b = 2,` as a statement. So jsmql refuses it too.
+    expect(() => jsmql.compile("({ $ }) => { $.a = 1, $.b = 2, }")).toThrow(
+      "A ',' with no write after it, before '}' at position 29. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').",
+    );
+    expect(jsmql.compile("({ $ }) => { $.a = 1, $.b = 2 }")()).toEqual([{ $set: { a: 1, b: 2 } }]);
   });
 
   it("function declaration parameter list (pipeline)", () => {

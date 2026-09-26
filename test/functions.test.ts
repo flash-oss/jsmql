@@ -147,8 +147,12 @@ describe("reusable functions — output stability", () => {
     expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual(jsmql("$.y = $.z + 1;"));
   });
 
-  it("works as a bracketed-pipeline element", () => {
-    expect(jsmql("[const double = (x) => x * 2, $set({ y: double($.x) })]")).toEqual([
+  it("is refused as a bracketed-pipeline element; the statement form inlines it", () => {
+    // `[const double = …]` is a JavaScript SyntaxError: a declaration is not an array element.
+    expect(() => jsmql("[const double = (x) => x * 2, $set({ y: double($.x) })]")).toThrow(
+      "`const double = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1. Write the pipeline as statements, with a ';' after each one: `const double = …; $match(…);`. In a stage's sub-pipeline, write the value inline in the stage that reads it.",
+    );
+    expect(jsmql("const double = (x) => x * 2; $set({ y: double($.x) });")).toEqual([
       { $set: { y: { $let: { vars: { x: "$x" }, in: { $multiply: ["$$x", 2] } } } } },
     ]);
   });
@@ -234,13 +238,13 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("re-declaring a function in the same pipeline is rejected", () => {
     expect(() => jsmql("const f = (x) => x; const f = (y) => y + 1; $ = { a: f($.n) };")).toThrow(
-      "`function f` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
+      "`const f` at position 20 is already declared earlier in this block, which JavaScript refuses. Pick a different name.",
     );
   });
 
   it("a function name colliding with a `let` binding is rejected", () => {
     expect(() => jsmql("let total = $.amount; const total = (x) => x; $ = { a: total($.n) };")).toThrow(
-      "`function total` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
+      "`const total` at position 22 is already declared earlier in this block, which JavaScript refuses. Pick a different name.",
     );
   });
 
@@ -377,7 +381,7 @@ describe("`function` keyword — parity with the arrow form", () => {
 
   it("`function` declaration works as a bracketed-pipeline element", () => {
     const fn = jsmql("[ function double(x) { return x * 2 }, $set({ a: double($.price) }) ]");
-    const arrow = jsmql("[ const double = (x) => x * 2, $set({ a: double($.price) }) ]");
+    const arrow = jsmql("const double = (x) => x * 2; $set({ a: double($.price) });");
     expect(fn).toEqual([{ $set: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } }]);
     expect(fn).toEqual(arrow);
   });

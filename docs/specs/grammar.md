@@ -31,24 +31,29 @@ function_decl  = "function" IDENT "(" [IDENT ("," IDENT)* ","?] ")" expr_block
 let_decl       = ("let" | "const") declarator ("," declarator)*
                (* pipeline-scoped local binding; see docs/specs/let-bindings.md.
                   `let` is reassignable (`name = …` later), `const` is not.
-                  Only valid inside a pipeline (any `;`-separated form or a
-                  bracketed `[...]` pipeline element). A top-level let/const in
-                  expression mode is a parse error.
+                  A statement, never an array element: JavaScript refuses
+                  `[let x = …]`, and the parser refuses it with the statement
+                  form `let x = …; $match(…);` as the way out.
                   A declaration list is N declarations, as in JavaScript: a later
                   declarator reads the earlier ones. The `,` is also the MERGE and
                   the `;` the stage boundary, the rule update_filter follows, so
                   one list takes one `$set` — broken only at a declarator that
-                  reads a sibling bound in it. Inside a bracketed `[...]` pipeline
-                  the `,` is already the ELEMENT separator, so each element there
-                  carries its own keyword. *)
+                  reads a sibling bound in it.
+                  One scope declares a name once: a second declaration of it, or
+                  a declaration that names a parameter of the enclosing function,
+                  is a ParseError, as in JavaScript. A nested function is a new
+                  scope and may shadow. *)
 
 declarator     = IDENT "=" expression
                (* an initialiser is required: a binding is a value, and MQL has
                   no `undefined` to hold the place of one, so `let x;` is a
                   position-marked ParseError naming `let x = <expr>`. *)
 
-update_filter  = update_op ("," update_op)* ","?
-               (* parser dispatch:
+update_filter  = update_op ("," update_op)*
+               (* no trailing ",": a statement is not a list, so JavaScript
+                  refuses `$.a = 1,`, and so does the parser. The same holds in
+                  a parenthesised group `($.a = 1, $.b = 2)`.
+                  parser dispatch:
                   - leading `delete`, `++`, or `--`, OR
                   - leading expression followed by an assignment operator
                   triggers update_filter; otherwise expression *)
@@ -269,7 +274,7 @@ Every expression this grammar accepts is also valid JavaScript syntax. Adding a 
 
 ## Trailing commas
 
-JS allows one trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`). So the parser accepts one **everywhere a comma list appears**: call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array and object literals, destructure patterns, arrow / `function` parameter lists, the `jsmql.compile` `(params, { $, … })` signature, and the in-stage update-op chain (`$.a = 1, $.b = 2,`). The EBNF spells the `","?` on the core lists above, and leaves it out on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`), where only a *lone* trailing comma is meaningful. A trailing comma never changes the parse, so the output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Every comma loop in `src/compiler/parse/parser.ts` — `args`, `arrayLiteral`, `objectLiteral`, `paramList`, `destructure` — is written the same way, `do { if (<closer>) break; … } while (eat("Comma"))`, so one shape enforces this rule everywhere.
+JS allows one trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`). So the parser accepts one **everywhere a comma list appears**: call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array and object literals, destructure patterns, arrow / `function` parameter lists, and the `jsmql.compile` `(params, { $, … })` signature. A statement is not a list: `$.a = 1, $.b = 2,` is a JavaScript SyntaxError, and the parser refuses it and names the comma-free form. The EBNF spells the `","?` on the core lists above, and leaves it out on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`), where only a *lone* trailing comma is meaningful. A trailing comma never changes the parse, so the output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Every comma loop in `src/compiler/parse/parser.ts` — `args`, `arrayLiteral`, `objectLiteral`, `paramList`, `destructure` — is written the same way, `do { if (<closer>) break; … } while (eat("Comma"))`, so one shape enforces this rule everywhere.
 
 ## Function-form input is not part of the grammar
 

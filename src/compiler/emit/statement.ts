@@ -125,7 +125,7 @@ function stageBody(node: Expr, env: Env): unknown {
 function subPipeline(node: Expr, env: Env, slot: { stage: string; key: string } | null = null): Stage[] {
   if (node.type !== "ArrayLiteral") throw E.needsStageList(slot, node.pos);
   const out: Stage[] = [];
-  let scope = childEnv(env, node, "elements").block();
+  let scope = childEnv(env, node, "elements");
   for (const el of node.elements) {
     if (el.type === "SpreadElement") throw E.spreadInStageList(el.pos);
     if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
@@ -234,7 +234,6 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
   // `function f(x) { return … }` — a name for a body, inlined at each call; no stage of its own.
   if (stmt.type === "FuncDecl") {
     const decl = stmt as Extract<PipelineStmt, { type: "FuncDecl" }>;
-    if (env.scope.declaredHere(decl.name)) throw E.redeclared("function", decl.name, decl.pos);
     const lambda = decl.lambda as Extract<Expr, { type: "Lambda" }>;
     return {
       stages: [],
@@ -348,9 +347,6 @@ function declStages(run: readonly (LetDecl | FuncDecl)[], env: Env): (Step & { c
  * value would be.
  */
 function letStages(decl: LetDecl, env: Env): Step {
-  // JavaScript refuses a second `let x` in one block; so does this language. A
-  // binding a stage dropped is still declared: the way back is `x = …`, not `let`.
-  if (env.scope.declaredHere(decl.name)) throw E.redeclared(decl.kind, decl.name, decl.pos);
   // A block over the SAME documents shares their fields: a shadowing `let` would
   // write the outer binding's slot, and the outer read after the block would see it.
   // A body over another collection has documents of its own, and shadows freely.

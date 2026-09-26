@@ -66,9 +66,11 @@ type Lambda   = Extract<Expr, { type: "Lambda" }>;            // the arrow node,
 type FuncDecl = { type: "FuncDecl"; name: string; lambda: Lambda; kind: "let" | "const"; form: "arrow" | "function"; pos: number };
 ```
 
-`PipelineStmt` and `ArrayElement` are both widened to include `FuncDecl` (parallel
-to how `LetDecl` is admitted), so a declaration can appear either as a
-`;`-separated statement or as an element in a bracketed `[…]` pipeline.
+`PipelineStmt` and `ArrayElement` are both widened to include `FuncDecl`. A
+`const f = (x) => …` declaration is always a `;`-separated statement, because
+JavaScript refuses a declaration as an array element. A bracketed `[…]` pipeline
+holds only the `function f(x) { … }` spelling, which JavaScript reads there as a
+function expression.
 
 ## Lexer
 
@@ -86,9 +88,9 @@ start. See § The `function` keyword.
   parenthesised `(x) => …` form is recognised there, through `parsePrimary`'s
   `isLambdaStart`. Without this rule, `const f = x => …` fails with
   `Unexpected token '=>'`.
-- **`declarator()`** holds the fork itself, so every dispatch site inherits it: the
-  statement loop's declaration list (`bindings()`) and the bracketed pipeline's
-  single element (`binding()`) alike. If the parsed initialiser is a `Lambda`, it
+- **`declarator()`** holds the fork itself, and the statement loop's declaration
+  list (`bindings()`) is its one caller. A bracketed pipeline refuses a `const`
+  element before the fork. If the parsed initialiser is a `Lambda`, it
   returns a `FuncDecl`; otherwise it returns a `LetDecl`. The block-body-arrow path
   (`parseExprBlockBody`) does **not** fork, because a function declares only at the
   top level, so it rejects a nested arrow-valued binding there with a precise
@@ -165,7 +167,7 @@ call site, exactly as for a hand-written IIFE.
 | `function` body without `return` | ``A block body must end with a `return <expr>` statement …`` |
 | Generator `function*` | ``jsmql does not support generator functions (`function*`) …`` |
 | `function` predicate with local bindings | *accepted* — the bindings become the `$let` the predicate's `$expr` rides in |
-| Re-declaration / name clash | ``Function `f` is already declared earlier in this pipeline …`` |
+| Re-declaration / name clash | `` `const f` at position N is already declared earlier in this block, which JavaScript refuses. … `` (a `ParseError`) |
 | Nested declaration in an arrow body | ``Reusable functions must be declared at the top level of a pipeline …`` |
 | Declaration with no pipeline | ``A reusable function declaration (…) is only valid inside a pipeline …`` |
 

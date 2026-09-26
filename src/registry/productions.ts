@@ -1340,7 +1340,7 @@ export const PRODUCTIONS = {
   }),
 
   constantBinding: production({
-    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration.",
+    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration. A statement, never an array element: JavaScript refuses `[const x = …]`. One scope declares a name once, its function's parameters included.",
     tokens: ["const", "=", "identifier", ","],
     spelling: "const x = …",
     becomes: "LetDecl",
@@ -1354,7 +1354,7 @@ export const PRODUCTIONS = {
   }),
 
   mutableBinding: production({
-    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration.",
+    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration. A statement, never an array element: JavaScript refuses `[let x = …]`. One scope declares a name once, its function's parameters included.",
     tokens: ["let", "=", "identifier", ","],
     spelling: "let x = …",
     becomes: "LetDecl",
@@ -1397,7 +1397,7 @@ export const PRODUCTIONS = {
   }),
 
   fieldAssignment: production({
-    doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node.",
+    doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node. A `,` joins two writes; it cannot end the run, because JavaScript refuses `$.a = 1,`.",
     tokens: ["=", "+=", "-=", "*=", "/=", ",", "(", ")"],
     spelling: "$.field = …",
     becomes: ["AssignExpr", "UpdateFilter"],

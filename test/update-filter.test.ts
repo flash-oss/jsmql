@@ -232,8 +232,18 @@ describe("update filters: sequencing", () => {
     expect(jsmql("$.a = 1, $.b = $.a, $.c = 3")).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a", c: 3 } }]);
   });
 
-  it("allows a trailing comma", () => {
-    expect(jsmql("$.a = 1,")).toEqual([{ $set: { a: 1 } }]);
+  it("refuses a trailing comma, as JavaScript does", () => {
+    expect(jsmql.validate("$.a = 1, $.b = 2,")).toEqual({
+      valid: false,
+      errors: [
+        {
+          message:
+            "A ',' with no write after it, before end of input at position 16. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').",
+          pos: 16,
+          code: "SYNTAX_ERROR",
+        },
+      ],
+    });
   });
 });
 

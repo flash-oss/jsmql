@@ -83,7 +83,6 @@ describe("compiler/passes/shape — a bracketed literal is decided by its first 
   it("is a pipeline when the first element is a statement", () => {
     expect(shape("[$match($.a > 1)]")).toBe("pipeline");
     expect(shape("[$.a = 1]")).toBe("pipeline");
-    expect(shape("[let x = $.a + 1, $match(x > 5)]")).toBe("pipeline");
     expect(shape("[function double(x) { return x * 2 }, $set({ a: double($.p) })]")).toBe("pipeline");
   });
 

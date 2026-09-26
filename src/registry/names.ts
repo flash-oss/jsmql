@@ -7308,7 +7308,6 @@ export const NAMES = {
         for (const el of recv.elements) {
           const c =
             el.type === "SpreadElement" ||
-            el.type === "LetDecl" ||
             el.type === "FuncDecl" ||
             el.type === "AssignExpr" ||
             el.type === "DeleteStmt" ||

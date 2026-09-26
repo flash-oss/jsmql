@@ -270,7 +270,7 @@ function callbackAnswer(
   const cb = args[n];
   if (cb === undefined || cb.type !== "Lambda" || cb.body === undefined) return ANY;
   const kinds = callbackParamsOf(name, "value") ?? [];
-  let bodyEnv = env.block();
+  let bodyEnv = env;
   cb.params.forEach((p, i) => {
     const kind = kinds[i];
     const t =

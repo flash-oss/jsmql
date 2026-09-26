@@ -10,6 +10,59 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat!: a program is JavaScript syntax — three forms that `node --check` refuses are refused
+
+The corpus gate in `test/compiler-parse.test.ts` held a `NOT_JS` table: twelve
+sources the compiler accepted, although JavaScript refuses each one. That broke
+the strict-subset rule (CLAUDE.md § #2). The developer decided to refuse each
+form, with no deprecation. Each refusal is a `ParseError` with `.pos` and "at
+position N", and it names the JavaScript form that works. The `NOT_JS` table is
+gone, so the gate is strict: every source the suites compile parses as
+JavaScript.
+
+1. **A `,` that ends a statement.** `$.a = 1,`, `$.a = 1, $.b = 2,` before `;`
+   or `}`, and `($.a = 1, $.b = 2,)` compiled as if the comma was absent. The
+   parser now refuses the comma: "A ',' with no write after it, before end of
+   input at position 7. … Delete the ',' ('$.a = 1;'), or write the next write
+   after it ('$.a = 1, $.b = 2;')." A list keeps its trailing comma:
+   `[$.a = 1, $.b = 2,]` still gives `[{ $set: { a: 1, b: 2 } }]`.
+2. **A declaration as an array element.** `[let x = $.a + 1, $match(x > 5)]`
+   compiled to a pipeline. JavaScript refuses `let` and `const` inside `[ … ]`,
+   so the parser refuses it and names the statement form
+   `let x = …; $match(…);`, which gives the same stages. A stage's own
+   sub-pipeline (a `$lookup.pipeline` or `$facet` branch array) loses its
+   local `let`. The message says to write the value inline there, and a
+   sub-pipeline over another collection keeps its lets through the block form
+   `$$$.<coll>.aggregate(() => { let x = …; … })`. `ArrayElement` no longer
+   holds a `LetDecl`. A `function f(x) { … }` element stays, because JavaScript
+   reads it as a function expression.
+3. **A name declared twice in one scope.** `x => { const x = 99; return x }`
+   compiled to `{ $let: { vars: { x: 99 }, in: "$$x" } }`, and a constant pair
+   such as `[1, 2].map(x => { const y = 1; const y = 2; return y })` folded
+   away before the emit-phase check could see it. The parser's statement loop
+   `block()` now holds one scope per block, seeded with the enclosing
+   function's parameters (pattern parts and the entry destructure included).
+   A second declaration, or a declaration that names a parameter, is a
+   `ParseError`: "`const x` re-declares the parameter `x` at position 19, which
+   JavaScript refuses. Pick a different name." A nested function is a new
+   scope, so `x => $.o.map(y => { const x = 99; return x + y })` still
+   compiles. A duplicate parameter name in an arrow or a destructure
+   (`(x, x) => x`) is refused too; a plain `function (x, x)` list stays, as in
+   JavaScript. This one rule replaces three checks: the fold's
+   `refuseParameterRedeclaration`, the emit phase's `redeclared` (in
+   `statement.ts` and `lower.ts`), and the `Scope.own` / `declaredHere` /
+   `block()` state that fed it. A duplicate declaration now reaches
+   `validate()` as `SYNTAX_ERROR`, not `CODEGEN_ERROR`.
+
+Tests about a form now assert its refusal, word for word, with its `.pos`, and
+a `node:vm` check that JavaScript refuses the same source. Tests where the form
+was incidental use the statement spelling and keep their MQL. Docs:
+`LANGUAGE.md` (trailing commas, sequencing, block bodies, local bindings),
+`specs/grammar.md`, `specs/let-bindings.md`, `specs/reusable-functions.md`,
+`specs/update-filter.md`.
+
+---
+
 ## 2026-09-26 — fix: `.pickBy` / `.omitBy` read the predicate with JavaScript's truth rules
 
 `$.o.pickBy(v => v)` lowered its predicate as a raw value in `$filter.cond`:

@@ -59,10 +59,9 @@ does not.
 > named function, not a value binding. The initialiser alone tells the two
 > apart. See [reusable-functions.md](reusable-functions.md).
 
-`PipelineStmt` widens to `UpdateFilter | Expr | LetDecl`. `ArrayElement`
-widens to include `LetDecl` too (parallel to `AssignExpr` / `DeleteStmt`), so
-a let can appear either as a `;`-separated statement or as an element inside
-a bracketed `[…]` pipeline.
+`PipelineStmt` widens to `UpdateFilter | Expr | LetDecl`. `ArrayElement` does
+not hold a `LetDecl`: JavaScript refuses a declaration as an array element, so
+a let is always a `;`-separated statement (see § Parser).
 
 ## Lexer
 
@@ -76,8 +75,7 @@ Two keywords in [src/compiler/lex/lexer.ts](../../src/compiler/lex/lexer.ts):
 ## Parser
 
 A leading `let` (or its `const` alias) opens a declaration wherever a
-statement stands — at the top level, inside a bracketed pipeline, and inside
-a block body. The declaration reads `let <Ident> = <Expression>`. A missing
+statement stands — at the top level and inside a block body. The declaration reads `let <Ident> = <Expression>`. A missing
 identifier raises a position-marked `ParseError` that echoes the keyword as
 written. A missing initialiser raises the same kind of error: a binding is a
 value, and MQL has no `undefined` to hold the place of one. So the parser
@@ -180,35 +178,67 @@ $.o = $.i.map((v) => { const d = v * 2, e = d + 1; return e; });
 //             in: { $let: { vars: { e: { $add: ["$$d", 1] } }, in: "$$e" } } } }
 ```
 
-Inside a bracketed `[…]` pipeline the `,` already works as the ELEMENT
-separator, so the parser does not read a list there: each element carries
-its own keyword (`[ let a = …, let b = …, … ]`), and each takes a stage of
-its own.
+A declaration is never an element of a bracketed `[…]` pipeline, because
+JavaScript refuses `[let x = …]`. The parser refuses it where the keyword
+stands, and names the statement form:
+
+```js
+[let x = $.a + 1, $match(x > 5)]
+// ✗ error — "`let x = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1.
+//            Write the pipeline as statements, with a ';' after each one: `let x = …; $match(…);`.
+//            In a stage's sub-pipeline, write the value inline in the stage that reads it."
+
+let x = $.a + 1; $match(x > 5);
+// → [{ $set: { "__jsmql.var.x": { $add: ["$a", 1] } } },
+//    { $match: { $expr: { $gt: ["$__jsmql.var.x", 5] } } },
+//    { $unset: "__jsmql" }]
+```
 
 The declaration's `pos` — the offset every codegen error about the binding
 forwards — is the KEYWORD for the first declarator, and the declarator's own
 NAME for each one after it. This lets an error underline the exact
 declarator it is about.
 
-A declaration ALONE is not a program: with no `;` to make the input a
-pipeline, the parser refuses a lone `let X = …` and names the two spellings
-that work — a trailing `;`, or the bracketed form `[ let X = …, … ]`. See
-[src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
-The parser does **not** catch re-declaration — that check needs a
-pipeline-level view and lives in codegen. The constructed `LetDecl` node
-records the keyword's source offset in its `pos` field, and codegen forwards
-that offset into every `CodegenError` it raises about the binding
-(re-declaration, a binding/parameter name collision, a dropped-let read
-after a reshape stage). So a `.validate()` caller sees the original keyword
-in `errors[0].pos`.
+A declaration ALONE never stands as a Filter: `collapse()` keeps it in a
+`Pipeline`, because nothing would read it. A constant declaration that
+nothing reads leaves no stage, and the emitter refuses the empty program.
+See [src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
+
+**Re-declaration is a parse error, as in JavaScript.** One scope declares a
+name once. The statement loop `block()` holds the scope of its block, and a
+function's parameters open it: an arrow's or a `function`'s names (a
+destructured pattern's parts included) and the entry form's destructure. A
+second declaration of a name, or a declaration that names a parameter, is a
+`ParseError` at that declaration. The parser holds this rule, because the
+fold inlines a constant declaration before a later phase can see it. A
+nested function opens a scope of its own, and its declaration may shadow an
+outer name:
+
+```js
+let a = 1; let a = 2; $.x = a;
+// ✗ error — "`let a` at position 11 is already declared earlier in this block, which JavaScript refuses. Pick a different name."
+
+$.items.map(x => { const x = 99; return x })
+// ✗ error — "`const x` re-declares the parameter `x` at position 19, which JavaScript refuses. Pick a different name."
+
+$.items.map(x => $.other.map(y => { const x = 99; return x + y }))
+// → { $map: { input: { $ifNull: ["$items", []] }, as: "x", in:
+//      { $map: { input: { $ifNull: ["$other", []] }, as: "y", in:
+//        { $let: { vars: { x: 99 }, in: { $add: ["$$x", "$$y"] } } } } } } }
+```
+
+The constructed `LetDecl` node records the keyword's source offset in its
+`pos` field, and codegen forwards that offset into every `CodegenError` it
+raises about the binding (a binding that shadows an outer one in the same
+documents, a dropped-let read after a reshape stage). So a `.validate()`
+caller sees the original keyword in `errors[0].pos`.
 
 ### `let` vs `const`
 
 Both keywords declare a pipeline-scoped binding. They differ in
-**reassignment**, and, as a result, in **static typing**. The three
-dispatch sites (`collectStatement()`, `parseArrayLiteral()`, and the
-object-key branch in `parseObjectEntry()`) accept either keyword.
-`parseLetDecl()` records which one was written, in `LetDecl.kind`
+**reassignment**, and, as a result, in **static typing**. The statement
+loop's `statement()` accepts either keyword.
+`declarator()` records which one was written, in `LetDecl.kind`
 (`"let" | "const"`). Declaration, read, scope-tracking, and cleanup
 otherwise ignore the keyword. A re-declaration, shadow, or parser error
 message echoes the keyword the user wrote.

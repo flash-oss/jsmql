@@ -358,11 +358,6 @@ export class Env {
     return new Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
   }
 
-  /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
-  block(): Env {
-    return new Env(this.scope.block(), this.site, this.chain, this.documents);
-  }
-
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js: string, type: Type, pos: number): Bound {
     return this.bound(this.scope.param(js, type, pos, this.level));

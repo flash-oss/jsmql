@@ -496,8 +496,7 @@ export function stageInputs(
    */
   const bound = (cb: Expr): Env | null => {
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;
-    // The parameters open the callback's block: a `let` of the same name inside it collides.
-    let e = argEnv.block();
+    let e = argEnv;
     if (cb.params.length >= 1) {
       e = e.bind(cb.params[0], {
         ref: { kind: "document", path: env.chain.element },
