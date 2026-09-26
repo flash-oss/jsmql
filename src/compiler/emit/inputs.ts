@@ -621,8 +621,8 @@ export function stageInputs(
       if (stages === undefined) throw valueWhereBlockExpected(written, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name, objects), name, env.chain.element),
-    orderBy: (keys, orders) => streamSortAsk(orderBySpec(keys, orders, name), name, env.chain.element),
+    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name, objects), name, env.chain.element, e.pos),
+    orderBy: (keys, orders) => streamSortAsk(orderBySpec(keys, orders, name), name, env.chain.element, keys.pos),
     slot: () => env.chain.slot().path,
     bind: (hint) => {
       const b = env.fresh(hint);

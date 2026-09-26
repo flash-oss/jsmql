@@ -871,6 +871,12 @@ export type BodyRule = {
    * real sort key.
    */
   everyValueIn?: readonly (string | number)[];
+  /**
+   * The body is a sort spec, and it names at most this many keys. MEASURED: a
+   * `$sort` of 33 keys answers "too many compound keys". See `SORT_KEY_LIMIT`
+   * in mql.ts for each slot that states it.
+   */
+  maxSortKeys?: number;
   /** Groups of keys that never come together: the ISO-week parts and the calendar parts of a date. */
   notTogether?: readonly (readonly (readonly string[])[])[];
   /**

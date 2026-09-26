@@ -1217,6 +1217,11 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
   }
   const args = node.args as readonly Expr[];
   checkSlots(node.name, sel.rule.args, args, false);
+  // A stage spelled on a reference meets the same body rule as the stage statement.
+  const bodyRule = stageBodyRuleOf(name);
+  if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
+    checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
+  }
   const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   const out: Stage[] = [];
   for (const stage of stages)
@@ -1267,7 +1272,12 @@ function streamLink(
     throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
   }
   const args = link.args as readonly Expr[];
-  checkSlots(link.name, sel.rule.args, args, stageBodyRuleOf(name) !== undefined);
+  const bodyRule = stageBodyRuleOf(name);
+  checkSlots(link.name, sel.rule.args, args, bodyRule !== undefined);
+  // A stage link's body meets the same rule as the stage statement's body.
+  if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
+    checkBody(name, bodyRule, args, positionalKeysOf(name), link.pos);
+  }
   // `name` is the row that runs; `link.name` is what the developer typed. A message
   // that swaps them tells the reader about a method they did not write.
   const stages = sel.rule.emit(

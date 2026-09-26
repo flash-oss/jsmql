@@ -47,7 +47,7 @@ nesting an `.aggregate((o) => { … })` block.
 - Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), the compiler refuses a following stage link, because a value has no stream for a stage to run over (`streamStages` in `src/compiler/emit/statement.ts`).
 - **Placement reads a chain link as a stage.** A link carries the same `position` fact as the statement it stands for, and `place` checks it per link against what the chain has emitted. This is what makes `.$out("a").$limit(1)` fail exactly like `$out("a"); $limit(1);` does.
 
-**Lowering — one equivalence, by construction.** A stage link has no lowering of its own. `streamLink` hands it to the same `statement` cell its statement form uses, in whichever chain it stands in: the root stream, a `$facet` branch, a `$lookup` body (`$$$.<coll>.$match(…)` and `.aggregate((o) => { $match(…); })` are the same program), a `$unionWith` body, or the stages before a `$out`. The two spellings cannot drift.
+**Lowering — one equivalence, by construction.** A stage link has no lowering of its own. `streamLink` (and `refStatement`, for a link spelled directly on `$$`) hands it to the same `statement` cell and the same `checkBody` rule its statement form uses, in whichever chain it stands in: the root stream, a `$facet` branch, a `$lookup` body (`$$$.<coll>.$match(…)` and `.aggregate((o) => { $match(…); })` are the same program), a `$unionWith` body, or the stages before a `$out`. The two spellings cannot drift.
 
 ```js
 $$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });
@@ -91,6 +91,8 @@ The shape rule in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape
 ## Lowering
 
 `stageStatement` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers a stage call or stage document through its row. The body lowers through the row's `body` rule ([emit-pass.md § stage bodies](emit-pass.md)); the literal-gated checks in `check.ts` refuse what the server would — a `$limit: 0`, an unknown `$group` key, a `$project` that mixes inclusion and exclusion. Placement lowers through its `position` fact.
+
+A body rule's `maxSortKeys` fact marks a sort spec that the server limits to `SORT_KEY_LIMIT` keys ([src/registry/mql.ts](../../src/registry/mql.ts), where the measured slots are listed). The `$sort` body states it, and so does the nested `sortBy` rule of each other row that sorts documents. A `nested` rule reads its key in both call forms, so `$top($.a, { … })` meets the same check as `$top({ output: $.a, sortBy: { … } })`. The stream sort methods reach the same limit through `streamSortAsk` in `src/compiler/emit/sort-spec.ts`; see [stream-methods.md](stream-methods.md).
 
 The one stage-aware body rule is `$match`'s. An object literal is a query document, and it passes through verbatim (the escape hatch: `$match({ $expr: … })` forces the aggregation form). Anything else lowers through the filter road ([filter-mode.md § The filter road](filter-mode.md)), so `find()` and `$match` produce the same document for the same input. Other bodies lower through the value road, where accumulators, operators, field references and method chains compose.
 

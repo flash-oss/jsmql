@@ -215,6 +215,7 @@ function dateOptions(arg, value) {
   }
   return out;
 }
+var SORT_KEY_LIMIT = 32;
 var singleArrayArg = (operand) => Array.isArray(operand) ? [operand] : operand;
 var sizeOf = (a) => ({ $size: singleArrayArg(a) });
 var firstOf = (a) => ({ $first: singleArrayArg(a) });
@@ -4124,7 +4125,15 @@ var NAMES = {
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
-    shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
+    shape: {
+      object: {
+        required: ["output", "sortBy"],
+        optional: [],
+        closed: true,
+        positional: ["output", "sortBy"],
+        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } }
+      }
+    },
     filter: unsupported(
       "$bottom is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
     ),
@@ -4151,7 +4160,8 @@ var NAMES = {
         required: ["output", "sortBy", "n"],
         optional: [],
         closed: true,
-        positional: ["output", "sortBy", "n"]
+        positional: ["output", "sortBy", "n"],
+        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } }
       }
     },
     filter: unsupported(
@@ -4175,7 +4185,15 @@ var NAMES = {
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
-    shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
+    shape: {
+      object: {
+        required: ["output", "sortBy"],
+        optional: [],
+        closed: true,
+        positional: ["output", "sortBy"],
+        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } }
+      }
+    },
     filter: unsupported(
       "$top is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
     ),
@@ -4202,7 +4220,8 @@ var NAMES = {
         required: ["output", "sortBy", "n"],
         optional: [],
         closed: true,
-        positional: ["output", "sortBy", "n"]
+        positional: ["output", "sortBy", "n"],
+        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } }
       }
     },
     filter: unsupported(
@@ -4862,6 +4881,7 @@ var NAMES = {
       // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
       // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
       nested: {
+        sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT },
         output: {
           required: [],
           optional: [],
@@ -5621,6 +5641,7 @@ var NAMES = {
     body: {
       // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
       nested: {
+        sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT },
         output: {
           required: [],
           optional: [],
@@ -5740,7 +5761,8 @@ var NAMES = {
       // The keys are the developer's own field names, so this row closes nothing.
       // The server fixes every VALUE.
       closed: false,
-      everyValueIn: [1, -1]
+      everyValueIn: [1, -1],
+      maxSortKeys: SORT_KEY_LIMIT
     },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
@@ -23189,6 +23211,10 @@ var needsPipeline = (name2, pos) => new CodegenError(
 );
 var spreadInOperatorBody = (pos) => new CodegenError("MQL has no spread in an object. Write Object.assign(a, b) instead.", pos);
 var computedKeyInOperatorBody = (pos) => new CodegenError("Computed object keys are not allowed here. An operator argument key must be a literal name.", pos);
+var tooManySortKeys = (who, count, limit, pos) => new CodegenError(
+  `'${who}' sorts by at most ${limit} keys, and this sort names ${count}. The server refuses a longer compound sort. Keep the ${limit} keys that decide the order, or put the last keys into one document field ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.`,
+  pos
+);
 var spreadInCall = (label, pos) => new CodegenError(
   `${label}: spread arguments are not supported. Pass each argument explicitly, or use $op($let, ...) to build the bindings by hand.`,
   pos
@@ -24608,11 +24634,11 @@ function checkBody(name2, rule, args, keys, pos) {
     const v = valueOf2(k);
     if (v !== void 0) checkType(name2, k, v, t);
   }
+  for (const [k, inner] of Object.entries(rule.nested ?? {})) {
+    const v = valueOf2(k);
+    if (v !== void 0 && v.type === "ObjectLiteral") checkBody(`${name2}.${k}`, inner, [v], [], v.pos);
+  }
   if (body !== null) {
-    for (const [k, inner] of Object.entries(rule.nested ?? {})) {
-      const v = valueOf2(k);
-      if (v !== void 0 && v.type === "ObjectLiteral") checkBody(`${name2}.${k}`, inner, [v], [], v.pos);
-    }
     if (rule.eachValue !== void 0) {
       for (const k of present2) {
         const v = valueOf2(k);
@@ -24629,6 +24655,9 @@ function checkBody(name2, rule, args, keys, pos) {
         );
       }
     }
+  }
+  if (rule.maxSortKeys !== void 0 && body !== null && present2.length > rule.maxSortKeys) {
+    throw tooManySortKeys(name2, present2.length, rule.maxSortKeys, pos);
   }
   if (rule.nonEmpty === true && body !== null && present2.length === 0) {
     throw new CodegenError(
@@ -25805,8 +25834,10 @@ function orderBySpec(keys, orders, method) {
   });
   return { kind: "keys", spec };
 }
-function streamSortAsk(ask, method, element2 = "") {
+function streamSortAsk(ask, method, element2, pos) {
   if (ask.kind === "keys") {
+    const count = Object.keys(ask.spec).length;
+    if (count > SORT_KEY_LIMIT) throw tooManySortKeys(`.${method}()`, count, SORT_KEY_LIMIT, pos);
     if (element2 === "") return ask;
     return { kind: "keys", spec: Object.fromEntries(Object.entries(ask.spec).map(([k, d]) => [`${element2}.${k}`, d])) };
   }
@@ -26644,8 +26675,8 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
       if (stages === void 0) throw valueWhereBlockExpected(written2, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name2, objects), name2, env.chain.element),
-    orderBy: (keys2, orders) => streamSortAsk(orderBySpec(keys2, orders, name2), name2, env.chain.element),
+    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name2, objects), name2, env.chain.element, e.pos),
+    orderBy: (keys2, orders) => streamSortAsk(orderBySpec(keys2, orders, name2), name2, env.chain.element, keys2.pos),
     slot: () => env.chain.slot().path,
     bind: (hint2) => {
       const b = env.fresh(hint2);
@@ -28429,6 +28460,10 @@ function refStatement(node, ref, env, first) {
   }
   const args = node.args;
   checkSlots(node.name, sel.rule.args, args, false);
+  const bodyRule = stageBodyRuleOf(name2);
+  if (bodyRule !== void 0 && args.length === 1 && args[0].type === "ObjectLiteral") {
+    checkBody(name2, bodyRule, args, positionalKeysOf(name2), node.pos);
+  }
   const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   const out = [];
   for (const stage of stages)
@@ -28459,7 +28494,11 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
     throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
   }
   const args = link.args;
-  checkSlots(link.name, sel.rule.args, args, stageBodyRuleOf(name2) !== void 0);
+  const bodyRule = stageBodyRuleOf(name2);
+  checkSlots(link.name, sel.rule.args, args, bodyRule !== void 0);
+  if (bodyRule !== void 0 && args.length === 1 && args[0].type === "ObjectLiteral") {
+    checkBody(name2, bodyRule, args, positionalKeysOf(name2), link.pos);
+  }
   const stages = sel.rule.emit(
     stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
   );

@@ -15,7 +15,7 @@ import { stringify } from "../../stringify.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
 import { bodyExampleOf, bodySlotAt } from "../rows.ts";
-import { computedKeyInOperatorBody, spreadInOperatorBody } from "./errors.ts";
+import { computedKeyInOperatorBody, spreadInOperatorBody, tooManySortKeys } from "./errors.ts";
 import { evaluate } from "../passes/evaluate.ts";
 import { isDate } from "../../bson.ts";
 
@@ -393,11 +393,12 @@ export function checkBody(
     const v = valueOf(k);
     if (v !== undefined) checkType(name, k, v, t);
   }
+  // A nested rule reads the key's value, which both call forms hand over: `$top({ output, sortBy })` and `$top(output, sortBy)`.
+  for (const [k, inner] of Object.entries(rule.nested ?? {})) {
+    const v = valueOf(k);
+    if (v !== undefined && v.type === "ObjectLiteral") checkBody(`${name}.${k}`, inner, [v], [], v.pos);
+  }
   if (body !== null) {
-    for (const [k, inner] of Object.entries(rule.nested ?? {})) {
-      const v = valueOf(k);
-      if (v !== undefined && v.type === "ObjectLiteral") checkBody(`${name}.${k}`, inner, [v], [], v.pos);
-    }
     if (rule.eachValue !== undefined) {
       for (const k of present) {
         const v = valueOf(k);
@@ -414,6 +415,9 @@ export function checkBody(
         );
       }
     }
+  }
+  if (rule.maxSortKeys !== undefined && body !== null && present.length > rule.maxSortKeys) {
+    throw tooManySortKeys(name, present.length, rule.maxSortKeys, pos);
   }
   if (rule.nonEmpty === true && body !== null && present.length === 0) {
     throw new CodegenError(

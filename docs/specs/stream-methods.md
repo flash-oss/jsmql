@@ -63,6 +63,8 @@ Where the object spelling is already claimed, it keeps its richer meaning: `.ord
 
 Each row below describes *lowering*. For the callback spellings a slot accepts, the section above is canonical.
 
+A stream sort method emits a `$sort` stage, so `streamSortAsk` in `src/compiler/emit/sort-spec.ts` refuses a spec of more than `SORT_KEY_LIMIT` keys ([src/registry/mql.ts](../../src/registry/mql.ts)) at the sort argument. A sort of an array value lowers to `$sortArray`, which takes more keys, so the value road states no limit. See [aggregation-stages.md § Lowering](aggregation-stages.md#lowering).
+
 | Method | Args | Lowering | Stages emitted |
 |---|---|---|---|
 | `.slice(start, end?)` | 1-2 non-negative integer literals; `end >= start` if both present | `$skip` + `$limit` | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |

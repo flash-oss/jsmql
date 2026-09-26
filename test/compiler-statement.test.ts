@@ -319,6 +319,34 @@ describe("compiler/emit/statement — a stage body is checked from the facts its
     expect(() => pipeline('$unwind({ path: "items" });')).toThrow(/The path must start with '\$'/);
   });
 
+  it("takes a sort of 32 keys in each slot that sorts documents, and refuses 33", () => {
+    // MEASURED on :27018: each slot runs 32 keys and answers "too many compound keys" for 33.
+    // The server run below proves the 32-key half; `$sortArray` takes more, so it is not here.
+    const spec = (n: number): string => `{ ${Array.from({ length: n }, (_, i) => `k${i}: 1`).join(", ")} }`;
+    const names = (n: number): string => `[${Array.from({ length: n }, (_, i) => `"k${i}"`).join(", ")}]`;
+    const slots: readonly [string, (s: string) => string][] = [
+      ["$sort", (s) => `$sort(${s});`],
+      ["$sort", (s) => `$$.$sort(${s});`],
+      ["$setWindowFields.sortBy", (s) => `$setWindowFields({ sortBy: ${s}, output: { r: { $sum: 1 } } });`],
+      ["$fill.sortBy", (s) => `$fill({ sortBy: ${s}, output: { qty: { method: "locf" } } });`],
+      ["$top.sortBy", (s) => `$group({ _id: null, t: $top({ output: $.a, sortBy: ${s} }) });`],
+      ["$bottomN.sortBy", (s) => `$group({ _id: null, t: $bottomN($.a, ${s}, 2) });`],
+      [".toSorted()", (s) => `$$.toSorted(${s});`],
+    ];
+    for (const [who, src] of slots) {
+      expect(compiled(src(spec(32))), who).toHaveLength(1);
+      expect(() => pipeline(src(spec(33))), who).toThrow(
+        `'${who}' sorts by at most 32 keys, and this sort names 33. The server refuses a longer compound sort.`,
+      );
+    }
+    expect(compiled(`$$.sortBy(${names(32)});`)).toEqual([
+      { $sort: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`k${i}`, 1])) },
+    ]);
+    expect(() => pipeline(`$$.sortBy(${names(33)});`)).toThrow(/^'\.sortBy\(\)' sorts by at most 32 keys/);
+    // An array sort is `$sortArray`, which the server runs with 33 keys.
+    expect(compiled(`$.x = $.items.toSorted(${spec(33)});`)).toHaveLength(1);
+  });
+
   it("checks a key's literal value against the closed set the server keeps", () => {
     expect(compiled("$bucket({ groupBy: $.a, boundaries: [0, 10, 30] });")).toEqual([
       { $bucket: { groupBy: "$a", boundaries: [0, 10, 30] } },

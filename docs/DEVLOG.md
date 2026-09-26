@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a sort of documents refuses more than 32 keys
+
+`$sort({ k0: 1, …, k32: 1 })` compiled, and the server refused it with "too
+many compound keys" — an HR3 violation. `test/stage-validation.test.ts` named
+the case "rejects more than 32 keys" and asserted that it compiled. The limit
+holds on every deployment, so it is a row fact (HR2 allows it). MEASURED on
+:27018, 32 keys run and 33 fail in the `$sort` stage, in `$setWindowFields.sortBy`,
+in `$fill.sortBy`, and in the `sortBy` of `$top`, `$topN`, `$bottom` and
+`$bottomN` (group and window). `$sortArray.sortBy` and the update `$push`
+`$sort` modifier run 33 keys, so they state no limit.
+
+The number lives once, as `SORT_KEY_LIMIT` in
+[src/registry/mql.ts](../src/registry/mql.ts). A new body-rule fact,
+`maxSortKeys`, carries it on the `$sort` body and on a nested `sortBy` rule of
+each other row. `checkBody` runs a `nested` rule in both call forms, so the
+positional `$top($.a, { … })` meets it too. The stream sort methods
+(`.sort`, `.toSorted`, `.sortBy`, `.orderBy`) reach the same constant through
+`streamSortAsk`, at the sort argument. One message, `tooManySortKeys` in
+[src/compiler/emit/errors.ts](../src/compiler/emit/errors.ts), states the limit
+and two ways out: keep the keys that decide the order, or gather the last keys
+into one document field (BSON compares a document field by field, measured).
+
+A stage link (`$$.$sort({…})`, `$$.filter(…).$sort({…})`) skipped the body
+rule of its stage, so `$$.$sort({ a: 2 })` also compiled and failed on the
+server. `streamLink` and `refStatement` now run `checkBody` as the statement
+form does. This is a polarity change: a stage link whose body breaks its row's
+rule is refused, with the statement form's message.
+
+---
+
 ## 2026-09-26 — feat!: `in` takes a list on its right, and the key test goes
 
 `in` had two meanings: with a list on the right it was MongoDB's `$in`, and

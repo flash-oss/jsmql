@@ -344,6 +344,16 @@ export const spreadInOperatorBody = (pos: number): CodegenError =>
 export const computedKeyInOperatorBody = (pos: number): CodegenError =>
   new CodegenError("Computed object keys are not allowed here. An operator argument key must be a literal name.", pos);
 
+/**
+ * A sort of more keys than the server takes: the `$sort` stage, a `sortBy` body,
+ * or a stream sort method. `who` is the spelling the developer wrote.
+ */
+export const tooManySortKeys = (who: string, count: number, limit: number, pos: number): CodegenError =>
+  new CodegenError(
+    `'${who}' sorts by at most ${limit} keys, and this sort names ${count}. The server refuses a longer compound sort. Keep the ${limit} keys that decide the order, or put the last keys into one document field ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.`,
+    pos,
+  );
+
 /** A spread handed to a lambda application — an IIFE or a declared function. */
 export const spreadInCall = (label: string, pos: number): CodegenError =>
   new CodegenError(

@@ -20,6 +20,7 @@ import {
   DATE_PARTS_CALENDAR,
   DATE_PARTS_ISO,
   DATE_PARTS_ISO_MARKERS,
+  SORT_KEY_LIMIT,
   capitalizeExpr,
   cbrt,
   clampNonNegative,
@@ -4779,7 +4780,15 @@ export const NAMES = {
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
-    shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
+    shape: {
+      object: {
+        required: ["output", "sortBy"],
+        optional: [],
+        closed: true,
+        positional: ["output", "sortBy"],
+        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
+      },
+    },
     filter: unsupported(
       "$bottom is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
     ),
@@ -4808,6 +4817,7 @@ export const NAMES = {
         optional: [],
         closed: true,
         positional: ["output", "sortBy", "n"],
+        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
       },
     },
     filter: unsupported(
@@ -4832,7 +4842,15 @@ export const NAMES = {
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
-    shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
+    shape: {
+      object: {
+        required: ["output", "sortBy"],
+        optional: [],
+        closed: true,
+        positional: ["output", "sortBy"],
+        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
+      },
+    },
     filter: unsupported(
       "$top is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
     ),
@@ -4861,6 +4879,7 @@ export const NAMES = {
         optional: [],
         closed: true,
         positional: ["output", "sortBy", "n"],
+        nested: { sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT } },
       },
     },
     filter: unsupported(
@@ -5544,6 +5563,7 @@ export const NAMES = {
       // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
       // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
       nested: {
+        sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT },
         output: {
           required: [],
           optional: [],
@@ -6333,6 +6353,7 @@ export const NAMES = {
     body: {
       // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
       nested: {
+        sortBy: { required: [], optional: [], closed: false, maxSortKeys: SORT_KEY_LIMIT },
         output: {
           required: [],
           optional: [],
@@ -6457,6 +6478,7 @@ export const NAMES = {
       // The server fixes every VALUE.
       closed: false,
       everyValueIn: [1, -1],
+      maxSortKeys: SORT_KEY_LIMIT,
     },
     bodyPositions: { "": "value" },
     forbiddenIn: [],

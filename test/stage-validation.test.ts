@@ -101,47 +101,20 @@ describe("stage body validation — $sort", () => {
       "'$sort' takes 1 or -1 for every key, and 'a' has a boolean.",
     );
   });
-  it("rejects more than 32 keys", () => {
-    const keys = Array.from({ length: 33 }, (_, i) => `k${i}: 1`).join(", ");
-    expect(jsmql(`[ $sort({ ${keys} }) ]`)).toEqual([
-      {
-        $sort: {
-          k0: 1,
-          k1: 1,
-          k2: 1,
-          k3: 1,
-          k4: 1,
-          k5: 1,
-          k6: 1,
-          k7: 1,
-          k8: 1,
-          k9: 1,
-          k10: 1,
-          k11: 1,
-          k12: 1,
-          k13: 1,
-          k14: 1,
-          k15: 1,
-          k16: 1,
-          k17: 1,
-          k18: 1,
-          k19: 1,
-          k20: 1,
-          k21: 1,
-          k22: 1,
-          k23: 1,
-          k24: 1,
-          k25: 1,
-          k26: 1,
-          k27: 1,
-          k28: 1,
-          k29: 1,
-          k30: 1,
-          k31: 1,
-          k32: 1,
-        },
-      },
-    ]);
+  // MEASURED on :27018: a $sort of 32 keys runs, and one of 33 answers "too many compound keys".
+  const sortKeys = (n: number): string => Array.from({ length: n }, (_, i) => `k${i}: 1`).join(", ");
+  it("rejects more than 32 keys, at the position of the sort", () => {
+    const src = `[ $sort({ ${sortKeys(33)} }) ]`;
+    expect(() => jsmql(src)).toThrow(
+      "'$sort' sorts by at most 32 keys, and this sort names 33. The server refuses a longer compound sort. Keep the 32 keys that decide the order, or put the last keys into one document field ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.",
+    );
+    const { errors } = jsmql.validate(src);
+    expect(errors.map((e) => e.pos)).toEqual([2]);
+  });
+  it("accepts exactly 32 keys", () => {
+    const spec: Record<string, number> = {};
+    for (let i = 0; i < 32; i++) spec[`k${i}`] = 1;
+    expect(jsmql(`[ $sort({ ${sortKeys(32)} }) ]`)).toEqual([{ $sort: spec }]);
   });
   it("accepts a valid sort spec", () => {
     expect(jsmql("[ $sort({ a: 1, b: -1 }) ]")).toEqual([{ $sort: { a: 1, b: -1 } }]);

@@ -231,6 +231,19 @@ export function dateOptions(arg: Expr | undefined, value: (e: Expr) => unknown):
   return out;
 }
 
+// ── sorts ────────────────────────────────────────────────────────────────────
+
+/**
+ * The most keys a sort spec may name where the server sorts documents. MEASURED on
+ * :27018, 32 keys run and 33 fail with "too many compound keys", in each of these slots:
+ *   { $sort: {…} }                                   the stage
+ *   { $setWindowFields: { sortBy: {…}, output } }    the window order
+ *   { $group: { t: { $top: { output, sortBy } } } }  also $topN, $bottom, $bottomN, and the window form
+ * Two slots take more, so they state no limit: `$sortArray.sortBy` and the `$sort`
+ * modifier of an update `$push` both run with 33 keys.
+ */
+export const SORT_KEY_LIMIT = 32;
+
 // ── arrays ───────────────────────────────────────────────────────────────────
 
 /** A literal array as ONE operand. The server reads `{ $size: [1, 2] }` as two operands, and `{ $size: [[1, 2]] }` as one. */

@@ -4289,6 +4289,15 @@ A plain value array like `[1, 2, 3]` is *not* a pipeline. The first element does
 
 JSMQL supports every stage that the pinned MongoDB aggregation spec defines: one row per stage in [`src/registry/names.ts`](../src/registry/names.ts), which is the live list. JSMQL refuses a name that is not one of them, and names the nearest match (`$grpup` → "Did you mean '$group'?").
 
+**A sort of documents takes at most 32 keys.** The server refuses a longer compound sort ("too many compound keys"). So JSMQL refuses it at compile time, at the position of the sort. The limit applies to each place that sorts documents: the `$sort` stage in both spellings, a stream sort method (`.sort`, `.toSorted`, `.sortBy`, `.orderBy`), and the `sortBy` of `$setWindowFields`, `$fill`, `$top`, `$topN`, `$bottom` and `$bottomN`. An array sort (`$.items.toSorted({…})`) lowers to `$sortArray`, which takes more keys, so JSMQL does not limit it.
+
+```js
+$sort({ k0: 1, k1: 1, /* … */ k32: 1 })
+// ✗ '$sort' sorts by at most 32 keys, and this sort names 33. The server refuses a longer compound sort.
+//   Keep the 32 keys that decide the order, or put the last keys into one document field
+//   ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.
+```
+
 ---
 
 ## Function Form
