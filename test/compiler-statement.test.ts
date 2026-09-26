@@ -655,6 +655,78 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(() => pipeline("$not(true);")).toThrow(/'\$not'/);
   });
 
+  it("names the nearest working name for a misspelled call, from the names of its kind", () => {
+    const refusal = (src: string): string => {
+      try {
+        pipeline(src);
+      } catch (e) {
+        return (e as Error).message;
+      }
+      return "compiled";
+    };
+    // A `$$` receiver: a stream method, the union road's `.push`, `.size()`, a stage link.
+    expect(refusal("$$.sizee();")).toBe(
+      "'.sizee()' is not a method of the stream '$$'. Did you mean '.size()'? A stage is a link too: '$$.$match(…)'.",
+    );
+    expect(refusal("$$.concatt([{ a: 1 }]);")).toBe(
+      "'.concatt()' is not a method of the stream '$$'. Did you mean '.concat()'? A stage is a link too: '$$.$match(…)'.",
+    );
+    // A `$$$.<coll>` chain that becomes the stream.
+    expect(refusal("$$ = $$$.orders.filterr((o) => o.a);")).toBe(
+      "Unknown method '.filterr()' at position 15. Did you mean '.filter()'?",
+    );
+    // A method on a value receiver, as a statement: the mutators take this position.
+    expect(refusal("$.tags.popp();")).toBe("Unknown method '.popp()' at position 6. Did you mean '.pop()'?");
+    expect(refusal("$.tags.pushh(1);")).toBe("Unknown method '.pushh()' at position 6. Did you mean '.push()'?");
+    // A static on a namespace, and a global.
+    expect(refusal("Object.assignn($.a, { b: 1 });")).toBe(
+      "Unknown method 'Object.assignn()' at position 6. Did you mean 'Object.assign'?",
+    );
+    expect(refusal("assertt($.a > 1);")).toBe(
+      "Unknown function 'assertt(...)'. Did you mean 'assert(...)'? Declare it first with `const assertt = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$assertt(...)`; for a method, `receiver.assertt(...)`.",
+    );
+    expect(refusal("$.n = Numberr($.s);")).toBe(
+      "Unknown function 'Numberr(...)'. Did you mean 'Number(...)'? Declare it first with `const Numberr = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Numberr(...)`; for a method, `receiver.Numberr(...)`.",
+    );
+    // A stage name.
+    expect(refusal("$matc({ a: 1 });")).toBe("Unknown name '$matc' at position 0. Did you mean '$match'?");
+    // Each suggestion is a name that works in the same place.
+    expect(compiled("$.tags.pop();")).toEqual([
+      {
+        $set: {
+          tags: {
+            $let: {
+              vars: { jsmqlArr: { $ifNull: ["$tags", []] } },
+              in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
+            },
+          },
+        },
+      },
+    ]);
+    expect(compiled("$$ = $$$.orders.filter((o) => o.a);")).toEqual([
+      { $match: { $expr: false } },
+      {
+        $unionWith: {
+          coll: "orders",
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $ne: [{ $ifNull: ["$a", null] }, null] },
+                    { $ne: ["$a", false] },
+                    { $ne: ["$a", ""] },
+                    { $ne: ["$a", 0] },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
   it("refuses a destination that is not a field, and the deletion of the document", () => {
     expect(() => pipeline("$.s.trim() = 1;")).toThrow(/You can write only to a field/);
     expect(() => pipeline("delete $;")).toThrow(/delete the document itself/);

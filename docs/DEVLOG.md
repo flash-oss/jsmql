@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a misspelled call names the nearest working name of its kind
+
+`$$.pushh({ a: 1 });` gave "'.pushh()' is not a method of the stream '$$'." with
+no suggestion, although `$$.push(…)` works (the union road). The stream-link
+refusal drew its candidates from the rows that list the `stream` position, and
+that set leaves out `.push()` and `.size()`. The candidates are now every row a
+`$$` receiver accepts in some position: `streamReceiverNames()` in
+`src/compiler/rows.ts` reads `where` and `on`, so `$$.pushh(…)` names `.push()`
+and `$$.sizee()` names `.size()`. `test/union.test.ts` held the old gap as a
+rule ("names no method for a near-miss of '.push'"), with the reason that
+`.push` is no chain method. `$$ = $$.push(…)` and `$$.filter(p).push(…)` both
+compile, so that reason no longer held, and the test now asserts the suggestion.
+
+The sibling refusals had three more gaps of the same kind:
+
+- `$$ = $$$.orders.filterr(p)` said "'.filterr()' makes a value, and the stream
+  must stay documents". A name no row knows makes no value, so it now gets
+  "Unknown method '.filterr()' at position 15. Did you mean '.filter()'?".
+- A statement that calls an unknown method or static gave "Unknown name 'popp'
+  at position 6." with no suggestion. It now reads as the value road does:
+  `$.tags.popp();` names `.pop()`, and `Object.assignn(…);` names
+  `Object.assign`.
+- "Unknown function" suggested from the declared functions only, so
+  `Numberr($.s)` and `assertt(…)` got no suggestion. The candidates now add every
+  global that a program calls by its bare name (`bareCallableNames()`).
+
+A value receiver (`$.a.sizee()`), `Math.maxx(…)` in a value, and a stage name
+(`$matc(…)`) already named the nearest name, and keep their messages.
+
+---
+
 ## 2026-09-26 — fix: `++` / `--` read with JavaScript's precedence, and a write inside a value names the statement to write
 
 The `increment` and `decrement` rows had no precedence, so the Pratt loop never

@@ -793,6 +793,20 @@ export function streamMethodNames(): string[] {
   );
 }
 
+/**
+ * Every name that a `$$` receiver accepts in some position: a stream link
+ * (`.filter`), a stage link (`.$match`), the union road (`.push`, `.concat`),
+ * and `.size()`. A refusal of a link on the stream suggests from this set.
+ */
+export function streamReceiverNames(): string[] {
+  return Object.keys(ROWS).filter((n) => lists(n, "stream") || familiesOf(n)?.includes("stream") === true);
+}
+
+/** Every global that a program calls by its bare name: `Number(…)`, `assert(…)`, `new Date(…)`. */
+export function bareCallableNames(): string[] {
+  return Object.keys(ROWS).filter((n) => !n.startsWith("$") && isGlobalName(n) && isCallable(n));
+}
+
 /** The methods that END a `$$$.<coll>` chain with a value: an array value rule and no stream rule. */
 export function valueTerminalMethodNames(): string[] {
   return methodRows().filter((n) => {

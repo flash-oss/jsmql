@@ -16,6 +16,7 @@ import type { FuncDecl, LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, 
 import { readsRef } from "./mql.ts";
 import { setKey } from "../../registry/mql.ts";
 import type { BodyPath } from "../rows.ts";
+import type { Family } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -37,6 +38,10 @@ import {
   mergesIntoOf,
   unionsOf,
   hasStreamValueCell,
+  bareCallableNames,
+  familiesOf,
+  namespaceNames,
+  streamReceiverNames,
 } from "../rows.ts";
 import { consult, everyName, listedIn } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
@@ -52,7 +57,7 @@ import { documentAfter, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
 import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
-import { select, shapeOf, type Receiver } from "./select.ts";
+import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
 import { FILTER } from "../passes/position.ts";
@@ -1168,11 +1173,7 @@ function linkStages(links: readonly Link[], env: Env, first: boolean): Stage[] {
     if (link.optional) throw E.optionalOnStream(link.pos);
     const stages = streamLink(link, env, first && out.length === 0, undefined, out);
     if (stages === null) {
-      throw E.notAStreamLink(
-        link.name,
-        everyName().filter((n) => listedIn(n, "stream")),
-        link.pos,
-      );
+      throw E.notAStreamLink(link.name, streamReceiverNames(), link.pos);
     }
     // What this link's own callbacks hoisted stands directly ahead of the link, not
     // ahead of the chain: `g` in `.$sortByCount(k).map(g => …)` is the document
@@ -1307,6 +1308,30 @@ provideJoin((node, env) => joinValue(node, env, JOIN));
 // ── the stage calls ──────────────────────────────────────────────────────────
 
 /**
+ * A statement that calls a name no row knows. The suggestion comes from the
+ * names of the same kind, spelled the way the value road spells them: a
+ * method (`$.a.popp()`), a static (`Math.maxx(…)`), or a global (`assertt(…)`).
+ */
+function unknownCall(sel: Extract<Selected, { kind: "unknown" }>, node: Expr, env: Env): Error {
+  if (node.type === "CallExpression" && node.callee.type === "Ident") {
+    return E.unknownFunction(sel.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
+  }
+  if (node.type === "MethodCall") {
+    const recv = node.object;
+    if (recv.type === "Ident" && !env.scope.has(recv.name) && namespaceNames().has(recv.name)) {
+      const ns = recv.name;
+      const members = everyName().filter((n) => familiesOf(n)?.includes(ns as Family) === true);
+      return E.refusalFor(sel, `${ns}.${sel.name}`, `'${ns}'`, "statement", node.pos, members, (c) => `${ns}.${c}`);
+    }
+    return E.refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, JS_NAMES);
+  }
+  return E.refusalFor(sel, sel.name, "", "statement", node.pos, []);
+}
+
+/** Every name a JavaScript program calls as a method or a global: the rows that are not MongoDB `$` names. */
+const JS_NAMES = everyName().filter((n) => !n.startsWith("$"));
+
+/**
  * A statement that NAMES something: `$match(…)` and its siblings,
  * `assert(…)`, and the raw `{ $match: … }` document HR1 lets the
  * developer paste. The ROW decides whether the name may stand here. A
@@ -1414,6 +1439,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
+    if (sel.kind === "unknown" && !name.startsWith("$")) throw unknownCall(sel, node, env);
     // a misspelled stage gets the nearest one: the stages are the names with a statement form
     throw E.refusalFor(
       sel,

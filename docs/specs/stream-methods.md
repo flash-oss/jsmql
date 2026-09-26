@@ -32,7 +32,7 @@ the receiver.
 | `$$$.<coll>.<chain>` | another collection's stream | the `$lookup` body the join road assembles ([lookup-stage.md](lookup-stage.md)); `$$ = $$$.<coll>.<chain>` then unwinds it into the stream, or unions it in when nothing correlates |
 | `coll.<chain>` — a callback's third parameter | the inner stream of a body over another collection | that body |
 
-A link whose row has no `stream` cell is refused with the nearest name that has one. A value terminal (`.size()`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination, so it is refused ("… gives it no destination"); on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position. Both lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
+A link whose row has no `stream` cell is refused with the nearest name that a `$$` receiver accepts (`streamReceiverNames` in [src/compiler/rows.ts](../../src/compiler/rows.ts)): a stream method, a stage link, the union road's `.push()`, or `.size()`. A value terminal (`.size()`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination, so it is refused ("… gives it no destination"); on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position. Both lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
 
 ## The cell
 
@@ -339,7 +339,11 @@ the wording stays consistent across methods. Two general principles:
   "write the literal in source" hint.
 
 The stream road refuses a link whose row has no `stream` cell, with the nearest
-name that has one (`didYouMean`). A row that states an `unsupported(reason)` cell
+name that a `$$` receiver accepts in any position (`didYouMean` over
+`streamReceiverNames`): `$$.pushh(…)` names `.push()`, and `$$.sizee()` names
+`.size()`. In `$$ = $$$.<coll>.<chain>`, a link that no row knows gets the
+unknown-method refusal over the same set: `$$ = $$$.orders.filterr(p)` gives
+"Unknown method '.filterr()' at position 15. Did you mean '.filter()'?". A row that states an `unsupported(reason)` cell
 answers with its reason. For the single-element methods (`.find`, `.findLast`, `.at`)
 the reason names `.filter(p).take(1)` / `.slice(n, n + 1)`, and for `.find` on
 `$$$.<coll>` it names the join form `$ = $$$.<coll>.find(<pred>)`.

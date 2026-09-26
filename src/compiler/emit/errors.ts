@@ -15,9 +15,11 @@ import {
   callbackParamsOf,
   diagnosticOf,
   isFieldProperty,
+  isKnownName,
   siblingOf,
   spreadAlternativeOf,
   stageBodyRuleOf,
+  streamReceiverNames,
 } from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
@@ -1172,12 +1174,18 @@ export const oneDocumentInStream = (pos: number): CodegenError =>
     pos,
   );
 
-/** `$$ = $$$.c.filter(p).length` — a value is not a stream. */
+/**
+ * `$$ = $$$.c.filter(p).size()` — a value is not a stream. A name that no row
+ * knows makes no value at all, so it gets the unknown-method refusal instead,
+ * with the nearest link of a chain.
+ */
 export const valueInStream = (name: string, pos: number): CodegenError =>
-  new CodegenError(
-    `'.${name}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….${name}()'.`,
-    pos,
-  );
+  isKnownName(name)
+    ? new CodegenError(
+        `'.${name}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….${name}()'.`,
+        pos,
+      )
+    : refusalFor({ kind: "unknown", name }, `.${name}`, "'$$$'", "stream", pos, streamReceiverNames());
 
 /** `$.x = …` inside a body over another collection: the outer document is out of reach there. */
 export const outerWriteInForeign = (pos: number): CodegenError =>

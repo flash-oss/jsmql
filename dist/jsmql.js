@@ -14755,6 +14755,12 @@ function mutatorFormOf(name2) {
 function onlyInsideOf(name2, position) {
   return row(name2)?.onlyInside?.[position];
 }
+function streamReceiverNames() {
+  return Object.keys(ROWS).filter((n2) => lists(n2, "stream") || familiesOf(n2)?.includes("stream") === true);
+}
+function bareCallableNames() {
+  return Object.keys(ROWS).filter((n2) => !n2.startsWith("$") && isGlobalName(n2) && isCallable(n2));
+}
 
 // src/registry/tokens.ts
 var token = (e) => ({ ...e, kind: "token" });
@@ -23746,10 +23752,10 @@ var oneDocumentInStream = (pos) => new CodegenError(
   "'.find(\u2026)' gives ONE document, and the stream is many. Write '$$ = $$$.<coll>.filter(pred).take(1)' for a stream of the first match, or '$ = $$$.<coll>.find(pred)' to make each document the one it finds.",
   pos
 );
-var valueInStream = (name2, pos) => new CodegenError(
+var valueInStream = (name2, pos) => isKnownName(name2) ? new CodegenError(
   `'.${name2}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.\u2026.${name2}()'.`,
   pos
-);
+) : refusalFor({ kind: "unknown", name: name2 }, `.${name2}`, "'$$$'", "stream", pos, streamReceiverNames());
 var outerWriteInForeign = (pos) => new CodegenError(
   "The outer document cannot be written from inside a body over another collection \u2014 only read. Write the body's own document through its callback parameter ('o.x = \u2026', 'delete o.x', 'o = { \u2026 }'), or as a stage ('$set({ x: \u2026 })'). Write the outer field after the join.",
   pos
@@ -27322,7 +27328,7 @@ function callExpression(node, env) {
       if (newKeywordOf(callee.name) === "required") throw unknownFunction(callee.name, [], node.pos);
       return dispatchBare(node, callee.name, node.args, env);
     }
-    throw unknownFunction(callee.name, env.scope.functionNames(), node.pos);
+    throw unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
   }
   if (callee.type === "Lambda") return applyLambda2(callee, node.args, env, node.pos, "IIFE", null);
   throw notCallable(node.pos);
@@ -28521,11 +28527,7 @@ function linkStages(links, env, first) {
     if (link.optional) throw optionalOnStream(link.pos);
     const stages = streamLink(link, env, first && out.length === 0, void 0, out);
     if (stages === null) {
-      throw notAStreamLink(
-        link.name,
-        everyName().filter((n2) => listedIn(n2, "stream")),
-        link.pos
-      );
+      throw notAStreamLink(link.name, streamReceiverNames(), link.pos);
     }
     out.push(...env.chain.ahead(), ...stages);
   }
@@ -28602,6 +28604,22 @@ function peels(link, env) {
 }
 var JOIN = { link: streamLink, peels };
 provideJoin((node, env) => joinValue(node, env, JOIN));
+function unknownCall(sel, node, env) {
+  if (node.type === "CallExpression" && node.callee.type === "Ident") {
+    return unknownFunction(sel.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
+  }
+  if (node.type === "MethodCall") {
+    const recv = node.object;
+    if (recv.type === "Ident" && !env.scope.has(recv.name) && namespaceNames().has(recv.name)) {
+      const ns = recv.name;
+      const members = everyName().filter((n2) => familiesOf(n2)?.includes(ns) === true);
+      return refusalFor(sel, `${ns}.${sel.name}`, `'${ns}'`, "statement", node.pos, members, (c) => `${ns}.${c}`);
+    }
+    return refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, JS_NAMES2);
+  }
+  return refusalFor(sel, sel.name, "", "statement", node.pos, []);
+}
+var JS_NAMES2 = everyName().filter((n2) => !n2.startsWith("$"));
 function stageStatement(node, env, first) {
   const base = chainBase(node);
   if (node.type === "MethodCall") {
@@ -28661,6 +28679,7 @@ function stageStatement(node, env, first) {
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
+    if (sel.kind === "unknown" && !name2.startsWith("$")) throw unknownCall(sel, node, env);
     throw refusalFor(
       sel,
       name2,

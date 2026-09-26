@@ -41,7 +41,7 @@ nesting an `.aggregate((o) => { … })` block.
 **Surface.**
 
 - **Receiver** — a stream: `$$`, `$$$.<coll>`, a callback's third parameter, or any chain link off one of those. Stage links and the lodash chain methods ([stream-methods.md](stream-methods.md)) interleave freely while the chain is still stream-shaped.
-- **Name** — any row with a `statement` cell. `$count` resolves as the *stage*, matching statement position. The compiler refuses an unknown `$`-name and names the nearest stage (`didYouMean`), instead of falling through to value-mode method dispatch.
+- **Name** — any row with a `statement` cell. `$count` resolves as the *stage*, matching statement position. The compiler refuses an unknown `$`-name and names the nearest stage (`didYouMean`), instead of falling through to value-mode method dispatch. An unknown name without a `$` names the nearest name of its own kind, as value position does: a method (`$.tags.popp();` names `.pop()`), a static (`Object.assignn(…);` names `Object.assign`), or a global (`assertt(…);` names `assert(...)`).
 - **Arity** — exactly one argument, the stage body (the row's `args`).
 - **Not a stage link** — a bare `.$name` with no call, and `?.$name(…)`. Both are parse errors; see [grammar.md](grammar.md).
 - Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), the compiler refuses a following stage link, because a value has no stream for a stage to run over (`streamStages` in `src/compiler/emit/statement.ts`).

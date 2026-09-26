@@ -121,7 +121,9 @@ site cannot.
 
 `callExpression` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)
 dispatches on the callee: a name bound to a function expands it; a name bound to
-anything else gives "Unknown function" with a `didYouMean` over the declared names;
+anything else gives "Unknown function" with a `didYouMean` over the declared names
+and every global that a program calls by its bare name (`bareCallableNames` in
+[src/compiler/rows.ts](../../src/compiler/rows.ts), e.g. `Numberr(x)` names `Number(...)`);
 a lambda takes the IIFE path. Both expansions run `applyLambda`. The lowering lowers
 each argument in the CALLER's Env, binds each parameter once by `$let` so a
 multiply-read argument is not computed twice, and lowers the body under them. A call

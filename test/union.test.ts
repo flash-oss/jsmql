@@ -284,11 +284,16 @@ describe("$$.push — error positions", () => {
 // An error must never recommend syntax that does not work at the position the
 // user is writing in. Two ways a `$$` chain can get that wrong.
 describe("chain errors only ever name syntax that works here", () => {
-  // The chain-method suggestions leave out '.push', so a near-miss of it gets no
-  // suggestion at all.
-  it("names no method for a near-miss of '.push' on the stream", () => {
+  // A chain on the stream takes '.push' (the union road), so a near-miss of it names '.push'.
+  it("names '.push()' for a near-miss of it on the stream", () => {
     expect(() => jsmql("$$ = $$.pushh({ a: 1 });")).toThrow(
-      "'.pushh()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
+      "'.pushh()' is not a method of the stream '$$'. Did you mean '.push()'? A stage is a link too: '$$.$match(…)'.",
+    );
+    expect(() => jsmql("$$.pushh({ a: 1 });")).toThrow(
+      "'.pushh()' is not a method of the stream '$$'. Did you mean '.push()'? A stage is a link too: '$$.$match(…)'.",
+    );
+    expect(() => jsmql("$$.filter((d) => d.a).pushh({ a: 1 });")).toThrow(
+      "'.pushh()' is not a method of the stream '$$'. Did you mean '.push()'? A stage is a link too: '$$.$match(…)'.",
     );
   });
 
