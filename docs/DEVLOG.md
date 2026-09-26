@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a computed string key that can be missing reads as the empty name
+
+`$getField` aborts the query on a null field name: "$getField requires 'field' to
+evaluate to type String, but got null". A key that the proof could not show as a string
+already took `{ $toString: { $ifNull: [k, ""] } }`. But a key proven a string took no
+guard, even when the proof said that it can be missing. So `$.o[$.s.trim()]` and
+`$.doc[$.k.toLowerCase()]` failed on each document with no `s` or `k`, because a string
+method answers null for a missing string. A key read from a const map failed in the same
+way: `const M = { a: "x" }; $ = { v: $[M[$.k]] }`. Now the string key takes
+`{ $ifNull: [k, ""] }` exactly where the proof says that it can be missing. A key that is
+there, for example a written string, still takes no guard.
+
+Two tests asserted the old shape, and mongod refused it for a document with no key. See
+`indexAccess` in [lower.ts](../src/compiler/emit/lower.ts) and
+[docs/specs/types.md](specs/types.md) § The null guard.
+
+---
+
 ## 2026-09-26 — feat!: a read that gives no value is a compile error
 
 The developer asked for a compile error when a program reads a field after a known

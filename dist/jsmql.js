@@ -27683,7 +27683,8 @@ function indexAccess(node, env) {
   const optional = node.optional || chainHasOptional(node.object);
   const known = node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf3(node.object, objEnv));
   const wrapped = (neutral) => optional ? ifNull(raw, neutral) : raw;
-  if (kindOf3(node.index, env) === "string") return { $getField: { field: idx, input: wrapped({}) } };
+  const named = isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] };
+  if (kindOf3(node.index, env) === "string") return { $getField: { field: named, input: wrapped({}) } };
   const literal2 = evaluate(node.index, /* @__PURE__ */ new Map());
   if (literal2.ok && typeof literal2.value === "number" && Number.isInteger(literal2.value)) {
     const i = literal2.value;
@@ -27702,7 +27703,7 @@ function indexAccess(node, env) {
       fieldAt(o2)
     );
   }
-  const key = { $toString: isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] } };
+  const key = { $toString: named };
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);

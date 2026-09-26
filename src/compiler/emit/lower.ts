@@ -677,7 +677,9 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
   const known =
     node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf(node.object, objEnv));
   const wrapped = (neutral: unknown) => (optional ? ifNull(raw, neutral) : raw);
-  if (kindOf(node.index, env) === "string") return { $getField: { field: idx, input: wrapped({}) } };
+  // `$getField` refuses a null name, so a key the proof cannot show is there reads as `""`
+  const named = isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] };
+  if (kindOf(node.index, env) === "string") return { $getField: { field: named, input: wrapped({}) } };
   const literal = evaluate(node.index, new Map());
   if (literal.ok && typeof literal.value === "number" && Number.isInteger(literal.value)) {
     const i = literal.value;
@@ -696,8 +698,7 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
       fieldAt(o),
     );
   }
-  // `$getField` refuses a null name, so a key the proof cannot show is there reads as `""`
-  const key = { $toString: isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] } };
+  const key = { $toString: named };
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);

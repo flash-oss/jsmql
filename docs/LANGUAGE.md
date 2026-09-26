@@ -555,11 +555,13 @@ query time, MongoDB decides what happens (`$arrayElemAt` counts from the end).
 When the key is **provably a string** — a string literal, a `.toLowerCase()`-style
 string-returning expression, a `const k = "…"` binding, or **a lambda parameter iterating
 an array whose elements are all strings** — it can only be an object property name (a string
-is never a numeric array index), so JSMQL skips the dispatch and emits `$getField` directly:
+is never a numeric array index), so JSMQL skips the dispatch and emits `$getField` directly.
+A string key that can be missing reads as `""`, because `$getField` refuses a null name. A
+string method answers null for a missing string, so `.toLowerCase()` takes this guard:
 
 ```js
 $.config["host"]              // → { $getField: { field: "host", input: "$config" } }
-$.scores[$.key.toLowerCase()] // → { $getField: { field: { $cond: { if: { $eq: [{ $ifNull: ["$key", null] }, null] }, then: null, else: { $toLower: "$key" } } }, input: "$scores" } }
+$.scores[$.key.toLowerCase()] // → { $getField: { field: { $ifNull: [{ $cond: { if: { $eq: [{ $ifNull: ["$key", null] }, null] }, then: null, else: { $toLower: "$key" } } }, ""] }, input: "$scores" } }
 
 // `party` iterates a string array → typed `string`, so `$.cre.result[party]` is a getter:
 ["sender", "recipient"].map(party => $.cre.result[party])
@@ -590,10 +592,10 @@ The **bare root** `$` is the simplest case: the root document is always an objec
 $["cart.field.length"]              // → "$cart.field.length"   — the nested `length` field, raw
 $["weird-name"]                     // → "$weird-name"
 $["cart.field.length"] * $.cart.field.width   // → { $multiply: ["$cart.field.length", "$cart.field.width"] }
-$[$.fieldName]                      // → { $getField: { field: "$fieldName", input: "$$ROOT" } }   — computed key, no $isArray dispatch
+$[$.fieldName]                      // → { $getField: { field: { $toString: { $ifNull: ["$fieldName", ""] } }, input: "$$ROOT" } }   — computed key, no $isArray dispatch
 ```
 
-(An object literal receiver follows the same rule — `({ a: 1 })[$.k]` → `{ $getField: { field: "$k", input: { a: 1 } } }` — since an object literal is never an array either.)
+(An object literal receiver follows the same rule — `({ a: 1 })[$.k]` → `{ $getField: { field: { $toString: { $ifNull: ["$k", ""] } }, input: { a: 1 } } }` — since an object literal is never an array either.)
 
 ### Optional Chaining
 

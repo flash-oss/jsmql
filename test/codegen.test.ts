@@ -1757,9 +1757,17 @@ describe("bracket access", () => {
     });
     // A PROVABLE string key needs no coercion and keeps the lean shape.
     expect(jsmql.expr('$.doc["host"]')).toEqual({ $getField: { field: "host", input: "$doc" } });
+    // A string method answers null for a missing string, and `$getField` refuses a null
+    // name ("$getField requires 'field' to evaluate to type String, but got null"). So the
+    // key takes the `""` guard.
     expect(jsmql.expr("$.doc[$.k.toLowerCase()]")).toEqual({
       $getField: {
-        field: { $cond: { if: { $eq: [{ $ifNull: ["$k", null] }, null] }, then: null, else: { $toLower: "$k" } } },
+        field: {
+          $ifNull: [
+            { $cond: { if: { $eq: [{ $ifNull: ["$k", null] }, null] }, then: null, else: { $toLower: "$k" } } },
+            "",
+          ],
+        },
         input: "$doc",
       },
     });
@@ -1820,10 +1828,16 @@ describe("bracket access", () => {
   });
   it("string-producing key expression on bare field → $getField directly", () => {
     // `.toLowerCase()` is statically a string, so the key cannot be an array
-    // index — same compact $getField lowering as a literal key.
+    // index — the same $getField lowering as a literal key. It may be null, so it
+    // takes the `""` guard that `$getField` needs.
     expect(jsmql.expr("$.map[$.key.toLowerCase()]")).toEqual({
       $getField: {
-        field: { $cond: { if: { $eq: [{ $ifNull: ["$key", null] }, null] }, then: null, else: { $toLower: "$key" } } },
+        field: {
+          $ifNull: [
+            { $cond: { if: { $eq: [{ $ifNull: ["$key", null] }, null] }, then: null, else: { $toLower: "$key" } } },
+            "",
+          ],
+        },
         input: "$map",
       },
     });
@@ -1856,6 +1870,22 @@ describe("bracket access", () => {
     expect(jsmql.expr("$[$.fieldName]")).toEqual({
       $getField: { field: { $toString: { $ifNull: ["$fieldName", ""] } }, input: "$$ROOT" },
     });
+    // Indexing the root by a value read from a const map (`$[SSTM_PROP[party]]`). The map
+    // folds to an object literal, and a key that it may not hold reads as `""`.
+    expect(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M[$.k]] };')).toEqual([
+      {
+        $replaceWith: {
+          v: {
+            $getField: {
+              field: {
+                $ifNull: [{ $getField: { field: { $toString: { $ifNull: ["$k", ""] } }, input: { a: "x" } } }, ""],
+              },
+              input: "$$ROOT",
+            },
+          },
+        },
+      },
+    ]);
     // A const map folds to a closed object. A key that it does not hold names no field.
     expect(() => jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M["k"]] };')).toThrow(
       `'["k"]' reads a field that this object does not have. It holds 'a'.`,

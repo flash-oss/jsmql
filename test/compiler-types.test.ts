@@ -798,6 +798,46 @@ describe.skipIf(up === null)("types — the server gives no value for a read tha
   });
 });
 
+describe("types — a computed key that may be missing reads as the empty name", () => {
+  // `$getField` refuses a null name, so the guard stands wherever the proof cannot show the key.
+  it("a string key guards what the proof cannot show, and takes no guard where it can", () => {
+    expect(jsmql.expr("$.o[$.s.trim()]")).toEqual({
+      $getField: { field: { $ifNull: [{ $trim: { input: "$s" } }, ""] }, input: "$o" },
+    });
+    expect(jsmql('$.s = "a"; $.v = $.o[$.s];')[1]).toEqual({
+      $set: { v: { $getField: { field: "$s", input: "$o" } } },
+    });
+  });
+});
+
+describe.skipIf(up === null)("types — the server runs a computed key that may be missing", () => {
+  let client: MongoClient;
+  let coll: Collection;
+  beforeAll(async () => {
+    client = (await liveClient())!;
+    coll = client.db("jsmql_compiler_types").collection("keys");
+    await coll.deleteMany({});
+    await coll.insertMany([
+      { _id: 1, o: { a: 1 }, s: " a ", k: "a", x: 5 },
+      { _id: 2, o: { a: 1 }, x: 6 },
+    ]);
+  });
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  it("a key that is missing reads no field, as JavaScript's `o[undefined]` does", async () => {
+    const out = await coll
+      .aggregate([{ $set: { v: jsmql.expr("$.o[$.s.trim()]") } }, { $project: { v: 1 } }, { $sort: { _id: 1 } }])
+      .toArray();
+    expect(out).toEqual([{ _id: 1, v: 1 }, { _id: 2 }]);
+    const mapped = await coll
+      .aggregate([...(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M[$.k]] };') as object[])])
+      .toArray();
+    expect(mapped).toEqual([{ v: 5 }, {}]);
+  });
+});
+
 describe("types — a join carries the shape its body made", () => {
   it("a `const` bound to a join is a present array: `.has` needs no guard", () => {
     expect(jsmql('const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq(); $.hit = ids.has("x");')).toEqual([
