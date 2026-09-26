@@ -631,7 +631,7 @@ function targetPath(op: UpdateOp, env: Env): string {
   // arrives here as one assignment.
   if (t.type === "Ident" && onOwnStream(t, env)) throw E.writeToOwnStream(t.name, t.pos);
   if (t.type === "Ident") throw new E.UnknownIdentifierError(t.name, t.pos);
-  if (t.type === "CollectionRef") return STREAM_TARGET;
+  if (t.type === "StreamRef") return STREAM_TARGET;
   throw E.notAWriteTarget(op.pos);
 }
 
@@ -667,8 +667,7 @@ function becomeStream(
 ): Stage[] {
   if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written);
   const chainOn = chainBase(value) as { type: string };
-  const streamRoad =
-    chainOn.type === "CollectionRef" || readsAnotherCollection(value) || onOwnStream(chainOn as Expr, env);
+  const streamRoad = chainOn.type === "StreamRef" || readsAnotherCollection(value) || onOwnStream(chainOn as Expr, env);
   // A kind the registry PROVES is not a list says something else.
   // MEASURED, the server refuses it:
   // `[{ $set: { s: 5 } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`
@@ -734,8 +733,8 @@ function outStages(
   const name = op.op === "=" ? "$out" : "$merge";
   const rhs = op.value;
   const base = chainBase(rhs) as { type: string };
-  if (base.type !== "CollectionRef") throw E.outNeedsStream(rhs.pos);
-  const stages = rhs.type === "CollectionRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
+  if (base.type !== "StreamRef") throw E.outNeedsStream(rhs.pos);
+  const stages = rhs.type === "StreamRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
   return [...stages, ...place(name, { [name]: target }, env, first && stages.length === 0, op.pos)];
 }
 
@@ -796,8 +795,7 @@ function isFacet(doc: Extract<Expr, { type: "ObjectLiteral" }>): boolean {
 }
 
 const isStreamChain = (e: Expr): boolean =>
-  e.type === "CollectionRef" ||
-  (e.type === "MethodCall" && (chainBase(e) as { type: string }).type === "CollectionRef");
+  e.type === "StreamRef" || (e.type === "MethodCall" && (chainBase(e) as { type: string }).type === "StreamRef");
 
 /**
  * `$ = { k: <$$ chain>, … }` — one `$facet` branch per entry, each the stages its
@@ -821,7 +819,7 @@ function facetStages(doc: Extract<Expr, { type: "ObjectLiteral" }>, env: Env, fi
     if (named.has(key)) throw E.facetDuplicate(key, e.pos);
     named.add(key);
     const body = childEnv(entries, e, "value").enter({ stage: "$facet", path: [key] }, new Chain());
-    if (e.value.type !== "CollectionRef") body.chain.emitted.push(...streamStages(e.value, body, true));
+    if (e.value.type !== "StreamRef") body.chain.emitted.push(...streamStages(e.value, body, true));
     setKey(branches, key, body.chain.close());
   }
   return place("$facet", { $facet: branches }, env, first, doc.pos);
@@ -1089,8 +1087,8 @@ function refuseUnbuiltSugar(value: Expr): void {
   const base = chainBase(value) as { type: string };
   // `$$.size()` is a VALUE the stream carries — its row states a stream cell in the value
   // position — where a chain on the stream is documents, not a value.
-  if (base.type === "CollectionRef" && value.type === "MethodCall") {
-    const direct = value.object.type === "CollectionRef" && hasStreamValueCell(value.name);
+  if (base.type === "StreamRef" && value.type === "MethodCall") {
+    const direct = value.object.type === "StreamRef" && hasStreamValueCell(value.name);
     if (!direct) throw E.streamAsValue(value.pos);
   }
 }
@@ -1157,8 +1155,8 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
   if (readsAnotherCollection(cur)) return joinStream(chain, env, first, JOIN);
   // `$$` is the ROOT stream at every depth; a body over another collection cannot
   // reach it, and names its own stream through the callback's third parameter.
-  if (cur.type === "CollectionRef" && env.level > 0) throw E.rootStreamInForeign(chain.pos);
-  if (cur.type !== "CollectionRef" && !onOwnStream(cur, env)) throw E.notAStreamChain(chain.pos);
+  if (cur.type === "StreamRef" && env.level > 0) throw E.rootStreamInForeign(chain.pos);
+  if (cur.type !== "StreamRef" && !onOwnStream(cur, env)) throw E.notAStreamChain(chain.pos);
   return linkStages(links, env, first);
 }
 
@@ -1204,7 +1202,7 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
   // No row is spelled on the database alone. So `$$$.<name>()` meets
   // every row's gate as a bare call, and the gate refuses it.
   const receiver: Receiver =
-    ref === "CollectionRef"
+    ref === "StreamRef"
       ? { kind: "stream" }
       : ref === "ClusterRef"
         ? { kind: "namespace", name: "cluster" }
@@ -1212,7 +1210,7 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
   const sel = select(consult(name, "statement"), receiver, { kind: "multiple" }, node.args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`statement '${name}' selected a receiver dispatch`);
-    const spelled = ref === "CollectionRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
+    const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
     throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
   }
   const args = node.args as readonly Expr[];
@@ -1327,15 +1325,15 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     // their rows say so. Everything else is `$$ = $$.<chain>;` — the
     // same chain, the same stages.
     const ownStream = onOwnStream(base as Expr, env);
-    const onRef = ["CollectionRef", "DatabaseRef", "ClusterRef"].includes(base.type) || ownStream;
+    const onRef = ["StreamRef", "DatabaseRef", "ClusterRef"].includes(base.type) || ownStream;
     if (onRef) {
       if (node.optional) throw E.optionalOnStream(node.pos);
       const row = namedRow(node) ?? node.name;
       // `$$.push(…)` — documents unioned into the stream.
       // `$.reduce((acc, d) => acc.concat(…), [])`: the array reducer is a filter and a reshape of the stream.
-      if (node.object.type === "CollectionRef" && isStreamReduce(node)) return arrayReduceStages(node, env, first);
+      if (node.object.type === "StreamRef" && isStreamReduce(node)) return arrayReduceStages(node, env, first);
       if (isContextRef(node.object) && unionsOf(row)) {
-        if (base.type !== "CollectionRef") throw E.rootStreamInForeign(node.pos);
+        if (base.type !== "StreamRef") throw E.rootStreamInForeign(node.pos);
         if (env.level > 0) throw E.rootStreamInForeign(node.pos);
         return unionStages(node.args, env, node, JOIN);
       }
@@ -1349,10 +1347,10 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
       const asStatement =
         says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown" && !ownedByAPass;
       if (!asStatement) {
-        if (base.type === "CollectionRef" || ownStream) return streamStages(node, env, first);
+        if (base.type === "StreamRef" || ownStream) return streamStages(node, env, first);
         // `$$$$.currentOpp();` — the reference's OWN spelling, so the name is a
         // diagnostic stage that does not exist at that scope, not a collection read.
-        if (isContextRef(node.object) && base.type !== "CollectionRef") {
+        if (isContextRef(node.object) && base.type !== "StreamRef") {
           const sigil = base.type === "ClusterRef" ? "$$$$" : "$$$";
           const scope = base.type === "ClusterRef" ? "cluster" : "database";
           const spelledOnIt = everyStageName()
@@ -1374,7 +1372,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     }
   }
   const name = namedRow(node);
-  if (node.type === "CollectionRef") throw E.bareContextRef("$$", node.pos);
+  if (node.type === "StreamRef") throw E.bareContextRef("$$", node.pos);
   if (node.type === "DatabaseRef") throw E.bareContextRef("$$$", node.pos);
   if (node.type === "ClusterRef") throw E.bareContextRef("$$$$", node.pos);
   if (name === null) throw E.notAStatement(node.pos);

@@ -118,7 +118,7 @@ describe("system stages — error messages", () => {
 
   it("wrong scope: a collection stage on $$$$ points at the $$ prefix", () => {
     expect(() => jsmql("$$$$.indexStats()")).toThrow(
-      "'.indexStats()' is not available on a 'cluster' — it is defined on 'stream'. Write '$$.indexStats()' — the collection reference, run on 'db.coll.aggregate()'.",
+      "'.indexStats()' is not available on a 'cluster' — it is defined on 'stream'. Write '$$.indexStats()' — the root stream, run on 'db.coll.aggregate()'.",
     );
     expect(jsmql("$$.indexStats()")).toEqual([{ $indexStats: {} }]);
   });
@@ -132,7 +132,7 @@ describe("system stages — error messages", () => {
 
   it("$$$ (database) has no diagnostics of its own — unknown method points elsewhere", () => {
     expect(() => jsmql("$$$.fooBar()")).toThrow(
-      "'$$$' is the database, and no stage runs on it alone. '.fooBar()' is not one of them. A stage runs on the collection ('$$.<stage>()') or the cluster ('$$$$.<stage>()'). To read a collection called 'fooBar', write '$.<field> = $$$.fooBar.find(…)'.",
+      "'$$$' is the database, and no stage runs on it alone. '.fooBar()' is not one of them. A stage runs on the current collection ('$$.<stage>()') or on the cluster ('$$$$.<stage>()'). To read a collection called 'fooBar', write '$.<field> = $$$.fooBar.find(…)'.",
     );
     // A misspelling on the CLUSTER names the nearest stage of that scope.
     expect(() => jsmql("$$$$.currentOpp()")).toThrow("Did you mean '$$$$.currentOp()'?");
@@ -150,7 +150,7 @@ describe("system stages — error messages", () => {
     // The '$' spelling of a diagnostic stage is refused outright: it is a source
     // stage, and it reached the row without meeting the scope its sugar states.
     expect(() => jsmql("$$.$indexStats()")).toThrow(
-      "'$indexStats' reports on the deployment, so it is a source stage and not a chain link. Write '$$.indexStats()' — the collection reference, run on 'db.coll.aggregate()'.",
+      "'$indexStats' reports on the deployment, so it is a source stage and not a chain link. Write '$$.indexStats()' — the root stream, run on 'db.coll.aggregate()'.",
     );
     expect(() => jsmql("$$.$currentOp({})")).toThrow(
       "'$currentOp' reports on the deployment, so it is a source stage and not a chain link. Write '$$$$.currentOp()' — the cluster reference, run on the admin database.",

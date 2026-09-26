@@ -3,8 +3,8 @@
 ## Overview
 
 `$$.size()` is the number of documents in the current stream **at the point it
-is used** — `.size()`, as `Set.size` names a count, on the stream (`$$` is the current
-collection/stream). It is a **value**. You can use it in any place that takes
+is used** — `.size()`, as `Set.size` names a count, on the stream (`$$` is the root
+stream). It is a **value**. You can use it in any place that takes
 an expression: a field RHS (`$.n = $$.size()`), arithmetic (`$.share = 1 / $$.size()`), an
 `assert` condition (`assert($$.size() <= 1, …)`), a stage body (`$project`,
 `$group`), or a top-level `$match` `$expr`.

@@ -7225,8 +7225,8 @@ describe("Object.groupBy — refused; the receiver form is the one spelling", ()
     "Object.groupBy($.items, (a, b) => a)",
   ]) {
     it(`refuses ${src}`, () => {
-      expect(() => jsmql.expr(src)).toThrow(/'Object\.groupBy\(collection, discriminator\)' is not part of jsmql/);
-      expect(() => jsmql.expr(src)).toThrow(/Write '<collection>\.groupBy\(<discriminator>\)'/);
+      expect(() => jsmql.expr(src)).toThrow(/'Object\.groupBy\(items, discriminator\)' is not part of JSMQL/);
+      expect(() => jsmql.expr(src)).toThrow(/Write '<array>\.groupBy\(<discriminator>\)'/);
     });
   }
 
@@ -9625,10 +9625,10 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   // Tests use the string form because `$$` / `$$$` / `$$$$` are not yet declared
   // as ambient globals — that's part of the future-API surface.
 
-  describe("$$ — current collection", () => {
+  describe("$$ — the root stream", () => {
     // $$ lights up the `$$.push(...)` → `$unionWith` shape. Any other use of $$
     // (`.foo` member access, `["foo"]` index access, `.bar()` method call,
-    // bare reference, RHS use) is rejected by the CollectionRef codegen case
+    // bare reference, RHS use) is rejected by the StreamRef codegen case
     // with a precise "statement-only / only .push(...)" message. See
     // docs/specs/union-stage.md.
     it("dot-ident form (not .push / .filter) throws statement-only at codegen", () => {
@@ -9709,7 +9709,7 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
   });
 
   describe("parser sanity-guards", () => {
-    it("bare $$ without . or [ → CollectionRef codegen error (statement-only message)", () => {
+    it("bare $$ without . or [ → StreamRef codegen error (statement-only message)", () => {
       // Once `$out` sugar allows bare `$$` as the RHS of `$$$.coll = $$`, the
       // parser stops pre-rejecting bare `$$` and codegen surfaces the
       // actionable "statement-only" message when `$$` lands somewhere

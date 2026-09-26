@@ -128,7 +128,7 @@ export type Ref =
    */
   | { readonly kind: "function"; readonly lambda: Expr; readonly expanding: boolean }
   /**
-   * A named stream — a callback's collection parameter, `const s = $$.filter(…)`.
+   * A named stream — a callback's receiver parameter, `const s = $$.filter(…)`.
    * `chain` names the (sub-)pipeline whose documents it names. It is kept because a
    * value it materialises — its count — belongs on THAT pipeline and nowhere else. A
    * `$facet` branch and a body over another collection each assemble a chain of

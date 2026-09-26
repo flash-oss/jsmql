@@ -575,7 +575,7 @@ If you want compact output for a *numeric* index, pin the type — bind the valu
 
 **Callback `(element, index, array)`.** Array-method callbacks (`.map` / `.filter` / `.find` / `.some` / `.every` / `.flatMap` / …) accept all three JS parameters. The third — the array being iterated — is the method's input, so `arr.size()` is the count of that array (`$size`): `$.items.map((el, i, arr) => el / arr.size())`. Strict-JS semantics: in a `.filter(...).map((el, i, arr) => …)` chain, `arr` is the post-filter array (it's `map`'s input). The `index` is lazy — JSMQL only emits the `$zip`/`$range` index machinery when `i` is *actually used*; `(el, i, arr) => arr.size()` (where `i` is only there positionally to reach `arr`) compiles to a plain `$map`/`$filter`.
 
-On a **`$$$.<coll>` lookup chain** (`$$$.orders.filter(p).map((o, _i, coll) => …)`) the third param is the *foreign sub-stream*, and `coll.size()` is its document count — how many documents matched the filter — materialised by a `$setWindowFields` `$count` inside the `$lookup.pipeline`. A stream has no materialised array, so **only `.size()`** is available on this handle (no indexing or iteration), and the **index** param is never available (MongoDB streams have no per-doc index; it may be present, unused, only to reach the 3rd param). Example: `$.byOrder = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, share: o.total / coll.size() }))`.
+On a **`$$$.<coll>` lookup chain** (`$$$.orders.filter(p).map((o, _i, stream) => …)`) the third param is the *foreign sub-stream*, and `stream.size()` is its document count — how many documents matched the filter — materialised by a `$setWindowFields` `$count` inside the `$lookup.pipeline`. A stream has no materialised array, so **only `.size()`** is available on this handle (no indexing or iteration), and the **index** param is never available (MongoDB streams have no per-doc index; it may be present, unused, only to reach the 3rd param). Example: `$.byOrder = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, share: o.total / coll.size() }))`.
 
 The **bare root** `$` is the simplest case: the root document is always an object and never an array, so there is nothing to dispatch on for *any* key. A string-literal key lowers to a plain field reference — `$["x"]` is just `$.x` — and a computed key lowers straight to `$getField`. This is how you name a field that is not a bare identifier — a name containing a dot, dash, space, etc. — and a nested `length` field is a plain `.length` read, because JSMQL computes no property:
 
@@ -592,7 +592,7 @@ $[$.fieldName]                      // → { $getField: { field: "$fieldName", i
 
 `?.` is accepted everywhere `.` is, and it does what JavaScript's `?.` does.
 
-**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists. Each `?.` tests only the value in front of it; a dot after it follows the dot rule of [HR5](LANG_RULES.md): an array or object method runs on the empty collection when its receiver is missing.
+**A `?.` with a CALL after it stops the chain.** The call does not run, and the chain answers `null` — the nearest thing MongoDB holds to JavaScript's `undefined`. The test sits at the top of the chain, so the links below it run only when the field exists. Each `?.` tests only the value in front of it; a dot after it follows the dot rule of [HR5](LANG_RULES.md): an array or object method runs on an empty array or object when its receiver is missing.
 
 ```js
 $.s?.trim().length() // a call runs after the ?. — the chain stops, and answers null
@@ -610,7 +610,7 @@ $.a.uniq()           // no ?. — an array method on a field that may be missing
 | Consumer category | Wrapped with | Example |
 |---|---|---|
 | Bare read | nothing (sugar only) | `$.user?.name` → `"$user.name"` |
-| Array spread | `[]` — under `.` as well: a missing collection spreads as the empty one (HR5) | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
+| Array spread | `[]` — under `.` as well: a missing array spreads as an empty array (HR5) | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
 | Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user.name", null] }, null] }, then: null, else: { $trim: { input: "$user.name" } } } }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
@@ -799,7 +799,7 @@ $.topRegions = $$$.orders.sort({ createdAt: -1 }).take(1000)
   .sort({ revenue: -1 }).take(3);
 ```
 
-`.aggregate` takes the same `(element, index, collection)` params `.filter`/`.map` accept, but the index is positional-only. It is the pipeline-oriented spelling — reshape, roll up, or paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. `.aggregate` also works on the current stream (`$$.aggregate((o) => { … })`), where the block's statements are simply the chain's stages — the same thing writing them directly, or chaining them (`$$.$sort({ … }).$limit(10)`), does. It earns its keep there in a [`$facet` branch](#facet-via----key--chain--), which *is* a sub-pipeline, so it has no "write them directly" alternative.
+`.aggregate` takes the same `(element, index, stream)` params `.filter`/`.map` accept, but the index is positional-only. It is the pipeline-oriented spelling — reshape, roll up, or paste an array of stages — while `.find`/`.filter` are the element-predicate spellings; that split is why the `{ … }` block belongs to `.aggregate` alone. `.aggregate` also works on the current stream (`$$.aggregate((o) => { … })`), where the block's statements are simply the chain's stages — the same thing writing them directly, or chaining them (`$$.$sort({ … }).$limit(10)`), does. It earns its keep there in a [`$facet` branch](#facet-via----key--chain--), which *is* a sub-pipeline, so it has no "write them directly" alternative.
 
 **The sub-stream count (`(o, _i, coll) => …`).** The 3rd param names the **sub-stream** the pipeline has produced so far; `coll.size()` is how many documents are in it, materialised by a `$setWindowFields` `$count` *inside* the `$lookup.pipeline`. Use it as an in-pipeline guard:
 
@@ -968,7 +968,7 @@ $.archivedOrders = $$$.orders.filter(o => o.userId === $._id);  // ✅ same-db $
 
 ### Collection union: `$$.push(...)`
 
-`$$` is the current collection. `.push(...items)` appends those items to the current stream — the JS-faithful name for MongoDB's [`$unionWith`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/unionWith/) stage. **Statement-only**: `$$.push(...)` emits one or more `$unionWith` stages and has no value. You cannot use it on a RHS, in arithmetic, inside a Filter, or anywhere else JSMQL reads an expression.
+`$$` is the root stream. `.push(...items)` appends those items to it — the JS-faithful name for MongoDB's [`$unionWith`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/unionWith/) stage. **Statement-only**: `$$.push(...)` emits one or more `$unionWith` stages and has no value. You cannot use it on a RHS, in arithmetic, inside a Filter, or anywhere else JSMQL reads an expression.
 
 The spread (`...`) rule is identical to JavaScript's: you must spread arrays, and you must not spread scalars. `.concat(list)` is the other JavaScript spelling, and it takes the array itself.
 
@@ -1791,7 +1791,7 @@ $.result = $.bool ? "R" : "OTHER";
 // → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } } ]
 ```
 
-**A method on a receiver that is null or missing answers what its family's empty collection answers.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]` and an object method on `{}`: the compiler wraps the receiver in `$ifNull`, and the operator gives the answer — `[]` for `.uniq()`, `0` for `.sum()` and `.size()`, `false` for `.has(x)`, `true` for `.every(p)`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. A string method answers `null`: JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds; `$strLenCP` and `$toUpper` would abort or answer `""`, so the receiver is tested first. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
+**A method on a receiver that is null or missing answers what it answers on an empty array or object.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]` and an object method on `{}`: the compiler wraps the receiver in `$ifNull`, and the operator gives the answer — `[]` for `.uniq()`, `0` for `.sum()` and `.size()`, `false` for `.has(x)`, `true` for `.every(p)`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. A string method answers `null`: JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds; `$strLenCP` and `$toUpper` would abort or answer `""`, so the receiver is tested first. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
 
 ```js
 $.s.trim().length()               // a STRING method: `s` may be missing → tested first, and answers null
@@ -2167,7 +2167,7 @@ The last two have no single MongoDB operator, so JSMQL composes them. Each opera
 
 For `$allElementsTrue` / `$anyElementTrue`, use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
 
-### Grouping: `<collection>.groupBy()`
+### Grouping: `<array>.groupBy()`
 
 ```js
 $.items.groupBy(x => x.category)
@@ -2176,12 +2176,12 @@ $.items.groupBy(x => x.category)
 
 The discriminator is a single-parameter arrow, a field name (`"category"`), or omitted for the element itself. JSMQL wraps a non-string key in `$toString`, matching JavaScript, which coerces an object key to a string.
 
-**`Object.groupBy(collection, discriminator)` is not a JSMQL name.** It said the same thing as the receiver form and emitted identical MQL, and one capability gets one spelling. The name still parses, so JSMQL's error names the form that works:
+**`Object.groupBy(items, discriminator)` is not a JSMQL name.** It said the same thing as the receiver form and emitted identical MQL, and one capability gets one spelling. The name still parses, so JSMQL's error names the form that works:
 
 ```js
 Object.groupBy($.items, x => x.category)
-// → ❌ CodegenError: 'Object.groupBy(collection, discriminator)' is not part of jsmql …
-//    Write '<collection>.groupBy(<discriminator>)'
+// → ❌ CodegenError: 'Object.groupBy(items, discriminator)' is not part of JSMQL …
+//    Write '<array>.groupBy(<discriminator>)'
 ```
 
 ### lodash object methods

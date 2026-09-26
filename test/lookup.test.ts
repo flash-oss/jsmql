@@ -228,7 +228,7 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
   });
 });
 
-describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream size)", () => {
+describe("$$$.coll.filter — block-body 3rd 'stream' param (sub-stream size)", () => {
   // The post-filter sub-stream count, through `<coll>.size()`, usable inside the
   // block (here in an assert). Verified end-to-end on a live mongod: alice
   // (2 orders) → orders:[…], bob (0 orders) → orders:[] (the assert no-ops on
@@ -272,7 +272,7 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream size
     ).toThrow(/has no value inside/);
   });
 
-  it("rejects a use of the collection handle other than `.size()` in the block", () => {
+  it("rejects a use of the stream handle other than `.size()` in the block", () => {
     expect(() =>
       jsmql(`$.x = $$$.orders.aggregate((o, i, c) => { $match(o.userId === $._id); $.first = c[0]; });`),
     ).toThrow(/cannot be written|only 'c/);
@@ -1439,7 +1439,7 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
     ]);
   });
 
-  it("$$ = source-switch binds the 3rd 'collection' param's .size() (parity with .map)", () => {
+  it("$$ = source-switch binds the 3rd 'stream' param's .size() (parity with .map)", () => {
     expect(jsmql("$$ = $$$.products.aggregate((o, _i, coll) => { $set({ n: coll.size() }); });")).toEqual([
       { $match: { $expr: false } },
       {
@@ -1591,7 +1591,7 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
     ]);
   });
 
-  it("the 3rd 'collection' param binds the sub-stream count after a lodash chain", () => {
+  it("the 3rd 'stream' param binds the sub-stream count after a lodash chain", () => {
     expect(
       jsmql(
         "$.r = $$$.orders.sort({ t: -1 }).take(3).aggregate((o, _i, coll) => { $addFields({ n: coll.size() }); });",
@@ -1758,7 +1758,7 @@ describe("$$$.coll.aggregate — error cases", () => {
     );
   });
 
-  it("a use other than .size() of the 3rd 'collection' param is rejected", () => {
+  it("a use other than .size() of the 3rd 'stream' param is rejected", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate((o, _i, coll) => { $match(o.n === coll[0]); });")).toThrow(
       "'coll' is the body's own stream. This body runs '$match', which changes what its count means. The compiler stamps 'coll.size()' into a field ahead of the body. That stage either drops the field or changes the number of documents. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop 'coll' from the parameter list.",
     );

@@ -119,8 +119,8 @@ const CONTEXT_REFS = {
   collection: {
     name: "$$",
     doc:
-      "jsmql current-collection context reference (`$$`, run on `db.coll.aggregate()`). " +
-      "Names a collection-scoped diagnostic source stage, or heads collection sugar " +
+      "jsmql root-stream context reference (`$$`, run on `db.coll.aggregate()`). " +
+      "Names a diagnostic source stage of the current collection, or heads stream sugar " +
       "(`$$.push(...)` → `$unionWith`, `$$.filter(...)`, stream methods, `$$ = ...`).",
   },
   database: {
@@ -143,25 +143,25 @@ const CONTEXT_REFS = {
 };
 
 // `$$.<method>(...)` completions beyond the diagnostic source stages: the
-// chainable / statement-level stream vocabulary on the current collection.
+// chainable / statement-level stream vocabulary on the root stream.
 // Names are asserted against `streamMethodNames()` (src/compiler/rows.ts, over
 // the rows in src/registry/names.ts) below, so the registry stays the source of
 // truth — a new stream method without a signature here is a build-time error.
 // `.filter` (special-cased chain head) and `.push` (statement-level `$unionWith`)
-// are listed by hand below. Only the collection ref (`$$`) gets these — `$$$` /
+// are listed by hand below. Only the stream ref (`$$`) gets these — `$$$` /
 // `$$$$` reach the same methods through member access on their permissive
 // `[key: string]: any` tail.
 //
-// Name of the ambient interface the `$$` collection ref is typed as. Stream
+// Name of the ambient interface the `$$` stream ref is typed as. Stream
 // methods return it (not `any`) so chains keep their completion AND their
 // callback params stay contextually typed — `$$.filter(d => …).map(d => …)`
 // would otherwise trip `noImplicitAny` on the second lambda once the first call
 // collapsed to `any`.
-const COLLECTION_REF_TYPE = "JsmqlCollectionRef";
+const STREAM_REF_TYPE = "JsmqlStreamRef";
 
 // Name of the ambient interface a FOREIGN collection (`$$$.<coll>`) is typed as,
-// and the base the collection ref extends. It holds the read surface both refs
-// share; the collection ref adds only what is unique to the current stream.
+// and the base the stream ref extends. It holds the read surface both refs
+// share; the stream ref adds only what is unique to the root stream.
 const FOREIGN_REF_TYPE = "JsmqlForeignRef";
 
 // Each stream method's JSDoc + parameter list. The return type is appended by
@@ -272,7 +272,7 @@ const STREAM_METHOD_SIGNATURES = {
 // with `$unionWith` and `$facet`). `.push` is the statement-level `$unionWith`. `.push` belongs
 // to the current stream alone. The other two are valid on a foreign collection too.
 const NON_REGISTRY_STREAM_METHODS = ["filter", "reject"];
-const COLLECTION_ONLY_STREAM_METHODS = ["push"];
+const ROOT_STREAM_ONLY_METHODS = ["push"];
 
 // Emission order for the chainable stream methods (registry order, then the non-registry entries).
 // Drift-protected in BOTH directions: every registered stream method must have a signature, and
@@ -287,7 +287,7 @@ function streamMethodMembers(returnType, names) {
         `but have no signature in STREAM_METHOD_SIGNATURES. Add one so '$$.<method>()' gets completion.`,
     );
   }
-  const known = new Set([...registry, ...NON_REGISTRY_STREAM_METHODS, ...COLLECTION_ONLY_STREAM_METHODS]);
+  const known = new Set([...registry, ...NON_REGISTRY_STREAM_METHODS, ...ROOT_STREAM_ONLY_METHODS]);
   const stray = Object.keys(STREAM_METHOD_SIGNATURES).filter((n) => !known.has(n));
   if (stray.length > 0) {
     throw new Error(
@@ -1130,13 +1130,13 @@ function contextRefBlock(spec) {
   // Extends the foreign reference. This lets ONE index type on `$$$` serve both the read head
   // and the `$out` write target. TypeScript resolves a target's named members against the source's
   // declared members, and never through its index signature. So `$$$.<coll> = $$` needs `$$` to
-  // actually declare them. Re-declare every chainable to return the collection reference. Add what
-  // only the current collection has: its diagnostic source stages and the statement-level `.push`
+  // actually declare them. Re-declare every chainable to return the stream reference. Add what
+  // only the root stream has: the diagnostic source stages of the current collection, and the statement-level `.push`
   // (the `$unionWith` operator).
-  const collectionMembers = [
+  const streamRefMembers = [
     ...diagnosticMembers("collection"),
-    ...streamMethodMembers(COLLECTION_REF_TYPE, COLLECTION_ONLY_STREAM_METHODS),
-    ...chainableMembers(COLLECTION_REF_TYPE),
+    ...streamMethodMembers(STREAM_REF_TYPE, ROOT_STREAM_ONLY_METHODS),
+    ...chainableMembers(STREAM_REF_TYPE),
     // Declared so the member exists for the assignment above, but uncallable:
     // jsmql rejects `.find` anywhere in a `$$` chain, whatever its position.
     "/** @deprecated Not a stream method — a pipeline is an array. Use `.filter(p).slice(0, 1)`. */",
@@ -1145,10 +1145,10 @@ function contextRefBlock(spec) {
 
   const blocks = [
     `interface ${FOREIGN_REF_TYPE} {\n${foreignMembers.join("\n")}\n}`,
-    `interface ${COLLECTION_REF_TYPE} extends ${FOREIGN_REF_TYPE} {\n${collectionMembers.join("\n")}\n}`,
+    `interface ${STREAM_REF_TYPE} extends ${FOREIGN_REF_TYPE} {\n${streamRefMembers.join("\n")}\n}`,
     // `$$` is `var`, not `const`. The `$$ = …` replace-stream and `$facet` sugar
     // reassign it wholesale. `const` would reject that valid jsmql (TS2588).
-    `${refJsdoc("collection")}\nvar ${CONTEXT_REFS.collection.name}: ${COLLECTION_REF_TYPE};`,
+    `${refJsdoc("collection")}\nvar ${CONTEXT_REFS.collection.name}: ${STREAM_REF_TYPE};`,
     // `$$$` and `$$$$` stay `const`. They only take *property* writes (`$$$.coll = …` → the
     // `$out` operator). `const` permits that, while `const` still flags the invalid
     // `$$$ = …` whole-reassignment. `$$$` indexes to the foreign reference, which gives

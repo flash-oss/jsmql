@@ -1875,7 +1875,7 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
 
 describe("a lookup inside a literal sub-pipeline array", () => {
   // Hoisting is what makes it wrong: the `$lookup` would land in the outer pipeline while
-  // the reference to its result stayed inside, where the stream is a different collection
+  // the reference to its result stayed inside, where the stream reads a different collection
   // whose documents never carry the outer scratch slot. The field would read as missing, on
   // every document, silently.
   const NAMES = /isn't available inside a literal sub-pipeline array|cannot be written|no destination|has no 'let'/;

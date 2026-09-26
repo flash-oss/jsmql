@@ -144,7 +144,7 @@ describe("compiler/parse — name-blind", () => {
   });
 
   it("gives the three context references three node types", () => {
-    expect(parseExpression("$$").type).toBe("CollectionRef");
+    expect(parseExpression("$$").type).toBe("StreamRef");
     expect(parseExpression("$$$.orders").type).toBe("MemberAccess");
     expect((parseExpression("$$$.orders") as { object: { type: string } }).object.type).toBe("DatabaseRef");
     expect((parseExpression("$$$$.db.c") as { object: { object: { type: string } } }).object.object.type).toBe(

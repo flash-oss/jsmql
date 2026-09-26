@@ -760,7 +760,7 @@ class Parser {
       t === "Ident" ||
       t === "MemberAccess" ||
       t === "IndexAccess" ||
-      t === "CollectionRef" ||
+      t === "StreamRef" ||
       t === "DatabaseRef" ||
       t === "ClusterRef";
     if (isPlace) return;
@@ -1037,7 +1037,7 @@ class Parser {
         return this.dollar();
       case "DoubleDollar":
         this.c.next();
-        return { type: "CollectionRef", pos: t.pos };
+        return { type: "StreamRef", pos: t.pos };
       case "TripleDollar":
         this.c.next();
         return { type: "DatabaseRef", pos: t.pos };

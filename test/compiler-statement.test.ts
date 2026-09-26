@@ -474,9 +474,9 @@ describe("compiler/emit/statement — bindings between stages", () => {
     expect(() => pipeline("$$.aggregate(o => { let o = 1; $.y = o; });")).toThrow(/re-declares the parameter `o`/);
     // a name the block declares ends with the block
     expect(() => pipeline("$$.aggregate(o => { let k = o.b; $.y = k; }); $.z = k;")).toThrow(/Unknown identifier 'k'/);
-    // a callback's index and collection parameters have no value on a stream, and say so as parameters
+    // a callback's index and receiver parameters have no value on a stream, and say so as parameters
     expect(() => pipeline("$$.map((d, i) => ({ n: i }));")).toThrow(/`i` has no value inside `.map\(\)`/);
-    // the collection parameter IS the stream the callback runs over: at the top, `$$`
+    // the receiver parameter IS the stream the callback runs over: at the top, `$$`
     expect(compiled("$$.map((d, i, c) => ({ n: c.size() }));")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
       { $replaceWith: { n: "$__jsmql.size" } },
@@ -600,7 +600,7 @@ describe("compiler/emit/statement — the stream road", () => {
     expect(() => pipeline("$$ = $$.countBy(String);")).toThrow(/takes a key here/);
     // an unknown link, with the nearest one in the chain's own spelling
     expect(() => pipeline("$$.$prject({ a: 1 });")).toThrow(/Did you mean '\.\$project\(\)'/);
-    // a read of the index or collection parameter says what to write instead
+    // a read of the index or receiver parameter says what to write instead
     expect(() => pipeline("$$ = $$.map((d, i) => ({ n: i }));")).toThrow(/no per-document index/);
     expect(compiled("$$ = $$.map((d, _i, _coll) => ({ id: d._id }));")).toEqual([{ $replaceWith: { id: "$_id" } }]);
   });

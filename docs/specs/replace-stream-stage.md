@@ -3,7 +3,7 @@
 ## Overview
 
 `$$ = <expr>` is the JSMQL surface for replacing the pipeline's document
-stream. The LHS is the bare `$$` token — the current collection / stream,
+stream. The LHS is the bare `$$` token — the root stream,
 the same role MQL's `$$ROOT` plays for a single document. It is the sister
 shape to `$ = <expr>` (which replaces *one* doc → `$replaceWith`); `$$ = <expr>`
 replaces the *stream* and lowers to either a `$match` (narrow) or
@@ -51,11 +51,11 @@ other assignment. WHICH target this means is a question for the emit phase:
 destinations ([out-stage.md](out-stage.md)), and a bare `$$$` / `$$$$` is
 refused there, with the message naming the missing segment.
 
-It has no tokens or AST nodes of its own. The shape is `AssignExpr { target: CollectionRef, value: <expr>, pos }`.
+It has no tokens or AST nodes of its own. The shape is `AssignExpr { target: StreamRef, value: <expr>, pos }`.
 
 ## Lowering
 
-`$$ = <expr>` is an `AssignExpr` whose target is the `CollectionRef`, and it is a statement wherever it stands — a lone `$$ = …` with no `;` is a pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)), so the polymorphic and the strict entries agree; `jsmql.filter()` refuses it, as it refuses every pipeline. `writeStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the target and hands the value to one of three roads:
+`$$ = <expr>` is an `AssignExpr` whose target is the `StreamRef`, and it is a statement wherever it stands — a lone `$$ = …` with no `;` is a pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)), so the polymorphic and the strict entries agree; `jsmql.filter()` refuses it, as it refuses every pipeline. `writeStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the target and hands the value to one of three roads:
 
 - **A chain on `$$`** → the stream road, `streamStages`: the same link-by-link lowering the bare statement `$$.<chain>;` gets, so the two spellings are one program ([stream-methods.md § Where a chain runs](stream-methods.md)). A predicate lowers through the filter road with the parameter as the document.
 - **A chain on `$$$.<coll>`** → the join road, `joinStream` ([lookup-stage.md § The join road](lookup-stage.md)): the chain's links become the sub-pipeline. When the body read the outer document, JSMQL replaces the stream per outer document (`$lookup` + `$unwind` + `$replaceWith`); otherwise it drops the current stream (`$match: { $expr: false }`) and unions in the other collection's pipeline. `.find` is refused here — one document is not a stream.
@@ -72,7 +72,7 @@ JSMQL refuses an unsupported RHS and names the forms that work:
 | `ArrayLiteral` RHS of docs mid-pipeline (e.g. `$match(...); $$ = [{...}]`) | `'$$ = [<docs>]' is only valid as the first stage of a pipeline ('$documents' must be at the head per MongoDB). To append documents to an existing stream, use '$$.push({...}, {...}, …)' instead, which lowers to '$unionWith'.` (Note: `$$ = []` is supported — it empties the stream; `$$ = [<docs>]` at stage 0 lowers to `$documents`.) |
 | `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | `'$$ = <ternary>' (conditional stream branching) is not a supported form — a stream has no single condition that swaps the whole stream for A or B. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).` |
 | `MethodCall` on `$$` / `$$$.<coll>` with method other than `filter` | `'$$ = …' RHS supports only '<recv>.filter(<predicate>)' — '.<method>(...)' is not allowed here.[ Did you mean '.filter'?] Use '<recv>.filter(<predicate>)' to <intent>, or write '$ = $$$.<coll>.find(<predicate>)' if you meant to replace each document with a single matching foreign doc.` |
-| Bare `CollectionRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call a stream method. … Any lodash stream method may head the chain (e.g. '$$$.<coll>.toSorted(...).take(...)'), not only '.filter'.` |
+| Bare `StreamRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call a stream method. … Any lodash stream method may head the chain (e.g. '$$$.<coll>.toSorted(...).take(...)'), not only '.filter'.` |
 | Anything else | `'$$ = …' RHS must be '$$.<streamMethod>…' … or '$$$.<coll>.<streamMethod>…' …; a '.filter'/'.reject' correlating on '$.<field>' promotes a source switch to a per-outer-doc '$lookup'.` |
 
 The parser refuses a compound assignment (`$$ += 5`, `$$++`) at parse time: the token

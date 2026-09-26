@@ -143,7 +143,7 @@ export function edge(node: object, key: string, here: Where): Where {
   // clause after this.
   if (n.type === "AssignExpr" && key === "value") {
     const target = n.target as Any;
-    if (target.type === "CollectionRef") return STREAM;
+    if (target.type === "StreamRef") return STREAM;
   }
 
   // A chain that bottoms out in a context reference is a STREAM: `$$.filter(p)`,

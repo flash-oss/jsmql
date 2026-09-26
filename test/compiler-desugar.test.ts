@@ -255,7 +255,7 @@ describe("compiler/passes/position — the position each node stands in", () => 
   it("carries the stream down every link of a `$$ = …` chain, but not into a callback", () => {
     const src = "$$ = $$.filter(d => d.x).map(d => d.y);";
     // Children first — the walk is bottom-up, so the chain reads inside out.
-    expect(at(src, "stream")).toEqual(["CollectionRef", "MethodCall.filter", "MethodCall.map"]);
+    expect(at(src, "stream")).toEqual(["StreamRef", "MethodCall.filter", "MethodCall.map"]);
     // The lambda reads one document, so it is an ordinary expression.
     expect(at(src, "value")).toContain("Lambda");
   });
@@ -267,7 +267,7 @@ describe("compiler/passes/position — the position each node stands in", () => 
   });
 
   it("keeps the left of a write out of value position", () => {
-    expect(at("$$ = $$.filter(d => d.x);", "target")).toEqual(["CollectionRef"]);
+    expect(at("$$ = $$.filter(d => d.x);", "target")).toEqual(["StreamRef"]);
     expect(at("$.a = 1;", "target")).toEqual(["FieldRef"]);
     expect(at("delete $.a;", "target")).toEqual(["FieldRef"]);
     expect(at("$.a = 1;", "value")).toEqual(["NumberLiteral"]);
@@ -316,7 +316,7 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
   it("leaves a slot the row declares arrow-only alone", () => {
     expect(arg('$.o.mapValues("f")')).toBe("StringLiteral");
     expect(arg("$.items.reduce((a, v) => a + v, 0)")).toBe("Lambda");
-    // `Object.groupBy(collection, discriminator)` puts the collection FIRST, so a
+    // `Object.groupBy(items, discriminator)` puts the array FIRST, so a
     // layout keyed by position rather than by receiver would rewrite the wrong slot.
     expect(arg('Object.groupBy($.items, ["a", 1])')).toBe("FieldRef");
     expect(arg('Object.groupBy($.items, ["a", 1])', 1)).toBe("ArrayLiteral");

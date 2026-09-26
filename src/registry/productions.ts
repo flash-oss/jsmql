@@ -1034,11 +1034,11 @@ export const PRODUCTIONS = {
   }),
 
   streamReference: production({
-    doc: "`$$` — the current collection as a stream.",
+    doc: "`$$` — the root stream.",
     tokens: ["$$"],
     spelling: "$$",
-    // `$$` — the current collection, as a stream.
-    becomes: "CollectionRef",
+    // `$$` — the root stream, at every depth (HR4).
+    becomes: "StreamRef",
     on: "any",
     returns: "unknown",
     where: ["stream"],

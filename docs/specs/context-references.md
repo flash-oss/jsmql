@@ -43,15 +43,15 @@ The table's row keys — `'$$'`, `'$$$'`, `'$$$$'` — are the spellings the par
 [`src/registry/ast.ts`](../../src/registry/ast.ts) — three bare marker nodes, beside `FieldRef`:
 
 ```ts
-| { type: "CollectionRef"; pos: number }   // $$
+| { type: "StreamRef"; pos: number }   // $$
 | { type: "DatabaseRef"; pos: number }     // $$$
 | { type: "ClusterRef"; pos: number }      // $$$$
 ```
 
 They carry no payload. The existing `MemberAccess` (for `.name`) and `IndexAccess` (for `[expr]`) nodes wrap them and capture the path or key. Example:
 
-- `$$.foo` → `MemberAccess { object: CollectionRef, member: "foo" }`
-- `$$["foo"]` → `IndexAccess { object: CollectionRef, index: StringLiteral "foo" }`
+- `$$.foo` → `MemberAccess { object: StreamRef, member: "foo" }`
+- `$$["foo"]` → `IndexAccess { object: StreamRef, index: StringLiteral "foo" }`
 - `$$$$[db].coll` → `MemberAccess { object: IndexAccess { object: ClusterRef, index: <ParamRef db> }, member: "coll" }`
 
 Why use separate node types instead of one `ContextRef { depth }` node? Each level carries a different surface. A database ref needs a collection after it. A cluster ref needs a database and a collection. `$$` is a stream in its own right. So each node matches on its own, rather than by a depth count.
@@ -63,7 +63,7 @@ Why use separate node types instead of one `ContextRef { depth }` node? Each lev
 ```ts
 case "DoubleDollar":
   this.c.next();
-  return { type: "CollectionRef", pos: t.pos };
+  return { type: "StreamRef", pos: t.pos };
 // TripleDollar → DatabaseRef and QuadDollar → ClusterRef read the same way.
 ```
 
@@ -77,7 +77,7 @@ Postfix wrapping (`MemberAccess`, `IndexAccess`, optional chains, calls) happens
 
 ```
 $.x = $$
-→ '$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.size()'.
+→ '$$' (the root stream) is statement-only. In a value slot, use a method on it, for example '$$.size()'.
 ```
 
 Postfix wraps recurse into their `object` first. So any chained form (`$$.foo`, `$$$[x]`, `$$$$[a].b.c()`) that no road claims reaches the leaf marker node and is refused there. No wrapper site needs a case of its own.

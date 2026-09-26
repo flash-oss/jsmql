@@ -85,7 +85,7 @@ function constantOf(e: Expr): unknown {
 
 /** Is this `$$.reduce(…)` a fold of the ROOT stream? */
 export const isStreamReduce = (e: Expr): e is Call =>
-  e.type === "MethodCall" && e.name === "reduce" && e.object.type === "CollectionRef";
+  e.type === "MethodCall" && e.name === "reduce" && e.object.type === "StreamRef";
 
 /** Does a `$$ = [ … ]` list hold a reducer wrap, and is it the whole list? */
 export function isReduceWrap(list: Extract<Expr, { type: "ArrayLiteral" }>): boolean {
@@ -260,7 +260,7 @@ export function holdsStreamReduce(node: unknown): boolean {
   if (Array.isArray(node)) return node.some(holdsStreamReduce);
   const n = node as { type?: string } & Record<string, unknown>;
   if (n.type === "MethodCall" && isStreamReduce(n as unknown as Expr)) return true;
-  if (n.type === "MethodCall" && (chainBase(n) as { type: string }).type === "CollectionRef" && n.name === "reduce")
+  if (n.type === "MethodCall" && (chainBase(n) as { type: string }).type === "StreamRef" && n.name === "reduce")
     return true;
   return Object.entries(n).some(([k, v]) => k !== "type" && k !== "pos" && holdsStreamReduce(v));
 }

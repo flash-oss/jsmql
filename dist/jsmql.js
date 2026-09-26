@@ -6996,7 +6996,7 @@ var NAMES = {
     doc: "'.flatMap()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // $unwind needs a field path, and a matcher is provably a boolean.
@@ -7043,7 +7043,7 @@ var NAMES = {
     doc: "'.map()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // $replaceWith needs a document, and a matcher is provably a boolean.
@@ -7076,7 +7076,7 @@ var NAMES = {
     on: ["array", "stream"],
     // MEASURED: three parameters as a value, exactly one as a chain link —
     // `$$ = $$.filter((d, i) => …)` is "must take exactly one parameter".
-    params: { value: ["value", "index", "collection"], stream: ["value"] },
+    params: { value: ["value", "index", "receiver"], stream: ["value"] },
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
       // A bare callable takes a VALUE; a stream element is a document.
@@ -7110,7 +7110,7 @@ var NAMES = {
     // On another collection (`$$$.c.find(p)`) it is the `filter` row's cell plus
     // `$limit: 1`, and yields ONE document. See src/compiler/emit/join.ts.
     picksOne: "filter",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "element",
     where: ["value"],
@@ -7168,7 +7168,7 @@ var NAMES = {
     doc: "'.findLast()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "element",
     where: ["value"],
@@ -7258,7 +7258,7 @@ var NAMES = {
     doc: "'.some()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
     where: ["value", "filter"],
@@ -7298,7 +7298,7 @@ var NAMES = {
     doc: "'.every()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
     where: ["value"],
@@ -10041,7 +10041,7 @@ var NAMES = {
         // The parser accepts the name so it gets an answer, and this cell refuses it: the
         // receiver form is the one spelling, and it emits the identical MQL.
         Object: unsupported(
-          "'Object.groupBy(collection, discriminator)' is not part of jsmql \u2014 the collection's own method says the same thing, and one capability gets one spelling. Write '<collection>.groupBy(<discriminator>)': '$.items.groupBy(d => d.k)' emits the identical MQL."
+          "'Object.groupBy(items, discriminator)' is not part of JSMQL \u2014 the array's own method says the same thing, and one capability gets one spelling. Write '<array>.groupBy(<discriminator>)': '$.items.groupBy(d => d.k)' emits the identical MQL."
         )
       }
     },
@@ -12026,7 +12026,7 @@ var NAMES = {
     doc: "'.aggregate(pipeline)' \u2014 splices raw stages into the chain. Takes an array or a block body.",
     call: true,
     on: "stream",
-    params: ["value", "index", "collection"],
+    params: ["value", "index", "receiver"],
     iterateeSlots: {
       stream: {
         arrowOnly: "a block of pipeline stages, `(o) => { $stage(\u2026); \u2026 }`, or a stage-array literal `[{ $stage: \u2026 }]`; no shorthand stands in for either"
@@ -12860,18 +12860,18 @@ var NAMES = {
     window: unsupported("'$' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   $$: root({
-    doc: "The current collection, as a stream of documents. Every value-position use is refused as statement-only.",
+    doc: "The root stream: the documents of the pipeline. Every value-position use is refused as statement-only.",
     token: "DoubleDollar",
     provides: "collection",
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
-    // value slot gets a refusal — "'$$' (current collection) is statement-only" —
+    // value slot gets a refusal — "'$$' (the root stream) is statement-only" —
     // so `expr` is a refusal even though `$$.size()` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
     filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => \u2026)'."),
     expr: unsupported(
-      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.size()'."
+      "'$$' (the root stream) is statement-only. In a value slot, use a method on it, for example '$$.size()'."
     ),
     stream: inCode("src/compiler/emit/statement.ts"),
     statement: inCode("src/compiler/emit/statement.ts"),
@@ -13941,11 +13941,11 @@ var PRODUCTIONS = {
     statement: unsupported("'$' is not a statement \u2014 see its 'where'.")
   }),
   streamReference: production({
-    doc: "`$$` \u2014 the current collection as a stream.",
+    doc: "`$$` \u2014 the root stream.",
     tokens: ["$$"],
     spelling: "$$",
-    // `$$` — the current collection, as a stream.
-    becomes: "CollectionRef",
+    // `$$` — the root stream, at every depth (HR4).
+    becomes: "StreamRef",
     on: "any",
     returns: "unknown",
     where: ["stream"],
@@ -14638,7 +14638,7 @@ function hasStreamValueCell(name2) {
 function neverNullOf(name2) {
   return row(name2)?.neverNull === true;
 }
-function emptyCollectionOf(name2, family) {
+function emptyValueOf(name2, family) {
   const own = families(row(name2)?.on);
   const fams = family !== null ? [family] : own === void 0 || own === "any" ? [] : own.filter((f) => FIELD_FAMILIES.includes(f));
   if (fams.length === 0) return null;
@@ -15292,7 +15292,7 @@ function chainBase(node) {
 }
 function isContextRef(node) {
   const t = node.type;
-  return t === "CollectionRef" || t === "DatabaseRef" || t === "ClusterRef";
+  return t === "StreamRef" || t === "DatabaseRef" || t === "ClusterRef";
 }
 function readsAContextRef(node) {
   return isContextRef(chainBase(node));
@@ -19456,7 +19456,7 @@ var Parser = class _Parser {
    */
   requirePlace(target, pos, op) {
     const t = target.expr.type;
-    const isPlace = t === "FieldRef" || t === "Ident" || t === "MemberAccess" || t === "IndexAccess" || t === "CollectionRef" || t === "DatabaseRef" || t === "ClusterRef";
+    const isPlace = t === "FieldRef" || t === "Ident" || t === "MemberAccess" || t === "IndexAccess" || t === "StreamRef" || t === "DatabaseRef" || t === "ClusterRef";
     if (isPlace) return;
     if (target.expr.type === "MethodCall") {
       const call = `.${target.expr.wrote ?? target.expr.name}()`;
@@ -19694,7 +19694,7 @@ var Parser = class _Parser {
         return this.dollar();
       case "DoubleDollar":
         this.c.next();
-        return { type: "CollectionRef", pos: t.pos };
+        return { type: "StreamRef", pos: t.pos };
       case "TripleDollar":
         this.c.next();
         return { type: "DatabaseRef", pos: t.pos };
@@ -21669,7 +21669,7 @@ function edge(node, key, here) {
   if (namesSomething(n2, key)) return TARGET;
   if (n2.type === "AssignExpr" && key === "value") {
     const target = n2.target;
-    if (target.type === "CollectionRef") return STREAM;
+    if (target.type === "StreamRef") return STREAM;
   }
   if ((n2.type === "MethodCall" || n2.type === "MemberAccess" || n2.type === "IndexAccess") && key === "object") {
     const receiver = n2.object;
@@ -22063,7 +22063,7 @@ function writesACollection(target) {
 }
 function refuseNonScalarTarget(target, op) {
   const t = target;
-  const what = t.type === "CollectionRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
+  const what = t.type === "StreamRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
   if (what === null) return;
   throw new ParseError(
     `Cannot use '${op}' on ${what} \u2014 it is the whole document, not a scalar. Write the field: '$.<field> ${op} \u2026'`,
@@ -23025,8 +23025,8 @@ function everyName() {
 // src/compiler/emit/errors.ts
 var signature = (spelled3, args) => `${spelled3}(${args.sig})`;
 var RUNS_ON = {
-  stream: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
-  collection: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
+  stream: { sigil: "$$", place: "the root stream, run on 'db.coll.aggregate()'" },
+  collection: { sigil: "$$", place: "the root stream, run on 'db.coll.aggregate()'" },
   cluster: { sigil: "$$$$", place: "the cluster reference, run on the admin database" }
 };
 var sugarOf = (name2) => name2.startsWith("$") ? name2.slice(1) : name2;
@@ -23501,7 +23501,7 @@ var noStageOnDatabase = (name2, pos) => {
   const sugar = sugarOf(name2);
   const runsOn = runsOnFor(name2);
   return new CodegenError(
-    runsOn === void 0 ? `'$$$' is the database, and no stage runs on it alone. Write '$$.${sugar}()' on the collection, or '$$$$.${sugar}()' on the cluster.` : `'$$$' is the database, and no stage runs on it alone. Write '${runsOn.sigil}.${sugar}()' \u2014 ${runsOn.place}.`,
+    runsOn === void 0 ? `'$$$' is the database, and no stage runs on it alone. Write '$$.${sugar}()' on the current collection, or '$$$$.${sugar}()' on the cluster.` : `'$$$' is the database, and no stage runs on it alone. Write '${runsOn.sigil}.${sugar}()' \u2014 ${runsOn.place}.`,
     pos
   );
 };
@@ -23609,7 +23609,7 @@ var diagnosticIsNotALink = (name2, pos) => {
 };
 var notAStageOnRef = (name2, sigil, candidates, pos) => {
   const where = sigil === "$$$$" ? "'$$$$' is the cluster, and only the stages that report on the deployment are spelled on it" : "'$$$' is the database, and no stage runs on it alone";
-  const tail = sigil === "$$$$" ? didYouMean(name2, candidates, (s) => `$$$$.${s}()`) : " A stage runs on the collection ('$$.<stage>()') or the cluster ('$$$$.<stage>()').";
+  const tail = sigil === "$$$$" ? didYouMean(name2, candidates, (s) => `$$$$.${s}()`) : " A stage runs on the current collection ('$$.<stage>()') or on the cluster ('$$$$.<stage>()').";
   const read = ` To read a collection called '${name2}', write '$.<field> = ${sigil}.${name2}.find(\u2026)'.`;
   return new CodegenError(`${where}. '.${name2}()' is not one of them.${tail}${read}`, pos);
 };
@@ -24887,7 +24887,7 @@ function statedPresence(node, env) {
       const name2 = namedRow(node) ?? node.name;
       if (!neverNullOf(name2)) return false;
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
-      const wrapped = !spineHasOptional(node) && emptyCollectionOf(name2, family) !== null;
+      const wrapped = !spineHasOptional(node) && emptyValueOf(name2, family) !== null;
       const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
       return receiver && node.args.every((a) => argPresent(a, env));
     }
@@ -24916,7 +24916,7 @@ function statedPresence(node, env) {
       return null;
     case "FieldRef":
     case "Ident":
-    case "CollectionRef":
+    case "StreamRef":
     case "IndexAccess":
     case "TernaryExpr":
     case "ExprBlock":
@@ -24971,7 +24971,7 @@ var kindOf3 = (node, env) => single2(typeOf(node, env));
 function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
   if (src !== null) return src;
-  if (node.type === "CollectionRef") return "stream";
+  if (node.type === "StreamRef") return "stream";
   return familyOfKind(kindOf3(node, env));
 }
 function namesIn2(arg) {
@@ -25006,7 +25006,7 @@ function callbackAnswer(name2, receiver, args, n2, arg, env) {
   let bodyEnv = env.block();
   cb.params.forEach((p, i) => {
     const kind = kinds[i];
-    const t = kind === "value" ? flattenOnce(receiver) : kind === "index" ? of("number") : kind === "key" ? of("string") : kind === "collection" ? receiver : kind === "accumulator" ? arg(n2 + 1) : ANY;
+    const t = kind === "value" ? flattenOnce(receiver) : kind === "index" ? of("number") : kind === "key" ? of("string") : kind === "receiver" ? receiver : kind === "accumulator" ? arg(n2 + 1) : ANY;
     bodyEnv = bodyEnv.param(p, t, cb.pos).env;
   });
   return typeOf(cb.body, bodyEnv);
@@ -25110,7 +25110,7 @@ function kindsOf2(node, env) {
       return env.typeAt(node.path, 0);
     case "Ident":
       return env.scope.has(node.name) ? env.lookup(node.name, node.pos).type : ANY;
-    case "CollectionRef":
+    case "StreamRef":
       return of("stream");
     case "MemberAccess": {
       if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
@@ -26749,7 +26749,7 @@ function lowerValue(node, env) {
       const path = reachable(env.render(locate(node, env), node.pos));
       return node.optional === true ? { $ifNull: [path, null] } : path;
     }
-    case "CollectionRef":
+    case "StreamRef":
     case "DatabaseRef":
     case "ClusterRef":
       return rootAsValue(node, env);
@@ -27071,7 +27071,7 @@ function receiverOf(recv, env) {
   const src = sourceFamily(recv);
   if (src !== null && NAMESPACES3.has(src))
     return { kind: "namespace", name: src };
-  if (recv.type === "CollectionRef" || onOwnStream(recv, env)) return { kind: "stream" };
+  if (recv.type === "StreamRef" || onOwnStream(recv, env)) return { kind: "stream" };
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
   if (src === "set") return { kind: "value", family: "set", lowered };
@@ -27096,7 +27096,7 @@ function methodCall2(node, env) {
 function dispatchOn(node, name2, recvNode, args, env) {
   const position = positionIn(env);
   const recvEnv = childEnv(env, node, "object");
-  const chainOnStream = recvNode.type === "MethodCall" && chainBase(recvNode).type === "CollectionRef";
+  const chainOnStream = recvNode.type === "MethodCall" && chainBase(recvNode).type === "StreamRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
@@ -27119,7 +27119,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
     checkSlotKinds(name2, sel.rule.args, exprArgs, kinds);
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
-    const empty = emptyCollectionOf(name2, family);
+    const empty = emptyValueOf(name2, family);
     const inExpression = position === "value" || position === "filter";
     const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
     const input = wrap ? ifNull(recv, empty) : recv;
@@ -27610,7 +27610,7 @@ function constantOf2(e) {
       return NOT_CONSTANT3;
   }
 }
-var isStreamReduce = (e) => e.type === "MethodCall" && e.name === "reduce" && e.object.type === "CollectionRef";
+var isStreamReduce = (e) => e.type === "MethodCall" && e.name === "reduce" && e.object.type === "StreamRef";
 function isReduceWrap(list) {
   if (list.elements.length !== 1) return false;
   const el = list.elements[0];
@@ -27742,7 +27742,7 @@ function holdsStreamReduce(node) {
   if (Array.isArray(node)) return node.some(holdsStreamReduce);
   const n2 = node;
   if (n2.type === "MethodCall" && isStreamReduce(n2)) return true;
-  if (n2.type === "MethodCall" && chainBase(n2).type === "CollectionRef" && n2.name === "reduce")
+  if (n2.type === "MethodCall" && chainBase(n2).type === "StreamRef" && n2.name === "reduce")
     return true;
   return Object.entries(n2).some(([k, v]) => k !== "type" && k !== "pos" && holdsStreamReduce(v));
 }
@@ -28104,13 +28104,13 @@ function targetPath(op, env) {
   }
   if (t.type === "Ident" && onOwnStream(t, env)) throw writeToOwnStream(t.name, t.pos);
   if (t.type === "Ident") throw new UnknownIdentifierError(t.name, t.pos);
-  if (t.type === "CollectionRef") return STREAM_TARGET;
+  if (t.type === "StreamRef") return STREAM_TARGET;
   throw notAWriteTarget(op.pos);
 }
 function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lead, how) {
   if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written2);
   const chainOn = chainBase(value);
-  const streamRoad = chainOn.type === "CollectionRef" || readsAnotherCollection(value) || onOwnStream(chainOn, env);
+  const streamRoad = chainOn.type === "StreamRef" || readsAnotherCollection(value) || onOwnStream(chainOn, env);
   const t = typeOf(value, env);
   if (streamRoad || isOnly(t, "stream")) return streamStages(value, env, first);
   if (cannotBe(t, "array")) throw notAStreamChain(value.pos, nounOfKinds(t), lead, how);
@@ -28144,8 +28144,8 @@ function outStages(op, target, env, first) {
   const name2 = op.op === "=" ? "$out" : "$merge";
   const rhs = op.value;
   const base = chainBase(rhs);
-  if (base.type !== "CollectionRef") throw outNeedsStream(rhs.pos);
-  const stages = rhs.type === "CollectionRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
+  if (base.type !== "StreamRef") throw outNeedsStream(rhs.pos);
+  const stages = rhs.type === "StreamRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
   return [...stages, ...place(name2, { [name2]: target }, env, first && stages.length === 0, op.pos)];
 }
 function mergeStages(node, env, first) {
@@ -28181,7 +28181,7 @@ function oneDocumentStages(value, env) {
 function isFacet(doc) {
   return doc.entries.some((e) => e.type === "KeyValueEntry" && isStreamChain(e.value));
 }
-var isStreamChain = (e) => e.type === "CollectionRef" || e.type === "MethodCall" && chainBase(e).type === "CollectionRef";
+var isStreamChain = (e) => e.type === "StreamRef" || e.type === "MethodCall" && chainBase(e).type === "StreamRef";
 function facetStages(doc, env, first) {
   const branches = {};
   const named = /* @__PURE__ */ new Set();
@@ -28195,7 +28195,7 @@ function facetStages(doc, env, first) {
     if (named.has(key)) throw facetDuplicate(key, e.pos);
     named.add(key);
     const body = childEnv(entries, e, "value").enter({ stage: "$facet", path: [key] }, new Chain());
-    if (e.value.type !== "CollectionRef") body.chain.emitted.push(...streamStages(e.value, body, true));
+    if (e.value.type !== "StreamRef") body.chain.emitted.push(...streamStages(e.value, body, true));
     setKey(branches, key, body.chain.close());
   }
   return place("$facet", { $facet: branches }, env, first, doc.pos);
@@ -28358,8 +28358,8 @@ function writeStages(uf, env, first) {
 }
 function refuseUnbuiltSugar(value) {
   const base = chainBase(value);
-  if (base.type === "CollectionRef" && value.type === "MethodCall") {
-    const direct = value.object.type === "CollectionRef" && hasStreamValueCell(value.name);
+  if (base.type === "StreamRef" && value.type === "MethodCall") {
+    const direct = value.object.type === "StreamRef" && hasStreamValueCell(value.name);
     if (!direct) throw streamAsValue(value.pos);
   }
 }
@@ -28394,8 +28394,8 @@ function streamStages(chain, env, first) {
     cur = cur.object;
   }
   if (readsAnotherCollection(cur)) return joinStream(chain, env, first, JOIN);
-  if (cur.type === "CollectionRef" && env.level > 0) throw rootStreamInForeign(chain.pos);
-  if (cur.type !== "CollectionRef" && !onOwnStream(cur, env)) throw notAStreamChain(chain.pos);
+  if (cur.type === "StreamRef" && env.level > 0) throw rootStreamInForeign(chain.pos);
+  if (cur.type !== "StreamRef" && !onOwnStream(cur, env)) throw notAStreamChain(chain.pos);
   return linkStages(links, env, first);
 }
 function linkStages(links, env, first) {
@@ -28420,11 +28420,11 @@ function refStatement(node, ref, env, first) {
     throw diagnosticIsNotALink(name2, node.pos);
   }
   if (ref === "DatabaseRef") throw noStageOnDatabase(node.name, node.pos);
-  const receiver = ref === "CollectionRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
+  const receiver = ref === "StreamRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
   const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
-    const spelled3 = ref === "CollectionRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
+    const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
     throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
   }
   const args = node.args;
@@ -28481,13 +28481,13 @@ function stageStatement(node, env, first) {
   const base = chainBase(node);
   if (node.type === "MethodCall") {
     const ownStream = onOwnStream(base, env);
-    const onRef = ["CollectionRef", "DatabaseRef", "ClusterRef"].includes(base.type) || ownStream;
+    const onRef = ["StreamRef", "DatabaseRef", "ClusterRef"].includes(base.type) || ownStream;
     if (onRef) {
       if (node.optional) throw optionalOnStream(node.pos);
       const row2 = namedRow(node) ?? node.name;
-      if (node.object.type === "CollectionRef" && isStreamReduce(node)) return arrayReduceStages(node, env, first);
+      if (node.object.type === "StreamRef" && isStreamReduce(node)) return arrayReduceStages(node, env, first);
       if (isContextRef(node.object) && unionsOf(row2)) {
-        if (base.type !== "CollectionRef") throw rootStreamInForeign(node.pos);
+        if (base.type !== "StreamRef") throw rootStreamInForeign(node.pos);
         if (env.level > 0) throw rootStreamInForeign(node.pos);
         return unionStages(node.args, env, node, JOIN);
       }
@@ -28495,8 +28495,8 @@ function stageStatement(node, env, first) {
       const ownedByAPass = says !== null && says.kind === "inCode" && peels(node);
       const asStatement = says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown" && !ownedByAPass;
       if (!asStatement) {
-        if (base.type === "CollectionRef" || ownStream) return streamStages(node, env, first);
-        if (isContextRef(node.object) && base.type !== "CollectionRef") {
+        if (base.type === "StreamRef" || ownStream) return streamStages(node, env, first);
+        if (isContextRef(node.object) && base.type !== "StreamRef") {
           const sigil = base.type === "ClusterRef" ? "$$$$" : "$$$";
           const scope = base.type === "ClusterRef" ? "cluster" : "database";
           const spelledOnIt = everyStageName().filter((s) => diagnosticOf(s)?.scope === scope).map((s) => s.slice(1));
@@ -28511,7 +28511,7 @@ function stageStatement(node, env, first) {
     }
   }
   const name2 = namedRow(node);
-  if (node.type === "CollectionRef") throw bareContextRef("$$", node.pos);
+  if (node.type === "StreamRef") throw bareContextRef("$$", node.pos);
   if (node.type === "DatabaseRef") throw bareContextRef("$$$", node.pos);
   if (node.type === "ClusterRef") throw bareContextRef("$$$$", node.pos);
   if (name2 === null) throw notAStatement(node.pos);
@@ -28860,7 +28860,7 @@ function received(program) {
   }
   if (program.type === "UpdateFilter") {
     const target = program.ops[0]?.type === "AssignExpr" ? program.ops[0].target.type : null;
-    if (target === "CollectionRef") {
+    if (target === "StreamRef") {
       return {
         what: "a stream-replace `$$ = <expr>` (the pipeline stages its chain describes)",
         hint: "jsmql.pipeline(); for a Filter, pass the predicate to jsmql.filter() directly"

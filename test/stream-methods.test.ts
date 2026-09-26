@@ -824,16 +824,16 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     );
   });
 
-  it("an UNUSED index param is allowed (positional, to reach the 3rd 'collection' param)", () => {
+  it("an UNUSED index param is allowed (positional, to reach the 3rd 'stream' param)", () => {
     // `i` is present but never referenced — accepted, no $zip/index machinery.
     expect(jsmql("$$ = $$.map((d, _i) => ({ id: d._id }));")).toEqual([{ $replaceWith: { id: "$_id" } }]);
   });
 
-  // ── 3rd 'collection' param → sub-stream size ──────────────────────────────
+  // ── 3rd 'stream' param → sub-stream size ──────────────────────────────
   // `coll.size()` (the post-filter sub-stream's document count) materialises a
   // `$setWindowFields` `$count` (`__jsmql.size`) ahead of the `$replaceWith`.
   // Verified end-to-end on a live mongod (counts correct, no `__jsmql` leak).
-  describe(".map((d, _i, coll) => …) — 3rd 'collection' param sub-stream size", () => {
+  describe(".map((d, _i, coll) => …) — 3rd 'stream' param sub-stream size", () => {
     it("top-level `$$` stream chain: coll.size() → $setWindowFields + read-back", () => {
       expect(jsmql("$$ = $$.map((d, _i, coll) => ({ id: d._id, n: coll.size() }));")).toEqual([
         { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },

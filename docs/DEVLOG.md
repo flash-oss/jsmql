@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix!: "collection" names only a MongoDB collection
+
+The word had four meanings. It named a MongoDB collection, and also `[]` and
+`{}` (HR5 said "a dot runs the method on an empty collection"), the root stream
+`$$` ("the current collection, as a stream"), and the third parameter of a
+callback (lodash's `(value, index, collection)`). The developer decided that a
+"collection" is only a MongoDB collection, or the current collection: the
+collection that the MQL starts to run from. An array, an object and a stream are
+never collections.
+
+So HR5 now reads "a dot runs the method on an empty array or object", in
+[LANG_RULES.md](LANG_RULES.md), the README, LANGUAGE.md and the specs. `$$` is
+"the root stream" everywhere, as HR4 already says. The refusal of a bare `$$`
+value now says "'$$' (the root stream) is statement-only", and a system stage
+spelled on `$$` says "the root stream, run on 'db.coll.aggregate()'". The
+`Object.groupBy` refusal names its parameters `(items, discriminator)`, as MDN
+does, and its fix `<array>.groupBy(…)`. The examples call the third callback
+parameter `stream`, and the lodash "Collection" group is "the lodash array
+vocabulary". A word that names the scope of `$$` stays: `$$.indexStats()`
+reports on the current collection.
+
+The names in the code follow the same rule: the AST node of `$$` is `StreamRef`
+(it was `CollectionRef`), the callback parameter kind is `receiver`, the HR5
+helper is `emptyValueOf`, and the ambient type of `$$` in
+`@koresar/jsmql/globals` is `JsmqlStreamRef` (it was `JsmqlCollectionRef`). The
+type rename and the new message text are why this entry carries a `!`.
+
+---
+
 ## 2026-09-26 — docs: name all HARD RULES and all SOFT RULES, not a numbered range
 
 The root [CLAUDE.md](../CLAUDE.md) (two times) and [docs/CLAUDE.md](CLAUDE.md)

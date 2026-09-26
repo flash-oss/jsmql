@@ -36,7 +36,7 @@ import {
   elementsOf,
   soleFieldFamilyOf,
   hasStreamValueCell,
-  emptyCollectionOf,
+  emptyValueOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
@@ -184,7 +184,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
       // written with it holds the key: `x: null`. A bare path would leave the key out.
       return node.optional === true ? { $ifNull: [path, null] } : path;
     }
-    case "CollectionRef":
+    case "StreamRef":
     case "DatabaseRef":
     case "ClusterRef":
       return rootAsValue(node, env);
@@ -381,7 +381,7 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       const t = typeOf(el.argument, inner);
       if (isOnly(t, "string")) throw E.spreadOfString(el.argument.pos);
       if (cannotBe(t, "array")) throw E.spreadNotAnArray(E.nounOfKinds(t), el.argument.pos);
-      // HR5 reads a missing collection as the empty one: `[...$.a, 1]` is `[1]` when `a`
+      // HR5 reads a missing array as the empty one: `[...$.a, 1]` is `[1]` when `a`
       // is not there. `$concatArrays` answers null for a null operand, and the mutator
       // templates (`.pop()`, `.fill()`) spread the receiver into a `$size`, which aborts
       // on a missing value. A value the proof shows present takes no wrap. The list the
@@ -630,7 +630,7 @@ function receiverOf(recv: Expr, env: Env): Receiver {
   const src = sourceFamily(recv);
   if (src !== null && NAMESPACES.has(src))
     return { kind: "namespace", name: src as Receiver extends { name: infer N } ? N : never };
-  if (recv.type === "CollectionRef" || onOwnStream(recv, env)) return { kind: "stream" };
+  if (recv.type === "StreamRef" || onOwnStream(recv, env)) return { kind: "stream" };
   // A regex has no value of its own: its row reads the pattern and flags off the
   // source node, so the node itself is handed over.
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
@@ -679,7 +679,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   // A value the stream itself answers (`$$.size()`, the document count) is a value of
   // its own and passes: the row states a stream cell in its VALUE position.
   const chainOnStream =
-    recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "CollectionRef";
+    recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "StreamRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw E.streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
@@ -703,15 +703,15 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     }
     checkSlots(name, sel.rule.args, exprArgs);
     checkSlotKinds(name, sel.rule.args, exprArgs, kinds);
-    // HR5: under a dot, a method on a collection that may be null or missing runs on
-    // the EMPTY collection of its family — `[]` for an array method, `{}` for an object
+    // HR5: under a dot, a method on a receiver that may be null or missing runs on
+    // the EMPTY value of its family — `[]` for an array method, `{}` for an object
     // method — so the operator answers what it answers there, and the cell sees a
     // receiver that is present. A receiver the proof shows present takes no wrap. A
     // `?.` never reaches here with an absent receiver: the chain stopped above and
     // proved the path. A string method keeps its receiver, and answers null itself.
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : (sel.family ?? soleFieldFamilyOf(name));
-    const empty = emptyCollectionOf(name, family);
+    const empty = emptyValueOf(name, family);
     // Only where the receiver is a VALUE of the document: inside `$group` or a window
     // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
     // each document's `a` as it is.

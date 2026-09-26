@@ -31,8 +31,8 @@ const signature = (spelled: string, args: Arity): string => `${spelled}(${args.s
  * a diagnostic stage states (`collection`). So both are keys here.
  */
 const RUNS_ON: Readonly<Record<string, { sigil: string; place: string } | undefined>> = {
-  stream: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
-  collection: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
+  stream: { sigil: "$$", place: "the root stream, run on 'db.coll.aggregate()'" },
+  collection: { sigil: "$$", place: "the root stream, run on 'db.coll.aggregate()'" },
   cluster: { sigil: "$$$$", place: "the cluster reference, run on the admin database" },
 };
 
@@ -242,7 +242,7 @@ export const afterReplace =
       ? `\`${name}\` is a \`let\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Assign it again after the stage (\`${name} = …\`), or carry the value as a field of the new document.`
       : `\`${name}\` is a \`const\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Carry the value as a field of the new document, or declare it with \`let\` and assign it again after the stage.`;
 
-/** A callback parameter the stream cannot fill — the index, the collection. */
+/** A callback parameter the stream cannot fill — the index, the receiver. */
 export const unfilledParam = (name: string, method: string, why: string): string =>
   `\`${name}\` has no value inside \`.${method}()\` — ${why}`;
 
@@ -936,7 +936,7 @@ export const noStageOnDatabase = (name: string, pos: number): CodegenError => {
   const runsOn = runsOnFor(name);
   return new CodegenError(
     runsOn === undefined
-      ? `'$$$' is the database, and no stage runs on it alone. Write '$$.${sugar}()' on the collection, or '$$$$.${sugar}()' on the cluster.`
+      ? `'$$$' is the database, and no stage runs on it alone. Write '$$.${sugar}()' on the current collection, or '$$$$.${sugar}()' on the cluster.`
       : `'$$$' is the database, and no stage runs on it alone. Write '${runsOn.sigil}.${sugar}()' — ${runsOn.place}.`,
     pos,
   );
@@ -1142,7 +1142,7 @@ export const notAStageOnRef = (
   const tail =
     sigil === "$$$$"
       ? didYouMean(name, candidates, (s) => `$$$$.${s}()`)
-      : " A stage runs on the collection ('$$.<stage>()') or the cluster ('$$$$.<stage>()').";
+      : " A stage runs on the current collection ('$$.<stage>()') or on the cluster ('$$$$.<stage>()').";
   const read = ` To read a collection called '${name}', write '$.<field> = ${sigil}.${name}.find(…)'.`;
   return new CodegenError(`${where}. '.${name}()' is not one of them.${tail}${read}`, pos);
 };

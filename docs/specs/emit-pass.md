@@ -62,13 +62,13 @@ $.x.indexOf(1)
 // → { $indexOfArray: [{ $ifNull: ["$x", []] }, 1] }
 ```
 
-**HR5 — a dot runs an array or object method on the empty collection.**
+**HR5 — a dot runs an array or object method on `[]` or `{}`.**
 `dispatchOn` (`emit/lower.ts`) wraps a receiver the proof does not show present
 in `{ $ifNull: [<recv>, []] }` for an array rule and `{ $ifNull: [<recv>, {}] }`
 for an object rule, before the cell runs, and hands the cell `present: true`.
 The family is the receiver's proven family, else the family the selected rule
 runs on (`Selected.family`, from a per-family cell), else the row's one field
-family. The operator then answers what it answers on the empty collection —
+family. The operator then answers what it answers on `[]` or `{}` —
 `[]`, `0`, `false`, `true`, missing — and every array or object method under a
 dot answers a value that is there. `statedPresence` (`emit/prove.ts`) says so:
 such a call is present when no `?.` sits on its spine, so a chain pays the one
@@ -86,7 +86,7 @@ test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
 `isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
 array, a `let` of a present value through the binding's proof, a `neverNull`
 row over present operands, a written field whose value was present, a path a
-`?.` proved through `Env.proving`, or a wrapped collection receiver), or proven
+`?.` proved through `Env.proving`, or an array or object receiver that `dispatchOn` wrapped), or proven
 at run time by the `$type` test of the dispatch branch the cell runs under. A
 row that dispatches on the receiver's type (`.indexOf`) lets null and missing
 fall to its `uncertain` default, which answers `-1`. The `neverNull` fact is
@@ -490,7 +490,7 @@ $$.take(0);                       // → [{"$match":{"$expr":false}}]           
 A callback's FIRST parameter IS the stream's document: `d.x` is the path "x"
 in a predicate and `"$x"` in a reshape, and the bare `d` is `"$$ROOT"`. `$.x`
 inside the callback names the same document — the root — as HR4 says it does
-everywhere. The compiler binds the index and collection parameters lodash
+everywhere. The compiler binds the index and receiver parameters that lodash
 allows, and a READ of either says what to write instead (a stream has no
 per-document index; `$$.size()` is its size).
 
@@ -533,7 +533,7 @@ stage, rather than emitting a read of a field the stage took away. The way
 back is the one JavaScript allows: `x = …` on a dropped `let` writes its slot
 again, and the next statement reads it. A dropped `const` can only be carried
 as a field of the new document. Every name that has no value here — a
-dropped binding, a callback's index or collection parameter the stream
+dropped binding, a callback's index or receiver parameter that the stream
 cannot fill, a function inside its own body — is one `dropped` marker
 carrying the wording its read throws. This way the reason is worded where
 the name was taken away, and not guessed where it is read. `$$ = [ … ]`

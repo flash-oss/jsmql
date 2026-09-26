@@ -106,7 +106,7 @@ function writesACollection(target: Expr): boolean {
 
 function refuseNonScalarTarget(target: object, op: AssignOp): void {
   const t = target as { type: string; path?: string };
-  const what = t.type === "CollectionRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
+  const what = t.type === "StreamRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
   if (what === null) return;
   throw new ParseError(
     `Cannot use '${op}' on ${what} — it is the whole document, not a scalar. Write the field: '$.<field> ${op} …'`,

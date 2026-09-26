@@ -3,7 +3,7 @@
 ## Overview
 
 `$$.push(args...)` is the JSMQL surface for MongoDB's `$unionWith` stage. The
-receiver `$$` is the current-collection context-reference (`CollectionRef`).
+receiver `$$` is the root stream (`StreamRef`).
 `.push(...)` is the JS array-mutation idiom — append items to the end. This
 is also the semantic of `$unionWith` itself: take documents from another source
 and append them to the current stream.
@@ -78,7 +78,7 @@ server answered `{}` for, in silence.
 ## AST and parser
 
 No AST changes. `$$.push(...)` parses as a `MethodCall` whose `object` is a
-`CollectionRef`. Spread arguments (`...$$$.coll`) use the existing
+`StreamRef`. Spread arguments (`...$$$.coll`) use the existing
 `SpreadElement` in `CallArg`. Block-body lambdas inside spreads
 (`...$$$.coll.filter(o => { ... })`) work because `parsePostfix` already
 threads `allowBlockBody` when the method receiver chain is rooted at

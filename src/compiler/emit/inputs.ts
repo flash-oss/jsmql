@@ -62,7 +62,7 @@ export const childEnv = (env: Env, node: object, key: string): Env => {
 /**
  * A callback bound for a body: the one element parameter is a variable, and the
  * body is lowered under it. Rows with a real renderer bind one parameter here.
- * An index or collection parameter is a different lowering. No row that
+ * An index or receiver parameter is a different lowering. No row that
  * reaches this constructor states one.
  */
 function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { as: string; ref: string; in: unknown } {
@@ -360,7 +360,7 @@ function staleCountStage(cb: Expr): string | null {
 }
 
 /**
- * The stream `recv` names, when it is a callback's collection parameter: the chain
+ * The stream `recv` names, when it is a callback's receiver parameter: the chain
  * whose documents it stands for and their level. Null for `$$`, which is the ROOT
  * stream at every depth (HR4) and so belongs to the top-most chain at level 0.
  *
@@ -374,7 +374,7 @@ function streamHandleOf(recv: Expr | null, env: Env): { chain: Chain; level: num
   return b.ref.kind === "streamHandle" ? { chain: b.ref.chain, level: b.level } : null;
 }
 
-/** Is `recv` the body's OWN stream — a callback's collection parameter — rather than `$$`, the root stream? */
+/** Is `recv` the body's OWN stream — a callback's receiver parameter — rather than `$$`, the root stream? */
 export function onOwnStream(recv: Expr | null, env: Env): boolean {
   return (
     recv !== null &&
@@ -488,8 +488,8 @@ export function stageInputs(
    * A callback's FIRST parameter IS the stream's element: the document itself, so
    * its fields are top-level paths — or, after `.flatMap("items")`, the unwound
    * field, so its fields are `items.<field>` (the chain's `element`). lodash lets a
-   * callback name an index and the collection too; a stream has no per-document
-   * index and the collection is the stream itself, so each is bound as a name
+   * callback name an index and the receiver too; a stream has no per-document
+   * index, and the receiver is the stream itself, so each is bound as a name
    * whose READ says what to write instead.
    */
   const bound = (cb: Expr): Env | null => {
@@ -517,7 +517,7 @@ export function stageInputs(
       });
     }
     if (cb.params.length === 3) {
-      // The collection parameter IS the stream the callback runs over — at the top
+      // The receiver parameter IS the stream that the callback runs over — at the top
       // the same as `$$`, inside a body over another collection that body's stream.
       // A body whose stages change the count or the fields cannot carry one: the stamp
       // is a FIELD, hoisted ahead of the body's stages. So the handle is refused for the

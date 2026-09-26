@@ -531,12 +531,12 @@ export function neverNullOf(name: string): boolean {
 }
 
 /**
- * HR5: the EMPTY collection an array, set or object method runs on when its receiver is
+ * HR5: the EMPTY value that an array, set or object method runs on when its receiver is
  * null or missing — `[]` for an array or a set, `{}` for an object — or null for a method
  * of another family. `family` is the receiver's proven family, or null; then the row's own
  * field families decide, and they must agree on one empty value.
  */
-export function emptyCollectionOf(name: string, family: string | null): [] | Record<string, never> | null {
+export function emptyValueOf(name: string, family: string | null): [] | Record<string, never> | null {
   const own = families(row(name)?.on);
   const fams: readonly string[] =
     family !== null
@@ -693,7 +693,7 @@ export function isGlobalName(name: string): boolean {
 
 /**
  * The row a CONSTRUCT names, from the production that builds its node type:
- * `CollectionRef` is built by the production whose first token is `$$`, and
+ * `StreamRef` is built by the production whose first token is `$$`, and
  * `$$` is a row. Read off both registries, so a root spelling is never listed
  * beside the node type it builds.
  */
