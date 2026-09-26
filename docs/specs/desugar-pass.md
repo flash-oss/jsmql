@@ -226,7 +226,10 @@ JavaScript computes where the two differ. That is why a month added to 31
 January gives the last day of February (`$dateAdd` clamps). That is why
 `.startOf("week")` gives the Sunday (`$dateTrunc`'s default). That is why
 `.diff` counts the boundaries crossed (`$dateDiff`). That is why
-`Math.round(0.5)` gives 0.
+`Math.round(0.5)` gives 0. The server's answer is the answer of JSMQL's own
+lowering, not of the nearest raw operator. So `Object.entries({ a: 1 })` folds
+to `[["a", 1]]`, which its `$map` over `$objectToArray` gives. Only a raw
+`$objectToArray(…)` gives `{ k, v }` documents.
 
 The pass leaves a form to the server when it cannot reproduce the answer with
 certainty: a date method with a timezone or another option (a named zone

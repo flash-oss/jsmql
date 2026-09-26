@@ -20487,7 +20487,7 @@ function foldNamespaceCall(namespace, name2, args) {
       case "values":
         return plain(o) ? ok2(Object.values(o)) : NO2;
       case "entries":
-        return plain(o) ? ok2(Object.entries(o).map(([k, v]) => ({ k, v }))) : NO2;
+        return plain(o) ? ok2(Object.entries(o)) : NO2;
       case "assign":
         return values.every(plain) ? ok2(Object.assign({}, ...values)) : NO2;
       case "fromEntries": {

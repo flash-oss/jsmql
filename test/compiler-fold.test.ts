@@ -257,10 +257,20 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
     expect(valueOf("Math.log2(3)")).toBe("(not constant)");
   });
 
-  it("folds `Object.entries` to the `{k, v}` documents `$objectToArray` gives", () => {
-    expect(valueOf("Object.entries({ a: 1 })")).toEqual([{ k: "a", v: 1 }]);
-    // `.toPairs()` is the one that answers with JavaScript's two-element arrays.
+  it("folds `Object.entries` to JavaScript's [key, value] pairs, as the runtime lowering gives them", () => {
+    // node -e 'Object.entries({ a: 1, b: "x" })' → [["a", 1], ["b", "x"]]
+    expect(valueOf('Object.entries({ a: 1, b: "x" })')).toEqual([
+      ["a", 1],
+      ["b", "x"],
+    ]);
+    expect(valueOf("Object.entries({})")).toEqual([]);
+    // `.toPairs()` is the lodash spelling of the same pairs.
     expect(valueOf("({ a: 1 }).toPairs()")).toEqual([["a", 1]]);
+    // The siblings of the family give JavaScript's answer too.
+    expect(valueOf("Object.keys({ a: 1, b: 2 })")).toEqual(["a", "b"]);
+    expect(valueOf("Object.values({ a: 1, b: 2 })")).toEqual([1, 2]);
+    expect(valueOf('Object.fromEntries([["a", 1], ["b", 2]])')).toEqual({ a: 1, b: 2 });
+    expect(valueOf('Object.fromEntries(Object.entries({ a: 1, b: "x" }))')).toEqual({ a: 1, b: "x" });
   });
 
   it("does not fold a name the language does not have", () => {

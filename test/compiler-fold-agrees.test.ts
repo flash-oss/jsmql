@@ -88,6 +88,8 @@ const EXPRESSIONS: readonly string[] = [
   "Object.keys({ a: 1, b: 2 })",
   "Object.values({ a: 1, b: 2 })",
   "Object.entries({ a: 1 })",
+  'Object.entries({ a: 1, b: "x" })',
+  'Object.fromEntries([["a", 1], ["b", 2]])',
   "Object.assign({ a: 1 }, { b: 2 })",
   // string methods
   '"aBc".toUpperCase()',
@@ -397,17 +399,6 @@ function unfolded(src: string): { mql: unknown; doc: Record<string, unknown> } {
  */
 const NO_OPERAND: readonly string[] = ["Math.PI", "Math.E"];
 
-/**
- * The expressions where the fold and the server disagree, each with the reason.
- * The suite asserts that each one still disagrees, so a repair moves a row here
- * instead of passing unseen. A new disagreement turns the suite red.
- */
-const DISAGREE: Readonly<Record<string, string>> = {
-  // docs/LANGUAGE.md: `Object.entries` gives [key, value] PAIRS. The runtime lowering
-  // gives pairs; the fold gives MongoDB's `{ k, v }` documents.
-  "Object.entries({ a: 1 })": "the fold gives { k, v } documents, not [key, value] pairs",
-};
-
 describe.skipIf(!up)("compiler/passes/fold — the value it computes is the value the server computes", () => {
   let client: MongoClient;
   let run: (mql: unknown, doc: Record<string, unknown>) => Promise<unknown>;
@@ -439,7 +430,7 @@ describe.skipIf(!up)("compiler/passes/fold — the value it computes is the valu
     expect(constant).toEqual(NO_OPERAND);
   });
 
-  it("agrees with the server on every one of them, except the rows DISAGREE names", async () => {
+  it("agrees with the server on every one of them", async () => {
     const disagree: string[] = [];
     for (const src of EXPRESSIONS) {
       const folded = evaluate(parseExpression(src), new Map());
@@ -456,10 +447,7 @@ describe.skipIf(!up)("compiler/passes/fold — the value it computes is the valu
       const mine = folded.value instanceof Date ? folded.value.toISOString() : folded.value;
       const theirs = server instanceof Date ? server.toISOString() : server;
       if (JSON.stringify(mine) !== JSON.stringify(theirs)) {
-        if (src in DISAGREE) continue;
         disagree.push(`${src}  fold=${JSON.stringify(mine)}  server=${JSON.stringify(theirs)}`);
-      } else if (src in DISAGREE) {
-        disagree.push(`${src}  agrees now: remove its DISAGREE row`);
       }
     }
     expect(disagree).toEqual([]);

@@ -180,9 +180,9 @@ export function foldNamespaceCall(namespace: string, name: string, args: readonl
       case "values":
         return plain(o) ? ok(Object.values(o)) : NO;
       case "entries":
-        // `$objectToArray` — a list of `{k, v}` DOCUMENTS, not JavaScript's
-        // two-element arrays. `.toPairs()` is the one that gives those.
-        return plain(o) ? ok(Object.entries(o).map(([k, v]) => ({ k, v }))) : NO;
+        // JavaScript's [key, value] pairs, as the runtime lowering gives them.
+        // Only the raw `$objectToArray(…)` gives `{ k, v }` documents.
+        return plain(o) ? ok(Object.entries(o)) : NO;
       case "assign":
         return values.every(plain) ? ok(Object.assign({}, ...(values as object[]))) : NO;
       case "fromEntries": {

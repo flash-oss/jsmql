@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: the fold gives `Object.entries` as [key, value] pairs
+
+`Object.entries({ a: 1 })` folded to `[{ k: "a", v: 1 }]`, the raw
+`$objectToArray` answer. JavaScript gives `[["a", 1]]`, and so does the
+runtime lowering (`Object.entries($.o)` is a `$map` over `$objectToArray`,
+measured on :27018), and so does docs/LANGUAGE.md. So one expression gave two
+answers: a constant operand gave documents, a field operand gave pairs. The
+fold in [src/compiler/passes/fold-methods.ts](../src/compiler/passes/fold-methods.ts)
+now gives `Object.entries(o)` as it stands. The sibling folds (`Object.keys`,
+`Object.values`, `Object.fromEntries`, `.toPairs()`) already agreed, and
+`.keys()` / `.values()` / `.entries()` on a literal do not fold.
+
+The `DISAGREE` table of `test/compiler-fold-agrees.test.ts` held this one
+case. It is empty now, so the table and its "still disagrees" guard are gone,
+and every folded expression must agree with the server. A consequence:
+`$$ = Object.entries({ a: 1 })` is refused (its elements are arrays), as
+`$$ = Object.entries($.scores)` already was.
+
+---
+
 ## 2026-09-26 — fix: a sort of documents refuses more than 32 keys
 
 `$sort({ k0: 1, …, k32: 1 })` compiled, and the server refused it with "too
