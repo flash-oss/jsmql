@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — docs: name all HARD RULES and all SOFT RULES, not a numbered range
+
+The root [CLAUDE.md](../CLAUDE.md) (two times) and [docs/CLAUDE.md](CLAUDE.md)
+wrote "HR1–HR4" to mean all the hard rules, and HR5 already exists. The number
+of rules changes, so a range goes stale at the next rule, exactly as a count
+does. The developer decided that prose says "all HARD RULES" or "all SOFT
+RULES". A sentence about one rule still names that rule by its ID.
+
+---
+
 ## 2026-09-26 — docs: rewrite LANG_RULES.md in STE, and correct it against the compiler
 
 The first STE pass over [docs/LANG_RULES.md](docs/LANG_RULES.md) kept each

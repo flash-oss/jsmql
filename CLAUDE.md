@@ -23,7 +23,7 @@ JSMQL targets both **Filters** (`db.coll.find(filter)`) and **Pipelines** (`db.c
 
 ## #0 priority: the language axioms
 
-[docs/LANG_RULES.md](docs/LANG_RULES.md) holds the language axioms: the HARD RULES (HR1–HR4) and the SOFT RULES. The HARD RULES outrank every other document, spec, and `CLAUDE.md` file here. The compiler upholds them **at all times**; a build that breaks one has a bug, never a new feature. Read them before any change to lexing, parsing, codegen, the operator registry, or stage lowering. On a conflict, **LANG_RULES wins**: fix the conformance bug, and do not weaken the rule. When you cannot fix the bug in the same change, keep the rule stated as law and flag the gap as open work.
+[docs/LANG_RULES.md](docs/LANG_RULES.md) holds the language axioms: all HARD RULES and all SOFT RULES. The HARD RULES outrank every other document, spec, and `CLAUDE.md` file here. The compiler upholds them **at all times**; a build that breaks one has a bug, never a new feature. Read them before any change to lexing, parsing, codegen, the operator registry, or stage lowering. On a conflict, **LANG_RULES wins**: fix the conformance bug, and do not weaken the rule. When you cannot fix the bug in the same change, keep the rule stated as law and flag the gap as open work.
 
 ### Verify MQL against a running MongoDB
 
@@ -164,7 +164,7 @@ Every fact has **one** true home. Everywhere else, write a one-line pointer (`Se
 
 | Fact type | Canonical home |
 |---|---|
-| Language axioms (HR1–HR4, SOFT rules) | `docs/LANG_RULES.md` |
+| Language axioms (all HARD RULES and all SOFT RULES) | `docs/LANG_RULES.md` |
 | User-facing behaviour + examples | `docs/LANGUAGE.md` |
 | Per-feature implementation detail / lowering rules | `docs/specs/<feature>.md` |
 | Module invariants, "where do I add X" | `src/CLAUDE.md` |

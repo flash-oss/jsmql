@@ -4,7 +4,7 @@
 
 | Path | Audience | Update when |
 |---|---|---|
-| `docs/LANG_RULES.md` | Anyone changing the language | A language axiom changes. The HARD RULES (HR1–HR4) outrank every other document here. A change to them is a language design decision, not a doc edit. |
+| `docs/LANG_RULES.md` | Anyone changing the language | A language axiom changes. All HARD RULES outrank every other document here. A change to them is a language design decision, not a doc edit. |
 | `docs/LANGUAGE.md` | Users of JSMQL | The user-visible behaviour changes |
 | `docs/DEVLOG.md` | Future-self / contributors asking "why?" | Every observable change — feature, refactor, naming, doc decision |
 | `docs/DEFERRED.md` | Anyone wanting "what's left to do?" / "what did we decide against?" | You add a "not yet supported" throw, you ship a deferred item, or you record a "will not implement" decision. See § Maintain docs/DEFERRED.md in the root `CLAUDE.md`. |
