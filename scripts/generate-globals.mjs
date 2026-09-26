@@ -368,12 +368,12 @@ function valueTerminalMembers() {
 //
 // Object-*receiver* methods (`.mapValues`, `.pick`, `.omit`, `.invert`) are deliberately NOT augmented.
 // The only interface to hang them on is `Object`, the base of every type. It would advertise them
-// (misleadingly) on numbers, strings, arrays, everything. Date getters are native on `Date`. Set
-// and RegExp methods are native on `Set` and `RegExp`. All such names sit in the skip sets below.
+// (misleadingly) on numbers, strings, arrays, everything. Date getters are native on `Date`.
+// RegExp methods are native on `RegExp`. All such names sit in the skip sets below.
 
 // Names from the `METHODS` registry that are NOT emitted as augmentations. Native
-// methods already carry lib.d.ts types; object-receiver / set / regex / date /
-// shimmed names have no clean interface to hang on (see note above).
+// methods already carry lib.d.ts types; object-receiver / regex / date / shimmed
+// names have no clean interface to hang on (see note above).
 const VALUE_METHOD_SKIP = {
   // Native `Array.prototype`: already typed by TypeScript's library.
   nativeArray: new Set([
@@ -450,16 +450,6 @@ const VALUE_METHOD_SKIP = {
   dateNative: new Set(NATIVE_DATE_METHODS),
   // Object-receiver: no safe interface (Object is the base of everything).
   object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs", "assign"]),
-  // Set-receiver (intercepted on `new Set(...)`; native and ES-proposal Set methods).
-  set: new Set([
-    "intersection",
-    "union",
-    "difference",
-    "isSubsetOf",
-    "isSupersetOf",
-    "isDisjointFrom",
-    "symmetricDifference",
-  ]),
   // RegExp-receiver (intercepted on regex literals).
   regex: new Set(["test", "exec"]),
   // Shimmed to a custom error message: not a real completable method.
@@ -494,6 +484,18 @@ const VALUE_METHOD_SIGNATURES = {
   sampleSize: { recv: "Array", sig: "(n?: number): T[]", doc: "`n` random elements — `_.sampleSize`." },
   without: { recv: "Array", sig: "(...values: T[]): T[]", doc: "Exclude the given values — `_.without`." },
   xor: { recv: "Array", sig: "(...arrays: T[][]): T[]", doc: "Symmetric difference — `_.xor`." },
+  symmetricDifference: {
+    recv: "Array",
+    sig: "(other: T[]): T[]",
+    doc: "The values that only one of the two arrays holds — the same answer as `.xor()`.",
+  },
+  union: { recv: "Array", sig: "(other: T[]): T[]", doc: "The values of both arrays, each once — `_.union`." },
+  intersection: {
+    recv: "Array",
+    sig: "(other: any[]): T[]",
+    doc: "The values that both arrays hold, each once — `_.intersection`.",
+  },
+  difference: { recv: "Array", sig: "(other: any[]): T[]", doc: "The values that `other` does not hold, each once." },
   xorBy: { recv: "Array", sig: "(...args: any[]): T[]", doc: "Symmetric difference by iteratee — `_.xorBy`." },
   differenceBy: { recv: "Array", sig: "(...args: any[]): T[]", doc: "Difference by iteratee — `_.differenceBy`." },
   intersectionBy: {
@@ -535,12 +537,19 @@ const VALUE_METHOD_SIGNATURES = {
   mean: { recv: "Array", sig: "(): number", doc: "Arithmetic mean — `_.mean`." },
   sumBy: { recv: "Array", sig: `(${ITER}): number`, doc: "Sum of iteratee values — `_.sumBy`." },
   meanBy: { recv: "Array", sig: `(${ITER}): number`, doc: "Mean of iteratee values — `_.meanBy`." },
-  size: { recv: "Array", sig: "(): number", doc: "Element count — `Set.size`, `_.size`." },
+  size: { recv: "Array", sig: "(): number", doc: "Element count — `_.size`." },
   has: {
     recv: "Array",
     sig: "(value: any): boolean",
-    doc: "Is `value` an element — `Set.has`; a string tests a substring with `.includes()`.",
+    doc: "Is `value` an element; a string tests a substring with `.includes()`.",
   },
+  isSubsetOf: { recv: "Array", sig: "(other: any[]): boolean", doc: "Does `other` hold every element." },
+  isSupersetOf: {
+    recv: "Array",
+    sig: "(other: any[]): boolean",
+    doc: "Does this array hold every element of `other`.",
+  },
+  isDisjointFrom: { recv: "Array", sig: "(other: any[]): boolean", doc: "Do the two arrays share no element." },
   // ── Array<T> — reshaping returns ────────────────────────────────────────────
   chunk: { recv: "Array", sig: "(size: number): T[][]", doc: "Split into groups of `size` — `_.chunk`." },
   partition: { recv: "Array", sig: `(${PRED}): [T[], T[]]`, doc: "Split into `[matching, rest]` — `_.partition`." },
@@ -720,7 +729,6 @@ function valueMethodAugmentationBlock() {
     ...VALUE_METHOD_SKIP.nativeString,
     ...VALUE_METHOD_SKIP.dateNative,
     ...VALUE_METHOD_SKIP.object,
-    ...VALUE_METHOD_SKIP.set,
     ...VALUE_METHOD_SKIP.regex,
     ...VALUE_METHOD_SKIP.shimmed,
   ]);
@@ -739,7 +747,7 @@ function valueMethodAugmentationBlock() {
     throw new Error(
       `generate-globals: value method(s) ${missing.sort().join(", ")} are in the METHODS registry but have no ` +
         `VALUE_METHOD_SIGNATURES entry. Add a signature so completion works, or a VALUE_METHOD_SKIP entry ` +
-        `(native array/string/date, object-receiver, set, regex, shimmed) if it should not be augmented.`,
+        `(native array/string/date, object-receiver, regex, shimmed) if it should not be augmented.`,
     );
   }
   const stray = Object.keys(VALUE_METHOD_SIGNATURES).filter((n) => !registry.has(n) || skip.has(n));

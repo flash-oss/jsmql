@@ -24,6 +24,7 @@ type Row = {
   iterateeSlots?: Readonly<Record<string, unknown>>;
   document?: string;
   body?: unknown;
+  newKeyword?: string;
 };
 
 const rows = Object.entries(NAMES) as [string, Row][];
@@ -63,6 +64,17 @@ describe("registry — every callback-taking name states its slot layout", () =>
       }
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe("registry — a constructor that demands `new`", () => {
+  it("lists no position, so its own refusal answers both spellings", () => {
+    // The compiler has no "needs 'new'" refusal. A row that demanded `new` and listed a
+    // position would compile `Map(…)` as `new Map(…)` and say nothing. So each such row
+    // is a refusal row, and `Map(…)` and `new Map(…)` reach the same row text.
+    const demands = rows.filter(([, row]) => row.kind === "global" && row.newKeyword === "required");
+    expect(demands.length).toBeGreaterThan(0);
+    expect(demands.filter(([, row]) => (row.where?.length ?? 0) > 0).map(([name]) => name)).toEqual([]);
   });
 });
 

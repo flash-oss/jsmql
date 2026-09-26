@@ -143,7 +143,7 @@ primary        = operator_call
                | math_call | math_const
                | object_call
                | type_cast | type_cast_ref | number_static
-               | new_date_or_set | objectid_literal | objectid_ref | date_now | array_static
+               | constructor_call | objectid_literal | objectid_ref | date_now | array_static
                | regex_literal
                | template_literal
                | number | bigint
@@ -230,7 +230,9 @@ objectid_ref   = "ObjectId"                                  (* bare callback sh
 number_static  = "Number" "." NUMBER_STATIC "(" expression ","? ")"
 NUMBER_STATIC  = (* the rows in src/registry/names.ts with `on: "Number"` *)
 
-new_date_or_set = "new" ("Date" | "Set") "(" (expression ("," expression)* ","?)? ")"
+constructor_call = "new" IDENT ("(" (expression ("," expression)* ","?)? ")")?
+                 (* one node for every class; src/registry/names.ts says what each class
+                    builds, and a class whose row lists no position (`Set`) is refused *)
 objectid_literal = "new"? "ObjectId" "(" (expression ","?)? ")"
                  (* empty → $createObjectId(); a 24-hex string literal → ObjectId
                     literal (non-24 string throws; pre-2009 timestamp throws);
@@ -289,7 +291,7 @@ Every expression this grammar accepts is also valid JavaScript syntax. Adding a 
 
 ## Trailing commas
 
-JS allows one trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`). So the parser accepts one **everywhere a comma list appears**: call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array and object literals, destructure patterns, arrow / `function` parameter lists, and the `jsmql.compile` `(params, { $, … })` signature. A statement is not a list: `$.a = 1, $.b = 2,` is a JavaScript SyntaxError, and the parser refuses it and names the comma-free form. The EBNF spells the `","?` on the core lists above, and leaves it out on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`), where only a *lone* trailing comma is meaningful. A trailing comma never changes the parse, so the output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Every comma loop in `src/compiler/parse/parser.ts` — `args`, `arrayLiteral`, `objectLiteral`, `paramList`, `destructure` — is written the same way, `do { if (<closer>) break; … } while (eat("Comma"))`, so one shape enforces this rule everywhere.
+JS allows one trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`). So the parser accepts one **everywhere a comma list appears**: call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new X(…)`), array and object literals, destructure patterns, arrow / `function` parameter lists, and the `jsmql.compile` `(params, { $, … })` signature. A statement is not a list: `$.a = 1, $.b = 2,` is a JavaScript SyntaxError, and the parser refuses it and names the comma-free form. The EBNF spells the `","?` on the core lists above, and leaves it out on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`), where only a *lone* trailing comma is meaningful. A trailing comma never changes the parse, so the output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Every comma loop in `src/compiler/parse/parser.ts` — `args`, `arrayLiteral`, `objectLiteral`, `paramList`, `destructure` — is written the same way, `do { if (<closer>) break; … } while (eat("Comma"))`, so one shape enforces this rule everywhere.
 
 ## Function-form input is not part of the grammar
 
@@ -491,5 +493,5 @@ The parser reads `in` like any relational operator. The emitter (`membership` in
 - `JSON.stringify`/`JSON.parse` — no MQL primitive
 - `<<`, `>>`, `>>>` (bitwise shifts) — no MQL primitive
 - `Number.isFinite()` — MQL has no Infinity literal that can be referenced cleanly
-- `Set.prototype.symmetricDifference` and `.isDisjointFrom` — no direct MongoDB equivalent (compose manually via `$setDifference` + `$setUnion`)
+- `Set` in both spellings (`new Set(…)`, `Set(…)`) — MongoDB has no set type; each set operation is a method of an array, and the refusal names these methods
 - `Array.from(…)` in every form — `$range(0, n)` is the range, and `.map(…)` on an array you already hold is the rest; one capability gets one spelling

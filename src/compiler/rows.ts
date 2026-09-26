@@ -467,11 +467,6 @@ export function spreadAlternativeOf(name: string): string | undefined {
   return emitRow(name)?.spreadAlternative;
 }
 
-/** The receiver family a value built by this global belongs to (`Set` → "set"), or undefined. */
-export function constructedFamilyOf(name: string): Family | undefined {
-  return emitRow(name)?.family;
-}
-
 /** The production that builds `nodeType` on its own — the first row whose `becomes` is exactly it. */
 export function productionForNode(nodeType: string): string | undefined {
   for (const [key, p] of Object.entries(PRODUCTIONS) as [string, { becomes: unknown }][]) {
@@ -531,8 +526,8 @@ export function neverNullOf(name: string): boolean {
 }
 
 /**
- * HR5: the EMPTY value that an array, set or object method runs on when its receiver is
- * null or missing — `[]` for an array or a set, `{}` for an object — or null for a method
+ * HR5: the EMPTY value that an array or object method runs on when its receiver is
+ * null or missing — `[]` for an array, `{}` for an object — or null for a method
  * of another family. `family` is the receiver's proven family, or null; then the row's own
  * field families decide, and they must agree on one empty value.
  */
@@ -545,7 +540,7 @@ export function emptyValueOf(name: string, family: string | null): [] | Record<s
         ? []
         : own.filter((f) => FIELD_FAMILIES.includes(f));
   if (fams.length === 0) return null;
-  if (fams.every((f) => f === "array" || f === "set")) return [];
+  if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
   return null;
 }
@@ -674,8 +669,7 @@ export function newKeywordOf(name: string): "required" | "optional" | "forbidden
  * `ObjectId`, `Decimal128`, `MinKey`, `Date`, and their mongosh spellings.
  *
  * Read for the ambient `declare global` block (scripts/generate-globals.mjs), so a
- * tenth constructor is one ROW and no generator edit. `Set` is not here: its row
- * demands `new` and it builds an array, not a BSON value.
+ * tenth constructor is one ROW and no generator edit.
  */
 export function constructorGlobals(): readonly { name: string; newKeyword: string; doc: string }[] {
   const out: { name: string; newKeyword: string; doc: string }[] = [];
@@ -817,7 +811,7 @@ export function bareCallableNames(): string[] {
   );
 }
 
-/** Every global that `new` builds: `new Date(…)`, `new Set(…)`, `new ObjectId(…)`. */
+/** Every global that `new` builds: `new Date(…)`, `new ObjectId(…)`, `new Decimal128(…)`. */
 export function constructibleNames(): string[] {
   return bareCallableNames().filter((n) => {
     const k = newKeywordOf(n);

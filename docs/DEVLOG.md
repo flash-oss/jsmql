@@ -10,6 +10,75 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat!: Set is not part of JSMQL; the array methods cover each set operation
+
+The developer decided that `Set` is not part of JSMQL. The compiler refuses
+`new Set(…)` and `Set(…)` in every position, and the message names the array
+methods: `'<array>.uniq()'` for the unique values, `'.uniq().size()'` for their
+count, `'.has(x)'`, `'.union(other)'`, `'.intersection(other)'`,
+`'.difference(other)'` and `'.xor(other)'`. Where an accumulator goes, in
+`$group` and in `$setWindowFields`, the message names `$addToSet(<value>)`. The
+error stands at the `new` of `new Set(…)`, and at the `(` of `Set(…)`, as for
+every call without `new`. [docs/DEFERRED.md](DEFERRED.md) §B records the
+decision.
+
+MongoDB has no set type, so `new Set(x)` lowered to `x` itself, and nothing
+removed a duplicate. `new Set($.a)` read back as `[3, 1, 3, 2, 1]` from the
+server, where JavaScript gives `[3, 1, 2]`. The two most common members did not
+compile: `.size()` and `.has(3)` were refused on a `set` receiver. `.add()` was
+an unknown method. The array methods already did each operation.
+
+The `Set` row in [src/registry/names.ts](../src/registry/names.ts) is now a
+refusal row, as `Map` and `RegExp` are, with `where: []`. The `set` receiver
+family goes from [src/registry/vocabulary.ts](../src/registry/vocabulary.ts).
+The fold of `new Set([…])` goes, and so do the "needs 'new'" refusal and its
+`new Set(...)` suggestion. The dispatch rule for two field families with one
+`$type` test also goes, because only `set` and `array` shared a test. A new test
+in [test/compiler-select.test.ts](../test/compiler-select.test.ts) holds that
+each field family has its own `$type` test. A test in
+[test/registry-agrees.test.ts](../test/registry-agrees.test.ts) holds that a
+row that demands `new` lists no position.
+
+`.difference()` on an array is now the set difference, `$setDifference`: each
+value once, as a JavaScript `Set` gives it. The developer asked for Set
+behaviour and short MQL, and rejected lodash's `_.difference`, which keeps the
+duplicates of the receiver. So `$.a.difference($.b)` over
+`{ a: [3, 1, 3, 2, 1], b: [2, 4, 4] }` gives `[3, 1]`, not `[3, 1, 3, 1]`, and
+the MQL is one operator in place of a `$filter`. This supersedes
+[2026-09-07 — fix(compiler): three answers the acceptance gate measured wrong](#2026-09-07--fixcompiler-three-answers-the-acceptance-gate-measured-wrong),
+which gave a `Set` receiver `$setDifference` and an array receiver the
+`$filter` of lodash. The stream form `$$.flatMap(…).difference(…)` and
+`.differenceBy()` keep lodash's reading, by the developer's choice. A stream
+holds documents, not a set of values, and lodash is the only source of the name
+`differenceBy`.
+
+The three relations `.isSubsetOf()`, `.isSupersetOf()` and `.isDisjointFrom()`
+stay on arrays, because lodash has no name for them, and a composition gives
+larger MQL. `.symmetricDifference()` stays beside `.xor()`, by the developer's
+choice. Two rows, `.isDisjointFrom()` and `.symmetricDifference()`, refused a
+Filter and each stage position with the false message "has no MongoDB
+equivalent". A Filter now reads them through `$expr`, as it reads their
+siblings, and the other positions give the usual messages. The generated
+`@koresar/jsmql/globals` types skipped the set methods as `Set` names, so a
+typed array reported `TS2551` on `.union()`. These methods are now `Array<T>`
+methods, as `.xor()` is.
+
+One MQL change follows with no new rule. The rows `.intersection()` and
+`.difference()` listed two field families, `array` and `set`. So the compiler
+could not prove the kind of their answer, and a truth test checked `null`,
+`false`, `""` and `0`. With one field family it proves an array, and an array is
+falsy only when it is null. So `$.a.intersection($.b) ? 1 : 2` tests
+`$ne: [{ $ifNull: [<the intersection>, null] }, null]` alone.
+
+The mapping from each `Set` member to its array method is in
+[docs/LANGUAGE.md § Set operations on arrays](LANGUAGE.md#set-operations-on-arrays).
+[test/compiler-methods.test.ts](../test/compiler-methods.test.ts) compares each
+array form with the answer of JavaScript's own `Set` on a live mongod. The `Set`
+surface came in with
+[2026-05-06 — ES2024/2025 set & object surface, regex helpers, BigInt, padding](#2026-05-06--es20242025-set--object-surface-regex-helpers-bigint-padding).
+
+---
+
 ## 2026-09-26 — docs: a cheap sub-agent checks new and edited prose against STE
 
 The root [CLAUDE.md](../CLAUDE.md) now has one more step in § Write in Simplified

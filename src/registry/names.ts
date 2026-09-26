@@ -582,12 +582,10 @@ type MongoSpec<
 type GlobalSpec<W extends readonly Position[]> = {
   doc: string;
   token: TokenName;
-  /** `new` before it. `ObjectId` takes both spellings; `Set` demands it. */
+  /** `new` before it. `ObjectId` takes both spellings; `Map` demands it, as JavaScript does. */
   newKeyword: "required" | "optional" | "forbidden";
   /** When it is also a namespace: the family a name bound to it resolves against. */
   provides?: Family;
-  /** The receiver family a VALUE built by this constructor belongs to — `new Set(…)` is a `set`. */
-  family?: Family;
   returns: TypeExpr;
   /** The value is never null once its arguments are there — the same fact `neverNull` states on a JavaScript row. */
   neverNull?: true;
@@ -1118,18 +1116,6 @@ const orderedBounds = (a: unknown, b: unknown): readonly [unknown, unknown] | nu
  */
 const norList = (input: FilterIn): QueryDoc => logicalList(input) ?? { $nor: [] };
 
-/**
- * lodash's `_.difference`: the receiver's elements that the other array does not
- * hold, DUPLICATES KEPT — `_.difference([3, 3, 2, 1], [2])` is `[3, 3, 1]`. A
- * `new Set(…)` receiver answers with the deduping set operator instead, and a
- * receiver whose family is not proven is never a Set, because `new Set(…)` is.
- */
-const lodashDifference = ({ recv, args, value, bind }: ExprIn): unknown => {
-  const other = value(args[0]);
-  const item = bind("item");
-  return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, arrayOrEmpty(other)] }] } } };
-};
-
 /** lodash's `groupBy` as a value: `{ <key>: [elements whose key is <key>] }`, one entry per distinct key. */
 function groupedByKey(
   input: unknown,
@@ -1151,6 +1137,11 @@ function groupedByKey(
  */
 const fromIsNotJsmql = unsupported(
   "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.",
+);
+
+/** `new Set(…)` in every position but an accumulator's. MongoDB has no set type, and an array method does each set operation. */
+const setIsNotJsmql = unsupported(
+  "'new Set(…)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'.",
 );
 
 /** `new Map(…)` in every position. MongoDB has no map type, and an object holds keys and values. */
@@ -10567,8 +10558,8 @@ export const NAMES = {
     },
     expr: {
       perFamily: {
-        // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
-        // missing is read as the empty array. An array LITERAL is the value, not an operand list.
+        // `_.size(undefined)` is 0: a receiver that may be missing is read as the empty
+        // array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
           emit: ({ recv, present }) => sizeOf(present || Array.isArray(recv) ? recv : arrayOrEmpty(recv)),
@@ -11846,8 +11837,8 @@ export const NAMES = {
   intersection: name({
     doc: "'.intersection()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set", "stream"],
-    returns: { array: "same", set: "array", stream: "stream" },
+    on: ["array", "stream"],
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -11883,7 +11874,7 @@ export const NAMES = {
   union: name({
     doc: "'.union()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "array",
     neverNull: true,
     where: ["value"],
@@ -11903,8 +11894,8 @@ export const NAMES = {
   difference: name({
     doc: "'.difference()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set", "stream"],
-    returns: { array: "same", set: "array", stream: "stream" },
+    on: ["array", "stream"],
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -11914,19 +11905,14 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        array: { args: { sig: "other", exact: 1 }, emit: lodashDifference },
-        // A Set holds each value once, and so must its difference. MEASURED:
-        // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a JavaScript Set gives.
-        set: {
+        // The set difference: each value once, as a JavaScript Set holds it. MEASURED:
+        // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
+        array: {
           args: { sig: "other", exact: 1 },
           emit: ({ recv, args, value }) => ({ $setDifference: [recv, arrayOrEmpty(value(args[0]))] }),
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value — see its 'stream' cell."),
       },
-      // Both families test `$type: "array"`, so no run-time test tells them apart. This
-      // row needs none: the source proves `new Set(…)`, so an unproven receiver is
-      // an array and takes lodash's reading.
-      uncertain: lodashDifference,
     },
     stream: {
       args: { sig: "other", exact: 1 },
@@ -11949,7 +11935,7 @@ export const NAMES = {
   isSubsetOf: name({
     doc: "'.isSubsetOf()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
@@ -11971,7 +11957,7 @@ export const NAMES = {
   isSupersetOf: name({
     doc: "'.isSupersetOf()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
@@ -13341,15 +13327,13 @@ export const NAMES = {
   }),
 
   symmetricDifference: name({
-    doc: "'Set.symmetricDifference()' — recognised, and refused: MongoDB has no equivalent.",
+    doc: "'.symmetricDifference()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "array",
     neverNull: true,
     where: ["value"],
-    filter: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
-    ),
+    filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
       emit: ({ recv, args, value, bind }) => {
@@ -13363,29 +13347,23 @@ export const NAMES = {
         };
       },
     },
-    stream: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
-    ),
+    stream: because("compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'."),
     statement: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+      "'.symmetricDifference()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.symmetricDifference();'",
     ),
-    group: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
-    ),
+    group: unsupported("'.symmetricDifference()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+      "'.symmetricDifference()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
     ),
   }),
 
   isDisjointFrom: name({
-    doc: "'Set.isDisjointFrom()' — recognised, and refused: MongoDB has no equivalent.",
+    doc: "'.isDisjointFrom()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
     where: ["value"],
-    filter: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
-    ),
+    filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
       emit: ({ recv, args, value, present, bind }) =>
@@ -13393,17 +13371,13 @@ export const NAMES = {
           $eq: [sizeOf({ $setIntersection: [r, arrayOrEmpty(value(args[0]))] }), 0],
         })),
     },
-    stream: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
-    ),
+    stream: unsupported("'.isDisjointFrom()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+      "'.isDisjointFrom()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isDisjointFrom();'",
     ),
-    group: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
-    ),
+    group: unsupported("'.isDisjointFrom()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+      "'.isDisjointFrom()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
     ),
   }),
 
@@ -14193,30 +14167,6 @@ export const NAMES = {
       "'NumberInt(<constant>)' — this constant is not a whole number in the 32-bit range (-2147483648 … 2147483647). Write 'Long(…)' for a bigger integer, or 'Double(…)' to keep a fraction.",
   }),
 
-  Set: global_({
-    doc: "A set of values, for the set operations. Folds to a plain array — MongoDB has no set type.",
-    token: "Ident",
-    newKeyword: "required",
-    // A value built by this constructor is a receiver of the `set` family: the
-    // set operations (`.union`, `.difference`) are names on it.
-    family: "set",
-    returns: "array",
-    where: ["value"],
-    filter: because("a set is a value, not a test. Use '.union(...)' / '.difference(...)' on it."),
-    expr: {
-      byArgs: {
-        // A constant array never reaches this row — the fold makes `new Set([1, 2])` the array first.
-        constant: unsupported("'new Set(<constant>)' — the constant is not an array. Write 'new Set([1, 2, 3])'."),
-        dynamic: { args: { sig: "values", exact: 1 }, emit: ({ args, value }) => value(args[0]) },
-        otherwise: unsupported("'new Set(…)' takes exactly one array of values."),
-      },
-    },
-    stream: unsupported("'Set' produces a value, not a stream of documents."),
-    statement: unsupported("'Set' produces a value. Use it inside a reshape or a '$set'."),
-    group: unsupported("'Set' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Set' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
   Number: global_({
     doc: "Converts a value to a number.",
     token: "Ident",
@@ -14254,6 +14204,28 @@ export const NAMES = {
     statement: unsupported("'Array' produces a value. Use it inside a reshape or a '$set'."),
     group: unsupported("'Array' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  Set: global_({
+    doc: "The JavaScript Set class. MongoDB has no set type; see its refusal.",
+    token: "Ident",
+    newKeyword: "required",
+    returns: "unknown",
+    where: [],
+    filter: setIsNotJsmql,
+    expr: setIsNotJsmql,
+    stream: setIsNotJsmql,
+    statement: setIsNotJsmql,
+    // The general sentence names the pipeline form, which refuses `Set` too. A constant
+    // array folds in an update document: `$.x = [1, 2, 2].uniq()` is `{ $set: { x: [1, 2] } }`.
+    updateDoc: setIsNotJsmql,
+    // Where an accumulator goes, MongoDB's own operator gathers the unique values of a group.
+    group: unsupported(
+      "'new Set(…)' is not an accumulator. Inside '$group', '$addToSet(<value>)' gathers the unique values.",
+    ),
+    window: unsupported(
+      "'new Set(…)' is not a window function. Inside '$setWindowFields', '$addToSet(<value>)' gathers the unique values.",
+    ),
   }),
 
   Map: global_({

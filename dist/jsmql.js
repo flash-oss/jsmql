@@ -87,8 +87,7 @@ var FIELD_FAMILY_TYPES = {
   number: ["int", "long", "double", "decimal"],
   object: ["object"],
   date: ["date"],
-  regexp: ["regex"],
-  set: ["array"]
+  regexp: ["regex"]
 };
 var accumulated = (input) => {
   const operand = input.value(input.args[0]);
@@ -626,11 +625,6 @@ var orderedBounds = (a, b) => {
   return null;
 };
 var norList = (input) => logicalList(input) ?? { $nor: [] };
-var lodashDifference = ({ recv, args, value, bind }) => {
-  const other = value(args[0]);
-  const item = bind("item");
-  return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, arrayOrEmpty(other)] }] } } };
-};
 function groupedByKey(input, it, bind) {
   const key = bind("key");
   const filtered = { $filter: { input, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
@@ -640,6 +634,9 @@ function groupedByKey(input, it, bind) {
 }
 var fromIsNotJsmql = unsupported(
   "'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
+);
+var setIsNotJsmql = unsupported(
+  "'new Set(\u2026)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'."
 );
 var mapIsNotJsmql = unsupported(
   "'new Map(\u2026)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('Object.fromEntries(pairs)')."
@@ -9616,8 +9613,8 @@ var NAMES = {
     },
     expr: {
       perFamily: {
-        // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
-        // missing is read as the empty array. An array LITERAL is the value, not an operand list.
+        // `_.size(undefined)` is 0: a receiver that may be missing is read as the empty
+        // array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
           emit: ({ recv, present: present2 }) => sizeOf(present2 || Array.isArray(recv) ? recv : arrayOrEmpty(recv))
@@ -10848,8 +10845,8 @@ var NAMES = {
   intersection: name({
     doc: "'.intersection()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set", "stream"],
-    returns: { array: "same", set: "array", stream: "stream" },
+    on: ["array", "stream"],
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -10884,7 +10881,7 @@ var NAMES = {
   union: name({
     doc: "'.union()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "array",
     neverNull: true,
     where: ["value"],
@@ -10903,8 +10900,8 @@ var NAMES = {
   difference: name({
     doc: "'.difference()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set", "stream"],
-    returns: { array: "same", set: "array", stream: "stream" },
+    on: ["array", "stream"],
+    returns: { array: "same", stream: "stream" },
     neverNull: true,
     where: ["value", "stream"],
     elementOnly: {
@@ -10914,19 +10911,14 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        array: { args: { sig: "other", exact: 1 }, emit: lodashDifference },
-        // A Set holds each value once, and so must its difference. MEASURED:
-        // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a JavaScript Set gives.
-        set: {
+        // The set difference: each value once, as a JavaScript Set holds it. MEASURED:
+        // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
+        array: {
           args: { sig: "other", exact: 1 },
           emit: ({ recv, args, value }) => ({ $setDifference: [recv, arrayOrEmpty(value(args[0]))] })
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
-      },
-      // Both families test `$type: "array"`, so no run-time test tells them apart. This
-      // row needs none: the source proves `new Set(…)`, so an unproven receiver is
-      // an array and takes lodash's reading.
-      uncertain: lodashDifference
+      }
     },
     stream: {
       args: { sig: "other", exact: 1 },
@@ -10948,7 +10940,7 @@ var NAMES = {
   isSubsetOf: name({
     doc: "'.isSubsetOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
@@ -10968,7 +10960,7 @@ var NAMES = {
   isSupersetOf: name({
     doc: "'.isSupersetOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
@@ -12268,15 +12260,13 @@ var NAMES = {
     )
   }),
   symmetricDifference: name({
-    doc: "'Set.symmetricDifference()' \u2014 recognised, and refused: MongoDB has no equivalent.",
+    doc: "'.symmetricDifference()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "array",
     neverNull: true,
     where: ["value"],
-    filter: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
       emit: ({ recv, args, value, bind }) => {
@@ -12290,45 +12280,35 @@ var NAMES = {
         };
       }
     },
-    stream: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    stream: because("compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'."),
     statement: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
+      "'.symmetricDifference()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.symmetricDifference();'"
     ),
-    group: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    group: unsupported("'.symmetricDifference()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
+      "'.symmetricDifference()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
   isDisjointFrom: name({
-    doc: "'Set.isDisjointFrom()' \u2014 recognised, and refused: MongoDB has no equivalent.",
+    doc: "'.isDisjointFrom()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
     where: ["value"],
-    filter: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
         $eq: [sizeOf({ $setIntersection: [r, arrayOrEmpty(value(args[0]))] }), 0]
       }))
     },
-    stream: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    stream: unsupported("'.isDisjointFrom()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
+      "'.isDisjointFrom()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isDisjointFrom();'"
     ),
-    group: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    group: unsupported("'.isDisjointFrom()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
+      "'.isDisjointFrom()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
   Object: root({
@@ -13068,29 +13048,6 @@ var NAMES = {
     compare: "$.count === NumberInt(3)",
     refuseConstant: "'NumberInt(<constant>)' \u2014 this constant is not a whole number in the 32-bit range (-2147483648 \u2026 2147483647). Write 'Long(\u2026)' for a bigger integer, or 'Double(\u2026)' to keep a fraction."
   }),
-  Set: global_({
-    doc: "A set of values, for the set operations. Folds to a plain array \u2014 MongoDB has no set type.",
-    token: "Ident",
-    newKeyword: "required",
-    // A value built by this constructor is a receiver of the `set` family: the
-    // set operations (`.union`, `.difference`) are names on it.
-    family: "set",
-    returns: "array",
-    where: ["value"],
-    filter: because("a set is a value, not a test. Use '.union(...)' / '.difference(...)' on it."),
-    expr: {
-      byArgs: {
-        // A constant array never reaches this row — the fold makes `new Set([1, 2])` the array first.
-        constant: unsupported("'new Set(<constant>)' \u2014 the constant is not an array. Write 'new Set([1, 2, 3])'."),
-        dynamic: { args: { sig: "values", exact: 1 }, emit: ({ args, value }) => value(args[0]) },
-        otherwise: unsupported("'new Set(\u2026)' takes exactly one array of values.")
-      }
-    },
-    stream: unsupported("'Set' produces a value, not a stream of documents."),
-    statement: unsupported("'Set' produces a value. Use it inside a reshape or a '$set'."),
-    group: unsupported("'Set' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Set' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
-  }),
   Number: global_({
     doc: "Converts a value to a number.",
     token: "Ident",
@@ -13127,6 +13084,27 @@ var NAMES = {
     statement: unsupported("'Array' produces a value. Use it inside a reshape or a '$set'."),
     group: unsupported("'Array' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  Set: global_({
+    doc: "The JavaScript Set class. MongoDB has no set type; see its refusal.",
+    token: "Ident",
+    newKeyword: "required",
+    returns: "unknown",
+    where: [],
+    filter: setIsNotJsmql,
+    expr: setIsNotJsmql,
+    stream: setIsNotJsmql,
+    statement: setIsNotJsmql,
+    // The general sentence names the pipeline form, which refuses `Set` too. A constant
+    // array folds in an update document: `$.x = [1, 2, 2].uniq()` is `{ $set: { x: [1, 2] } }`.
+    updateDoc: setIsNotJsmql,
+    // Where an accumulator goes, MongoDB's own operator gathers the unique values of a group.
+    group: unsupported(
+      "'new Set(\u2026)' is not an accumulator. Inside '$group', '$addToSet(<value>)' gathers the unique values."
+    ),
+    window: unsupported(
+      "'new Set(\u2026)' is not a window function. Inside '$setWindowFields', '$addToSet(<value>)' gathers the unique values."
+    )
   }),
   Map: global_({
     doc: "The JavaScript Map class. MongoDB has no map type; see its refusal.",
@@ -13926,7 +13904,7 @@ var PRODUCTIONS = {
     statement: unsupported("'Class.method()' is not a statement \u2014 see its 'where'.")
   }),
   constructorCall: production({
-    doc: "`new Date(\u2026)`, `new Set(\u2026)`, `new ObjectId(\u2026)`. What each constructor means is in names.ts.",
+    doc: "`new Date(\u2026)`, `new ObjectId(\u2026)`, `new Decimal128(\u2026)`. What each constructor means is in names.ts.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
     // One node for every `new X(…)`. names.ts says which constructor it is.
@@ -14675,9 +14653,6 @@ function operandShapeOf(name2) {
 function spreadAlternativeOf(name2) {
   return emitRow(name2)?.spreadAlternative;
 }
-function constructedFamilyOf(name2) {
-  return emitRow(name2)?.family;
-}
 function productionForNode(nodeType) {
   for (const [key, p] of Object.entries(PRODUCTIONS)) {
     if (p.becomes === nodeType) return key;
@@ -14717,7 +14692,7 @@ function emptyValueOf(name2, family) {
   const own = families(row(name2)?.on);
   const fams = family !== null ? [family] : own === void 0 || own === "any" ? [] : own.filter((f) => FIELD_FAMILIES.includes(f));
   if (fams.length === 0) return null;
-  if (fams.every((f) => f === "array" || f === "set")) return [];
+  if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
   return null;
 }
@@ -20766,11 +20741,6 @@ function foldConstructor(name2, args) {
   switch (canonicalBsonName(name2)) {
     case "Date":
       return foldNewDate(values);
-    case "Set": {
-      const [a] = values;
-      if (args.length === 0) return ok2([]);
-      return Array.isArray(a) ? ok2(a) : NO2;
-    }
     default:
       return bsonValue2(name2, args.length, values);
   }
@@ -23388,10 +23358,9 @@ var wrongCallCount = (label, params, got, pos) => new CodegenError(
   pos
 );
 var unknownFunction = (name2, known, pos) => new CodegenError(
-  `Unknown function '${name2}(...)'.${didYouMean(name2, known, (s) => newKeywordOf(s) === "required" ? `new ${s}(...)` : `${s}(...)`)} Declare it first with \`const ${name2} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${name2}(...)\`; for a method, \`receiver.${name2}(...)\`.`,
+  `Unknown function '${name2}(...)'.${didYouMean(name2, known, (s) => `${s}(...)`)} Declare it first with \`const ${name2} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${name2}(...)\`; for a method, \`receiver.${name2}(...)\`.`,
   pos
 );
-var needsNew = (name2, pos) => new CodegenError(`'${name2}(\u2026)' needs 'new', as in JavaScript. Write 'new ${name2}(\u2026)'.`, pos);
 var newOnFunction = (name2, pos) => new CodegenError(`'${name2}' is not a constructor in JSMQL. Call it without 'new': '${name2}(\u2026)'.`, pos);
 var unknownClass = (name2, known, pos) => new CodegenError(
   name2 === null ? "'new' takes the name of a class, as in 'new Date(\u2026)'." : `Unknown class '${name2}' in 'new ${name2}(\u2026)'.${didYouMean(name2, known, (s) => `new ${s}(\u2026)`)} MQL has no classes of its own. Write the value as an object literal ('{ \u2026 }'), or declare a function that returns one and call it without 'new'.`,
@@ -24357,13 +24326,7 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
     return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
   }
   const lowering = listed.filter((f) => !isRefusal(branches[f]));
-  const tests = /* @__PURE__ */ new Set();
-  const fieldFamilies = (lowering.length > 0 ? lowering : listed).filter((family) => {
-    const test = TYPES[family].join(",");
-    if (tests.has(test)) return false;
-    tests.add(test);
-    return true;
-  });
+  const fieldFamilies = lowering.length > 0 ? lowering : listed;
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
   const fitting = fieldFamilies.filter((f) => {
     const b = branches[f];
@@ -24392,7 +24355,7 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
     if (bad !== null && bad.kind !== "rule") return bad;
     out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
   }
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
+  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
   return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
 }
 function select(verdict, receiver, shaped, count, kinds = []) {
@@ -25204,8 +25167,6 @@ function familyOfKind(k) {
 function sourceFamily(node) {
   if (node.type === "Ident" && NAMESPACES2.has(node.name)) return node.name;
   if (node.type === "RegexLiteral") return "regexp";
-  if (node.type === "NewExpression" && node.callee.type === "Ident")
-    return constructedFamilyOf(node.callee.name) ?? null;
   return null;
 }
 var kindOf3 = (node, env) => single2(typeOf(node, env));
@@ -27322,7 +27283,6 @@ function receiverOf(recv, env) {
   if (recv.type === "StreamRef" || onOwnStream(recv, env)) return { kind: "stream" };
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
-  if (src === "set") return { kind: "value", family: "set", lowered };
   const t = typeOf(recv, env);
   const kinds = kindsOf(t);
   if (kinds === null) return { kind: "opaque", lowered };
@@ -27444,12 +27404,7 @@ function callExpression(node, env) {
       if (b.ref.kind === "dropped") throw droppedBinding(b.ref, node.pos);
       throw notCallable(node.pos);
     }
-    if (isGlobalName(callee.name)) {
-      if (newKeywordOf(callee.name) === "required" && (positionsOf(callee.name)?.length ?? 0) > 0) {
-        throw needsNew(callee.name, node.pos);
-      }
-      return dispatchBare(node, callee.name, node.args, env);
-    }
+    if (isGlobalName(callee.name)) return dispatchBare(node, callee.name, node.args, env);
     throw unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
   }
   if (callee.type === "Lambda") return applyLambda2(callee, node.args, env, node.pos, "IIFE", null);

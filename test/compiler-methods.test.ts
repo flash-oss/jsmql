@@ -34,6 +34,8 @@ const DOC = {
   h: "<a & b>",
   a: [3, 1, 2],
   b: [2, 5],
+  // an array that holds a value more than once, for the set operations
+  dup: [3, 1, 3, 2, 1],
   docs: [
     { k: "x", v: 2 },
     { k: "y", v: 1 },
@@ -666,6 +668,7 @@ describe("compiler/emit — object methods", () => {
                     "h",
                     "a",
                     "b",
+                    "dup",
                     "docs",
                     "nested",
                     "pairs",
@@ -1740,13 +1743,14 @@ describe("compiler/emit — array methods", () => {
     expect(unordered("$.a.intersection($.b)", () => [2])).toEqual({
       $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
-    expect(compiled("$.a.difference($.b)", () => [3, 1])).toEqual({
-      $filter: {
-        input: { $ifNull: ["$a", []] },
-        as: "jsmqlItem",
-        cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] },
-      },
+    // The set difference: each value once, as a JavaScript Set holds it. lodash's
+    // `_.difference([3, 1, 3, 2, 1], [2, 5])` keeps the duplicates, [3, 1, 3, 1].
+    expect(unordered("$.a.difference($.b)", (d) => [...new Set(d.a).difference(new Set(d.b))])).toEqual({
+      $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
+    expect(
+      unordered("[3, 1, 3, 2, 1].difference($.b)", (d) => [...new Set([3, 1, 3, 2, 1]).difference(new Set(d.b))]),
+    ).toEqual({ $setDifference: [[3, 1, 3, 2, 1], { $ifNull: ["$b", []] }] });
     expect(unordered("$.a.union($.b)", () => [3, 1, 2, 5])).toEqual({
       $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
     });
@@ -2163,37 +2167,73 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(() => expr("$.a.zipWith($.b, x => x)")).toThrow(/one parameter per zipped array/);
   });
 
-  it("lowers the Set relations on a Set or an array", () => {
+  it("does each JavaScript Set operation with an array method", () => {
+    // MongoDB has no set type. Each case is the array form of one Set operation, and
+    // JavaScript's own Set gives the answer that the server must agree with. A set
+    // operator promises no order, so the elements are compared, not their sequence.
     // MEASURED: $setIsSubset and $size ABORT the command on an operand that is not an
-    // array, where every $setUnion/$setDifference sibling answers null. The RECEIVER is a
-    // JavaScript method's and answers null when it is not there; a missing ARGUMENT list
-    // reads as the empty set. A literal is already an array and takes neither.
-    expect(compiled("new Set($.a).isSubsetOf(new Set($.b))", () => new Set(DOC.a).isSubsetOf(new Set(DOC.b)))).toEqual({
-      $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    // array, so a missing receiver runs on `[]` (HR5) and a missing list argument is `[]`.
+    expect(unordered("$.dup.uniq()", (d) => [...new Set(d.dup)])).toEqual({ $setUnion: { $ifNull: ["$dup", []] } });
+    expect(compiled("$.dup.uniq().size()", (d) => new Set(d.dup).size)).toEqual({
+      $size: { $setUnion: { $ifNull: ["$dup", []] } },
     });
-    expect(compiled("new Set([2]).isSubsetOf(new Set($.b))", () => new Set([2]).isSubsetOf(new Set(DOC.b)))).toEqual({
-      $setIsSubset: [[2], { $ifNull: ["$b", []] }],
+    expect(compiled("$.dup.has(3)", (d) => new Set(d.dup).has(3))).toEqual({ $in: [3, { $ifNull: ["$dup", []] }] });
+    expect(unordered("$.dup.union([9])", (d) => [...new Set(d.dup).add(9)])).toEqual({
+      $setUnion: [{ $ifNull: ["$dup", []] }, [9]],
     });
     expect(
-      compiled("new Set($.b).isSupersetOf(new Set([5]))", () => new Set(DOC.b).isSupersetOf(new Set([5]))),
-    ).toEqual({ $setIsSubset: [[5], { $ifNull: ["$b", []] }] });
+      unordered("$.dup.uniq().without(3)", (d) => {
+        const s = new Set(d.dup);
+        s.delete(3);
+        return [...s];
+      }),
+    ).toEqual({
+      $filter: {
+        input: { $setUnion: { $ifNull: ["$dup", []] } },
+        as: "jsmqlItem",
+        cond: { $not: [{ $in: ["$$jsmqlItem", [3]] }] },
+      },
+    });
+    expect(unordered("$.dup.union($.b)", (d) => [...new Set(d.dup).union(new Set(d.b))])).toEqual({
+      $setUnion: [{ $ifNull: ["$dup", []] }, { $ifNull: ["$b", []] }],
+    });
+    expect(unordered("$.dup.intersection($.b)", (d) => [...new Set(d.dup).intersection(new Set(d.b))])).toEqual({
+      $setIntersection: [{ $ifNull: ["$dup", []] }, { $ifNull: ["$b", []] }],
+    });
+    expect(unordered("$.dup.difference($.b)", (d) => [...new Set(d.dup).difference(new Set(d.b))])).toEqual({
+      $setDifference: [{ $ifNull: ["$dup", []] }, { $ifNull: ["$b", []] }],
+    });
+    // Two spellings of one answer: the Set name binds each list once, lodash's name reads each twice.
     expect(
-      compiled("new Set($.a).isDisjointFrom(new Set($.b))", () => new Set(DOC.a).isDisjointFrom(new Set(DOC.b))),
-    ).toEqual({ $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0] });
-    expect(
-      unordered("new Set($.a).symmetricDifference(new Set($.b))", () => [
-        ...new Set(DOC.a).symmetricDifference(new Set(DOC.b)),
-      ]),
+      unordered("$.dup.symmetricDifference($.b)", (d) => [...new Set(d.dup).symmetricDifference(new Set(d.b))]),
     ).toEqual({
       $let: {
-        vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } },
+        vars: { jsmqlA: { $ifNull: ["$dup", []] }, jsmqlB: { $ifNull: ["$b", []] } },
         in: {
           $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }],
         },
       },
     });
-    expect(unordered("new Set($.a).union(new Set($.b))", () => [...new Set(DOC.a).union(new Set(DOC.b))])).toEqual({
-      $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }],
+    expect(unordered("$.dup.xor($.b)", (d) => [...new Set(d.dup).symmetricDifference(new Set(d.b))])).toEqual({
+      $setUnion: [
+        { $setDifference: [{ $ifNull: ["$dup", []] }, { $ifNull: ["$b", []] }] },
+        { $setDifference: [{ $ifNull: ["$b", []] }, { $ifNull: ["$dup", []] }] },
+      ],
+    });
+    expect(compiled("$.dup.isSubsetOf($.b)", (d) => new Set(d.dup).isSubsetOf(new Set(d.b)))).toEqual({
+      $setIsSubset: [{ $ifNull: ["$dup", []] }, { $ifNull: ["$b", []] }],
+    });
+    expect(compiled("[1, 3].isSubsetOf($.dup)", (d) => new Set([1, 3]).isSubsetOf(new Set(d.dup)))).toEqual({
+      $setIsSubset: [[1, 3], { $ifNull: ["$dup", []] }],
+    });
+    expect(compiled("$.dup.isSupersetOf([1, 3])", (d) => new Set(d.dup).isSupersetOf(new Set([1, 3])))).toEqual({
+      $setIsSubset: [[1, 3], { $ifNull: ["$dup", []] }],
+    });
+    expect(compiled("$.dup.isDisjointFrom($.b)", (d) => new Set(d.dup).isDisjointFrom(new Set(d.b)))).toEqual({
+      $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$dup", []] }, { $ifNull: ["$b", []] }] } }, 0],
+    });
+    expect(compiled("$.dup.isDisjointFrom([9])", (d) => new Set(d.dup).isDisjointFrom(new Set([9])))).toEqual({
+      $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$dup", []] }, [9]] } }, 0],
     });
   });
 
@@ -2312,7 +2352,7 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ['$.a.differenceBy($.b, "id")', [], [1, 2]],
   ['$.a.intersectionBy($.b, "id")', [], []],
   ['$.a.xorBy($.b, "id")', [], [1, 2]],
-  // the RECEIVER is the empty set when it is not there: `new Set(undefined)` is empty in JavaScript
+  // a missing RECEIVER runs on `[]` (HR5), the reading lodash gives it
   ["$.a.isSubsetOf($.b)", true, false],
   ["$.a.isSupersetOf($.b)", true, true],
   ["$.a.isDisjointFrom($.b)", true, true],
@@ -2323,15 +2363,12 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
   ["$.a.initial()", [], [1]],
   ["$.o.pick($.b)", {}, {}],
   ["$.o.omit($.b)", {}, { x: 1 }],
-  // a missing list ARGUMENT of a set operation is the empty set: `new Set(undefined)` is empty
+  // a missing list ARGUMENT of a set operation is the empty list, as lodash reads it
   ["$.a.union($.b)", [], [1, 2]],
   ["$.a.intersection($.b)", [], []],
+  ["$.a.symmetricDifference($.b)", [], [1, 2]],
   ["$.a.xor($.b)", [], [1, 2]],
   ["$.a.unionBy($.b, x => x)", [], [1, 2]],
-  ["new Set($.a).union(new Set($.b))", [], [1, 2]],
-  ["new Set($.a).intersection(new Set($.b))", [], []],
-  ["new Set($.a).difference(new Set($.b))", [], [1, 2]],
-  ["new Set($.a).symmetricDifference(new Set($.b))", [], [1, 2]],
 ];
 
 /**

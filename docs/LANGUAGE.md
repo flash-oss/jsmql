@@ -1856,27 +1856,27 @@ $.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).size();   // a $loo
 ```
 
 **A list ARGUMENT takes the same empty-list reading.** A method that compares the receiver
-against a second list reaches `$in` or `$setIsSubset` with that list, and both abort on
-null. So the cell guards the list the way HR5 guards the receiver, and a missing list
-means "the empty list" — the reading lodash gives a missing list. JSMQL hands a list
-spelled in the source straight through, because it is already an array:
+against a second list guards that list, as HR5 guards the receiver. So a missing list means
+"the empty list", which is the reading lodash gives a missing list. Without the guard, `$in`
+and `$setIsSubset` abort the command on a null list, and a set operator such as
+`$setDifference` answers null. JSMQL hands a list spelled in the source straight through,
+because it is already an array:
 
 ```js
 $.a.difference($.b)               // `a` and `b` may be missing → both read as []
-// → { $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", { $ifNull: ["$b", []] }] }] } } }
+// → { $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
 
 $.a.difference([1, 2])            // spelled in the source — an array, always
-// → { $filter: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [1, 2]] }] } } }
+// → { $setDifference: [{ $ifNull: ["$a", []] }, [1, 2]] }
 
-$.a.isSubsetOf($.b)               // a missing set, on either side, is the empty set
+$.a.isSubsetOf($.b)               // a missing list, on either side, is the empty list
 // → { $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
 ```
 
 So the three set PREDICATES — `.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()` —
 read a missing operand as the **empty set** and answer a real boolean: `true`, `true` and
-`true` over a document that holds neither field. Their array-returning siblings —
-`.union()`, `.intersection()`, `.symmetricDifference()`, `.xor()` — answer the other list,
-or `[]`.
+`true` over a document that holds neither field. A set operation that answers an array,
+for example `.union()`, answers the other list, or `[]`.
 
 If you know the type of an `.indexOf()` receiver at design time and want compact output, you have three options. Bind the value to a `const` with a type-revealing initialiser. Or chain a type-fixing method first — `$.tags.toLowerCase().indexOf(...)` pins a string. Or use the explicit `$indexOfArray` / `$indexOfCP` operator forms.
 
@@ -2117,7 +2117,7 @@ $.xs.chunk(3)                               // [[…3], […3], [rest]]   (size:
 $.xs.flatten()                              // one level (with an $isArray guard)
 $.xs.compact()                              // drop JS-falsy (false/null/0/""/missing) — same as .filter(Boolean)
 $.a.union($.b) / .intersection($.b) / .xor($.b)          // $setUnion / $setIntersection / composed — unique values, order undefined
-$.a.difference($.b)                                      // keeps the receiver's duplicates, as lodash does — a $filter, not $setDifference
+$.a.difference($.b)                                      // $setDifference — unique values, as a JavaScript Set gives them
 $.a.without(2, 4)                           // exclude the given values (variadic)
 $.a.xor($.b)                                // symmetric difference (chain .xor(c) for more)
 $.a.differenceBy($.b, "id")                 // set ops compared BY an iteratee key…
@@ -2135,7 +2135,9 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > A predicate-run method takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element the predicate rejects, using JS truthiness, as `.filter` does — see [Truthy and falsy](#truthy-and-falsy). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so each run gives a **different result** — non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement** and returns the whole shuffled array when `n` exceeds the length.
 
-> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `Object.keys(<a countBy result>)` hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `Object.keys(counts).map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. `.difference` is the exception and stays a `$filter`, because lodash keeps the receiver's duplicates there, and dropping them would change the values, not just their order. A live mongod verified every shape here.
+> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `Object.keys(<a countBy result>)` hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `Object.keys(counts).map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
+
+> **`.difference` is the set difference, not lodash's.** lodash's `_.difference([3, 1, 3, 2, 1], [2])` keeps the duplicates and gives `[3, 1, 3, 1]`. JSMQL gives each value once, as a JavaScript `Set` does, so the answer is `[3, 1]` in some order. `.differenceBy` and the stream form `$$.flatMap(…).difference(…)` keep each duplicate.
 
 > **JSMQL rejects chaining that cannot type-check.** When a method is chained on a receiver whose type is provably wrong for it, JSMQL throws at compile time, instead of emitting MQL the server would reject. Examples: `.every(p).map(f)` — a boolean has no methods; `s.toUpperCase().map(f)` — a string is not an array; `a.countBy("t").take(3)` — an object is not an array; and, over a lookup, `$$$.orders.find(p).take(5)` — `.find` returns one document. This check fires only when the receiver type is **fully certain**. An element of unknown type still compiles, for example `arr.find(p).map(f)`, because the element could itself be an array. A result whose type depends on its arguments, such as `n.clamp(a, b)`, still compiles too.
 
@@ -2187,30 +2189,54 @@ The bare form is for **arrays of values**. A pipeline stream carries documents, 
 
 **`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Math.trunc(Number(<value>))` for the whole number `parseInt` would give.
 
-**`Map` and `RegExp` are not JSMQL names.** MongoDB has no map type, so write an object, or build one from pairs with `Object.fromEntries(pairs)`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms. `new` on a name that JSMQL does not know names the nearest class it can construct (`new Dat()` → "Did you mean 'new Date(…)'?"), and `new` on a function (`new Number(5)`) names the call without `new`.
+**`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `Object.fromEntries(pairs)`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
 
-### Set methods (ES2025)
+`new` on a name that JSMQL does not know names the nearest class it can construct (`new Dat()` → "Did you mean 'new Date(…)'?"), and `new` on a function (`new Number(5)`) names the call without `new`.
 
-Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper is a JS-syntax tag; MQL has no Set type, so the underlying arrays go straight into the operator. `Set(...)` without `new` is refused, as JavaScript refuses it, and the error names `new Set(...)`.
+### Set operations on arrays
+
+MongoDB has no set type. A JavaScript `Set` could only compile to the array it holds, with each duplicate still in it. So JSMQL refuses `new Set(…)` and `Set(…)`, and the error names the array methods. Each set operation is a method of the array. The method has the lodash name where lodash has one, and the JavaScript name for the three relations that lodash has no name for.
+
+| JavaScript `Set` | JSMQL | mongod, over `{ a: [3, 1, 3, 2, 1], b: [2, 4, 4] }` |
+|---|---|---|
+| `new Set(a)`, `[...new Set(a)]` | `$.a.uniq()` | `[1, 2, 3]` |
+| `new Set(a).size` | `$.a.uniq().size()` | `3` |
+| `s.has(3)` | `$.a.has(3)` | `true` |
+| `s.add(9)` | `$.a.union([9])` | `[1, 2, 3, 9]` |
+| `s.delete(3)` | `$.a.uniq().without(3)` | `[1, 2]` |
+| `s.clear()` | `[]` | `[]` |
+| `a.union(b)` | `$.a.union($.b)` | `[1, 2, 3, 4]` |
+| `a.intersection(b)` | `$.a.intersection($.b)` | `[2]` |
+| `a.difference(b)` | `$.a.difference($.b)` | `[3, 1]` |
+| `a.symmetricDifference(b)` | `$.a.xor($.b)` or `$.a.symmetricDifference($.b)` | `[1, 3, 4]` |
+| `a.isSubsetOf(b)` | `$.a.isSubsetOf($.b)` | `false` |
+| `a.isSupersetOf(b)` | `$.a.isSupersetOf($.b)` | `false` |
+| `a.isDisjointFrom(b)` | `$.a.isDisjointFrom($.b)` | `false` |
 
 ```js
-new Set($.a).intersection(new Set($.b))   // { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
-new Set($.a).union(new Set($.b))          // { $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
-new Set($.a).difference(new Set($.b))     // { $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
-new Set($.a).isSubsetOf(new Set($.b))     // { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setIsSubset: ["$a", { $ifNull: ["$b", []] }] } } }
-new Set($.a).isSupersetOf(new Set($.b))   // { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setIsSubset: [{ $ifNull: ["$b", []] }, "$a"] } } }
+$.a.uniq()                    // → { $setUnion: { $ifNull: ["$a", []] } }
+$.a.uniq().size()             // → { $size: { $setUnion: { $ifNull: ["$a", []] } } }
+$.a.has(3)                    // → { $in: [3, { $ifNull: ["$a", []] }] }
+$.a.union([9])                // → { $setUnion: [{ $ifNull: ["$a", []] }, [9]] }
+$.a.uniq().without(3)         // → { $filter: { input: { $setUnion: { $ifNull: ["$a", []] } }, as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [3]] }] } } }
+$.a.union($.b)                // → { $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
+$.a.intersection($.b)         // → { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
+$.a.difference($.b)           // → { $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
+$.a.xor($.b)                  // → { $setUnion: [{ $setDifference: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }, { $setDifference: [{ $ifNull: ["$b", []] }, { $ifNull: ["$a", []] }] }] }
+$.a.symmetricDifference($.b)
+// → { $let: { vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } }, in: { $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }] } } }
+$.a.isSubsetOf($.b)           // → { $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
+$.a.isSupersetOf($.b)         // → { $setIsSubset: [{ $ifNull: ["$b", []] }, { $ifNull: ["$a", []] }] }
+$.a.isDisjointFrom($.b)       // → { $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0] }
 ```
 
-A missing field reads as the empty set, as `new Set(undefined)` does in JavaScript: `new Set($.a).union(new Set($.b))` answers the elements of `a` when `b` is not there. The operators themselves answer null for a null operand, so JSMQL wraps each operand in `$ifNull`. `$setIsSubset` refuses a null operand and aborts the command. So `.isSubsetOf()` and `.isSupersetOf()` test the receiver first and answer null when it is not there, as every JavaScript method does (see [the rule](#type-aware-dispatch)); a missing *argument* reads as the empty set there too.
+Three facts differ from a JavaScript `Set`:
 
-```js
-new Set($.a).symmetricDifference(new Set($.b))
-// → { $let: { vars: { jsmqlA: { $ifNull: ["$a", []] }, jsmqlB: { $ifNull: ["$b", []] } }, in: { $setDifference: [ { $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] } ] } } }
-new Set($.a).isDisjointFrom(new Set($.b))
-// → { $eq: [ { $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }, 0 ] }
-```
+- **The order is MongoDB's.** A JavaScript `Set` keeps the order of insertion. MongoDB's manual states that the order of a set operator's output is unspecified. So above, `$.a.uniq()` gave `[1, 2, 3]` and `$.a.difference($.b)` gave `[3, 1]`. When the order matters, sort the answer: `$.a.uniq().toSorted()`.
+- **`.difference()` is the set difference, not lodash's.** It gives each value once, as `Set.prototype.difference` does. lodash's `_.difference` keeps the duplicates of the receiver, and gives `[3, 1, 3, 1]` here.
+- **A missing field is the empty list.** A dot runs the method on `[]`, and a missing list argument also reads as `[]`. So each relation gives a real boolean, and each operation gives an array (see [Type-aware dispatch](#type-aware-dispatch)).
 
-The last two have no single MongoDB operator, so JSMQL composes them. Each operand is bound once, so a field is read once however the composition uses it. The set-method argument must itself be a `new Set(...)` literal, so that the JS reads consistently.
+`.xor()` and `.symmetricDifference()` give the same values. `.symmetricDifference()` binds each list once in a `$let`, and `.xor()` reads each list twice. The raw operators stay available through the escape hatch (see [Set Operations](#set-operations)). They add no `$ifNull`, so `$setDifference($.a, $.b)` gives null when a field is missing.
 
 For `$allElementsTrue` / `$anyElementTrue`, use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
 
@@ -3757,7 +3783,7 @@ $$.difference([1, 2]);
 // → error: '.difference()' isn't available on '$$' — compares each ELEMENT against a second array, and every element of this stream is a whole document. Unwind the field first — '.flatMap("<field>").difference(<list>)' — or drop documents with '.reject(<pred>)'.
 ```
 
-In a join, the same link on a stream of whole documents is not a stream link. It reads the joined array as a value — `$$$.orders.filter(p).difference(docs)` is lodash's `$filter` over the array — like any method with no stream form.
+In a join, the same link on a stream of whole documents is not a stream link. It reads the joined array as a value — `$$$.orders.filter(p).difference(docs)` is `$setDifference` over the array — like any method with no stream form.
 
 The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stream still carries one order per line, with `items` holding that line. To make the elements the documents, say so: `.map(item => item)` is `{ $replaceWith: "$items" }`. From that stage on, the document is the element again, as it is after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and changes nothing else: a callback after it still receives the whole document.
 

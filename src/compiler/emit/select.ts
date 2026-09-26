@@ -316,21 +316,12 @@ function fromPerFamily(
   if (possible !== undefined && listed.length === 0) {
     return { kind: "wrongReceiver", name, got: possible.join(" or "), accepts: on ?? "any" };
   }
-  // A `$switch` separates only what `$type` tells apart: `set` and `array` share the
-  // one test, so no branch can choose between them. The row's declaration order gives its
-  // precedence, so the first family with a given test answers. The family that loses
-  // is reached through its PROVEN receiver above (`new Set(…)` is proven at the source).
   // A family the row REFUSES cannot be the family of a receiver in a program that
   // compiles, so `.keys()` on an unproven field is a call on an object. The refused
   // families stay only when nothing else is left, so that the refusal is what answers.
+  // Each field family has its own `$type` test, so each one is a branch of its own.
   const lowering = listed.filter((f) => !isRefusal(branches[f]));
-  const tests = new Set<string>();
-  const fieldFamilies = (lowering.length > 0 ? lowering : listed).filter((family) => {
-    const test = TYPES[family].join(",");
-    if (tests.has(test)) return false;
-    tests.add(test);
-    return true;
-  });
+  const fieldFamilies = lowering.length > 0 ? lowering : listed;
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
   // A branch whose slot cannot take a PROVEN argument kind is not the branch the
   // call means: `.indexOf(1)` searches an array, because `$indexOfCP` takes a string.
@@ -373,10 +364,7 @@ function fromPerFamily(
   // The default fires for a null or missing value, and for a possible kind no
   // branch takes. Neither can happen when the value is there and every possible
   // family has a branch.
-  const complete =
-    covered &&
-    receiver.present === true &&
-    possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
+  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
   return { kind: "dispatch", name, branches: out, otherwise: uncertain as AnyEmit | Refusal, complete };
 }
 
