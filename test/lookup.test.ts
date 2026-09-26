@@ -1469,7 +1469,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
 
   it("the same rejection on a chained `.find` does not offer the `.map`-only rewrite", () => {
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).toThrow(
-      "`$match(...)` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $match(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$match(…)'. at position 58",
+      "`$match(...)` at position 58 is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $match(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$match(…)'.",
     );
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).not.toThrow(
       /`return` a document/,

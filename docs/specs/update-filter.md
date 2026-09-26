@@ -246,8 +246,12 @@ target (`Object.assign({}, $.a)`), it is a value. In an expression it is
 | `IndexAccess` as target         | parser       | "Update op target must be a static field path; computed/index access ('[…]') is not supported" |
 | Lambda or compound-shape target | parser       | "Update op target must be a field path like '$.x' or '$.x.y'" |
 | Compound chain (`$.a += $.b += 1`) | parser     | The write-inside-a-value message for the inner `$.b += 1` |
-| Write inside a value (`1 + $.x++`, `1 + ($.a = 5)`) | parser | "'$.x++' is a write inside a value at position N. A write stands only as a statement. Write '$.x += 1;' as its own statement after the statement that uses the value, …" |
-| Update op in a value array       | codegen      | "Assignment is a statement, not a value. It is only valid at the top level or as a pipeline-array element." |
+| Write inside a value (`1 + $.x++`, `1 + ($.a = 5)`, `f(delete $.a)`) | parser | "'$.x++' is a write inside a value at position N. A write stands only as a statement. Write '$.x += 1;' as its own statement after the statement that uses the value, …" |
+| Write in a value array (`$.y = [$.x++]`, `$.y = [delete $.a]`) | desugar, before any rule | The same message. A `=` or compound write quotes its target and operator: "'$.a = …' is a write inside a value …". A `delete` has nothing to read afterwards, so its message names the statement alone. |
+| Function in a value array (`$.y = [function f(x) { … }]`) | desugar, before any rule | "'function f(…)' is a function inside a value at position N. MQL has no function values. …" |
+| Target that is not a place (`1 = 2`, `$.a + 1 = 2`, `1++`) | parser | "Cannot apply '=' to '$.a + 1' at position N. You can write only to a field, a binding, '$', '$$' or a collection." The message quotes the target as the source spells it. |
+| Arithmetic write on `$` or `$$` (`$ += 1`, `$$++`) | parser | "Cannot use '+=' on '$' at position N. '$' is the whole document, not a field. Write to a field: '$.<field> += …'." A `=` replaces either one, and `$$$.<coll> += …` is a `$merge`, so both stay legal. |
+| `delete $` / `delete $$` | codegen | "'delete $' would delete the document itself. …" / "'delete $$' would delete the stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'." |
 | Empty update op program          | codegen      | "Update op program must contain at least one assignment or delete" (defensive — parser should not produce this) |
 
 `AssignExpr.pos` / `DeleteStmt.pos` come from the target's source offset (for

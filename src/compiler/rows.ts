@@ -679,8 +679,12 @@ export function newKeywordOf(name: string): "required" | "optional" | "forbidden
  */
 export function constructorGlobals(): readonly { name: string; newKeyword: string; doc: string }[] {
   const out: { name: string; newKeyword: string; doc: string }[] = [];
-  for (const [name, r] of Object.entries(ROWS) as [string, { kind?: string; newKeyword?: string; doc?: string }][]) {
-    if (r?.kind !== "global" || r.newKeyword !== "optional") continue;
+  for (const [name, r] of Object.entries(ROWS) as [
+    string,
+    { kind?: string; newKeyword?: string; doc?: string; where?: readonly string[] },
+  ][]) {
+    // A row that lists no position is a refusal (`RegExp`), not a constructor a program uses.
+    if (r?.kind !== "global" || r.newKeyword !== "optional" || (r.where?.length ?? 0) === 0) continue;
     out.push({ name, newKeyword: r.newKeyword, doc: r.doc ?? "" });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -802,9 +806,23 @@ export function streamReceiverNames(): string[] {
   return Object.keys(ROWS).filter((n) => lists(n, "stream") || familiesOf(n)?.includes("stream") === true);
 }
 
-/** Every global that a program calls by its bare name: `Number(…)`, `assert(…)`, `new Date(…)`. */
+/**
+ * Every global that a program calls by its bare name: `Number(…)`, `assert(…)`, `new Date(…)`.
+ * A row that lists no position (`Math`, `Array`) is a namespace or a refusal, so no
+ * suggestion names it.
+ */
 export function bareCallableNames(): string[] {
-  return Object.keys(ROWS).filter((n) => !n.startsWith("$") && isGlobalName(n) && isCallable(n));
+  return Object.keys(ROWS).filter(
+    (n) => !n.startsWith("$") && isGlobalName(n) && isCallable(n) && (positionsOf(n)?.length ?? 0) > 0,
+  );
+}
+
+/** Every global that `new` builds: `new Date(…)`, `new Set(…)`, `new ObjectId(…)`. */
+export function constructibleNames(): string[] {
+  return bareCallableNames().filter((n) => {
+    const k = newKeywordOf(n);
+    return k === "required" || k === "optional";
+  });
 }
 
 /** The methods that END a `$$$.<coll>` chain with a value: an array value rule and no stream rule. */

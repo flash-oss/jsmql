@@ -77,7 +77,10 @@ target         = field_ref ("." FIELD_SEGMENT)*
                                                 accepted at parse time, validated against
                                                 the pipeline let-scope at codegen *)
                (* a field-path target must be static; index access ($.x[0]) is
-                  rejected at parse time *)
+                  rejected at parse time. A target that is not a place (`1 = 2`)
+                  is refused with its own spelling quoted, and an arithmetic
+                  write (`+=`, `++`) on `$` or `$$` is refused, because neither
+                  is a field. *)
 
 expression     = ternary
 
@@ -109,6 +112,10 @@ power          = unary ("**" power)?                     (* right-associative *)
 
 unary          = "typeof" unary
                | ("!" | "-" | "~") unary
+               | "delete" unary
+               (* JavaScript reads `delete` as a value too (`f(delete $.a)`),
+                  and the parser refuses it there like any other write inside
+                  a value. *)
                | update
 
 update         = ("++" | "--") unary

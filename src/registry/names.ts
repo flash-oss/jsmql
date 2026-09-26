@@ -1155,6 +1155,16 @@ const fromIsNotJsmql = unsupported(
   "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.",
 );
 
+/** `new Map(…)` in every position. MongoDB has no map type, and an object holds keys and values. */
+const mapIsNotJsmql = unsupported(
+  "'new Map(…)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('Object.fromEntries(pairs)').",
+);
+
+/** `new RegExp(…)` in every position. The literal is the JSMQL spelling of a regular expression. */
+const regExpIsNotJsmql = unsupported(
+  "'RegExp(…)' is not part of JSMQL. Write a regular expression literal ('/^ab/i'). For a pattern built at run time, write '$regexMatch({ input: …, regex: … })'.",
+);
+
 /**
  * `Number.isFinite($.x)` in every position. jsmql has no Infinity / NaN literal to
  * compare against, so the name parses and is then refused wherever it stands, with
@@ -14247,6 +14257,34 @@ export const NAMES = {
     statement: unsupported("'Array' produces a value. Use it inside a reshape or a '$set'."),
     group: unsupported("'Array' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  Map: global_({
+    doc: "The JavaScript Map class. MongoDB has no map type; see its refusal.",
+    token: "Ident",
+    newKeyword: "required",
+    returns: "object",
+    where: [],
+    filter: mapIsNotJsmql,
+    expr: mapIsNotJsmql,
+    stream: unsupported("'Map' produces a value, not a stream of documents."),
+    statement: unsupported("'Map' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'Map' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Map' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  RegExp: global_({
+    doc: "The JavaScript RegExp class. A regular expression literal is the JSMQL spelling; see its refusal.",
+    token: "Ident",
+    newKeyword: "optional",
+    returns: "unknown",
+    where: [],
+    filter: regExpIsNotJsmql,
+    expr: regExpIsNotJsmql,
+    stream: unsupported("'RegExp' produces a value, not a stream of documents."),
+    statement: unsupported("'RegExp' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'RegExp' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'RegExp' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   length: name({

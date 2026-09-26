@@ -167,6 +167,8 @@ describe("strict-shape `.compile` builders", () => {
     expect(() => jsmql.pipeline.compile(42 as never)).toThrow(/jsmql\.pipeline\.compile\(\) expects an arrow function/);
   });
   it("a string that is not the entry form is refused", () => {
-    expect(() => jsmql.compile("$.age > 18")).toThrow(/takes the entry form/);
+    expect(() => jsmql.compile("$.age > 18")).toThrow(
+      "The source at position 0 is not the entry form '(params, { $, … }) => …' that jsmql.compile() takes: an arrow whose first destructure names the parameters.",
+    );
   });
 });

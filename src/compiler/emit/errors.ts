@@ -16,6 +16,7 @@ import {
   diagnosticOf,
   isFieldProperty,
   isKnownName,
+  newKeywordOf,
   siblingOf,
   spreadAlternativeOf,
   stageBodyRuleOf,
@@ -248,12 +249,6 @@ export const afterReplace =
 export const unfilledParam = (name: string, method: string, why: string): string =>
   `\`${name}\` has no value inside \`.${method}()\` — ${why}`;
 
-export const statementInValue = (what: string, pos: number): CodegenError =>
-  new CodegenError(
-    `${what} is a statement, not a value. It is only valid at the top level or as a pipeline-array element.`,
-    pos,
-  );
-
 export const negativeIndex = (index: number, pos: number): CodegenError =>
   new CodegenError(
     `Negative bracket index '[${index}]' is not allowed. In JavaScript that reads a property named "${index}" (normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end. This method works on both arrays and strings.`,
@@ -287,7 +282,24 @@ export const wrongCallCount = (label: string, params: readonly string[], got: nu
 
 export const unknownFunction = (name: string, known: readonly string[], pos: number): CodegenError =>
   new CodegenError(
-    `Unknown function '${name}(...)'.${didYouMean(name, known, (s) => `${s}(...)`)} Declare it first with \`const ${name} = (…) => …;\` at the top level of a pipeline; for a MongoDB operator write \`$${name}(...)\`; for a method, \`receiver.${name}(...)\`.`,
+    `Unknown function '${name}(...)'.${didYouMean(name, known, (s) => (newKeywordOf(s) === "required" ? `new ${s}(...)` : `${s}(...)`))} Declare it first with \`const ${name} = (…) => …;\` at the top level of a pipeline; for a MongoDB operator write \`$${name}(...)\`; for a method, \`receiver.${name}(...)\`.`,
+    pos,
+  );
+
+/** `Set([1, 2])`: the row states that the constructor needs `new`, as JavaScript does. */
+export const needsNew = (name: string, pos: number): CodegenError =>
+  new CodegenError(`'${name}(…)' needs 'new', as in JavaScript. Write 'new ${name}(…)'.`, pos);
+
+/** `new Number(5)`, or `new f(1)` for a declared function: a function, not a constructor. */
+export const newOnFunction = (name: string, pos: number): CodegenError =>
+  new CodegenError(`'${name}' is not a constructor in JSMQL. Call it without 'new': '${name}(…)'.`, pos);
+
+/** `new Foo(1)`: no row names the class. `name` is null when the callee is not a name at all. */
+export const unknownClass = (name: string | null, known: readonly string[], pos: number): CodegenError =>
+  new CodegenError(
+    name === null
+      ? "'new' takes the name of a class, as in 'new Date(…)'."
+      : `Unknown class '${name}' in 'new ${name}(…)'.${didYouMean(name, known, (s) => `new ${s}(…)`)} MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.`,
     pos,
   );
 
@@ -469,10 +481,12 @@ export const rootMustBeDocument = (noun: string, pos: number): CodegenError =>
     pos,
   );
 
-/** `delete $` — the root is not a field, and a pipeline that drops the document has no shape. */
-export const cannotDeleteRoot = (pos: number): CodegenError =>
+/** `delete $` and `delete $$` — neither root is a field, and a pipeline that drops it has no shape. */
+export const cannotDeleteRoot = (root: "$" | "$$", pos: number): CodegenError =>
   new CodegenError(
-    "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'.",
+    root === "$"
+      ? "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'."
+      : "'delete $$' would delete the stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'.",
     pos,
   );
 

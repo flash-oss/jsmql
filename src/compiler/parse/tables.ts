@@ -107,6 +107,12 @@ export const INFIX: ReadonlyMap<TokenName, Rule> = build(
   (f) => f === "infix" || f === "postfix" || f === "ternary" || f === "prefixOrPostfix",
 );
 
+/** The statement form of a write that JavaScript also reads as a value: `++` → `+= 1`. The row states it. */
+export function asStatementOf(spelling: string): string | null {
+  const type = lexemeToType(spelling);
+  return type === null ? null : (PREFIX.get(type)?.asStatement ?? null);
+}
+
 /**
  * The literal identifier that a rule requires, from its `word` field. The lexer
  * does not reserve `function`, so the parser must match the text. The text lives

@@ -2546,10 +2546,10 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   it("statement-position array mutators use the same formatter", () => {
     expect(() => jsmql("$.a.reverse(1);")).toThrow("'.reverse()' takes no arguments, got 1");
     expect(() => jsmql("$.a.copyWithin(1);")).toThrow(
-      "'.copyWithin(target, start[, end])' takes 2 to 3 arguments, got 1. at position 3",
+      "'.copyWithin(target, start[, end])' at position 3 takes 2 to 3 arguments, got 1.",
     );
     expect(() => jsmql("$.a.fill();")).toThrow(
-      "'.fill(value[, start[, end]])' takes 1 to 3 arguments, got 0. at position 3",
+      "'.fill(value[, start[, end]])' at position 3 takes 1 to 3 arguments, got 0.",
     );
   });
 });
@@ -4702,7 +4702,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
     it("a key-function method gets the same lead and no suggestion", () => {
       expect(() => jsmql("$.r = $$$.orders.sortBy((o) => { $limit(2); });")).toThrow(
-        "`$limit(...)` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $limit(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$limit(…)'. at position 33",
+        "`$limit(...)` at position 33 is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $limit(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$limit(…)'.",
       );
     });
 
@@ -8405,8 +8405,67 @@ describe("error cases", () => {
   });
   it("rejects an assignment to a literal, with a precise message", () => {
     expect(() => jsmql.expr("42 = 1")).toThrow(
-      "Cannot apply '=' to a NumberLiteral. You can write only to a field, a binding, '$', '$$' or a collection. at position 3",
+      "Cannot apply '=' to '42' at position 3. You can write only to a field, a binding, '$', '$$' or a collection.",
     );
+  });
+});
+
+describe("constructors — 'new' as JavaScript reads it, and the way forward", () => {
+  it("asks for 'new' where JavaScript requires it", () => {
+    // JavaScript: `Set([1])` throws "Constructor Set requires 'new'".
+    expect(() => jsmql.expr("Set([1, 2])")).toThrow("'Set(…)' needs 'new', as in JavaScript. Write 'new Set(…)'.");
+    expect(jsmql.expr("new Set([1, 2])")).toEqual([1, 2]);
+  });
+
+  it("names the call without 'new' for a function", () => {
+    expect(() => jsmql.expr("new Number(5)")).toThrow(
+      "'Number' is not a constructor in JSMQL. Call it without 'new': 'Number(…)'.",
+    );
+    expect(() => jsmql("const f = (x) => x; $.a = new f(1);")).toThrow(
+      "'f' is not a constructor in JSMQL. Call it without 'new': 'f(…)'.",
+    );
+  });
+
+  it("names the nearest class for an unknown one", () => {
+    expect(() => jsmql.expr("new Dat()")).toThrow(
+      "Unknown class 'Dat' in 'new Dat(…)'. Did you mean 'new Date(…)'? MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.",
+    );
+    expect(() => jsmql.expr("new Foo(1)")).toThrow(
+      "Unknown class 'Foo' in 'new Foo(…)'. MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.",
+    );
+  });
+
+  it("refuses 'Map' and 'RegExp' in both spellings, and names the JSMQL form", () => {
+    const map =
+      "'new Map(…)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('Object.fromEntries(pairs)').";
+    expect(() => jsmql.expr("new Map([['a', 1]])")).toThrow(map);
+    expect(() => jsmql.expr("Map([['a', 1]])")).toThrow(map);
+    const regExp =
+      "'RegExp(…)' is not part of JSMQL. Write a regular expression literal ('/^ab/i'). For a pattern built at run time, write '$regexMatch({ input: …, regex: … })'.";
+    expect(() => jsmql.expr('new RegExp("^ab")')).toThrow(regExp);
+    expect(() => jsmql.expr('RegExp("^ab")')).toThrow(regExp);
+    // The two forms each refusal names compile.
+    expect(jsmql.expr("Object.fromEntries($.pairs)")).toEqual({
+      $arrayToObject: {
+        $map: {
+          input: "$pairs",
+          as: "jsmqlP",
+          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+        },
+      },
+    });
+    expect(jsmql.expr("$regexMatch({ input: $.s, regex: $.p })")).toEqual({
+      $regexMatch: { input: "$s", regex: "$p" },
+    });
+  });
+
+  it("suggests only a name that a program can call", () => {
+    // `Math` and `Array` list no position, so `Map(…)` is never told to write `Math(…)`.
+    expect(() => jsmql.expr("Mapp(1)")).toThrow(
+      "Unknown function 'Mapp(...)'. Declare it first with `const Mapp = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Mapp(...)`; for a method, `receiver.Mapp(...)`.",
+    );
+    // A constructor that requires 'new' is suggested with it.
+    expect(() => jsmql.expr("Sett([1])")).toThrow(/Did you mean 'new Set\(\.\.\.\)'\?/);
   });
 });
 
@@ -10267,13 +10326,13 @@ describe("jsmql.compile()", () => {
   describe("error: rejects a default in the destructure", () => {
     it("rejects a literal default, with the explanatory message", () => {
       expect(() => jsmql.compile(({ minAge = 18 }: { minAge?: number }, { $ }) => $.age > minAge)).toThrow(
-        "jsmql does not support a default value in the params destructure ('minAge = …'). Apply the default where you call the query. Use JS's `??` at the call site: q({ minAge: input ?? <default> }). Or write the value into the template-tag form. at position 10",
+        "jsmql does not support a default value in the params destructure ('minAge = …') at position 10. Apply the default where you call the query. Use JS's `??` at the call site: q({ minAge: input ?? <default> }). Or write the value into the template-tag form.",
       );
     });
 
     it("rejects an expression default, with the explanatory message", () => {
       expect(() => jsmql.compile(({ now = Date.now() }: { now?: number }, { $ }) => $.createdAt > now)).toThrow(
-        "jsmql does not support a default value in the params destructure ('now = …'). Apply the default where you call the query. Use JS's `??` at the call site: q({ now: input ?? <default> }). Or write the value into the template-tag form. at position 7",
+        "jsmql does not support a default value in the params destructure ('now = …') at position 7. Apply the default where you call the query. Use JS's `??` at the call site: q({ now: input ?? <default> }). Or write the value into the template-tag form.",
       );
     });
 
@@ -10309,7 +10368,7 @@ describe("jsmql.compile()", () => {
     it("rejects an array destructure", () => {
       const src = "([a, b], { $ }) => $.x > a";
       expect(() => jsmql.compile(new Function("return " + src)() as never)).toThrow(
-        "jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got '['. at position 1",
+        "jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got '[' at position 1.",
       );
     });
   });
@@ -10393,7 +10452,7 @@ describe("jsmql.compile()", () => {
 
     it("rejects a non-arrow string with the same FunctionInputError message", () => {
       expect(() => jsmql.compile("$.age > 18")).toThrow(
-        "jsmql.compile() takes the entry form '(params, { $, … }) => …'. This is an arrow whose first destructure names the parameters. at position 0",
+        "The source at position 0 is not the entry form '(params, { $, … }) => …' that jsmql.compile() takes: an arrow whose first destructure names the parameters.",
       );
     });
 

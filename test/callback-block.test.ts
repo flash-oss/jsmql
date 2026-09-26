@@ -64,7 +64,7 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
       ],
       [
         `$.r = $$$.o.filter(x => { function f(a) { return a } return f(x.a); });`,
-        /`function f\(…\) \{ … \}` declares a reusable function/,
+        /`function f\(…\) \{ … \}` at position 26 declares a reusable function/,
       ],
     ];
     for (const [src, message] of cases) expect(() => jsmql(src)).toThrow(message);

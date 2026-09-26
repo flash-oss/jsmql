@@ -46,6 +46,7 @@ import { replaceIdents } from "../passes/inject.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import {
   ASSIGN_TRIGGERS,
+  asStatementOf,
   INFIX,
   MAX_PRECEDENCE,
   mixingRefused,
@@ -163,8 +164,9 @@ function statementSpelling(stmt: PipelineStmt): string {
  */
 function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   const wrote = statementSpelling(stmt);
+  const pos = (stmt as { pos: number }).pos;
   if (stmt.type === "FuncDecl") {
-    return `\`${wrote}\` declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(…)' inside the callback.`;
+    return `\`${wrote}\` at position ${pos} declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(…)' inside the callback.`;
   }
   // '.aggregate' is the one method whose block IS a list of stages, so every way
   // out names it. Deleting only the 'return' leaves the same block on the same
@@ -173,9 +175,9 @@ function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   const link = stmt.type === "OperatorCall" ? `'$$.$${(stmt as { name: string }).name.replace(/^\$/, "")}(…)'` : null;
   const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
   if (retPos !== null) {
-    return `\`${wrote}\` at position ${(stmt as { pos: number }).pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
+    return `\`${wrote}\` at position ${pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
   }
-  return `\`${wrote}\` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
+  return `\`${wrote}\` at position ${pos} is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
 }
 
 /** `$.a.b` for a field target, or the bare name otherwise. */
@@ -298,17 +300,70 @@ function trailingComma(comma: Token, next: Token): ParseError {
  * JavaScript gives the write a value, but a write stands only as a statement.
  * The message names the statement to write instead, and which side of the read
  * it goes on: a postfix `++` gives the value from before the write, and every
- * other write gives the value from after it.
+ * other write gives the value from after it. A `delete` leaves nothing to read,
+ * so its `place` is null.
  */
 function writeInValue(
   wrote: string,
   statement: string,
-  place: string,
+  place: string | null,
   side: "before" | "after",
   pos: number,
 ): ParseError {
+  const read = place === null ? "" : `, and read '${place}' there`;
   return new ParseError(
-    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value, and read '${place}' there.`,
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value${read}.`,
+    pos,
+  );
+}
+
+/**
+ * The same refusal, for a write the parser read as a pipeline element. Only the
+ * position pass knows that the array in `$.y = [$.x++]` is a value, so the
+ * desugar pass asks here, before any rule rewrites the write.
+ */
+export function writeInValueOf(node: UpdateOp | UpdateFilter): ParseError {
+  const op = node.type === "UpdateFilter" ? node.ops[0] : node;
+  const place = targetSpelling(op.target);
+  if (op.type === "DeleteStmt") return writeInValue(`delete ${place}`, `delete ${place}`, null, "before", op.pos);
+  const update = asStatementOf(op.op);
+  if (update === null) return writeInValue(`${place} ${op.op} …`, `${place} ${op.op} …`, place, "before", op.pos);
+  // The parser gives the write the position of its operator, so a prefix `++`
+  // stands before its target and a postfix one after it.
+  const prefix = op.pos < (op.target as { pos: number }).pos;
+  const wrote = prefix ? `${op.op}${place}` : `${place}${op.op}`;
+  return writeInValue(wrote, `${place} ${update}`, place, prefix ? "before" : "after", op.pos);
+}
+
+/**
+ * `$.y = [function f(x) { … }]`: a function as an element of a value. MQL has no
+ * function values, so a function stands only as its own statement.
+ */
+export function functionInValueOf(node: FuncDecl): ParseError {
+  return new ParseError(
+    `'function ${node.name}(…)' is a function inside a value at position ${node.pos}. MQL has no function values. Write the function as its own statement at the top level of the pipeline, and call '${node.name}(…)' where the value goes.`,
+    node.pos,
+  );
+}
+
+/**
+ * `$ += 1` and `$$++`: an arithmetic write needs a field. `$` is the whole
+ * document and `$$` is the stream of documents, so neither can take one.
+ * A `=` replaces either one, and a collection (`$$$.<coll> += …`) takes the
+ * write as a `$merge`, so both of those stay legal.
+ */
+function refuseWholeTarget(target: Expr, op: string, pos: number): void {
+  if (op === "=" || op === "delete") return;
+  const what =
+    target.type === "CollectionRef"
+      ? "'$$' is the stream of documents"
+      : target.type === "FieldRef" && target.path === ""
+        ? "'$' is the whole document"
+        : null;
+  if (what === null) return;
+  const field = asStatementOf(op) === null ? `$.<field> ${op} …` : `$.<field>${op}`;
+  throw new ParseError(
+    `Cannot use '${op}' on '${target.type === "CollectionRef" ? "$$" : "$"}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`,
     pos,
   );
 }
@@ -422,7 +477,7 @@ class Parser {
         // `{ a = 1 }`: a value reaches a compiled query only through the params object, at call time.
         if (this.c.is("Eq")) {
           throw new ParseError(
-            `jsmql does not support a default value in the params destructure ('${key.text} = …'). Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
+            `jsmql does not support a default value in the params destructure ('${key.text} = …') at position ${this.c.peek().pos}. Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
             this.c.peek().pos,
           );
         }
@@ -781,10 +836,11 @@ class Parser {
     }
     if (this.c.is("Delete")) {
       const kw = this.c.next();
+      const targetStart = this.c.peek().pos;
       const target = this.pratt(1);
       // `delete a?.b` is legal JavaScript, unlike `a?.b = 1`. So only the
       // "is it a place at all" half of the check applies here.
-      this.requirePlace(target, kw.pos, "delete");
+      this.requirePlace(target, kw.pos, "delete", this.src.slice(targetStart, this.c.lastEnd()));
       return [{ type: "DeleteStmt", target: target.expr, pos: kw.pos }];
     }
     // `++$.a` and `$.a++` mean the same write. The row says `prefixOrPostfix`,
@@ -804,7 +860,7 @@ class Parser {
     // The token's own text IS the spelling: `=`, `+=`, `++`. So no table maps
     // a token type back to the operator it was lexed from.
     const spelling = op.text as AssignOp;
-    this.requireWriteTarget(target, op.pos, spelling);
+    this.requireWriteTarget(target, op.pos, spelling, this.src.slice(placeStart, placeEnd));
     const update = PREFIX.get(op.type)?.asStatement ?? null;
     if (update !== null) {
       // `$.a++ + 1;` is `($.a++) + 1` to JavaScript: a value around the write.
@@ -822,8 +878,9 @@ class Parser {
       let valueStart = this.c.peek().pos;
       let value = this.pratt(1);
       while (this.c.is("Eq")) {
+        const wrote = this.src.slice(valueStart, this.c.lastEnd());
         const eq = this.c.next();
-        this.requireWriteTarget(value, eq.pos, "=");
+        this.requireWriteTarget(value, eq.pos, "=", wrote);
         targets.push(value.expr);
         valueStart = this.c.peek().pos;
         value = this.pratt(1);
@@ -843,7 +900,7 @@ class Parser {
   private refuseAssignInValue(target: Parsed, start: number): never {
     const place = this.src.slice(start, this.c.lastEnd());
     const op = this.c.next();
-    this.requireWriteTarget(target, op.pos, op.text);
+    this.requireWriteTarget(target, op.pos, op.text, place);
     this.expression();
     const wrote = this.src.slice(start, this.c.lastEnd());
     throw writeInValue(wrote, wrote, place, "before", op.pos);
@@ -892,9 +949,10 @@ class Parser {
   /**
    * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
    * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not places.
-   * JavaScript refuses them, and so does JSMQL.
+   * JavaScript refuses them, and so does JSMQL. `wrote` is the target as the
+   * source spells it, so the message quotes the developer's own text.
    */
-  private requirePlace(target: Parsed, pos: number, op: string): void {
+  private requirePlace(target: Parsed, pos: number, op: string, wrote: string): void {
     const t = target.expr.type;
     const isPlace =
       t === "FieldRef" ||
@@ -915,9 +973,8 @@ class Parser {
         pos,
       );
     }
-    const what = target.rule === null ? `a ${t}` : `a '${spelled(target.rule)}' expression`;
     throw new ParseError(
-      `Cannot apply '${op}' to ${what}. You can write only to a field, a binding, '$', '$$' or a collection.`,
+      `Cannot apply '${op}' to '${wrote}' at position ${pos}. You can write only to a field, a binding, '$', '$$' or a collection.`,
       pos,
     );
   }
@@ -929,8 +986,9 @@ class Parser {
    * This method reads the row rather than testing `.optional`. So the next rule
    * that says so needs no branch here.
    */
-  private requireWriteTarget(target: Parsed, pos: number, op: string): void {
-    this.requirePlace(target, pos, op);
+  private requireWriteTarget(target: Parsed, pos: number, op: string, wrote: string): void {
+    this.requirePlace(target, pos, op, wrote);
+    refuseWholeTarget(target.expr, op, pos);
     if (target.rule === null) return;
     const refusal = NEVER_A_WRITE_TARGET.get(target.rule);
     if (refusal === undefined) return;
@@ -981,7 +1039,7 @@ class Parser {
         if (endsAtWrite) return left;
         const place = this.src.slice(start, this.c.lastEnd());
         const op = this.c.next();
-        this.requireWriteTarget(left, op.pos, op.text);
+        this.requireWriteTarget(left, op.pos, op.text, place);
         throw writeInValue(this.src.slice(start, op.end), `${place} ${rule.asStatement}`, place, "after", op.pos);
       }
 
@@ -1046,8 +1104,8 @@ class Parser {
       const argument = this.pratt(rule.prec);
       // `$.y = ++$.x`: JavaScript reads the prefix write as a value.
       if (rule.asStatement !== null) {
-        this.requireWriteTarget(argument, op.pos, op.text);
         const place = this.src.slice(placeStart, this.c.lastEnd());
+        this.requireWriteTarget(argument, op.pos, op.text, place);
         throw writeInValue(
           this.src.slice(op.pos, this.c.lastEnd()),
           `${place} ${rule.asStatement}`,
@@ -1068,6 +1126,16 @@ class Parser {
         expr: { type: "UnaryExpr", op: op.text as UnaryOp, argument: argument.expr, pos: op.pos },
         rule: rule.rules[0],
       };
+    }
+    // `f(delete $.a)`: JavaScript reads `delete` as a value too, but a write
+    // stands only as a statement.
+    if (this.c.is("Delete")) {
+      const kw = this.c.next();
+      const placeStart = this.c.peek().pos;
+      const target = this.pratt(MAX_PRECEDENCE);
+      const place = this.src.slice(placeStart, this.c.lastEnd());
+      this.requirePlace(target, kw.pos, "delete", place);
+      throw writeInValue(`delete ${place}`, `delete ${place}`, null, "before", kw.pos);
     }
     return this.postfix(this.atom());
   }

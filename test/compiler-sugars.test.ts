@@ -444,7 +444,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         },
       },
     ]);
-    expect(() => pipeline("$.xs.pop(1);")).toThrow(/'\.pop\(\)' takes exactly 0 arguments, got 1/);
+    expect(() => pipeline("$.xs.pop(1);")).toThrow("'.pop()' at position 4 takes exactly 0 arguments, got 1.");
   });
 
   it("fill and copyWithin follow JavaScript's index rules, negatives included", () => {
@@ -1165,7 +1165,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
       },
     ]);
     expect(() => pipeline("$.xs.fill();")).toThrow(
-      /'\.fill\(value\[, start\[, end\]\]\)' takes 1 to 3 arguments, got 0/,
+      /'\.fill\(value\[, start\[, end\]\]\)' at position \d+ takes 1 to 3 arguments, got 0\./,
     );
   });
 

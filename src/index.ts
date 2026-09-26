@@ -421,7 +421,8 @@ function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBui
     }
     if (!isEntryForm(src)) {
       throw new FunctionInputError(
-        `${api}() takes the entry form '(params, { $, … }) => …'. This is an arrow whose first destructure names the parameters.`,
+        `The source at position 0 is not the entry form '(params, { $, … }) => …' that ${api}() takes: an arrow whose first destructure names the parameters.`,
+        0,
       );
     }
     const parsed = parseInput(src);

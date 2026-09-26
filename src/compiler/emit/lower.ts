@@ -38,6 +38,8 @@ import {
   hasStreamValueCell,
   emptyCollectionOf,
   bareCallableNames,
+  constructibleNames,
+  positionsOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
@@ -356,10 +358,10 @@ function refuseStageList(node: Expr, elements: readonly ArrayElement[]): void {
 function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): unknown {
   refuseStageList(node, elements);
   const inner = childEnv(env, node, "elements");
+  // The desugar pass refuses a statement in a value, with the spelling the developer wrote.
   for (const el of elements) {
-    if (el.type === "AssignExpr" || el.type === "UpdateFilter") throw E.statementInValue("Assignment", el.pos);
-    if (el.type === "DeleteStmt") throw E.statementInValue("delete", el.pos);
-    if (el.type === "FuncDecl") throw E.statementInValue("A function declaration", el.pos);
+    if (el.type === "AssignExpr" || el.type === "UpdateFilter" || el.type === "DeleteStmt" || el.type === "FuncDecl")
+      internalError(`a '${el.type}' reached a value array`, el.pos);
   }
   if (!elements.some((el) => el.type === "SpreadElement"))
     return elements.filter(isExpr).map((el) => lowerValue(el, inner));
@@ -824,8 +826,11 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
       throw E.notCallable(node.pos);
     }
     if (isGlobalName(callee.name)) {
-      // A constructor called without `new`, where the row requires one.
-      if (newKeywordOf(callee.name) === "required") throw E.unknownFunction(callee.name, [], node.pos);
+      // A constructor called without `new`, where the row requires one. A row that
+      // lists no position answers with its own refusal for either spelling.
+      if (newKeywordOf(callee.name) === "required" && (positionsOf(callee.name)?.length ?? 0) > 0) {
+        throw E.needsNew(callee.name, node.pos);
+      }
       return dispatchBare(node, callee.name, node.args, env);
     }
     throw E.unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
@@ -836,10 +841,16 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
 
 function newExpression(node: Extract<Expr, { type: "NewExpression" }>, env: Env): unknown {
   const { callee } = node;
-  if (callee.type !== "Ident" || !isGlobalName(callee.name) || newKeywordOf(callee.name) === "forbidden") {
-    throw E.notCallable(node.pos);
+  if (callee.type !== "Ident") throw E.unknownClass(null, [], node.pos);
+  const { name } = callee;
+  if (env.scope.has(name) && env.lookup(name, callee.pos).ref.kind === "function")
+    throw E.newOnFunction(name, node.pos);
+  if (env.scope.has(name) || !isGlobalName(name)) throw E.unknownClass(name, constructibleNames(), node.pos);
+  // A row that lists no position answers with its own refusal for either spelling.
+  if (newKeywordOf(name) === "forbidden" && (positionsOf(name)?.length ?? 0) > 0) {
+    throw E.newOnFunction(name, node.pos);
   }
-  return dispatchBare(node, callee.name, node.args, env);
+  return dispatchBare(node, name, node.args, env);
 }
 
 /** A global called by name — `Number(x)`, `new Date(…)`, `assert(…)`. */

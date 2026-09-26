@@ -13,8 +13,15 @@ export class ParseError extends Error {
   pos: number;
   constructor(message: string, pos: number) {
     // Every message states the position. The code does not add it twice when the
-    // message already places the position in the middle of the sentence.
-    super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
+    // message already places the position in the middle of the sentence. A message
+    // that ends with a full stop takes the position before the stop.
+    super(
+      /\bat position \d+/.test(message)
+        ? message
+        : message.endsWith(".")
+          ? `${message.slice(0, -1)} at position ${pos}.`
+          : `${message} at position ${pos}`,
+    );
     this.name = "ParseError";
     this.pos = pos;
   }

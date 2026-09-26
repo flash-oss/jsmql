@@ -192,6 +192,14 @@ spliced into the body mention. See `freshParam`.
 
 ## The driver
 
+Before the first round, one walk refuses a write that stands in a value: a write
+or a `delete` as an element of an array that is a value (`$.y = [$.x++]`), and a
+function there. The parser reads such an element as a pipeline element, because
+only the position pass knows which arrays are pipelines. The walk runs before
+any rule rewrites the write, so the refusal quotes the write as the source
+spells it. It is the refusal the parser gives `$.y = $.x++`. See
+[update-filter.md § Error message conventions](update-filter.md#error-message-conventions).
+
 The rules run in order, then the fold runs, and the whole round repeats until a
 round changes nothing. Identity is the test, because `mapTree` returns the same
 object when no rule fires.

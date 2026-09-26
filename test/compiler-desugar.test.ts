@@ -98,22 +98,8 @@ describe("compiler/passes/desugar — a sugar becomes the source it means", () =
   });
 });
 
-describe("compiler/passes/desugar — the guards run BEFORE the rewrite", () => {
-  // Rewriting first would turn a tailored refusal into valid-looking MQL:
-  // `$ += 1` would become `$ = $ + 1`, which compiles to a $replaceWith.
-  const refused: [string, RegExp][] = [
-    ["$ += 1;", /Cannot use '\+=' on bare '\$'/],
-    ["$ -= 1;", /Cannot use '-=' on bare '\$'/],
-    ["$++;", /Cannot use '\+\+' on bare '\$'/],
-    ["$$ += 1;", /Cannot use '\+=' on '\$\$'/],
-    ["$$++;", /Cannot use '\+\+' on '\$\$'/],
-  ];
-  for (const [src, message] of refused) {
-    it(`refuses ${src}`, () => {
-      expect(() => desugar(parse(src))).toThrow(message);
-    });
-  }
-
+describe("compiler/passes/desugar — a compound write on a field is its '=' form", () => {
+  // The parser refuses the same operators on `$` and `$$` (see compiler-parse.test.ts).
   it("still allows the same operators on a field of the document", () => {
     expect(shape("$.n += 1;")).toBe(shape("$.n = $.n + 1;"));
     expect(shape("$.n++;")).toBe(shape("$.n = $.n + 1;"));
@@ -214,7 +200,7 @@ describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement
     expect(became("$.items.shift();")).toBe("write(MethodCall)");
     expect(became("$.items.fill(0);")).toBe("write(MethodCall)");
     expect(became("$.items.copyWithin(0, 3);")).toBe("write(ArrayLiteral)");
-    expect(() => became("$.items.pop(1);")).toThrow(/'\.pop\(\)' takes exactly 0 arguments, got 1/);
+    expect(() => became("$.items.pop(1);")).toThrow("'.pop()' at position 7 takes exactly 0 arguments, got 1.");
   });
 });
 

@@ -953,7 +953,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       continue;
     }
     if (path === STREAM_TARGET) {
-      if (op.type === "DeleteStmt") throw E.cannotDeleteRoot(op.pos);
+      if (op.type === "DeleteStmt") throw E.cannotDeleteRoot("$$", op.pos);
       flush();
       // A bracketed list of literal DOCUMENTS names the stream's
       // documents. A list holding anything else — a spread, a value — is
@@ -976,7 +976,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       continue;
     }
     if (op.type === "DeleteStmt") {
-      if (path === "") throw E.cannotDeleteRoot(op.pos);
+      if (path === "") throw E.cannotDeleteRoot("$", op.pos);
       if (sets !== null) flush();
       (unsets ??= []).push(path);
       prove(path, null);

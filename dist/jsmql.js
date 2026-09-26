@@ -641,6 +641,12 @@ function groupedByKey(input, it, bind) {
 var fromIsNotJsmql = unsupported(
   "'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
 );
+var mapIsNotJsmql = unsupported(
+  "'new Map(\u2026)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('Object.fromEntries(pairs)')."
+);
+var regExpIsNotJsmql = unsupported(
+  "'RegExp(\u2026)' is not part of JSMQL. Write a regular expression literal ('/^ab/i'). For a pattern built at run time, write '$regexMatch({ input: \u2026, regex: \u2026 })'."
+);
 var NO_IS_FINITE = unsupported(
   `Number.isFinite($.x) is not supported: jsmql has no syntax for an Infinity or NaN literal to compare against. Three ways round it: check the BSON type with '$type($.x)' and reject the "double" values you know to be non-finite at the source; substitute a sentinel with '$op($convert, { input: $.x, to: "double", onError: 0 })'; or constrain to a known range ('$.x > -1e300 && $.x < 1e300') where the domain allows it.`
 );
@@ -13122,6 +13128,32 @@ var NAMES = {
     group: unsupported("'Array' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
+  Map: global_({
+    doc: "The JavaScript Map class. MongoDB has no map type; see its refusal.",
+    token: "Ident",
+    newKeyword: "required",
+    returns: "object",
+    where: [],
+    filter: mapIsNotJsmql,
+    expr: mapIsNotJsmql,
+    stream: unsupported("'Map' produces a value, not a stream of documents."),
+    statement: unsupported("'Map' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'Map' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Map' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  RegExp: global_({
+    doc: "The JavaScript RegExp class. A regular expression literal is the JSMQL spelling; see its refusal.",
+    token: "Ident",
+    newKeyword: "optional",
+    returns: "unknown",
+    where: [],
+    filter: regExpIsNotJsmql,
+    expr: regExpIsNotJsmql,
+    stream: unsupported("'RegExp' produces a value, not a stream of documents."),
+    statement: unsupported("'RegExp' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'RegExp' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'RegExp' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
   length: name({
     doc: "'.length()' \u2014 the number of characters of a string. See docs/LANGUAGE.md.",
     call: true,
@@ -14776,7 +14808,15 @@ function streamReceiverNames() {
   return Object.keys(ROWS).filter((n2) => lists(n2, "stream") || familiesOf(n2)?.includes("stream") === true);
 }
 function bareCallableNames() {
-  return Object.keys(ROWS).filter((n2) => !n2.startsWith("$") && isGlobalName(n2) && isCallable(n2));
+  return Object.keys(ROWS).filter(
+    (n2) => !n2.startsWith("$") && isGlobalName(n2) && isCallable(n2) && (positionsOf(n2)?.length ?? 0) > 0
+  );
+}
+function constructibleNames() {
+  return bareCallableNames().filter((n2) => {
+    const k = newKeywordOf(n2);
+    return k === "required" || k === "optional";
+  });
 }
 
 // src/registry/tokens.ts
@@ -15230,7 +15270,9 @@ function lex(src) {
 // src/compiler/parse/cursor.ts
 var ParseError = class extends Error {
   constructor(message, pos) {
-    super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
+    super(
+      /\bat position \d+/.test(message) ? message : message.endsWith(".") ? `${message.slice(0, -1)} at position ${pos}.` : `${message} at position ${pos}`
+    );
     this.name = "ParseError";
     this.pos = pos;
   }
@@ -18923,6 +18965,10 @@ var PREFIX = build((f) => f === "prefix" || f === "prefixOrPostfix");
 var INFIX = build(
   (f) => f === "infix" || f === "postfix" || f === "ternary" || f === "prefixOrPostfix"
 );
+function asStatementOf(spelling) {
+  const type = lexemeToType(spelling);
+  return type === null ? null : PREFIX.get(type)?.asStatement ?? null;
+}
 var WORDS = new Map(
   rows.filter(([, r]) => r.word !== void 0).map(([n2, r]) => [r.word, n2])
 );
@@ -19011,16 +19057,17 @@ function statementSpelling(stmt) {
 }
 function notPartOfACallback(stmt, retPos) {
   const wrote = statementSpelling(stmt);
+  const pos = stmt.pos;
   if (stmt.type === "FuncDecl") {
-    return `\`${wrote}\` declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(\u2026)' inside the callback.`;
+    return `\`${wrote}\` at position ${pos} declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(\u2026)' inside the callback.`;
   }
   const stages = `'.aggregate((o) => { ${wrote}; \u2026 })'`;
   const link = stmt.type === "OperatorCall" ? `'$$.$${stmt.name.replace(/^\$/, "")}(\u2026)'` : null;
   const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
   if (retPos !== null) {
-    return `\`${wrote}\` at position ${stmt.pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
+    return `\`${wrote}\` at position ${pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
   }
-  return `\`${wrote}\` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
+  return `\`${wrote}\` at position ${pos} is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
 }
 function targetSpelling(target) {
   if (target.type === "FieldRef") return target.path === "" ? "$" : `$.${target.path}`;
@@ -19085,8 +19132,35 @@ function trailingComma(comma, next) {
   );
 }
 function writeInValue(wrote, statement, place2, side, pos) {
+  const read = place2 === null ? "" : `, and read '${place2}' there`;
   return new ParseError(
-    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value, and read '${place2}' there.`,
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value${read}.`,
+    pos
+  );
+}
+function writeInValueOf(node) {
+  const op = node.type === "UpdateFilter" ? node.ops[0] : node;
+  const place2 = targetSpelling(op.target);
+  if (op.type === "DeleteStmt") return writeInValue(`delete ${place2}`, `delete ${place2}`, null, "before", op.pos);
+  const update = asStatementOf(op.op);
+  if (update === null) return writeInValue(`${place2} ${op.op} \u2026`, `${place2} ${op.op} \u2026`, place2, "before", op.pos);
+  const prefix = op.pos < op.target.pos;
+  const wrote = prefix ? `${op.op}${place2}` : `${place2}${op.op}`;
+  return writeInValue(wrote, `${place2} ${update}`, place2, prefix ? "before" : "after", op.pos);
+}
+function functionInValueOf(node) {
+  return new ParseError(
+    `'function ${node.name}(\u2026)' is a function inside a value at position ${node.pos}. MQL has no function values. Write the function as its own statement at the top level of the pipeline, and call '${node.name}(\u2026)' where the value goes.`,
+    node.pos
+  );
+}
+function refuseWholeTarget(target, op, pos) {
+  if (op === "=" || op === "delete") return;
+  const what = target.type === "CollectionRef" ? "'$$' is the stream of documents" : target.type === "FieldRef" && target.path === "" ? "'$' is the whole document" : null;
+  if (what === null) return;
+  const field = asStatementOf(op) === null ? `$.<field> ${op} \u2026` : `$.<field>${op}`;
+  throw new ParseError(
+    `Cannot use '${op}' on '${target.type === "CollectionRef" ? "$$" : "$"}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`,
     pos
   );
 }
@@ -19182,7 +19256,7 @@ var Parser = class _Parser {
         const name2 = this.c.eat("Colon") ? this.identLike().text : key.text;
         if (this.c.is("Eq")) {
           throw new ParseError(
-            `jsmql does not support a default value in the params destructure ('${key.text} = \u2026'). Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
+            `jsmql does not support a default value in the params destructure ('${key.text} = \u2026') at position ${this.c.peek().pos}. Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
             this.c.peek().pos
           );
         }
@@ -19502,8 +19576,9 @@ var Parser = class _Parser {
     }
     if (this.c.is("Delete")) {
       const kw = this.c.next();
+      const targetStart = this.c.peek().pos;
       const target2 = this.pratt(1);
-      this.requirePlace(target2, kw.pos, "delete");
+      this.requirePlace(target2, kw.pos, "delete", this.src.slice(targetStart, this.c.lastEnd()));
       return [{ type: "DeleteStmt", target: target2.expr, pos: kw.pos }];
     }
     const lead = PREFIX.get(this.c.type);
@@ -19517,7 +19592,7 @@ var Parser = class _Parser {
       throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
     }
     const spelling = op.text;
-    this.requireWriteTarget(target, op.pos, spelling);
+    this.requireWriteTarget(target, op.pos, spelling, this.src.slice(placeStart, placeEnd));
     const update = PREFIX.get(op.type)?.asStatement ?? null;
     if (update !== null) {
       if (INFIX.has(this.c.type) || ASSIGN_TRIGGERS.has(this.c.type)) {
@@ -19532,8 +19607,9 @@ var Parser = class _Parser {
       let valueStart = this.c.peek().pos;
       let value = this.pratt(1);
       while (this.c.is("Eq")) {
+        const wrote = this.src.slice(valueStart, this.c.lastEnd());
         const eq = this.c.next();
-        this.requireWriteTarget(value, eq.pos, "=");
+        this.requireWriteTarget(value, eq.pos, "=", wrote);
         targets.push(value.expr);
         valueStart = this.c.peek().pos;
         value = this.pratt(1);
@@ -19551,7 +19627,7 @@ var Parser = class _Parser {
   refuseAssignInValue(target, start) {
     const place2 = this.src.slice(start, this.c.lastEnd());
     const op = this.c.next();
-    this.requireWriteTarget(target, op.pos, op.text);
+    this.requireWriteTarget(target, op.pos, op.text, place2);
     this.expression();
     const wrote = this.src.slice(start, this.c.lastEnd());
     throw writeInValue(wrote, wrote, place2, "before", op.pos);
@@ -19596,9 +19672,10 @@ var Parser = class _Parser {
   /**
    * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
    * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not places.
-   * JavaScript refuses them, and so does JSMQL.
+   * JavaScript refuses them, and so does JSMQL. `wrote` is the target as the
+   * source spells it, so the message quotes the developer's own text.
    */
-  requirePlace(target, pos, op) {
+  requirePlace(target, pos, op, wrote) {
     const t = target.expr.type;
     const isPlace = t === "FieldRef" || t === "Ident" || t === "MemberAccess" || t === "IndexAccess" || t === "CollectionRef" || t === "DatabaseRef" || t === "ClusterRef";
     if (isPlace) return;
@@ -19609,9 +19686,8 @@ var Parser = class _Parser {
         pos
       );
     }
-    const what = target.rule === null ? `a ${t}` : `a '${spelled(target.rule)}' expression`;
     throw new ParseError(
-      `Cannot apply '${op}' to ${what}. You can write only to a field, a binding, '$', '$$' or a collection.`,
+      `Cannot apply '${op}' to '${wrote}' at position ${pos}. You can write only to a field, a binding, '$', '$$' or a collection.`,
       pos
     );
   }
@@ -19622,8 +19698,9 @@ var Parser = class _Parser {
    * This method reads the row rather than testing `.optional`. So the next rule
    * that says so needs no branch here.
    */
-  requireWriteTarget(target, pos, op) {
-    this.requirePlace(target, pos, op);
+  requireWriteTarget(target, pos, op, wrote) {
+    this.requirePlace(target, pos, op, wrote);
+    refuseWholeTarget(target.expr, op, pos);
     if (target.rule === null) return;
     const refusal = NEVER_A_WRITE_TARGET.get(target.rule);
     if (refusal === void 0) return;
@@ -19666,7 +19743,7 @@ var Parser = class _Parser {
         if (endsAtWrite) return left;
         const place2 = this.src.slice(start, this.c.lastEnd());
         const op2 = this.c.next();
-        this.requireWriteTarget(left, op2.pos, op2.text);
+        this.requireWriteTarget(left, op2.pos, op2.text, place2);
         throw writeInValue(this.src.slice(start, op2.end), `${place2} ${rule.asStatement}`, place2, "after", op2.pos);
       }
       if (mixingRefused(rule, left.rule, "left")) {
@@ -19721,8 +19798,8 @@ var Parser = class _Parser {
       const placeStart = this.c.peek().pos;
       const argument = this.pratt(rule.prec);
       if (rule.asStatement !== null) {
-        this.requireWriteTarget(argument, op.pos, op.text);
         const place2 = this.src.slice(placeStart, this.c.lastEnd());
+        this.requireWriteTarget(argument, op.pos, op.text, place2);
         throw writeInValue(
           this.src.slice(op.pos, this.c.lastEnd()),
           `${place2} ${rule.asStatement}`,
@@ -19742,6 +19819,14 @@ var Parser = class _Parser {
         expr: { type: "UnaryExpr", op: op.text, argument: argument.expr, pos: op.pos },
         rule: rule.rules[0]
       };
+    }
+    if (this.c.is("Delete")) {
+      const kw = this.c.next();
+      const placeStart = this.c.peek().pos;
+      const target = this.pratt(MAX_PRECEDENCE);
+      const place2 = this.src.slice(placeStart, this.c.lastEnd());
+      this.requirePlace(target, kw.pos, "delete", place2);
+      throw writeInValue(`delete ${place2}`, `delete ${place2}`, null, "before", kw.pos);
     }
     return this.postfix(this.atom());
   }
@@ -22224,15 +22309,6 @@ function writesACollection(target) {
   const base = chainBase(target);
   return base.type === "DatabaseRef" || base.type === "ClusterRef";
 }
-function refuseNonScalarTarget(target, op) {
-  const t = target;
-  const what = t.type === "CollectionRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
-  if (what === null) return;
-  throw new ParseError(
-    `Cannot use '${op}' on ${what} \u2014 it is the whole document, not a scalar. Write the field: '$.<field> ${op} \u2026'`,
-    target.pos
-  );
-}
 var compoundAssign = {
   name: "fieldAssignment",
   apply: (node, where) => {
@@ -22242,7 +22318,6 @@ var compoundAssign = {
     const binop = COMPOUND.get(n2.op);
     if (binop === void 0) return node;
     if (writesACollection(n2.target)) return node;
-    refuseNonScalarTarget(n2.target, n2.op);
     return {
       type: "AssignExpr",
       target: { ...n2.target },
@@ -22262,7 +22337,6 @@ var incDec = {
     const n2 = node;
     if (n2.type !== "AssignExpr") return node;
     if (n2.op !== "++" && n2.op !== "--") return node;
-    refuseNonScalarTarget(n2.target, n2.op);
     return {
       type: "AssignExpr",
       target: { ...n2.target },
@@ -22379,7 +22453,7 @@ var mutatorForm = {
       const counts = Object.keys(form.by).map(Number);
       const range = counts.length === 1 ? `exactly ${counts[0]}` : `${Math.min(...counts)} to ${Math.max(...counts)}`;
       throw new ParseError(
-        `'.${n2.name}(${form.sig})' takes ${range} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
+        `'.${n2.name}(${form.sig})' at position ${n2.pos} takes ${range} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
         n2.pos
       );
     }
@@ -22600,7 +22674,19 @@ var RULES = [
   groupBodyLink,
   iterateeShorthand
 ];
+function refuseWritesInValues(program, root2) {
+  mapTreeIn(program, root2, edge, (node, where) => {
+    if (where.at === "statement" || where.at === "updateDoc") return node;
+    const t = node.type;
+    if (t === "UpdateFilter" || t === "AssignExpr" || t === "DeleteStmt") {
+      throw writeInValueOf(node);
+    }
+    if (t === "FuncDecl") throw functionInValueOf(node);
+    return node;
+  });
+}
 function desugarVerbose(program, root2 = STATEMENT) {
+  refuseWritesInValues(program, root2);
   let current = program;
   const seen = /* @__PURE__ */ new Set([fingerprint(program)]);
   for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -23281,10 +23367,6 @@ var functionAsValue = (name2, pos) => new CodegenError(
 var droppedBinding = (ref, pos) => new CodegenError(ref.message, pos);
 var afterReplace = (by) => (name2, mutable) => mutable ? `\`${name2}\` is a \`let\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Assign it again after the stage (\`${name2} = \u2026\`), or carry the value as a field of the new document.` : `\`${name2}\` is a \`const\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Carry the value as a field of the new document, or declare it with \`let\` and assign it again after the stage.`;
 var unfilledParam = (name2, method, why) => `\`${name2}\` has no value inside \`.${method}()\` \u2014 ${why}`;
-var statementInValue = (what, pos) => new CodegenError(
-  `${what} is a statement, not a value. It is only valid at the top level or as a pipeline-array element.`,
-  pos
-);
 var negativeIndex = (index, pos) => new CodegenError(
   `Negative bracket index '[${index}]' is not allowed. In JavaScript that reads a property named "${index}" (normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end. This method works on both arrays and strings.`,
   pos
@@ -23306,7 +23388,13 @@ var wrongCallCount = (label, params, got, pos) => new CodegenError(
   pos
 );
 var unknownFunction = (name2, known, pos) => new CodegenError(
-  `Unknown function '${name2}(...)'.${didYouMean(name2, known, (s) => `${s}(...)`)} Declare it first with \`const ${name2} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${name2}(...)\`; for a method, \`receiver.${name2}(...)\`.`,
+  `Unknown function '${name2}(...)'.${didYouMean(name2, known, (s) => newKeywordOf(s) === "required" ? `new ${s}(...)` : `${s}(...)`)} Declare it first with \`const ${name2} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${name2}(...)\`; for a method, \`receiver.${name2}(...)\`.`,
+  pos
+);
+var needsNew = (name2, pos) => new CodegenError(`'${name2}(\u2026)' needs 'new', as in JavaScript. Write 'new ${name2}(\u2026)'.`, pos);
+var newOnFunction = (name2, pos) => new CodegenError(`'${name2}' is not a constructor in JSMQL. Call it without 'new': '${name2}(\u2026)'.`, pos);
+var unknownClass = (name2, known, pos) => new CodegenError(
+  name2 === null ? "'new' takes the name of a class, as in 'new Date(\u2026)'." : `Unknown class '${name2}' in 'new ${name2}(\u2026)'.${didYouMean(name2, known, (s) => `new ${s}(\u2026)`)} MQL has no classes of its own. Write the value as an object literal ('{ \u2026 }'), or declare a function that returns one and call it without 'new'.`,
   pos
 );
 var notCallable = (pos) => new CodegenError(
@@ -23399,8 +23487,8 @@ var rootMustBeDocument = (noun, pos) => new CodegenError(
   `'$ = \u2026' replaces the document, so the value has to BE a document \u2014 ${noun} is not one. Put it under a field ('$ = { value: \u2026 };'), or write to a field instead ('$.value = \u2026;').`,
   pos
 );
-var cannotDeleteRoot = (pos) => new CodegenError(
-  "'delete $' would delete the document itself. To replace it, write '$ = { \u2026 };'; to drop every field but one, write '$ = { keep: $.keep };'.",
+var cannotDeleteRoot = (root2, pos) => new CodegenError(
+  root2 === "$" ? "'delete $' would delete the document itself. To replace it, write '$ = { \u2026 };'; to drop every field but one, write '$ = { keep: $.keep };'." : "'delete $$' would delete the stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => \u2026);'.",
   pos
 );
 var notAWriteTarget = (pos) => new CodegenError(
@@ -27026,9 +27114,8 @@ function arrayLiteral(node, elements, env) {
   refuseStageList(node, elements);
   const inner = childEnv(env, node, "elements");
   for (const el of elements) {
-    if (el.type === "AssignExpr" || el.type === "UpdateFilter") throw statementInValue("Assignment", el.pos);
-    if (el.type === "DeleteStmt") throw statementInValue("delete", el.pos);
-    if (el.type === "FuncDecl") throw statementInValue("A function declaration", el.pos);
+    if (el.type === "AssignExpr" || el.type === "UpdateFilter" || el.type === "DeleteStmt" || el.type === "FuncDecl")
+      internalError(`a '${el.type}' reached a value array`, el.pos);
   }
   if (!elements.some((el) => el.type === "SpreadElement"))
     return elements.filter(isExpr2).map((el) => lowerValue(el, inner));
@@ -27349,7 +27436,9 @@ function callExpression(node, env) {
       throw notCallable(node.pos);
     }
     if (isGlobalName(callee.name)) {
-      if (newKeywordOf(callee.name) === "required") throw unknownFunction(callee.name, [], node.pos);
+      if (newKeywordOf(callee.name) === "required" && (positionsOf(callee.name)?.length ?? 0) > 0) {
+        throw needsNew(callee.name, node.pos);
+      }
       return dispatchBare(node, callee.name, node.args, env);
     }
     throw unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
@@ -27359,10 +27448,15 @@ function callExpression(node, env) {
 }
 function newExpression(node, env) {
   const { callee } = node;
-  if (callee.type !== "Ident" || !isGlobalName(callee.name) || newKeywordOf(callee.name) === "forbidden") {
-    throw notCallable(node.pos);
+  if (callee.type !== "Ident") throw unknownClass(null, [], node.pos);
+  const { name: name2 } = callee;
+  if (env.scope.has(name2) && env.lookup(name2, callee.pos).ref.kind === "function")
+    throw newOnFunction(name2, node.pos);
+  if (env.scope.has(name2) || !isGlobalName(name2)) throw unknownClass(name2, constructibleNames(), node.pos);
+  if (newKeywordOf(name2) === "forbidden" && (positionsOf(name2)?.length ?? 0) > 0) {
+    throw newOnFunction(name2, node.pos);
   }
-  return dispatchBare(node, callee.name, node.args, env);
+  return dispatchBare(node, name2, node.args, env);
 }
 function dispatchBare(node, name2, args, env) {
   const position = positionIn(env);
@@ -28407,7 +28501,7 @@ function writeStages(uf, env, first) {
       continue;
     }
     if (path === STREAM_TARGET) {
-      if (op.type === "DeleteStmt") throw cannotDeleteRoot(op.pos);
+      if (op.type === "DeleteStmt") throw cannotDeleteRoot("$$", op.pos);
       flush();
       if (op.value.type === "ArrayLiteral" && !holdsSpread(op.value)) {
         emit(documentsStages(op.value, inner));
@@ -28417,7 +28511,7 @@ function writeStages(uf, env, first) {
       continue;
     }
     if (op.type === "DeleteStmt") {
-      if (path === "") throw cannotDeleteRoot(op.pos);
+      if (path === "") throw cannotDeleteRoot("$", op.pos);
       if (sets !== null) flush();
       (unsets ??= []).push(path);
       prove(path, null);
@@ -29163,7 +29257,8 @@ function makeCompile(mode, api) {
     }
     if (!isEntryForm(src)) {
       throw new FunctionInputError(
-        `${api}() takes the entry form '(params, { $, \u2026 }) => \u2026'. This is an arrow whose first destructure names the parameters.`
+        `The source at position 0 is not the entry form '(params, { $, \u2026 }) => \u2026' that ${api}() takes: an arrow whose first destructure names the parameters.`,
+        0
       );
     }
     const parsed = parseInput(src);

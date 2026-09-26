@@ -232,7 +232,7 @@ Each refusal names a concrete fix:
 | a value that is not a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = true`) | "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;')." |
 | `$ = $$$.<coll>.filter(p)` (an array of documents) | "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.…'." |
 | any array (`$ = []`, `$ = [1, 2]`, `$ = [{…}]`, `$ = $.items.map(…)`) | "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'." |
-| `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on bare '$' — it is the whole document, not a scalar. Write the field: '$.<field> ++ …'" |
+| `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on '$' at position N. '$' is the whole document, not a field. Write to a field: '$.<field>++'." |
 | `delete $` | "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'." |
 
 A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`), and so does any expression the compiler cannot prove is not a document — the server, not the compiler, refuses `$ = $.points * 1.1`. An ARRAY never passes, whatever its elements — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).

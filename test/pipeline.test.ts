@@ -530,15 +530,24 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     );
   });
 
+  it("rejects `delete $$` with the two forms that empty or narrow the stream", () => {
+    expect(() => jsmql("delete $$;")).toThrow(
+      "'delete $$' would delete the stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'.",
+    );
+    // Both named forms compile.
+    expect(jsmql("$$ = [];")).toEqual([{ $match: { $expr: false } }]);
+    expect(jsmql("$$.filter(d => d.a > 1);")).toEqual([{ $match: { a: { $gt: 1 } } }]);
+  });
+
   it("rejects compound increment on bare `$`", () => {
     expect(() => jsmql("$++;")).toThrow(
-      "Cannot use '++' on bare '$' — it is the whole document, not a scalar. Write the field: '$.<field> ++ …' at position 0",
+      "Cannot use '++' on '$' at position 1. '$' is the whole document, not a field. Write to a field: '$.<field>++'.",
     );
   });
 
   it("rejects compound assignment on bare `$`", () => {
     expect(() => jsmql("$ += 5;")).toThrow(
-      "Cannot use '+=' on bare '$' — it is the whole document, not a scalar. Write the field: '$.<field> += …' at position 0",
+      "Cannot use '+=' on '$' at position 2. '$' is the whole document, not a field. Write to a field: '$.<field> += …'.",
     );
   });
 
@@ -575,7 +584,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("a `.filter` branch takes a JavaScript predicate — a stage in its block is rejected", () => {
     expect(() => jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toThrow(
-      "`$sort(...)` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $sort(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$sort(…)'. at position 35",
+      "`$sort(...)` at position 35 is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $sort(...); … })'. It is the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
   });
 

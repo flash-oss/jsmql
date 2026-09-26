@@ -215,7 +215,7 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("a lone `function` declaration (nothing calls it) is rejected like a lone arrow decl", () => {
     expect(() => jsmql("function foo(a) { return a }")).toThrow(
-      "jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got 'a'. at position 13",
+      "jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got 'a' at position 13.",
     );
   });
 
@@ -250,7 +250,7 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("a nested function inside an arrow body is rejected", () => {
     expect(() => jsmql("$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };")).toThrow(
-      "`const g = (…) => …` declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write `const g = (…) => …;` as its own statement before this one. Then call 'g(…)' inside the callback. at position 25",
+      "`const g = (…) => …` at position 25 declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write `const g = (…) => …;` as its own statement before this one. Then call 'g(…)' inside the callback.",
     );
   });
 

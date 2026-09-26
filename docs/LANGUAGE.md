@@ -2184,9 +2184,11 @@ The bare form is for **arrays of values**. A pipeline stream carries documents, 
 
 **`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Math.trunc(Number(<value>))` for the whole number `parseInt` would give.
 
+**`Map` and `RegExp` are not JSMQL names.** MongoDB has no map type, so write an object, or build one from pairs with `Object.fromEntries(pairs)`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms. `new` on a name that JSMQL does not know names the nearest class it can construct (`new Dat()` → "Did you mean 'new Date(…)'?"), and `new` on a function (`new Number(5)`) names the call without `new`.
+
 ### Set methods (ES2025)
 
-Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper is a JS-syntax tag; MQL has no Set type, so the underlying arrays go straight into the operator.
+Wrap arrays in `new Set(...)` to use the ES2025 set-algebra methods. The wrapper is a JS-syntax tag; MQL has no Set type, so the underlying arrays go straight into the operator. `Set(...)` without `new` is refused, as JavaScript refuses it, and the error names `new Set(...)`.
 
 ```js
 new Set($.a).intersection(new Set($.b))   // { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
@@ -3352,7 +3354,8 @@ jsmql(`[
 
 An update filter is a **statement**, not an expression value. It is valid only at the top level of a `jsmql()` call or as a direct pipeline-array element. It cannot appear:
 
-- Inside an arbitrary expression (`($.a = 1) + 2` — rejected)
+- Inside an arbitrary expression (`($.a = 1) + 2`, `f(delete $.a)` — rejected)
+- As an element of an array that is a value (`$.y = [$.x++]` — rejected)
 - Inside a lambda body (`$.list.map(x => $.a = x)` — rejected)
 - As any value other than a top-level statement or a pipeline element
 
@@ -3414,7 +3417,7 @@ Compile-time rejections (each with an actionable hint):
 | `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null` | A scalar is not a document. Wrap it: `$ = { value: ... }`. |
 | `$ = undefined` | `undefined` has meaning only in `$match` position. Use `null` for the present-but-null case, or move the comparison into `$match`. |
 | `$ = $$$.users.filter(...)` | `.filter()` on a collection is a join that returns an array. Use `.find()` for a single document. |
-| `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a scalar. Use `$ = { ...$, ...overrides }` to merge fields. |
+| `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a field. Write to a field (`$.n += 5`), or merge fields with `$ = { ...$, ...overrides }`. |
 | `delete $` | Bare `$` is the whole document. Use `$ = <newDoc>` to replace it, or `delete $.<field>` to drop a single field. |
 
 `$replaceWith` is a **reshape-clearing stage**: any `let` binding declared before it is gone. A later reference produces a precise error: `` `x` is a `let` binding and can't be read after `$replaceWith` — the stage replaces the document. ``
@@ -3599,7 +3602,8 @@ Compile-time rejections:
 | `$$ = cond ? A : B` | JSMQL does not support a stream-level ternary. A stream has no single condition that swaps the whole stream for A or B. Narrow with `$$.filter(p)`, or switch source with `$$$.<coll>.filter(p)`. |
 | `$$ = $$$.<coll>.find(...)` | `.find(...)` returns a single element in JS, but a pipeline is an array. For "first match", write `.filter(p).slice(0, 1)`. To replace each document with a single matching foreign document, use `$ = $$$.<coll>.find(<predicate>)` (a separate lookup form). |
 | `$$ = $$$.<coll>` (no `.filter` and no other chain method) | A bare collection reference needs a predicate (`.filter(o => …)`) or a chained stream method, for example `.slice(0, 10)`. |
-| `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |
+| `$$ += …`, `$$++` | `$$` is the stream of documents, not a field. Write to a field: `$.<field> += …`. |
+| `delete $$` | `$$` is the stream. Write `$$ = []` to keep no documents, or `$$.filter(d => …)` to keep some. |
 
 **Let scope.** The narrow form (`$$.filter(p)`) is just a `$match`, and it preserves any prior `let` binding: a reference resolves to the binding's field as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's documents are gone after the never-matching `$match`, so any prior `let` becomes unreadable. The next reference produces `` `x` is a `let` binding and can't be read after `$unionWith` … ``.
 

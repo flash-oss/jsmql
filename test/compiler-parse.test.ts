@@ -275,6 +275,44 @@ describe("compiler/parse — a write inside a value: JavaScript's grouping, one 
     });
   }
 
+  // A write in an ARRAY reads as a pipeline element to the parser. The position
+  // pass puts the array in a value, and the desugar pass gives the same refusal.
+  const DELETE_IN_VALUE = (place: string, pos: number): string =>
+    `'delete ${place}' is a write inside a value at position ${pos}. A write stands only as a statement. Write 'delete ${place};' as its own statement before the statement that uses the value.`;
+  const inArrays: [string, string, number][] = [
+    ["$.y = [$.x++];", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 10), 10],
+    ["$.y = [++$.x];", IN_VALUE("++$.x", "$.x += 1", "$.x", "before", 7), 7],
+    ["$.y = [$.a = 1];", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 11), 11],
+    ["$.y = [1, $.a += 2];", IN_VALUE("$.a += …", "$.a += …", "$.a", "before", 14), 14],
+    ["$.y = [($.a = 5)];", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 12), 12],
+    ["$.y = { k: [$.a = 1] };", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 16), 16],
+    ["$match([$.a = 1]);", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 12), 12],
+    ["$.y = [1, delete $.a];", DELETE_IN_VALUE("$.a", 10), 10],
+    // JavaScript reads `delete` as a value too.
+    ["$.y = f(delete $.a);", DELETE_IN_VALUE("$.a", 8), 8],
+    ["$.y = 1 + (delete $.a.b);", DELETE_IN_VALUE("$.a.b", 11), 11],
+  ];
+  for (const [src, message, pos] of inArrays) {
+    it(`refuses ${src}`, () => {
+      expect(jsAccepts(src)).toBe(true);
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toBe(message);
+      expect(result.errors[0].pos).toBe(pos);
+    });
+  }
+
+  it("refuses a function in a value, which MQL cannot hold", () => {
+    expect(() => jsmql("$.y = [function f(x) { return x }];")).toThrow(
+      "'function f(…)' is a function inside a value at position 7. MQL has no function values. Write the function as its own statement at the top level of the pipeline, and call 'f(…)' where the value goes.",
+    );
+  });
+
+  it("keeps a write in a pipeline array and in a sub-pipeline", () => {
+    expect(jsmql("[$.a = 1, $sort({ a: 1 })]")).toEqual([{ $set: { a: 1 } }, { $sort: { a: 1 } }]);
+    expect(jsmql("$facet({ a: [$.x = 1] });")).toEqual([{ $facet: { a: [{ $set: { x: 1 } }] } }]);
+  });
+
   it("gives the JavaScript answer for the statement the refusal names", () => {
     // `$.y = $.x++` in JavaScript: y gets the old x, then x grows by one.
     const doc = { x: 1, y: 0 };
@@ -775,6 +813,38 @@ describe("compiler/parse — a write target is a place, and an optional chain is
     for (const src of ["$.a + 1 = 2;", "1 = 2;", '"x" = 1;', "$.a = 1 = 2;", "++(1 + $.a);", "f() = 1;", "f()++;"]) {
       expect(() => parse(src), src).toThrow(/Cannot apply|cannot be assigned/);
     }
+  });
+
+  it("quotes the target as the source spells it", () => {
+    const NOT_A_PLACE = (op: string, target: string, pos: number): string =>
+      `Cannot apply '${op}' to '${target}' at position ${pos}. You can write only to a field, a binding, '$', '$$' or a collection.`;
+    expect(() => parse("1++;")).toThrow(NOT_A_PLACE("++", "1", 1));
+    expect(() => parse("delete 1;")).toThrow(NOT_A_PLACE("delete", "1", 0));
+    expect(() => parse("$.a + 1 = 2;")).toThrow(NOT_A_PLACE("=", "$.a + 1", 8));
+    expect(() => parse("$.a = 1 = 2;")).toThrow(NOT_A_PLACE("=", "1", 8));
+  });
+
+  it("refuses an arithmetic write on '$' or '$$', which is not a field", () => {
+    // Without this refusal, `$ += 1` would become the valid-looking `$ = $ + 1`.
+    const WHOLE = (op: string, target: string, what: string, field: string, pos: number): string =>
+      `Cannot use '${op}' on '${target}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`;
+    const DOC = "'$' is the whole document";
+    const STREAM = "'$$' is the stream of documents";
+    const refused: [string, string][] = [
+      ["$ += 1;", WHOLE("+=", "$", DOC, "$.<field> += …", 2)],
+      ["$ -= 1;", WHOLE("-=", "$", DOC, "$.<field> -= …", 2)],
+      ["$++;", WHOLE("++", "$", DOC, "$.<field>++", 1)],
+      ["++$;", WHOLE("++", "$", DOC, "$.<field>++", 0)],
+      ["$$ += 1;", WHOLE("+=", "$$", STREAM, "$.<field> += …", 3)],
+      ["$$++;", WHOLE("++", "$$", STREAM, "$.<field>++", 2)],
+      // The value form gets the same answer, not a statement that the parser refuses too.
+      ["$.y = $$++;", WHOLE("++", "$$", STREAM, "$.<field>++", 8)],
+    ];
+    for (const [src, message] of refused) expect(() => parse(src), src).toThrow(message);
+    // `=` replaces the document or the stream, and a collection takes `+=` as a `$merge`.
+    expect(jsmql("$ = { a: 1 };")).toEqual([{ $replaceWith: { a: 1 } }]);
+    expect(jsmql("$$$.archive += $$;")).toEqual([{ $merge: "archive" }]);
+    expect(jsmql("$.n += 1;")).toEqual([{ $set: { n: { $add: ["$n", 1] } } }]);
   });
 
   it("accepts a parenthesised target", () => {

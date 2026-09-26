@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: an error names the fix in the user's words
+
+Several refusals named an internal node type, a wrong receiver, or a fix that
+did not compile:
+
+```
+1++;                  → "Cannot apply '++' to a NumberLiteral. … collection. at position 1"
+$.y = [$.x++];        → "Assignment is a statement, not a value. …"   (no position, no fix)
+$.y = $$++;           → suggests '$$ += 1;', which the compiler also refuses
+$$ -= 1;              → "… on '$$' — it is the whole document, not a scalar."
+delete $$;            → "'delete $' would delete the document itself. …"
+Set([1]);             → "Unknown function 'Set(...)'. …"
+Map([]);              → "… Did you mean 'Math(...)'?"
+new Foo(1);           → "Direct call '(...)(args)' is only supported when …"
+```
+
+Each one now says what the developer wrote. `requirePlace` quotes the target as
+the source spells it (`Cannot apply '++' to '1' at position 1.`). A write in an
+array that is a value gets the refusal the parser gives `$.y = $.x++`: the
+parser cannot know that position, so the desugar pass refuses the write in one
+walk before any rule rewrites it. `delete` inside a value (`f(delete $.a)`,
+valid JavaScript) and a function in a value array get the same kind of message.
+The arithmetic-write check on `$` and `$$` moved from the desugar pass into the
+parser's `requireWriteTarget`, so the value form and the statement form give
+one answer. It names `$$` as the stream, and `delete $$` names `$$ = []` and
+`$$.filter(d => …)`.
+
+The constructor messages read their rows. `Set(…)` names `new Set(…)`, because
+its row states `newKeyword: "required"`. `new Number(5)` names the call without
+`new`, and an unknown class takes `didYouMean` over the names `new` can build.
+New `Map` and `RegExp` rows refuse both spellings and name the JSMQL form: an
+object or `Object.fromEntries(pairs)`, a regex literal or `$regexMatch`.
+`bareCallableNames()` leaves out a row that lists no position, so no suggestion
+names `Math(…)`. `constructorGlobals()` leaves out the same rows, so the
+generated globals do not declare `RegExp`.
+
+A `ParseError` whose message ends with a full stop now takes its position before
+the stop, so no message reads "…. at position N". Each call site that ended with
+a suggestion states the position in its first sentence instead, e.g.
+`'.fill(value[, start[, end]])' at position 3 takes 1 to 3 arguments, got 0.`
+
+---
+
 ## 2026-09-26 — fix: `.concat()` reads each argument as JavaScript does, and a set method reads a missing list as empty
 
 JavaScript's `concat` adds the elements of an array argument, and adds any other
