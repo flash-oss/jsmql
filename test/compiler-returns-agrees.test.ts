@@ -319,7 +319,13 @@ type BodyShape = {
   optional: readonly string[];
   enums?: Record<string, readonly string[]>;
 };
-type Row = { kind?: string; where?: readonly Position[]; shape?: Shape; returns?: TypeExpr };
+type Row = {
+  kind?: string;
+  where?: readonly Position[];
+  shape?: Shape;
+  returns?: TypeExpr;
+  neverNull?: true | "always";
+};
 
 /** The kind a row's `returns` states for the server to confirm: the term's top kind. */
 const stated = (row: Row): string => (row.returns === undefined ? "unknown" : topKindOf(row.returns));
@@ -567,6 +573,42 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
         disagree.push(`${literal}.size(): written ${JSON.stringify(counted)}, mongod ${out.__v}`);
     }
     expect(disagree).toEqual([]);
+  });
+
+  it("answers a value for each operator that states `neverNull`, over missing operands too for `always`", async () => {
+    // The presence proof leaves out an `$ifNull` on the strength of this fact, so a wrong
+    // claim is a wrong answer. `always` reads every field operand as a missing field.
+    const missing = (v: unknown): unknown =>
+      typeof v === "string"
+        ? v.startsWith("$") && !v.startsWith("$$")
+          ? "$__missing"
+          : v
+        : Array.isArray(v)
+          ? v.map(missing)
+          : v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype
+            ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, missing(x)]))
+            : v;
+    const wrong: string[] = [];
+    let measured = 0;
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      if (row.kind !== "mongo" || row.neverNull === undefined) continue;
+      if (row.where?.includes("value") !== true) continue;
+      if (CANNOT_MEASURE[name] !== undefined) {
+        wrong.push(`${name}: states neverNull, and the server cannot measure it`);
+        continue;
+      }
+      const call = BY_HAND[name]?.value ?? buildCall(name, row, specs.get(name));
+      for (const c of row.neverNull === "always" ? [call, missing(call)] : [call]) {
+        const rows = await coll
+          .aggregate([{ $addFields: { __v: c } }, { $project: { t: { $type: "$__v" } } }])
+          .toArray();
+        const empty = rows.filter((r) => r.t === "null" || r.t === "missing");
+        if (empty.length > 0) wrong.push(`${name}: ${JSON.stringify(c)} answered ${empty[0].t}`);
+      }
+      measured++;
+    }
+    expect(wrong).toEqual([]);
+    expect(measured).toBeGreaterThan(0);
   });
 
   it("cannot measure exactly the operators it says it cannot", async () => {

@@ -10,6 +10,46 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat: no `$ifNull` guards a value that is there
+
+The developer asked for every `$ifNull` that changes no answer to go, in the array,
+string and object methods. `$.a.intersection($.b).size()` was
+`{ $size: { $ifNull: [{ $setIntersection: [ … ] }, []] } }`, and it is now
+`{ $size: { $setIntersection: [ … ] } }`. `$.a.sum()` is `{ $sum: "$a" }`. After
+`$.x = $.a.intersection($.b);`, the read `$.x.size()` is `{ $size: "$x" }`.
+
+The presence proof reads the `neverNull` fact of a row, and most rows stated none: 137
+of the 200 method rows and 161 of the 163 operator rows. Each unstated fact made the
+proof say "maybe null", so the method that read the value added a guard. The rows now state the fact
+where mongod measured it. `neverNull` gains a second strength, `"always"`: the value is
+there whatever the arguments are. A set operation reads a missing list as `[]`, and
+`$eq` answers `false` for a missing operand, so both state `"always"`.
+
+A new fact, `readsNullAsEmpty`, marks an operator that answers null as it answers the
+empty value: `$sum`, `$avg`, `$max`, `$min`, `$mergeObjects`, and the final guard of
+`.join()`. HR5 then adds no wrap, as [docs/LANG_RULES.md](LANG_RULES.md) HR5 states.
+A list argument that the proof shows there takes no guard, and a `?.` value under a
+list guard takes one `$ifNull`, not two. Inside the body of a null test, the receiver
+is there, so its string length takes no `""` guard. A literal object operand of a raw
+operator is a body (`$hour({ date })`), and it proves nothing.
+
+[test/compiler-methods.test.ts](../test/compiler-methods.test.ts) measures each claim of
+a method row, and [test/compiler-returns-agrees.test.ts](../test/compiler-returns-agrees.test.ts)
+measures each claim of an operator row. Both fail when a row states a fact and has no
+measurement. A server oracle drops one guard at a time and compares the answers over
+fields that are missing, null, empty, set and of another type. Over a grid of chains, it
+found 1356 dead guards before the change and 650 after, and a new test holds the fixed
+cases at zero.
+
+Two kinds of dead guard stay. First, a null test reads "missing" as null through an
+`$ifNull`, and that `$ifNull` does nothing on a value that is never missing: an array
+element, or a field that a `$set` wrote. The type
+tracker has one `absent` flag for null and missing (the 2026-09-21 decision), so it
+cannot tell. Second, a guard at the head of a chain can be redundant when a later
+`.join()` or `.sum()` also reads null as empty. Each guard is right where it stands.
+
+---
+
 ## 2026-09-26 — feat!: Set is not part of JSMQL; the array methods cover each set operation
 
 The developer decided that `Set` is not part of JSMQL. The compiler refuses

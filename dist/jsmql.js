@@ -138,21 +138,23 @@ var clampNonNegativeIndex = (node, lowered) => {
   const lit = literalIndexValue(node);
   return lit === null ? { $max: [0, lowered] } : Math.max(0, lit);
 };
-function strLenOf(value) {
+function strLenOf(value, present2 = false) {
   if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
-  return { $strLenCP: isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
+  return { $strLenCP: present2 || isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
 }
-function normaliseSliceIndex(node, lowered, recv) {
+function normaliseSliceIndex(node, lowered, recv, present2 = false) {
   const lit = literalIndexValue(node);
-  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv), -lit));
-  return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv)] }), lowered);
+  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv, present2), -lit));
+  return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv, present2)] }), lowered);
 }
-var strTail = (s, from) => ({ $substrCP: [s, from, strLenOf(s)] });
-var capitalizeExpr = (s) => ({
-  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }]
+var strTail = (s, from, present2 = false) => ({
+  $substrCP: [s, from, strLenOf(s, present2)]
 });
-var firstCharExpr = (s, op) => ({
-  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)]
+var capitalizeExpr = (s, present2 = false) => ({
+  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1, present2) }]
+});
+var firstCharExpr = (s, op, present2 = false) => ({
+  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1, present2)]
 });
 var ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
 var HTML_ESCAPE_PAIRS = [
@@ -393,6 +395,7 @@ var dateRow = (spelling) => global_({
   newKeyword: "optional",
   provides: "Date",
   returns: "date",
+  neverNull: true,
   where: ["value"],
   filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
   updateDoc: unsupported(
@@ -431,6 +434,7 @@ var bsonValue = (e) => global_({
   token: "Ident",
   newKeyword: "optional",
   returns: e.returns,
+  neverNull: true,
   where: ["value"],
   filter: because(`${e.isA} is a value, not a test. Compare it: '${e.compare}'.`),
   updateDoc: unsupported(
@@ -458,6 +462,7 @@ var bsonSentinel = (spelling, doc, compare) => global_({
   token: "Ident",
   newKeyword: "optional",
   returns: spelling === "MinKey" ? "minKey" : "maxKey",
+  neverNull: true,
   where: ["value"],
   filter: because(`${spelling}() is a value, not a test. Compare it: '${compare}'.`),
   // The fold builds the value — there is no MQL expression that produces one, so
@@ -568,7 +573,16 @@ var logicalList = ({ name: name2, args, query }) => {
   return { [name2]: list.map(query) };
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
-var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
+var arrayOrEmpty = (recv) => {
+  if (Array.isArray(recv)) return recv;
+  const inner = isIfNullWrapped(recv) ? recv.$ifNull : null;
+  if (inner !== null && inner.length === 2 && inner[1] === null) return { $ifNull: [inner[0], []] };
+  return { $ifNull: [recv, []] };
+};
+var listArgument = (value, type, arg) => {
+  const lowered = value(arg);
+  return type(arg).absent ? arrayOrEmpty(lowered) : lowered;
+};
 var mayBeArray = (t) => t.kinds === "any" || t.kinds.has("array");
 var onlyArray = (t) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has("array");
 var arrayOrOne = (ref) => ({ $cond: [{ $isArray: ref }, ref, [ref]] });
@@ -652,6 +666,7 @@ var NAMES = {
     doc: "Returns the absolute value of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -670,6 +685,7 @@ var NAMES = {
     doc: "Adds numbers to return the sum, or adds numbers and a date to return a new date.",
     category: "arithmetic",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -691,6 +707,7 @@ var NAMES = {
     doc: "Returns the smallest integer greater than or equal to the specified number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -709,6 +726,7 @@ var NAMES = {
     doc: "Returns the result of dividing the first number by the second.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -730,6 +748,7 @@ var NAMES = {
     doc: "Raises e to the specified exponent.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -748,6 +767,7 @@ var NAMES = {
     doc: "Returns the largest integer less than or equal to the specified number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -766,6 +786,7 @@ var NAMES = {
     doc: "Calculates the natural log of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -784,6 +805,7 @@ var NAMES = {
     doc: "Calculates the log of a number in the specified base.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -805,6 +827,7 @@ var NAMES = {
     doc: "Calculates the log base 10 of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -823,6 +846,7 @@ var NAMES = {
     doc: "Returns the remainder of the first number divided by the second.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "field, [divisor, remainder]", exact: 2 }, emit: fieldClause },
@@ -844,6 +868,7 @@ var NAMES = {
     doc: "Multiplies numbers to return the product.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -865,6 +890,7 @@ var NAMES = {
     doc: "Raises a number to the specified exponent.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -886,6 +912,7 @@ var NAMES = {
     doc: "Rounds a number to a whole integer or to a specified decimal place.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "flex",
     filter: viaFallback,
@@ -907,6 +934,7 @@ var NAMES = {
     doc: "Returns the sigmoid of a value, defined as 1 / (1 + e^(-x)). The result is between 0 and 1.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -925,6 +953,7 @@ var NAMES = {
     doc: "Calculates the square root.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -943,6 +972,7 @@ var NAMES = {
     doc: "Returns the result of subtracting the second value from the first.",
     category: "arithmetic",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -964,6 +994,7 @@ var NAMES = {
     doc: "Truncates a number to a whole integer or to a specified decimal place.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "flex",
     filter: viaFallback,
@@ -985,6 +1016,7 @@ var NAMES = {
     doc: "Returns the result of a bitwise AND operation on an array of int or long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1006,6 +1038,7 @@ var NAMES = {
     doc: "Returns the result of a bitwise NOT operation on a single int or long value.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1024,6 +1057,7 @@ var NAMES = {
     doc: "Returns the result of a bitwise OR operation on an array of int or long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1045,6 +1079,7 @@ var NAMES = {
     doc: "Returns the result of a bitwise XOR (exclusive or) operation on an array of int and long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1066,6 +1101,7 @@ var NAMES = {
     doc: "Returns the sine of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1084,6 +1120,7 @@ var NAMES = {
     doc: "Returns the cosine of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1102,6 +1139,7 @@ var NAMES = {
     doc: "Returns the tangent of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1120,6 +1158,7 @@ var NAMES = {
     doc: "Returns the inverse sine (arc sine) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1138,6 +1177,7 @@ var NAMES = {
     doc: "Returns the inverse cosine (arc cosine) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1156,6 +1196,7 @@ var NAMES = {
     doc: "Returns the inverse tangent (arc tangent) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1174,6 +1215,7 @@ var NAMES = {
     doc: "Returns the inverse tangent of y / x in radians, where y and x are the first and second arguments.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1195,6 +1237,7 @@ var NAMES = {
     doc: "Returns the hyperbolic sine of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1213,6 +1256,7 @@ var NAMES = {
     doc: "Returns the hyperbolic cosine of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1231,6 +1275,7 @@ var NAMES = {
     doc: "Returns the hyperbolic tangent of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1249,6 +1294,7 @@ var NAMES = {
     doc: "Returns the inverse hyperbolic sine of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1267,6 +1313,7 @@ var NAMES = {
     doc: "Returns the inverse hyperbolic cosine of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1285,6 +1332,7 @@ var NAMES = {
     doc: "Returns the inverse hyperbolic tangent of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1303,6 +1351,7 @@ var NAMES = {
     doc: "Converts a value from degrees to radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1321,6 +1370,7 @@ var NAMES = {
     doc: "Converts a value from radians to degrees.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1339,6 +1389,7 @@ var NAMES = {
     doc: "Returns 0 if the two values are equivalent, 1 if the first is greater, and -1 if less.",
     category: "comparison",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1357,6 +1408,7 @@ var NAMES = {
     doc: "Returns true if the values are equivalent.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$eq" },
     shape: "flex",
@@ -1379,6 +1431,7 @@ var NAMES = {
     doc: "Returns true if the values are not equivalent.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$ne" },
     shape: "flex",
@@ -1401,6 +1454,7 @@ var NAMES = {
     doc: "Returns true if the first value is greater than the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$gt" },
     shape: "flex",
@@ -1423,6 +1477,7 @@ var NAMES = {
     doc: "Returns true if the first value is greater than or equal to the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$gte" },
     shape: "flex",
@@ -1445,6 +1500,7 @@ var NAMES = {
     doc: "Returns true if the first value is less than the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$lt" },
     shape: "flex",
@@ -1467,6 +1523,7 @@ var NAMES = {
     doc: "Returns true if the first value is less than or equal to the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$lte" },
     shape: "flex",
@@ -1489,6 +1546,7 @@ var NAMES = {
     doc: "Returns true only when all its expressions evaluate to true.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
@@ -1510,6 +1568,7 @@ var NAMES = {
     doc: "Returns true when any of its expressions evaluates to true.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
@@ -1531,6 +1590,7 @@ var NAMES = {
     doc: "Returns the boolean value that is the opposite of its argument expression.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "single",
     filter: {
@@ -1624,6 +1684,7 @@ var NAMES = {
     doc: "Concatenates any number of strings.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1645,6 +1706,7 @@ var NAMES = {
     doc: "Searches a string for a substring and returns the UTF-8 byte index of the first occurrence, or -1.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1666,6 +1728,7 @@ var NAMES = {
     doc: "Searches a string for a substring and returns the UTF-8 code point index of the first occurrence, or -1.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1767,6 +1830,7 @@ var NAMES = {
     doc: "Applies a regular expression to a string and returns information on all matched substrings.",
     category: "string",
     returns: { arrayOf: "object" },
+    neverNull: "always",
     where: ["value"],
     shape: {
       object: {
@@ -1793,6 +1857,7 @@ var NAMES = {
     doc: "Applies a regular expression to a string and returns a boolean indicating whether a match is found.",
     category: "string",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     shape: {
       object: {
@@ -1869,6 +1934,7 @@ var NAMES = {
     doc: "Splits a string into substrings based on a delimiter and returns an array of substrings.",
     category: "string",
     returns: { arrayOf: "string" },
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1901,6 +1967,7 @@ var NAMES = {
     doc: "Returns the number of UTF-8 encoded bytes in a string.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1919,6 +1986,7 @@ var NAMES = {
     doc: "Returns the number of UTF-8 code points in a string.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1937,6 +2005,7 @@ var NAMES = {
     doc: "Performs case-insensitive string comparison.",
     category: "string",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1955,6 +2024,7 @@ var NAMES = {
     doc: "Deprecated. Use $substrBytes or $substrCP.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1976,6 +2046,7 @@ var NAMES = {
     doc: "Returns the substring of a string starting at the specified UTF-8 byte index.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1997,6 +2068,7 @@ var NAMES = {
     doc: "Returns the substring of a string starting at the specified UTF-8 code point index.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2018,6 +2090,7 @@ var NAMES = {
     doc: "Converts a string to lowercase.",
     category: "string",
     returns: "string",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2036,6 +2109,7 @@ var NAMES = {
     doc: "Converts a string to uppercase.",
     category: "string",
     returns: "string",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2146,6 +2220,7 @@ var NAMES = {
     doc: "Converts an array of key-value pairs to a document.",
     category: "array",
     returns: "object",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2164,6 +2239,7 @@ var NAMES = {
     doc: "Concatenates arrays to return the concatenated array.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value", "group", "window"],
     spreadAlternative: "use array spread ([...a, ...b]) or .concat()",
     shape: "array",
@@ -2249,6 +2325,7 @@ var NAMES = {
     doc: "Returns a boolean indicating whether a specified value is in an array.",
     category: "array",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     liftsTo: { op: "$in" },
     shape: "flex",
@@ -2271,6 +2348,7 @@ var NAMES = {
     doc: "Searches an array for a value and returns the index of the first occurrence, or -1.",
     category: "array",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2292,6 +2370,7 @@ var NAMES = {
     doc: "Determines if the operand is an array.",
     category: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2401,6 +2480,7 @@ var NAMES = {
     doc: "Converts a document to an array of documents representing key-value pairs.",
     category: "array",
     returns: { arrayOf: "object" },
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2468,6 +2548,7 @@ var NAMES = {
     doc: "Returns an array with the elements in reverse order.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2486,6 +2567,7 @@ var NAMES = {
     doc: "Returns the number of elements in the array.",
     category: "array",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2504,6 +2586,7 @@ var NAMES = {
     doc: "Returns a subset of an array.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value", "updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
     shape: "array",
@@ -2572,6 +2655,7 @@ var NAMES = {
     doc: "Returns true if no element of a set evaluates to false.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2590,6 +2674,7 @@ var NAMES = {
     doc: "Returns true if any elements of a set evaluate to true.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2608,6 +2693,7 @@ var NAMES = {
     doc: "Returns a set with elements that appear in the first set but not in the second set.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2626,6 +2712,7 @@ var NAMES = {
     doc: "Returns true if the input sets have the same distinct elements.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2647,6 +2734,7 @@ var NAMES = {
     doc: "Returns a set with elements that appear in all of the input sets.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2668,6 +2756,7 @@ var NAMES = {
     doc: "Returns true if all elements of the first set appear in the second set.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2686,6 +2775,7 @@ var NAMES = {
     doc: "Returns a set with elements that appear in any of the input sets.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value", "group", "window"],
     shape: "array",
     filter: viaFallback,
@@ -2725,6 +2815,7 @@ var NAMES = {
     doc: "Combines multiple documents into a single document.",
     category: "object",
     returns: "object",
+    neverNull: "always",
     where: ["value", "group"],
     spreadAlternative: "use object spread ({ ...a, ...b }) or Object.assign(...docs)",
     shape: "flex",
@@ -3043,6 +3134,7 @@ var NAMES = {
     doc: "Returns the day of the month for a date as a number between 1 and 31.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3061,6 +3153,7 @@ var NAMES = {
     doc: "Returns the day of the week for a date as a number between 1 (Sunday) and 7 (Saturday).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3079,6 +3172,7 @@ var NAMES = {
     doc: "Returns the day of the year for a date as a number between 1 and 366.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3097,6 +3191,7 @@ var NAMES = {
     doc: "Returns the hour for a date as a number between 0 and 23.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3115,6 +3210,7 @@ var NAMES = {
     doc: "Returns the weekday number in ISO 8601 format, ranging from 1 (Monday) to 7 (Sunday).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3133,6 +3229,7 @@ var NAMES = {
     doc: "Returns the week number in ISO 8601 format, ranging from 1 to 53.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3151,6 +3248,7 @@ var NAMES = {
     doc: "Returns the year number in ISO 8601 format.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3169,6 +3267,7 @@ var NAMES = {
     doc: "Returns the milliseconds of a date as a number between 0 and 999.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3187,6 +3286,7 @@ var NAMES = {
     doc: "Returns the minute for a date as a number between 0 and 59.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3205,6 +3305,7 @@ var NAMES = {
     doc: "Returns the month for a date as a number between 1 (January) and 12 (December).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3223,6 +3324,7 @@ var NAMES = {
     doc: "Returns the seconds for a date as a number between 0 and 60 (leap seconds).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3241,6 +3343,7 @@ var NAMES = {
     doc: "Converts a value to a Date.",
     category: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3259,6 +3362,7 @@ var NAMES = {
     doc: "Returns the week number for a date as a number between 0 and 53.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3277,6 +3381,7 @@ var NAMES = {
     doc: "Returns the year for a date as a number.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3295,6 +3400,7 @@ var NAMES = {
     doc: "Returns the incrementing ordinal from a timestamp as a long.",
     category: "timestamp",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3313,6 +3419,7 @@ var NAMES = {
     doc: "Returns the seconds from a timestamp as a long.",
     category: "timestamp",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3381,6 +3488,7 @@ var NAMES = {
     doc: "Returns true if the expression resolves to an integer, decimal, double, or long.",
     category: "type",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3417,6 +3525,7 @@ var NAMES = {
     doc: "Converts a value to a boolean.",
     category: "type",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3435,6 +3544,7 @@ var NAMES = {
     doc: "Converts a value to a Decimal128.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3453,6 +3563,7 @@ var NAMES = {
     doc: "Converts a value to a double.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3471,6 +3582,7 @@ var NAMES = {
     doc: "Converts a value to an integer.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3489,6 +3601,7 @@ var NAMES = {
     doc: "Converts a value to a long.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3525,6 +3638,7 @@ var NAMES = {
     doc: "Converts a value to an ObjectId.",
     category: "type",
     returns: "objectId",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3543,6 +3657,7 @@ var NAMES = {
     doc: "Converts a value to a string.",
     category: "type",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3579,6 +3694,7 @@ var NAMES = {
     doc: "Returns the BSON data type of the field.",
     category: "type",
     returns: "string",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "single",
     filter: { args: { sig: "field, type", exact: 2 }, emit: fieldClause },
@@ -3696,6 +3812,7 @@ var NAMES = {
     doc: "Returns the size of a string or binary data value's content in bytes.",
     category: "data-size",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3714,6 +3831,7 @@ var NAMES = {
     doc: "Returns the size in bytes of a document when encoded as BSON.",
     category: "data-size",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3750,6 +3868,7 @@ var NAMES = {
     doc: "Returns a random ObjectId.",
     category: "miscellaneous",
     returns: "objectId",
+    neverNull: "always",
     where: ["value"],
     shape: "none",
     filter: viaFallback,
@@ -3808,6 +3927,7 @@ var NAMES = {
     doc: "Returns a random float between 0 and 1.",
     category: "miscellaneous",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "none",
     filter: viaFallback,
@@ -4120,7 +4240,7 @@ var NAMES = {
     category: "arithmetic",
     returns: "number",
     // MEASURED: `{ $sum: null }` and a `$group` sum over a missing field both answer 0.
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "group", "window"],
     shape: "flex",
     filter: viaFallback,
@@ -5987,6 +6107,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $ltrim: { input: recv } }) },
@@ -6004,6 +6125,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $ltrim: { input: recv } }) },
@@ -6021,6 +6143,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $rtrim: { input: recv } }) },
@@ -6036,6 +6159,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $rtrim: { input: recv } }) },
@@ -6095,13 +6219,14 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "start[, count]", allowed: [1, 2] },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => {
-        const start = normaliseSliceIndex(args[0], value(args[0]), r);
-        const count = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+        const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
+        const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
         return { $substrCP: [r, start, count] };
       })
     },
@@ -6117,6 +6242,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6125,7 +6251,7 @@ var NAMES = {
         if (args.length === 0) return recv;
         return nullOr(recv, present2, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
-          const end = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+          const end = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
           return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
         });
       }
@@ -6144,6 +6270,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6201,6 +6328,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
@@ -6231,6 +6359,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
@@ -6278,6 +6407,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6298,6 +6428,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6360,6 +6491,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6380,6 +6512,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6403,6 +6536,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6423,6 +6557,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6441,6 +6576,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6461,6 +6597,7 @@ var NAMES = {
     call: true,
     on: ["array", "string"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6504,6 +6641,7 @@ var NAMES = {
     on: "string",
     sibling: { array: "For membership in an array, write '.has(x)'." },
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // A regex with no anchor — indexable where the planner can use one, and unlike
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
@@ -6542,6 +6680,7 @@ var NAMES = {
     on: "array",
     sibling: { string: "For a substring test, write '.includes(x)'." },
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     // An INDEX reads a query document, so the query form is the indexable one:
     // `$.tags.has("x")` → { tags: "x" }, MongoDB's "equals, or is an array containing" —
@@ -6658,7 +6797,7 @@ var NAMES = {
     on: ["array", "stream"],
     sibling: { string: "To join strings, write '+' between them: 'a + b'." },
     returns: { array: "array", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -7181,6 +7320,7 @@ var NAMES = {
     params: ["value", "index"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7241,6 +7381,7 @@ var NAMES = {
     params: ["value", "index"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7271,6 +7412,7 @@ var NAMES = {
     call: true,
     on: ["array", "string"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7303,6 +7445,7 @@ var NAMES = {
     params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // `$.items.some(i => i.q > 2)` → { items: { $elemMatch: { q: { $gt: 2 } } } } — when the
     // whole body has a native form against the element as root. Otherwise the expression form.
@@ -7343,6 +7486,7 @@ var NAMES = {
     params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7424,6 +7568,7 @@ var NAMES = {
     elements: "scalar",
     returns: "string",
     neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7445,6 +7590,7 @@ var NAMES = {
     on: "any",
     elements: "scalar",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7797,6 +7943,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $year: recv }) },
@@ -7814,6 +7961,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7835,6 +7983,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dayOfMonth: recv }) },
@@ -7850,6 +7999,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7869,6 +8019,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $hour: recv }) },
@@ -7886,6 +8037,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $minute: recv }) },
@@ -7903,6 +8055,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $second: recv }) },
@@ -7920,6 +8073,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $millisecond: recv }) },
@@ -7937,6 +8091,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $year: recv }) },
@@ -7954,6 +8109,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7975,6 +8131,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dayOfMonth: recv }) },
@@ -7992,6 +8149,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8013,6 +8171,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $hour: recv }) },
@@ -8030,6 +8189,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $minute: recv }) },
@@ -8047,6 +8207,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $second: recv }) },
@@ -8064,6 +8225,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $millisecond: recv }) },
@@ -8081,6 +8243,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toLong: recv }) },
@@ -8096,6 +8259,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dateToString: { date: recv } }) },
@@ -8113,6 +8277,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8146,6 +8311,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8184,6 +8350,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8219,6 +8386,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8254,6 +8422,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8287,6 +8456,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8320,6 +8490,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8353,6 +8524,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8388,6 +8560,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8423,6 +8596,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8458,6 +8632,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8492,6 +8667,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8533,6 +8709,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8576,6 +8753,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8617,6 +8795,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8697,6 +8876,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8739,6 +8919,8 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "number",
+    neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: recv }) },
@@ -8754,6 +8936,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "number",
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: recv }) },
@@ -8769,6 +8952,7 @@ var NAMES = {
     call: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
@@ -8793,6 +8977,7 @@ var NAMES = {
     call: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
@@ -8819,6 +9004,8 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
@@ -8849,6 +9036,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    readsNullAsEmpty: true,
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
@@ -9066,7 +9254,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -9102,13 +9290,13 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => {
-        const other = arrayOrEmpty(value(args[0]));
+      emit: ({ recv, args, value, type }) => {
+        const other = listArgument(value, type, args[0]);
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
       }
     },
@@ -9130,7 +9318,7 @@ var NAMES = {
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -9139,13 +9327,13 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(arrayOrEmpty(value(args[0])), it) },
+            vars: { [keys.as]: iterateeKeys(listArgument(value, type, args[0]), it) },
             in: { $filter: { input: recv, as: it.as, cond: { $not: [inOther] } } }
           }
         };
@@ -9179,7 +9367,7 @@ var NAMES = {
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -9188,13 +9376,13 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(arrayOrEmpty(value(args[0])), it) },
+            vars: { [keys.as]: iterateeKeys(listArgument(value, type, args[0]), it) },
             in: { $filter: { input: recv, as: it.as, cond: inOther } }
           }
         };
@@ -9224,12 +9412,12 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => uniqByReduce({ $concatArrays: [recv, arrayOrEmpty(value(args[0]))] }, iteratee(args[1]), bind)
+      emit: ({ recv, args, value, iteratee, bind, type }) => uniqByReduce({ $concatArrays: [recv, listArgument(value, type, args[0])] }, iteratee(args[1]), bind)
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
     statement: unsupported(
@@ -9245,14 +9433,14 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
-        const other = arrayOrEmpty(value(args[0]));
+        const other = listArgument(value, type, args[0]);
         const a = bind("a");
         const b = bind("b");
         const aKeys = bind("aKeys");
@@ -9599,6 +9787,7 @@ var NAMES = {
       object: "For the number of fields, write '.keys().size()'."
     },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     // Per family, because one answer for both states a legality the stream form
     // does not have: `$.tags.size() < 5` scans, `$$.size() > 1` does not compile
@@ -9886,6 +10075,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "object",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10208,6 +10398,7 @@ var NAMES = {
       }
     },
     returns: { recordOf: { callback: 0 } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10241,6 +10432,7 @@ var NAMES = {
       }
     },
     returns: { recordOf: { elementOf: "same" } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10277,7 +10469,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present: present2 }) => {
+      emit: ({ recv, args, bind, value, present: present2, type }) => {
         const keys = spelledKeys(args[0]);
         if (keys === null) {
           const kv = bind("kv");
@@ -10286,7 +10478,7 @@ var NAMES = {
               $filter: {
                 input: pairsOfObject(recv, present2),
                 as: kv.as,
-                cond: { $in: [`${kv.ref}.k`, arrayOrEmpty(value(args[0]))] }
+                cond: { $in: [`${kv.ref}.k`, listArgument(value, type, args[0])] }
               }
             }
           };
@@ -10331,9 +10523,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present: present2 }) => {
+      emit: ({ recv, args, bind, value, present: present2, type }) => {
         const spelled3 = spelledKeys(args[0]);
-        const keys = spelled3 ?? arrayOrEmpty(value(args[0]));
+        const keys = spelled3 ?? listArgument(value, type, args[0]);
         const kv = bind("kv");
         return {
           $arrayToObject: {
@@ -10373,6 +10565,7 @@ var NAMES = {
       }
     },
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10400,6 +10593,7 @@ var NAMES = {
       }
     },
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10423,6 +10617,7 @@ var NAMES = {
     call: true,
     on: "object",
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10492,9 +10687,10 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => capitalizeExpr(recv) },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => capitalizeExpr(recv, present2) },
     stream: unsupported("'.capitalize()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.capitalize()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.capitalize();'"
@@ -10509,9 +10705,10 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstCharExpr(recv, "$toUpper") },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => firstCharExpr(recv, "$toUpper", present2) },
     stream: unsupported("'.upperFirst()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.upperFirst()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.upperFirst();'"
@@ -10526,9 +10723,10 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstCharExpr(recv, "$toLower") },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => firstCharExpr(recv, "$toLower", present2) },
     stream: unsupported("'.lowerFirst()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lowerFirst()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lowerFirst();'"
@@ -10559,6 +10757,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10579,6 +10778,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10599,6 +10799,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10619,6 +10820,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10647,6 +10849,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => escapeHtmlExpr(recv) },
@@ -10662,6 +10865,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10679,7 +10883,7 @@ var NAMES = {
           }
         }
       },
-      emit: ({ recv, args, bind }) => {
+      emit: ({ recv, args, bind, present: present2 }) => {
         let length = 30;
         let omission = "...";
         if (args[0]?.type === "ObjectLiteral") {
@@ -10693,7 +10897,7 @@ var NAMES = {
         const s = bind("str");
         return {
           $let: {
-            vars: { [s.as]: coerceStringBinding(recv) },
+            vars: { [s.as]: present2 ? recv : coerceStringBinding(recv) },
             in: {
               $cond: [
                 { $gt: [{ $strLenCP: s.ref }, length] },
@@ -10719,6 +10923,7 @@ var NAMES = {
     call: true,
     on: ["number", "date"],
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10739,6 +10944,7 @@ var NAMES = {
     // a number and a date test a range the same way, so one cell serves both families
     on: ["number", "date"],
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // A field against two constant bounds is a range on one field — the clause an
     // index answers, and the document a MongoDB developer writes by hand.
@@ -10775,6 +10981,7 @@ var NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10799,6 +11006,7 @@ var NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10823,6 +11031,7 @@ var NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10847,7 +11056,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -10856,7 +11065,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setIntersection: [recv, arrayOrEmpty(value(args[0]))] })
+      emit: ({ recv, args, value, type }) => ({ $setIntersection: [recv, listArgument(value, type, args[0])] })
     },
     stream: {
       args: { sig: "other", exact: 1 },
@@ -10883,12 +11092,12 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setUnion: [recv, arrayOrEmpty(value(args[0]))] })
+      emit: ({ recv, args, value, type }) => ({ $setUnion: [recv, listArgument(value, type, args[0])] })
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
     statement: unsupported(
@@ -10902,7 +11111,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -10915,7 +11124,7 @@ var NAMES = {
         // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
         array: {
           args: { sig: "other", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $setDifference: [recv, arrayOrEmpty(value(args[0]))] })
+          emit: ({ recv, args, value, type }) => ({ $setDifference: [recv, listArgument(value, type, args[0])] })
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
       }
@@ -10942,11 +11151,12 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, arrayOrEmpty(value(args[0]))] }))
+      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, listArgument(value, type, args[0])] }))
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10962,11 +11172,12 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [arrayOrEmpty(value(args[0])), r] }))
+      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [listArgument(value, type, args[0]), r] }))
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10982,6 +11193,7 @@ var NAMES = {
     call: true,
     on: "any",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12123,7 +12335,8 @@ var NAMES = {
     mutatesArgumentAt: 0,
     returns: { object: { merge: ["same", { args: 0 }] }, Object: { merge: [{ args: 0 }] } },
     // MEASURED: `$.o.assign({ z: 1 })` answers `{ a: 1, b: 2, z: 1 }` for `o: { a: 1, b: 2 }` and `{ z: 1 }` for a missing or null `o`; `Object.assign({}, $.o)` answers `{}` there — an object every time
-    neverNull: true,
+    neverNull: "always",
+    readsNullAsEmpty: true,
     // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
     // before the compiler reads any statement cell — so the row states only the value.
     where: ["value"],
@@ -12187,6 +12400,7 @@ var NAMES = {
     call: true,
     on: "Number",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12209,6 +12423,7 @@ var NAMES = {
     call: true,
     on: "Number",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12247,6 +12462,7 @@ var NAMES = {
     call: true,
     on: "Array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
@@ -12264,17 +12480,17 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, bind }) => {
+      emit: ({ recv, args, value, bind, type }) => {
         const a = bind("a");
         const b = bind("b");
         return {
           $let: {
-            vars: { [a.as]: recv, [b.as]: arrayOrEmpty(value(args[0])) },
+            vars: { [a.as]: recv, [b.as]: listArgument(value, type, args[0]) },
             in: { $setDifference: [{ $setUnion: [a.ref, b.ref] }, { $setIntersection: [a.ref, b.ref] }] }
           }
         };
@@ -12294,12 +12510,13 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
-        $eq: [sizeOf({ $setIntersection: [r, arrayOrEmpty(value(args[0]))] }), 0]
+      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({
+        $eq: [sizeOf({ $setIntersection: [r, listArgument(value, type, args[0])] }), 0]
       }))
     },
     stream: unsupported("'.isDisjointFrom()' has no stream form: it produces a value, not a stream of documents."),
@@ -12328,6 +12545,7 @@ var NAMES = {
     token: "Ident",
     newKeyword: "forbidden",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toString: value(args[0]) }) },
@@ -12343,6 +12561,7 @@ var NAMES = {
     token: "Ident",
     newKeyword: "forbidden",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, truth }) => truth(args[0]) },
@@ -12411,6 +12630,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $abs: value(args[0]) }) },
@@ -12426,6 +12646,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sqrt: value(args[0]) }) },
@@ -12443,6 +12664,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $exp: value(args[0]) }) },
@@ -12458,6 +12680,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ln: value(args[0]) }) },
@@ -12473,6 +12696,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log: [value(args[0]), 2] }) },
@@ -12490,6 +12714,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log10: value(args[0]) }) },
@@ -12507,6 +12732,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $trunc: value(args[0]) }) },
@@ -12524,6 +12750,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cmp: [value(args[0]), 0] }) },
@@ -12541,6 +12768,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => cbrt(value(args[0])) },
@@ -12558,6 +12786,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sin: value(args[0]) }) },
@@ -12573,6 +12802,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cos: value(args[0]) }) },
@@ -12588,6 +12818,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tan: value(args[0]) }) },
@@ -12603,6 +12834,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asin: value(args[0]) }) },
@@ -12620,6 +12852,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acos: value(args[0]) }) },
@@ -12637,6 +12870,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atan: value(args[0]) }) },
@@ -12654,6 +12888,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sinh: value(args[0]) }) },
@@ -12671,6 +12906,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cosh: value(args[0]) }) },
@@ -12688,6 +12924,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tanh: value(args[0]) }) },
@@ -12705,6 +12942,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asinh: value(args[0]) }) },
@@ -12722,6 +12960,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acosh: value(args[0]) }) },
@@ -12739,6 +12978,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atanh: value(args[0]) }) },
@@ -12756,6 +12996,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12774,6 +13015,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12794,6 +13036,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12814,6 +13057,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
@@ -12831,6 +13075,7 @@ var NAMES = {
     call: false,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => 3.141592653589793 },
@@ -12844,6 +13089,7 @@ var NAMES = {
     call: false,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => 2.718281828459045 },
@@ -13054,6 +13300,7 @@ var NAMES = {
     newKeyword: "forbidden",
     provides: "Number",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
     expr: {
@@ -13141,6 +13388,7 @@ var NAMES = {
       stream: "For the document count, write '$$.size()'."
     },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
@@ -13161,6 +13409,7 @@ var NAMES = {
     call: true,
     on: "Date",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     updateDoc: unsupported(
@@ -13179,6 +13428,7 @@ var NAMES = {
     call: true,
     on: "Date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     // The month counts from 0, as JavaScript's does; the cell adds one for `$dateFromParts`.
@@ -14686,7 +14936,14 @@ function hasStreamValueCell(name2) {
   return typeof cell === "object" && cell !== null && typeof cell.emit === "function";
 }
 function neverNullOf(name2) {
-  return row(name2)?.neverNull === true;
+  const stated = row(name2)?.neverNull;
+  return stated === true || stated === "always";
+}
+function neverNullAlwaysOf(name2) {
+  return row(name2)?.neverNull === "always";
+}
+function readsNullAsEmptyOf(name2) {
+  return row(name2)?.readsNullAsEmpty === true;
 }
 function emptyValueOf(name2, family) {
   const own = families(row(name2)?.on);
@@ -25093,17 +25350,17 @@ function statedPresence(node, env) {
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
       const wrapped = !spineHasOptional(node) && emptyValueOf(name2, family) !== null;
       const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
-      return receiver && node.args.every((a) => argPresent(a, env));
+      return receiver && argsThere(name2, node.args, env);
     }
     case "OperatorCall":
-      return neverNullOf(node.name) && node.args.every((a) => argPresent(a, env));
+      return neverNullOf(node.name) && (neverNullAlwaysOf(node.name) || node.args.every((a) => !(a.type === "ObjectLiteral" && namedRow(a) === null) && argPresent(a, env)));
     case "CallExpression":
       if (node.callee.type === "Ident" && !env.scope.has(node.callee.name)) {
-        return neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env));
+        return neverNullOf(node.callee.name) && argsThere(node.callee.name, node.args, env);
       }
       return null;
     case "NewExpression":
-      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env)) : false;
+      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? neverNullOf(node.callee.name) && argsThere(node.callee.name, node.args, env) : false;
     case "UnaryExpr": {
       const key = productionForOperator("UnaryExpr", node.op);
       return key !== void 0 && neverNullOf(key) && isPresent(node.argument, env);
@@ -25146,6 +25403,9 @@ function chainHasOptional(e) {
     cursor = cursor.object;
   }
   return cursor.type === "FieldRef" && cursor.optional === true;
+}
+function argsThere(name2, args, env) {
+  return neverNullAlwaysOf(name2) || args.every((a) => argPresent(a, env));
 }
 function argPresent(a, env) {
   if (a.type === "SpreadElement") return isPresent(a.argument, env);
@@ -25424,7 +25684,8 @@ function typeOfEmitted(value, doc) {
       names: null
     };
     const result = evaluate2(returnsOf(op), site);
-    const isPresent3 = neverNullOf(op) && args.every((a) => !typeOfEmitted(a, doc).absent);
+    const body = (a) => isPlainObject(a) && operatorKeyOf(a) === null;
+    const isPresent3 = neverNullAlwaysOf(op) || neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent);
     return isPresent3 ? present(result) : maybeAbsent(result);
   }
   if (isPlainObject(value)) {
@@ -27329,10 +27590,23 @@ function dispatchOn(node, name2, recvNode, args, env) {
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
     const empty = emptyValueOf(name2, family);
     const inExpression = position === "value" || position === "filter";
-    const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const needsEmpty = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const nullIsEmpty = needsEmpty && readsNullAsEmptyOf(name2);
+    const wrap = needsEmpty && !nullIsEmpty;
     const input = wrap ? ifNull(recv, empty) : recv;
     return sel.rule.emit(
-      exprInputs(name2, input, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, proven || wrap)
+      exprInputs(
+        name2,
+        input,
+        exprArgs,
+        positionalKeysOf(name2),
+        env,
+        node,
+        READ,
+        void 0,
+        recvNode,
+        proven || wrap || nullIsEmpty
+      )
     );
   }
   if (sel.kind === "dispatch") {

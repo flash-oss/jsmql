@@ -1753,9 +1753,7 @@ describe("cart subtotal through .sumBy", { features: ["Array methods"] }, () => 
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { subtotal: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.items.sumBy(item => item.qty * item.price)`)).toEqual({
-        $sum: {
-          $map: { input: { $ifNull: ["$items", []] }, as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } },
-        },
+        $sum: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } } },
       });
     },
   );
@@ -2220,14 +2218,7 @@ describe("shopping cart total with 10_000 cap", { features: ["Numeric separators
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { total: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Math.min(10_000, $.lines.sumBy(l => l.qty * l.price))`)).toEqual({
-        $min: [
-          10000,
-          {
-            $sum: {
-              $map: { input: { $ifNull: ["$lines", []] }, as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } },
-            },
-          },
-        ],
+        $min: [10000, { $sum: { $map: { input: "$lines", as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } } } }],
       });
     },
   );

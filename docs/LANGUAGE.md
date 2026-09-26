@@ -1618,10 +1618,10 @@ $.name.trimStart()                 // { $ltrim: { input: "$name" } }
 $.name.trimEnd()                   // { $rtrim: { input: "$name" } }
 $.name.toLowerCase()               // { $toLower: "$name" }
 $.name.toUpperCase()               // { $toUpper: "$name" }
-$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: { $ifNull: ["$name", ""] } }] }
+$.name.substr(1)                   // { $substrCP: ["$name", 1, { $strLenCP: "$name" }] }
 $.name.substr(0, 3)                // { $substrCP: ["$name", 0, 3] }
 $.name.substring(2, 7)             // { $substrCP: ["$name", 2, 5] }   — end-exclusive folded to length
-$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$name", ""] } }, 1] }] }] }
+$.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $subtract: [{ $strLenCP: "$name" }, 1] }] }] }
 $.name.substr(-3)                  // the last three characters — a negative start counts from the end
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
@@ -1877,6 +1877,26 @@ So the three set PREDICATES — `.isSubsetOf()`, `.isSupersetOf()`, `.isDisjoint
 read a missing operand as the **empty set** and answer a real boolean: `true`, `true` and
 `true` over a document that holds neither field. A set operation that answers an array,
 for example `.union()`, answers the other list, or `[]`.
+
+**A value that is there takes no guard.** A set operation reads a missing list as `[]`,
+so its answer is always an array, and a method after it adds no `$ifNull`. A list argument
+that is there takes no guard either. A field that the pipeline wrote from such a value takes
+no guard. An operator that answers `null` as it answers the empty value needs no wrap, for
+example `$sum`:
+
+```js
+$.a.intersection($.b).size()      // the intersection is always an array
+// → { $size: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } }
+
+$.z.union($.a.uniq())             // the list argument is there, so it takes no guard
+// → { $setUnion: [{ $ifNull: ["$z", []] }, { $setUnion: { $ifNull: ["$a", []] } }] }
+
+$.x = $.a.intersection($.b); $.n = $.x.size();
+// → [{ $set: { x: { $setIntersection: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] } } }, { $set: { n: { $size: "$x" } } }]
+
+$.a.sum()                         // `{ $sum: null }` is 0, as `{ $sum: [] }` is
+// → { $sum: "$a" }
+```
 
 If you know the type of an `.indexOf()` receiver at design time and want compact output, you have three options. Bind the value to a `const` with a type-revealing initialiser. Or chain a type-fixing method first — `$.tags.toLowerCase().indexOf(...)` pins a string. Or use the explicit `$indexOfArray` / `$indexOfCP` operator forms.
 

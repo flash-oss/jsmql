@@ -99,7 +99,7 @@ A string method is the exception. On a missing or `null` string, a string method
 // The document is {}. It has no field `a`.
 $.a.uniq()          // → { $setUnion: { $ifNull: ["$a", []] } }        → []
 $.a.has("red")      // → { $in: ["red", { $ifNull: ["$a", []] }] }     → false
-$.a.sum()           // → { $sum: { $ifNull: ["$a", []] } }             → 0
+$.a.sum()           // → { $sum: "$a" }                                → 0
 $.a?.uniq()         // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setUnion: "$a" } } }   → null
 
 // The document is { a: ["x", "x"] }.
@@ -116,7 +116,7 @@ $.a?.b.uniq()       // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, nul
 $.a?.b.uniq()       // → the same MQL as above                          → null
 ```
 
-When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot.
+When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`.
 
 Two more facts belong to this rule:
 

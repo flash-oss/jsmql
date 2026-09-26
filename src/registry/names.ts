@@ -36,6 +36,7 @@ import {
   foldedSubtract,
   indexedPairs,
   isFiniteNumber,
+  isIfNullWrapped,
   isSingleCodePointLiteral,
   iterateeKeys,
   joinWords,
@@ -178,15 +179,30 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   collapses?: true | "unlessRawBody";
   /**
-   * The value cell answers null ONLY when its receiver or an array argument is
-   * null or missing — never for an input that is there. `.map`, `.filter`,
-   * `.slice`, `Object.keys` state it: `$map` over an array is an array. `.find`
-   * (the element may be missing), `.max` (of an empty array, null) and `.match`
-   * (`$regexFind` answers null for no match) do not. `isPresent` reads this fact
+   * The value cell answers null ONLY when its receiver or an argument is null or
+   * missing — never for an input that is there. `.map`, `.filter`, `.slice`,
+   * `Object.keys` state it: `$map` over an array is an array. `.find` (the element
+   * may be missing), `.max` (of an empty array, null) and `.match` (`$regexFind`
+   * answers null for no match) do not. `isPresent` reads this fact
    * (src/compiler/emit/prove.ts), so a `$size` / `$in` over such a chain needs no
    * `$ifNull` guard when the chain starts from something that is there.
+   *
+   * `"always"` says more: the cell answers a value WHATEVER its arguments are,
+   * because it reads a missing argument as the empty value of its slot, or its
+   * operator answers a value for any operand. The receiver still counts (HR5 wraps
+   * it, or the proof shows it there). MEASURED: `$.a.intersection($.b)` over a
+   * document with no `b` is `[]`, and `$.a.has($.x)` with no `x` is `false`.
+   * test/compiler-methods.test.ts measures every claim of both strengths.
    */
-  neverNull?: true;
+  neverNull?: true | "always";
+  /**
+   * The operator gives the same answer for a null or missing receiver as for the
+   * EMPTY value of its family, so HR5 needs no `$ifNull` around the receiver.
+   * MEASURED: `{ $sum: null }` and `{ $sum: [] }` are both 0, and `$avg`, `$max`
+   * and `$min` answer null for both. `.join()` guards its own answer, so a null
+   * receiver and `[]` both give `""`. test/compiler-methods.test.ts measures each row.
+   */
+  readsNullAsEmpty?: true;
   /**
    * The way forward when the receiver is PROVEN to be a family this row does not
    * take, one sentence per such family. `.length()` reads a string, so on an array
@@ -453,9 +469,16 @@ type MongoSpec<
    * The operator answers null ONLY for a null or missing operand — never for
    * operands that are there: `$range` of two numbers is an array. The same fact
    * `neverNull` states on a JavaScript row. `isPresent` (src/compiler/emit/prove.ts)
-   * reads both.
+   * reads both. A literal object operand is a body (`$map: { input, … }`,
+   * `$hour: { date, timezone }`), and it proves nothing, because the proof cannot
+   * tell which key is the input. So `true` gives presence over a list or one value.
+   *
+   * `"always"`: the operator answers a value for ANY operand, a missing one
+   * included. MEASURED: `{ $eq: ["$nope", 1] }` is false, `{ $toUpper: "$nope" }`
+   * is "", and `{ $sum: "$nope" }` is 0. test/compiler-returns-agrees.test.ts
+   * measures both strengths on every row that states one.
    */
-  neverNull?: true;
+  neverNull?: true | "always";
   /**
    * A DIAGNOSTIC source stage — it reports on the deployment rather than on the
    * documents, so it takes no input stream and stands first. `scope` is the sigil
@@ -588,7 +611,7 @@ type GlobalSpec<W extends readonly Position[]> = {
   provides?: Family;
   returns: TypeExpr;
   /** The value is never null once its arguments are there — the same fact `neverNull` states on a JavaScript row. */
-  neverNull?: true;
+  neverNull?: true | "always";
   where: W;
   only?: readonly Only[];
   filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
@@ -656,6 +679,7 @@ const dateRow = (spelling: string) =>
     newKeyword: "optional",
     provides: "Date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
     updateDoc: unsupported(
@@ -704,6 +728,7 @@ const bsonValue = (e: {
     token: "Ident",
     newKeyword: "optional",
     returns: e.returns,
+    neverNull: true,
     where: ["value"],
     filter: because(`${e.isA} is a value, not a test. Compare it: '${e.compare}'.`),
     updateDoc: unsupported(
@@ -739,6 +764,7 @@ const bsonSentinel = (spelling: string, doc: string, compare: string) =>
     token: "Ident",
     newKeyword: "optional",
     returns: spelling === "MinKey" ? "minKey" : "maxKey",
+    neverNull: true,
     where: ["value"],
     filter: because(`${spelling}() is a value, not a test. Compare it: '${compare}'.`),
     // The fold builds the value — there is no MQL expression that produces one, so
@@ -936,9 +962,25 @@ const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement
  * refuse it ("$in requires an array as a second argument, found: null"). HR5 wraps a
  * RECEIVER before a cell sees it (`dispatchOn` in src/compiler/emit/lower.ts); a cell
  * calls this for a list its arguments carry. A literal is already an array, so the
- * emitter passes it through unchanged.
+ * emitter passes it through unchanged. A `?.` read already turns a missing value into
+ * null (`{ $ifNull: ["$a.b", null] }`), so one `$ifNull` turns it into `[]` instead.
  */
-const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
+const arrayOrEmpty = (recv: unknown): unknown => {
+  if (Array.isArray(recv)) return recv;
+  const inner = isIfNullWrapped(recv) ? (recv as { $ifNull: unknown[] }).$ifNull : null;
+  if (inner !== null && inner.length === 2 && inner[1] === null) return { $ifNull: [inner[0], []] };
+  return { $ifNull: [recv, []] };
+};
+
+/**
+ * A list ARGUMENT, read as the array it is: a missing one is `[]`, as lodash reads it.
+ * A list the proof shows THERE takes no guard, so `$.z.union($.a.uniq())` reads the
+ * `.uniq()` as it is. See `arrayOrEmpty`.
+ */
+const listArgument = (value: ExprIn["value"], type: ExprIn["type"], arg: Expr): unknown => {
+  const lowered = value(arg);
+  return type(arg).absent ? arrayOrEmpty(lowered) : lowered;
+};
 
 /** Can the value be an array, by its proof? A proof that shows nothing can be anything. */
 const mayBeArray = (t: Type): boolean => t.kinds === "any" || t.kinds.has("array");
@@ -1168,6 +1210,7 @@ export const NAMES = {
     doc: "Returns the absolute value of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1187,6 +1230,7 @@ export const NAMES = {
     doc: "Adds numbers to return the sum, or adds numbers and a date to return a new date.",
     category: "arithmetic",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1209,6 +1253,7 @@ export const NAMES = {
     doc: "Returns the smallest integer greater than or equal to the specified number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1228,6 +1273,7 @@ export const NAMES = {
     doc: "Returns the result of dividing the first number by the second.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1250,6 +1296,7 @@ export const NAMES = {
     doc: "Raises e to the specified exponent.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1269,6 +1316,7 @@ export const NAMES = {
     doc: "Returns the largest integer less than or equal to the specified number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1288,6 +1336,7 @@ export const NAMES = {
     doc: "Calculates the natural log of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1307,6 +1356,7 @@ export const NAMES = {
     doc: "Calculates the log of a number in the specified base.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1329,6 +1379,7 @@ export const NAMES = {
     doc: "Calculates the log base 10 of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1348,6 +1399,7 @@ export const NAMES = {
     doc: "Returns the remainder of the first number divided by the second.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "field, [divisor, remainder]", exact: 2 }, emit: fieldClause },
@@ -1370,6 +1422,7 @@ export const NAMES = {
     doc: "Multiplies numbers to return the product.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1392,6 +1445,7 @@ export const NAMES = {
     doc: "Raises a number to the specified exponent.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1414,6 +1468,7 @@ export const NAMES = {
     doc: "Rounds a number to a whole integer or to a specified decimal place.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "flex",
     filter: viaFallback,
@@ -1436,6 +1491,7 @@ export const NAMES = {
     doc: "Returns the sigmoid of a value, defined as 1 / (1 + e^(-x)). The result is between 0 and 1.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1455,6 +1511,7 @@ export const NAMES = {
     doc: "Calculates the square root.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1474,6 +1531,7 @@ export const NAMES = {
     doc: "Returns the result of subtracting the second value from the first.",
     category: "arithmetic",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1496,6 +1554,7 @@ export const NAMES = {
     doc: "Truncates a number to a whole integer or to a specified decimal place.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "flex",
     filter: viaFallback,
@@ -1518,6 +1577,7 @@ export const NAMES = {
     doc: "Returns the result of a bitwise AND operation on an array of int or long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1540,6 +1600,7 @@ export const NAMES = {
     doc: "Returns the result of a bitwise NOT operation on a single int or long value.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1559,6 +1620,7 @@ export const NAMES = {
     doc: "Returns the result of a bitwise OR operation on an array of int or long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1581,6 +1643,7 @@ export const NAMES = {
     doc: "Returns the result of a bitwise XOR (exclusive or) operation on an array of int and long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1603,6 +1666,7 @@ export const NAMES = {
     doc: "Returns the sine of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1622,6 +1686,7 @@ export const NAMES = {
     doc: "Returns the cosine of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1641,6 +1706,7 @@ export const NAMES = {
     doc: "Returns the tangent of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1660,6 +1726,7 @@ export const NAMES = {
     doc: "Returns the inverse sine (arc sine) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1679,6 +1746,7 @@ export const NAMES = {
     doc: "Returns the inverse cosine (arc cosine) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1698,6 +1766,7 @@ export const NAMES = {
     doc: "Returns the inverse tangent (arc tangent) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1717,6 +1786,7 @@ export const NAMES = {
     doc: "Returns the inverse tangent of y / x in radians, where y and x are the first and second arguments.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1739,6 +1809,7 @@ export const NAMES = {
     doc: "Returns the hyperbolic sine of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1758,6 +1829,7 @@ export const NAMES = {
     doc: "Returns the hyperbolic cosine of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1777,6 +1849,7 @@ export const NAMES = {
     doc: "Returns the hyperbolic tangent of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1796,6 +1869,7 @@ export const NAMES = {
     doc: "Returns the inverse hyperbolic sine of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1815,6 +1889,7 @@ export const NAMES = {
     doc: "Returns the inverse hyperbolic cosine of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1834,6 +1909,7 @@ export const NAMES = {
     doc: "Returns the inverse hyperbolic tangent of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1853,6 +1929,7 @@ export const NAMES = {
     doc: "Converts a value from degrees to radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1872,6 +1949,7 @@ export const NAMES = {
     doc: "Converts a value from radians to degrees.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1891,6 +1969,7 @@ export const NAMES = {
     doc: "Returns 0 if the two values are equivalent, 1 if the first is greater, and -1 if less.",
     category: "comparison",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -1910,6 +1989,7 @@ export const NAMES = {
     doc: "Returns true if the values are equivalent.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$eq" },
     shape: "flex",
@@ -1933,6 +2013,7 @@ export const NAMES = {
     doc: "Returns true if the values are not equivalent.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$ne" },
     shape: "flex",
@@ -1956,6 +2037,7 @@ export const NAMES = {
     doc: "Returns true if the first value is greater than the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$gt" },
     shape: "flex",
@@ -1979,6 +2061,7 @@ export const NAMES = {
     doc: "Returns true if the first value is greater than or equal to the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$gte" },
     shape: "flex",
@@ -2002,6 +2085,7 @@ export const NAMES = {
     doc: "Returns true if the first value is less than the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$lt" },
     shape: "flex",
@@ -2025,6 +2109,7 @@ export const NAMES = {
     doc: "Returns true if the first value is less than or equal to the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$lte" },
     shape: "flex",
@@ -2048,6 +2133,7 @@ export const NAMES = {
     doc: "Returns true only when all its expressions evaluate to true.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
@@ -2070,6 +2156,7 @@ export const NAMES = {
     doc: "Returns true when any of its expressions evaluates to true.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
@@ -2092,6 +2179,7 @@ export const NAMES = {
     doc: "Returns the boolean value that is the opposite of its argument expression.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "single",
     filter: {
@@ -2189,6 +2277,7 @@ export const NAMES = {
     doc: "Concatenates any number of strings.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2211,6 +2300,7 @@ export const NAMES = {
     doc: "Searches a string for a substring and returns the UTF-8 byte index of the first occurrence, or -1.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2233,6 +2323,7 @@ export const NAMES = {
     doc: "Searches a string for a substring and returns the UTF-8 code point index of the first occurrence, or -1.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2339,6 +2430,7 @@ export const NAMES = {
     doc: "Applies a regular expression to a string and returns information on all matched substrings.",
     category: "string",
     returns: { arrayOf: "object" },
+    neverNull: "always",
     where: ["value"],
     shape: {
       object: {
@@ -2366,6 +2458,7 @@ export const NAMES = {
     doc: "Applies a regular expression to a string and returns a boolean indicating whether a match is found.",
     category: "string",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     shape: {
       object: {
@@ -2445,6 +2538,7 @@ export const NAMES = {
     doc: "Splits a string into substrings based on a delimiter and returns an array of substrings.",
     category: "string",
     returns: { arrayOf: "string" },
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2479,6 +2573,7 @@ export const NAMES = {
     doc: "Returns the number of UTF-8 encoded bytes in a string.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2498,6 +2593,7 @@ export const NAMES = {
     doc: "Returns the number of UTF-8 code points in a string.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2517,6 +2613,7 @@ export const NAMES = {
     doc: "Performs case-insensitive string comparison.",
     category: "string",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2536,6 +2633,7 @@ export const NAMES = {
     doc: "Deprecated. Use $substrBytes or $substrCP.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2558,6 +2656,7 @@ export const NAMES = {
     doc: "Returns the substring of a string starting at the specified UTF-8 byte index.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2580,6 +2679,7 @@ export const NAMES = {
     doc: "Returns the substring of a string starting at the specified UTF-8 code point index.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2602,6 +2702,7 @@ export const NAMES = {
     doc: "Converts a string to lowercase.",
     category: "string",
     returns: "string",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2621,6 +2722,7 @@ export const NAMES = {
     doc: "Converts a string to uppercase.",
     category: "string",
     returns: "string",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2737,6 +2839,7 @@ export const NAMES = {
     doc: "Converts an array of key-value pairs to a document.",
     category: "array",
     returns: "object",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2756,6 +2859,7 @@ export const NAMES = {
     doc: "Concatenates arrays to return the concatenated array.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value", "group", "window"],
     spreadAlternative: "use array spread ([...a, ...b]) or .concat()",
     shape: "array",
@@ -2845,6 +2949,7 @@ export const NAMES = {
     doc: "Returns a boolean indicating whether a specified value is in an array.",
     category: "array",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     liftsTo: { op: "$in" },
     shape: "flex",
@@ -2868,6 +2973,7 @@ export const NAMES = {
     doc: "Searches an array for a value and returns the index of the first occurrence, or -1.",
     category: "array",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2890,6 +2996,7 @@ export const NAMES = {
     doc: "Determines if the operand is an array.",
     category: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3005,6 +3112,7 @@ export const NAMES = {
     doc: "Converts a document to an array of documents representing key-value pairs.",
     category: "array",
     returns: { arrayOf: "object" },
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3075,6 +3183,7 @@ export const NAMES = {
     doc: "Returns an array with the elements in reverse order.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3094,6 +3203,7 @@ export const NAMES = {
     doc: "Returns the number of elements in the array.",
     category: "array",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3113,6 +3223,7 @@ export const NAMES = {
     doc: "Returns a subset of an array.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value", "updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
     shape: "array",
@@ -3184,6 +3295,7 @@ export const NAMES = {
     doc: "Returns true if no element of a set evaluates to false.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3203,6 +3315,7 @@ export const NAMES = {
     doc: "Returns true if any elements of a set evaluate to true.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3222,6 +3335,7 @@ export const NAMES = {
     doc: "Returns a set with elements that appear in the first set but not in the second set.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -3241,6 +3355,7 @@ export const NAMES = {
     doc: "Returns true if the input sets have the same distinct elements.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -3263,6 +3378,7 @@ export const NAMES = {
     doc: "Returns a set with elements that appear in all of the input sets.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -3285,6 +3401,7 @@ export const NAMES = {
     doc: "Returns true if all elements of the first set appear in the second set.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -3304,6 +3421,7 @@ export const NAMES = {
     doc: "Returns a set with elements that appear in any of the input sets.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value", "group", "window"],
     shape: "array",
     filter: viaFallback,
@@ -3345,6 +3463,7 @@ export const NAMES = {
     doc: "Combines multiple documents into a single document.",
     category: "object",
     returns: "object",
+    neverNull: "always",
     where: ["value", "group"],
     spreadAlternative: "use object spread ({ ...a, ...b }) or Object.assign(...docs)",
     shape: "flex",
@@ -3674,6 +3793,7 @@ export const NAMES = {
     doc: "Returns the day of the month for a date as a number between 1 and 31.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3693,6 +3813,7 @@ export const NAMES = {
     doc: "Returns the day of the week for a date as a number between 1 (Sunday) and 7 (Saturday).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3712,6 +3833,7 @@ export const NAMES = {
     doc: "Returns the day of the year for a date as a number between 1 and 366.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3731,6 +3853,7 @@ export const NAMES = {
     doc: "Returns the hour for a date as a number between 0 and 23.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3750,6 +3873,7 @@ export const NAMES = {
     doc: "Returns the weekday number in ISO 8601 format, ranging from 1 (Monday) to 7 (Sunday).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3769,6 +3893,7 @@ export const NAMES = {
     doc: "Returns the week number in ISO 8601 format, ranging from 1 to 53.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3788,6 +3913,7 @@ export const NAMES = {
     doc: "Returns the year number in ISO 8601 format.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3807,6 +3933,7 @@ export const NAMES = {
     doc: "Returns the milliseconds of a date as a number between 0 and 999.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3826,6 +3953,7 @@ export const NAMES = {
     doc: "Returns the minute for a date as a number between 0 and 59.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3845,6 +3973,7 @@ export const NAMES = {
     doc: "Returns the month for a date as a number between 1 (January) and 12 (December).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3864,6 +3993,7 @@ export const NAMES = {
     doc: "Returns the seconds for a date as a number between 0 and 60 (leap seconds).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3883,6 +4013,7 @@ export const NAMES = {
     doc: "Converts a value to a Date.",
     category: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3902,6 +4033,7 @@ export const NAMES = {
     doc: "Returns the week number for a date as a number between 0 and 53.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3921,6 +4053,7 @@ export const NAMES = {
     doc: "Returns the year for a date as a number.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3940,6 +4073,7 @@ export const NAMES = {
     doc: "Returns the incrementing ordinal from a timestamp as a long.",
     category: "timestamp",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -3959,6 +4093,7 @@ export const NAMES = {
     doc: "Returns the seconds from a timestamp as a long.",
     category: "timestamp",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4029,6 +4164,7 @@ export const NAMES = {
     doc: "Returns true if the expression resolves to an integer, decimal, double, or long.",
     category: "type",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4067,6 +4203,7 @@ export const NAMES = {
     doc: "Converts a value to a boolean.",
     category: "type",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4086,6 +4223,7 @@ export const NAMES = {
     doc: "Converts a value to a Decimal128.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4105,6 +4243,7 @@ export const NAMES = {
     doc: "Converts a value to a double.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4124,6 +4263,7 @@ export const NAMES = {
     doc: "Converts a value to an integer.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4143,6 +4283,7 @@ export const NAMES = {
     doc: "Converts a value to a long.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4181,6 +4322,7 @@ export const NAMES = {
     doc: "Converts a value to an ObjectId.",
     category: "type",
     returns: "objectId",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4200,6 +4342,7 @@ export const NAMES = {
     doc: "Converts a value to a string.",
     category: "type",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4238,6 +4381,7 @@ export const NAMES = {
     doc: "Returns the BSON data type of the field.",
     category: "type",
     returns: "string",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "single",
     filter: { args: { sig: "field, type", exact: 2 }, emit: fieldClause },
@@ -4360,6 +4504,7 @@ export const NAMES = {
     doc: "Returns the size of a string or binary data value's content in bytes.",
     category: "data-size",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4379,6 +4524,7 @@ export const NAMES = {
     doc: "Returns the size in bytes of a document when encoded as BSON.",
     category: "data-size",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -4417,6 +4563,7 @@ export const NAMES = {
     doc: "Returns a random ObjectId.",
     category: "miscellaneous",
     returns: "objectId",
+    neverNull: "always",
     where: ["value"],
     shape: "none",
     filter: viaFallback,
@@ -4478,6 +4625,7 @@ export const NAMES = {
     doc: "Returns a random float between 0 and 1.",
     category: "miscellaneous",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "none",
     filter: viaFallback,
@@ -4803,7 +4951,7 @@ export const NAMES = {
     category: "arithmetic",
     returns: "number",
     // MEASURED: `{ $sum: null }` and a `$group` sum over a missing field both answer 0.
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "group", "window"],
     shape: "flex",
     filter: viaFallback,
@@ -6742,6 +6890,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $ltrim: { input: recv } }) },
@@ -6760,6 +6909,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $ltrim: { input: recv } }) },
@@ -6778,6 +6928,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $rtrim: { input: recv } }) },
@@ -6794,6 +6945,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $rtrim: { input: recv } }) },
@@ -6856,14 +7008,16 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "start[, count]", allowed: [1, 2] },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => {
-          const start = normaliseSliceIndex(args[0], value(args[0]), r);
-          const count = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+          // `r` is there in the body of the null test, so its length takes no guard
+          const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
+          const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
           return { $substrCP: [r, start, count] };
         }),
     },
@@ -6880,6 +7034,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6888,7 +7043,7 @@ export const NAMES = {
         if (args.length === 0) return recv;
         return nullOr(recv, present, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
-          const end = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+          const end = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
           return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
         });
       },
@@ -6908,6 +7063,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6969,6 +7125,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
@@ -7001,6 +7158,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
@@ -7053,6 +7211,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7074,6 +7233,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7139,6 +7299,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7161,6 +7322,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7186,6 +7348,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7208,6 +7371,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7228,6 +7392,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7249,6 +7414,7 @@ export const NAMES = {
     call: true,
     on: ["array", "string"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7293,6 +7459,7 @@ export const NAMES = {
     on: "string",
     sibling: { array: "For membership in an array, write '.has(x)'." },
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // A regex with no anchor — indexable where the planner can use one, and unlike
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
@@ -7333,6 +7500,7 @@ export const NAMES = {
     on: "array",
     sibling: { string: "For a substring test, write '.includes(x)'." },
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     // An INDEX reads a query document, so the query form is the indexable one:
     // `$.tags.has("x")` → { tags: "x" }, MongoDB's "equals, or is an array containing" —
@@ -7461,7 +7629,7 @@ export const NAMES = {
     on: ["array", "stream"],
     sibling: { string: "To join strings, write '+' between them: 'a + b'." },
     returns: { array: "array", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -8017,6 +8185,7 @@ export const NAMES = {
     params: ["value", "index"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8080,6 +8249,7 @@ export const NAMES = {
     params: ["value", "index"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8112,6 +8282,7 @@ export const NAMES = {
     call: true,
     on: ["array", "string"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8145,6 +8316,7 @@ export const NAMES = {
     params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // `$.items.some(i => i.q > 2)` → { items: { $elemMatch: { q: { $gt: 2 } } } } — when the
     // whole body has a native form against the element as root. Otherwise the expression form.
@@ -8194,6 +8366,7 @@ export const NAMES = {
     params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8279,6 +8452,7 @@ export const NAMES = {
     elements: "scalar",
     returns: "string",
     neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8302,6 +8476,7 @@ export const NAMES = {
     on: "any",
     elements: "scalar",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8674,6 +8849,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $year: recv }) },
@@ -8692,6 +8868,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8714,6 +8891,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dayOfMonth: recv }) },
@@ -8730,6 +8908,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8750,6 +8929,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $hour: recv }) },
@@ -8768,6 +8948,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $minute: recv }) },
@@ -8786,6 +8967,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $second: recv }) },
@@ -8804,6 +8986,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $millisecond: recv }) },
@@ -8822,6 +9005,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $year: recv }) },
@@ -8840,6 +9024,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8862,6 +9047,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dayOfMonth: recv }) },
@@ -8880,6 +9066,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8902,6 +9089,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $hour: recv }) },
@@ -8920,6 +9108,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $minute: recv }) },
@@ -8938,6 +9127,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $second: recv }) },
@@ -8956,6 +9146,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $millisecond: recv }) },
@@ -8974,6 +9165,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toLong: recv }) },
@@ -8990,6 +9182,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dateToString: { date: recv } }) },
@@ -9008,6 +9201,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9042,6 +9236,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9081,6 +9276,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9117,6 +9313,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9153,6 +9350,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9187,6 +9385,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9221,6 +9420,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9255,6 +9455,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9291,6 +9492,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9327,6 +9529,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9363,6 +9566,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9398,6 +9602,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9440,6 +9645,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9484,6 +9690,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9526,6 +9733,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9608,6 +9816,7 @@ export const NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9652,6 +9861,8 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "number",
+    neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: recv }) },
@@ -9668,6 +9879,7 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "number",
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: recv }) },
@@ -9684,6 +9896,7 @@ export const NAMES = {
     call: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
@@ -9709,6 +9922,7 @@ export const NAMES = {
     call: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
@@ -9736,6 +9950,8 @@ export const NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
@@ -9767,6 +9983,7 @@ export const NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    readsNullAsEmpty: true,
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
@@ -9991,7 +10208,7 @@ export const NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -10028,13 +10245,13 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => {
-        const other = arrayOrEmpty(value(args[0]));
+      emit: ({ recv, args, value, type }) => {
+        const other = listArgument(value, type, args[0]);
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
       },
     },
@@ -10057,7 +10274,7 @@ export const NAMES = {
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -10066,13 +10283,13 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(arrayOrEmpty(value(args[0])), it) },
+            vars: { [keys.as]: iterateeKeys(listArgument(value, type, args[0]), it) },
             in: { $filter: { input: recv, as: it.as, cond: { $not: [inOther] } } },
           },
         };
@@ -10107,7 +10324,7 @@ export const NAMES = {
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -10116,13 +10333,13 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(arrayOrEmpty(value(args[0])), it) },
+            vars: { [keys.as]: iterateeKeys(listArgument(value, type, args[0]), it) },
             in: { $filter: { input: recv, as: it.as, cond: inOther } },
           },
         };
@@ -10153,13 +10370,13 @@ export const NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) =>
-        uniqByReduce({ $concatArrays: [recv, arrayOrEmpty(value(args[0]))] }, iteratee(args[1]), bind),
+      emit: ({ recv, args, value, iteratee, bind, type }) =>
+        uniqByReduce({ $concatArrays: [recv, listArgument(value, type, args[0])] }, iteratee(args[1]), bind),
     },
     stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
     statement: unsupported(
@@ -10176,14 +10393,14 @@ export const NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
-        const other = arrayOrEmpty(value(args[0]));
+        const other = listArgument(value, type, args[0]);
         const a = bind("a");
         const b = bind("b");
         const aKeys = bind("aKeys");
@@ -10544,6 +10761,7 @@ export const NAMES = {
       object: "For the number of fields, write '.keys().size()'.",
     },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     // Per family, because one answer for both states a legality the stream form
     // does not have: `$.tags.size() < 5` scans, `$$.size() > 1` does not compile
@@ -10838,6 +11056,7 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "object",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11171,6 +11390,7 @@ export const NAMES = {
       },
     },
     returns: { recordOf: { callback: 0 } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11205,6 +11425,7 @@ export const NAMES = {
       },
     },
     returns: { recordOf: { elementOf: "same" } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11242,7 +11463,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present }) => {
+      emit: ({ recv, args, bind, value, present, type }) => {
         const keys = spelledKeys(args[0]);
         // A key list only the server knows: read the object's own keys, keep the named ones.
         if (keys === null) {
@@ -11252,7 +11473,7 @@ export const NAMES = {
               $filter: {
                 input: pairsOfObject(recv, present),
                 as: kv.as,
-                cond: { $in: [`${kv.ref}.k`, arrayOrEmpty(value(args[0]))] },
+                cond: { $in: [`${kv.ref}.k`, listArgument(value, type, args[0])] },
               },
             },
           };
@@ -11298,10 +11519,10 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present }) => {
+      emit: ({ recv, args, bind, value, present, type }) => {
         // A key list the source spells is that list; one only the server knows is its value.
         const spelled = spelledKeys(args[0]);
-        const keys = spelled ?? arrayOrEmpty(value(args[0]));
+        const keys = spelled ?? listArgument(value, type, args[0]);
         const kv = bind("kv");
         return {
           $arrayToObject: {
@@ -11342,6 +11563,7 @@ export const NAMES = {
       },
     },
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11370,6 +11592,7 @@ export const NAMES = {
       },
     },
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11394,6 +11617,7 @@ export const NAMES = {
     call: true,
     on: "object",
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11466,9 +11690,10 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => capitalizeExpr(recv) },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present }) => capitalizeExpr(recv, present) },
     stream: unsupported("'.capitalize()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.capitalize()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.capitalize();'",
@@ -11484,9 +11709,10 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstCharExpr(recv, "$toUpper") },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present }) => firstCharExpr(recv, "$toUpper", present) },
     stream: unsupported("'.upperFirst()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.upperFirst()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.upperFirst();'",
@@ -11502,9 +11728,10 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstCharExpr(recv, "$toLower") },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present }) => firstCharExpr(recv, "$toLower", present) },
     stream: unsupported("'.lowerFirst()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lowerFirst()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lowerFirst();'",
@@ -11537,6 +11764,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11558,6 +11786,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11579,6 +11808,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11600,6 +11830,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11629,6 +11860,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => escapeHtmlExpr(recv) },
@@ -11645,6 +11877,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11662,7 +11895,7 @@ export const NAMES = {
           },
         },
       },
-      emit: ({ recv, args, bind }) => {
+      emit: ({ recv, args, bind, present }) => {
         // the options are constants (the rule says so); lodash's defaults otherwise
         let length = 30;
         let omission = "...";
@@ -11677,7 +11910,7 @@ export const NAMES = {
         const s = bind("str");
         return {
           $let: {
-            vars: { [s.as]: coerceStringBinding(recv) },
+            vars: { [s.as]: present ? recv : coerceStringBinding(recv) },
             in: {
               $cond: [
                 { $gt: [{ $strLenCP: s.ref }, length] },
@@ -11704,6 +11937,7 @@ export const NAMES = {
     call: true,
     on: ["number", "date"],
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11725,6 +11959,7 @@ export const NAMES = {
     // a number and a date test a range the same way, so one cell serves both families
     on: ["number", "date"],
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // A field against two constant bounds is a range on one field — the clause an
     // index answers, and the document a MongoDB developer writes by hand.
@@ -11762,6 +11997,7 @@ export const NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11787,6 +12023,7 @@ export const NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11813,6 +12050,7 @@ export const NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11839,7 +12077,7 @@ export const NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -11848,7 +12086,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setIntersection: [recv, arrayOrEmpty(value(args[0]))] }),
+      emit: ({ recv, args, value, type }) => ({ $setIntersection: [recv, listArgument(value, type, args[0])] }),
     },
     stream: {
       args: { sig: "other", exact: 1 },
@@ -11876,12 +12114,12 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setUnion: [recv, arrayOrEmpty(value(args[0]))] }),
+      emit: ({ recv, args, value, type }) => ({ $setUnion: [recv, listArgument(value, type, args[0])] }),
     },
     stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
     statement: unsupported(
@@ -11896,7 +12134,7 @@ export const NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -11909,7 +12147,7 @@ export const NAMES = {
         // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
         array: {
           args: { sig: "other", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $setDifference: [recv, arrayOrEmpty(value(args[0]))] }),
+          emit: ({ recv, args, value, type }) => ({ $setDifference: [recv, listArgument(value, type, args[0])] }),
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value — see its 'stream' cell."),
       },
@@ -11937,12 +12175,13 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) =>
-        nullOr(recv, present, bind, (r) => ({ $setIsSubset: [r, arrayOrEmpty(value(args[0]))] })),
+      emit: ({ recv, args, value, present, bind, type }) =>
+        nullOr(recv, present, bind, (r) => ({ $setIsSubset: [r, listArgument(value, type, args[0])] })),
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -11959,12 +12198,13 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) =>
-        nullOr(recv, present, bind, (r) => ({ $setIsSubset: [arrayOrEmpty(value(args[0])), r] })),
+      emit: ({ recv, args, value, present, bind, type }) =>
+        nullOr(recv, present, bind, (r) => ({ $setIsSubset: [listArgument(value, type, args[0]), r] })),
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -11981,6 +12221,7 @@ export const NAMES = {
     call: true,
     on: "any",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13184,7 +13425,8 @@ export const NAMES = {
     mutatesArgumentAt: 0,
     returns: { object: { merge: ["same", { args: 0 }] }, Object: { merge: [{ args: 0 }] } },
     // MEASURED: `$.o.assign({ z: 1 })` answers `{ a: 1, b: 2, z: 1 }` for `o: { a: 1, b: 2 }` and `{ z: 1 }` for a missing or null `o`; `Object.assign({}, $.o)` answers `{}` there — an object every time
-    neverNull: true,
+    neverNull: "always",
+    readsNullAsEmpty: true,
     // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
     // before the compiler reads any statement cell — so the row states only the value.
     where: ["value"],
@@ -13250,6 +13492,7 @@ export const NAMES = {
     call: true,
     on: "Number",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13273,6 +13516,7 @@ export const NAMES = {
     call: true,
     on: "Number",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13313,6 +13557,7 @@ export const NAMES = {
     call: true,
     on: "Array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
@@ -13331,17 +13576,17 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, bind }) => {
+      emit: ({ recv, args, value, bind, type }) => {
         const a = bind("a");
         const b = bind("b");
         return {
           $let: {
-            vars: { [a.as]: recv, [b.as]: arrayOrEmpty(value(args[0])) },
+            vars: { [a.as]: recv, [b.as]: listArgument(value, type, args[0]) },
             in: { $setDifference: [{ $setUnion: [a.ref, b.ref] }, { $setIntersection: [a.ref, b.ref] }] },
           },
         };
@@ -13362,13 +13607,14 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present, bind }) =>
+      emit: ({ recv, args, value, present, bind, type }) =>
         nullOr(recv, present, bind, (r) => ({
-          $eq: [sizeOf({ $setIntersection: [r, arrayOrEmpty(value(args[0]))] }), 0],
+          $eq: [sizeOf({ $setIntersection: [r, listArgument(value, type, args[0])] }), 0],
         })),
     },
     stream: unsupported("'.isDisjointFrom()' has no stream form: it produces a value, not a stream of documents."),
@@ -13399,6 +13645,7 @@ export const NAMES = {
     token: "Ident",
     newKeyword: "forbidden",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toString: value(args[0]) }) },
@@ -13415,6 +13662,7 @@ export const NAMES = {
     token: "Ident",
     newKeyword: "forbidden",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, truth }) => truth(args[0]) },
@@ -13486,6 +13734,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $abs: value(args[0]) }) },
@@ -13502,6 +13751,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sqrt: value(args[0]) }) },
@@ -13520,6 +13770,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $exp: value(args[0]) }) },
@@ -13536,6 +13787,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ln: value(args[0]) }) },
@@ -13552,6 +13804,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log: [value(args[0]), 2] }) },
@@ -13570,6 +13823,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log10: value(args[0]) }) },
@@ -13588,6 +13842,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $trunc: value(args[0]) }) },
@@ -13606,6 +13861,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cmp: [value(args[0]), 0] }) },
@@ -13624,6 +13880,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => cbrt(value(args[0])) },
@@ -13642,6 +13899,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sin: value(args[0]) }) },
@@ -13658,6 +13916,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cos: value(args[0]) }) },
@@ -13674,6 +13933,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tan: value(args[0]) }) },
@@ -13690,6 +13950,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asin: value(args[0]) }) },
@@ -13708,6 +13969,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acos: value(args[0]) }) },
@@ -13726,6 +13988,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atan: value(args[0]) }) },
@@ -13744,6 +14007,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sinh: value(args[0]) }) },
@@ -13762,6 +14026,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cosh: value(args[0]) }) },
@@ -13780,6 +14045,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tanh: value(args[0]) }) },
@@ -13798,6 +14064,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asinh: value(args[0]) }) },
@@ -13816,6 +14083,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acosh: value(args[0]) }) },
@@ -13834,6 +14102,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atanh: value(args[0]) }) },
@@ -13852,6 +14121,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13871,6 +14141,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13892,6 +14163,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13913,6 +14185,7 @@ export const NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
@@ -13931,6 +14204,7 @@ export const NAMES = {
     call: false,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => 3.141592653589793 },
@@ -13945,6 +14219,7 @@ export const NAMES = {
     call: false,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => 2.718281828459045 },
@@ -14173,6 +14448,7 @@ export const NAMES = {
     newKeyword: "forbidden",
     provides: "Number",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
     expr: {
@@ -14265,6 +14541,7 @@ export const NAMES = {
       stream: "For the document count, write '$$.size()'.",
     },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
@@ -14286,6 +14563,7 @@ export const NAMES = {
     call: true,
     on: "Date",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     updateDoc: unsupported(
@@ -14305,6 +14583,7 @@ export const NAMES = {
     call: true,
     on: "Date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     // The month counts from 0, as JavaScript's does; the cell adds one for `$dateFromParts`.

@@ -2627,8 +2627,8 @@ describe("array methods (no lambda)", () => {
           else: {
             $substrCP: [
               "$__jsmql.var.s",
-              { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$__jsmql.var.s", ""] } }, 1] }] },
-              { $strLenCP: { $ifNull: ["$__jsmql.var.s", ""] } },
+              { $max: [0, { $subtract: [{ $strLenCP: "$__jsmql.var.s" }, 1] }] },
+              { $strLenCP: "$__jsmql.var.s" },
             ],
           },
         },
@@ -3188,7 +3188,7 @@ describe("bare built-in callbacks", () => {
   // the element to the iteratee gensym rather than an arrow's own parameter name.
   it("sumBy(Number) coerces each element before summing", () => {
     expect(jsmql.expr("$.xs.sumBy(Number)")).toEqual({
-      $sum: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDouble: "$$x" } } },
+      $sum: { $map: { input: "$xs", as: "x", in: { $toDouble: "$$x" } } },
     });
   });
   it("keyBy(ObjectId) keys by the converted element", () => {
@@ -4693,7 +4693,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
         $ifNull: [
           {
             $reduce: {
-              input: { $ifNull: ["$items", []] },
+              input: "$items",
               initialValue: null,
               in: {
                 $cond: {
@@ -5824,18 +5824,14 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
 
 describe("lodash array methods (per-doc value vocabulary)", () => {
   it(".sum()/.mean()/.max()/.min() → $sum/$avg/$max/$min of the array", () => {
-    expect(jsmql.expr("$.a.sum()")).toEqual({ $sum: { $ifNull: ["$a", []] } });
-    expect(jsmql.expr("$.a.mean()")).toEqual({ $avg: { $ifNull: ["$a", []] } });
-    expect(jsmql.expr("$.a.max()")).toEqual({ $max: { $ifNull: ["$a", []] } });
-    expect(jsmql.expr("$.a.min()")).toEqual({ $min: { $ifNull: ["$a", []] } });
+    expect(jsmql.expr("$.a.sum()")).toEqual({ $sum: "$a" });
+    expect(jsmql.expr("$.a.mean()")).toEqual({ $avg: "$a" });
+    expect(jsmql.expr("$.a.max()")).toEqual({ $max: "$a" });
+    expect(jsmql.expr("$.a.min()")).toEqual({ $min: "$a" });
   });
   it(".sumBy(iteratee) accepts a field string or an arrow", () => {
-    expect(jsmql.expr('$.a.sumBy("x")')).toEqual({
-      $sum: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x.x" } },
-    });
-    expect(jsmql.expr("$.a.sumBy(o => o.x)")).toEqual({
-      $sum: { $map: { input: { $ifNull: ["$a", []] }, as: "o", in: "$$o.x" } },
-    });
+    expect(jsmql.expr('$.a.sumBy("x")')).toEqual({ $sum: { $map: { input: "$a", as: "x", in: "$$x.x" } } });
+    expect(jsmql.expr("$.a.sumBy(o => o.x)")).toEqual({ $sum: { $map: { input: "$a", as: "o", in: "$$o.x" } } });
   });
   it(".uniq() → $setUnion (dedupe; MongoDB does not define the order)", () => {
     // `$setUnion` of one array IS dedupe. lodash preserves input order and this does
@@ -6787,9 +6783,7 @@ describe("lodash iteratee / predicate shorthands (uniform across higher-order me
     });
   });
   it("shorthands reach the lodash iteratee/predicate methods too (.sumBy / .reject / .some)", () => {
-    expect(jsmql.expr('$.a.sumBy("price")')).toEqual({
-      $sum: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: "$$x.price" } },
-    });
+    expect(jsmql.expr('$.a.sumBy("price")')).toEqual({ $sum: { $map: { input: "$a", as: "x", in: "$$x.price" } } });
     expect(jsmql.expr("$.a.reject({ ok: true })")).toEqual({
       $filter: { input: { $ifNull: ["$a", []] }, as: "x", cond: { $not: [{ $eq: ["$$x.ok", true] }] } },
     });
@@ -8534,7 +8528,7 @@ describe("1-arg substr", () => {
       $cond: {
         if: { $eq: [{ $ifNull: ["$email", null] }, null] },
         then: null,
-        else: { $substrCP: ["$email", 1, { $strLenCP: { $ifNull: ["$email", ""] } }] },
+        else: { $substrCP: ["$email", 1, { $strLenCP: "$email" }] },
       },
     });
   });
@@ -8556,13 +8550,11 @@ describe("1-arg substr", () => {
             {
               $cond: {
                 if: { $lt: [{ $add: ["$headerLength", 1] }, 0] },
-                then: {
-                  $max: [0, { $add: [{ $add: ["$headerLength", 1] }, { $strLenCP: { $ifNull: ["$email", ""] } }] }],
-                },
+                then: { $max: [0, { $add: [{ $add: ["$headerLength", 1] }, { $strLenCP: "$email" }] }] },
                 else: { $add: ["$headerLength", 1] },
               },
             },
-            { $strLenCP: { $ifNull: ["$email", ""] } },
+            { $strLenCP: "$email" },
           ],
         },
       },
@@ -8574,11 +8566,7 @@ describe("1-arg substr", () => {
         if: { $eq: [{ $ifNull: ["$email", null] }, null] },
         then: null,
         else: {
-          $substrCP: [
-            "$email",
-            { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$email", ""] } }, 3] }] },
-            { $strLenCP: { $ifNull: ["$email", ""] } },
-          ],
+          $substrCP: ["$email", { $max: [0, { $subtract: [{ $strLenCP: "$email" }, 3] }] }, { $strLenCP: "$email" }],
         },
       },
     });
@@ -8632,13 +8620,7 @@ describe("the string forms of a slice: .substring and .substr", () => {
           $cond: {
             if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
             then: null,
-            else: {
-              $substrCP: [
-                "$$jsmqlRecv",
-                2,
-                { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } }, 2] }] },
-              ],
-            },
+            else: { $substrCP: ["$$jsmqlRecv", 2, { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlRecv" }, 2] }] }] },
           },
         },
       },
@@ -8656,8 +8638,8 @@ describe("the string forms of a slice: .substring and .substr", () => {
             else: {
               $substrCP: [
                 "$$jsmqlRecv",
-                { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } }, 3] }] },
-                { $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } },
+                { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlRecv" }, 3] }] },
+                { $strLenCP: "$$jsmqlRecv" },
               ],
             },
           },
@@ -8679,11 +8661,11 @@ describe("the string forms of a slice: .substring and .substr", () => {
                 {
                   $cond: {
                     if: { $lt: ["$i", 0] },
-                    then: { $max: [0, { $add: ["$i", { $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } }] }] },
+                    then: { $max: [0, { $add: ["$i", { $strLenCP: "$$jsmqlRecv" }] }] },
                     else: "$i",
                   },
                 },
-                { $strLenCP: { $ifNull: ["$$jsmqlRecv", ""] } },
+                { $strLenCP: "$$jsmqlRecv" },
               ],
             },
           },
@@ -8704,9 +8686,7 @@ describe(".substring", () => {
       $cond: {
         if: { $eq: [{ $ifNull: ["$email", null] }, null] },
         then: null,
-        else: {
-          $substrCP: ["$email", 1, { $max: [0, { $subtract: [{ $strLenCP: { $ifNull: ["$email", ""] } }, 1] }] }],
-        },
+        else: { $substrCP: ["$email", 1, { $max: [0, { $subtract: [{ $strLenCP: "$email" }, 1] }] }] },
       },
     });
   });
@@ -9365,7 +9345,7 @@ describe(".join", () => {
       $ifNull: [
         {
           $reduce: {
-            input: { $ifNull: ["$tags", []] },
+            input: "$tags",
             initialValue: null,
             in: {
               $cond: {
@@ -9403,7 +9383,7 @@ describe(".join", () => {
       $ifNull: [
         {
           $reduce: {
-            input: { $ifNull: ["$tags", []] },
+            input: "$tags",
             initialValue: null,
             in: {
               $cond: {
@@ -9462,7 +9442,7 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
     });
     // an argument that may be missing makes the whole chain uncertain
     expect(jsmql.expr("[1, 2].concat($.b).size()")).toEqual({
-      $size: { $ifNull: [{ $concatArrays: [[1, 2], { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }] }, []] },
+      $size: { $concatArrays: [[1, 2], { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }] },
     });
     expect(jsmql.expr("$range(0, $.n).size()")).toEqual({ $size: { $ifNull: [{ $range: [0, "$n"] }, []] } });
     expect(jsmql.expr("Object.keys($.o).size()")).toEqual({

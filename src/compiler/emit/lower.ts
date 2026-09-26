@@ -40,6 +40,7 @@ import {
   bareCallableNames,
   constructibleNames,
   positionsOf,
+  readsNullAsEmptyOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
@@ -728,10 +729,27 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
     // each document's `a` as it is.
     const inExpression = position === "value" || position === "filter";
-    const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const needsEmpty =
+      inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    // An operator that answers null as it answers the empty value needs no wrap:
+    // `{ $sum: "$a" }` is 0 for a missing `a`, as `{ $sum: [] }` is. Its cell may read
+    // the receiver as there, because the answer is the one it gives there.
+    const nullIsEmpty = needsEmpty && readsNullAsEmptyOf(name);
+    const wrap = needsEmpty && !nullIsEmpty;
     const input = wrap ? ifNull(recv, empty) : recv;
     return sel.rule.emit(
-      exprInputs(name, input, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, proven || wrap),
+      exprInputs(
+        name,
+        input,
+        exprArgs,
+        positionalKeysOf(name),
+        env,
+        node,
+        READ,
+        undefined,
+        recvNode,
+        proven || wrap || nullIsEmpty,
+      ),
     );
   }
   if (sel.kind === "dispatch") {

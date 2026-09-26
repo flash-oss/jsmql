@@ -25,6 +25,7 @@ type Row = {
   document?: string;
   body?: unknown;
   newKeyword?: string;
+  readsNullAsEmpty?: true;
 };
 
 const rows = Object.entries(NAMES) as [string, Row][];
@@ -75,6 +76,19 @@ describe("registry — a constructor that demands `new`", () => {
     const demands = rows.filter(([, row]) => row.kind === "global" && row.newKeyword === "required");
     expect(demands.length).toBeGreaterThan(0);
     expect(demands.filter(([, row]) => (row.where?.length ?? 0) > 0).map(([name]) => name)).toEqual([]);
+  });
+});
+
+describe("registry — a row that reads null as the empty value", () => {
+  it("states it only where the receiver has an empty value: an array or an object", () => {
+    // HR5 runs an array method on `[]` and an object method on `{}`. The fact says the
+    // operator already gives that answer for null, so it means nothing on a string row.
+    const stray = rows
+      .filter(([, row]) => row.readsNullAsEmpty === true)
+      .filter(([, row]) => !familiesOf(row).some((f) => f === "array" || f === "object"))
+      .map(([name]) => name);
+    expect(rows.some(([, row]) => row.readsNullAsEmpty === true)).toBe(true);
+    expect(stray).toEqual([]);
   });
 });
 

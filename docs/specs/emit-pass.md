@@ -838,7 +838,9 @@ A set method reads its list argument as `[]` when it is missing, as lodash
 reads a missing list: `$.a.union($.b)` is
 `{ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }`. The set
 operators answer null for a null operand, so without the wrap a missing
-argument makes the whole value null.
+argument makes the whole value null. A list argument that the proof shows present
+takes no wrap: `$.z.union($.a.uniq())` reads the `.uniq()` as it is. See
+[types.md](types.md) § Presence.
 
 The globals follow JavaScript where the two number differently or the server
 holds a different equality. `new Date(y, m, d, …)` and `Date.UTC(…)` count

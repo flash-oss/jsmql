@@ -101,17 +101,21 @@ export const clampNonNegativeIndex = (node: Expr, lowered: unknown): unknown => 
   return lit === null ? { $max: [0, lowered] } : Math.max(0, lit);
 };
 
-/** The length of a string value. A literal counts its code points. A value takes `$strLenCP` over "" for a missing one. */
-export function strLenOf(value: unknown): unknown {
+/**
+ * The length of a string value. A literal counts its code points. A value takes
+ * `$strLenCP` over "" for a missing one, because `$strLenCP` refuses null — unless the
+ * caller knows it is there (`present`), as the body of a null test does.
+ */
+export function strLenOf(value: unknown, present = false): unknown {
   if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
-  return { $strLenCP: isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
+  return { $strLenCP: present || isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
 }
 
 /** A JavaScript slice index on a string. A negative index counts from the end, with a clamp at 0. */
-export function normaliseSliceIndex(node: Expr, lowered: unknown, recv: unknown): unknown {
+export function normaliseSliceIndex(node: Expr, lowered: unknown, recv: unknown, present = false): unknown {
   const lit = literalIndexValue(node);
-  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv), -lit));
-  return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv)] }), lowered);
+  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv, present), -lit));
+  return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv, present)] }), lowered);
 }
 
 /** A negative literal's magnitude — `-3` → 3 — or null. */
@@ -121,16 +125,18 @@ export function negativeLiteralValue(node: Expr): number | null {
 }
 
 /** Everything from `from` on. */
-export const strTail = (s: unknown, from: number): unknown => ({ $substrCP: [s, from, strLenOf(s)] });
+export const strTail = (s: unknown, from: number, present = false): unknown => ({
+  $substrCP: [s, from, strLenOf(s, present)],
+});
 
 /** lodash `capitalize`: first character up, the rest down. */
-export const capitalizeExpr = (s: unknown): unknown => ({
-  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }],
+export const capitalizeExpr = (s: unknown, present = false): unknown => ({
+  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1, present) }],
 });
 
 /** lodash `upperFirst` / `lowerFirst`: it changes the first character and keeps the rest. */
-export const firstCharExpr = (s: unknown, op: "$toUpper" | "$toLower"): unknown => ({
-  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)],
+export const firstCharExpr = (s: unknown, op: "$toUpper" | "$toLower", present = false): unknown => ({
+  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1, present)],
 });
 
 /** lodash's word boundary: a capitalised word, an acronym, a lone capital, a number. */

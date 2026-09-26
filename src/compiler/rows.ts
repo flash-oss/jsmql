@@ -522,7 +522,18 @@ export function hasStreamValueCell(name: string): boolean {
 
 /** Does the value cell answer null only for a null or missing input — never for an input that is there? */
 export function neverNullOf(name: string): boolean {
-  return (row(name) as { neverNull?: true } | undefined)?.neverNull === true;
+  const stated = (row(name) as { neverNull?: true | "always" } | undefined)?.neverNull;
+  return stated === true || stated === "always";
+}
+
+/** Does the value cell answer a value WHATEVER its arguments are — a missing one read as the empty value of its slot? */
+export function neverNullAlwaysOf(name: string): boolean {
+  return (row(name) as { neverNull?: true | "always" } | undefined)?.neverNull === "always";
+}
+
+/** Does the operator answer a null receiver as it answers the empty one, so HR5 needs no `$ifNull`? */
+export function readsNullAsEmptyOf(name: string): boolean {
+  return (row(name) as { readsNullAsEmpty?: true } | undefined)?.readsNullAsEmpty === true;
 }
 
 /**

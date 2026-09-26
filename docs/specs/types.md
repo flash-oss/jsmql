@@ -181,18 +181,36 @@ exactly what they hold.
 ### Presence
 
 A proof's `absent` flag comes from the row or the source where either states it
-(`statedPresence` in [prove.ts](../../src/compiler/emit/prove.ts)): a literal is
-present; a call is present when its row states `neverNull` and its receiver and
-value arguments are present; an `Injected` value is present unless it is null. A
-`? :` is present when both branches are; a property read carries the object's
-proof; a binding carries what its value proved. `a ?? b` is present exactly when
-`b` is. An array or object method under a dot is present whatever its receiver:
-HR5 reads a missing receiver as `[]` or `{}` (`dispatchOn` in
-[lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()`
-guards `a` once and `.size()` adds nothing. A `?.` on the spine takes that away:
-the chain stops, and the value may be null. MEASURED: `{ $size: null }` and
-`{ $in: [x, null] }` abort the command, so a cell guards with `$ifNull` exactly
-where the proof says `absent`.
+(`statedPresence` in [prove.ts](../../src/compiler/emit/prove.ts)). A literal is
+present, and an `Injected` value is present unless it is null. A `? :` is present
+when both branches are; a property read carries the object's proof; a binding
+carries what its value proved. `a ?? b` is present exactly when `b` is.
+
+A call is present when its row states `neverNull` and its receiver and value
+arguments are present. A row that states `neverNull: "always"` reads a missing
+argument itself (the cell wraps a missing list in `[]`), or its operator answers a
+value for any operand (`$eq`, `$type`). So only its receiver counts:
+`$.a.intersection($.b)` is present, and `.size()` after it adds no `$ifNull`. A raw
+operator's literal object operand is a body (`$map({ input, … })`, `$hour({ date })`),
+and it proves nothing, because no row states which key is the input.
+
+An array or object method under a dot is present whatever its receiver: HR5 reads a
+missing receiver as `[]` or `{}` (`dispatchOn` in
+[lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()` guards
+`a` once. A row that states `readsNullAsEmpty` takes no wrap at all, because its
+operator gives the same answer for null: `$.a.sum()` is `{ $sum: "$a" }`. A `?.` on
+the spine takes the presence away: the chain stops, and the value may be null.
+
+A cell guards with `$ifNull` exactly where the proof says `absent`. MEASURED:
+`{ $size: null }` and `{ $in: [x, null] }` abort the command. The same rule holds for
+an argument: a list argument that the proof shows present takes no guard
+(`listArgument` in [names.ts](../../src/registry/names.ts)). Inside the body of a null
+test, the receiver is present, so its length takes no `""` guard.
+[test/compiler-methods.test.ts](../../test/compiler-methods.test.ts) measures each
+`neverNull` and `readsNullAsEmpty` claim of a JavaScript row on mongod, and
+[test/compiler-returns-agrees.test.ts](../../test/compiler-returns-agrees.test.ts)
+measures each claim of an operator. The same suite drops each guard of a set of cases,
+one at a time, and fails when no answer changes.
 
 ### The document after a stage
 

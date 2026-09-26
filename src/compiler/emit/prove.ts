@@ -25,6 +25,7 @@ import {
   familiesOf,
   isCallable,
   namespaceNames,
+  neverNullAlwaysOf,
   neverNullOf,
   productionForOperator,
   returnsOf,
@@ -72,7 +73,9 @@ const NAMESPACES = namespaceNames();
  * whether it is (a `$lookup`'s array, a `let` of a present value). A call
  * is, when its row states `neverNull` and its receiver and every value
  * argument are also present — `$map` over an array that is there gives an
- * array that is there. A field path is present only where the document's
+ * array that is there. A row that states `"always"` reads a missing argument
+ * itself, so only its receiver counts: `$.a.union($.b)` is there, because a
+ * dot wraps `a` and the cell wraps `b`. A field path is present only where the document's
  * proof says so: the document may lack it, and every array operator returns
  * null for a missing input. A `? :` is present when both branches are; a
  * property read is present when the object's proof says so.
@@ -115,18 +118,24 @@ function statedPresence(node: Expr, env: Env): boolean | null {
         node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES.has(node.object.name)
           ? true
           : wrapped || isPresent(node.object, env);
-      return receiver && node.args.every((a) => argPresent(a, env));
+      return receiver && argsThere(name, node.args, env);
     }
     case "OperatorCall":
-      return neverNullOf(node.name) && node.args.every((a) => argPresent(a, env));
+      // A literal object operand is a body (`$map({ input: …, as, in })`, `$hour({ date: … })`),
+      // and which of its keys is the input is no fact of the row: it proves nothing.
+      return (
+        neverNullOf(node.name) &&
+        (neverNullAlwaysOf(node.name) ||
+          node.args.every((a) => !(a.type === "ObjectLiteral" && namedRow(a) === null) && argPresent(a, env)))
+      );
     case "CallExpression":
       if (node.callee.type === "Ident" && !env.scope.has(node.callee.name)) {
-        return neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env));
+        return neverNullOf(node.callee.name) && argsThere(node.callee.name, node.args, env);
       }
       return null;
     case "NewExpression":
       return node.callee.type === "Ident" && !env.scope.has(node.callee.name)
-        ? neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env))
+        ? neverNullOf(node.callee.name) && argsThere(node.callee.name, node.args, env)
         : false;
     case "UnaryExpr": {
       const key = productionForOperator("UnaryExpr", node.op);
@@ -176,6 +185,11 @@ export function chainHasOptional(e: Expr): boolean {
     cursor = cursor.object;
   }
   return cursor.type === "FieldRef" && cursor.optional === true;
+}
+
+/** The arguments of a `neverNull` call are there, or the row reads a missing one as a value of its own (`"always"`). */
+function argsThere(name: string, args: readonly CallArg[], env: Env): boolean {
+  return neverNullAlwaysOf(name) || args.every((a) => argPresent(a, env));
 }
 
 /** An argument as written: a callback is not a value and says nothing; a spread is its list; a value must be present. */
@@ -553,7 +567,10 @@ export function typeOfEmitted(value: unknown, doc: Type): Type {
       names: null,
     };
     const result = evaluate(returnsOf(op), site);
-    const isPresent = neverNullOf(op) && args.every((a) => !typeOfEmitted(a, doc).absent);
+    // A literal object operand is a body, and proves nothing: see `OperatorCall` in `statedPresence`.
+    const body = (a: unknown): boolean => isPlainObject(a) && operatorKeyOf(a) === null;
+    const isPresent =
+      neverNullAlwaysOf(op) || (neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent));
     return isPresent ? present(result) : maybeAbsent(result);
   }
   if (isPlainObject(value)) {
