@@ -51,6 +51,7 @@ import {
   reverseArrayOf,
   setKey,
   singleArrayArg,
+  slotAggregate,
   sizeOf,
   sliceArray,
   strLenOf,
@@ -6842,8 +6843,8 @@ export const NAMES = {
     statement: unsupported(
       "'.sum()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sum();'",
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: singleArrayArg(recv) }) },
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$sum", recv, (a) => ({ $sum: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$sum", recv, (a) => ({ $sum: a })) },
   }),
 
   mean: name({
@@ -6858,8 +6859,8 @@ export const NAMES = {
     statement: unsupported(
       "'.mean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.mean();'",
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: singleArrayArg(recv) }) },
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$avg", recv, (a) => ({ $avg: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$avg", recv, (a) => ({ $avg: a })) },
   }),
 
   max: name({
@@ -6883,8 +6884,8 @@ export const NAMES = {
     statement: unsupported(
       "'.max()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.max();'",
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: singleArrayArg(recv) }) },
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$max", recv, (a) => ({ $max: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$max", recv, (a) => ({ $max: a })) },
   }),
 
   min: name({
@@ -6908,8 +6909,8 @@ export const NAMES = {
     statement: unsupported(
       "'.min()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.min();'",
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: singleArrayArg(recv) }) },
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$min", recv, (a) => ({ $min: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$min", recv, (a) => ({ $min: a })) },
   }),
 
   sumBy: name({
@@ -7662,8 +7663,8 @@ export const NAMES = {
     statement: unsupported(
       "'.head()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.head();'",
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) },
   }),
 
   first: name({
@@ -7678,8 +7679,8 @@ export const NAMES = {
     statement: unsupported(
       "'.first()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.first();'",
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) },
   }),
 
   last: name({
@@ -7694,8 +7695,8 @@ export const NAMES = {
     statement: unsupported(
       "'.last()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.last();'",
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) },
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$last", recv, lastOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$last", recv, lastOf) },
   }),
 
   nth: name({

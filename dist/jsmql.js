@@ -217,6 +217,7 @@ var sizeOf = (a) => Array.isArray(a) ? a.length : { $size: a };
 var firstOf = (a) => ({ $first: singleArrayArg(a) });
 var lastOf = (a) => ({ $last: singleArrayArg(a) });
 var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
+var slotAggregate = (op, recv, perDocument) => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
 var jsTruth = (value) => ({
   $and: [
     { $ne: [{ $ifNull: [value, null] }, null] },
@@ -662,10 +663,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    }
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $ceil: mongo({
     doc: "Returns the smallest integer greater than or equal to the specified number.",
@@ -722,10 +720,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "number, base", exact: 2 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    }
+    expr: { args: { sig: "number, base", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $log10: mongo({
     doc: "Calculates the log base 10 of a number.",
@@ -755,10 +750,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    }
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $pow: mongo({
     doc: "Raises a number to the specified exponent.",
@@ -767,10 +759,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "base, exponent", exact: 2 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    }
+    expr: { args: { sig: "base, exponent", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $round: mongo({
     doc: "Rounds a number to a whole integer or to a specified decimal place.",
@@ -833,10 +822,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    }
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $bitNot: mongo({
     doc: "Returns the result of a bitwise NOT operation on a single int or long value.",
@@ -854,10 +840,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    }
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $bitXor: mongo({
     doc: "Returns the result of a bitwise XOR (exclusive or) operation on an array of int and long values.",
@@ -866,10 +849,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    }
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $sin: mongo({
     doc: "Returns the sine of a value that is measured in radians.",
@@ -932,10 +912,7 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "y, x", exact: 2 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    }
+    expr: { args: { sig: "y, x", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $sinh: mongo({
     doc: "Returns the hyperbolic sine of a value measured in radians.",
@@ -1290,10 +1267,7 @@ var NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: {
-        sig: "string, delimiter",
-        exact: 2
-      },
+      args: { sig: "string, delimiter", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     }
   }),
@@ -1639,10 +1613,7 @@ var NAMES = {
       args: { sig: "array, [position, ]count", allowed: [2, 3] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
-    updateDoc: {
-      args: { sig: "count", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "count", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $sortArray: mongo({
     doc: "Sorts the elements of an array.",
@@ -2245,10 +2216,7 @@ var NAMES = {
     shape: "single",
     // The server requires a constant here, and a query document holds values. A rate read
     // at run time has no query form in this cell, so the call takes HR2's plain form.
-    filter: {
-      args: { sig: "rate", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "rate", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $toHashedIndexKey: mongo({
     doc: "Computes the hash of the input expression using MongoDB's hashed-index hash function.",
@@ -2269,10 +2237,7 @@ var NAMES = {
     shape: "single",
     group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: { args: { sig: "operand", exact: 1 }, emit: single },
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $avg: mongo({
     doc: "Returns the average for the specified expression.",
@@ -2303,14 +2268,8 @@ var NAMES = {
     forbiddenIn: [],
     group: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
     window: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $max: mongo({
     doc: "Returns the maximum value that results from applying an expression.",
@@ -2326,10 +2285,7 @@ var NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: { args: { sig: "operand", exact: 1 }, emit: single },
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $median: mongo({
     doc: "Returns an approximation of the median (50th percentile) as a scalar value.",
@@ -2357,10 +2313,7 @@ var NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: { args: { sig: "operand", exact: 1 }, emit: single },
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $percentile: mongo({
     doc: "Returns an array of scalar values that correspond to specified percentile values.",
@@ -2384,10 +2337,7 @@ var NAMES = {
     shape: "single",
     group: { args: { sig: "operand", exact: 1 }, emit: single },
     window: { args: { sig: "operand", exact: 1 }, emit: single },
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $stdDevPop: mongo({
     doc: "Calculates the population standard deviation of the input values.",
@@ -2584,14 +2534,8 @@ var NAMES = {
     evaluates: ["*"],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $bucket: mongo({
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
@@ -2602,14 +2546,8 @@ var NAMES = {
     evaluates: ["groupBy", "default"],
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $bucketAuto: mongo({
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
@@ -2620,14 +2558,8 @@ var NAMES = {
     evaluates: ["groupBy"],
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $changeStream: mongo({
     doc: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
@@ -2662,14 +2594,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $currentOp: mongo({
     doc: "Returns information on active and/or dormant operations for the MongoDB deployment.",
@@ -2680,14 +2606,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $densify: mongo({
     doc: "Creates new documents in a sequence of documents where certain values in a field are missing.",
@@ -2743,14 +2663,8 @@ var NAMES = {
     // A `$unionWith` that NAMES a collection is fine in a branch, so the ban is the
     // literal-documents form alone.
     bansNested: ["$documents"],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $fill: mongo({
     doc: "Populates null and missing field values within documents.",
@@ -2784,14 +2698,8 @@ var NAMES = {
     evaluates: ["startWith"],
     bodyPositions: { "": "value", restrictSearchWithMatch: "filter" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $group: mongo({
     doc: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
@@ -2800,14 +2708,8 @@ var NAMES = {
     evaluates: ["_id"],
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $indexStats: mongo({
     doc: "Returns statistics regarding the use of each index for the collection.",
@@ -2818,14 +2720,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $limit: mongo({
     doc: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
@@ -2836,20 +2732,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listLocalSessions: mongo({
     doc: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
@@ -2860,14 +2744,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listSampledQueries: mongo({
     doc: "Lists sampled queries for all collections or a specific collection.",
@@ -2904,14 +2782,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $lookup: mongo({
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
@@ -2925,14 +2797,8 @@ var NAMES = {
     bodyPositions: { "": "value", pipeline: "statement" },
     binds: { keysOf: "let", visibleIn: ["pipeline"] },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $match: mongo({
     doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
@@ -2961,14 +2827,8 @@ var NAMES = {
     takesLet: true,
     bodyPositions: { "": "value", whenMatched: { list: "statement", otherwise: "value" } },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $out: mongo({
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
@@ -2979,14 +2839,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $planCacheStats: mongo({
     doc: "Returns plan cache information for a collection.",
@@ -2997,14 +2851,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $project: mongo({
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
@@ -3015,14 +2863,8 @@ var NAMES = {
     only: ["update"],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $rankFusion: mongo({
     doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
@@ -3058,14 +2900,8 @@ var NAMES = {
     only: ["update"],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $replaceWith: mongo({
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
@@ -3075,14 +2911,8 @@ var NAMES = {
     only: ["update"],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $sample: mongo({
     doc: "Randomly selects the specified number of documents from its input.",
@@ -3091,14 +2921,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $scoreFusion: mongo({
     doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
@@ -3148,18 +2972,9 @@ var NAMES = {
     evaluates: ["*"],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $setWindowFields: mongo({
     doc: "Groups documents into windows and applies one or more operators to the documents in each window.",
@@ -3171,14 +2986,8 @@ var NAMES = {
     evaluates: ["partitionBy"],
     bodyPositions: { "": "value", "output.*": "window" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $shardedDataDistribution: mongo({
     doc: "Provides data and size distribution information on sharded collections.",
@@ -3202,20 +3011,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $sort: mongo({
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
@@ -3227,14 +3024,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
     updateDoc: { args: { sig: "spec", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $sortByCount: mongo({
@@ -3260,14 +3051,8 @@ var NAMES = {
     where: ["stream", "statement"],
     bodyPositions: { "": "value", pipeline: "statement" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $unset: mongo({
     doc: "Removes or excludes fields from documents.",
@@ -3279,24 +3064,9 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $unwind: mongo({
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
@@ -3305,14 +3075,8 @@ var NAMES = {
     evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    stream: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1 },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $vectorSearch: mongo({
     doc: "Performs an ANN or ENN search on a vector in the specified field.",
@@ -6106,8 +5870,8 @@ var NAMES = {
     statement: unsupported(
       "'.sum()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sum();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: singleArrayArg(recv) }) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$sum", recv, (a) => ({ $sum: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$sum", recv, (a) => ({ $sum: a })) }
   }),
   mean: name({
     doc: "'.mean()' \u2014 see docs/LANGUAGE.md.",
@@ -6121,8 +5885,8 @@ var NAMES = {
     statement: unsupported(
       "'.mean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.mean();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: singleArrayArg(recv) }) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$avg", recv, (a) => ({ $avg: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$avg", recv, (a) => ({ $avg: a })) }
   }),
   max: name({
     doc: "'.max()' \u2014 see docs/LANGUAGE.md.",
@@ -6145,8 +5909,8 @@ var NAMES = {
     statement: unsupported(
       "'.max()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.max();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: singleArrayArg(recv) }) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$max", recv, (a) => ({ $max: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$max", recv, (a) => ({ $max: a })) }
   }),
   min: name({
     doc: "'.min()' \u2014 see docs/LANGUAGE.md.",
@@ -6169,8 +5933,8 @@ var NAMES = {
     statement: unsupported(
       "'.min()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.min();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: singleArrayArg(recv) }) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$min", recv, (a) => ({ $min: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$min", recv, (a) => ({ $min: a })) }
   }),
   sumBy: name({
     doc: "'.sumBy()' \u2014 see docs/LANGUAGE.md.",
@@ -6898,8 +6662,8 @@ var NAMES = {
     statement: unsupported(
       "'.head()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.head();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) }
   }),
   first: name({
     doc: "'.first()' \u2014 see docs/LANGUAGE.md.",
@@ -6913,8 +6677,8 @@ var NAMES = {
     statement: unsupported(
       "'.first()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.first();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) }
   }),
   last: name({
     doc: "'.last()' \u2014 see docs/LANGUAGE.md.",
@@ -6928,8 +6692,8 @@ var NAMES = {
     statement: unsupported(
       "'.last()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.last();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$last", recv, lastOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$last", recv, lastOf) }
   }),
   nth: name({
     doc: "'.nth()' \u2014 see docs/LANGUAGE.md.",
@@ -8388,10 +8152,7 @@ var NAMES = {
   $inc: mongo({
     doc: "Increments a field by a number. JSMQL also writes it as JavaScript: '$.views++', '++$.views', '$.views += 2'.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   // ── names that are valid ONLY inside another operator's body. A test proves each
   // one both ways: the container accepts it, and on its own it is "Unrecognized expression".
@@ -8399,82 +8160,55 @@ var NAMES = {
     doc: "A rectangle, by its bottom-left and top-right corners.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $center: mongo({
     doc: "A circle on a flat plane, by centre and radius.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $centerSphere: mongo({
     doc: "A circle on a sphere, by centre and radius in radians.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $polygon: mongo({
     doc: "A polygon, by its list of points.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $geometry: mongo({
     doc: "A GeoJSON shape.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin", "$geoIntersects", "$near", "$nearSphere"] },
-    filter: {
-      args: { sig: "shape", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $maxDistance: mongo({
     doc: "The furthest a match may be, in metres or radians.",
     where: ["filter"],
     onlyInside: { filter: ["$near", "$nearSphere", "$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $minDistance: mongo({
     doc: "The nearest a match may be, in metres or radians.",
     where: ["filter"],
     onlyInside: { filter: ["$near", "$nearSphere"] },
-    filter: {
-      args: { sig: "shape", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $each: mongo({
     doc: "Adds several values at once instead of one.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push", "$addToSet"] },
-    updateDoc: {
-      args: { sig: "values", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "values", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $position: mongo({
     doc: "The index to insert at, rather than appending.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
-    updateDoc: {
-      args: { sig: "index", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "index", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $case: mongo({
     doc: "One branch of a '$switch': its test and its result.",
@@ -8490,66 +8224,42 @@ var NAMES = {
   $currentDate: mongo({
     doc: "Sets a field to the current date.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $mul: mongo({
     doc: "Multiplies a field by a number. JSMQL also writes it as JavaScript: '$.price *= 1.1', '$.price /= 2'.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $rename: mongo({
     doc: "Renames a field. JSMQL also writes it as JavaScript: '$.b = $.a; delete $.a;'.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $setOnInsert: mongo({
     doc: "Sets a field only when an upsert inserts a new document.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $pop: mongo({
     doc: "Removes the first or last element of an array. JSMQL also writes it as JavaScript: '$.tags.pop()'.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $pull: mongo({
     doc: "Removes every array element matching a condition.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $pullAll: mongo({
     doc: "Removes every listed value from an array.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $bit: mongo({
     doc: "Applies a bitwise and / or / xor to an integer field.",
     where: ["updateDoc"],
-    updateDoc: {
-      args: { sig: "fields", exact: 1 },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   // ── the query language: operators with a filter form and no expression form.
   // The seven geometry sub-constructs ($box, $center, $centerSphere, $polygon,
@@ -8589,10 +8299,7 @@ var NAMES = {
     doc: "Adds a comment to a query predicate.",
     category: "miscellaneous",
     where: ["filter"],
-    filter: {
-      args: { sig: "text", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "text", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $elemMatch: mongo({
     doc: "The $elemMatch operator matches documents that contain an array field with at least one element that matches all the specified query criteria.",
@@ -8646,10 +8353,7 @@ var NAMES = {
     doc: "Validate documents against the given JSON Schema.",
     category: "miscellaneous",
     where: ["filter"],
-    filter: {
-      args: { sig: "schema", exact: 1 },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    }
+    filter: { args: { sig: "schema", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $near: mongo({
     doc: "Returns geospatial objects in proximity to a point. Requires a geospatial index. The 2dsphere and 2d indexes support $near.",
@@ -8683,13 +8387,7 @@ var NAMES = {
     // MEASURED: the server refuses `find({ $nor: [] })` ("$nor argument must be a
     // non-empty array"), and `$nor` has no expression form to fall back to. So this
     // row refuses the empty list and emits nothing.
-    filter: {
-      args: {
-        sig: "predicates",
-        atLeast: 1
-      },
-      emit: norList
-    }
+    filter: { args: { sig: "predicates", atLeast: 1 }, emit: norList }
   }),
   $regex: mongo({
     doc: "Selects documents where values match a specified regular expression.",

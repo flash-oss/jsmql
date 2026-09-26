@@ -37,8 +37,8 @@ const SLOTS = {
   window: (acc: string) => `$setWindowFields({ sortBy: { n: 1 }, output: { r: ${acc} } });`,
 } as const;
 
-/** The receivers each spelling runs on: a number field and an array field. */
-const RECEIVERS = ["$.n", "$.a"];
+/** The receivers each spelling runs on: a number field, an array field, and an array literal. */
+const RECEIVERS = ["$.n", "$.a", "[$.n, $.m]"];
 
 /** The call that each row with an accumulator cell takes, from its argument count. */
 const callOf = (name: string, cell: { args?: { none?: true } }): string =>
@@ -95,7 +95,30 @@ describe.skipIf(!up)("emit every JavaScript accumulator spelling in a shape mong
     expect(refused).toEqual([]);
     // A suite that silently stops comparing is worse than none: this check fails
     // if the count of accumulator cells of a JavaScript method decreases.
-    expect(checked).toBeGreaterThanOrEqual(28);
+    expect(checked).toBeGreaterThanOrEqual(42);
+  });
+
+  it("reduces an array literal on each document first, then accumulates it", async () => {
+    // `[$.n, $.m]` holds one array on each document. The aggregate reads it as
+    // JavaScript does on that document, and the slot accumulates the result:
+    // over { n: 1, m: 2 } and { n: 3, m: 4 }, `.sum()` is (1 + 2) + (3 + 4).
+    const EXPECTED: Readonly<Record<string, number>> = {
+      ".sum()": 10,
+      ".mean()": 2.5,
+      ".max()": 4,
+      ".min()": 1,
+      ".head()": 1,
+      ".first()": 1,
+      ".last()": 4,
+    };
+    for (const [call, want] of Object.entries(EXPECTED)) {
+      const mql = jsmql.pipeline(SLOTS.group(`[$.n, $.m]${call}`)) as Record<string, unknown>[];
+      const [row] = await coll.aggregate(mql).toArray();
+      expect([call, row.r]).toEqual([call, want]);
+    }
+    expect(jsmql.pipeline(SLOTS.group("[$.n, $.m].sum()"))).toEqual([
+      { $group: { _id: null, r: { $sum: { $sum: ["$n", "$m"] } } } },
+    ]);
   });
 
   it("passes an operand list that you write through, in both spellings (HR2)", async () => {

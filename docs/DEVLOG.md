@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — fix: a JavaScript aggregate on an array literal runs in a `$group` slot
+
+A JavaScript aggregate in an accumulator slot gave MQL that the server refuses, when
+its receiver was an array literal:
+
+```js
+$group({ _id: null, r: [$.n, $.m].sum() });   // → { r: { $sum: [["$n", "$m"]] } }
+// mongod: "The $sum accumulator is a unary operator"; a window slot answered 0
+```
+
+The receiver held one array on each document, and the cell wrapped it one level
+deeper, as the value road does for `$size`. An accumulator slot reads any array as
+an operand list. Now the aggregate reduces the array on each document first, as
+`.sumBy(fn)` does, and the slot accumulates the result:
+`[$.n, $.m].sum()` → `{ $sum: { $sum: ["$n", "$m"] } }`. MEASURED over
+`{ n: 1, m: 2 }` and `{ n: 3, m: 4 }`: `.sum()` 10, `.mean()` 2.5, `.max()` 4,
+`.min()` 1, `.first()` 1, `.last()` 4, in both slots. A field receiver keeps its
+shape (`$.a.sum()` → `{ $sum: "$a" }`). The helper is `slotAggregate` in
+[src/registry/mql.ts](../src/registry/mql.ts), and
+[test/compiler-accumulator-agrees.test.ts](../test/compiler-accumulator-agrees.test.ts)
+runs the array-literal receiver for every cell.
+
+---
+
 ## 2026-09-26 — refactor: drop the check facts that only the escape hatch read
 
 A `$op(…)` or `$stage(…)` call meets no check (HR3 does not apply to it), so the

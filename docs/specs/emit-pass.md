@@ -870,8 +870,11 @@ are `$first`, `.last()` is `$last`, `.max()` / `.min()` are their operators.
 `{ $sum: { $sum: <map> } }`, `{ $avg: { $avg: <map> } }` — because the
 accumulator alone ignores an array operand (`$sum` of an array is 0, and
 `$avg` of one is null, measured). So `.meanBy` in a group is the mean of the
-per-document means. A `GroupIn` carries the receiver and `iteratee` for these
-cells; an operator call passes null.
+per-document means. A receiver that renders as an array LITERAL is reduced the same
+way (`slotAggregate` in `src/registry/mql.ts`), because a slot reads
+`{ $sum: [ … ] }` as an operand list, and a `$group` slot refuses it:
+`[$.n, $.m].sum()` is `{ $sum: { $sum: ["$n", "$m"] } }`. A `GroupIn` carries the
+receiver and `iteratee` for these cells; an operator call passes null.
 
 ```
 $group({ _id: $.tag, total: $.a.sum(), f: $.a.first() });
