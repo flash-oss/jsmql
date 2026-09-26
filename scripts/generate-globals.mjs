@@ -923,6 +923,10 @@ function jsdocFor(name, spec, registryDef) {
 //   and types.
 // ---------------------------------------------------------------------------
 
+// Every key is optional in the type, because the types never refuse a `$` call (see
+// CATCH_ALL). An incomplete object literal must still match this documented signature,
+// or TypeScript picks the catch-all while the developer types, and the key completion
+// is lost. The field's doc names a key that the server requires.
 function argsObjectForSpec(spec, registryKeys) {
   const specArgs = spec?.arguments ?? [];
   const byName = new Map(specArgs.map((a) => [a.name, a]));
@@ -931,7 +935,7 @@ function argsObjectForSpec(spec, registryKeys) {
   const lines = ["{"];
   for (const k of keys) {
     const specArg = byName.get(k);
-    const optional = specArg?.optional ? "?" : "";
+    const required = specArg !== undefined && !specArg.optional ? "Required. " : "";
     const type = mapType(specArg?.type);
     const desc = specArg?.description?.trim();
     if (desc) {
@@ -943,9 +947,9 @@ function argsObjectForSpec(spec, registryKeys) {
         .map((s) => s.trim())
         .filter(Boolean)
         .join(" ");
-      lines.push(`  /** ${one} */`);
-    }
-    lines.push(`  ${quoteKeyIfNeeded(k)}${optional}: ${type};`);
+      lines.push(`  /** ${required}${one} */`);
+    } else if (required !== "") lines.push(`  /** Required. */`);
+    lines.push(`  ${quoteKeyIfNeeded(k)}?: ${type};`);
   }
   lines.push("}");
   return lines.join("\n");
@@ -1052,11 +1056,20 @@ function expressionOpCallableType(spec, opDef) {
   }
 }
 
+// A `$op(…)` or `$stage(…)` call is the developer's own MQL (HR2), and the compiler
+// takes it with any arguments: the positional form of an object-form operator
+// (`$trim($.name, " ")`), a string body (`$unwind("$items")`), or a count that the
+// server refuses (`$size(1, 2)`). So each name gains one catch-all overload after
+// its documented signatures, and the types never refuse a `$` call. The documented
+// signatures come first, so completion and hover still read them.
+const CATCH_ALL = "(...args: any[]): any";
+
 function emitFunctionDecls(name, callableSigs) {
   // Emit one `function` declaration per call signature inside `declare global`.
   // TypeScript merges identically-named function declarations as overloads, so a
   // `flex`-shape operator naturally surfaces with both call shapes.
-  return callableSigs.map((sig) => `function ${name}${sig.replace(/^\(/, "(")};`).join("\n");
+  const sigs = callableSigs.includes(CATCH_ALL) ? callableSigs : [...callableSigs, CATCH_ALL];
+  return sigs.map((sig) => `function ${name}${sig.replace(/^\(/, "(")};`).join("\n");
 }
 
 // ---------------------------------------------------------------------------

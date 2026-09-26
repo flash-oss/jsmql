@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-26 — feat: the TypeScript globals never refuse a `$` call
+
+A `$op(…)` or `$stage(…)` call is the developer's own MQL, and the compiler takes it
+with any arguments. The generated globals still refused three such calls:
+
+```ts
+$trim(x, " ");        // TS2554 "Expected 1 arguments, but got 2" — the positional form
+$unwind("$items");    // TS2345 — a string is not the object form
+$size(1, 2);          // TS2554 — a count that the server refuses
+```
+
+The developer decided, in the interview on the HR3 change, to keep each documented
+signature and to add one catch-all overload, `(...args: any[]): any`, after it
+([scripts/generate-globals.mjs](../scripts/generate-globals.mjs)). The catch-all
+alone lost the key completion: TypeScript completes the keys from the overload that
+the call matches, and an incomplete object literal matched only the catch-all.
+MEASURED with the TypeScript language service: `$trim({ | })` completed global names.
+So every key of a documented object signature is now optional, and the doc of a key
+that the server requires starts with "Required.". `$trim({ | })` completes `input`
+and `chars` again. [test/types/globals-completion.ts](../test/types/globals-completion.ts)
+holds the three calls above.
+
+---
+
 ## 2026-09-26 — feat!: an unknown `$name` passes through, and a bracketed literal is a pipeline
 
 The developer decided, in the interview on the HR3 change, that an unknown `$name`

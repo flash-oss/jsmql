@@ -4836,7 +4836,7 @@ db.users.updateMany({}, bumpTier({ tier: 2 }));
 
 Listing every stage and operator alongside `$` in the toolbox destructure gets tedious. A real pipeline mentions five to ten stages plus a handful of escape-hatch expression ops. Spelling them out at every call site is bookkeeping the user should not have to do.
 
-The `@koresar/jsmql/globals` subpath is a **pure-types** module that surfaces every JSMQL stage and operator as an ambient global. Import it once at the top of your file, keep only `$` in the toolbox destructure, and write `$match(…)`, `$dateAdd(…)`, and so on directly. Your IDE then autocompletes names and arg objects, catches a typo at compile time, and shows the official MongoDB description and doc link on hover.
+The `@koresar/jsmql/globals` subpath is a **pure-types** module that surfaces every JSMQL stage and operator as an ambient global. Import it once at the top of your file, keep only `$` in the toolbox destructure, and write `$match(…)`, `$dateAdd(…)`, and so on directly. Your IDE then autocompletes names and arg objects, catches a misspelled name at compile time, and shows the official MongoDB description and doc link on hover.
 
 ```ts
 import "@koresar/jsmql/globals"; // ← side-effect import; loads only `declare global` types
@@ -4860,15 +4860,25 @@ import "@koresar/jsmql/globals";
 
 const recent = jsmql(
   ({ $ }) => $dateAdd({ startDate: $.purchaseDate, unit: "day", amount: 3 }),
-  //                  ╰── autocomplete suggests: startDate, unit, amount, timezone?
+  //                  ╰── autocomplete suggests: startDate, unit, amount, timezone
   //                  ╰── `unit` is typed as the MQL timeUnit literal union
 );
+```
+
+A `$op(…)` call is your own MQL, so the types never refuse its arguments. After its documented signature, each name carries one catch-all overload, and the server judges the call:
+
+```ts
+import "@koresar/jsmql/globals";
+
+jsmql(({ $ }) => $trim($.name, " "));   // the positional form of an object-form operator
+jsmql(({ $ }) => { $unwind("$items"); }); // a string body
+jsmql(({ $ }) => $size(1, 2));          // a count that the server refuses
 ```
 
 How it works:
 
 - The compiled module (`dist/globals.js`) is `export {};`. **It exports no value, and costs nothing at runtime** beyond a single empty module load. A bundler tree-shakes it to nothing in practice. For fully zero-runtime use, add `"@koresar/jsmql/globals"` to your tsconfig `compilerOptions.types` instead of importing it.
-- The types are **generated at build time from the official MongoDB MQL spec** ([`mongodb/mql-specifications`](https://github.com/mongodb/mql-specifications)), so they always match the operator the server documents: required versus optional args, a function-overload shape (for example `$and(x)` versus `$and(x, y, z)`), the full description, version metadata, and a link.
+- The types are **generated at build time from the official MongoDB MQL spec** ([`mongodb/mql-specifications`](https://github.com/mongodb/mql-specifications)), so they always match the operator the server documents: the key names (the doc of a key that the server requires starts with "Required."), a function-overload shape (for example `$and(x)` versus `$and(x, y, z)`), the full description, version metadata, and a link. Each key is optional in the type, so the completion works while you type the object.
 - The declarations are **global**, through TypeScript's `declare global`. Once any file in your project imports the module, the names are visible everywhere. **This is intentional.** A bundler rewrites every alternative — a named import, a namespace import — into `(0, _ops.$match)(…)` form, which the JSMQL parser cannot read. A global is the only shape that survives every transform. Each name starts with `$`, so a real collision with a user identifier is nil — `$` as an identifier prefix is the MongoDB convention, and no other part of the TS ecosystem uses it.
 - The runtime path stays the same. The JSMQL parser already recognises a bare `$stage(…)` or `$op(…)` call regardless of what TypeScript sees. This import only quiets TypeScript and gives your IDE something to complete.
 

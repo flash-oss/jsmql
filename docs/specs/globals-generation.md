@@ -38,6 +38,7 @@ For each operator the generator emits:
 
 - A multi-line JSDoc comment with the full spec `description` (or the registry description as a fallback), an optional `@minVersion <ver>` tag, and an `@see <link>` tag (the spec's `link` field, or the default Mongo docs URL built from the name).
 - One or more `function $name(…): any;` declarations. A `flex`-shape operator emits two overloads, so it takes more than one line.
+- One catch-all overload, `function $name(...args: any[]): any;`, after the documented ones. A `$op(…)` or `$stage(…)` call is the developer's own MQL (HR2), and the compiler takes it with any arguments: the positional form of an object-form operator (`$trim($.name, " ")`), a string body (`$unwind("$items")`), or a count that the server refuses (`$size(1, 2)`). So the types never refuse a `$` call.
 
 ### Call-shape rules
 
@@ -45,7 +46,7 @@ Stages (driven by the spec's `encode` field):
 
 | `encode` | Signature |
 |---|---|
-| `object` | `function $stage(args: { …spec args… }): any;` with each spec argument as a field, marked optional per `optional: true`. |
+| `object` | `function $stage(args: { …spec args… }): any;` with each spec argument as an optional field. The field's doc starts with "Required." when the spec states no `optional: true`. |
 | `single` (or missing) | `function $stage(name: type): any;` lifting the first spec argument's name and type. |
 | `array` | `function $stage(name: unknown[]): any;` |
 | `none` or zero arguments | `function $stage(): any;` |
@@ -56,9 +57,11 @@ Expression operators (driven by the operand shape the row states — authoritati
 |---|---|
 | `single` | `function $op(expression: type): any;`, or `function $op(...expression: type[]): any;` when the YAML marks the arg `variadic: array`. |
 | `array` | `function $op(...expressions: type[]): any;` (JSMQL's array shape is N positional args, not one array). |
-| `object` | `function $op(args: { …registry keys… }): any;`, where each registry key is annotated with its spec arg's optionality and type when present. |
+| `object` | `function $op(args: { …registry keys… }): any;`, where each registry key is an optional field with its spec arg's type, and its doc starts with "Required." when the spec arg is not optional. |
 | `none` | `function $op(): any;` |
 | `flex` | Two overloads — `(expression: type): any;` and `(...expressions: type[]): any;` — covering both call shapes the parser accepts. |
+
+Every key of an object signature is optional, because TypeScript completes the keys from the overload that the call matches. An incomplete object literal, which is what the developer has while typing, must still match the documented overload. With a required key, TypeScript picks the catch-all instead, and the key completion is lost. MEASURED with the TypeScript language service: `$trim({ | })` completes `input` and `chars`, and `$dateAdd({ startDate: x, | })` completes the other three keys.
 
 ### Type mapping
 
@@ -146,6 +149,8 @@ The `default` field points at the near-empty `dist/globals.js`, so an accidental
 ## Test coverage
 
 [`test/operator-spec-coverage.test.ts`](../../test/operator-spec-coverage.test.ts) runs the drift test "src/globals.ts is byte-equal to the generator output".
+
+[`test/types/globals-completion.ts`](../../test/types/globals-completion.ts) holds the catch-all: `$trim(x, " ")`, `$unwind("$items")` and `$size(1, 2)` type-check.
 
 [`test/smoke.test.ts`](../../test/smoke.test.ts) checks that `dist/globals.{js,d.ts}` exists and holds real content, as part of the `smoke:dist` flow.
 
