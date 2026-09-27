@@ -182,6 +182,35 @@ describe("compiler/emit/statement — the writes", () => {
     ]);
   });
 
+  it("keeps `$` the ROOT document inside a body over another collection", () => {
+    // The body's stages run over the orders, so a `$project` there reshapes an order, not `$`
+    // (HR4). The value road reads the root document through the `let`, as `$?.pick` does.
+    expect(compiled('$.x = $$$.orders.aggregate(o => { o = $.pick(["a"]); });')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_root: "$$ROOT" },
+          pipeline: [
+            {
+              $replaceWith: {
+                $let: {
+                  vars: { jsmqlObj: "$$jsmql_f0_root" },
+                  in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } },
+                },
+              },
+            },
+          ],
+          as: "x",
+        },
+      },
+    ]);
+    expect(compiled('$.x = $$$.orders.aggregate(o => { o = $.omit(["a"]); });')).toEqual(
+      pipeline('$.x = $$$.orders.aggregate(o => { o = $?.omit(["a"]); });'),
+    );
+    // A body over the SAME documents runs its stages over `$` itself, so the stage stays.
+    expect(compiled('$$.aggregate(o => { o = $.pick(["a"]); });')).toEqual([{ $project: { a: 1, _id: 0 } }]);
+  });
+
   it("places a stage that computes a needed value ahead of the stage that uses it", () => {
     expect(compiled("$.n = $$.size();")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
@@ -984,11 +1013,23 @@ beforeAll(async () => {
     { _id: 1, a: 2, b: 4, qty: 3, price: 5, sub: { k: 1, deep: { v: 1 } }, items: [1, 2] },
     { _id: 2, a: 9, b: 1, qty: 1, price: 2, sub: { k: 2, deep: { v: 2 } }, items: [] },
   ]);
+  // The documents of another collection, for a body over it: `a` is there, null, and missing.
+  const orders = c.db("jsmql_compiler_statement").collection("orders");
+  await orders.deleteMany({});
+  await orders.insertMany([
+    { _id: 10, a: 100, b: 1, audit: "x" },
+    { _id: 11, a: null, b: 2 },
+    { _id: 12, b: 3 },
+  ]);
 });
 
 afterAll(async () => {
   await client?.close();
 });
+
+/** A source's pipeline, run over the live collection. */
+const run = (src: string): Promise<Record<string, unknown>[]> =>
+  coll!.aggregate<Record<string, unknown>>(pipeline(src) as Record<string, unknown>[]).toArray();
 
 describe("compiler/emit/statement — a regex literal in MQL that you write is a BSON regex", () => {
   it("keeps the regex in a query document, in an operator's operand, and in a stage body", () => {
@@ -1049,9 +1090,6 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
 });
 
 describe("compiler/emit/statement — an empty key list, against the server's own answer", () => {
-  const run = (src: string): Promise<unknown[]> =>
-    coll!.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
-
   it.skipIf(!up)("`.pick([])` makes each element `{}`, as lodash's `_.pick(o, [])` does", async () => {
     expect(await run("$$.pick([]);")).toEqual([{}, {}]);
     expect(await run("$ = $.pick([]);")).toEqual([{}, {}]);
@@ -1062,6 +1100,16 @@ describe("compiler/emit/statement — an empty key list, against the server's ow
   it.skipIf(!up)("`.omit([])` keeps each document as it is, as lodash's `_.omit(o, [])` does", async () => {
     const docs = await coll!.find({}).toArray();
     expect(await run("$$.omit([]); $.x = 1;")).toEqual(docs.map((d) => ({ ...d, x: 1 })));
+  });
+});
+
+describe("compiler/emit/statement — a reshape in a body over another collection, against the server's own answer", () => {
+  it.skipIf(!up)("`o = $.pick([…])` there picks from the ROOT document, once for each order (HR4)", async () => {
+    const got = await run('$.x = $$$.orders.aggregate(o => { o = $.pick(["a"]); });');
+    expect(got.map((d) => d.x)).toEqual([
+      [{ a: 2 }, { a: 2 }, { a: 2 }],
+      [{ a: 9 }, { a: 9 }, { a: 9 }],
+    ]);
   });
 });
 

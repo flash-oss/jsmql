@@ -1031,7 +1031,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     // every document: the stages `$$.pick(…)` emits, on the document.
     // See docs/specs/replace-root-stage.md.
     if (path === "") {
-      const links = elementWiseOnDocument(op.value);
+      const links = elementWiseOnDocument(op.value, inner);
       if (links !== null) {
         flush();
         emit(documentStages(links, inner, first && out.length === 0));
@@ -1140,15 +1140,20 @@ function refuseUnbuiltSugar(value: Expr): void {
  * makes of each document. So the two spellings are one lowering. An
  * optional link (`$?.pick(…)`) is not this: the value road reads its
  * `?.`.
+ *
+ * The stages run over the documents of THIS level. Inside a body over
+ * another collection, `$` is still the root document (HR4), so a stage
+ * there would reshape the wrong document. The value road reads `$`
+ * through the body's `let` instead.
  */
-function elementWiseOnDocument(value: Expr): readonly Link[] | null {
+function elementWiseOnDocument(value: Expr, env: Env): readonly Link[] | null {
   const links: Link[] = [];
   let cur: Expr = value;
   while (cur.type === "MethodCall") {
     links.unshift(cur);
     cur = cur.object;
   }
-  if (links.length === 0 || cur.type !== "FieldRef" || cur.path !== "") return null;
+  if (links.length === 0 || cur.type !== "FieldRef" || cur.path !== "" || env.level > 0) return null;
   for (const link of links) {
     const on = receiverFamiliesOf(namedRow(link) ?? link.name);
     if (link.optional || on === undefined || on === "any" || !on.includes("object") || !on.includes("stream"))

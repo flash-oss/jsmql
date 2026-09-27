@@ -25459,7 +25459,7 @@ function writeStages(uf, env, first) {
       continue;
     }
     if (path === "") {
-      const links = elementWiseOnDocument(op.value);
+      const links = elementWiseOnDocument(op.value, inner);
       if (links !== null) {
         flush();
         emit(documentStages(links, inner, first && out.length === 0));
@@ -25536,14 +25536,14 @@ function refuseUnbuiltSugar(value) {
     if (!direct) throw streamAsValue(value.pos);
   }
 }
-function elementWiseOnDocument(value) {
+function elementWiseOnDocument(value, env) {
   const links = [];
   let cur = value;
   while (cur.type === "MethodCall") {
     links.unshift(cur);
     cur = cur.object;
   }
-  if (links.length === 0 || cur.type !== "FieldRef" || cur.path !== "") return null;
+  if (links.length === 0 || cur.type !== "FieldRef" || cur.path !== "" || env.level > 0) return null;
   for (const link of links) {
     const on = receiverFamiliesOf(namedRow(link) ?? link.name);
     if (link.optional || on === void 0 || on === "any" || !on.includes("object") || !on.includes("stream"))

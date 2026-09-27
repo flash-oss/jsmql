@@ -110,6 +110,20 @@ A chain with a link on the object family only (`$ = $.pick([…]).mapValues(…)
 (`$ = $?.pick([…])`), takes the value road: one `$replaceWith` over `$$ROOT`, as for every other
 method on the bare `$`.
 
+The stages run over the documents of the level where the write stands. So the bare `$` takes the
+stream road only where the stages run over the root documents. These places are the top, a
+`$facet` branch and a `$$.aggregate(…)` block. Inside a body over another collection, `$` is still the root
+document ([LANG_RULES.md § HR4](../LANG_RULES.md)), and a stage there reshapes the body's own
+document. So `o = $.pick([…])` in `$$$.orders.aggregate(o => { … })` takes the value road, which
+reads the root document through the `$lookup`'s `let`:
+
+```
+$.x = $$$.orders.aggregate(o => { o = $.pick(["a"]); });
+→ [{ $lookup: { from: "orders", let: { jsmql_f0_root: "$$ROOT" }, pipeline: [
+     { $replaceWith: { $let: { vars: { jsmqlObj: "$$jsmql_f0_root" }, in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } } } } }
+   ], as: "x" } }]
+```
+
 ## Bare `$` is `$$ROOT`
 
 A bare `$` (no `.<field>` suffix, no following identifier for `$op(...)`) is a
