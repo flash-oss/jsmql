@@ -608,6 +608,27 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
 const deepIncludes = (haystack: readonly unknown[], needle: unknown): boolean =>
   haystack.some((h) => sameValue(h, needle));
 
+/**
+ * It keeps the first element for each key, in the order of the list.
+ *
+ * This is how the set family keeps a value once. `$setUnion` gives a repeated
+ * value once. The uniqBy `$reduce` keeps the first element per key, as lodash
+ * does. The server promises no order for a set operator's answer. So the fold
+ * keeps the order of first occurrence. The same list then always gives the same answer.
+ */
+function firstPerKey(
+  items: readonly unknown[],
+  keyOf: (v: unknown, i: number, list: readonly unknown[]) => unknown,
+): unknown[] {
+  const seen: unknown[] = [];
+  return items.filter((v, i) => {
+    const k = keyOf(v, i, items);
+    if (deepIncludes(seen, k)) return false;
+    seen.push(k);
+    return true;
+  });
+}
+
 /** Every element, keyed for comparison. Non-scalar keys have no MongoDB spelling. */
 function keyedBy(xs: readonly unknown[], fn: Callable): unknown[] | null {
   const keys = xs.map((v, i) => fn(v, i, xs));
@@ -869,30 +890,19 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
 
     // ── the set family, compared the way MongoDB compares ───────────────────
     case "uniq":
-    case "sortedUniq": {
-      const out: unknown[] = [];
-      for (const v of xs) if (!deepIncludes(out, v)) out.push(v);
-      return ok(out);
-    }
+    case "sortedUniq":
+      return ok(firstPerKey(xs, (v) => v));
     case "uniqBy":
-    case "sortedUniqBy": {
-      if (fn === undefined) return NO;
-      const seen: unknown[] = [];
-      const out: unknown[] = [];
-      xs.forEach((v, i) => {
-        const k = fn(v, i, xs);
-        if (deepIncludes(seen, k)) return;
-        seen.push(k);
-        out.push(v);
-      });
-      return ok(out);
-    }
+    case "sortedUniqBy":
+      return fn === undefined ? NO : ok(firstPerKey(xs, fn));
     case "without":
       return ok(xs.filter((v) => !deepIncludes(args.map(valueOf), v)));
     case "xor": {
       if (!Array.isArray(a)) return NO;
       const other = a as unknown[];
-      return ok([...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))]);
+      // `$setUnion` gives each value once, so a value that one side holds twice survives once.
+      const kept = [...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))];
+      return ok(firstPerKey(kept, (v) => v));
     }
     case "differenceBy":
     case "intersectionBy":
@@ -909,17 +919,11 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       if (name === "intersectionBy") return ok(mine);
       const myKeys = xs.map(keyOf);
       const extra = (other as unknown[]).filter((v, i) => !deepIncludes(myKeys, keyOf(v, i, other as unknown[])));
-      if (name === "xorBy") return ok([...notMine, ...extra]);
+      // `_.xorBy` is the uniqBy of the elements whose key the other side does not have. So a
+      // key that one side holds twice survives once, with its first element.
+      if (name === "xorBy") return ok(firstPerKey([...notMine, ...extra], keyOf));
       // `_.unionBy` is the uniqBy of the concatenation: one element per key, the first wins.
-      const seen: unknown[] = [];
-      const union: unknown[] = [];
-      [...xs, ...(other as unknown[])].forEach((v, i, all) => {
-        const k = keyOf(v, i, all);
-        if (deepIncludes(seen, k)) return;
-        seen.push(k);
-        union.push(v);
-      });
-      return ok(union);
+      return ok(firstPerKey([...xs, ...(other as unknown[])], keyOf));
     }
 
     // ── slicing by count ────────────────────────────────────────────────────

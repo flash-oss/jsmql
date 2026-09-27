@@ -1033,6 +1033,43 @@ the parser and the passes found no other hint that aborts on a missing field.
 
 ---
 
+## 2026-09-26 — fix: the constant fold of .xor() keeps each value once, as the server does
+
+The fold of `.xor()` gave a value twice when one side held it twice.
+`[3, 1, 3].xor([1])` folded to `[3, 3]`. The value lowering of `.xor()` is
+`$setUnion` over two `$setDifference` operands. On the fixture mongod, it gives
+`[3]`. The `_.xor` function of lodash also gives `[3]`. The fold of `.xorBy()`
+had the same problem. Its lowering keeps the first element per key. So
+`[{ n: 3, t: "a" }, { n: 1 }, { n: 3, t: "b" }].xorBy([{ n: 1 }], o => o.n)`
+gives `[{ n: 3, t: "a" }]` on the server. The fold kept both elements with
+`n: 3`. A fold must not change the answer (see
+[docs/specs/desugar-pass.md](specs/desugar-pass.md) § Constant folding). So each
+fold now keeps a value, or a key, once.
+
+One helper, `firstPerKey` in
+[src/compiler/passes/fold-methods.ts](../src/compiler/passes/fold-methods.ts),
+keeps the first element for each key. `.uniq()`, `.uniqBy()` and `.unionBy()`
+each had a copy of this loop. Now they call the helper too. MongoDB does not
+specify the order of a set operator's output. For example, the server gave
+`[1, 2, 3]` for `[3, 1, 3].xor([2])`. The fold gives `[3, 1, 2]`, the order in
+which each value first occurs. This order is the same at each compile. The
+`_.xor` function gives the same order. A sort into the server's order would copy a
+behaviour that MongoDB does not promise. The spec now states this rule for a set
+answer.
+
+Four new cases in
+[test/compiler-fold-agrees.test.ts](../test/compiler-fold-agrees.test.ts) hold a
+value or a key twice on one side, for `.xor()` and `.xorBy()`. The suite
+compared the exact sequence of each answer. Its set cases passed only because
+the fold and the server gave the same order by chance. Now, when the top
+operator of the MQL is `$setUnion`, `$setIntersection` or `$setDifference`, the
+suite compares the elements in any order. A duplicate still counts. So the old
+fold fails the new cases. The rule reads the MQL that the server runs, not a
+list of method names. So a set method that gets a fold later needs no change to
+the suite.
+
+---
+
 ## 2026-09-26 — fix: the fold gives `Object.entries` as [key, value] pairs
 
 `Object.entries({ a: 1 })` folded to `[{ k: "a", v: 1 }]`, the raw
