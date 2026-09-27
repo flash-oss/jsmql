@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — test: every read chain runs against the rules of HR5
+
+The `?.` fold bug of 2026-09-26 ("a `?.` guards the value before it, however many members
+follow it") showed only when two or more members follow a `?.`. No hand-written case named
+that shape, so no test failed. The developer asked that such a bug never happen again.
+[test/compiler-chains.test.ts](../test/compiler-chains.test.ts) writes 340 read chains from
+a small grammar: `$.a`, then `.b`, `?.b`, `[$.kb]` or `?.[$.kb]` up to three levels deep,
+then no method, or `.trim()` or `.uniq()` under a dot or a `?.`. It runs each chain on
+mongod over documents that hold each kind of value at each level. It compares each answer
+with an oracle that states HR5 in plain JavaScript and never calls the compiler.
+
+The suite fails where it must. With the fold fix taken out, it reports 39 wrong answers,
+for example `$.a.b?.c.d.uniq()` over `{ a: { b: {} } }` gives null where HR5 gives `[]`.
+With the bracket reads as they were before the fix of today, it reports 270. A new kind of
+read extends the grammar, and the oracle states its rule.
+
+---
+
 ## 2026-09-27 — fix!: a bracket read answers as a dot read does
 
 The developer asked that `o[expr]` take the guard that `o.prop` takes, and that `o?.[expr]`

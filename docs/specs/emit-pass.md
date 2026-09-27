@@ -109,7 +109,8 @@ stops nothing. The reads run as plain reads, and one `{ $ifNull: [<the reads>, n
 stands on top. A `?.` read is JavaScript's `undefined` where the value is not there, and a
 written document holds it as `null`. The folded path takes the same wrap
 (`$.a?.b` is `{ $ifNull: ["$a.b", null] }`), so `$.o?.[k]` and `$.o[k]?.q` answer as
-`$.o?.p` does.
+`$.o?.p` does. `test/compiler-chains.test.ts` runs every chain of a small grammar of these
+reads on the server. It compares each answer with an oracle that states the rules.
 
 **A read after a value reads as a field path.** `memberAccess` binds a value that is
 not a path once, and reads the field reads above it off the variable:
