@@ -252,15 +252,25 @@ states `neverNull`, whatever its operand.
 | `element` | The unwound path becomes its element, present unless `preserveNullAndEmptyArrays`. |
 | `unknown` | An unknown document. `$bucket`, `$bucketAuto` and `$sortByCount` state this until a layout can name their output fields [DEF-038]. |
 
-Inside one statement the same reader runs at each replacing stage, so a write
-after `$ = …` lands on what that stage made.
+**Each group of stages changes the Env once, where the group stands.** A chain
+link, a write of a `,` run and a stage call are each a group. The Env takes the
+groups in the order of their stages, and it never reads the same stages again. A
+second reading of the stages cannot see the links. So it misses a row that gives
+the documents back. It also misses a scratch field that a later link wrote after
+a stage that replaced the document. The trailing cleanup (`Chain.dirty`) follows the same
+order: a stage that replaced the document clears it, and a later scratch write
+sets it again. See `Step` in [statement.ts](../../src/compiler/emit/statement.ts).
+
+Inside one `,` run, a write after `$ = …` lands on what that stage made. It cannot
+read a `let` that the stage took, as the next statement cannot, and `x = …` in the
+same run carries the `let` again.
 
 A stream chain applies the same reader after each link. The next link runs under
-the Env that a statement gets after the same stages. That Env holds the document's
-proof after them, and no field-carried binding that a replaced document took with
-it. A link
-whose row states `restoresDocuments` (`.uniq()`) gives the documents back as they
-were, so it keeps both. See `afterLink` in
+the Env that the link before it left. That Env holds the document's proof after
+the link's stages, and no field-carried binding that a replaced document took with
+it. A link whose row states `restoresDocuments` (`.uniq()`) gives the documents
+back as they were, so it keeps both. The statement after the chain reads the Env
+that the last link left. See `afterLink` in
 [statement.ts](../../src/compiler/emit/statement.ts).
 
 ```js
@@ -270,6 +280,10 @@ $.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length();
 // → …, { $replaceWith: "$p" }, { $set: { c: { $strLenCP: "$b" } } }
 $.a = "x";  $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));
 // → …, { $replaceWith: { n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } } } }
+let t = $.a;  $$.uniq();  $match($.x === t);
+// → …, { $match: { $expr: { $eq: ["$x", "$__jsmql.var.t"] } } }, { $unset: "__jsmql" }
+$$.map(d => ({ a: d.a })).shuffle();
+// → …, { $sort: { "__jsmql.tmp.0": 1 } }, { $unset: "__jsmql" }
 ```
 
 ### A filter narrows the document

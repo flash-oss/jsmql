@@ -21297,6 +21297,14 @@ var Env = class _Env {
   at(where) {
     return new _Env(this.scope, { ...this.site, where }, this.chain, this.documents);
   }
+  /**
+   * The same bindings and proofs, back where `parent` stands. A statement lowers
+   * its values under a child's Env, and the next statement stands where this one
+   * stood.
+   */
+  backAt(parent) {
+    return new _Env(this.scope, parent.site, this.chain, this.documents);
+  }
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name2) {
     return new _Env(this.scope, { ...this.site, inside: name2 }, this.chain, this.documents);
@@ -25022,6 +25030,7 @@ function lowerProgram(program, env) {
   }
   return env.chain.close();
 }
+var landed = (stages, env) => ({ stages, env: afterStages(stages, env) });
 function statementStages(stmt, env, first) {
   if (stmt.type === "UpdateFilter") return writeStages(stmt, env, first);
   if (stmt.type === "LetDecl") return letStages(stmt, env);
@@ -25038,8 +25047,7 @@ function statementStages(stmt, env, first) {
       })
     };
   }
-  const stages = stageStatement(stmt, env, first);
-  return { stages, env: afterStages(stages, env) };
+  return stageStatement(stmt, env, first);
 }
 function declRun(stmts, i) {
   const head = stmts[i];
@@ -25248,7 +25256,7 @@ function targetPath(op, env) {
   throw notAWriteTarget(op.pos);
 }
 function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lead, how) {
-  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written2);
+  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return landed(documentsStages(value, env, written2), env);
   const chainOn = chainBase(value);
   const streamRoad = chainOn.type === "StreamRef" || readsAnotherCollection(value) || onOwnStream(chainOn, env);
   const t = typeOf(value, env);
@@ -25258,7 +25266,7 @@ function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lea
   if (cannotBe(element2, "object")) throw streamElementsNotDocuments(pluralNounOfKinds(element2), written2, value.pos);
   const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
-  return [{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }];
+  return landed([{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }], env);
 }
 function outTarget(t) {
   const base = chainBase(t);
@@ -25289,9 +25297,10 @@ function outStages(op, target, env, first) {
   const rhs = op.value;
   const base = chainBase(rhs);
   if (base.type !== "StreamRef") throw outNeedsStream(rhs.pos);
-  const stages = rhs.type === "StreamRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
+  const chain = rhs.type === "StreamRef" ? { stages: [], env } : streamStages(rhs, childEnv(env, op, "value"), first);
   const spelled3 = `${targetSpelling2(target)} ${op.op} \u2026`;
-  return [...stages, ...place(name2, { [name2]: target }, env, first && stages.length === 0, op.pos, spelled3)];
+  const write = place(name2, { [name2]: target }, env, first && chain.stages.length === 0, op.pos, spelled3);
+  return { stages: [...chain.stages, ...write], env: chain.env.backAt(env) };
 }
 function mergeStages(node, env, first) {
   const target = outTarget(node.object);
@@ -25303,10 +25312,10 @@ function mergeStages(node, env, first) {
   const source = spread ? arg.argument : arg;
   const inner = childEnv(env, node, "args");
   const spelling = `$$$.<coll>.${node.name}(${spread ? "...<array>" : "<array>"})`;
-  const stages = (
+  const documents = (
     // `.push(<document>)` — the one spelling that does NOT read a list: the value is
     // the document, exactly as `$ = <document>;` reads it.
-    node.name === "push" && !spread ? oneDocumentStages(source, inner) : becomeStream(
+    node.name === "push" && !spread ? landed(oneDocumentStages(source, inner), inner) : becomeStream(
       source,
       inner,
       inner.at({ at: "value" }),
@@ -25317,7 +25326,8 @@ function mergeStages(node, env, first) {
     )
   );
   const spelled3 = `${targetSpelling2(target)}.${node.name}(\u2026)`;
-  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos, spelled3)];
+  const write = place("$merge", { $merge: target }, env, false, node.pos, spelled3);
+  return { stages: [...documents.stages, ...write], env: documents.env.backAt(env) };
 }
 function oneDocumentStages(value, env) {
   const t = typeOf(value, env);
@@ -25341,7 +25351,7 @@ function facetStages(doc, env, first) {
     if (named.has(key)) throw facetDuplicate(key, e.pos);
     named.add(key);
     const body = childEnv(entries, e, "value").enter({ stage: "$facet", path: [key] }, new Chain());
-    if (e.value.type !== "StreamRef") body.chain.emitted.push(...streamStages(e.value, body, true));
+    if (e.value.type !== "StreamRef") body.chain.emitted.push(...streamStages(e.value, body, true).stages);
     setKey(branches, key, body.chain.close());
   }
   return place("$facet", { $facet: branches }, env, first, doc.pos);
@@ -25369,27 +25379,26 @@ var replacesWhole = (v) => isPlainObject(v) && Object.keys(v).every((k) => !k.st
 var touches = (x, y) => x === y || x === "" || y === "" || x.startsWith(`${y}.`) || y.startsWith(`${x}.`);
 function writeStages(uf, env, first) {
   let inner = childEnv(env, uf, "ops");
-  let revived = env;
-  let proofs = [];
   const prove = (path, type) => {
-    proofs.push({ path, type });
     inner = type === null ? inner.removed(path) : inner.written(path, type);
   };
   const out = [];
   let sets = null;
   let unsets = null;
   const flush = () => {
-    if (sets !== null) out.push({ $set: sets.fields });
-    if (unsets !== null) out.push({ $unset: unsets.length === 1 ? unsets[0] : unsets });
+    const group = [];
+    if (sets !== null) group.push({ $set: sets.fields });
+    if (unsets !== null) group.push({ $unset: unsets.length === 1 ? unsets[0] : unsets });
+    env.chain.advance(group);
+    out.push(...group);
     sets = null;
     unsets = null;
   };
   const emit = (made = []) => {
-    out.push(...env.chain.ahead(), ...made);
-    if (made.some((st) => replacesDocument(Object.keys(st)[0], st))) {
-      proofs = [];
-      inner = inner.document(made.reduce((d, st) => documentAfter(st, d), inner.documents[inner.level]));
-    }
+    const hoisted = env.chain.ahead();
+    const step = "env" in made ? made : landed([...made], inner);
+    out.push(...hoisted, ...step.stages);
+    inner = step.env;
   };
   for (const op of uf.ops) {
     const out_ = outTarget(op.target);
@@ -25484,23 +25493,19 @@ function writeStages(uf, env, first) {
           pos: op.target.pos
         };
         inner = inner.bind(op.target.name, binding);
-        revived = revived.bind(op.target.name, binding);
         env.chain.dirty = true;
         continue;
       }
       if (was.ref.kind === "field") {
         const binding = { ref: was.ref, type: written2, mutable: was.mutable, pos: was.pos };
         inner = inner.bind(op.target.name, binding);
-        revived = revived.bind(op.target.name, binding);
         continue;
       }
     }
     prove(path, written2);
   }
   flush();
-  let after = afterStages(out, revived);
-  for (const p of proofs) after = p.type === null ? after.removed(p.path) : after.written(p.path, p.type);
-  return { stages: out, env: after };
+  return { stages: out, env: inner.backAt(env) };
 }
 function refuseUnbuiltSugar(value) {
   const base = chainBase(value);
@@ -25528,9 +25533,9 @@ function elementWiseOnDocument(value) {
 function documentStages(links, env, first) {
   const element2 = env.chain.element;
   env.chain.element = "";
-  const stages = linkStages(links, env, first);
-  if (!stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element2;
-  return stages;
+  const step = linkStages(links, env, first);
+  if (!step.stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element2;
+  return step;
 }
 function streamStages(chain, env, first) {
   const links = [];
@@ -25539,7 +25544,7 @@ function streamStages(chain, env, first) {
     links.unshift(cur);
     cur = cur.object;
   }
-  if (readsAnotherCollection(cur)) return joinStream(chain, env, first, JOIN);
+  if (readsAnotherCollection(cur)) return landed(joinStream(chain, env, first, JOIN), env);
   if (cur.type === "StreamRef" && env.level > 0) throw rootStreamInForeign(chain.pos);
   if (cur.type !== "StreamRef" && !onOwnStream(cur, env)) throw notAStreamChain(chain.pos);
   return linkStages(links, env, first);
@@ -25557,7 +25562,7 @@ function linkStages(links, env, first) {
     out.push(...made);
     here = afterLink(link, made, here);
   }
-  return out;
+  return { stages: out, env: here };
 }
 function afterLink(link, made, env) {
   if (!restoresDocumentsOf(namedRow(link) ?? link.name)) return afterStages(made, env);
@@ -25664,11 +25669,12 @@ function stageStatement(node, env, first) {
     if (onRef) {
       if (node.optional) throw optionalOnStream(node.pos);
       const row2 = namedRow(node) ?? node.name;
-      if (node.object.type === "StreamRef" && isStreamReduce(node)) return arrayReduceStages(node, env, first);
+      if (node.object.type === "StreamRef" && isStreamReduce(node))
+        return landed(arrayReduceStages(node, env, first), env);
       if (isContextRef(node.object) && unionsOf(row2)) {
         if (base.type !== "StreamRef") throw rootStreamInForeign(node.pos);
         if (env.level > 0) throw rootStreamInForeign(node.pos);
-        return unionStages(node.args, env, node, JOIN);
+        return landed(unionStages(node.args, env, node, JOIN), env);
       }
       const says = isContextRef(node.object) ? consult(row2, "statement") : null;
       const ownedByAPass = says !== null && says.kind === "inCode" && peels(node);
@@ -25686,7 +25692,7 @@ function stageStatement(node, env, first) {
         }
         throw noDestination(node.pos);
       }
-      return refStatement(node, base.type, env, first);
+      return landed(refStatement(node, base.type, env, first), env);
     }
   }
   const name2 = namedRow(node);
@@ -25723,7 +25729,10 @@ function stageStatement(node, env, first) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
     const stages2 = bodyEnv !== null ? [{ [name2]: readIn(args[0], bodyEnv) }] : sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
-    return stages2.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos));
+    return landed(
+      stages2.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos)),
+      env
+    );
   }
   if (sel.kind !== "rule") {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
@@ -25731,7 +25740,10 @@ function stageStatement(node, env, first) {
   }
   checkSlots(name2, sel.rule.args, args, false);
   const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
-  return stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos));
+  return landed(
+    stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos)),
+    env
+  );
 }
 function plainStage(name2, node, args, env) {
   const all2 = "args" in node ? node.args : [];

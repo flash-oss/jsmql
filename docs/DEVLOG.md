@@ -10,6 +10,54 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — fix: each group of stages changes the Env once, in the order of the stages
+
+A `let` lives in a `__jsmql.var.<name>` field, and the pipeline ends with
+`{ $unset: "__jsmql" }`. After a `.uniq()` link the cleanup was missing, so the
+scratch field reached the answer. MEASURED on mongod:
+
+```
+let t = $.a; $$.uniq().filter(d => d.x === t);
+→ [{ $set: { "__jsmql.var.t": "$a" } }, { $group: … }, { $replaceWith: "$__jsmqlTmp" },
+   { $match: { $expr: { $eq: ["$x", "$__jsmql.var.t"] } } }]
+→ [{ _id: 1, a: 1, x: 1, __jsmql: { var: { t: 1 } } }]
+```
+
+The same cause refused a correct program: `let t = $.a; $$.uniq(); $match($.x === t);`
+answered "`t` … cannot be read after `$group`". The chain walker read the
+`restoresDocuments` fact of the `.uniq()` row, so `afterLink` kept the binding
+and the cleanup. Then the statement read the same stages a second time
+(`afterStages` over the whole list of the chain). That reading saw a `$group` and
+a `$replaceWith`, and it could not see the link. So it dropped the binding and
+cleared `Chain.dirty`. The write road also read its stages once, at the end of
+the run. Both readings lost the ORDER of the stages, so a scratch field that a
+stage wrote after a replace lost its cleanup too:
+
+```
+$$.map(d => ({ a: d.a })).shuffle();                   → `__jsmql.tmp.0` in the answer
+$ = { a: $.a }, $.n = $$.size();                       → `__jsmql.size` in the answer
+let t = $.a; $$$.out = $$.uniq();                      → `__jsmql.var.t` written into `out`
+$$.flatMap("ids").uniq(); $$.map(x => ({ v: x * 2 }));  → `x` read the document, not the id
+let t = $.a; $ = { a: $.a }, $.x = t;                  → `x` read a field that the stage took
+```
+
+Now each group of stages changes the Env once, where the group stands: a chain
+link, a write of a `,` run, a stage call. A road that walks a chain returns a
+`Step`: its stages, and the Env that its last link left. No caller reads those
+stages again (`streamStages`, `becomeStream`, `outStages`, `mergeStages` and
+`stageStatement` in [statement.ts](../src/compiler/emit/statement.ts)). The
+write road threads ONE Env through the run, in order, so the second Env
+(`revived`) and the replay of the proofs are gone. `Env.backAt` gives the result
+back at the site of the statement. So the last program above is now refused, as
+the same program with `;` was. `x = …` after the stage in the same run carries
+the `let` again. The other fix considered was a mark on the stages of a
+restoring link. A mark fixes `.uniq()` alone. The second reading still clears the
+cleanup after a later scratch write. Also, a road that copies a stage loses the
+mark. Tests: [compiler-types.test.ts](../test/compiler-types.test.ts), live on
+mongod too. See [types.md § The document after a stage](specs/types.md#the-document-after-a-stage).
+
+---
+
 ## 2026-09-27 — fix: the compiler refuses a stage, an operator or a global function on a value
 
 A MongoDB operator, a stage and a global function read no receiver: each one is

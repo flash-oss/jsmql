@@ -391,6 +391,15 @@ export class Env {
     return new Env(this.scope, { ...this.site, where }, this.chain, this.documents);
   }
 
+  /**
+   * The same bindings and proofs, back where `parent` stands. A statement lowers
+   * its values under a child's Env, and the next statement stands where this one
+   * stood.
+   */
+  backAt(parent: Env): Env {
+    return new Env(this.scope, parent.site, this.chain, this.documents);
+  }
+
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name: string | null): Env {
     return new Env(this.scope, { ...this.site, inside: name }, this.chain, this.documents);

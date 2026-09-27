@@ -231,8 +231,21 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
   return env.chain.close();
 }
 
-/** A statement's stages, and the Env the NEXT statement is lowered under. */
+/**
+ * Stages, and the Env after them: the Env that the NEXT statement, link or write
+ * is lowered under.
+ *
+ * The Env records each group of stages ONCE, where the group lands: a chain
+ * link, a write of a run, a stage call. So it holds what the stages did, in the
+ * order that they did it. A road that walks a chain gives the Env that its last
+ * link left. A second reading of the same stages cannot see the links. So it
+ * misses a row that gives the documents back (`.uniq()`). It also misses a
+ * scratch field that a link wrote after a stage that replaced the document.
+ */
 type Step = { stages: Stage[]; env: Env };
+
+/** The Step of stages that no chain walked: `afterStages` reads them. */
+const landed = (stages: Stage[], env: Env): Step => ({ stages, env: afterStages(stages, env) });
 
 /** One statement's stages. `first` says whether nothing stands ahead of it here. */
 function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
@@ -252,8 +265,7 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
       }),
     };
   }
-  const stages = stageStatement(stmt, env, first);
-  return { stages, env: afterStages(stages, env) };
+  return stageStatement(stmt, env, first);
 }
 
 /**
@@ -623,7 +635,7 @@ function targetPath(op: UpdateOp, env: Env): string {
   if (t.type === "Ident" && env.scope.has(t.name)) {
     const b = env.lookup(t.name, t.pos);
     if (b.ref.kind === "field" || (b.ref.kind === "dropped" && b.ref.replaced)) {
-      // A `let` a stage dropped is written again into its slot — see `revived`.
+      // A `let` a stage dropped is written again into its slot, and `writeStages` binds it again.
       if (!b.mutable && !("mutates" in op && op.mutates === true)) throw E.constReassigned(t.name, op.pos);
       return fieldSlot(bindingSlot(t.name)).path;
     }
@@ -668,8 +680,8 @@ function becomeStream(
   written = "$$ = …",
   lead?: string,
   how?: string,
-): Stage[] {
-  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written);
+): Step {
+  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return landed(documentsStages(value, env, written), env);
   const chainOn = chainBase(value) as { type: string };
   const streamRoad = chainOn.type === "StreamRef" || readsAnotherCollection(value) || onOwnStream(chainOn as Expr, env);
   // A kind the registry PROVES is not a list says something else.
@@ -689,7 +701,7 @@ function becomeStream(
   if (cannotBe(element, "object")) throw E.streamElementsNotDocuments(E.pluralNounOfKinds(element), written, value.pos);
   const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
-  return [{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }];
+  return landed([{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }], env);
 }
 
 // ── the out road ─────────────────────────────────────────────────────────────
@@ -738,15 +750,16 @@ function outStages(
   target: string | { db: string; coll: string },
   env: Env,
   first: boolean,
-): Stage[] {
+): Step {
   if (op.op !== "=" && op.op !== "+=") throw E.writeToCollectionOp(op.op, op.pos);
   const name = op.op === "=" ? "$out" : "$merge";
   const rhs = op.value;
   const base = chainBase(rhs) as { type: string };
   if (base.type !== "StreamRef") throw E.outNeedsStream(rhs.pos);
-  const stages = rhs.type === "StreamRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
+  const chain = rhs.type === "StreamRef" ? { stages: [], env } : streamStages(rhs, childEnv(env, op, "value"), first);
   const spelled = `${targetSpelling(target)} ${op.op} …`;
-  return [...stages, ...place(name, { [name]: target }, env, first && stages.length === 0, op.pos, spelled)];
+  const write = place(name, { [name]: target }, env, first && chain.stages.length === 0, op.pos, spelled);
+  return { stages: [...chain.stages, ...write], env: chain.env.backAt(env) };
 }
 
 /**
@@ -764,7 +777,7 @@ function outStages(
  * `.concat` / `.push` mean, and what separates them from
  * `$$$.<coll> = $$`, an `$out` that drops everything first.
  */
-function mergeStages(node: Extract<Expr, { type: "MethodCall" }>, env: Env, first: boolean): Stage[] {
+function mergeStages(node: Extract<Expr, { type: "MethodCall" }>, env: Env, first: boolean): Step {
   const target = outTarget(node.object);
   if (target === null) internalError("a collection write whose receiver names no collection");
   if (node.args.length === 0) throw E.mergeNeedsArgument(node.name, node.pos);
@@ -774,11 +787,11 @@ function mergeStages(node: Extract<Expr, { type: "MethodCall" }>, env: Env, firs
   const source = (spread ? arg.argument : arg) as Expr;
   const inner = childEnv(env, node, "args");
   const spelling = `$$$.<coll>.${node.name}(${spread ? "...<array>" : "<array>"})`;
-  const stages =
+  const documents =
     // `.push(<document>)` — the one spelling that does NOT read a list: the value is
     // the document, exactly as `$ = <document>;` reads it.
     node.name === "push" && !spread
-      ? oneDocumentStages(source, inner)
+      ? landed(oneDocumentStages(source, inner), inner)
       : becomeStream(
           source,
           inner,
@@ -789,7 +802,8 @@ function mergeStages(node: Extract<Expr, { type: "MethodCall" }>, env: Env, firs
           "Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or ONE document ('$$$.<coll>.push({ … });').",
         );
   const spelled = `${targetSpelling(target)}.${node.name}(…)`;
-  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos, spelled)];
+  const write = place("$merge", { $merge: target }, env, false, node.pos, spelled);
+  return { stages: [...documents.stages, ...write], env: documents.env.backAt(env) };
 }
 
 /** `$$$.<coll>.push(<document>);` — one document per document of the stream. */
@@ -831,7 +845,7 @@ function facetStages(doc: Extract<Expr, { type: "ObjectLiteral" }>, env: Env, fi
     if (named.has(key)) throw E.facetDuplicate(key, e.pos);
     named.add(key);
     const body = childEnv(entries, e, "value").enter({ stage: "$facet", path: [key] }, new Chain());
-    if (e.value.type !== "StreamRef") body.chain.emitted.push(...streamStages(e.value, body, true));
+    if (e.value.type !== "StreamRef") body.chain.emitted.push(...streamStages(e.value, body, true).stages);
     setKey(branches, key, body.chain.close());
   }
   return place("$facet", { $facet: branches }, env, first, doc.pos);
@@ -898,26 +912,31 @@ const touches = (x: string, y: string): boolean =>
  *     conflicting paths").
  * A write to the document ROOT is its own stage: it replaces what the
  * next write would write into.
+ *
+ * ONE Env threads the run, and each group of stages lands on it in the
+ * order the groups stand. It takes what each write proved about its path,
+ * each `let` that a write carries again, and what each stage that
+ * replaced the document took with it. So a write after `$ = …` lands on
+ * what that stage made, and it cannot read a `let` that the stage took.
+ * The next statement reads the Env that the last group left.
  */
 function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
   let inner = childEnv(env, uf, "ops");
-  // `x = …` on a `let` a stage dropped carries it again: the next statement reads it.
-  let revived = env;
-  // What each write proved about its path, since the last stage that replaced the
-  // document. The statement's Env after its stages replays these onto the document,
-  // so the next statement reads a written field as what its value was.
-  let proofs: { path: string; type: Type | null }[] = [];
   const prove = (path: string, type: Type | null): void => {
-    proofs.push({ path, type });
     inner = type === null ? inner.removed(path) : inner.written(path, type);
   };
   const out: Stage[] = [];
   let sets: { paths: string[]; fields: Record<string, unknown> } | null = null;
   let unsets: string[] | null = null;
 
+  // The Env holds each write's proof already. The group still lands: an `$unset`
+  // changes the fields that a stamped count can name.
   const flush = (): void => {
-    if (sets !== null) out.push({ $set: sets.fields });
-    if (unsets !== null) out.push({ $unset: unsets.length === 1 ? unsets[0] : unsets });
+    const group: Stage[] = [];
+    if (sets !== null) group.push({ $set: sets.fields });
+    if (unsets !== null) group.push({ $unset: unsets.length === 1 ? unsets[0] : unsets });
+    env.chain.advance(group);
+    out.push(...group);
     sets = null;
     unsets = null;
   };
@@ -927,15 +946,17 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
    * `$lookup` a value wrote reads the document its own `$set` reads.
    * The caller passes nothing when the op joins the group `flush`
    * pushes, which still stands ahead of it.
+   *
+   * The op's stages land here. A road that walked a chain gives a Step,
+   * and the run goes on with the Env that the chain's last link left.
+   * A hoisted stage keeps the document, and its `hoist` marked the chain
+   * for the cleanup already.
    */
-  const emit = (made: readonly Stage[] = []): void => {
-    out.push(...env.chain.ahead(), ...made);
-    // A stage that replaced the document takes every proof about it away — the
-    // next write in this statement lands on what the stage made.
-    if (made.some((st) => replacesDocument(Object.keys(st)[0], st))) {
-      proofs = [];
-      inner = inner.document(made.reduce<Type>((d, st) => documentAfter(st, d), inner.documents[inner.level]));
-    }
+  const emit = (made: readonly Stage[] | Step = []): void => {
+    const hoisted = env.chain.ahead();
+    const step = "env" in made ? made : landed([...made], inner);
+    out.push(...hoisted, ...step.stages);
+    inner = step.env;
   };
 
   for (const op of uf.ops) {
@@ -1068,7 +1089,6 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
           pos: op.target.pos,
         };
         inner = inner.bind(op.target.name, binding);
-        revived = revived.bind(op.target.name, binding);
         env.chain.dirty = true;
         continue;
       }
@@ -1076,16 +1096,13 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       if (was.ref.kind === "field") {
         const binding: Declared = { ref: was.ref, type: written, mutable: was.mutable, pos: was.pos };
         inner = inner.bind(op.target.name, binding);
-        revived = revived.bind(op.target.name, binding);
         continue;
       }
     }
     prove(path, written);
   }
   flush();
-  let after = afterStages(out, revived);
-  for (const p of proofs) after = p.type === null ? after.removed(p.path) : after.written(p.path, p.type);
-  return { stages: out, env: after };
+  return { stages: out, env: inner.backAt(env) };
 }
 
 /**
@@ -1142,21 +1159,22 @@ function elementWiseOnDocument(value: Expr): readonly Link[] | null {
  * and `$` names the document, not that field. The element comes back
  * after this, unless a stage replaced the document.
  */
-function documentStages(links: readonly Link[], env: Env, first: boolean): Stage[] {
+function documentStages(links: readonly Link[], env: Env, first: boolean): Step {
   const element = env.chain.element;
   env.chain.element = "";
-  const stages = linkStages(links, env, first);
-  if (!stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element;
-  return stages;
+  const step = linkStages(links, env, first);
+  if (!step.stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element;
+  return step;
 }
 
 /**
  * A chain on the stream, `$$.filter(…).sortBy("k").take(3)`, as the stages it
  * means — one row's `stream` cell per link, base first. A stage is a link too
  * (`$$.$match(…)`), through the same cell its statement form uses. Each link's
- * stages take the placement its row states, exactly as a statement's do.
+ * stages take the placement its row states, exactly as a statement's do. The Env
+ * after them is the one the last link left.
  */
-function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
+function streamStages(chain: Expr, env: Env, first: boolean): Step {
   const links: Link[] = [];
   let cur: Expr = chain;
   while (cur.type === "MethodCall") {
@@ -1164,7 +1182,7 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
     cur = cur.object;
   }
   // `$$ = $$$.orders.…` switches the stream to another collection — the join road.
-  if (readsAnotherCollection(cur)) return joinStream(chain, env, first, JOIN);
+  if (readsAnotherCollection(cur)) return landed(joinStream(chain, env, first, JOIN), env);
   // `$$` is the ROOT stream at every depth; a body over another collection cannot
   // reach it, and names its own stream through the callback's third parameter.
   if (cur.type === "StreamRef" && env.level > 0) throw E.rootStreamInForeign(chain.pos);
@@ -1174,8 +1192,11 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
 
 type Link = Extract<Expr, { type: "MethodCall" }>;
 
-/** The links of a chain, base first, as their stages. Each link runs over what the link before it made. */
-function linkStages(links: readonly Link[], env: Env, first: boolean): Stage[] {
+/**
+ * The links of a chain, base first, as their stages. Each link runs over what the
+ * link before it made, and the Env after the chain is the one its last link left.
+ */
+function linkStages(links: readonly Link[], env: Env, first: boolean): Step {
   const out: Stage[] = [];
   let here = env;
   for (const link of links) {
@@ -1192,14 +1213,14 @@ function linkStages(links: readonly Link[], env: Env, first: boolean): Stage[] {
     out.push(...made);
     here = afterLink(link, made, here);
   }
-  return out;
+  return { stages: out, env: here };
 }
 
 /**
- * The Env the next link of a chain runs under. It is the Env a statement gets after
- * the same stages: the document's proof after them, and no binding that a replaced
- * document carried. A link whose row gives the documents back as they were
- * (`.uniq()`) keeps both.
+ * The Env the next link of a chain runs under, and the Env after the chain when
+ * this link is its last. It holds the document's proof after the link's stages,
+ * and no binding that a replaced document carried. A link whose row gives the
+ * documents back as they were (`.uniq()`) keeps both.
  */
 function afterLink(link: Link, made: readonly Stage[], env: Env): Env {
   if (!restoresDocumentsOf(namedRow(link) ?? link.name)) return afterStages(made, env);
@@ -1381,7 +1402,7 @@ const JS_NAMES = everyName().filter((n) => !n.startsWith("$"));
  * refuse `assert` with the wrong word. The row's own cell renders it, so
  * each shape stays one fact in one place.
  */
-function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
+function stageStatement(node: Expr, env: Env, first: boolean): Step {
   // A chain rooted in a context reference is a STREAM of documents. A
   // statement made of one is the stream road. This function does not
   // build that road.
@@ -1406,11 +1427,12 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
       const row = namedRow(node) ?? node.name;
       // `$$.push(…)` — documents unioned into the stream.
       // `$.reduce((acc, d) => acc.concat(…), [])`: the array reducer is a filter and a reshape of the stream.
-      if (node.object.type === "StreamRef" && isStreamReduce(node)) return arrayReduceStages(node, env, first);
+      if (node.object.type === "StreamRef" && isStreamReduce(node))
+        return landed(arrayReduceStages(node, env, first), env);
       if (isContextRef(node.object) && unionsOf(row)) {
         if (base.type !== "StreamRef") throw E.rootStreamInForeign(node.pos);
         if (env.level > 0) throw E.rootStreamInForeign(node.pos);
-        return unionStages(node.args, env, node, JOIN);
+        return landed(unionStages(node.args, env, node, JOIN), env);
       }
       const says = isContextRef(node.object) ? consult(row, "statement") : null;
       // A statement cell a PASS owns is the FIELD form — the desugar
@@ -1443,7 +1465,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
       // the row's cell, with the receiver checked against the scope the
       // row states (`$$.indexStats()`, `$$$$.currentOp()`), and placed
       // as the row says.
-      return refStatement(node, base.type, env, first);
+      return landed(refStatement(node, base.type, env, first), env);
     }
   }
   const name = namedRow(node);
@@ -1502,7 +1524,10 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
         : sel.kind === "rule"
           ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[])
           : [plainStage(name, node, args, env)];
-    return stages.flatMap((st) => place(Object.keys(st)[0] ?? name, st, env, first, node.pos));
+    return landed(
+      stages.flatMap((st) => place(Object.keys(st)[0] ?? name, st, env, first, node.pos)),
+      env,
+    );
   }
   if (sel.kind !== "rule") {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
@@ -1513,7 +1538,10 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   // A cell answers with the stages its name means. Where they may
   // STAND is the row's other fact, and the compiler applies that fact
   // to each stage.
-  return stages.flatMap((st) => place(Object.keys(st)[0] ?? name, st, env, first, node.pos));
+  return landed(
+    stages.flatMap((st) => place(Object.keys(st)[0] ?? name, st, env, first, node.pos)),
+    env,
+  );
 }
 
 /**
