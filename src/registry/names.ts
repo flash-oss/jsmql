@@ -8660,6 +8660,15 @@ export const NAMES = {
       emit: ({ args, value, element }) => {
         const at = element().path;
         const keys = value(args[0]) as string[];
+        // No field to keep: the element becomes `{}`, where it lives on the document. An inclusion
+        // `$project` needs a field to include, and `{ _id: 0 }` on its own EXCLUDES. MEASURED on
+        // `{ _id: 1, a: 1, b: 2 }`: `{ $project: { _id: 0 } }` answers `{ a: 1, b: 2 }`, and
+        // `{ $replaceWith: {} }` answers `{}`.
+        if (keys.length === 0) {
+          const empty =
+            at === "" ? {} : at.split(".").reduceRight<Record<string, unknown>>((inner, s) => setKey({}, s, inner), {});
+          return [{ $replaceWith: empty }];
+        }
         return [
           {
             $project: Object.fromEntries([
@@ -8710,9 +8719,11 @@ export const NAMES = {
       // Drops the named fields of the ELEMENT.
       emit: ({ args, value, element }) => {
         const at = element().path;
-        return [
-          { $project: Object.fromEntries((value(args[0]) as string[]).map((k) => [at === "" ? k : `${at}.${k}`, 0])) },
-        ];
+        const keys = value(args[0]) as string[];
+        // No field to drop: the documents stay as they are, so the cell emits no stage. MEASURED: the
+        // server refuses `{ $project: {} }`, because a projection needs at least one field.
+        if (keys.length === 0) return [];
+        return [{ $project: Object.fromEntries(keys.map((k) => [at === "" ? k : `${at}.${k}`, 0])) }];
       },
     },
     statement: unsupported(

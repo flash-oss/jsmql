@@ -7595,6 +7595,10 @@ var NAMES = {
       emit: ({ args, value, element: element2 }) => {
         const at3 = element2().path;
         const keys = value(args[0]);
+        if (keys.length === 0) {
+          const empty = at3 === "" ? {} : at3.split(".").reduceRight((inner, s) => setKey({}, s, inner), {});
+          return [{ $replaceWith: empty }];
+        }
         return [
           {
             $project: Object.fromEntries([
@@ -7643,9 +7647,9 @@ var NAMES = {
       // Drops the named fields of the ELEMENT.
       emit: ({ args, value, element: element2 }) => {
         const at3 = element2().path;
-        return [
-          { $project: Object.fromEntries(value(args[0]).map((k) => [at3 === "" ? k : `${at3}.${k}`, 0])) }
-        ];
+        const keys = value(args[0]);
+        if (keys.length === 0) return [];
+        return [{ $project: Object.fromEntries(keys.map((k) => [at3 === "" ? k : `${at3}.${k}`, 0])) }];
       }
     },
     statement: unsupported(

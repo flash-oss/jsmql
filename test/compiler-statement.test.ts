@@ -116,6 +116,7 @@ describe("compiler/emit/statement — the writes", () => {
     // says of every document, so the two spellings are one lowering — the lean `$project`.
     expect(compiled('$ = $.pick(["a", "b"]);')).toEqual([{ $project: { a: 1, b: 1, _id: 0 } }]);
     expect(compiled('$ = $.omit(["a"]);')).toEqual([{ $project: { a: 0 } }]);
+    expect(compiled("$ = $.pick([]);")).toEqual([{ $replaceWith: {} }]);
     expect(compiled('$ = $.pick(["a", "b"]).omit(["b"]);')).toEqual([
       { $project: { a: 1, b: 1, _id: 0 } },
       { $project: { b: 0 } },
@@ -618,6 +619,12 @@ describe("compiler/emit/statement — the stream road", () => {
     expect(compiled("$$ = $$.flatMap(d => d.items);")).toEqual([{ $unwind: "$items" }]);
     expect(compiled('$$ = $$.pick(["a", "b"]);')).toEqual([{ $project: { a: 1, b: 1, _id: 0 } }]);
     expect(compiled('$$ = $$.omit(["a"]);')).toEqual([{ $project: { a: 0 } }]);
+    // An empty list keeps no field, so the element becomes `{}`. An inclusion `$project`
+    // needs a field, and `{ _id: 0 }` on its own keeps every other field.
+    expect(compiled("$$ = $$.pick([]);")).toEqual([{ $replaceWith: {} }]);
+    expect(compiled('$$.flatMap("items").pick([]);')).toEqual([{ $unwind: "$items" }, { $replaceWith: { items: {} } }]);
+    // An empty list drops no field, so it is no stage: the server refuses an empty `$project`.
+    expect(compiled("$$.omit([]); $.x = 1;")).toEqual([{ $set: { x: 1 } }]);
     expect(compiled('$$ = $$.uniqBy("k");')).toEqual([
       { $group: { _id: "$k", __jsmqlTmp: { $first: "$$ROOT" } } },
       { $replaceWith: "$__jsmqlTmp" },
@@ -1038,6 +1045,23 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
     // each environment refusal is one the table names, and no source is skipped without a name
     expect(byEnvironment.sort()).toEqual(Object.keys(REFUSED_BY_ENVIRONMENT).sort());
     expect(ran + byEnvironment.length + Object.keys(NEEDS_MORE_THAN_A_SERVER).length).toBe(RUNS.length);
+  });
+});
+
+describe("compiler/emit/statement — an empty key list, against the server's own answer", () => {
+  const run = (src: string): Promise<unknown[]> =>
+    coll!.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
+
+  it.skipIf(!up)("`.pick([])` makes each element `{}`, as lodash's `_.pick(o, [])` does", async () => {
+    expect(await run("$$.pick([]);")).toEqual([{}, {}]);
+    expect(await run("$ = $.pick([]);")).toEqual([{}, {}]);
+    // The element stays where it lives on the document, as it does for a named field.
+    expect(await run('$$.flatMap("items").pick([]);')).toEqual([{ items: {} }, { items: {} }]);
+  });
+
+  it.skipIf(!up)("`.omit([])` keeps each document as it is, as lodash's `_.omit(o, [])` does", async () => {
+    const docs = await coll!.find({}).toArray();
+    expect(await run("$$.omit([]); $.x = 1;")).toEqual(docs.map((d) => ({ ...d, x: 1 })));
   });
 });
 
