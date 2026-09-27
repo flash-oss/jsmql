@@ -23,6 +23,7 @@ import { Env } from "../src/compiler/emit/env.ts";
 import { lowerValue } from "../src/compiler/emit/lower.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
+import { answersSet, inAnyOrder } from "./support/set-answer.ts";
 
 const URI = SCRATCH_URI;
 
@@ -359,22 +360,6 @@ function lowerTree(tree: Node): unknown {
 const readsSeed = (mql: unknown): boolean => JSON.stringify(mql).includes('"$f0');
 
 /**
- * Does the server answer with the output of a set operator? `$setUnion`, `$setIntersection`
- * and `$setDifference` promise no element order (SR2). So the suite compares the elements of
- * such an answer, not their sequence.
- */
-const answersSet = (mql: unknown): boolean =>
-  typeof mql === "object" &&
-  mql !== null &&
-  Object.keys(mql).some((k) => /^\$set(Union|Intersection|Difference)$/.test(k));
-
-/**
- * It gives the elements of a list in sorted order, so two orders of the same elements compare equal.
- * A duplicate still counts, so `[3, 3]` and `[3]` stay different.
- */
-const inAnyOrder = (v: unknown): unknown => (Array.isArray(v) ? v.map((x) => JSON.stringify(x)).sort() : v);
-
-/**
  * The expression with its first constant operand moved into a document.
  *
  * The compiler folds a constant expression before it lowers it, so `jsmql.expr("1 + 2")`
@@ -404,7 +389,7 @@ function unfolded(src: string): { mql: unknown; doc: Record<string, unknown> } {
   for (const [holder, key] of slots) {
     const child = holder[key] as Node;
     const settled = evaluate(child as Parameters<typeof evaluate>[0], new Map());
-    if (!settled.ok || settled.value instanceof Set) continue;
+    if (!settled.ok) continue;
     holder[key] = { type: "FieldRef", path: "f0", pos: child.pos };
     try {
       return { mql: lowerTree(root), doc: { f0: settled.value } };
