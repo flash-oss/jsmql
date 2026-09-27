@@ -120,7 +120,7 @@ The compiler accepts `$ = "$sub"`, a field path that resolves to a document at r
 
 An operator's row says where it may stand (`where`), and it states the lowering for each of those positions. A `$op(…)` call is the developer's own MQL, so a call in a position that the row does not list takes HR2's plain form, and the server judges it:
 
-- A **window** operator (`$rank`, `$derivative`, …) stands in a `$setWindowFields` output slot. Elsewhere it passes through: `jsmql.expr("$rank()")` → `{ $rank: {} }`, and mongod answers "Unrecognized expression '$rank'".
+- A **window** operator (`$rank`, `$derivative`, …) stands in a `$setWindowFields` output slot. Elsewhere it passes through: `jsmql.expr("$rank()")` → `{ $rank: {} }`, and mongod refuses it, because `$rank` is not an expression operator.
 - An **accumulator-only** operator (`$push`, `$addToSet`, `$top`, …) stands in a `$group` field slot, a `$setWindowFields` output slot, or as an update operator in `jsmql.update`. Elsewhere it passes through the same way.
 
 The positions are the rows' facts, and the generated globals read them too. See [globals-generation.md](globals-generation.md).

@@ -34,9 +34,7 @@ The trailing `.` / `[` is **not** part of a prefix token. Each prefix is bare. P
 
 The table's row keys — `'$$'`, `'$$$'`, `'$$$$'` — are the spellings the parser's messages print. So an internal token name never leaks into a user-facing string.
 
-5 or more consecutive `$` characters, followed by anything, throw this error:
-
-> `Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$') at position N`
+5 or more consecutive `$` characters, followed by anything, are a `LexError`. The message names the four prefixes that exist, and it gives the position.
 
 ## AST
 
@@ -76,8 +74,7 @@ Postfix wrapping (`MemberAccess`, `IndexAccess`, optional chains, calls) happens
 [`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts) — the three marker nodes share one case on the value road, `rootAsValue`. This case asks the node's registry row what it says about the position the node stands in, then throws that refusal with the node's own `pos`:
 
 ```
-$.x = $$
-→ '$$' (the root stream) is statement-only. In a value slot, use a method on it, for example '$$.size()'.
+$.x = $$   // ✗ the root stream is not a value; a method on it, such as $$.size(), is one
 ```
 
 Postfix wraps recurse into their `object` first. So any chained form (`$$.foo`, `$$$[x]`, `$$$$[a].b.c()`) that no road claims reaches the leaf marker node and is refused there. No wrapper site needs a case of its own.

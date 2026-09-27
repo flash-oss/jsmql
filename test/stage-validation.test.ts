@@ -7,27 +7,27 @@ import { jsmql } from "../src/index.ts";
 // where each stage stands, and the query operators that an aggregation `$match` refuses.
 //
 // Most expected documents in the first block are DELIBERATELY invalid. Each one is the
-// developer's MQL, passed through as written, and the server refuses it with its own
-// message (quoted beside it). They pin the pass-through; the suite does not endorse them
+// developer's MQL, passed through as written, and the server refuses it (the note
+// beside it gives the reason). They pin the pass-through; the suite does not endorse them
 // as valid shapes (test/CLAUDE.md § Never assert MQL that the MongoDB server rejects).
 
 describe("a stage body is your own MQL, and it passes through as written", () => {
   const sortKeys = (n: number): string => Array.from({ length: n }, (_, i) => `k${i}: 1`).join(", ");
   const PASSES: readonly [string, unknown][] = [
-    // mongod: "the limit must be positive"
+    // mongod: the server refuses a limit that is not positive.
     ["[ $limit(0) ]", [{ $limit: 0 }]],
     ["[ $limit(-5) ]", [{ $limit: -5 }]],
     ["[ $limit(2.5) ]", [{ $limit: 2.5 }]],
     ["[ $limit('x') ]", [{ $limit: "x" }]],
     ["[ $skip(-1) ]", [{ $skip: -1 }]],
-    // mongod: "invalid argument to $limit stage: Expected a number"
+    // mongod: the server refuses a field path, because `$limit` takes a number.
     ["[ $limit($.pageSize) ]", [{ $limit: "$pageSize" }]],
     ["[ $skip($.n) ]", [{ $skip: "$n" }]],
-    // mongod: "the count field cannot be a $-prefixed path" (and its siblings)
+    // mongod: the server refuses a `$`-prefixed count field. It refuses the other two names too.
     ["[ $count('') ]", [{ $count: "" }]],
     ["[ $count('$x') ]", [{ $count: "$x" }]],
     ["[ $count('a.b') ]", [{ $count: "a.b" }]],
-    // mongod: "a group's fields must be specified in an object"
+    // mongod: the server refuses a `$group` body that is not an object.
     ['[ $group("externalId") ]', [{ $group: "externalId" }]],
     ["[ $group(5) ]", [{ $group: 5 }]],
     ["[ $group([1, 2]) ]", [{ $group: [1, 2] }]],
@@ -37,15 +37,15 @@ describe("a stage body is your own MQL, and it passes through as written", () =>
     ["[ $sort(1) ]", [{ $sort: 1 }]],
     ["[ $sample(5) ]", [{ $sample: 5 }]],
     ["[ $unset(5) ]", [{ $unset: 5 }]],
-    // mongod: "$sort key ordering must be 1 (for ascending) or -1 (for descending)"
+    // mongod: the server refuses a sort direction other than 1 or -1.
     ["[ $sort({ a: 2 }) ]", [{ $sort: { a: 2 } }]],
     ['[ $sort({ createdAt: "desc" }) ]', [{ $sort: { createdAt: "desc" } }]],
     ["[ $sort({ a: true }) ]", [{ $sort: { a: true } }]],
-    // mongod: "Cannot do exclusion on field b in inclusion projection"
+    // mongod: the server refuses an exclusion inside an inclusion projection.
     ["[ $project({ a: 1, b: 0 }) ]", [{ $project: { a: 1, b: 0 } }]],
     ["[ $project({}) ]", [{ $project: {} }]],
     ["[ $unset('') ]", [{ $unset: "" }]],
-    // mongod: "path option to $unwind stage should be prefixed with a '$': items"
+    // mongod: the server refuses an `$unwind` path with no `$` prefix.
     ["[ $unwind('items') ]", [{ $unwind: "items" }]],
     ["[ $sample({}) ]", [{ $sample: {} }]],
     ["[ $sample({ size: -1 }) ]", [{ $sample: { size: -1 } }]],
@@ -70,7 +70,7 @@ describe("a stage body is your own MQL, and it passes through as written", () =>
       "[ $fill({ sortBy: { t: 1 }, output: { x: { method: 'linaer' } } }) ]",
       [{ $fill: { sortBy: { t: 1 }, output: { x: { method: "linaer" } } } }],
     ],
-    // mongod: "a group specification must include an _id"
+    // mongod: the server refuses a `$group` with no `_id`.
     ["[ $group({ total: $sum($.x) }) ]", [{ $group: { total: { $sum: "$x" } } }]],
     [
       "[ $lookup({ from: 'c', localField: 'a', foreignField: 'b' }) ]",
@@ -81,7 +81,7 @@ describe("a stage body is your own MQL, and it passes through as written", () =>
     ["[ $unionWith({}) ]", [{ $unionWith: {} }]],
     ["[ $replaceWith(5) ]", [{ $replaceWith: 5 }]],
     ["[ { $documents: 5 } ]", [{ $documents: 5 }]],
-    // mongod: "too many compound keys"
+    // mongod: the server refuses a sort with this many keys.
     [
       `[ $sort({ ${sortKeys(33)} }) ]`,
       [{ $sort: Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`k${i}`, 1])) }],
@@ -152,7 +152,7 @@ describe("$match query-operator placement", () => {
 });
 
 // A stage name in a value slot is your MQL too: it passes through, and the server
-// answers "Unrecognized expression '$limit'". Each output below is DELIBERATELY invalid.
+// refuses it as an unknown expression operator. Each output below is DELIBERATELY invalid.
 describe("a pipeline stage name used where a value is expected", () => {
   const PASSES: [string, string, unknown][] = [
     ["an assignment RHS", "$.x = $limit(5);", [{ $set: { x: { $limit: 5 } } }]],

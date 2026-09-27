@@ -342,8 +342,8 @@ export class Env {
     if (loc.kind === "var") {
       // An EXPRESSION binds a MongoDB variable — `$map`, `$filter`, `$reduce`,
       // `$let` — but a body over another collection belongs to a STAGE hoisted
-      // out of it, where the name is never bound. MEASURED: mongod answers "Use
-      // of undefined variable: x", and the pipeline does not run at all.
+      // out of it, where the name is never bound. MEASURED: mongod refuses the
+      // read of the unbound name, and the pipeline does not run at all.
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }

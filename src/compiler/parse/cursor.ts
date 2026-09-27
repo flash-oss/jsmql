@@ -2,7 +2,7 @@
 //
 // The friendly name of a token comes from its registry key. tokens.ts uses the SPELLING
 // as the key, so `'('` reads as `'('` and a class-named row reads as `number`. No
-// TokenName reaches a message. A user should never see "Expected LParen".
+// TokenName reaches a message, so a user never sees an internal name such as `LParen`.
 
 import { KEYWORDS } from "../../registry/keywords.ts";
 import { TOKENS } from "../../registry/tokens.ts";
@@ -69,7 +69,7 @@ export class Cursor {
    *
    * This is a method, not a comparison against `type`, because TypeScript narrows
    * a getter and keeps the narrowing across a `next()` call. After one
-   * `this.c.type !== "LBrace"` check, every later comparison became "no overlap".
+   * `this.c.type !== "LBrace"` check, TypeScript refused every later comparison.
    */
   is(type: TokenName): boolean {
     return this.peek().type === type;

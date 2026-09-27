@@ -99,8 +99,8 @@ mongod refuses the wrong reading. The team measured:
 
 ```
 { $group: { _id: { $sum: ["$x","$y"] }, s: "…" } }        accepted
-{ $group: { _id: null, s: { $sum: ["$x","$y"] } } }       "The $sum accumulator is a unary operator"
-{ $geoNear: { …, query: { $eq: ["$k","a"] } } }           "unknown top level operator: $eq"
+{ $group: { _id: null, s: { $sum: ["$x","$y"] } } }       refused: an accumulator takes one operand
+{ $geoNear: { …, query: { $eq: ["$k","a"] } } }           refused: query is a query document
 { $geoNear: { …, query: { $expr: { $eq: ["$k","a"] } } } } accepted
 ```
 
@@ -128,7 +128,7 @@ same document. The server judges the count:
 
 ```
 $group({ _id: null, r: $push([$.x, $.y]) });     → [{ $group: { _id: null, r: { $push: ["$x","$y"] } } }]
-$group({ _id: null, r: { $push: [$.x, $.y] } }); → the same document: the server refuses it as "a unary operator"
+$group({ _id: null, r: { $push: [$.x, $.y] } }); → the same document: the server refuses the two operands
 ```
 
 `$covariancePop` and `$covarianceSamp` are the exception the registry states rather

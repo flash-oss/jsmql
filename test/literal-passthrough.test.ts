@@ -117,8 +117,8 @@ describe("literal pass-through — every $unwind spelling and its siblings", () 
   });
 
   it("a non-$ literal string passes through as a $replaceWith new-root, and `$ =` refuses it", () => {
-    // `$replaceWith` is your own MQL. DELIBERATELY invalid: mongod says "'replacement
-    // document'  must evaluate to an object, but resulting value was: "hello". …"
+    // `$replaceWith` is your own MQL. DELIBERATELY invalid: mongod refuses it, because
+    // the new root is a string and not an object.
     expect(jsmql(`$replaceWith("hello");`)).toEqual([{ $replaceWith: "hello" }]);
     // `$ = …` is JSMQL code, so the compiler owns its lowering and refuses the string.
     expect(() => jsmql(`$ = "hello";`)).toThrow(

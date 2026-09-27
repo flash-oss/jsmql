@@ -310,7 +310,7 @@ describe("registry — an operator cannot accept more operands than it renders",
     // An operand accepted and then not rendered VANISHES. `$abs($.a, $.b)` used
     // to emit `{"$abs":"$a"}` — valid MQL and the wrong answer — and the three
     // object-shaped date operators emitted a shape mongod refuses outright:
-    //   {$dateDiff:"$a"} → "$dateDiff only supports an object as its argument"
+    //   {$dateDiff:"$a"} → refused: `$dateDiff` takes only a document
     // The `keys` field's own doc records this regression once already.
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
@@ -328,7 +328,7 @@ describe("registry — an operator cannot accept more operands than it renders",
   it("never lets an accumulator slot state an unbounded operand count", () => {
     // A `$group` output slot and a `$setWindowFields.output` slot each take ONE
     // expression, and the two report a second operand differently:
-    //   {$group:{_id:null,s:{$sum:["$x","$y"]}}}          → "unary operator"
+    //   {$group:{_id:null,s:{$sum:["$x","$y"]}}}          → refused: the accumulator takes one operand
     //   {$setWindowFields:{…,output:{r:{$sum:["$x","$y"]}}}}  → 0, where "$x" → 4
     // The second is the reason `atLeast` is banned here rather than merely
     // discouraged: nothing reports it, so only the registry can.

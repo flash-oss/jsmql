@@ -65,8 +65,8 @@ export const switchOn = (
  * A `$switch` whose branches cover every value that can reach it, so it states no
  * default. Never a `$cond`: MEASURED, the server optimises a `$cond`'s branches
  * BEFORE it reads the test, so `{ $cond: [<is array>, { $size: v }, { $strLenCP: v }] }`
- * over a constant `v` — a `$let` variable, a `$literal` — fails with "Failed to
- * optimize pipeline", while the same branches under `$switch` run on every receiver.
+ * over a constant `v` — a `$let` variable, a `$literal` — fails before the pipeline
+ * runs. The same branches under `$switch` run on every receiver.
  */
 export const switchOver = (candidates: readonly { readonly case: Truth; readonly then: unknown }[]): unknown => {
   const { kept: branches, decided } = liveBranches(candidates);

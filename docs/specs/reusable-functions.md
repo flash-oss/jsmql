@@ -86,15 +86,15 @@ start. See § The `function` keyword.
 - **`parseLetDecl()`** also recognises an **unparenthesised** single-param arrow
   right-hand side (`const f = x => …`), which `parseExpression` does not — only the
   parenthesised `(x) => …` form is recognised there, through `parsePrimary`'s
-  `isLambdaStart`. Without this rule, `const f = x => …` fails with
-  `Unexpected token '=>'`.
+  `isLambdaStart`. Without this rule, `const f = x => …` fails as a parse error
+  at the `=>`.
 - **`declarator()`** holds the fork itself, and the statement loop's declaration
   list (`bindings()`) is its one caller. A bracketed pipeline refuses a `const`
   element before the fork. If the parsed initialiser is a `Lambda`, it
   returns a `FuncDecl`; otherwise it returns a `LetDecl`. The block-body-arrow path
   (`parseExprBlockBody`) does **not** fork, because a function declares only at the
-  top level, so it rejects a nested arrow-valued binding there with a precise
-  "declare at the top level" message.
+  top level, so it rejects a nested arrow-valued binding there, and the message
+  names the top level as the place for the declaration.
 - **`function`-keyword declaration** in `collectStatement()` / `parseArrayLiteral()`:
   a leading identifier `function` is parsed by `parseFunctionDeclStatement()` into
   the same `FuncDecl` node (`form: "function"`). See § The `function` keyword.
@@ -121,7 +121,7 @@ site cannot.
 
 `callExpression` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)
 dispatches on the callee: a name bound to a function expands it; a name bound to
-anything else gives "Unknown function" with a `didYouMean` over the declared names
+anything else is refused, with a `didYouMean` over the declared names
 and every global that a program calls by its bare name (`bareCallableNames` in
 [src/compiler/rows.ts](../../src/compiler/rows.ts), e.g. `Numberr(x)` names `Number(...)`);
 a lambda takes the IIFE path. Both expansions run `applyLambda`. The lowering lowers
@@ -129,8 +129,8 @@ each argument in the CALLER's Env, binds each parameter once by `$let` so a
 multiply-read argument is not computed twice, and lowers the body under them. A call
 with no parameters binds nothing, so no `$let` wraps the body (`const two = () =>
 $.a * 2; two()` → `{ $multiply: ["$a", 2] }`). Inside the body the function's own
-name is bound to a refusal, so direct or mutual recursion is refused ("Recursive
-function calls are not supported — a MongoDB expression cannot call itself …").
+name is bound to a refusal, so direct or mutual recursion is refused. MQL gives
+an expression no way to call itself.
 
 ### Free-variable capture
 
@@ -145,11 +145,10 @@ A reusable function used where a **value** is expected is refused with guidance
 toward calling it, because MQL has no first-class function ([DEF-032]). Two sites:
 
 - **bare value position** (`$ = { fn: double }`, `double + 1`): the identifier
-  resolves to a `function` binding, and a function is not a value — "'f' is a
-  reusable function — call it with 'f(...)'. A function cannot be used as a value …".
+  resolves to a `function` binding, and a function is not a value. The message
+  names the call, `f(...)`.
 - **bare array-method callback** (`arr.map(double)`): the method's callback rule
-  sees a name where it takes an arrow — "'.map((x[, i[, arr]]) => …)' takes an
-  arrow with an expression body." — write `arr.map(x => double(x))`.
+  sees a name where it takes an arrow. Write `arr.map(x => double(x))`.
 
 ## Output stability
 
@@ -160,18 +159,18 @@ call site, exactly as for a hand-written IIFE.
 
 ## Errors
 
-| Situation | Message gist |
+| Situation | The refusal |
 |---|---|
-| Wrong argument count | ``Function 'add': expected 2 argument(s) for params (a, b), got 1.`` |
-| Direct/mutual recursion | ``Recursive function calls aren't supported …`` |
-| Call to an undeclared name | ``Unknown function 'comput(...)'. Did you mean 'compute(...)'? …`` |
-| Function used as a value | ``'double' is a reusable function — call it with 'double(...)' …`` ([DEF-032]) |
-| `function` body without `return` | ``A block body must end with a `return <expr>` statement …`` |
-| Generator `function*` | ``jsmql does not support generator functions (`function*`) …`` |
+| Wrong argument count | the count of arguments differs from the count of parameters; the message names the parameters |
+| Direct/mutual recursion | an expression cannot call itself in MQL |
+| Call to an undeclared name | an unknown function, with a `didYouMean` suggestion |
+| Function used as a value | a function is not a value; the message names the call ([DEF-032]) |
+| `function` body without `return` | the block-body refusal: the body has no closing `return <expr>` |
+| Generator `function*` | MQL has no generator; the message names a plain `function` and an arrow |
 | `function` predicate with local bindings | *accepted* — the bindings become the `$let` the predicate's `$expr` rides in |
-| Re-declaration / name clash | `` `const f` at position N is already declared earlier in this block, which JavaScript refuses. … `` (a `ParseError`) |
-| Nested declaration in an arrow body | ``Reusable functions must be declared at the top level of a pipeline …`` |
-| Declaration with no pipeline | ``A reusable function declaration (…) is only valid inside a pipeline …`` |
+| Re-declaration / name clash | the block already declares the name, and JavaScript refuses that too (a `ParseError`) |
+| Nested declaration in an arrow body | a reusable function belongs at the top level of a pipeline |
+| Declaration with no pipeline | a declaration needs the pipeline form |
 
 Every one of these carries a meaningful `.pos`, so `validate()` underlines the
 offending span.

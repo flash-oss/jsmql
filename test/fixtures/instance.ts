@@ -189,7 +189,7 @@ async function bootstrapUsers(): Promise<void> {
 }
 
 // Last few log lines, to make a startup failure actionable (port in use, stale
-// dbpath lock, corrupt dbpath) instead of a bare "did not come up" timeout.
+// dbpath lock, corrupt dbpath) instead of a bare timeout.
 function logTail(lines: number): string {
   try {
     const all = readFileSync(FIXTURE_LOGPATH, "utf8").trimEnd().split("\n");

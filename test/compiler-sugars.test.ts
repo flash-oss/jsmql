@@ -87,7 +87,7 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
     expect(() => pipeline("$ = { a: $$.filter(o => o.a > 1), lit: 1 };")).toThrow(/every entry must be one: 'lit'/);
     expect(() => pipeline('$ = { "a.b": $$.take(1) };')).toThrow(/cannot name a '\$facet' branch/);
     expect(() => pipeline('$ = { "$big": $$.take(1) };')).toThrow(/cannot name a '\$facet' branch/);
-    // measured: `$facet is not allowed to be used within a $facet stage`, `$out is not allowed … within a $facet`
+    // measured: the server refuses a `$facet` or an `$out` inside a `$facet`
     expect(() => pipeline("$ = { outer: $$.aggregate(o => { $ = { inner: $$.take(1) }; }) };")).toThrow(
       /'\$facet' cannot stand inside '\$facet'/,
     );

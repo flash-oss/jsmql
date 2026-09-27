@@ -3,7 +3,7 @@
 // Phase 3 needs the answer before it can run, because several sugars mean one
 // thing as a STATEMENT and are refused everywhere else:
 //   $.items.sort();          → [{ "$set": { "items": { "$sortArray": … } } }]
-//   $.a = $.items.sort()     → ".sort() mutates the array … use '.toSorted()'"
+//   $.a = $.items.sort()     → refused: a mutator as a value; write `.toSorted()`
 // One tree shape gives two meanings. A rewrite blind to position would turn
 // the second into a nested assignment and drop the message the row carries.
 //

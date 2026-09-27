@@ -351,7 +351,7 @@ function rawValue(e: Expr, env: Env): unknown {
   }
   const value = lowerValue(e, env);
   // The server refuses an aggregation operator in a query document outright.
-  // Measured: `{ a: { $trim: … } }` answers "unknown operator: $trim". The
+  // Measured: the server refuses `{ a: { $trim: … } }`. The
   // compiler checks this HERE, and not on a raw document's keys, because a
   // document the developer TYPED is their own MQL and passes through — a query
   // operator newer than this build must still round-trip. This value is one
@@ -408,8 +408,8 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     );
   }
   // A query-only JavaScript spelling applies to the top-level document. Inside an
-  // `$elemMatch` body the server refuses it ("can only be applied to the top-level
-  // document"), and it has no value form that the compiler can use instead.
+  // `$elemMatch` body the server refuses it, and it has no value form that the
+  // compiler can use instead.
   if (!escape && !listedIn(name, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
     throw E.queryOnlyInsideElement(name, node.pos);
   }

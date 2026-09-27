@@ -177,13 +177,13 @@ describe("$$.push — mixed args (real-world chain)", () => {
 });
 
 describe("$$.push — error cases", () => {
-  it(".filter without spread → reject with 'use ...' hint", () => {
+  it(".filter without spread → reject, and the hint names the spread form", () => {
     expect(() => jsmql("$$.push($$$.archive.filter(o => o.active))")).toThrow(
       "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it — '$$.push(...$$$.<coll>.filter(pred))' — to push every match, or write '.find(pred)' for the first one.",
     );
   });
 
-  it(".find with spread → reject with 'drop the ...' hint", () => {
+  it(".find with spread → reject, and the hint names the form with no spread", () => {
     expect(() => jsmql("$$.push(...$$$.archive.find(o => o._id === 'X'))")).toThrow(
       "'.find(pred)' gives ONE document. JavaScript would not spread this. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
     );
@@ -306,8 +306,8 @@ describe("chain errors only ever name syntax that works here", () => {
   // be offered there — but it must still be offered where it does work.
   it("offers the statement form only where a statement position exists", () => {
     // A facet branch is the one container that bans the stage a written list makes,
-    // at any depth — MEASURED: "$documents inside of $unionWith is not allowed to be
-    // used within a $facet stage". A branch that appends a COLLECTION is fine.
+    // at any depth — MEASURED: the server refuses `$documents` inside a `$unionWith`
+    // inside a `$facet`. A branch that appends a COLLECTION is fine.
     expect(() => jsmql("$ = { k: $$.push({ a: 1 }) };")).toThrow(
       "'.push(<document>)' makes a '$documents' stage, and the server refuses that anywhere inside a '$facet' — however deeply it is nested. Append another collection instead ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.",
     );

@@ -45,9 +45,8 @@ type Arg = Extract<Expr, { type: "MethodCall" }>["args"][number];
 
 /**
  * The documents a WRITTEN list holds, or null. `$documents` takes a list the
- * program spells out — MEASURED, the server refuses a field path there ("an
- * array is expected") — so an array is appendable exactly when its elements
- * are written.
+ * program spells out — MEASURED, the server refuses a field path there — so an
+ * array is appendable exactly when its elements are written.
  */
 function writtenDocuments(e: Expr): readonly Expr[] | null {
   if (e.type !== "ArrayLiteral" || e.elements.length === 0) return null;

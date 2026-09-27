@@ -68,7 +68,7 @@ type Parsed = {
   /** The rule that produced this node. The mixing rules need it. */ rule: ProductionKey | null;
 };
 
-/** "Unexpected token 'x'", or "Unexpected end of input" when the token is the end token. */
+/** The refusal of an unexpected token, or of the end of the input when the token is the end token. */
 const unexpected = (t: { type: string }): string =>
   t.type === "EOF" ? "Unexpected end of input" : `Unexpected token ${found(t as never)}`;
 
@@ -248,7 +248,7 @@ function refuseDuplicateParams(binders: readonly Binder[]): void {
 /**
  * JavaScript declares a name once per scope. A function's parameters and the
  * declarations at the top of its block share one scope. So `x => { const x = 1; … }`
- * is a SyntaxError ("Identifier 'x' has already been declared"), and so is a
+ * is a SyntaxError, because it declares `x` twice, and so is a
  * second `let a` in one block. A nested function opens a scope of its own, and a
  * declaration there may shadow the outer name. The parser holds this rule, because
  * the fold inlines a constant declaration before any later phase can see it.
@@ -964,8 +964,8 @@ class Parser {
       t === "ClusterRef";
     if (isPlace) return;
     // A method call is spelled by the CALL that the source wrote, not by the rule that built its receiver.
-    // `$.s.trim()` is a `MethodCall` node whose rule is `.field`, and "a '.field' expression" is a form
-    // that the reader never typed.
+    // `$.s.trim()` is a `MethodCall` node whose rule is `.field`. A message that names the `.field` rule
+    // names a form that the reader never typed.
     if (target.expr.type === "MethodCall") {
       const call = `.${target.expr.wrote ?? target.expr.name}()`;
       throw new ParseError(

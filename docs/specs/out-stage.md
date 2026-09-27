@@ -62,9 +62,8 @@ unchanged. Chained methods — `.filter(<predicate>)`, any method with a
 Statement-only and last-stage-only: nothing may follow the `$out` sugar in a
 pipeline. The compiler FILES the stage as the chain's terminal, rather than
 emitting it, so the `__jsmql` cleanup precedes it, and it is still written
-last. The compiler refuses a later statement with a position-bearing error
-("Nothing can follow '$out': it writes the pipeline's output and the server
-requires it last. Move this statement above it.").
+last. The compiler refuses a later statement with a position-bearing error,
+and the message names the fix: move the statement above the write.
 
 ## Convention: why a distinct LHS prefix?
 
@@ -115,37 +114,37 @@ See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#o
 
 The compiler refuses everything else, each with the form that works:
 
-- a computed bracket (`$$$[$.x] = $$` — "The collection is named when the pipeline is written: '$$$.<coll>' or '$$$["<coll>"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.")
-- too many segments (`$$$.a.b = $$` — "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').")
-- a database alone (`$$$$.db = $$` — "'$$$$.<db>' names a database; write the collection too …")
+- a computed bracket (`$$$[$.x] = $$`) — the name must be known when the pipeline is built. The message names the literal forms, and `jsmql.compile` for a name chosen at run time.
+- too many segments (`$$$.a.b = $$`) — the message names `$$$.<coll> = $$` for the current database, and `$$$$.<db>.<coll> = $$` for another.
+- a database alone (`$$$$.db = $$`) — the message asks for the collection too.
 
 The target's shape is unambiguous against its neighbours. `$ = …` has the bare-`$` target. A field write has a `$.`-rooted target. A join (`$$$.<coll>.find(…)`) is a value, never a target.
 
 ## Validation
 
-| Trigger | Message (excerpt) |
+| Trigger | The refusal |
 |---|---|
-| `$$$.<a>.<b> = …` (three `$`, two LHS segments) | `'$$$.<a>.<b>' has too many segments for a same-database \$out target — use '$$$$.<db>.<coll>' (four $) for a cross-database write, or '$$$.<coll>' (three $) for the local database.` |
-| `$$$$.<x> = …` (four `$`, one LHS segment) | `'$$$$.<x>' is missing the collection — write '$$$$.<db>.<coll>' (db, then collection), or use '$$$.<coll>' (three $) for the local database.` |
-| `$$$$.<a>.<b>.<c> = …` (three or more segments) | `Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').` |
-| `$$$[<non-literal>] = …` (computed bracket on the LHS) | `The collection is named when the pipeline is written: '$$$.<coll>' or '$$$["<coll>"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.` |
-| RHS not rooted at `$$` (for example `$$$.coll = $.x`) | `The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.` |
+| `$$$.<a>.<b> = …` (three `$`, two LHS segments) | too many segments; the message names `$$$$.<db>.<coll>` for another database, and `$$$.<coll>` for the current one |
+| `$$$$.<x> = …` (four `$`, one LHS segment) | the collection is missing; the message names `$$$$.<db>.<coll>`, and `$$$.<coll>` for the current database |
+| `$$$$.<a>.<b>.<c> = …` (three or more segments) | too many segments, with the same two forms |
+| `$$$[<non-literal>] = …` (computed bracket on the LHS) | the name must be known when the pipeline is built; the message names the literal forms and `jsmql.compile` |
+| RHS not rooted at `$$` (for example `$$$.coll = $.x`) | the right side must be the stream; the message names the forms that work |
 | A link whose row has no `stream` cell | the stream road's refusal, with the nearest name that a `$$` receiver accepts ([stream-methods.md](stream-methods.md)) |
-| `$$.filter(<predicate>)` arity wrong | `'$$.filter(<predicate>)' takes exactly one predicate argument, got N.` |
-| `$$.filter(<not-a-predicate>)` | `'$$.filter(<predicate>)' in a '\$out' write chain takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.` (shared gate — see [emit-pass.md](emit-pass.md)) |
+| `$$.filter(<predicate>)` arity wrong | the arity refusal: `.filter` takes one predicate |
+| `$$.filter(<not-a-predicate>)` | the message names the predicate spellings that work (shared gate — see [emit-pass.md](emit-pass.md)) |
 | `$.x` inside the `$$.filter` predicate | `$.` is the document the predicate runs over (HR4), so it lowers like the parameter — no refusal; the two spellings mean the same field |
-| A statement after the `$out` sugar in the same pipeline | `Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.` |
+| A statement after the `$out` sugar in the same pipeline | the write must be last; the message asks to move the statement above it |
 | Two `$$$.<coll> = …` statements in one pipeline | The same refusal — the second follows the first. |
-| `$$$.<coll> = …` inside `jsmql.filter(…)` / `jsmql.expr(…)` | Refused as a write: `… but received a write (\`$.x = …\`, \`delete $.x\`). Use jsmql.update() for an update document, or jsmql.pipeline() for a \`$set\` / \`$unset\` pipeline.` |
-| `$$$.<coll> = …` inside `jsmql.update(…)` | `A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.` |
+| `$$$.<coll> = …` inside `jsmql.filter(…)` / `jsmql.expr(…)` | Refused as a write; the message names `jsmql.update()` and `jsmql.pipeline()`. |
+| `$$$.<coll> = …` inside `jsmql.update(…)` | a document-form update writes only fields of the document |
 
-| `$merge({ into: "c", whenMatched: [$sort({ a: 1 })] })` — a stage an update spec does not run | `'$sort' cannot stand inside '$merge': that body is an UPDATE, not a pipeline, and the server runs only '$addFields', '$set', '$project', '$unset', '$replaceRoot', '$replaceWith' and '$fill' there. …` |
-| `$merge({ into: "c", let: { v: $$.size() } })` — the stage that writes the output reading a materialised value | `'$merge' writes the pipeline's output and has to be its LAST stage, and jsmql clears its scratch fields in the stage right before it … Put the value in a field of the document first and read that field: '$.n = $$.size(); $merge({ … let: { v: $.n } … });'` |
+| `$merge({ into: "c", whenMatched: [$sort({ a: 1 })] })` — a stage an update spec does not run | that body is an update, not a pipeline, and the server runs there only the stages listed below |
+| `$merge({ into: "c", let: { v: $$.size() } })` — the stage that writes the output reading a materialised value | the scratch field is gone before the last stage runs; the message names `$.n = $$.size();` first, then a read of `$.n` |
 
 **`whenMatched` is an UPDATE, not a pipeline.** MEASURED on mongod: `$addFields`,
 `$set`, `$project`, `$unset`, `$replaceRoot`, `$replaceWith` and `$fill` run
-there, one stage per run with a valid body. Every other stage answers "<name>
-is not allowed to be used within an update". The `$merge` row states that set
+there, one stage per run with a valid body. The server refuses every other stage
+there. The `$merge` row states that set
 as its `statementBody`. `place` refuses a stage the set does not name.
 [test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) asks
 the server the same question and compares the two answers, so the row cannot
@@ -160,8 +159,7 @@ A stage the row files as LAST does not emit where it stands. The compiler
 files it on the chain, so nothing can land after it, and the `__jsmql` cleanup
 always precedes it ([emit-pass.md](emit-pass.md)). That order is what the
 last row above enforces: a body that reads a scratch field would read one the
-`$unset` has already dropped, and MEASURED, the server answers "Use of
-undefined variable: v".
+`$unset` has already dropped, and MEASURED, the server refuses the read.
 
 All errors carry a meaningful `.pos` (target node's `pos` for LHS shape
 errors, RHS node's `pos` for chain errors, offending later statement's
@@ -184,7 +182,7 @@ Adding a chain method is not a change specific to `$out`. Give the method's row 
 | `jsmql("…")`, with or without `;` | Allowed — a write is a pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)). |
 | `jsmql.pipeline("…")` | Allowed. |
 | `jsmql.filter("…")` / `jsmql.expr("…")` | Refused as a write; the message names `jsmql.pipeline()` instead. |
-| `jsmql.update("…")` | Refused: "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'." |
+| `jsmql.update("…")` | Refused: a document-form update writes only fields of the document, and the message names field writes that work. |
 
 ## Parser interaction
 

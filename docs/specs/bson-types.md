@@ -203,8 +203,7 @@ emitting `{ $toLong: "5" }`. Three things follow. The server parses no string pe
 document. The comparison stays on the query road, so `$.xs === 1n` matches an ELEMENT
 of `xs` where the `$expr` form compared the whole array. And a BigInt past 64 bits is
 refused at its source position, where it used to compile and fail on the server —
-MEASURED: `$toLong: "12345678901234567890123"` gives "Failed to parse number … in
-$convert".
+MEASURED: the server refuses `$toLong: "12345678901234567890123"` at run time.
 
 `longsWithin` converts a BigInt at any depth, because a settled constant can hold
 BigInts inside an array or an object. Negation folds (`-5n`), because a BigInt negates
@@ -215,9 +214,10 @@ An interpolated BigInt takes the same path and the same refusal.
 ## The sentinels
 
 `MinKey` / `MaxKey` compare against every type and compute with none. MEASURED:
-`$add: [MinKey, 1]` gives "only supports numeric or date types". There is no MQL
-expression that produces one either — `{ $minKey: 1 }` gives "Unrecognized expression" —
-so the value can only be the live one the fold builds, and their rows say `inCode`.
+the server refuses `$add: [MinKey, 1]`, because `$add` takes only numbers and dates.
+There is no MQL expression that produces one either: the server refuses
+`{ $minKey: 1 }`, because `$minKey` is not an expression operator. So the value
+can only be the live one the fold builds, and their rows say `inCode`.
 
 JSMQL does not refuse `MinKey() + 1` at compile time, because it refuses none of its
 siblings either: `true + 1`, `[1,2] + 1` and `0x507f… + 1` all emit `$add` today. A

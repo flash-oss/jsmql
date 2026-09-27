@@ -581,8 +581,8 @@ describe("compiler/passes/fold — the folds the server contradicted", () => {
   });
 
   it("refuses to fold a numeric string the server refuses to parse", () => {
-    // `$toDouble(" 12 ")` → "Failed to parse number"; `$toInt("0x10")` → "Illegal
-    // hexadecimal input". JavaScript accepts both, so the fold must not.
+    // The server does not parse `$toDouble(" 12 ")` (the spaces) or `$toInt("0x10")`
+    // (the hexadecimal form). JavaScript accepts both, so the fold must not.
     for (const src of ['Number(" 12 ")', 'Number("0x10")', 'Number("1_000")']) {
       expect(evaluate(parseExpression(src), new Map()).ok, src).toBe(false);
     }

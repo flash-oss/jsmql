@@ -35,7 +35,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 - **Target lowering.** No change to the MQL output. `validate()` gains a `warnings` array next to `errors`. Each warning carries `.pos`, `.severity: "warning"`, and a message that names the binding and the index it blocks.
 - **Why blocked.** The `ValidationResult` shape needs a new `warnings` array. The project is pre-1.0, so the API is not fixed, and the change is safe. But the project must also decide which other warnings it needs. Candidates include unused bindings, unreachable stages, and deprecated patterns.
 - **Attempted approaches.** None.
-- **Success criteria.** `jsmql.validate("let id = $.userId; $match($.x > 5);")` returns `{ valid: true, errors: [], warnings: [{ severity: "warning", pos: …, message: "let 'id' before $match blocks index usage on …" }] }`.
+- **Success criteria.** `jsmql.validate("let id = $.userId; $match($.x > 5);")` returns `{ valid: true, errors: [], warnings: [{ severity: "warning", pos: …, message: "…" }] }`.
 - **Rejection site(s).** Design only.
 - **Spec.** `docs/specs/let-bindings.md` § Deferred bullet 4.
 - **Status.** design-only
@@ -98,7 +98,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 - **Why blocked.** A Filter is a single expression with no statement list. Threading a declaration into it needs a separate declaration channel, or a textual-inline pass apart from the pipeline `$let` expansion. The output shape differs from the pipeline form — an inlined body instead of a `$let` — so the design stays separate on purpose.
 - **Attempted approaches.** None. The developer asked to record this as the likely next step for Filters.
 - **Success criteria.** Not yet decided; it depends on the inline design. `db.coll.find(jsmql("const adult = (p) => p.age >= 18; adult($)"))`, or a Filter-specific syntax, would produce a query document with the body inlined.
-- **Rejection site(s).** None. There is no dedicated throw. The parser's general rule covers it: it refuses a declaration outside a pipeline with the message "declares a reusable function, and a reusable function is declared at the top level of a pipeline".
+- **Rejection site(s).** None. There is no dedicated throw. The parser's general rule covers it: it refuses a declaration outside a pipeline, because only the top level of a pipeline can declare a reusable function.
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** design-only
 - **Effort.** M
@@ -149,8 +149,8 @@ This section records features the project considered and **rejected**. Each entr
 
 This was DEF-007. The idea was to make `.slice()` / `.some()` lower to the *projection-form* `$slice` (single argument) and `$elemMatch`, inside `$project({ … })`. The premise is wrong. JSMQL's `$project` is the **aggregation pipeline stage**, not a `find()` projection. The projection-form operators work only in a `find()` projection, and the aggregation stage rejects them. Verified against a running mongod (2026-06-11):
 
-- `{ $slice: N }` (single argument) fails with `Expression $slice takes at least 2 arguments, … but 1 were passed`. In an aggregation `$project`, `$slice` is always the expression operator.
-- `{ $elemMatch: { … } }` fails with `Cannot use $elemMatch in this context`. `$elemMatch` is not an aggregation operator at all. Even where it is valid, in a `find()` projection, it returns the *matched element*, not a boolean, so it would break the JavaScript meaning of `.some()`.
+- `{ $slice: N }` (single argument) fails, because the expression `$slice` needs two or more operands. In an aggregation `$project`, `$slice` is always the expression operator.
+- `{ $elemMatch: { … } }` fails, because the aggregation stage does not accept `$elemMatch`. `$elemMatch` is not an aggregation operator at all. Even where it is valid, in a `find()` projection, it returns the *matched element*, not a boolean, so it would break the JavaScript meaning of `.some()`.
 
 The expression forms that JSMQL already emits run correctly in `$project`: `$.items.slice(0, 3)` becomes `{ $slice: ["$items", 3] }`, and `$.items.some(i => i.x > 5)` becomes `{ $anyElementTrue: { $map: … } }`. The third proposed switch, `$meta`, already ships as a row in `src/registry/names.ts`. It is a normal aggregation expression, reachable through `$op($meta("textScore"))`. So there was nothing valid left to build. Building it would have made JSMQL knowingly emit invalid MQL, an HR3 violation.
 
@@ -204,9 +204,9 @@ The developer decided that the compiler does not check the MQL that you write yo
 
 Two checks stay, because the developer decided so. The first is the place of each stage in the pipeline, your stages too. The second is the list of query operators that an aggregation `$match` refuses (`$near`, `$nearSphere`, `$where`). The compiler also refuses a spread in `$op(…)`, because no MQL exists for it.
 
-### A "Did you mean" refusal for an unknown `$name`
+### A suggestion for an unknown `$name`
 
-The developer decided that an unknown `$name` passes through, with no suggestion. `$mtach($.a > 1);` compiles to `[{ $mtach: { $gt: ["$a", 1] } }]`, and the server gives the error "Unrecognized pipeline stage name: '$mtach'". A suggestion refuses each new MongoDB name that is near a known name. Many real names are near each other: `$gt` and `$gte`, `$sin` and `$sinh`, `$min` and `$minN`. A JavaScript name such as `.pushh()` or `Numberr(x)` keeps its suggestion, because JSMQL owns that closed set.
+The developer decided that an unknown `$name` passes through, with no suggestion. `$mtach($.a > 1);` compiles to `[{ $mtach: { $gt: ["$a", 1] } }]`, and the server refuses it, because MongoDB has no `$mtach` stage. A suggestion refuses each new MongoDB name that is near a known name. Many real names are near each other: `$gt` and `$gte`, `$sin` and `$sinh`, `$min` and `$minN`. A JavaScript name such as `.pushh()` or `Numberr(x)` keeps its suggestion, because JSMQL owns that closed set.
 
 ### Spreading a STRING into its characters (`[..."abc"]`)
 

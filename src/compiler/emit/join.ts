@@ -310,8 +310,8 @@ export function lookupStage(l: Lookup, as: string): Stage {
   // there. The server takes ONE matched document per outer document and stops
   // (measured: one key, one document examined per outer document), where the
   // pair alone would materialise every match first. MEASURED: 110 matching
-  // documents of 1 MB each give Location4568, "Total size of documents in
-  // <coll> matching pipeline's $lookup exceeds 104857600 bytes".
+  // documents of 1 MB each give Location4568: the total size of the matches
+  // is more than the limit of 104857600 bytes.
   if (l.pair === null || l.pipeline.length > 0) body.pipeline = l.pipeline;
   body.as = as;
   return { $lookup: body };

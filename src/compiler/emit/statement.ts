@@ -454,9 +454,9 @@ const holdsSpread = (list: Extract<Expr, { type: "ArrayLiteral" }>): boolean =>
  * documents.
  *
  * `$documents` is the stage that makes them. MEASURED, it runs only on a
- * database-level aggregation: `db.coll.aggregate([{ $documents: […] }])`
- * answers "'$documents' can only be run with database or cluster-level
- * aggregation". JSMQL's pipelines go to `db.coll.aggregate`. So the list
+ * database-level aggregation: the server refuses
+ * `db.coll.aggregate([{ $documents: […] }])`. JSMQL's pipelines go to
+ * `db.coll.aggregate`. So the list
  * arrives the way the source switch already arrives: every document
  * dropped, then the new ones unioned in. The empty list is that first
  * half on its own. A list holding a `$$.reduce` is the reducer WRAP, a
@@ -516,10 +516,10 @@ function namesWithin(
 
 /**
  * The placement a row states, applied. Both rules exist because the
- * server enforces them, and no renderer implies either. MEASURED:
- * `$out("o"); $.b = 2;` is refused with "$out can only be the final
- * stage in the pipeline", and `$.b = 2; $documents([…]);` is refused
- * with "$documents is only valid as the first stage". A stage that must
+ * server enforces them, and no renderer implies either. MEASURED: the
+ * server refuses `$out("o"); $.b = 2;`, because `$out` must be the last
+ * stage. It refuses `$.b = 2; $documents([…]);`, because `$documents` must
+ * be the first stage. A stage that must
  * be LAST is filed on the chain, not emitted. So nothing can land after
  * it, and the `__jsmql` cleanup always precedes it. `spelled` is how the
  * source wrote the stage, for the message of a statement after it.
@@ -555,8 +555,8 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
     }
     // An enclosing body that is an UPDATE spec takes a closed set of
     // stages, which its row states. The server refuses every other one
-    // outright (MEASURED: "$sort is not allowed to be used within an
-    // update"). The compiler refuses a stage the language gains later,
+    // outright (MEASURED with a `$sort` inside an
+    // update). The compiler refuses a stage the language gains later,
     // until the row names it. This is the safe default, and the
     // server's own.
     if (held === name) {
@@ -584,9 +584,8 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
     if (already !== null) throw E.twoTerminalStages(spelled, already.spelled, pos);
     // The `__jsmql` cleanup is the stage BEFORE the one that writes the
     // output. Nothing may run after that one. So a body reading a
-    // scratch field reads one that is already gone. MEASURED:
-    // `$merge({ let: { v: $$.size() } })` answered "Use of undefined
-    // variable: v".
+    // scratch field reads one that is already gone. MEASURED: the server
+    // refuses the read of `v` in `$merge({ let: { v: $$.size() } })`.
     if (readsScratch(stage)) throw E.terminalReadsScratch(name, pos);
     env.chain.terminal = { stage, spelled };
     return [];
@@ -685,9 +684,9 @@ function becomeStream(
   const chainOn = chainBase(value) as { type: string };
   const streamRoad = chainOn.type === "StreamRef" || readsAnotherCollection(value) || onOwnStream(chainOn as Expr, env);
   // A kind the registry PROVES is not a list says something else.
-  // MEASURED, the server refuses it:
-  // `[{ $set: { s: 5 } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`
-  // answers "'replacement document' must evaluate to an object".
+  // MEASURED, the server refuses
+  // `[{ $set: { s: 5 } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`,
+  // because the replacement is not an object.
   const t = typeOf(value, env);
   // A value proven a stream that is not a chain (`c ? $$.filter(p) : $$.filter(q)`) hears
   // the chain road's own refusal, which names the forms a stream takes.
@@ -695,8 +694,8 @@ function becomeStream(
   if (cannotBe(t, "array")) throw E.notAStreamChain(value.pos, E.nounOfKinds(t), lead, how);
   // A stream holds DOCUMENTS. Where the registry shows what ONE element
   // is, the compiler refuses an element that is not a document here,
-  // rather than leaving it to the server. MEASURED: `$replaceWith` of a
-  // string answers "'replacement document' must evaluate to an object".
+  // rather than leaving it to the server. MEASURED: the server refuses a
+  // `$replaceWith` of a string, because a string is not an object.
   const element = elementOf(t);
   if (cannotBe(element, "object")) throw E.streamElementsNotDocuments(E.pluralNounOfKinds(element), written, value.pos);
   const slot = env.chain.slot();
@@ -908,8 +907,7 @@ const touches = (x: string, y: string): boolean =>
  *     must read the NEW x, and one `$set` would read the old one.
  *   - the next write's path TOUCHES one the group writes. The same path
  *     twice means two things in the source. The server refuses a parent
- *     beside its own child outright ("specification contains two
- *     conflicting paths").
+ *     beside its own child outright.
  * A write to the document ROOT is its own stage: it replaces what the
  * next write would write into.
  *
@@ -1473,8 +1471,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
   if (node.type === "DatabaseRef") throw E.bareContextRef("$$$", node.pos);
   if (node.type === "ClusterRef") throw E.bareContextRef("$$$$", node.pos);
   // `{ $match: …, $sort: … }` — two stages in one raw document. MEASURED: the server
-  // refuses it ("must contain exactly one field"), and the place of each stage needs
-  // the one name its document holds.
+  // refuses it, and the place of each stage needs the one name its document holds.
   if (name === null && node.type === "ObjectLiteral" && node.entries.length > 1) {
     const head = staticKey(node.entries[0]);
     if (head !== null && head.startsWith("$")) throw E.multiKeyStageDocument(head, node.entries.length, node.pos);

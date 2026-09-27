@@ -122,7 +122,7 @@ describe("$out — LHS shape errors", () => {
     );
   });
 
-  it("a computed bracket rejects with the 'literal collection name' hint", () => {
+  it("a computed bracket is refused, and the hint asks for a literal collection name", () => {
     expect(() => jsmql("$$$[someVar] = $$;")).toThrow(
       "The collection is named when the pipeline is written: '$$$.<coll>' or '$$$[\"<coll>\"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.",
     );
@@ -132,8 +132,8 @@ describe("$out — LHS shape errors", () => {
 describe("$out — RHS shape errors", () => {
   it("a chain method no row states names the workaround", () => {
     // A chain link is a method whose row carries a `stream` cell, or a stage
-    // ('$$.$match(…)'). Only a name that is neither reaches the "a stage is a link
-    // too" hint.
+    // ('$$.$match(…)'). Only a name that is neither reaches the hint that names a
+    // stage link.
     expect(() => jsmql("$$$.coll = $$.unknownMethod();")).toThrow(
       "'.unknownMethod()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
     );
@@ -255,7 +255,7 @@ describe("$out — ParamRef in bracket-LHS (jsmql.compile binding)", () => {
     expect(fn({ dbName: "warehouse", collName: "users" })).toEqual([{ $out: { db: "warehouse", coll: "users" } }]);
   });
 
-  it("non-string binding is rejected with a 'must be a string' hint", () => {
+  it("non-string binding is rejected, and the hint asks for a string name", () => {
     const fn = jsmql.compile(({ n }) => ($$$[n] = $$));
     expect(() => fn({ n: 42 })).toThrow(/named when the pipeline is written|must be a string/);
   });
@@ -354,7 +354,7 @@ describe("$out RHS accepts chained stage calls", () => {
       );
     });
     it("passes an unknown stage name through, as your own MQL", () => {
-      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$prject'".
+      // DELIBERATELY invalid: mongod refuses `$prject`, because it is not a pipeline stage.
       expect(jsmql("$$$.archive = $$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }, { $out: "archive" }]);
     });
   });

@@ -408,8 +408,8 @@ var dateRow = (spelling) => global_({
         `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`
       ),
       dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
-      // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and an eighth
-      // argument is "takes at most 7". Months are 1-BASED here, unlike JavaScript.
+      // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
+      // an eighth argument. Months are 1-BASED here, unlike JavaScript.
       multiple: {
         args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
         emit: ({ args, value }) => dateFromParts(args.map(value), null)
@@ -463,7 +463,7 @@ var bsonSentinel = (spelling, doc, compare) => global_({
   where: ["value"],
   filter: because(`${spelling}() is a value, not a test. Compare it: '${compare}'.`),
   // The fold builds the value — there is no MQL expression that produces one, so
-  // no rule here could. MEASURED: `{ $minKey: 1 }` is "Unrecognized expression".
+  // no rule here could. MEASURED: the server refuses `{ $minKey: 1 }`.
   expr: inCode("src/compiler/passes/fold-methods.ts"),
   stream: unsupported(`'${spelling}' produces a value, not a stream of documents.`),
   statement: unsupported(`'${spelling}' produces a value. Use it inside a reshape or a '$set'.`),
@@ -1495,7 +1495,7 @@ var NAMES = {
   $filter: mongo({
     doc: "Selects a subset of the array, returning only elements that match the filter condition.",
     category: "array",
-    // MEASURED: `limit` does not see `$$this` — "Use of undefined variable: this".
+    // MEASURED: `limit` does not see `$$this` — the server refuses a read of it there.
     binds: { valueAt: "as", default: "this", visibleIn: ["cond"] },
     returns: "array",
     where: ["value"],
@@ -1648,7 +1648,7 @@ var NAMES = {
   $reduce: mongo({
     doc: "Applies an expression to each element in an array and combines them into a single value.",
     category: "array",
-    // MEASURED: `initialValue` does not see `$$this` — "Use of undefined variable: this".
+    // MEASURED: `initialValue` does not see `$$this` — the server refuses a read of it there.
     binds: { fixed: ["this", "value"], visibleIn: ["in"] },
     returns: "unknown",
     where: ["value"],
@@ -2643,7 +2643,7 @@ var NAMES = {
     where: ["stream", "statement"],
     preservesCount: true,
     only: ["update"],
-    // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
+    // MEASURED: { $addFields: "a" } → refused: the body must be a document
     document: "keeps",
     evaluates: ["*"],
     bodyPositions: { "": "value" },
@@ -2679,7 +2679,7 @@ var NAMES = {
     doc: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    // MEASURED: { $changeStream: { zzz: 1 } } → BSON field '$changeStream.zzz' is an unknown field
+    // MEASURED: { $changeStream: { zzz: 1 } } → refused: an unknown key
     document: "unknown",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -2691,7 +2691,7 @@ var NAMES = {
     doc: "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
     where: ["stream", "statement"],
     only: ["stageLast"],
-    // MEASURED: { $changeStreamSplitLargeEvent: { zzz: 1 } } → $changeStreamSplitLargeEvent spec should be an empty object
+    // MEASURED: { $changeStreamSplitLargeEvent: { zzz: 1 } } → refused: the body must be empty
     document: "unknown",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -2726,8 +2726,8 @@ var NAMES = {
   $densify: mongo({
     doc: "Creates new documents in a sequence of documents where certain values in a field are missing.",
     where: ["stream", "statement"],
-    // MEASURED: { $densify: { field: "t", range: {…}, zzz: 1 } } → BSON field '$densify.zzz' is an unknown field
-    // MEASURED: range.bounds: "everything" → Bounds string must either be 'full' or 'partition' (a nested key; not stated here)
+    // MEASURED: { $densify: { field: "t", range: {…}, zzz: 1 } } → refused: an unknown key
+    // MEASURED: range.bounds: "everything" → refused: a string bound is "full" or "partition" (a nested key; not stated here)
     document: "keeps",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -2739,7 +2739,7 @@ var NAMES = {
     doc: "Returns literal documents from input values.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    // MEASURED: { $documents: { a: 1 } } → '$documents' can only be run with database or cluster-level aggregation
+    // MEASURED: { $documents: { a: 1 } } → refused on a collection: the stage needs a database or cluster aggregation
     document: "unknown",
     evaluates: [""],
     bodyPositions: { "": "value" },
@@ -2772,8 +2772,7 @@ var NAMES = {
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
     // MEASURED: `$documents` reaches through a `$unionWith` that a `$lookup` or another
-    // `$unionWith` accepts — both run — and a facet branch refuses it at any depth:
-    // "$documents inside of $unionWith is not allowed to be used within a $facet stage".
+    // `$unionWith` accepts — both run — and a facet branch refuses it at any depth.
     // A `$unionWith` that NAMES a collection is fine in a branch, so the ban is the
     // literal-documents form alone.
     bansNested: ["$documents"],
@@ -2783,9 +2782,9 @@ var NAMES = {
   $fill: mongo({
     doc: "Populates null and missing field values within documents.",
     where: ["stream", "statement"],
-    // MEASURED: { $fill: { output: {…}, zzz: 1 } } → BSON field '$fill.zzz' is an unknown field
-    // MEASURED: partitionBy AND partitionByFields → Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'
-    // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
+    // MEASURED: { $fill: { output: {…}, zzz: 1 } } → refused: an unknown key
+    // MEASURED: partitionBy AND partitionByFields → refused: the body takes at most one of the two
+    // MEASURED: output.a.method: "zzz" → refused: the method is "locf" or "linear" (a nested key; not stated here)
     document: "keeps",
     evaluates: ["partitionBy", "output.*.value"],
     bodyPositions: { "": "value" },
@@ -2797,7 +2796,7 @@ var NAMES = {
     doc: "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    // MEASURED: { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } } → Unknown argument to $geoNear: zzz
+    // MEASURED: { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } } → refused: an unknown key
     document: "keeps",
     evaluates: ["near"],
     bodyPositions: { "": "value", query: "filter" },
@@ -2841,7 +2840,7 @@ var NAMES = {
     doc: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
     valueTwin: "$slice",
     where: ["stream", "statement"],
-    // MEASURED: { $limit: 0 } → the limit must be positive (the operand rule is in `args`)
+    // MEASURED: { $limit: 0 } → refused: the count must be above zero (the operand rule is in `args`)
     document: "keeps",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -2918,7 +2917,7 @@ var NAMES = {
     doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
     valueTwin: "$filter",
     where: ["stream", "statement"],
-    // MEASURED: { $match: [1] } → the match filter must be an expression in an object
+    // MEASURED: { $match: [1] } → refused: the body must be a document
     document: "narrows",
     evaluates: [],
     bodyPositions: { "": "filter" },
@@ -2929,13 +2928,13 @@ var NAMES = {
   $merge: mongo({
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     // MEASURED on mongod 8.3.7, one stage per run with a valid body: these seven run,
-    // and 24 others answer "<name> is not allowed to be used within an update".
+    // and the server refuses 24 others in an update.
     statementBody: ["$addFields", "$set", "$project", "$unset", "$replaceRoot", "$replaceWith", "$fill"],
     where: ["stream", "statement"],
     only: ["stageLast"],
-    // MEASURED: { $merge: { into: "c", zzz: 1 } } → BSON field '$merge.zzz' is an unknown field
-    // MEASURED: whenMatched: "zzz" → Enumeration value 'zzz' for field 'whenMatched' is not a valid value (an array is an update pipeline and passes)
-    // MEASURED: whenNotMatched: "zzz" → Enumeration value 'zzz' for field '$merge.whenNotMatched' is not a valid value
+    // MEASURED: { $merge: { into: "c", zzz: 1 } } → refused: an unknown key
+    // MEASURED: whenMatched: "zzz" → refused: not one of the words the key takes (an array is an update pipeline and passes)
+    // MEASURED: whenNotMatched: "zzz" → refused: not one of the words the key takes
     document: "keeps",
     evaluates: ["let"],
     takesLet: true,
@@ -2948,7 +2947,7 @@ var NAMES = {
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     where: ["stream", "statement"],
     only: ["stageLast"],
-    // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → BSON field '$out.zzz' is an unknown field; { $out: 1 } → $out only supports a string or object argument
+    // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → refused: an unknown key; { $out: 1 } → refused: the body must be a string or a document
     document: "keeps",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -3094,8 +3093,8 @@ var NAMES = {
     doc: "Groups documents into windows and applies one or more operators to the documents in each window.",
     where: ["stream", "statement"],
     preservesCount: true,
-    // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
-    // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
+    // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → refused: an unknown key
+    // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → refused: the body needs `output`
     document: "keeps",
     evaluates: ["partitionBy"],
     bodyPositions: { "": "value", "output.*": "window" },
@@ -3120,7 +3119,7 @@ var NAMES = {
     doc: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
     valueTwin: "$slice",
     where: ["stream", "statement"],
-    // MEASURED: { $skip: -1 } → Expected a non-negative number; { $skip: 1.5 } → Expected an integer (the operand rule is in `args`)
+    // MEASURED: { $skip: -1 } → refused: a negative count; { $skip: 1.5 } → refused: a fractional count (the operand rule is in `args`)
     document: "keeps",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -3173,7 +3172,7 @@ var NAMES = {
     valueTwin: "$unsetField",
     where: ["stream", "statement", "updateDoc"],
     only: ["update"],
-    // MEASURED: { $unset: 1 } → $unset specification must be a string or an array; { $unset: [] } → … with at least one field
+    // MEASURED: { $unset: 1 } → refused: the body must be a string or an array; { $unset: [] } → refused: the array must name at least one field
     document: "keeps",
     evaluates: [],
     bodyPositions: { "": "value" },
@@ -3422,9 +3421,9 @@ var NAMES = {
       args: {
         sig: "separator",
         exact: 1,
-        // MEASURED: the server refuses `{ $split: ["$s", ""] }` ("$split requires a
-        // non-empty separator"), and MongoDB has no operator that splits into characters.
-        // So this row refuses the empty separator and emits nothing.
+        // MEASURED: the server refuses `{ $split: ["$s", ""] }`, and MongoDB has no
+        // operator that splits into characters. So this row refuses the empty separator
+        // and emits nothing.
         nonEmpty: {
           0: {
             noun: "separator character",
@@ -3580,10 +3579,10 @@ var NAMES = {
     // is the one that survives where they differ, and both differences are positions
     // jsmql emits into: a SIBLING operator on the same field
     // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for)
-    // and `$elemMatch`, which needs an object ("$elemMatch needs an Object"). The two
-    // places the bare form is required instead — an element of `$in` or `$all`
-    // ("cannot nest $ under $in") — no regex reaches: a regex literal is only an
-    // argument to `.match` and its siblings, never an element of a written list.
+    // and `$elemMatch`, which needs an object. The two places the bare form is required
+    // instead — an element of `$in` or `$all` (the server refuses an operator document
+    // there) — no regex reaches: a regex literal is only an argument to `.match` and its
+    // siblings, never an element of a written list.
     filter: {
       args: { sig: "regexp", exact: 1 },
       emit: ({ recv, args, pathOf: pathOf3, literal: literal2 }) => {
@@ -4186,7 +4185,7 @@ var NAMES = {
             vars: { [arr.as]: recv },
             in: {
               // A `$let` variable cannot see a sibling in its own `vars` block (measured:
-              // "Use of undefined variable"), and a start counted from the end reads the
+              // the server refuses the read), and a start counted from the end reads the
               // receiver's length, so each binding sits one level inside the last.
               $let: {
                 vars: { [start.as]: resolveSliceIndex(args[0], value(args[0]), size) },
@@ -4373,8 +4372,8 @@ var NAMES = {
     doc: "'.filter()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    // MEASURED: three parameters as a value, exactly one as a chain link —
-    // `$$ = $$.filter((d, i) => …)` is "must take exactly one parameter".
+    // MEASURED: three parameters as a value, exactly one as a chain link — the
+    // compiler refuses a read of `i` in `$$ = $$.filter((d, i) => …)`.
     params: { value: ["value", "index", "receiver"], stream: ["value"] },
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
@@ -8340,7 +8339,7 @@ var NAMES = {
     updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   // ── names that are valid ONLY inside another operator's body. A test proves each
-  // one both ways: the container accepts it, and on its own it is "Unrecognized expression".
+  // one both ways: the container accepts it, and the server refuses it on its own.
   $box: mongo({
     doc: "A rectangle, by its bottom-left and top-right corners.",
     where: ["filter"],
@@ -8569,9 +8568,8 @@ var NAMES = {
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
     category: "boolean",
     where: ["filter"],
-    // MEASURED: the server refuses `find({ $nor: [] })` ("$nor argument must be a
-    // non-empty array"), and `$nor` has no expression form to fall back to. So this
-    // row refuses the empty list and emits nothing.
+    // MEASURED: the server refuses `find({ $nor: [] })`, and `$nor` has no expression
+    // form to fall back to. So this row refuses the empty list and emits nothing.
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: norList }
   }),
   $regex: mongo({
@@ -8594,9 +8592,8 @@ var NAMES = {
     category: "text",
     where: ["filter"],
     // MEASURED: the server refuses a '$match' with '$text' anywhere in its body — at the
-    // top or under an '$and' — unless that '$match' is the pipeline's FIRST stage ("$match
-    // with $text is only allowed as the first pipeline stage"). Inside a '$facet' branch it
-    // refuses the stage outright ("query requires text score metadata, but it is not available").
+    // top or under an '$and' — unless that '$match' is the pipeline's FIRST stage. Inside a
+    // '$facet' branch it refuses the stage outright, because the branch gets no text score.
     // Both facts are the stage's, so `place` reads them off the body's keys, not the
     // stage name's row.
     only: ["stageFirst"],
@@ -8617,9 +8614,9 @@ var NAMES = {
     doc: "Matches documents that satisfy a JavaScript expression.",
     where: [],
     // MEASURED: `find({ $where: … })` runs where server-side JavaScript is enabled, and
-    // an aggregation `$match` refuses it at any depth of the body — "$where is not
-    // allowed in this context". A raw `{ $where: … }` filter therefore passes through
-    // (HR1), and this row refuses the same document inside a `$match`.
+    // an aggregation `$match` refuses it at any depth of the body. A raw `{ $where: … }`
+    // filter therefore passes through (HR1), and this row refuses the same document
+    // inside a `$match`.
     forbiddenIn: ["$match"],
     placement: {
       container: `Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.has("a")' \u2014 and it runs as a query, in a '$match' or a 'find' filter alike.`
@@ -9654,7 +9651,7 @@ var NAMES = {
     doc: 'The JavaScript Math namespace. A receiver only \u2014 `jsmql.expr("Math")` errors.',
     token: "Ident",
     provides: "namespace",
-    // MEASURED: bare `Math` is "Expected '.' but got end of input at position 4".
+    // MEASURED: the compiler refuses a bare `Math`.
     // It is a receiver and nothing else, so no position lists it.
     where: [],
     filter: unsupported("'Math' is a namespace, not a test. Compare a member: 'Math.abs($.n) > 2'."),
@@ -9688,9 +9685,9 @@ var NAMES = {
     provides: "collection",
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
-    // value slot gets a refusal — "'$$' (the root stream) is statement-only" —
-    // so `expr` is a refusal even though `$$.size()` IS a value: that value is
-    // the `length` row, reached through `family: "stream"`, not this root.
+    // value slot gets a refusal, so `expr` is a refusal even though `$$.size()` IS a
+    // value: that value is the `length` row, reached through `family: "stream"`, not
+    // this root.
     where: ["stream", "statement"],
     filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => \u2026)'."),
     expr: unsupported(
@@ -9721,8 +9718,8 @@ var NAMES = {
     provides: "cluster",
     // MEASURED: `$$$$.db2.c = $$;` → [{"$out":{"db":"db2","coll":"c"}}], a
     // statement. There is no stream form: the server refuses a cross-database READ
-    // outright ("Cross-database reads aren't supported"). A "stream" entry here
-    // would claim a source switch this scope does not have.
+    // outright. A "stream" entry here would claim a source switch this scope does not
+    // have.
     where: ["statement"],
     filter: unsupported("'$$$$.<db>.<coll>' names a collection, not a test."),
     expr: unsupported("'$$$$.<db>.<coll>' names a collection, not a value."),
@@ -12104,7 +12101,7 @@ var Cursor = class {
    *
    * This is a method, not a comparison against `type`, because TypeScript narrows
    * a getter and keeps the narrowing across a `next()` call. After one
-   * `this.c.type !== "LBrace"` check, every later comparison became "no overlap".
+   * `this.c.type !== "LBrace"` check, TypeScript refused every later comparison.
    */
   is(type) {
     return this.peek().type === type;

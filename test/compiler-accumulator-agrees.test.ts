@@ -2,7 +2,7 @@
 // accepts. Both group and window slots parse `{ acc: [ … ] }` as an operand list
 // rather than as an array expression, and the two report a second operand
 // differently:
-//   {$group:{_id:null,s:{$sum:["$x","$y"]}}}              → "unary operator"
+//   {$group:{_id:null,s:{$sum:["$x","$y"]}}}              → refused: the accumulator takes one operand
 //   {$setWindowFields:{…,output:{r:{$sum:["$x","$y"]}}}}  → 0, where "$x" → 4
 // The second is why this suite exists: nothing reports it.
 //
@@ -64,8 +64,8 @@ describe.skipIf(!up)("emit every JavaScript accumulator spelling in a shape mong
   it("the server accepts every accumulator cell of a JavaScript method", async () => {
     const refused: string[] = [];
     /**
-     * A `.sumBy(fn)` / `.meanBy(fn)` maps its receiver, and `$map` refuses a number
-     * ("input to $map must be an array"). That is the type of the data, not the
+     * A `.sumBy(fn)` / `.meanBy(fn)` maps its receiver, and `$map` refuses a number,
+     * because its input must be an array. That is the type of the data, not the
      * shape of the slot. The list names each such pair, so it cannot hide a shape error.
      */
     const TYPED_OUT: ReadonlySet<string> = new Set(["sumBy.group $.n", "meanBy.group $.n"]);
@@ -129,7 +129,7 @@ describe.skipIf(!up)("emit every JavaScript accumulator spelling in a shape mong
     ]) {
       expect(jsmql.pipeline(src), src).toEqual([{ $group: { _id: null, r: { $push: ["$n", "$m"] } } }]);
     }
-    // DELIBERATELY invalid: mongod says "The $push accumulator is a unary operator".
+    // DELIBERATELY invalid: mongod refuses it, because the `$push` accumulator takes one operand.
     await expect(
       coll
         .aggregate(jsmql.pipeline("$group({ _id: null, r: $push([$.n, $.m]) });") as Record<string, unknown>[])

@@ -35,7 +35,7 @@ No new lexer or parser tokens. The receiver chain is one of:
 
 All shapes are built by the standard primary-postfix loop ([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)). The method call `.find(pred)` / `.filter(pred)` parses as the existing `MethodCall` node.
 
-**Block bodies.** The parser accepts a `{ … }` body on any callback (see [grammar.md](grammar.md)). What the block MEANS is the row's own business. `.aggregate((o) => { $sort(…); $limit(5); })` keeps its statements as the stages of the sub-pipeline. `.find` / `.filter` / `.reject` / `.map` are JavaScript methods. A stage-free block folds back to its value (`{ return E }` → `E`; `{ const … ; return E }` → a `$let`). The compiler refuses a stage-bearing block, and the message names the stage and the `.aggregate` rewrite ([method-dispatch of callback blocks](emit-pass.md)). Parsing first is what buys that message: a grammar that stopped at the first `$` could only say "unexpected token".
+**Block bodies.** The parser accepts a `{ … }` body on any callback (see [grammar.md](grammar.md)). What the block MEANS is the row's own business. `.aggregate((o) => { $sort(…); $limit(5); })` keeps its statements as the stages of the sub-pipeline. `.find` / `.filter` / `.reject` / `.map` are JavaScript methods. A stage-free block folds back to its value (`{ return E }` → `E`; `{ const … ; return E }` → a `$let`). The compiler refuses a stage-bearing block, and the message names the stage and the `.aggregate` rewrite ([method-dispatch of callback blocks](emit-pass.md)). Parsing first is what buys that message: a grammar that stopped at the first `$` could only report an unexpected token.
 
 ## AST extension
 
@@ -127,7 +127,7 @@ join correctly.
 **A variable an enclosing expression binds is refused.** `$lookup` is a stage. So
 the compiler hoists it out of any `$map` / `$filter` / `$reduce` / `$let` the
 source wrote it inside, and its body would then name a variable the server never
-bound there ("Use of undefined variable: x", measured).
+bound there (measured: the server refuses the read).
 
 No placement fixes this: the join runs per ARRAY ELEMENT, and a stage runs per
 DOCUMENT. So the compiler refuses the read where it stands. The message names
@@ -144,10 +144,9 @@ substituted in. So a type-dispatching expression there folds against that one
 value, branch by branch.
 
 A nested `$cond` folds the branch that does not apply, and the server refuses the
-whole pipeline before it reads a document — MEASURED: `$.o =
-$$$.products.find({ _id: $.arr[0] })` answered "can't convert from BSON type array to
-String" for an array key, and "$arrayElemAt's first argument must be an array" for a
-string one.
+whole pipeline before it reads a document — MEASURED: the server refused `$.o =
+$$$.products.find({ _id: $.arr[0] })` for an array key, and again for a string key.
+Each time, the refusal came from the branch for the other type.
 
 So every runtime type dispatch JSMQL writes is a `$switch`. A `$switch` drops a
 branch whose case folds to false, without optimising it (`indexAccess` in
@@ -156,31 +155,31 @@ branch whose case folds to false, without optimising it (`indexAccess` in
 server holds as a constant — a `jsmql.compile` parameter inside `$literal` — so the
 shape is one shape everywhere, and no rule ever picks it by position.
 
-**The collection's name** is a compile-time constant: `$$$.orders`, `$$$["orders"]`, or a `jsmql.compile` parameter or template slot that holds a string (`$$$[coll]`). MongoDB's `$lookup.from` takes no expression. The compiler refuses `$$$[$.name]` ("the collection is named when the pipeline is written"), and `$$$[""]` names no collection.
+**The collection's name** is a compile-time constant: `$$$.orders`, `$$$["orders"]`, or a `jsmql.compile` parameter or template slot that holds a string (`$$$[coll]`). MongoDB's `$lookup.from` takes no expression. The compiler refuses `$$$[$.name]`, a name that only the document holds, and `$$$[""]`, which names no collection.
 
 **Cross-database reads are refused.** `$$$$.<db>.<coll>.<chain>` would need `from: { db, coll }`. That is Atlas Data Federation's form, not a MongoDB server's. The refusal tells the reader to drop the `$$$$.<db>.` prefix and run the pipeline against that database. It also states that the cross-database WRITE (`$$$$.<db>.<coll> = $$` → `$out`) works ([out-stage.md](out-stage.md)).
 
 ## Mode gates
 
-A join materialises a `$lookup` stage, so it needs a pipeline to place it in. `jsmql.filter()`, `jsmql()` on a bare expression, and `jsmql.expr()` refuse it: "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline …". `jsmql.update()` refuses it too, the same way it refuses everything that is not a write ("An update document is made of writes …").
+A join materialises a `$lookup` stage, so it needs a pipeline to place it in. `jsmql.filter()`, `jsmql()` on a bare expression, and `jsmql.expr()` refuse it, and the message names a pipeline as the place for it. `jsmql.update()` refuses it too, the same way it refuses everything that is not a write.
 
 ## Error catalog
 
 Every refusal is a `CodegenError` with the offending node's `pos`, so `validate()` underlines the span.
 
-| Trigger | Message (paraphrased) |
+| Trigger | The refusal |
 |---|---|
-| `$$$.orders.filter(p);` — a read with no destination | "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = …'), bind it ('let x = …'), or make it the stream ('$$ = …')." |
-| `$$ = $$$.c.filter(p).size()` — a value where documents are needed | "… makes a value …" |
-| `$$ = $$$.c.find(p)` — one document where a stream is needed | ".find gives ONE document, and a stream is many" |
-| `$ = $$$.c.filter(p)` — many where the root needs one | "… the root needs one document …" |
-| `$$$.orders.fnid(o => …)` | "Unknown method '.fnid()' at position N. Did you mean '.find()'?" |
-| `$$ = $$$.orders.filterr(o => …)` — a link no row knows | "Unknown method '.filterr()' at position N. Did you mean '.filter()'?" |
-| `$$$.orders.find()` | "'.find(predicate)' requires exactly 1 argument, got 0" |
-| `$$$.orders.find(p).size()` | "'.size()' is not available on an 'object' — it is defined on 'array', 'stream'. For the number of fields, write '.keys().size()'." |
+| `$$$.orders.filter(p);` — a read with no destination | the read has no destination; the message names a field (`$.<field> = …`), a binding (`let x = …`) and the stream (`$$ = …`) |
+| `$$ = $$$.c.filter(p).size()` — a value where documents are needed | the stream takes documents, not a value |
+| `$$ = $$$.c.find(p)` — one document where a stream is needed | a stream needs many documents, and `.find` gives one |
+| `$ = $$$.c.filter(p)` — many where the root needs one | the root takes one document, and the chain gives an array |
+| `$$$.orders.fnid(o => …)` | an unknown method; the message suggests `.find()` |
+| `$$ = $$$.orders.filterr(o => …)` — a link no row knows | an unknown method; the message suggests `.filter()` |
+| `$$$.orders.find()` | the arity refusal, which names `.find(predicate)` |
+| `$$$.orders.find(p).size()` | one document has no `.size()`; the message names `.keys().size()` for the number of fields |
 | `$$$.orders.filter(p)` in a filter / `jsmql.expr` | the pipeline-mode refusal above |
-| `$$$[$.name]` / `$$$[""]` | "named when the pipeline is written" / "names no collection" |
+| `$$$[$.name]` / `$$$[""]` | the name is not a constant / the name is empty |
 | `$$$$.<db>.<coll>.filter(p)` | the cross-database refusal above |
-| `$$.push($$$.c.filter(x => x.n > $.m))` — an outer read in a `$unionWith` body | "'$unionWith' has no 'let': its body cannot read the outer document …" ([union-stage.md](union-stage.md)) |
-| `$geoNear({ …, query: { n: $$.size() } })` — a first-only stage whose body needs a hoisted stage | "'$geoNear' has to be the FIRST stage of the pipeline, and a value in its body needs a '$setWindowFields' stage of its own to run BEFORE it …" ([emit-pass.md](emit-pass.md) § Placement) |
-| `$.n = $.items.map(x => $$$.c.find({ _id: x.k }))` — a join reading a variable an enclosing callback binds | "'x' is bound by an enclosing callback, and a read of another collection is a '$lookup' STAGE … Make the elements documents first ('$$ = $.<array>;') … or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);')" |
+| `$$.push($$$.c.filter(x => x.n > $.m))` — an outer read in a `$unionWith` body | the stage has no `let`, so no outer value gets into its body ([union-stage.md](union-stage.md)) |
+| `$geoNear({ …, query: { n: $$.size() } })` — a first-only stage whose body needs a hoisted stage | no placement exists: `$geoNear` must be first, and the hoisted stage must run before it ([emit-pass.md](emit-pass.md) § Placement) |
+| `$.n = $.items.map(x => $$$.c.find({ _id: x.k }))` — a join reading a variable an enclosing callback binds | the `$lookup` stage runs outside the callback, so it cannot see `x`; the message names two fixes: `$$ = $.<array>;` first, or `let <name> = $$$.<coll>.filter(…);` outside the callback |

@@ -359,7 +359,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
   // allowed to stand, and a shape that is not on this list turns the suite red.
   const SERVER_REFUSES: Readonly<Record<string, string>> = {
     // lodash pads the shorter list with `undefined`; `$arrayToObject` refuses the pair
-    // that has no value ("$arrayToObject requires an array of size 2 arrays"). The same
+    // that has no value, because each pair must be an array of two items. The same
     // unequal-length reading the `zipWith` fold is withheld for.
     "[1,2,3,4,5].zipObject([10, 20, 30, 40])": "unequal lengths — the missing pair has no value",
   };

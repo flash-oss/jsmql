@@ -79,9 +79,7 @@ statement stands — at the top level and inside a block body. The declaration r
 identifier raises a position-marked `ParseError` that echoes the keyword as
 written. A missing initialiser raises the same kind of error: a binding is a
 value, and MQL has no `undefined` to hold the place of one. So the parser
-refuses `let x;` with the spelling that works —
-`'let x' binds no value at position 0. JSMQL has no 'undefined' to bind — write
-'let x = <expr>'.`
+refuses `let x;`, and names the spelling that works, `let x = <expr>`.
 
 ### Declaration lists
 
@@ -164,8 +162,9 @@ its own.
 
 A block-body arrow binds `$let` variables rather than document fields
 ([emit-pass.md](emit-pass.md#bindings-between-stages)). `$let` evaluates
-every var against the ENCLOSING scope — mongod answers
-`Use of undefined variable: a` for `vars: { a: 5, b: { $add: ["$$a", 1] } }`.
+every var against the ENCLOSING scope — mongod refuses
+`vars: { a: 5, b: { $add: ["$$a", 1] } }`, because the enclosing scope does not
+define `a`.
 So the same merge and break rule applies there, one `$let` per group:
 
 ```js
@@ -184,9 +183,7 @@ stands, and names the statement form:
 
 ```js
 [let x = $.a + 1, $match(x > 5)]
-// ✗ error — "`let x = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1.
-//            Write the pipeline as statements, with a ';' after each one: `let x = …; $match(…);`.
-//            A sub-pipeline takes its statements in an '.aggregate' block: …"
+// ✗ a declaration is not an array element — write the statements below
 
 let x = $.a + 1; $match(x > 5);
 // → [{ $set: { "__jsmql.var.x": { $add: ["$a", 1] } } },
@@ -226,10 +223,10 @@ outer name:
 
 ```js
 let a = 1; let a = 2; $.x = a;
-// ✗ error — "`let a` at position 11 is already declared earlier in this block, which JavaScript refuses. Pick a different name."
+// ✗ let a appears twice in one block
 
 $.items.map(x => { const x = 99; return x })
-// ✗ error — "`const x` re-declares the parameter `x` at position 19, which JavaScript refuses. Pick a different name."
+// ✗ x is already the name of the parameter
 
 $.items.map(x => $.other.map(y => { const x = 99; return x + y }))
 // → { $map: { input: { $ifNull: ["$items", []] }, as: "x", in:
@@ -274,11 +271,12 @@ reads the binding:
   right-hand side reads the binding's own slot, so `p = p * 0.9` lowers to
   `{ $set: { "__jsmql.var.p": { $multiply: ["$__jsmql.var.p", 0.9] } } }`.
   `+=` and `++` desugar to the same write.
-- **a `const`** — refused: "'x' is a 'const' and cannot be assigned again.
-  Declare it with 'let' to write it more than once."
+- **a `const`** — refused. The message names `let`, the keyword for a binding
+  that takes more than one write.
 - **dropped by a replacing stage** — refused with the post-replace error,
   in its reassignment form.
-- **undeclared** — refused: "Unknown identifier 'y'. Did you mean '$.y'?"
+- **undeclared** — refused with `UnknownIdentifierError`, which suggests the
+  field path (`$.y` for `y`).
 
 Outside a pipeline — a filter, `jsmql.expr`, an update document — there is
 no binding scope, so the compiler refuses a bare-identifier assignment
@@ -310,12 +308,11 @@ Every name lives in the Env's `Scope` ([src/compiler/emit/env.ts](../../src/comp
 
 ### Stages that replace the document
 
-`afterStages` reads each emitted stage's row. A stage whose `document` effect replaces the document — `fields`, `value` or `unknown` (`$group`, `$bucket`, `$replaceWith`, and others; see docs/specs/types.md) — or a `projection` in INCLUSION mode (every value `1` / `true`, apart from `_id: 0`) — takes every field-carried binding and the scratch namespace with it. A later read is refused, with a precise message:
+`afterStages` reads each emitted stage's row. A stage whose `document` effect replaces the document — `fields`, `value` or `unknown` (`$group`, `$bucket`, `$replaceWith`, and others; see docs/specs/types.md) — or a `projection` in INCLUSION mode (every value `1` / `true`, apart from `_id: 0`) — takes every field-carried binding and the scratch namespace with it. A later read is refused, and the message names the stage. It also names two fixes: write the binding again after the stage (`x = …`), or carry the value as a field of the new document.
 
 ```
 let x = $.a; $group({ _id: null }); $.y = x
-// ✗ `x` is a `let` binding. It cannot be read after `$group`, because that stage replaced the document
-//   that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document.
+// ✗ $group replaced the document that carried x
 ```
 
 `$project({ b: 0 })` (exclusion mode) and `$project({ x: $.y + 1 })` (expression mode) leave the rest of the document alone, `__jsmql` included, so the bindings survive them. So does a chain link whose row states `restoresDocuments` (`.uniq()`): its `$group` and `$replaceWith` give the documents back as they were. The Env takes each group of stages once, in the order of the stages. So the same refusal holds for a write later in the same `,` run. See docs/specs/types.md § The document after a stage.

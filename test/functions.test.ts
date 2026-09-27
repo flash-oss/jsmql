@@ -158,8 +158,8 @@ describe("reusable functions — output stability", () => {
   });
 
   // A param the server cannot spell as a `$$` variable has to be escaped at the call
-  // site's $let too, not just in the array-method binding sites — MongoDB rejects
-  // "'_' starts with an invalid character for a user variable name".
+  // site's $let too, not just in the array-method binding sites — MongoDB refuses a
+  // user variable name that starts with `_`.
   it("a param name the server rejects is escaped at the call site", () => {
     expect(jsmql.expr("((_) => 1)(2)")).toEqual(1);
     expect(jsmql("const f = (_, n) => n + 1; $.y = f($.a, $.b);")).toEqual([

@@ -71,7 +71,7 @@ describe("registry — every callback-taking name states its slot layout", () =>
 
 describe("registry — a constructor that demands `new`", () => {
   it("lists no position, so its own refusal answers both spellings", () => {
-    // The compiler has no "needs 'new'" refusal. A row that demanded `new` and listed a
+    // The compiler has no refusal that asks for `new`. A row that demanded `new` and listed a
     // position would compile `Map(…)` as `new Map(…)` and say nothing. So each such row
     // is a refusal row, and `Map(…)` and `new Map(…)` reach the same row text.
     const demands = rows.filter(([, row]) => row.kind === "global" && row.newKeyword === "required");
@@ -109,7 +109,7 @@ describe("registry — `only` and the positions it qualifies", () => {
   it("uses every member of the Only vocabulary on at least one row", () => {
     // `afterSort` was declared, documented with an example, and stated by no row
     // — so `$$ = $$.takeWhile(p)` would have emitted the $setWindowFields mongod
-    // refuses (Location5339901) instead of the "needs a preceding sort" refusal.
+    // refuses (Location5339901) instead of the refusal that asks for a sort first.
     const unused = ONLY.filter((o) => !rows.some(([, row]) => row.only?.includes(o) === true));
     expect(unused).toEqual([]);
   });
@@ -118,7 +118,7 @@ describe("registry — `only` and the positions it qualifies", () => {
     // Every Only member qualifies a stage or a link — "first stage", "last stage",
     // "an update-pipeline stage", "a link after a sort" — and the placement may
     // belong to an OPERATOR the stage carries rather than to the stage itself:
-    // MEASURED, "$match with $text is only allowed as the first pipeline stage", so
+    // MEASURED, the server allows a `$match` with `$text` only as the first stage, so
     // the rule is `$text`'s and the stage it qualifies is whichever `$match` holds it.
     // A row that stands in none of those three positions has nothing to qualify.
     const stray: string[] = [];

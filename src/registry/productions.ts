@@ -109,9 +109,9 @@ export type ProductionSpec<
    * The node that this rule builds can never be the left side of `=`, `+=`, `++`
    * or `--`. This cell also gives the alternative to write. `a?.b = 1` is a
    * JavaScript SyntaxError, for an optional chain anywhere in the target, and not
-   * only at its end. So the parser refuses it from the row. The message is
-   * "'<spelling>' cannot be assigned to — JavaScript rejects it. <instead>". This
-   * does not cover `delete`, because `delete a?.b` is legal.
+   * only at its end. So the parser refuses it from the row. The message names the
+   * `spelling` of the row, and ends with the `instead` text. This does not cover
+   * `delete`, because `delete a?.b` is legal.
    */
   neverAWriteTarget?: { instead: string };
   /**

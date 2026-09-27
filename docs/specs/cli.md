@@ -38,8 +38,8 @@ end-of-input error's caret on the source line, instead of a dangling blank one.
 
 The mode flags are mutually exclusive. Two of them together is a usage error.
 The strict flags inherit the library's actionable wrong-shape errors verbatim.
-For example, a bare expression under `--pipeline` produces the same "wrap it
-as `$match(...)`" message that the JS `jsmql.pipeline()` throws. The CLI
+For example, a bare expression under `--pipeline` gives the same message as the
+JS `jsmql.pipeline()`, and that message names the `$match(...)` wrapper. The CLI
 invents no new wording.
 
 ## Formatting
@@ -87,7 +87,7 @@ mode's shape contract:
 echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
 # → [{ $match: { age: { $gt: 18 } } }]
 echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --pipeline --argjson minAge 18
-# → exit 1: jsmql.pipeline() expects a Pipeline … (the arrow lowers to a Filter)
+# → exit 1: the arrow lowers to a Filter, so jsmql.pipeline() refuses it
 ```
 
 `--validate` with params validates the parameterised arrow's shape. The bound
@@ -107,19 +107,17 @@ call `process.exit` mid-stream.
 
 ## Error rendering
 
-On a thrown compile error, `renderError()` writes to stderr:
+On a thrown compile error, `renderError()` writes three lines to stderr:
 
-```
-jsmql: error: <err.message>
-  <the source line containing err.pos>
-  <spaces><caret ^ under the offending column>
-```
+1. the CLI's error prefix, then `err.message`;
+2. the source line that contains `err.pos`;
+3. spaces, then a caret `^` under the offending column.
 
 Every JSMQL compile error (`LexError`, `ParseError`, `CodegenError`,
 `UnknownIdentifierError`, or `FunctionInputError`) carries `pos: number`. The
 caret column is `pos - lineStart`. When `pos` is absent or out of range, the
-CLI prints only the `jsmql: error:` line. Usage errors are formatted
-differently: `jsmql: <message>`, followed by `Try 'jsmql --help'.`. So the two
+CLI prints only the first line. A usage error has a different form: a shorter
+prefix, then the message, then a line that points to `jsmql --help`. So the two
 error classes look different.
 
 ## Versioning

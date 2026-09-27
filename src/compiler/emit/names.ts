@@ -8,8 +8,8 @@
 //
 //   * a name the server refuses. MEASURED on mongod, `$let: { vars: { <name>: 7 } }`:
 //       x, x_1, xY, jsmqlArr, v_id       accepted
-//       _x, X, 1x                        "starts with an invalid character for a user variable name"
-//       x-y, x$                          "contains an invalid character for a variable name"
+//       _x, X, 1x                        refused: the first character is not allowed
+//       x-y, x$                          refused: a later character is not allowed
 //     so only `mongoVarName` mints a `MongoVar`, and it is total.
 //   * two JavaScript names that become one variable. A scheme that only
 //     prepended a letter made `_id` and `v_id` the same variable, `v_id`, and a
@@ -139,7 +139,7 @@ export type Ref =
   /**
    * A binding a document-replacing stage destroyed. Reading it is the
    * developer's error, and `fix` is the row's own advice:
-   *   let t = $.a; $group({ _id: $.k }); $.b = t   → "`t` … can't be read after '$group'"
+   *   let t = $.a; $group({ _id: $.k }); $.b = t   → refused: $group dropped t
    */
   /**
    * A name with no value here. Its read says why: a binding a document-replacing

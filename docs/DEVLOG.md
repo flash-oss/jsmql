@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — docs: no prose quotes an error message
+
+The prose of the project quoted error messages in many places:
+[LANGUAGE.md](LANGUAGE.md), [README.md](../README.md), the specs, the CLAUDE.md
+files, code comments and test titles. Each quote was a second copy of wording
+that the code owns. Many copies were stale. Some described a refusal that no
+longer happens. The developer decided that no prose quotes an error message.
+This entry supersedes "2026-09-27 — docs: each quote of the refusal for a
+dropped `let` matches the compiler", which refreshed four quotes in LANGUAGE.md.
+
+Each place now describes the refusal in generic words: what JSMQL refuses, why,
+and what to write instead. A code block marks a refused line with `// ✗` and a
+short note:
+
+```
+$match(total > 100);  // ✗ $group dropped total
+```
+
+The rule is in [CLAUDE.md](../CLAUDE.md) § Single source of truth. It covers
+every error message: the compiler's, the server's, and those of a tool such as
+Node or TypeScript. A test that checks a message keeps the text, because the
+test fails when the message changes. An old DEVLOG entry is history, and it
+keeps its text. An example of `jsmql.validate()` output keeps its shape, with
+`message: "…"`.
+
+Some quoted claims were false, so a generic note could not keep them. The prose
+now states what the compiler does:
+
+```
+$ = $.lineItems;                                        → [{ $replaceWith: "$lineItems" }]   not refused
+const k = $.a; $$ = $$$.orders.map(o => ({ v: k }));    → a $lookup whose let: carries k      not refused
+jsmql.update("$match({ age: 18 })")                     → { $match: { age: 18 } }             your own MQL, passed through
+let t = $.a; $project({a:0}); $.b = t                   → compiles (a comment said this of $project({a:1}), which is refused)
+```
+
+The table rows and the examples that described those old refusals now show a
+refusal that happens, or this change removes them. The code does not change: a
+parse-and-print comparison of each changed `.ts` and `.mjs` file gives the same
+program. [dist/jsmql.js](../dist/jsmql.js) and
+[playground.html](../playground.html) follow the edited comments.
+
+---
+
 ## 2026-09-27 — docs: each quote of the refusal for a dropped `let` matches the compiler
 
 JSMQL refuses a read of a `let` binding after a stage that replaced the

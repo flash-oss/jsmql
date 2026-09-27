@@ -470,9 +470,9 @@ $project({ name: 1, recentOrders: 1 });`,
 
   // assert(cond, msg) that FAILS for some document: it lowers to a $match whose
   // $convert names the message as a bson type, so MongoDB aborts the WHOLE
-  // aggregate with `Unknown type name: jsmql assertion failed: <msg>`. This is
-  // the load-bearing behaviour — proving the server really rejects, not that we
-  // emit a plausible-looking shape.
+  // aggregate. The server does not know that type name. Its error carries the
+  // message. This is the load-bearing behaviour — proving the server really
+  // rejects, not that we emit a plausible-looking shape.
   it("pipeline: a failing assert aborts the whole aggregate with its message", async () => {
     await expect(aggregate("orders", `assert($.total <= 100, "order total exceeds cap");`)).rejects.toThrow(
       "jsmql assertion failed: order total exceeds cap",
@@ -719,8 +719,8 @@ $ = { byLiteral: $.subscription["tier"], byMissing: $.subscription[$.keyField] ?
     expect(rows).toEqual([
       {
         byLiteral: "premium",
-        // Before the coercion this aborted with "$getField requires 'field' to
-        // evaluate to type String, but got null".
+        // Without the coercion, the server aborts this read, because `$getField`
+        // needs a string `field` and gets null.
         byMissing: "no-key",
         byNumber: "vip", // tags[0] — the array branch
         // A numeric object KEY builds the field "0", as JavaScript does.

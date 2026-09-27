@@ -114,9 +114,7 @@ instead, from the row's `asStatement` field:
 
 ```js
 jsmql("$.y = $.x++;")
-// ✗ '$.x++' is a write inside a value at position 9. A write stands only as a statement.
-//   Write '$.x += 1;' as its own statement after the statement that uses the value,
-//   and read '$.x' there.
+// ✗ a write inside a value; write the two statements below instead
 
 jsmql("$.y = $.x; $.x += 1;")
 // → [{ $set: { y: "$x" } }, { $set: { x: { $add: ["$x", 1] } } }]
@@ -152,9 +150,7 @@ Downstream:
 
 ```js
 jsmql("1 + ($.a = 5);")
-// ✗ '$.a = 5' is a write inside a value at position 9. A write stands only as a statement.
-//   Write '$.a = 5;' as its own statement before the statement that uses the value,
-//   and read '$.a' there.
+// ✗ a write inside a value; write $.a = 5; first, then read $.a
 ```
 
 A callback parameter with a default value (`(x = 1) => x`) is not a write. The parser
@@ -240,19 +236,19 @@ target (`Object.assign({}, $.a)`), it is a value. In an expression it is
 
 ## Error message conventions
 
-| Situation                       | Where caught | Message theme |
+| Situation                       | Where caught | The refusal |
 |---------------------------------|--------------|---------------|
-| Bare identifier as target       | codegen      | A bare-identifier target is validated at codegen: in a pipeline it may reassign an in-scope `let` (see [let-bindings.md § Reassignment](let-bindings.md)); otherwise "Cannot assign to bare identifier 'x' …" |
-| `IndexAccess` as target         | parser       | "Update op target must be a static field path; computed/index access ('[…]') is not supported" |
-| Lambda or compound-shape target | parser       | "Update op target must be a field path like '$.x' or '$.x.y'" |
+| Bare identifier as target       | codegen      | A bare-identifier target is validated at codegen: in a pipeline it may reassign an in-scope `let` (see [let-bindings.md § Reassignment](let-bindings.md)); otherwise it is refused. |
+| `IndexAccess` as target         | parser       | refused: the target must be a static field path |
+| Lambda or compound-shape target | parser       | refused: the target must be a field path, such as `$.x` or `$.x.y` |
 | Compound chain (`$.a += $.b += 1`) | parser     | The write-inside-a-value message for the inner `$.b += 1` |
-| Write inside a value (`1 + $.x++`, `1 + ($.a = 5)`, `f(delete $.a)`) | parser | "'$.x++' is a write inside a value at position N. A write stands only as a statement. Write '$.x += 1;' as its own statement after the statement that uses the value, …" |
-| Write in a value array (`$.y = [$.x++]`, `$.y = [delete $.a]`) | desugar, before any rule | The same message. A `=` or compound write quotes its target and operator: "'$.a = …' is a write inside a value …". A `delete` has nothing to read afterwards, so its message names the statement alone. |
-| Function in a value array (`$.y = [function f(x) { … }]`) | desugar, before any rule | "'function f(…)' is a function inside a value at position N. MQL has no function values. …" |
-| Target that is not a place (`1 = 2`, `$.a + 1 = 2`, `1++`) | parser | "Cannot apply '=' to '$.a + 1' at position N. You can write only to a field, a binding, '$', '$$' or a collection." The message quotes the target as the source spells it. |
-| Arithmetic write on `$` or `$$` (`$ += 1`, `$$++`) | parser | "Cannot use '+=' on '$' at position N. '$' is the whole document, not a field. Write to a field: '$.<field> += …'." A `=` replaces either one, and `$$$.<coll> += …` is a `$merge`, so both stay legal. |
-| `delete $` / `delete $$` | codegen | "'delete $' would delete the document itself. …" / "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'." |
-| Empty update op program          | codegen      | "Update op program must contain at least one assignment or delete" (defensive — parser should not produce this) |
+| Write inside a value (`1 + $.x++`, `1 + ($.a = 5)`, `f(delete $.a)`) | parser | the write-inside-a-value refusal; the message names the statement to write instead, after the read for a postfix write |
+| Write in a value array (`$.y = [$.x++]`, `$.y = [delete $.a]`) | desugar, before any rule | The same refusal. For a `=` or a compound write, the message quotes the target and the operator. A `delete` has nothing to read afterwards, so its message names the statement alone. |
+| Function in a value array (`$.y = [function f(x) { … }]`) | desugar, before any rule | refused: MQL has no function values; the message names a top-level declaration and a call |
+| Target that is not a place (`1 = 2`, `$.a + 1 = 2`, `1++`) | parser | refused: a write takes a field, a binding, `$`, `$$` or a collection as its target. The message quotes the target as the source spells it. |
+| Arithmetic write on `$` or `$$` (`$ += 1`, `$$++`) | parser | refused: `$` and `$$` are not fields, and the message names a write to a field. A `=` replaces either one, and `$$$.<coll> += …` is a `$merge`, so both stay legal. |
+| `delete $` / `delete $$` | codegen | refused: the statement would delete the document or the root stream itself. For the stream, the message names `$$ = [];` and `$$.filter(d => …);`. |
+| Empty update op program          | codegen      | refused (defensive — parser should not produce this) |
 
 `AssignExpr.pos` / `DeleteStmt.pos` come from the target's source offset (for
 `=`/`+=`/`-=`/`*=`/`/=`/`++`/`--`) or from the `delete` keyword (for `delete $.x`).

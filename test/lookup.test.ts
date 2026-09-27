@@ -111,7 +111,7 @@ describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest b
   it("an outer field with a char illegal in a MongoDB var name yields an identifier-safe let var", () => {
     // `meta.sub-id` — the hyphen is legal in a field NAME but illegal in a `$$`
     // VARIABLE name, so the raw segment cannot become the let-var name verbatim
-    // (mongod: "contains an invalid character for a variable name: '-'"). The
+    // (mongod refuses a `-` in a variable name). The
     // last path segment is sanitized to `[A-Za-z0-9_]` for the name only; the
     // value keeps the raw field path. Verified against a live mongod (HR3).
     expect(jsmql('$.x = $$$.orders.filter(o => o.ref === $.meta["sub-id"] && o.qty > 0);')).toEqual([
@@ -1343,8 +1343,8 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
 
     it(`a ${label} predicate hits the same Filter-mode gate as its arrow`, () => {
       // Detection drives the mode gate too: an undetected shorthand falls through
-      // to the generic "bare '$$$' reference" error instead of the actionable
-      // "requires Pipeline mode" one.
+      // to the generic refusal of a bare `$$$` reference, instead of the actionable
+      // refusal that names Pipeline mode.
       expect(() => jsmql(`$$$.orders.filter(${shorthand}).size() > 0`)).toThrow(/needs Pipeline mode/);
     });
   }
@@ -2033,8 +2033,8 @@ describe("$$$.coll.aggregate — error cases", () => {
   });
 
   // `.aggregate` needs a document STREAM. On a receiver the chain already reduced
-  // to a value, the generic value-mode path would answer a bare "Unknown method
-  // '.aggregate()'" and leave the user nowhere; the tailored message says what the
+  // to a value, the generic value-mode path would refuse `.aggregate()` as an
+  // unknown method and leave the user nowhere; the tailored message says what the
   // receiver became, matching the sibling `.find()` case.
   describe("on a receiver the chain already collapsed to a value", () => {
     const collapsed = [
@@ -2394,8 +2394,8 @@ describe("chained stage calls on $$$.<coll>", () => {
   });
 
   it("passes an unknown `$` stage in a foreign chain through, and suggests for a JavaScript name", () => {
-    // A `$`-named link is your own MQL. DELIBERATELY invalid: mongod says
-    // "Unrecognized pipeline stage name: '$sortt'".
+    // A `$`-named link is your own MQL. DELIBERATELY invalid: mongod refuses
+    // `$sortt`, because it is not a pipeline stage.
     expect(jsmql("$.t = $$$.orders.$sortt({ a: 1 });")).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $sortt: { a: 1 } }], as: "t" } },
     ]);

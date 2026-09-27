@@ -59,9 +59,9 @@ $trim($.name, " ", "x")         // → { $trim: ["$name", " ", "x"] }
 **HR3 — JSMQL never emits MQL that it knows is invalid.** HR3 does not apply to the escape hatches of HR1 and HR2. HR3 applies to the MQL that the compiler emits from JSMQL code. This is the lowering of each JavaScript construct, and each part that the compiler adds, for example a `$literal` or `$expr` wrapper, a stage, or a query document. When the compiler knows that the server rejects such MQL, it does not emit it. It throws an error that names the fix.
 
 ```js
-$.s.trim().map(x => x)          // ✗ "'.map()' is not available on a 'string' …"
-new Date("not-a-date")          // ✗ "… only an ISO 8601 string or a millisecond count is a date constant …"
-$$$.archive = $$; $.a = 1;      // ✗ "Nothing can follow '$$$.archive = …' …"
+$.s.trim().map(x => x)          // ✗ a string has no .map() method
+new Date("not-a-date")          // ✗ a date constant takes an ISO 8601 string or a millisecond count
+$$$.archive = $$; $.a = 1;      // ✗ the write to archive must stand last
 $divide(10)                     // → { $divide: 10 }   // one operand: the server refuses it
 jsmql.expr('{ $divide: 10 }')   // → { $divide: 10 }
 ```
@@ -69,9 +69,9 @@ jsmql.expr('{ $divide: 10 }')   // → { $divide: 10 }
 The compiler also checks the place of each stage, and your stages are included. A source stage stands first. `$out` and `$merge` stand last. A sub-pipeline takes only the stages that the server allows there. `$text` stands in the first `$match`. An aggregation `$match` takes no `$near`, `$nearSphere` or `$where`:
 
 ```js
-$out("x"); $.a = 1;                            // ✗ "Nothing can follow '$out' …"
-jsmql('[{ $out: "x" }, { $set: { a: 1 } }]')   // ✗ the same message
-$match({ loc: { $near: [0, 0] } });            // ✗ "'$near' is not allowed inside an aggregation '$match' …"
+$out("x"); $.a = 1;                            // ✗ $out must stand last
+jsmql('[{ $out: "x" }, { $set: { a: 1 } }]')   // ✗ the same refusal
+$match({ loc: { $near: [0, 0] } });            // ✗ an aggregation $match takes no $near
 ```
 
 **HR4 — Each of the four sigils names one scope, at every depth.** The four sigils are the context references:

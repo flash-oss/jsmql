@@ -499,7 +499,7 @@ describe("let bindings — parser errors", () => {
   });
 
   it("rejects unknown bare identifiers in pipelines with no lets", () => {
-    // Smoke check that the normal "unknown identifier" path still fires for
+    // Smoke check that the normal `UnknownIdentifierError` still fires for
     // unbound bare identifiers when no let machinery is in play. The trailing
     // `;` puts the input in Pipeline mode so the stage-call-without-`;` guard
     // does not intercept.

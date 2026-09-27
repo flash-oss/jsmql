@@ -199,8 +199,8 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
  *
  * A string that starts with `$` is normally a runtime field reference, and a
  * validator has no business with it — unless the slot is CONSTANT-only. There
- * the server reads the string as itself: measured, `{ $bucketAuto: { granularity:
- * "$g" } }` answers "granularity must be one of: R5, R10, …" instead of reading a field.
+ * the server reads the string as itself: measured, the server refuses `{ $bucketAuto:
+ * { granularity: "$g" } }` as a value outside the set, and does not read a field.
  */
 function checkEnum(
   name: string,

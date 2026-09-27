@@ -88,14 +88,15 @@ a member access.
 
 - On `$$`, the method namespace is **shared** with `.push` (union) and
   `.filter` (facet). `isSystemStageCall` claims a `$$` method only when it is
-  an actual diagnostic, or a near-typo of one. So `$$.indexStat()` gives "did
-  you mean `$$.indexStats(...)`". `$$.pop()` falls through to the union
+  an actual diagnostic, or a near-typo of one. So `$$.indexStat()` names
+  `$$.indexStats(...)`. `$$.pop()` falls through to the union
   validator's `.push`/`.filter` guidance untouched.
 - On `$$$` or `$$$$`, a direct call is a **diagnostic-only** namespace. So
   every direct call routes through the resolver, to get a precise error. This
   includes `$$$`, which has no diagnostics of its own: `$$$.currentOp()`
   resolves to the wrong-scope hint that points at `$$$$`. `$$$.foobar()`
-  resolves to a "no diagnostics here, they're on `$$` / `$$$$`" message.
+  resolves to a message that says `$$$` has no diagnostic stages, and names `$$`
+  and `$$$$`.
 
 `detectSystemStageCall` splits its work the same way the union and lookup
 translators split theirs. `isSystemStageCall(expr)` is the cheap boolean gate.
@@ -108,23 +109,21 @@ The `index.ts` auto-wrap also uses this gate, so a bare top-level
 A diagnostic produces the stream. So any stage emitted before it is a
 contradiction. The stage's row states the placement. The statement road checks
 this against what the chain has emitted so far. A diagnostic that is not the
-first statement is refused at the call-site position: "'$indexStats' produces
-the pipeline's source documents, so it has to be the FIRST stage — the server
-refuses it anywhere else. Move it to the top of the program."
+first statement is refused at the call-site position, and the message asks to
+move it to the top of the program.
 
 ## Error catalog
 
 | Input | Error |
 | --- | --- |
-| `$$.currentOp()` | wrong scope → `'currentOp' is a cluster-scoped system stage — write '$$$$.currentOp(...)' (the '$$$$' cluster reference, run on the admin database), not '$$'.` |
+| `$$.currentOp()` | wrong scope → points at `$$$$.currentOp(...)`, the cluster reference, run on the admin database |
 | `$$$.currentOp()` | wrong scope → same, points at `$$$$.currentOp(...)` |
 | `$$$$.indexStats()` | wrong scope → points at `$$.indexStats(...)` |
-| `$$.indexStat()` | `Did you mean '$$.indexStats(...)'?` (nearest diagnostic, with its correct prefix) |
-| `$$$.foobar()` | `'$$$.foobar(...)' is not a known diagnostic stage. '$$$' (database reference) has no diagnostic source stages — collection diagnostics use '$$', server/cluster diagnostics use '$$$$'.` |
-| `$$.indexStats({})` | `'$$.indexStats()' takes no options — call it with no arguments.` |
-| `$$.collStats(true)` | `'$$.collStats(...)' expects an options object literal …, not a boolean literal.` |
-| `$$.collStats({}, {})` | `'$$.collStats(...)' takes at most one options object, but got 2 arguments.` |
-| `$match($.x>1); $$.indexStats()` | `… must be the first stage. Move it to the front of the pipeline.` |
+| `$$.indexStat()` | the nearest diagnostic, with its correct prefix: `$$.indexStats(...)` |
+| `$$$.foobar()` | not a diagnostic stage: `$$$` has none; the message names `$$` for the collection diagnostics, and `$$$$` for the server and cluster diagnostics |
+| `$$.collStats(true)` | the options must be an object literal |
+| `$$.collStats({}, {})` | at most one options object |
+| `$match($.x>1); $$.indexStats()` | a diagnostic must be the first stage; the message asks to move it to the front |
 
 Every error carries a real `.pos`. This is the ref prefix for a scope or
 unknown-method error, and the call site for an arg-count or first-stage error.

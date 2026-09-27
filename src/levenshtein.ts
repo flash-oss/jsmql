@@ -1,7 +1,7 @@
-// Cheap Levenshtein distance + closest-name lookup. Builds the "did you mean?"
-// tail for every refusal against a CLOSED SET of names — the `didYouMean` helper
-// is the one way that tail is written, so a new closed-set refusal gets the same
-// suggestion without asking for it. See the DX rules in CLAUDE.md.
+// Cheap Levenshtein distance + closest-name lookup. It builds the suggestion tail
+// for every refusal against a CLOSED SET of names. The `didYouMean` helper is the
+// one writer of that tail, so each new closed-set refusal gets the same suggestion
+// automatically. See the DX rules in CLAUDE.md.
 
 export function levenshtein(a: string, b: string): number {
   const m = a.length;
@@ -31,10 +31,10 @@ export function levenshtein(a: string, b: string): number {
 export function closestNameTo(name: string, candidates: Iterable<string>): string | null {
   let best: { name: string; dist: number } | null = null;
   for (const candidate of candidates) {
-    // Never echo the name the user typed. A candidate set can legitimately
-    // contain it (a name valid in a *different* position), and "Did you mean
-    // '.push'?" after "'.push(...)' is not a chainable stream method" is noise
-    // at best — at worst it recommends syntax that does not work here.
+    // Never echo the name the user typed. A candidate set can contain it,
+    // because the name can be valid in a *different* position. A refusal of
+    // `.push(...)` in one position that then suggests `.push` gives no help,
+    // and it can recommend syntax that does not work here.
     if (candidate === name) continue;
     const d = levenshtein(name, candidate);
     if (best === null || d < best.dist) best = { name: candidate, dist: d };
@@ -45,10 +45,11 @@ export function closestNameTo(name: string, candidates: Iterable<string>): strin
 }
 
 /**
- * Build the trailing " Did you mean 'X'?" hint for a rejection against a closed
- * set of names — the canonical way to satisfy the closest-name DX mandate (see
- * the error-consistency rules in CLAUDE.md). Returns "" when no candidate is
- * close enough, so the call site can interpolate the result unconditionally.
+ * Build the trailing hint that names the closest candidate, for a rejection
+ * against a closed set of names. This is the canonical way to satisfy the
+ * closest-name DX mandate (see the error-consistency rules in CLAUDE.md).
+ * Returns "" when no candidate is close enough, so the call site can
+ * interpolate the result unconditionally.
  *
  * `format` renders the suggestion the way the surrounding message spells the
  * name: the default is the instance-method form (`.foo()`); pass

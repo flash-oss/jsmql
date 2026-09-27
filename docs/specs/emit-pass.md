@@ -47,10 +47,11 @@ An unprovable receiver on a row with ONE field family is that family, by the
 row's claim. On a row with two or more families, the compiler dispatches it at
 run time over the families the receiver can be. `.indexOf()` and `.lastIndexOf()`
 are the two such rows among the JavaScript methods: every other method reads one
-family, and its row states a `sibling` sentence per family it refuses, which the
-refusal (`errors.ts`) puts after its head — `'.length()' is not available on an
-'array' — it is defined on 'string'. For the number of elements, write
-'.size()'.` A branch whose `slotType` cannot take a PROVEN argument kind drops
+family, and its row states a `sibling` sentence per family it refuses. The
+refusal (`errors.ts`) puts that sentence after its head. For example, for
+`.length()` on an array, the message names `string` as the family that has the
+method. It also names `.size()` for the number of elements. A branch whose
+`slotType` cannot take a PROVEN argument kind drops
 out of the dispatch (`argsFit` in `select.ts`), and one branch left runs alone;
 `checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven
 kind.
@@ -119,8 +120,7 @@ variable path answers as a field path does over null, a scalar, an object and an
 The proof (`propOf` in type.ts) reads a member the same way. An index read
 (`indexAccess`) reads the empty value of a receiver that the proof cannot show is there.
 So a null receiver answers missing, as a path does. `$arrayElemAt` runs only for a key that
-is a number: MEASURED, the server aborts the query for a string key ("$arrayElemAt's second
-argument must be a numeric value, but is string").
+is a number: MEASURED, the server aborts the query for a string key.
 
 The second branch runs only when the test passed, so the guarded path IS
 there inside it. `Env.proving(path)` records that fact, and `isPresent` reads
@@ -172,8 +172,8 @@ three roads (`noReceiver` in `errors.ts`). A stage names its value twin, and an
 operator or a function names its call:
 
 ```js
-$.items.$sort({ a: 1 })   // ❌ '.$sort()' is a pipeline stage … For the value form, use '$sortArray(…)'.
-$.a.$size($.b)            // ❌ '.$size()' takes no receiver. … write '$size(…)' with every operand inside the parentheses.
+$.items.$sort({ a: 1 })   // ❌ a stage takes no value receiver; the value form is $sortArray(…)
+$.a.$size($.b)            // ❌ an operator in the method position; the refusal names the call form $size(…)
 $$.$sort({ a: 1 });       // [{ $sort: { a: 1 } }] — the stream is the one receiver that a stage takes
 ```
 
@@ -272,7 +272,7 @@ document. Measured over `{a:1,b:1,c:5}`, `{a:2,b:"oops",c:1}`, `{a:2,b:1,c:9}`:
 ```js
 ($.a === 1 || $.b * 2 === 2) && $.c > 3
 // per branch:  { $or: [{ a: 1 }, { $expr: { $eq: [{ $multiply: ["$b", 2] }, 2] } }], c: { $gt: 3 } }
-//              the server refuses it: "$multiply only supports numeric types"
+//              the server refuses it: $multiply gets the string "oops" from b
 // one $expr:   { c: { $gt: 3 }, $expr: { $or: [{ $eq: ["$a", 1] }, { $eq: [{ $multiply: ["$b", 2] }, 2] }] } }
 //              selects _id 1 and 3 — the `c` clause excluded the string `b` first
 ```
@@ -417,7 +417,7 @@ Three things end a group, each measured on the server.
 |---|---|---|
 | `$.a = 1, $.b = 2` | one `$set` | one `$set` evaluates every value against the document it received |
 | `$.x = 1, $.z = $.x` | two `$set`s | the second must read the NEW `x`, and one stage would read the old one |
-| `$.a = 1, $.a.b = 2` | two `$set`s | the server refuses a parent beside its own child: "specification contains two conflicting paths" |
+| `$.a = 1, $.a.b = 2` | two `$set`s | the server refuses a parent and its own child in one `$set` |
 | `$.a = 1, delete $.b` | `$set` then `$unset` | two stages, because they are two stages |
 
 A write to the document ROOT is its own stage: it replaces what the next
@@ -438,12 +438,12 @@ a stage that the developer names too, because the place of a stage stays checked
 
 | the row says | the target does | measured |
 |---|---|---|
-| `only: ["stageFirst"]` | refuses the stage anywhere but first, and anywhere its own body needs a hoisted stage | "$documents is only valid as the first stage"; "$geoNear was not the first stage in the pipeline after optimization" |
-| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, refuses a statement after it, and refuses a body that READS a scratch field | "$out can only be the final stage"; "Use of undefined variable: v" |
+| `only: ["stageFirst"]` | refuses the stage anywhere but first, and anywhere its own body needs a hoisted stage | the server refuses `$documents` and `$geoNear` anywhere but first |
+| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, refuses a statement after it, and refuses a body that READS a scratch field | the server refuses `$out` anywhere but last, and refuses a body that reads a dropped scratch field |
 | `forbiddenIn: […]` | refuses it inside those containers | the server refuses a write stage in a sub-pipeline |
-| `bodyPositions` | reads each body key in the position it names | `$geoNear`'s `query` as an aggregation expression: "unknown top level operator: $eq" |
+| `bodyPositions` | reads each body key in the position it names | the server refuses an aggregation expression in `$geoNear`'s `query`, which is a query document |
 | `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
-| `statementBody` | says what a `statement` slot HOLDS: a pipeline of its own, or an update spec and the stages it runs | "$sort is not allowed to be used within an update" |
+| `statementBody` | says what a `statement` slot HOLDS: a pipeline of its own, or an update spec and the stages it runs | the server refuses `$sort` inside an update |
 
 A stage's own body sub-pipeline runs under its OWN chain, with the container
 recorded as a boundary. Without the chain, a stage filed as LAST files onto
@@ -733,7 +733,7 @@ among branches, naming the key — and a bare `$$` is the stream unchanged
 (`[]`). Branch names follow the server's field rules (not empty, no `.`, no
 leading `$`; measured). The facet is a document-replacing stage, so the
 bindings end with it. The compiler refuses a chain on `$$` anywhere else than
-the root replace, as "not a value", and points at the facet form.
+the root replace, because the chain is a stream, and points at the facet form.
 
 **`$$.push(…)` and `.concat(…)` are `$unionWith`** (`emit/union.ts`), one
 stage per source in order: `...$$$.c` is `{ $unionWith: "c" }`,
@@ -780,7 +780,7 @@ refuses a second declaration in one block, as JavaScript refuses it.
 statement cell: a `$match` whose `$expr` converts `true` to a type NAMED by
 the outcome, `"bool"` when the condition holds and the message when it does
 not. The server refuses the unknown type name, and its error carries the
-message (measured: `Unknown type name: jsmql assertion failed: …`). The
+message (measured). The
 compiler reads the condition as a truth (a JavaScript spelling tests
 JavaScript truthiness). It spells a literal message into the name, and
 concatenates a dynamic one at run time.
@@ -951,13 +951,13 @@ writes of one operator when one operand is not a document of fields, because
 the two cannot merge. An update operator that the developer calls is the
 developer's own MQL, and its operand passes through as written. So does a
 fragment outside its host: `$each([1])` → `{"$each":[1]}`, and the server
-answers "Unknown modifier: $each".
+refuses it, because `$each` is not an update operator.
 
 ```
 $.n += 2; $.tags.push(3, 4); $.b = $.a; delete $.a;
   → {"$inc":{"n":2},"$push":{"tags":{"$each":[3,4]}},"$rename":{"a":"b"}}
 $.a = $.b + 1
-  → refused: a document-form update takes constants — use the pipeline form
+  → refused: the value reads the document, so write the pipeline form
 ```
 
 ## What has no value

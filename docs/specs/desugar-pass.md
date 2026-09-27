@@ -50,7 +50,7 @@ Several forms mean one thing as a **statement** and are refused everywhere else:
 
 ```
 $.items.sort();        →  [{ "$set": { "items": { "$sortArray": { "input": "$items", "sortBy": 1 } } } }]
-$.a = $.items.sort()   →  ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'"
+$.a = $.items.sort()   →  ✗ refused: in a value, write .toSorted()
 ```
 
 One tree shape, two meanings. A rewrite blind to position would turn the second
@@ -294,7 +294,7 @@ the chain.
 ```
 $.a.b.sort();
   fold first → [{"$set":{"a.b":{"$sortArray":{"input":"$a.b","sortBy":1}}}}]
-  reversed   → "'.sort()' changes its receiver in place, so as a statement it needs a field …"
+  reversed   → ✗ refused: the receiver is not yet a field path
 ```
 
 **Mutator spread before spread pack.** A statement mutator spreads its receiver
@@ -306,7 +306,7 @@ stream, and the union road reads that spread itself.
 Math.max(...$.a, 1)
   packed   → {"$max":{"$concatArrays":["$a",[1]]}}
 $.a.indexOf(...$.b)
-  not packed (the rule reads one argument) → "Spread (...) is not supported in .indexOf(...) …"
+  not packed (the rule reads one argument) → ✗ the spread is refused
 ```
 
 **Group body before iteratee shorthand.** Both read an object argument, and the

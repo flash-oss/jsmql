@@ -1986,8 +1986,8 @@
       // A variable name must be a plain JS identifier — the destructure
       // `({ name }) => …` we build for `jsmql.compile` only binds those. A
       // leading `$` would be read by the parser as the ops-hint slot, not a
-      // binding, so reject it with a clear message instead of a confusing
-      // downstream "unknown identifier".
+      // binding. So the script rejects it here, with a clear message. Otherwise
+      // the compiler refuses the name later, with a message that confuses the user.
       const VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
       // Parse the free-form Variables editor into a params object. Empty (or a
@@ -2037,8 +2037,8 @@
         const prefix = `({ ${keys.join(", ")} }) => { `;
         // Close the block on its OWN line. If `query` ends with a `// line
         // comment` and no trailing newline, appending `}` on the same line
-        // would comment out the closing brace and the parser would hit EOF
-        // ("Unexpected end of expression"). The leading newline terminates any
+        // would comment out the closing brace. The parser would then hit EOF
+        // and refuse the input. The leading newline terminates any
         // trailing line comment before the brace — mirrors `parseVars`, which
         // puts a `\n` before its closing `)` for the same reason.
         return { src: prefix + query + "\n}", prefixLen: prefix.length };
@@ -2263,8 +2263,8 @@
 
         // A malformed variables object blocks compilation. The query may be
         // fine, but the script cannot bind values to it. This shows the precise vars error,
-        // rather than silently dropping the variables, which would then misfire
-        // as "unknown identifier" on the names that the user clearly meant to bind.
+        // rather than silently dropping the variables. Without the variables, the compiler
+        // does not know the names that the user clearly meant to bind, and it refuses them.
         if (vars.error) {
           clearErrorMarker();
           outputCm.setOption("mode", null);

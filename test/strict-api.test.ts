@@ -136,7 +136,7 @@ describe("jsmql.update() — the update document", () => {
     expect(() => jsmql.update("$.age > 18")).toThrow(/An update document is made of writes/);
   });
   it("passes a fragment or a stage that you call through, and refuses what the compiler merges", () => {
-    // DELIBERATELY invalid: each call is your own MQL. mongod says "Unknown modifier: $sort. …"
+    // DELIBERATELY invalid: each call is your own MQL. mongod refuses each one, because it is not an update operator.
     expect(jsmql.update("$sort({ x: 1 })")).toEqual({ $sort: { x: 1 } });
     expect(jsmql.update("$match({ x: 1 })")).toEqual({ $match: { x: 1 } });
     // The compiler merges the statements into one document, so it refuses a field written twice.

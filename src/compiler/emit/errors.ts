@@ -568,9 +568,9 @@ export const multiKeyStageDocument = (name: string, keys: number, pos: number): 
 
 /**
  * `$ = 5` — a root replacement whose value cannot BE a document. Measured: the
- * server refuses `{ $replaceWith: 5 }`, `"x"`, `[1, 2]` and `null` alike
- * ("'replacement document' must evaluate to an object"), and accepts a field path
- * because only the run can tell what it holds.
+ * server refuses `{ $replaceWith: 5 }`, `"x"`, `[1, 2]` and `null` alike,
+ * because none of them is an object. It accepts a field path, because only the
+ * run can tell what it holds.
  */
 export const rootMustBeDocument = (noun: string, pos: number): CodegenError =>
   new CodegenError(
@@ -620,8 +620,8 @@ export const mustBeFirstStage = (name: string, pos: number, why?: string): Codeg
  * A stage that has to be FIRST whose own body reads a value that materialises a
  * stage — `$geoNear({ …, query: { n: $$.size() } })`. The hoisted stage has to run
  * before the read. Nothing may run before a first-only stage, so there is no
- * placement at all. MEASURED: mongod answered "$geoNear was not the first stage in
- * the pipeline after optimization".
+ * placement at all. MEASURED: mongod refuses the pipeline, because `$geoNear` is
+ * not the first stage after the server optimises it.
  */
 export const firstStageNeedsHoist = (
   name: string,
@@ -645,7 +645,7 @@ export const firstStageNeedsHoist = (
  * `$merge({ into: "c", let: { v: $$.size() } })` — the stage that writes the output,
  * reading a value jsmql materialised into a scratch field. The `__jsmql` cleanup is
  * the stage before it, and nothing may follow it. So the field is gone by then.
- * MEASURED: "Use of undefined variable: v".
+ * MEASURED: mongod refuses the read of `v`.
  */
 export const terminalReadsScratch = (name: string, pos: number): CodegenError =>
   new CodegenError(
@@ -945,8 +945,8 @@ export const noCorrelationSlot = (stage: string, pos: number): CodegenError =>
 /**
  * `$.items.map(x => $$$.c.find({ _id: x.k }))` — a join inside an expression that
  * binds its own variable. The `$lookup` is a STAGE, hoisted out of the `$map`. So
- * its body names a variable the server never bound there ("Use of undefined
- * variable: x", measured).
+ * its body names a variable the server never bound there, and the server
+ * refuses the read (measured).
  */
 export const readsEnclosingVariable = (name: string, stage: string, pos: number): CodegenError =>
   new CodegenError(
@@ -969,7 +969,7 @@ export const documentsNeedNoStage = (written: string, made: string, pos: number)
 /**
  * `$merge({ into: "c", whenMatched: [$sort({ a: 1 })] })` — a stage inside an UPDATE
  * spec, which is not a pipeline. The server runs a closed set there and refuses the
- * rest outright: MEASURED, "$sort is not allowed to be used within an update".
+ * rest outright: MEASURED, it refuses `$sort` there.
  */
 export const notInUpdateSpec = (
   name: string,

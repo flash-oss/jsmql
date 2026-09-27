@@ -241,7 +241,7 @@ export function dateOptions(arg: Expr | undefined, value: (e: Expr) => unknown):
 
 /**
  * The most keys a sort spec may name where the server sorts documents. MEASURED on
- * :27018, 32 keys run and 33 fail with "too many compound keys", in each of these slots:
+ * :27018: the server runs 32 keys and refuses 33 keys in each of these slots:
  *   { $sort: {…} }                                   the stage
  *   { $setWindowFields: { sortBy: {…}, output } }    the window order
  *   { $group: { t: { $top: { output, sortBy } } } }  also $topN, $bottom, $bottomN, and the window form
@@ -269,8 +269,8 @@ export const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $rever
  * `$setWindowFields.output` entry. The receiver is the accumulator's operand:
  * `$.a.sum()` is `{ $sum: "$a" }`. A receiver that renders as an array LITERAL holds
  * one array on each document, and the slot reads `{ $sum: [ … ] }` as an operand LIST.
- * MEASURED: a `$group` slot refuses it ("The $sum accumulator is a unary operator"),
- * and a window slot answers 0. So `perDocument` reduces the array on each document
+ * MEASURED: a `$group` slot refuses it, because the accumulator takes one operand
+ * there. A window slot answers 0. So `perDocument` reduces the array on each document
  * first, as `.sumBy` does, and the slot accumulates that value:
  *   [$.n, $.m].sum()     → { $sum: { $sum: ["$n", "$m"] } }          → Σ (n + m)
  *   [$.n, $.m].first()   → { $first: { $first: [["$n", "$m"]] } }    → n of the first document
@@ -507,7 +507,7 @@ export const isFiniteNumber = (v: unknown): Record<string, unknown> => ({
  * A list of `[key, value]` pairs as a document. `$toString` renders the key,
  * because the JavaScript `Object.fromEntries([[7, 1]])` answers `{ "7": 1 }`, and
  * `$arrayToObject` refuses a non-string key outright.
- * MEASURED: "\$arrayToObject requires an array of key-value pairs".
+ * MEASURED: the server refuses a pair whose key is not a string.
  */
 export const pairsToObject = (pairs: unknown, p: { as: string; ref: string }): unknown => ({
   $arrayToObject: {

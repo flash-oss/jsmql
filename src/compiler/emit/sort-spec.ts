@@ -267,9 +267,9 @@ export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string
 /**
  * A sort ask narrowed to what a `$sort` STAGE can carry, on a stream whose element
  * lives at `element` (`""` when the element IS the document). MongoDB sorts a stream
- * by field NAME. MEASURED, `{ $sort: 1 }` gives "the $sort key specification must be
- * an object", and `{ $sort: { $literal: 1 } }` gives "FieldPath field names may not
- * start with '$'". So an element that IS the document has nowhere to go as a key.
+ * by field NAME. MEASURED, the server refuses `{ $sort: 1 }`, because the spec is not a
+ * document. It refuses `{ $sort: { $literal: 1 } }`, because `$literal` is not a valid
+ * field name. So an element that IS the document has nowhere to go as a key.
  * An unwound element has a name — `.flatMap("tags").sort((a, b) => a - b)` sorts
  * by `tags` — and its fields sit under that name: `.flatMap("items").sortBy("qty")` sorts
  * by `items.qty`. A `$sort` stage takes at most `SORT_KEY_LIMIT` keys; `pos` is the

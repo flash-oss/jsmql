@@ -76,11 +76,10 @@ export const GROUP_TMP = `${JSMQL_NS}Tmp`;
  * A MongoDB **variable** name may contain only `[A-Za-z0-9_]` (and — enforced by
  * the `jsmql_` prefix — must start with a lowercase letter). A MongoDB **field**
  * name is far more permissive: `sub-id`, `2fa`, and Unicode text are all legal.
- * When a correlation var is named after an outer field's last path segment
- * (`letFieldVar`), any char outside `[A-Za-z0-9_]` — a hyphen is the common one —
- * would make the emitted var name server-invalid (`FailedToParse: '…' contains
- * an invalid character for a variable name`), an HR3 violation. So this function
- * maps every such char to `_`.
+ * When a correlation var takes its name from the last path segment of an outer
+ * field (`letFieldVar`), the name can hold a char outside `[A-Za-z0-9_]`. A hyphen
+ * is the common one. The server refuses a variable name with such a char. To emit
+ * such a name is an HR3 violation, so this function maps every such char to `_`.
  *
  * This mapping is deliberately NOT injective — `sub-id` and `sub_id` both fold
  * to `sub_id`. Collision safety is the `LetAllocator`'s job, not this function's:

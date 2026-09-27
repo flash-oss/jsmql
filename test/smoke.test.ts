@@ -274,8 +274,8 @@ describe("smoke: built dist", () => {
       // The `require(...)` form is the primary documented call shape, so the
       // CJS bundle must promote esbuild's default-export shape to
       // `module.exports = fn`. Without the post-build fixup in
-      // `scripts/build-cjs.mjs`, this test fails with "module.exports is not a
-      // function".
+      // `scripts/build-cjs.mjs`, this test fails, because the export is not a
+      // function.
       const script = `
         const jsmqlMongoose = require(${JSON.stringify(mongooseCjs)});
         if (typeof jsmqlMongoose !== "function") {

@@ -22,9 +22,10 @@ import { SCRATCH_URI } from "./config.ts";
  * Did the driver fail to find a server at all?
  *
  * MEASURED against the project's instance: a dead port answers
- * `MongoServerSelectionError` (`connect ECONNREFUSED`), while a wrong password
- * answers `MongoServerError` with code 18 and a missing grant answers
- * `MongoServerError` "not authorized". Only the first is a reason to skip.
+ * `MongoServerSelectionError`, because the port refuses the connection. A wrong
+ * password answers `MongoServerError` with code 18. A missing grant answers
+ * `MongoServerError`, because the user has no grant for the command. Only the
+ * first is a reason to skip.
  */
 export function isUnreachable(e: unknown): boolean {
   const name = (e as { name?: string } | null)?.name ?? "";

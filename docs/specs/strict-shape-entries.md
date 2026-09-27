@@ -32,20 +32,20 @@ The function `wrongShape(api, received)` refuses a program of the other shape. I
 
 ```
 jsmql.filter("$match($.age > 18)")
-// ✗ jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a top-level '$match' stage call. Use jsmql.pipeline().
+// ✗ a stage call is a Pipeline; the message names jsmql.pipeline()
 
 jsmql.pipeline("$.age > 18")
-// ✗ jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.
+// ✗ a bare predicate is a Filter; the message names jsmql.filter() and the $match(…) wrapper
 
 jsmql.expr("$.score = 100")
-// ✗ jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.
+// ✗ a write is not an expression; the message names jsmql.update() and jsmql.pipeline()
 ```
 
-The update road refuses on its own terms, because the shape rule does not know an update document as a shape. It refuses two cases: a value computed from the document ("A document-form update takes constants: the server reads '$<field>' there as the string, not the field. To compute from the document, use the pipeline form …"), and anything that is neither a write nor an update operator, such as `assert`, a join, `$$.push`, or a stream chain ("An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither."). A `$`-named call is the developer's own MQL, so a stage passes through as written: `jsmql.update("$match({ x: 1 })")` → `{ $match: { x: 1 } }`, and the server answers "Unknown modifier: $match".
+The update road refuses on its own terms, because the shape rule does not know an update document as a shape. It refuses two cases. The first is a value computed from the document. The server reads a field path there as a string, and the message names the pipeline form. The second is anything that is neither a write nor an update operator, such as `assert`, a join, `$$.push`, or a stream chain. Its message names the writes and the update operators that the document takes. A `$`-named call is the developer's own MQL, so a stage passes through as written: `jsmql.update("$match({ x: 1 })")` → `{ $match: { x: 1 } }`. The server refuses it, because `$match` is not an update operator.
 
 ## Parameterised form: `*.compile`
 
-Each strict entry carries a `.compile` builder: `jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile`. Each is the parse-once, bind-many form of that entry, narrowed to the same output type. The compiler parses the arrow once, eagerly. The returned closure injects the per-call values as `Injected` nodes ([inject.ts](../../src/compiler/passes/inject.ts)) and runs the same `lowerMode`, so the shape contract applies again on every call, with the identical message. The binding mechanics come from `jsmql.compile`: the destructure pattern, the refused values (`undefined`, a function, a symbol, a non-finite number, a circular structure), and values as literals, never as syntax; see [function-form-params.md](function-form-params.md). The one difference per builder is the wrong-input-type `TypeError`, which names the builder (`jsmql.filter.compile() expects an arrow function …`).
+Each strict entry carries a `.compile` builder: `jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile`. Each is the parse-once, bind-many form of that entry, narrowed to the same output type. The compiler parses the arrow once, eagerly. The returned closure injects the per-call values as `Injected` nodes ([inject.ts](../../src/compiler/passes/inject.ts)) and runs the same `lowerMode`, so the shape contract applies again on every call, with the identical message. The binding mechanics come from `jsmql.compile`: the destructure pattern, the refused values (`undefined`, a function, a symbol, a non-finite number, a circular structure), and values as literals, never as syntax; see [function-form-params.md](function-form-params.md). The one difference per builder is the wrong-input-type `TypeError`, which names the builder (for example `jsmql.filter.compile()`).
 
 The CLI uses these builders for `--arg` / `--argjson`, combined with a shape flag — see [cli.md § Parameters](cli.md). `jsmql.validate` accepts a parameterised-arrow string directly. It validates the shape with the bound values stubbed to `null`, so `--validate` with params needs no separate `validate.compile`.
 
@@ -53,8 +53,8 @@ The CLI uses these builders for `--arg` / `--argjson`, combined with a shape fla
 
 Every rejection carries the offending node's position, so editor tooling can underline the source region. The messages follow the DX rules in the root `CLAUDE.md`:
 
-- **Name the API.** Every error starts with `jsmql.filter()` / `jsmql.pipeline()` / `jsmql.update()` / `jsmql.expr()` — the user knows which call to look at.
-- **Name the shape that was found.** A `;`-separated Pipeline, a write, a stream chain, a top-level '$match' stage call — not a generic "wrong shape" complaint.
+- **Name the API.** Every error names the entry — `jsmql.filter()` / `jsmql.pipeline()` / `jsmql.update()` / `jsmql.expr()` — so the user knows which call to look at.
+- **Name the shape that was found.** For example, a `;`-separated Pipeline, a write, a stream chain, or a stage call — not a generic complaint about the shape.
 - **Suggest the right call.** Each error names an alternative: the other strict entry, the polymorphic `jsmql()`, or, when the user almost certainly wrote a `$match` by reflex, a direct call to `jsmql.filter()` on the predicate without the wrapper.
 
 ## When to update this spec

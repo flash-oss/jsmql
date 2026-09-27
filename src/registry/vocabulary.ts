@@ -126,16 +126,14 @@ export type ArgType =
   /**
    * A field NAME the stage writes into, not a path it reads. The server refuses an
    * empty name, a name with a `$` prefix, and a name with a dot in it. MEASURED:
-   * `{ $count: "$n" }` answers "the count field cannot be a $-prefixed path", and
-   * `{ $count: "a.b" }` answers "the count field cannot contain '.'". A plain
+   * the server refuses `{ $count: "$n" }` and `{ $count: "a.b" }`. A plain
    * `string` cannot say this, and every stage that names an output field needs it.
    */
   | "fieldName"
   /**
    * The mirror of `fieldName`: a field PATH the stage READS. The server demands
-   * its own `$` on it. MEASURED: `{ $unwind: "items" }` answers "path option to
-   * $unwind stage should be prefixed with a '$'". The `path` key of the object
-   * form answers the same.
+   * its own `$` on it. MEASURED: the server refuses `{ $unwind: "items" }`. It
+   * refuses the `path` key of the object form in the same way.
    */
   | "fieldPath"
   | "int"
@@ -258,9 +256,9 @@ export type Family =
    * because the diagnostic source stages divide by SCOPE, and the wrong prefix is
    * an error:
    *   $$.indexStats();    → [{ "$indexStats": {} }]
-   *   $$$$.indexStats();  → "'indexStats' is a collection-scoped system stage"
+   *   $$$$.indexStats();  → refused: indexStats has collection scope
    *   $$$$.currentOp();   → [{ "$currentOp": {} }]
-   *   $$.currentOp();     → "'currentOp' is a cluster-scoped system stage"
+   *   $$.currentOp();     → refused: currentOp has cluster scope
    */
   | "cluster";
 
@@ -372,7 +370,7 @@ export type Kind =
   // and $toUUID answers the same. No other name makes one.
   | "binData"
   // The two sentinels. They compare against every other type, and they compute with
-  // NONE. MEASURED: `$add: [MinKey, 1]` answers "only supports numeric or date types".
+  // NONE. MEASURED: the server refuses `$add: [MinKey, 1]`.
   // A kind of their own is what makes that refusal a compile-time refusal.
   | "minKey"
   | "maxKey";
@@ -397,8 +395,8 @@ export type Kind =
  *                               db.products.updateOne(
  *                                 { sku: "abc123" },
  *                                 { $inc: { quantity: -2, "metrics.orders": 1 } })
- *                             runs, and the SAME document in a pipeline answers
- *                             "Unrecognized pipeline stage name: '$inc'". Six
+ *                             runs, but the server refuses the SAME document in a
+ *                             pipeline, because no stage has the name $inc. Six
  *                             positions cannot tell those two apart, and then $inc
  *                             must claim that it is valid nowhere.
  *
@@ -407,18 +405,18 @@ export type Kind =
  *
  *   `stream` vs `statement`
  *     `$$.push(...$$$.archive);`     → [{ $unionWith: "archive" }]   a legal statement
- *     `$$ = $$.take(1).push(...);`   → refused, "use '.concat(...)' mid-chain"
+ *     `$$ = $$.take(1).push(...);`   → refused: in a chain, write `.concat(...)`
  *     One cell must take one of the two answers. If it takes the refusal, the
  *     registry denies the form that the language uses most.
  *
  *   `group` vs `window`, proven both ways on mongod:
- *     $rank         in $group → "unknown group operator"  ; in a window → accepted
- *     $mergeObjects in $group → accepted                  ; in a window → "Unrecognized window function"
+ *     $rank         in $group → refused, not an accumulator ; in a window → accepted
+ *     $mergeObjects in $group → accepted                    ; in a window → refused, not a window function
  *
  *   `group` vs `value` on ONE name — an accumulator is unary in a $group slot and
  *   variadic in a window slot:
  *     {$group:{v:{$avg:"$a"}}}                            → accepted
- *     {$group:{v:{$avg:["$a","$b"]}}}                     → "The $avg accumulator is a unary operator"
+ *     {$group:{v:{$avg:["$a","$b"]}}}                     → refused: one operand only
  *     {$setWindowFields:{output:{v:{$max:["$a","$b"]}}}}   → accepted
  *   which is why `args` lives on the CELL and never on the entry.
  */
@@ -444,7 +442,7 @@ export type SlotPosition = Position | { readonly list: Position; readonly otherw
  *                 the update argument, and this one is the array form.
  *   "afterSort"   a chain link that needs an ORDER that already exists:
  *                   $$ = $$.takeWhile(d => d.x > 1);
- *                     → ".takeWhile(<predicate>) needs a preceding sort"
+ *                     → refused: no sort comes before it
  *                   $$ = $$.sortBy("x").takeWhile(d => d.x > 1);   works
  *
  * There is no "streamEnd". A link that cannot continue a chain says so in its
@@ -457,8 +455,8 @@ export type Only = "stageFirst" | "stageLast" | "update" | "afterSort";
  * they are visible. The row states this, so the compiler applies one scope rule to
  * both spellings: the `$let({ vars: { k: 2 } }, …)` of the developer, and the
  * `$let` that a lowering writes. A name that the compiler mints then keeps clear
- * of a variable that the developer declared. MEASURED per key: a read of a
- * variable outside `visibleIn` answers "Use of undefined variable":
+ * of a variable that the developer declared. MEASURED per key: the server refuses
+ * a read of a variable outside `visibleIn`:
  *   { $filter: { input: "$a", cond: { $gt: ["$$this", 1] } } }              → runs
  *   { $filter: { input: "$a", cond: true, limit: { $add: ["$$this", 0] } } } → refused
  *   { $reduce: { input: "$a", initialValue: "$$this", in: "$$value" } }      → refused
@@ -614,13 +612,12 @@ type ParamKind =
  * link.
  *   $.a.toSorted(d => d.x)              → { $sortArray: { sortBy: { x: 1 } } }
  *   $$ = $$.toSorted((a, b) => a.n - b.n) → [{ $sort: { n: 1 } }]
- *   $$ = $$.toSorted(d => d.n)          → "comparator requires two parameters"
+ *   $$ = $$.toSorted(d => d.n)          → refused: the link needs `(a, b) => …`
  *
  * A list can be SHORTER than the API it names, and 13 of the lists are. That is
  * deliberate, not an omission, and each refusal says which parameter it drops:
  *   $.a.findIndex((v, i, arr) => arr)
- *     → "callbacks take at most 2 parameters (element, index); the third 'array'
- *        argument isn't supported. Reference the receiver directly instead."
+ *     → refused: the list stops at (element, index); read the receiver itself
  * So a list records what JSMQL accepts, and the API name says where to look for
  * the difference. It shows one difference between two close names: `.filter` takes
  * the index, and `.reject`, its own negation, does not.
@@ -644,17 +641,15 @@ export type Arity = {
   /**
    * Slots whose literal string or array must not be empty, keyed by slot. `noun`
    * names one entry, and `instead` is the alternative at the end of the message.
-   * MEASURED on `$unset`: `""` → "FieldPath cannot be constructed with empty
-   * string", and `[]` → "must be a string or an array with at least one field".
+   * MEASURED on `$unset`: the server refuses `""` and `[]`.
    */
   nonEmpty?: Readonly<Record<number, { noun: string; instead: string }>>;
   /** The literal type per slot. The compiler tests it only when the slot holds a literal. */
   /**
    * The literal type a slot accepts, or the SET of types where a slot takes more
    * than one shape. `$unionWith` takes a collection NAME or a body document, and
-   * the server refuses everything else ("the $unionWith stage specification must
-   * be an object or string, but found int"). One type is the common case, and it
-   * stays a bare `ArgType`.
+   * the server refuses everything else, for example an int. One type is the common
+   * case, and it stays a bare `ArgType`.
    */
   slotType?: Readonly<Record<number, ArgType | readonly ArgType[]>>;
   /**
@@ -665,14 +660,14 @@ export type Arity = {
   arrayOf?: Readonly<Record<number, ArgType>>;
   /**
    * Slots whose literal must fall in a closed numeric range. `$sampleRate` takes a
-   * rate in [0, 1], and the server refuses 2 ("must be in [0, 1]"). The compiler
-   * tests only a literal number.
+   * rate in [0, 1], and the server refuses 2. The compiler tests only a literal
+   * number.
    */
   slotRange?: Readonly<Record<number, readonly [number, number]>>;
   /**
    * Slots that refuse a literal zero, which is to say a divisor. The server refuses
-   * `$divide($.a, 0)` and `$.a % 0` ("divisor cannot be 0"), and the NaN answer of
-   * JavaScript has no MongoDB value.
+   * `$divide($.a, 0)` and `$.a % 0`, and the NaN answer of JavaScript has no
+   * MongoDB value.
    */
   nonZero?: readonly number[];
   /**
@@ -1172,8 +1167,8 @@ export type Refusal = {
    *
    * One reason must serve every spelling that can reach it, and only the caller
    * knows which spelling it reads:
-   *   $$ = $$.toReversed()  →  "'.toReversed(...)' isn't available on '$$' — reverses
-   *                            the stream, and a stream has no defined order …"
+   *   $$ = $$.toReversed()  →  refused: the caller names `.toReversed()` and `$$`,
+   *                            and the row gives the reason (the stream is unsorted)
    * A row that spells the subject itself repeats the name that the caller already
    * holds. The row states this flag, and no pass infers it. The alternative is to
    * read the first letter of the message and to guess, and that is a connection
@@ -1387,8 +1382,8 @@ export type Cell<
  *   `.length` in filter position
  *     $.tags.length < 5    → {$expr:{$cond:…}}     works, cannot use an index
  *     $.s.length < 5       → {$expr:{$cond:…}}     the same
- *     $$.size() > 1        → REFUSED, "'$$.size()' … needs Pipeline mode —
- *                            it materialises a '$setWindowFields' stage."
+ *     $$.size() > 1        → REFUSED: the count needs a `$setWindowFields`
+ *                            stage, and a Filter holds no stage
  *   One `viaFallback` for all three promises that the stream form only scans.
  *   In fact the stream form does not compile at all.
  */
@@ -1413,8 +1408,8 @@ export type On = Family | readonly Family[] | "any";
  *
  * An accumulator slot (`$group`, `$setWindowFields.output`) renders the same way:
  * `$push([$.x, $.y])` is `{ $push: ["$x", "$y"] }`, as its raw spelling is.
- * MEASURED: the server refuses that operand list in a `$group` slot ("The $push
- * accumulator is a unary operator"). The call is the developer's own MQL, so the
+ * MEASURED: the server refuses that operand list in a `$group` slot, because the
+ * accumulator takes one operand there. The call is the developer's own MQL, so the
  * server judges it.
  */
 export const single = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => ({

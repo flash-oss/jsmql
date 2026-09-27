@@ -61,27 +61,24 @@ It has no tokens or AST nodes of its own. The shape is `AssignExpr { target: Str
 - **A chain on `$$$.<coll>`** → the join road, `joinStream` ([lookup-stage.md § The join road](lookup-stage.md)): the chain's links become the sub-pipeline. When the body read the outer document, JSMQL replaces the stream per outer document (`$lookup` + `$unwind` + `$replaceWith`); otherwise it drops the current stream (`$match: { $expr: false }`) and unions in the other collection's pipeline. `.find` is refused here — one document is not a stream.
 - **An array literal** → `$documents`, valid only as the first statement (MongoDB places `$documents` at the head); later, `$$.push(…)` appends documents.
 
-**Bindings after a source switch.** A `$unionWith` body has no `let`, so JSMQL refuses an outer `let` or a `$.<field>` read inside the switched-in chain, and points to the correlated form (`.filter(u => u.x === $.y)`), which lowers to `$lookup` and does carry the outer document. After the switch the documents are the other collection's, and a `let` bound before it becomes unreadable: a later read is refused precisely (`` … It cannot be read after `$unionWith`, because that stage replaced the document that carried it. … ``, [let-bindings.md](let-bindings.md)).
+**Bindings after a source switch.** An outer read inside the switched-in chain makes the source switch correlated. An outer read is a read of the outer document, of the root `$$.size()`, or of an outer `let` or `const`. The `$lookup` then carries each value through its `let`. After the switch the documents are the other collection's, and a `let` bound before it becomes unreadable. The compiler refuses a later read, and the message names the stage that replaced the document ([let-bindings.md](let-bindings.md)).
 
 ## Rejections
 
 JSMQL refuses an unsupported RHS and names the forms that work:
 
-| Trigger | Message excerpt |
+| Trigger | The refusal |
 |---|---|
-| `ArrayLiteral` RHS of docs mid-pipeline (e.g. `$match(...); $$ = [{...}]`) | `'$$ = [<docs>]' is only valid as the first stage of a pipeline ('$documents' must be at the head per MongoDB). To append documents to an existing stream, use '$$.push({...}, {...}, …)' instead, which lowers to '$unionWith'.` (Note: `$$ = []` is supported — it empties the stream; `$$ = [<docs>]` at stage 0 lowers to `$documents`.) |
-| `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | `'$$ = <ternary>' (conditional stream branching) is not a supported form — a stream has no single condition that swaps the whole stream for A or B. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current stream) or '$$$.<coll>.filter(<predicate>)' (switch source to another collection).` |
-| `MethodCall` on `$$` / `$$$.<coll>` with method other than `filter` | `'$$ = …' RHS supports only '<recv>.filter(<predicate>)' — '.<method>(...)' is not allowed here.[ Did you mean '.filter'?] Use '<recv>.filter(<predicate>)' to <intent>, or write '$ = $$$.<coll>.find(<predicate>)' if you meant to replace each document with a single matching foreign doc.` |
-| Bare `StreamRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call a stream method. … Any lodash stream method may head the chain (e.g. '$$$.<coll>.toSorted(...).take(...)'), not only '.filter'.` |
-| Anything else | `'$$ = …' RHS must be '$$.<streamMethod>…' … or '$$$.<coll>.<streamMethod>…' …; a '.filter'/'.reject' correlating on '$.<field>' promotes a source switch to a per-outer-doc '$lookup'.` |
+| `TernaryExpr` RHS (e.g. `$$ = a ? b : c`) | refused, for the reason in § Not supported (by design); the message names the right sides that work |
+| Anything else | refused; the message names the right sides that work |
 
 The parser refuses a compound assignment (`$$ += 5`, `$$++`) at parse time: the token
 after `$$` has to be `.`, `[` or `=`, and the message names the expected
 followers.
 
 A predicate's parameter is the document; `$.<field>` inside it is the OUTER
-document (HR4), and a `$unionWith` body cannot reach it — the refusal names the
-correlated `.filter`, which lowers to `$lookup` and carries it.
+document (HR4). A `$unionWith` body cannot reach the outer document, so an outer
+read makes the source switch correlated, and the `$lookup` carries the value.
 
 `$$ = [<docs>]` lowers its documents under that same `$unionWith` boundary, so the
 list holds only what the program spells out — the rule and its two refusals live with
@@ -100,8 +97,11 @@ The update buffer flushes before `$$ = …`, so
 
 For the source-switch form, later `$.x = …` ops operate on the *new*
 docs (from the foreign collection), not the pre-switch docs. Any prior
-`let` becomes unreadable: `let cutoff = $.limit; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`
-produces `` `cutoff` is a `let` binding. It cannot be read after `$unionWith`, because that stage replaced the document that carried it. Assign it again after the stage (`cutoff = …`), or carry the value as a field of the new document. ``
+`let` becomes unreadable: the compiler refuses
+`let cutoff = $.limit; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`,
+because the documents after the switch do not carry `cutoff`. The message names
+two fixes: write `cutoff` again after the switch, or carry the value as a
+field of the new document.
 
 ## Not supported (by design)
 

@@ -2,8 +2,8 @@
 // See docs/specs/assert.md for the design and docs/LANGUAGE.md for the
 // user-facing reference. The lowering targets a `$convert` whose `to` is a
 // `$cond`: a holding assertion converts `true`→bool (no-op), a failing one
-// names the message as a bson type, which MongoDB rejects at runtime with
-// `Unknown type name: <message>`.
+// names the message as a bson type. MongoDB rejects that type name at runtime,
+// and its error text carries the message.
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";

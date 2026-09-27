@@ -48,8 +48,8 @@ export type TokenSpec<C extends string = never> = {
   /**
    * A cap on how many times this spelling can repeat. A longest-match table
    * cannot state it. `$$$$$` matches `$$$$` and then `$`, which gives two valid
-   * tokens and no error. The lexer instead says
-   *   "Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$')"
+   * tokens and no error. The lexer instead refuses the longer run, and the
+   * `tooLong` text is its message.
    */
   maxRun?: { limit: number; tooLong: string };
   /**

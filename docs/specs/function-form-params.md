@@ -10,7 +10,7 @@ Every rule below applies the same way to the strict-shape `.compile` builders (`
 
 ## Accepted input
 
-`jsmql.compile()` accepts either an arrow function or a **string** that contains the arrow source text. The function form goes through `Function.prototype.toString.call` to get the source; the string form passes through unchanged. Both paths converge on the same `Parser.parseEntry()` call, so every rule below applies to each the same way. A string with no arrow shape gives the same `FunctionInputError` the function-form path would raise (`"jsmql expects an arrow function \`({ $ }) => …\` … as the function-form input."`). Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).
+`jsmql.compile()` accepts either an arrow function or a **string** that contains the arrow source text. The function form goes through `Function.prototype.toString.call` to get the source; the string form passes through unchanged. Both paths converge on the same `Parser.parseEntry()` call, so every rule below applies to each the same way. A string with no arrow shape gives the same `FunctionInputError` that the function-form path would raise. The message names the arrow form that the entry takes. Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).
 
 JSMQL does not support a placeholder syntax inside the string (`${name}`, `$1`, and so on); the destructure pattern stays the one parameter-declaration mechanism. An inline placeholder would break the strict-JS-subset invariant, because `${id}` is not valid JS outside a template literal, and it would silently collide with a real template literal: a user who writes `` jsmql.compile(`… ${id} …`) `` with backticks would have JS resolve `id` before JSMQL ever saw the string.
 
@@ -70,7 +70,7 @@ A parameter is a VALUE, never syntax. `inject` in [src/compiler/passes/inject.ts
 
 ### Shadowing
 
-A callback parameter inside the body shadows a parameter of the same name, as JavaScript's own scoping rule says: `.map(x => x * 2)` in a body with `{ x }` bound reads the callback's `x`. A `let` of a parameter's name is JavaScript's own error (`Identifier 'a' has already been declared`), so it never reaches the compiler.
+A callback parameter inside the body shadows a parameter of the same name, as JavaScript's own scoping rule says: `.map(x => x * 2)` in a body with `{ x }` bound reads the callback's `x`. A `let` of a parameter's name is JavaScript's own error (a second declaration of the name), so it never reaches the compiler.
 
 ## index.ts — entry points
 
@@ -86,7 +86,7 @@ jsmql.validate(input)     // { valid, errors } instead of a throw
 
 `jsmql.compile` resolves the arrow source — `Function.prototype.toString.call` for a function input, the trimmed string itself for a string input — and parses it once (`parseEntry` gives the params, the toolbox names and the program). The returned closure, on each call:
 
-1. Looks each destructured key up on the params object. It refuses a missing key by name: "'minAge' is a parameter of this query and was not supplied. Pass it: jsmql.compile(fn)({ minAge: … })."
+1. Looks each destructured key up on the params object. It refuses a missing key by name, and the message shows the call that passes it.
 2. Checks each value (`checkValue`, shared with the template tag): it refuses `undefined`, a function, a symbol, a non-finite number and a circular structure, by slot (`JsmqlInterpolationError`, with the key on `.key`).
 3. Injects the values, folds, desugars, positions, and lowers through the same `lowerMode` the one-shot entry uses ([strict-shape-entries.md](strict-shape-entries.md)), so it shapes and refuses a compiled program exactly as it shapes and refuses the one-shot form.
 

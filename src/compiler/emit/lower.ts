@@ -539,9 +539,9 @@ function pathOf(node: Expr, env: Env): unknown {
 /**
  * A rendered path the server can follow. A segment that starts with `$` — the
  * field `$gt` in `{ qty: { $gt: 5 } }` read as `o.qty.$gt` — is refused in a
- * field path ("FieldPath field names may not start with '$'", measured), and is
- * read by `$getField` with the name as a literal instead. Every segment after
- * it is a `$getField` too, because a path cannot continue from an expression.
+ * field path (measured), and is read by `$getField` with the name as a literal
+ * instead. Every segment after it is a `$getField` too, because a path cannot
+ * continue from an expression.
  */
 function reachable(path: string): unknown {
   const root = path.startsWith("$$") ? 2 : 1;
@@ -655,8 +655,8 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
  * the server holds as a constant — a `$lookup.let` variable, an injected value
  * inside `$literal` — folds the branch that does not apply and the whole pipeline
  * is refused before a document is read (`$.o = $$$.c.find({ _id: $.arr[0] })`
- * answered "can't convert from BSON type array to String"; a string receiver
- * answered "$arrayElemAt's first argument must be an array"). A `$switch` drops a
+ * over an array failed in the string branch; a string receiver failed in the
+ * array branch). A `$switch` drops a
  * branch whose case folds to false without optimising it, so every receiver type
  * — array, string, document, number, null, missing — answers as it always did
  * (measured, the two shapes agree on each). It is the flatter document too, and
@@ -711,9 +711,8 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
   }
   const fieldAt = { $getField: { field: { $toString: named }, input: orEmpty({}) } };
   if (known === "object") return fieldAt;
-  // `$arrayElemAt` refuses a key that is not a number: MEASURED, "$arrayElemAt's second
-  // argument must be a numeric value, but is string". JavaScript's `arr["p"]` is `undefined`,
-  // so such a key reads no element.
+  // `$arrayElemAt` refuses a key that is not a number (MEASURED with a string key).
+  // JavaScript's `arr["p"]` is `undefined`, so such a key reads no element.
   const element = { $arrayElemAt: [orEmpty([]), idx] };
   if (known === "array") {
     return keyKind === "number"
@@ -1293,9 +1292,8 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
  * `{ const y = …; return … }`: one `$let` per declaration the fold could not
  * inline, innermost last — and ONE `$let` for the declarators a `,` joined, the
  * same rule the `$set` road follows. `$let` evaluates every var in the ENCLOSING
- * scope (mongod answers "Use of undefined variable" for a var that reads a
- * sibling), so a joined declarator that reads one bound beside it opens a new
- * `$let` there. See docs/specs/let-bindings.md.
+ * scope (mongod refuses a var that reads a sibling), so a joined declarator that
+ * reads one bound beside it opens a new `$let` there. See docs/specs/let-bindings.md.
  */
 function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e: Expr, env: Env) => unknown): unknown {
   // Each declarator lowers ONCE. One that breaks its group is already lowered, so

@@ -23,8 +23,8 @@ const bsonType = (v: unknown): unknown => (v as { _bsontype?: unknown })._bsonty
 const UUID_TEXT = "6ac24965-7917-4323-8d44-920ad1d69b94";
 
 // Built fresh per insert, never cloned: `structuredClone` drops `_bsontype`, and a
-// Decimal128 as a plain object makes the server answer
-// "$multiply only supports numeric types, not object" — MEASURED.
+// Decimal128 as a plain object makes the server refuse `$multiply`, because an
+// object is not a number — MEASURED.
 const doc = () => ({
   _id: 1,
   price: Decimal128.fromString("9.99"),

@@ -135,7 +135,7 @@ const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.h
 $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].name;
 // → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: { $let: { vars: { jsmqlV: { $arrayElemAt: ["$p", 0] } }, in: "$$jsmqlV.name" } } } }]
 $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price;
-// ✗ '.price' reads a field that '$.p[0]' does not have. It holds '_id', 'name'.
+// ✗ $.p[0] holds only _id and name
 ```
 
 ### A row's `returns`
@@ -347,9 +347,8 @@ the receiver's proof as a closed `Receiver`:
    `$switch` with **no `default`**. It is never a `$cond`: MEASURED, the server
    optimises a `$cond`'s branches before it reads the test, so
    `{ $cond: [<is array>, { $size: v }, { $strLenCP: v }] }` over a constant `v`
-   (a `$let` variable, a `$literal`) fails with "Failed to optimize pipeline", while
-   the same branches under `$switch` run on every receiver (`switchOver` in
-   [mql.ts](../../src/compiler/emit/mql.ts)).
+   (a `$let` variable, a `$literal`) fails. The same branches under `$switch` run
+   on every receiver (`switchOver` in [mql.ts](../../src/compiler/emit/mql.ts)).
 3. **Refuse at compile time only when no possible kind is accepted.** `$.b.trim()`
    after `$.b = $.arr.has("x")` is a compile error. A partial overlap is not:
    `{string, number}` under `.trim()` runs the string branch and the number falls
@@ -423,7 +422,8 @@ under a stream — refuses a value that can **never** be that kind, and lets a v
 that *may* be it through for the server to judge: "possible" is not "proven". The
 message names every kind the value can be (`nounOfKinds` in
 [errors.ts](../../src/compiler/emit/errors.ts)): `$.x = $.f ? "s" : 5; $ = $.x;`
-is refused as "a string or a number is not one", while `$.f ? { a: 1 } : 5` passes.
+is refused, and the message names both kinds, a string and a number.
+`$.f ? { a: 1 } : 5` passes.
 A spread of a value proven a string keeps its own message, which names the
 character-wise spelling.
 
@@ -474,9 +474,9 @@ apart. So a bare read of such a field passes, and a read or a call after it is r
 
 ```js
 $.tags.uniq().size
-// ✗ '.size' reads a field, and an array has no fields. Write '.size()' to call the method.
+// ✗ an array has no fields; the method is .size()
 $group({ _id: $.k, n: $sum(1) });  $$.filter(d => d.total > 5);
-// ✗ '.total' reads a field that 'd' does not have. It holds '_id', 'n'.
+// ✗ $group made only _id and n
 $.orders = $$$.orders.filter(o => o.uid === $._id);  $match($.orders.status === "open");
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "orders" } }, { $match: { "orders.status": "open" } }]
 ```
@@ -489,7 +489,7 @@ whose value was present takes no test: `$.s = "abc"; $.t = $.s.toUpperCase();`
 emits `{ $toUpper: "$s" }` alone. A computed key reads as `""` exactly where the proof
 says `absent`, because `$getField` aborts the query on a null name (`indexAccess` in
 [lower.ts](../../src/compiler/emit/lower.ts)). MEASURED: `{ $getField: { field: null,
-input: {} } }` fails with "$getField requires 'field' to evaluate to type String". An
+input: {} } }` fails, because the field name must be a string. An
 index read takes the empty value of its receiver on the same terms: `{ $ifNull: [o, {}] }`
 where the proof says `o` is `absent`, so a null `o` answers missing, as the path `"$o.p"`
 does. MEASURED: `$getField` answers null for a null input, and missing for `{}`.

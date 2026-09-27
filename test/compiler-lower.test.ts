@@ -167,7 +167,7 @@ describe("compiler/emit/lower — calls", () => {
     expect(expr("$eq([$.n, 4])")).toEqual({ $eq: ["$n", 4] });
     expect(expr("$size([$.a])")).toEqual({ $size: ["$a"] });
     // A 1-operand operator given two elements is given two operands, as written.
-    // DELIBERATELY invalid: mongod says "Expression $size takes exactly 1 arguments. 2 were passed in."
+    // DELIBERATELY invalid: mongod refuses it, because `$size` takes exactly one operand.
     expect(expr("$size([$.a, 1])")).toEqual({ $size: ["$a", 1] });
     expect(expr('$arrayToObject([[["a", 1], ["b", 2]]])')).toEqual({
       $arrayToObject: [
@@ -190,8 +190,8 @@ describe("compiler/emit/lower — calls", () => {
 
   it("passes ONE operand of a list operator through as written, in both spellings (HR1, HR2)", () => {
     // MEASURED: the server reads a lone operand that is not an array as one operand.
-    // `{ $add: "$x" }` answers `$x`, and `{ $divide: 10 }` is refused ("takes exactly 2
-    // arguments"). Both are your own MQL, so the compiler takes each one unchanged, and
+    // `{ $add: "$x" }` answers `$x`, and the server refuses `{ $divide: 10 }`, because
+    // `$divide` takes exactly two operands. Both are your own MQL, so the compiler takes each one unchanged, and
     // the call spelling gives the same document.
     const disagree: string[] = [];
     let checked = 0;
@@ -264,7 +264,7 @@ describe("compiler/emit/lower — calls", () => {
 
 describe("compiler/emit/lower — a path segment that starts with `$`", () => {
   it("reads it through $getField with the name as a literal, and every segment after it too", () => {
-    // "FieldPath field names may not start with '$'" — measured on mongod
+    // the server refuses a field-path segment that starts with `$` — measured on mongod
     expect(expr("$.qty.$gt")).toEqual({ $getField: { field: { $literal: "$gt" }, input: "$qty" } });
     expect(expr("$.a.$b.c")).toEqual({
       $getField: { field: "c", input: { $getField: { field: { $literal: "$b" }, input: "$a" } } },

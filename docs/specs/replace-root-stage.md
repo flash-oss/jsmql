@@ -70,7 +70,7 @@ the user's first cue to what the statement does to the document.
 | `$ = $.mapValues(v => v + 1)` | `{ $replaceWith: { $arrayToObject: { $map: { input: { $objectToArray: "$$ROOT" }, … } } } }` — a method on the bare `$` reads the document |
 | `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, pipeline: [ …, { $limit: 1 }], as: "__jsmql.tmp.N" } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — a document whose `.find` matched nothing leaves the stream (by design) |
 | `$ = { n: $.foo + $$$.coll.find(pred).count }` (buried lookup) | the `$lookup` hoisted ahead into a scratch slot, `{ $set: { slot: { $first: "$slot" } } }`, then `{ $replaceWith: { n: { $add: ["$foo", "$slot.count"] } } }` |
-| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (any array) | refused — "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' …" |
+| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (any array) | refused — the root takes one document; the message names `$$ = <array>;` for an array |
 | `$$ = [{…}, {…}]` / `$$ = $.items.map(…)` (the same array, on the STREAM) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root) |
 
 The direct-lookup form unwinds the slot instead of reading `$first`:
@@ -149,7 +149,7 @@ $ = {
 //   } }]
 ```
 
-**Detection is all-or-nothing.** `isFacet` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the object literal. When no entry is a chain on `$$`, it is an ordinary `$replaceWith` body. When at least one is, every entry must be one, and the compiler refuses a mixed object and names the entry — "'$ = { … }' with a '$$' chain is a '$facet', and every entry must be one: 'b' is not a chain on '$$'. Make it one ('b: $$.filter(…)'), or move it out of the object." It refuses a spread entry or a computed key in that mode too.
+**Detection is all-or-nothing.** `isFacet` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the object literal. When no entry is a chain on `$$`, it is an ordinary `$replaceWith` body. When at least one is, every entry must be one, and the compiler refuses a mixed object and names the entry. The message names two fixes: make the entry a chain on `$$`, or move it out of the object. It refuses a spread entry or a computed key in that mode too.
 
 **Each entry is one sub-pipeline.** `facetStages` lowers each chain through the stream road ([stream-methods.md § Where a chain runs](stream-methods.md)) in an Env that has crossed the `$facet` boundary over the SAME documents: a predicate lowers through the filter road with the parameter as the document, a stage link becomes the stage, and the outer bindings and `$$.size()` stay readable inside the branch ([let-bindings.md § Blocks and sub-pipelines](let-bindings.md)). Each branch ends with the cleanup of the scratch fields that its documents carry ([let-bindings.md § Cleanup](let-bindings.md#cleanup)). `$facet` replaces the document — its output is `{ <branch>: […], … }` — so every field-carried binding is dropped after it, and a later read is refused, with a precise message.
 
@@ -206,9 +206,9 @@ array the data decides, which gives one answer per input document.
 what it returns (a `returns: { arrayOf: … }` term — `.split()` gives strings, `Object.entries()`
 gives `[key, value]` arrays, `$objectToArray` gives `{ k, v }` documents),
 the compiler refuses an element that is not a document here, rather than
-letting the server do it. MEASURED,
+letting the server do it. MEASURED, the server refuses
 `[{ $set: { s: <the array> } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`
-answers "'replacement document' must evaluate to an object". A row that
+for such an element, because `$replaceWith` takes only a document. A row that
 states nothing — and a field path states nothing by construction — leaves
 the elements unproven, and the fan-out stands.
 
@@ -227,13 +227,13 @@ $$ = $.items.filter(x => x.qty > 0);   // docs with no qualifying item are dropp
 
 Each refusal names a concrete fix:
 
-| Trigger | Message |
+| Trigger | The refusal |
 |---|---|
-| a value that is not a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = true`) | "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;')." |
-| `$ = $$$.<coll>.filter(p)` (an array of documents) | "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.…'." |
-| any array (`$ = []`, `$ = [1, 2]`, `$ = [{…}]`, `$ = $.items.map(…)`) | "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'." |
-| `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on '$' at position N. '$' is the whole document, not a field. Write to a field: '$.<field>++'." |
-| `delete $` | "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'." |
+| a value that is not a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = true`) | the value must be a document; the message names two fixes: put it under a field (`$ = { value: … };`), or write to a field (`$.value = …;`) |
+| `$ = $$$.<coll>.filter(p)` (an array of documents) | the root takes one document, and the chain gives an array; the message names `$ = $$$.<coll>.find(pred)` for the first match, or a field for the array |
+| any array (`$ = []`, `$ = [1, 2]`, `$ = [{…}]`, `$ = $.items.map(…)`) | the root takes one document; the message names `$$ = <array>;` for one document per element, or `$.<field> = <array>;` to keep the array as a field |
+| `$++`, `$ += 5`, `$--`, `$ *= 2` | `$` is the whole document, not a field; the message names a write to a field (`$.<field>++`) |
+| `delete $` | the statement would delete the document itself; the message names `$ = { … };` to replace it, and `$ = { keep: $.keep };` to keep one field |
 
 A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`), and so does any expression the compiler cannot prove is not a document — the server, not the compiler, refuses `$ = $.points * 1.1`. An ARRAY never passes, whatever its elements — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
 

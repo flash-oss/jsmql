@@ -115,11 +115,11 @@ describe("compiler/emit/update — writes become their operators", () => {
 
   it("passes an update operator that you call through as written", () => {
     // DELIBERATELY invalid shapes: each one is your own MQL, and the server judges it.
-    // mongod: "Unknown modifier: $each. Expected a valid update modifier or pipeline-style update specified as an array"
+    // mongod: the server refuses `$each`, because it is not an update operator.
     expect(update("$each([1])")).toEqual({ $each: [1] });
-    // mongod: "Unknown modifier: $sort. …"
+    // mongod: the server refuses `$sort`, because it is not an update operator.
     expect(update("$sort({ a: 1 })")).toEqual({ $sort: { a: 1 } });
-    // mongod: "Modifiers operate on fields but we found type int instead. …"
+    // mongod: the server refuses the number, because `$set` takes a document of fields.
     expect(update("$set(5)")).toEqual({ $set: 5 });
   });
 

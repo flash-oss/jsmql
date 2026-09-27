@@ -32,7 +32,7 @@ the receiver.
 | `$$$.<coll>.<chain>` | another collection's stream | the `$lookup` body the join road assembles ([lookup-stage.md](lookup-stage.md)); `$$ = $$$.<coll>.<chain>` then unwinds it into the stream, or unions it in when nothing correlates |
 | `stream.<chain>` — a callback's third parameter | the inner stream of a body over another collection | that body |
 
-A link whose row has no `stream` cell is refused with the nearest name that a `$$` receiver accepts (`streamReceiverNames` in [src/compiler/rows.ts](../../src/compiler/rows.ts)): a stream method, a stage link, the union road's `.push()`, or `.size()`. A value terminal (`.size()`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination, so it is refused ("… gives it no destination"); on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position. Both lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
+A link whose row has no `stream` cell is refused with the nearest name that a `$$` receiver accepts (`streamReceiverNames` in [src/compiler/rows.ts](../../src/compiler/rows.ts)): a stream method, a stage link, the union road's `.push()`, or `.size()`. A value terminal (`.size()`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination, so it is refused; on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position. Both lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
 
 ## The cell
 
@@ -69,7 +69,7 @@ A stream sort method emits a `$sort` stage, so `streamSortAsk` in `src/compiler/
 |---|---|---|---|
 | `.slice(start, end?)` | 1-2 non-negative integer literals; `end >= start` if both present | `$skip` + `$limit` | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
 | `.concat(...others)` | 1+ args matching the `$$.push(...)` shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, `$$$.<coll>.find(p)`) | `src/compiler/emit/union.ts` (shared with `$$.push`) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents`-form stage |
-| `.map(d => <expr>)` / `.map(d => { … ; return <ret> })` | An **expression body** (`d => <expr>`, or a single-`return` block from the `function` form) **or** a stage-free **block body** (`d => { …; return <ret> }`, a pipeline `block` + `ret`; the callback-block rule refuses a *stage* inside it and points to `.aggregate`), with **1–3 params** `(element[, index[, collection]])`; `$.<field>` rejected ("use the lambda param"). The **index** (2nd) param cannot be referenced (no per-doc stream index — `someExpr` acts over the whole lambda); the **collection** (3rd) param is the sub-stream, and only `<coll>.size()` is available on it (any other use rejected with a materialised-form redirect). Both stream contexts support embedded `$$$.<coll>.find/filter(...)` lookups. JSMQL rejects a block with no `return`; for the full sub-pipeline statement vocabulary (`assert(...)`, `$match(...)`, …) use `.aggregate` and write the reshape as its root-replace `$ = <expr>` | **Expression body:** the callback parameter IS the body's document, so `d.<path>` reads a bare field path; an embedded `$$$.<coll>` read is materialised into a `__jsmql.tmp.<N>` slot ahead of the stage that reads it, and `stream.size()` prepends the `$setWindowFields` `$count` the `$$.size()` row states. **Inside a correlated `$lookup`** (the `$$ =` pivot / a nested chain / a `$.field = $$$.<coll>…` assign, NOT a flat `$unionWith`): both an expression body and a stage-free block take the SAME road `.aggregate` takes, because an expression body `d => X` is `d => { return X }`. The `return <ret>` becomes the body's own root replacement, the one difference from the `.aggregate` form, and cross-level reads — `$.field` / `$$.size()` (root), an enclosing foreign param, an ancestor `<coll>.size()` handle, **and an outer-pipeline `let`** declared before the pivot — are captured into the enclosing `$lookup.let` (`jsmql_f0_…` / `jsmql_s0_…` / `jsmql_v0_…`) and merged into that stage's `let` by the join road (see [lookup-stage.md](lookup-stage.md) § Nested reads). The chain's slot allocator is the same one, so a block-internal lookup gets slots distinct from the enclosing lookup's `as`. **On the top-level `$$` stream / a flat `$unionWith`** (no enclosing `$lookup.let` to correlate into) the block + synthetic `$ = ret` lower directly and `$.field` is rejected (use the param) | Expression body: prologue `$lookup` + `$set` pairs for each embedded foreign read, then one `{ $replaceWith: <expr> }`; a leading `$setWindowFields` `$count` when the code reads `stream.size()`. Block body: the block's `let` bindings and nested `$lookup`s, followed by one `{ $replaceWith: <ret> }`. In the `$$$.<coll>.<chain>` context the stages land inside the outer sub-pipeline — inner `$lookup`s correlate against the sub-pipeline's local doc, not any outer-pipeline `let` binding. Clears the let scope (reshape stage) |
+| `.map(d => <expr>)` / `.map(d => { … ; return <ret> })` | An **expression body** (`d => <expr>`, or a single-`return` block from the `function` form) **or** a stage-free **block body** (`d => { …; return <ret> }`, a pipeline `block` + `ret`; the callback-block rule refuses a *stage* inside it and points to `.aggregate`), with **1–3 params** `(element[, index[, collection]])`; `$.<field>` rejected. The **index** (2nd) param cannot be referenced (no per-doc stream index — `someExpr` acts over the whole lambda); the **collection** (3rd) param is the sub-stream, and only `<coll>.size()` is available on it (any other use rejected with a materialised-form redirect). Both stream contexts support embedded `$$$.<coll>.find/filter(...)` lookups. JSMQL rejects a block with no `return`; for the full sub-pipeline statement vocabulary (`assert(...)`, `$match(...)`, …) use `.aggregate` and write the reshape as its root-replace `$ = <expr>` | **Expression body:** the callback parameter IS the body's document, so `d.<path>` reads a bare field path; an embedded `$$$.<coll>` read is materialised into a `__jsmql.tmp.<N>` slot ahead of the stage that reads it, and `stream.size()` prepends the `$setWindowFields` `$count` the `$$.size()` row states. **Inside a correlated `$lookup`** (the `$$ =` pivot / a nested chain / a `$.field = $$$.<coll>…` assign, NOT a flat `$unionWith`): both an expression body and a stage-free block take the SAME road `.aggregate` takes, because an expression body `d => X` is `d => { return X }`. The `return <ret>` becomes the body's own root replacement, the one difference from the `.aggregate` form, and cross-level reads — `$.field` / `$$.size()` (root), an enclosing foreign param, an ancestor `<coll>.size()` handle, **and an outer-pipeline `let`** declared before the pivot — are captured into the enclosing `$lookup.let` (`jsmql_f0_…` / `jsmql_s0_…` / `jsmql_v0_…`) and merged into that stage's `let` by the join road (see [lookup-stage.md](lookup-stage.md) § Nested reads). The chain's slot allocator is the same one, so a block-internal lookup gets slots distinct from the enclosing lookup's `as`. **On the top-level `$$` stream / a flat `$unionWith`** (no enclosing `$lookup.let` to correlate into) the block + synthetic `$ = ret` lower directly and `$.field` is rejected (use the param) | Expression body: prologue `$lookup` + `$set` pairs for each embedded foreign read, then one `{ $replaceWith: <expr> }`; a leading `$setWindowFields` `$count` when the code reads `stream.size()`. Block body: the block's `let` bindings and nested `$lookup`s, followed by one `{ $replaceWith: <ret> }`. In the `$$$.<coll>.<chain>` context the stages land inside the outer sub-pipeline — inner `$lookup`s correlate against the sub-pipeline's local doc, not any outer-pipeline `let` binding. Clears the let scope (reshape stage) |
 | `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), an array of field names (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a two-param comparator arrow `a.<path> - b.<path>` / `b.<path> - a.<path>` (`\|\|` for compound). `.sort` and `.toSorted` are **equivalent on a stream** — nothing to mutate, both reorder the flow | The one sort reading every row with a sort argument shares (`emit/sort-spec.ts`): a comparator is read as one key per subtraction, and a name / list / spec as one key each, with `1` / `-1` / `"asc"` / `"desc"` all accepted as the direction | One `{ $sort: { … } }` stage; the stage keeps the key order from the source |
 | `.sortBy(<field> \| [fields])` | The lodash ascending-sort alias — one field key, or an array of them. JSMQL rejects an object argument (in lodash it is a matches-shorthand, not a direction; the error points at `.orderBy({…})` / `.sort({…})`) | the `sortSpec` service (ascending) | One `{ $sort: { … } }` stage |
 | `.orderBy(keys[, orders])` / `.orderBy({ field: dir })` | The lodash multi-key sort. Parallel form: `keys` is a field name or `[fields]`, `orders` a `1 \| -1 \| "asc" \| "desc"` (or an array of them, parallel to the keys; fewer orders than keys ⇒ the rest ascending). Object form: a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec with the directions inline (mirrors `.sort({…})`) — JSMQL then rejects a second `orders` argument | `buildOrderByStreamSpec`: an object `keys` → `buildKeySortSpec` (shared with `.sort`/`.toSorted`); otherwise it zips the two parallel args (`fieldNameLiteral` + `sortDirection`) | One `{ $sort: { … } }` stage |
@@ -261,9 +261,8 @@ entries must be static `<key>: <expr>` pairs. The init object must declare
 the same key set as the body. Extra or missing keys on either side throw an
 actionable error (in JS this would silently work, but mean something
 different). Each entry's body must reference `acc.<sameKey>` as the
-accumulator side (`total: acc.count + d.amount` is rejected with a
-`'Each entry must reference acc.total'` hint, because this is the
-constraint that keeps the per-key lowering local).
+accumulator side (`total: acc.count + d.amount` is rejected, and the hint names
+`acc.total`, because this is the constraint that keeps the per-key lowering local).
 
 JSMQL requires the `init` value for JS-faithfulness, but the MQL
 lowering does not use it (MongoDB accumulators have their own neutral elements). In the
@@ -304,8 +303,7 @@ Supported body shapes:
 
 The init MUST be `{}` (empty object). Mixed shapes (a computed key with static keys
 in the same body) fall through to the static-key object-reducer detector,
-which raises the precise "computed keys aren't supported" error and points
-at the offending entry. Multiple computed-key entries are not supported.
+which refuses the computed key and points at the offending entry. Multiple computed-key entries are not supported.
 
 Detection: `detectDictBuildWrap(value)` runs **before** `detectReduceWrap` in
 one road, because the two detectors' inputs overlap — otherwise the dict-build shape
@@ -338,18 +336,19 @@ parameter as the document, so a `$.<field>` read inside it is the outer document
 Every rejection branch sits next to the method's `validate` function, so
 the wording stays consistent across methods. Two general principles:
 
-- **Name the method explicitly.** `.slice(start[, end]) requires …` beats
-  `argument must be a number`.
-- **Suggest the actionable alternative.** Negative indices on `.slice` get
-  the "non-negative integer literals" message; computed args get the
-  "write the literal in source" hint.
+- **Name the method explicitly.** A message that names the call and its
+  signature (`.slice(start[, end])`) beats one that names only the kind of
+  argument.
+- **Suggest the actionable alternative.** A negative index on `.slice` gets a
+  message that states the index rule. A computed argument gets a hint to write
+  the value as a literal in the source.
 
 The stream road refuses a link whose row has no `stream` cell, with the nearest
 name that a `$$` receiver accepts in any position (`didYouMean` over
 `streamReceiverNames`): `$$.pushh(…)` names `.push()`, and `$$.sizee()` names
 `.size()`. In `$$ = $$$.<coll>.<chain>`, a link that no row knows gets the
-unknown-method refusal over the same set: `$$ = $$$.orders.filterr(p)` gives
-"Unknown method '.filterr()' at position 15. Did you mean '.filter()'?". A row that states an `unsupported(reason)` cell
+unknown-method refusal over the same set: `$$ = $$$.orders.filterr(p)` names
+`.filter()`. A row that states an `unsupported(reason)` cell
 answers with its reason. For the single-element methods (`.find`, `.findLast`, `.at`)
 the reason names `.filter(p).take(1)` / `.slice(n, n + 1)`, and for `.find` on
 `$$$.<coll>` it names the join form `$ = $$$.<coll>.find(<pred>)`.
@@ -433,7 +432,7 @@ carry an answer. There are four answers, and no fifth:
 `test/stream-methods.test.ts` fails when an array-receiver method has none of the four, when
 a name appears in two of them, or when a reason is too short to be useful.
 
-The reason matters more than the rejection. A generic "not a chainable stream method" list
+The reason matters more than the rejection. A generic list of the stream methods
 tells the developer what else exists, but never why *this* one is absent, and that is the
 difference between a rejection and a dead end. A reason that cannot be written convincingly
 announces a gap — that is how `.uniq`, `.sortedUniq` and `.sortedUniqBy` were

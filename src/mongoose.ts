@@ -218,7 +218,7 @@ export default function jsmqlMongoose(mongoose: any): void {
 // The augmentation merges into mongoose's `Model<TRawDocType, …>` interface,
 // so it activates only when the user actually has mongoose installed. If
 // mongoose is not on the resolution path, this block has no effect on
-// downstream type-checking — no spurious "mongoose is missing" errors from
+// downstream type-checking — no spurious errors about a missing mongoose from
 // projects that import this file purely for the runtime plugin.
 
 // Type-only side-effect import: brings mongoose into the program so the

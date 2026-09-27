@@ -24,7 +24,7 @@ for the user-facing reference.
 | `...$$$.<coll>.filter(pred)` | `{ $unionWith: { coll: "<coll>", pipeline: [<translated pred>] } }` |
 | `$$$.<coll>.find(pred)` (no spread) | `{ $unionWith: { coll: "<coll>", pipeline: [<translated pred>, { $limit: 1 }] } }` |
 | `{ inline document }` (one or more, consecutive) | `{ $unionWith: { pipeline: [{ $documents: [<docs>] }] } }` (consecutive inline docs batch into one stage) |
-| `...$$$$.<db>.<coll>[.filter(pred)]` | **rejected** — a `{ db, coll }` `$unionWith` namespace works only on Atlas Data Federation; the join road refuses it ("A read of another DATABASE isn't supported …") and redirects the reader to `...$$$.<coll>` |
+| `...$$$$.<db>.<coll>[.filter(pred)]` | **rejected** — a `{ db, coll }` `$unionWith` namespace works only on Atlas Data Federation; the join road refuses it and redirects the reader to `...$$$.<coll>` |
 | `$$$$.<db>.<coll>.find(pred)` | **rejected** — same cross-database read rejection as the line above |
 
 Source order across the argument list stays exactly as written. A `{...}` between
@@ -51,9 +51,9 @@ only what differs — the stage's shape and its missing `let`.
 ### A written list of documents, and only a written one
 
 `$documents` takes a list the program spells out. MEASURED on the server, a field path
-there is refused ("an array is expected"), and `{ coll, pipeline: [{ $documents }] }`
-is refused too ("\$documents can only be run with database or cluster-level
-aggregation"). So the appendable forms are: another collection (`coll`, with or without
+there is refused, because it does not give an array. `{ coll, pipeline: [{ $documents }] }`
+is refused too, because `$documents` runs only in an aggregation on a database or a
+cluster. So the appendable forms are: another collection (`coll`, with or without
 a sub-pipeline), one written document, and a written list of them — `$$.push({ … })`,
 `$$.push(...[{ … }, { … }])` and `$$.concat([{ … }])` all batch into one `$documents`,
 consecutive arguments together, kept in source order. An array the data decides has no
@@ -73,7 +73,7 @@ server answered `{}` for, in silence.
 
 ### `$unionWith` has no `let`
 
-`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so JSMQL refuses a read of the outer document, or of an outer binding, inside it rather than silently misreading it: "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value." The same holds for `$$.size()` there ([stream-size.md](stream-size.md)).
+`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so JSMQL refuses a read of the outer document, or of an outer binding, inside it rather than silently misreading it. The message names two fixes. One is a statement before the union that filters or reshapes the outer stream. The other is a join (`$.<field> = $$$.<coll>.filter(…)`), whose `$lookup` carries the value. The same holds for `$$.size()` there ([stream-size.md](stream-size.md)).
 
 ## AST and parser
 
@@ -89,17 +89,17 @@ or `[` after `$$` already accommodates `.push(...)`.
 
 ## Error catalog
 
-| Trigger | Message |
+| Trigger | The refusal |
 |---|---|
-| `$$.push($$$.coll.filter(p))` (forgot `...`) | "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it — '$$.push(...$$$.<coll>.filter(pred))' — to push every match, or write '.find(pred)' for the first one." |
-| `$$.push(...$$$.coll.find(p))` (spurious `...`) | "'.find(pred)' gives ONE document, which JavaScript would not spread. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match." |
-| `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | "A stream holds documents, and this is a number. Push a document ('$$.push({ … })') or another collection ('$$.push(...$$$.<coll>)')." |
+| `$$.push($$$.coll.filter(p))` (forgot `...`) | the array would push as one document; the message names the spread, `$$.push(...$$$.<coll>.filter(pred))`, and `.find(pred)` for the first match |
+| `$$.push(...$$$.coll.find(p))` (spurious `...`) | `.find` gives one document, and JavaScript does not spread one; the message names the form without `...`, and `...$$$.<coll>.filter(pred)` for every match |
+| `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | a stream holds documents; the message names a document (`$$.push({ … })`) and another collection (`$$.push(...$$$.<coll>)`) |
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (an outer read) | the no-`let` refusal above |
 | `$$.push(...$$$$.<db>.<coll>…)` (cross-database) | the cross-database refusal ([lookup-stage.md](lookup-stage.md)) |
-| `$$.push({ n: $$$.<coll>.find(p).<field> })` / `$$ = [{ n: … }]` — a value needing a stage | "'.push({ … })' writes the documents out as the program spells them, and this value needs a '$lookup' stage of its own to produce it … Append the other collection's documents themselves … or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter." |
-| `$$.push(...)` inside a `$lookup` body | "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, stream) => { stream.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'." |
-| `jsmql.filter("$$.push(...)")` | "jsmql.filter() expects a Filter (the document \`db.coll.find(filter)\` takes), but received a top-level 'push' stage call. Use jsmql.pipeline()." |
-| `jsmql.update("$$.push(...)")` | "An update document is made of writes … This is neither." |
+| `$$.push({ n: $$$.<coll>.find(p).<field> })` / `$$ = [{ n: … }]` — a value needing a stage | the value needs a `$lookup` stage, and the list cannot hold one; the message names the append of the other collection's documents, and a constant or a `jsmql.compile` parameter |
+| `$$.push(...)` inside a `$lookup` body | a body over another collection cannot reach the root stream; the message names the callback's third parameter and the stage form |
+| `jsmql.filter("$$.push(...)")` | the strict-shape refusal: the push is a stage call; the message names `jsmql.pipeline()` |
+| `jsmql.update("$$.push(...)")` | the update-document refusal: the push is neither a write nor an update operator |
 
 ## Server-version note
 
@@ -112,8 +112,8 @@ pushes work on every version that supports `$unionWith` (4.4+).
 - **Custom let-substitution.** Atlas's `$lookup.let` does not apply to
   `$unionWith`, but a future JSMQL release could synthesise the same effect
   through a `$set` stage *before* the push and a `$match` against that captured
-  value inside the sub-pipeline. Out of scope — the explicit "no
-  correlation" error is the documented contract.
+  value inside the sub-pipeline. Out of scope — the explicit error for a
+  correlated read is the documented contract.
 - **Cross-database unions are rejected at compile time.** A cross-database
   `$$.push(...$$$$.<db>.<coll>...)` / `$$.push($$$$.<db>.<coll>.find(...))`
   does not emit a `{ db, coll }` `$unionWith` namespace (that shape works only

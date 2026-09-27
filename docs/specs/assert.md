@@ -26,8 +26,8 @@ free tiers do not offer it. JSMQL therefore does **not** use it.
 
 Instead JSMQL uses a portable runtime failure that is not deprecated: it feeds
 an unrecognised **type name** to `$convert`. `{ $convert: { input: …, to: "<not a
-type>" } }` fails at runtime with `BadValue (2): Unknown type name: <not a
-type>`. The custom message rides in as the bad type name.
+type>" } }` fails at runtime with a `BadValue` error (code 2), and the server's
+message contains the bad type name. The custom message is the bad type name.
 
 ## Lowering
 
@@ -45,7 +45,8 @@ type>`. The custom message rides in as the bad type name.
   field, so a holding assertion is **invisible** in the output (no throwaway
   field).
 - **Fails** → `to` resolves to `<failType>` (a string that is never a valid
-  bson type name), so `$convert` throws `Unknown type name: <failType>`.
+  bson type name), so `$convert` throws, and the server's message contains
+  `<failType>`.
 
 The `assert` row's `statement` cell in
 [`src/registry/names.ts`](../../src/registry/names.ts) builds this: the `$convert`
@@ -72,8 +73,8 @@ message that happens to be a valid type name (for example `assert($.ok,
 "int")`) would make `$convert` **succeed** and skip the assertion silently.
 The prefix (the spaces and the leading words) guarantees that the
 failing-branch string is never a real type name, so the assertion always
-fires. It also reuses the inevitable `Unknown type name:` boilerplate — the
-user's text reads as the tail of the sentence.
+fires. The server's message also ends with the bad type name, so the user's
+text comes last in that message.
 
 The dynamic branch wraps the message in `$toString`, so a non-string
 expression (`assert($.ok, $.count)`) is coerced instead of crashing
@@ -111,10 +112,10 @@ A user-declared `const assert = …` takes precedence. The built-in yields when
 
 | Input | Error |
 |---|---|
-| expression position (ternary branch, field RHS, nested call) | `'assert(...)' is a pipeline statement, not a value …` (the row's refusal for the value position) |
+| expression position (ternary branch, field RHS, nested call) | refused: `assert(...)` is a statement and has no value (the row's refusal for the value position) |
 | `jsmql.filter(...)` / `jsmql.expr(...)` | same statement-form hint |
-| `assert()` / `assert(a, b, c)` | `assert(condition[, message]) requires 1 or 2 arguments, got N` |
-| `assert(...x)` (spread) | `Spread (...) is not supported as an argument to 'assert(...)'.` |
+| `assert()` / `assert(a, b, c)` | the arity refusal, which names `assert(condition[, message])` |
+| `assert(...x)` (spread) | refused: the message names the forms without a spread |
 
 ## `jsmql.update()`
 
@@ -126,7 +127,7 @@ pipeline, not in an update.
 ## Error shape at runtime
 
 A failing assertion surfaces as a driver error with `code: 2`,
-`codeName: "BadValue"`, and an `errmsg` that ends in
-`Unknown type name: jsmql assertion failed: <message>`. The numeric code is
+`codeName: "BadValue"`, and an `errmsg` that ends with the `<failType>` string
+from the table above. The numeric code is
 fixed, because it is MongoDB's code, not JSMQL's. Only the message text is
 under the user's control.

@@ -1315,7 +1315,7 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
     ]);
   });
 
-  it("zero-arg .toSorted() on whole documents is rejected with a 'no natural order' hint", () => {
+  it("zero-arg .toSorted() on whole documents is rejected, and the hint asks for a sort key", () => {
     expect(() => jsmql("$$ = $$.toSorted();")).toThrow(
       "'.toSorted()' isn't available on '$$' — a stream of documents has no natural order, so a key is required: '.toSorted(\"<field>\")'. After '.flatMap(\"<field>\")' the bare call sorts by the unwound values.",
     );
@@ -1338,7 +1338,7 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
   });
 
   // `$sortArray` takes a direction on its own; a `$sort` STAGE takes a field name and
-  // nothing else (measured: `{ $sort: 1 }` → "the $sort key specification must be an object").
+  // nothing else (measured: the server refuses `{ $sort: 1 }`, because the stage needs a document of keys).
   it("the whole element as the key is rejected on a stream, per method and direction", () => {
     expect(() => jsmql("$$.toSorted((a, b) => a - b);")).toThrow(
       ".toSorted((a, b) => a - b) sorts by the WHOLE element. A stream carries documents, and MongoDB sorts a document by field NAME. Name the field: '.toSorted((a, b) => a.age - b.age)', or '.toSorted(d => d.age)'.",
@@ -1638,7 +1638,7 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
     ]);
   });
 
-  it("non-path body is rejected with a 'hoist to a separate stage' hint", () => {
+  it("non-path body is rejected with an actionable hint", () => {
     expect(() => jsmql("$$ = $$.flatMap(d => d.items.map(x => x * 2));")).toThrow(
       "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind'. This stage takes a field path and nothing else.",
     );
@@ -1915,8 +1915,8 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
 
   it("falls through to the static-key object-reducer when keys mix computed + static", () => {
     // `({ ...acc, [d.id]: d.name, count: acc.count + 1 })` is not a pure dict-build,
-    // so the object-reducer path picks it up and reports "computed keys are not
-    // supported" with the precise error.
+    // so the object-reducer path picks it up and refuses the computed key with the
+    // precise error.
     expect(() =>
       jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name, count: acc.count + 1 }), { count: 0 })];"),
     ).toThrow(
@@ -2120,7 +2120,7 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
 });
 
 describe("unknown chain method on $$ → registry error with hint", () => {
-  it("typo like .slise is corrected through 'did you mean .slice?'", () => {
+  it("a typo like .slise gets .slice as the suggestion", () => {
     expect(() => jsmql("$$ = $$.slise(0, 5);")).toThrow(
       "'.slise()' is not a method of the stream '$$'. Did you mean '.slice()'? A stage is a link too: '$$.$match(…)'.",
     );

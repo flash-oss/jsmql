@@ -601,8 +601,8 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
   // The join is written in a callback, and the callback's parameter names the
   // document ITS stage receives — so the `$lookup` belongs directly ahead of that
   // stage, not ahead of the statement. MEASURED with the `$lookup` at the front
-  // instead: `$size` of a slot `$sortByCount` had already dropped ("The argument
-  // to $size must be an array, but was of type: missing").
+  // instead: the server refused `$size` of a slot that `$sortByCount` dropped earlier,
+  // because a missing slot is not an array.
   it("joins on the group key a reshaping stage made, not on the source document", () => {
     expect(
       compiled(
@@ -704,7 +704,7 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
 describe("compiler/emit/join — a join inside an expression that binds its own variable", () => {
   // A `$lookup` is a STAGE: it is hoisted out of the `$map` / `$filter` / `$reduce`
   // that binds the element, so its body would name a variable the server never
-  // bound there. MEASURED before the refusal: "Use of undefined variable: x".
+  // bound there. MEASURED before the refusal: the server refused `x` as an undefined variable.
   const REFUSAL =
     /'x' is bound by an enclosing callback.*'\$lookup' STAGE.*'\$\$ = \$\.<array>;'.*let <name> = \$\$\$\.<coll>/s;
 
@@ -799,9 +799,9 @@ describe("compiler/emit/join — a correlated key the server holds as a constant
   // `$lookup` evaluates its `let` against the outer document and then OPTIMISES the
   // sub-pipeline with the result substituted in, so every branch of a type dispatch
   // is folded against that one value. A nested `$cond` folds the branch that does
-  // not apply and the pipeline is refused before a document is read — MEASURED,
-  // "can't convert from BSON type array to String" for an array key and
-  // "$arrayElemAt's first argument must be an array" for a string one. A `$switch`
+  // not apply and the pipeline is refused before a document is read — MEASURED:
+  // an array key does not convert to a string, and a string key fails `$arrayElemAt`,
+  // which needs an array. A `$switch`
   // drops a branch whose case folds to false without optimising it.
   it("reads a bracket index in a join key without folding the branch that does not apply", () => {
     expect(

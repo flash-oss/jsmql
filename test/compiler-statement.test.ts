@@ -98,8 +98,8 @@ describe("compiler/emit/statement — the writes", () => {
     expect(compiled("$ = { x: $.a };")).toEqual([{ $replaceWith: { x: "$a" } }]);
     expect(compiled("$ = $.sub;")).toEqual([{ $replaceWith: "$sub" }]);
     // A root replacement has to BE a document. The server refuses every other
-    // value ("'replacement document' must evaluate to an object"), and a literal
-    // — or a name whose measured return type says so — is known at compile time.
+    // value, and a literal — or a name whose measured return type says so — is
+    // known at compile time.
     expect(() => pipeline("$ = 5;")).toThrow(/has to BE a document — a number/);
     expect(() => pipeline('$ = "x";')).toThrow(/a string is not one/);
     // `$` is ONE document and `$$` is the stream, so an array names the wrong
@@ -261,8 +261,8 @@ describe("compiler/emit/statement — the stage calls", () => {
 
 // A stage that you call by name is your own MQL (HR2), so HR3 does not apply to its
 // body: the compiler checks no key, count or value there. The expected documents in the
-// "passes through" tests below are DELIBERATELY invalid, and each comment quotes the
-// error that mongod gives for the document. A JavaScript spelling that lowers to the
+// "passes through" tests below are DELIBERATELY invalid, and each comment says why
+// mongod refuses the document. A JavaScript spelling that lowers to the
 // same stage keeps its check, because the compiler owns that lowering.
 describe("compiler/emit/statement — a stage body that you write passes through", () => {
   it("takes every key combination as written", () => {
@@ -273,12 +273,12 @@ describe("compiler/emit/statement — a stage body that you write passes through
     expect(compiled('$lookup({ from: "o", pipeline: [$limit(1)], as: "j" });')).toEqual([
       { $lookup: { from: "o", pipeline: [{ $limit: 1 }], as: "j" } },
     ]);
-    // mongod: "$lookup requires both or neither of 'localField' and 'foreignField' to be specified"
+    // mongod: `$lookup` takes `localField` and `foreignField` together, or neither
     expect(pipeline('$lookup({ from: "o", localField: "a", as: "j" });')).toEqual([
       { $lookup: { from: "o", localField: "a", as: "j" } },
     ]);
     expect(pipeline('$lookup({ from: "o", as: "j" });')).toEqual([{ $lookup: { from: "o", as: "j" } }]);
-    // mongod: "BSON field '$lookup.as' is missing but a required field"
+    // mongod: the required `as` key is missing
     expect(pipeline('$lookup({ from: "o", localField: "a", foreignField: "b" });')).toEqual([
       { $lookup: { from: "o", localField: "a", foreignField: "b" } },
     ]);
@@ -289,7 +289,7 @@ describe("compiler/emit/statement — a stage body that you write passes through
     expect(compiled('$unionWith({ coll: "o", pipeline: [$limit(1)] });')).toEqual([
       { $unionWith: { coll: "o", pipeline: [{ $limit: 1 }] } },
     ]);
-    // mongod: "the $unionWith stage specification must be an object or string, but found int"
+    // mongod: `$unionWith` needs a document or a string, and gets an int
     expect(pipeline("$unionWith(5);")).toEqual([{ $unionWith: 5 }]);
     // mongod reads "$c" as a collection name, and the union adds no document.
     expect(compiled("$unionWith($.c);")).toEqual([{ $unionWith: "$c" }]);
@@ -298,8 +298,8 @@ describe("compiler/emit/statement — a stage body that you write passes through
   it("takes a field path as a body, and the server judges it", () => {
     // `$unwind` and `$sortByCount` read their bodies as expressions, so the server takes a path.
     expect(compiled("$unwind($.p);")).toEqual([{ $unwind: "$p" }]);
-    // DELIBERATELY invalid: every other stage refuses it on the server, for example "the
-    // $sort key specification must be an object" and "a group's fields must be specified in an object".
+    // DELIBERATELY invalid: every other stage refuses it on the server. For example,
+    // `$sort` and `$group` each need a document.
     const PASSES: readonly [string, unknown][] = [
       ["$sort($.spec);", [{ $sort: "$spec" }]],
       ["$group($.g);", [{ $group: "$g" }]],
@@ -316,18 +316,18 @@ describe("compiler/emit/statement — a stage body that you write passes through
   it("takes every sort direction and unwind path as written", () => {
     expect(compiled("$sort({ a: 1, b: -1 });")).toEqual([{ $sort: { a: 1, b: -1 } }]);
     expect(compiled('$sort({ s: $meta("textScore") });')).toEqual([{ $sort: { s: { $meta: "textScore" } } }]);
-    // mongod: 'Illegal key in $sort specification: a: "desc"'
+    // mongod: `"desc"` is not a `$sort` direction
     expect(pipeline('$sort({ a: "desc" });')).toEqual([{ $sort: { a: "desc" } }]);
-    // mongod: "$sort key ordering must be 1 (for ascending) or -1 (for descending)"
+    // mongod: a `$sort` direction is 1 or -1, never 0
     expect(pipeline("$sort({ a: 0 });")).toEqual([{ $sort: { a: 0 } }]);
     expect(compiled('$unwind("$items");')).toEqual([{ $unwind: "$items" }]);
-    // mongod: "path option to $unwind stage should be prefixed with a '$': items"
+    // mongod: the `$unwind` path needs a `$` prefix
     expect(pipeline('$unwind("items");')).toEqual([{ $unwind: "items" }]);
     expect(pipeline('$unwind({ path: "items" });')).toEqual([{ $unwind: { path: "items" } }]);
   });
 
   it("takes a sort of 33 keys that you write, and refuses 33 in a JavaScript sort", () => {
-    // MEASURED on :27018: each slot runs 32 keys and answers "too many compound keys" for 33.
+    // MEASURED on :27018: each slot runs 32 keys, and refuses a 33rd key.
     // The server run below proves the 32-key half; `$sortArray` takes more, so it is not here.
     const spec = (n: number): string => `{ ${Array.from({ length: n }, (_, i) => `k${i}: 1`).join(", ")} }`;
     const names = (n: number): string => `[${Array.from({ length: n }, (_, i) => `"k${i}"`).join(", ")}]`;
@@ -361,13 +361,13 @@ describe("compiler/emit/statement — a stage body that you write passes through
     expect(compiled("$bucket({ groupBy: $.a, boundaries: [0, 10, 30] });")).toEqual([
       { $bucket: { groupBy: "$a", boundaries: [0, 10, 30] } },
     ]);
-    // mongod: "$bucket requires 'groupBy' and 'boundaries' to be specified."
+    // mongod: the required `boundaries` key is missing
     expect(pipeline("$bucket({ groupBy: $.a });")).toEqual([{ $bucket: { groupBy: "$a" } }]);
-    // mongod: "The $bucket 'boundaries' field must be an array, but found type: string."
+    // mongod: `boundaries` needs an array, and gets a string
     expect(pipeline("$bucket({ groupBy: $.a, boundaries: $.b });")).toEqual([
       { $bucket: { groupBy: "$a", boundaries: "$b" } },
     ]);
-    // mongod: "Unknown rounding granularity 'nope'"
+    // mongod: `nope` names no rounding granularity
     expect(pipeline('$bucketAuto({ groupBy: $.a, buckets: 2, granularity: "nope" });')).toEqual([
       { $bucketAuto: { groupBy: "$a", buckets: 2, granularity: "nope" } },
     ]);
@@ -540,9 +540,9 @@ describe("compiler/emit/statement — bindings between stages", () => {
   });
 
   it("starts the stream from a literal list of documents", () => {
-    // MEASURED: `db.coll.aggregate([{ $documents: […] }])` answers "'$documents' can
-    // only be run with database or cluster-level aggregation", and jsmql's pipelines
-    // go to a collection. So the list arrives the way a source switch arrives — every
+    // MEASURED: the server refuses `db.coll.aggregate([{ $documents: […] }])`, because
+    // `$documents` runs only in a database-level or cluster-level aggregate. jsmql's
+    // pipelines go to a collection. So the list arrives the way a source switch arrives — every
     // document dropped, the new ones unioned in — and it reads the same anywhere in
     // the program, not only first.
     const fanOut = (docs: unknown[]) => [
@@ -657,7 +657,7 @@ describe("compiler/emit/statement — the stream road", () => {
     // an argument that is neither an arrow nor a shorthand
     expect(() => pipeline("$$ = $$.countBy(String);")).toThrow(/takes a key here/);
     // An unknown JavaScript link names the nearest one. A `$`-named link is your own MQL,
-    // so it passes through. DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$prject'".
+    // so it passes through. DELIBERATELY invalid: mongod refuses it, because `$prject` names no stage.
     expect(() => pipeline("$$.filterr(d => d.a);")).toThrow(/Did you mean '\.filter\(\)'/);
     expect(pipeline("$$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }]);
     // a read of the index or receiver parameter says what to write instead
@@ -671,7 +671,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(() => pipeline("$.a > 1;")).toThrow(/A pipeline statement writes something/);
     expect(() => pipeline("$.s.trim();")).toThrow(/Assign it to a field/);
     // An operator that you call as a statement is your own MQL, so it passes through as a
-    // stage. DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$abs'".
+    // stage. DELIBERATELY invalid: mongod refuses it, because `$abs` names no stage.
     expect(pipeline("$abs(42);")).toEqual([{ $abs: 42 }]);
     expect(pipeline("$not(true);")).toEqual([{ $not: true }]);
   });
@@ -738,7 +738,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
       "Unknown function 'Numberr(...)'. Did you mean 'Number(...)'? Declare it first with `const Numberr = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$Numberr(...)`; for a method, `receiver.Numberr(...)`.",
     );
     // A `$`-named stage is your own MQL, so an unknown one passes through, with no
-    // suggestion. DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$matc'".
+    // suggestion. DELIBERATELY invalid: mongod refuses it, because `$matc` names no stage.
     expect(pipeline("$matc({ a: 1 });")).toEqual([{ $matc: { a: 1 } }]);
     // Each suggestion is a name that works in the same place.
     expect(compiled("$.tags.pop();")).toEqual([
@@ -783,21 +783,21 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 
   it("passes a body that the server refuses through as written, because you wrote it", () => {
-    // DELIBERATELY invalid shapes. Each comment quotes mongod's answer.
-    // mongod: "the count field cannot be a $-prefixed path"
+    // DELIBERATELY invalid shapes. Each comment says why mongod refuses one.
+    // mongod: the `$count` field name takes no `$` prefix
     expect(pipeline('$count("$n");')).toEqual([{ $count: "$n" }]);
     expect(pipeline("$count($.name);")).toEqual([{ $count: "$name" }]);
-    // mongod: "the count field cannot contain '.'"
+    // mongod: the `$count` field name takes no `.`
     expect(pipeline('$count("a.b");')).toEqual([{ $count: "a.b" }]);
-    // mongod: "the count field must be a non-empty string"
+    // mongod: the `$count` field name needs a string that is not empty
     expect(pipeline("$count(5);")).toEqual([{ $count: 5 }]);
-    // mongod: "the limit must be positive"
+    // mongod: `$limit` needs a number above 0
     expect(pipeline("$limit(0);")).toEqual([{ $limit: 0 }]);
-    // mongod: "invalid argument to $limit stage: Expected an integer: $limit: 1.5"
+    // mongod: `$limit` needs an integer
     expect(pipeline("$limit(1.5);")).toEqual([{ $limit: 1.5 }]);
-    // mongod: 'invalid argument to $limit stage: Expected a number in: $limit: "$n"'
+    // mongod: `$limit` needs a number, and gets a string
     expect(pipeline("$limit($.n);")).toEqual([{ $limit: "$n" }]);
-    // mongod: "invalid argument to $skip stage: Expected a non-negative number in: $skip: -1"
+    // mongod: `$skip` needs a number that is not negative
     expect(pipeline("$skip(-1);")).toEqual([{ $skip: -1 }]);
     // the valid spellings compile
     expect(compiled("$skip(0);")).toEqual([{ $skip: 0 }]);
@@ -836,36 +836,36 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
 
   it("passes a body that no deployment accepts through, in both spellings of a stage", () => {
     // The call and the raw document are ONE road, and both are your own MQL.
-    // DELIBERATELY invalid shapes. Each comment quotes mongod's answer.
-    // mongod: "$addFields specification stage must be an object, got int"
+    // DELIBERATELY invalid shapes. Each comment says why mongod refuses one.
+    // mongod: `$addFields` needs a document, and gets an int
     expect(pipeline("$addFields(5);")).toEqual([{ $addFields: 5 }]);
-    // mongod: "'replacement document'  must evaluate to an object, but resulting value was: 5. …"
+    // mongod: `$replaceWith` needs a document, and gets the number 5
     expect(pipeline("$replaceWith(5);")).toEqual([{ $replaceWith: 5 }]);
-    // mongod: "'newRoot' expression  must evaluate to an object, but resulting value was: 5. …"
+    // mongod: `newRoot` needs a document, and gets the number 5
     expect(pipeline("$replaceRoot({ newRoot: 5 });")).toEqual([{ $replaceRoot: { newRoot: 5 } }]);
-    // mongod: "BSON field '$replaceRoot.bogus' is an unknown field."
+    // mongod: `bogus` is an unknown key of `$replaceRoot`
     expect(pipeline("$replaceRoot({ bogus: 1 });")).toEqual([{ $replaceRoot: { bogus: 1 } }]);
-    // mongod: "path option to $unwind stage should be prefixed with a '$': items"
+    // mongod: the `$unwind` path needs a `$` prefix
     expect(pipeline('{ $unwind: "items" };')).toEqual([{ $unwind: "items" }]);
-    // mongod: 'Illegal key in $sort specification: a: "desc"'
+    // mongod: `"desc"` is not a `$sort` direction
     expect(pipeline('{ $sort: { a: "desc" } };')).toEqual([{ $sort: { a: "desc" } }]);
-    // mongod: "Unknown rounding granularity '$g'" — a stage reads the `$`-string as itself
+    // mongod: `$g` names no rounding granularity — a stage reads the `$`-string as itself
     expect(pipeline('$bucketAuto({ groupBy: $.x, buckets: 2, granularity: "$g" });')).toEqual([
       { $bucketAuto: { groupBy: "$x", buckets: 2, granularity: "$g" } },
     ]);
   });
 
   it("passes the body of every stage through, whatever the server says of it", () => {
-    // DELIBERATELY invalid shapes, measured on 8.3.7. Each comment quotes mongod's answer.
-    // mongod: "BSON field '$densify.zzz' is an unknown field."
+    // DELIBERATELY invalid shapes, measured on 8.3.7. Each comment says why mongod refuses one.
+    // mongod: `zzz` is an unknown key of `$densify`
     expect(pipeline('$densify({ field: "t", range: { step: 1, bounds: "full" }, zzz: 1 });')).toEqual([
       { $densify: { field: "t", range: { step: 1, bounds: "full" }, zzz: 1 } },
     ]);
-    // mongod: "BSON field '$densify.field' is missing but a required field"
+    // mongod: the required `field` key of `$densify` is missing
     expect(pipeline('$densify({ range: { step: 1, bounds: "full" } });')).toEqual([
       { $densify: { range: { step: 1, bounds: "full" } } },
     ]);
-    // mongod: "Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'"
+    // mongod: `$fill` takes `partitionBy` or `partitionByFields`, not both
     expect(
       pipeline(
         '$fill({ sortBy: { t: 1 }, partitionBy: "$k", partitionByFields: ["k"], output: { a: { method: "locf" } } });',
@@ -873,19 +873,19 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     ).toEqual([
       { $fill: { sortBy: { t: 1 }, partitionBy: "$k", partitionByFields: ["k"], output: { a: { method: "locf" } } } },
     ]);
-    // mongod: "BSON field '$setWindowFields.output' is missing but a required field"
+    // mongod: the required `output` key of `$setWindowFields` is missing
     expect(pipeline('$setWindowFields({ partitionBy: "$k" });')).toEqual([{ $setWindowFields: { partitionBy: "$k" } }]);
-    // mongod: "Enumeration value 'zzz' for field 'whenMatched' is not a valid value."
+    // mongod: `zzz` is not one of the `whenMatched` words
     expect(pipeline('$merge({ into: "c", whenMatched: "zzz" });')).toEqual([
       { $merge: { into: "c", whenMatched: "zzz" } },
     ]);
-    // mongod: "$changeStreamSplitLargeEvent spec should be an empty object"
+    // mongod: `$changeStreamSplitLargeEvent` takes only the empty document
     expect(pipeline("$changeStreamSplitLargeEvent({ zzz: 1 });")).toEqual([
       { $changeStreamSplitLargeEvent: { zzz: 1 } },
     ]);
-    // mongod: "BSON field '$out.zzz' is an unknown field."
+    // mongod: `zzz` is an unknown key of `$out`
     expect(pipeline('{ $out: { db: "d", coll: "c", zzz: 1 } };')).toEqual([{ $out: { db: "d", coll: "c", zzz: 1 } }]);
-    // mongod: "Unknown argument to $geoNear: zzz"
+    // mongod: `zzz` is an unknown key of `$geoNear`
     expect(pipeline('$geoNear({ near: [0, 0], distanceField: "d", zzz: 1 });')).toEqual([
       { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } },
     ]);
@@ -1008,8 +1008,8 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
   it("a binding holding an array-returning method's value is typed, so a read dispatches at compile time", () => {
     expect(pipeline('const ids = $.tags.uniq(); $.y = ids.has("a")')).toEqual([
       // `.uniq()` runs on the empty array when `tags` is missing (HR5), so its value is
-      // an array in every document. `$in` refuses a null array (MEASURED: "$in requires
-      // an array as a second argument, found: null"), and the proven value needs no test.
+      // an array in every document. `$in` refuses a null array (MEASURED), and the proven
+      // value needs no test.
       { $set: { "__jsmql.var.ids": { $setUnion: { $ifNull: ["$tags", []] } } } },
       { $set: { y: { $in: ["a", "$__jsmql.var.ids"] } } },
       { $unset: "__jsmql" },

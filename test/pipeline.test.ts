@@ -185,7 +185,7 @@ describe("pipeline — sub-pipelines", () => {
   });
 
   it("$lookup pipeline: a field ref passes through as written (HR1 — your own MQL)", () => {
-    // DELIBERATELY invalid: mongod says "A pipeline must be an array of objects".
+    // DELIBERATELY invalid: mongod refuses a field path as the pipeline, because it needs an array of stages.
     expect(jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toEqual([
       { $lookup: { from: "x", pipeline: "$someVar", as: "y" } },
     ]);
@@ -237,7 +237,7 @@ describe("raw MQL stage bodies pass through UNGUARDED (escape hatch — see src/
 
 describe("pipeline — error cases", () => {
   // An unknown stage is your own MQL, so it passes through with no suggestion.
-  // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$macth'".
+  // DELIBERATELY invalid: mongod refuses `$macth`, because it is not a pipeline stage.
   it("passes an unknown stage name through, in both spellings", () => {
     expect(jsmql("[{ $macth: $.age > 18 }]")).toEqual([{ $macth: { $gt: ["$age", 18] } }]);
     expect(jsmql("[$prject({ name: 1 })]")).toEqual([{ $prject: { name: 1 } }]);
@@ -250,7 +250,7 @@ describe("pipeline — error cases", () => {
   });
 
   it("multi-key object cannot be a stage element", () => {
-    // MEASURED: "A pipeline stage specification object must contain exactly one field."
+    // MEASURED: the server refuses a stage document that holds more than one field.
     expect(() => jsmql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(
       "A raw stage document holds exactly one stage, and this one holds 2 keys. Write '{ $match: … }' on its own, and the next stage as its own statement.",
     );
@@ -438,8 +438,8 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("refuses a fan-out whose elements the registry proves are not documents", () => {
     // JavaScript's `Object.entries` gives `[key, value]` PAIRS, and a stream holds
-    // documents — MEASURED, `$replaceWith` of an array answers "'replacement document'
-    // must evaluate to an object". The row states the element kind, so the refusal is
+    // documents — MEASURED, the server refuses `$replaceWith` of an array, because the
+    // new root must be an object. The row states the element kind, so the refusal is
     // at compile time and names the two spellings that do work.
     expect(() => jsmql("[ $$ = Object.entries($.scores) ]")).toThrow(
       /makes documents from the array's ELEMENTS, one each, and these elements are arrays/,
@@ -640,7 +640,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
     expect(jsmql(`$ = { all: $$.filter(o => true) };`)).toEqual([{ $facet: { all: [{ $match: { $expr: true } }] } }]);
   });
 
-  it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {
+  it("reads `$.<field>` inside a facet predicate as the branch document", () => {
     expect(jsmql(`$ = { recent: $$.filter(o => $.x > 5) };`)).toEqual([
       { $facet: { recent: [{ $match: { x: { $gt: 5 } } }] } },
     ]);
@@ -785,11 +785,10 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 
   // Outer context referenced INSIDE a source-switch's chain body (vs the prior
   // test, which references it in a later top-level stage). A bare
-  // `$$ = $$$.<coll>.map(…)` is a `$unionWith` that REPLACES the stream, so the
-  // outer document / root `$$.size()` / outer `let`s are not carried in — the
-  // error must say so and point at the correlated `.filter` form (which DOES
-  // thread them; see stream-size.test.ts "the root count, the doc field, the const, and the handle count").
-  it("outer `let` read inside a source-switch `.map` body → 'correlate with a .filter' error", () => {
+  // A `$$ = $$$.<coll>.map(…)` body that reads the outer context (an outer `let`, a
+  // root `$.<field>`) joins through `$lookup.let`, so the value is carried in (see
+  // stream-size.test.ts "the root count, the doc field, the const, and the handle count").
+  it("an outer `let` read inside a source-switch `.map` body joins through `$lookup.let`", () => {
     expect(jsmql(`const k = $.min + 1; $$ = $$$.orders.map(o => ({ v: k }));`)).toEqual([
       { $set: { "__jsmql.var.k": { $add: ["$min", 1] } } },
       {
@@ -805,9 +804,9 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     ]);
   });
 
-  it("root `$.<field>` read inside a source-switch `.map` body → 'outer document is gone' error", () => {
-    // Not the generic "use the param" hint — here `o.length` would be the
-    // SWITCHED collection's field, not the original root's, so that hint misleads.
+  it("a root `$.<field>` read inside a source-switch `.map` body joins through `$lookup.let`", () => {
+    // `$.length` reads the ORIGINAL root. `o.length` would read the field of the
+    // switched collection instead.
     expect(jsmql(`$$ = $$$.orders.map(o => ({ v: $.length }));`)).toEqual([
       {
         $lookup: {
@@ -822,8 +821,8 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     ]);
   });
 
-  it("a top-level `$$.map` keeps the plain 'use the param' hint (not a source-switch)", () => {
-    // No source-switch here, so the source-switch guidance must NOT leak in.
+  it("a top-level `$$.map` reads `$.<field>` as the stream document (not a source-switch)", () => {
+    // No source-switch here, so `$.x` reads the document of the stream itself.
     expect(jsmql(`$$ = $$.map(o => ({ v: $.x }));`)).toEqual([{ $replaceWith: { v: "$x" } }]);
   });
 
@@ -1542,9 +1541,9 @@ describe("$$ = $$$.<coll>.<streamMethod>… — any lodash method may start the 
     );
   });
 
-  it("keeps correlation through a non-filter method as a pitfall-guarded rejection", () => {
-    // A `.map` that reads the outer document with no filter to bound the foreign set is a
-    // cross-join pitfall. jsmql keeps it rejected, with the 'correlate with a .filter' guidance.
+  it("a non-filter method that reads the outer document joins through `$lookup.let`", () => {
+    // A `.map` that reads the outer document, with no filter to bound the foreign set,
+    // joins every foreign document to each outer document.
     expect(jsmql("$$ = $$$.orders.map(o => ({ v: $.length }));")).toEqual([
       {
         $lookup: {
@@ -1697,8 +1696,8 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   // A value in the stage's own body may need a STAGE of its own — `$$.size()` a
   // `$setWindowFields`, a `$$$.<coll>` read a `$lookup` — and jsmql places that
   // stage directly ahead of the one that reads it. Ahead of a first-only stage
-  // there is no room, and the server says so: MEASURED, "$geoNear was not the
-  // first stage in the pipeline after optimization".
+  // there is no room, and the server refuses it: MEASURED, `$geoNear` must stay
+  // the first stage after the server optimizes the pipeline.
   it("rejects a first-only stage whose body needs a stage of its own ahead of it", () => {
     expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.size() } });')).toThrow(
       /'\$geoNear' has to be the FIRST stage of the pipeline\. A value in its body needs a '\$setWindowFields' stage of its own to run BEFORE it\..*\$geoNear\(\{ … \}\); \$match\(\$\.<field> === \$\$\.size\(\)\);/s,
@@ -1773,7 +1772,7 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
 
   // The mirror: the `__jsmql` cleanup is the stage before the one that writes the
   // output, and nothing may follow that one — so a body reading a scratch field
-  // reads one already gone. MEASURED: "Use of undefined variable: v".
+  // reads one already gone. MEASURED: the server refuses `$$v`, because the variable is not defined.
   it("rejects a terminal stage whose body reads a materialised value", () => {
     expect(() => jsmql('$merge({ into: "c", let: { v: $$.size() }, whenMatched: [$set({ z: "$$v" })] });')).toThrow(
       /'\$merge' writes the pipeline's output and has to be its LAST stage.*\$\.n = \$\$\.size\(\); \$merge\(/s,
@@ -1925,7 +1924,7 @@ describe("chained stage calls on the current stream", () => {
 
   describe("errors", () => {
     it("passes an unknown stage name through, and suggests for a JavaScript name", () => {
-      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$prject'".
+      // DELIBERATELY invalid: mongod refuses `$prject`, because it is not a pipeline stage.
       expect(jsmql("$$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }]);
       expect(() => jsmql("$$.prject({ a: 1 });")).toThrow(
         "'.prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
@@ -1934,14 +1933,14 @@ describe("chained stage calls on the current stream", () => {
 
     // A `$`-named link is your own MQL, so it passes through as the stage you named.
     it("passes an expression operator chained as a stage through as written", () => {
-      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$abs'".
+      // DELIBERATELY invalid: mongod refuses `$abs`, because it is not a pipeline stage.
       expect(jsmql("$$.$abs(1);")).toEqual([{ $abs: 1 }]);
     });
 
     it("passes a stage link with any argument count through, in HR2's plain form", () => {
-      // DELIBERATELY invalid: mongod says "invalid argument to $limit stage: Expected a number in: $limit: {}".
+      // DELIBERATELY invalid: mongod refuses `$limit: {}`, because `$limit` takes a number.
       expect(jsmql("$$.$limit();")).toEqual([{ $limit: {} }]);
-      // mongod: "invalid argument to $limit stage: Expected a number in: $limit: [ 5, 6 ]"
+      // mongod: the server refuses `$limit: [5, 6]`, because `$limit` takes a number.
       expect(jsmql("$$.$limit(5, 6);")).toEqual([{ $limit: [5, 6] }]);
     });
 

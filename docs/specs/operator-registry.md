@@ -56,7 +56,7 @@ The compiler refuses JSMQL code that has no MQL inside a `$op(…)` call. A Java
 
 ## Unknown operators
 
-A `$name` with no row passes through by its argument count, in every position. So JSMQL runs a MongoDB operator or stage it has no row for yet. The position gives the name its role: a stage in a statement or a stream link, an expression in a value, and `{ $expr: { $foo: … } }` in a filter, with MongoDB's own truthiness. The compiler gives no "Did you mean" suggestion for a `$name`, because a suggestion refuses each new MongoDB name that is near a known one (docs/DEFERRED.md § B):
+A `$name` with no row passes through by its argument count, in every position. So JSMQL runs a MongoDB operator or stage it has no row for yet. The position gives the name its role: a stage in a statement or a stream link, an expression in a value, and `{ $expr: { $foo: … } }` in a filter, with MongoDB's own truthiness. The compiler gives no spelling suggestion for a `$name`, because a suggestion refuses each new MongoDB name that is near a known one (docs/DEFERRED.md § B):
 
 | Args | Output |
 |---|---|
@@ -67,7 +67,7 @@ A `$name` with no row passes through by its argument count, in every position. S
 
 ## Query-position-only operators
 
-`$sampleRate` has no expression form on the server. Its row lists `filter` alone: `$match($sampleRate(0.1))` → `[{ $match: { $sampleRate: 0.1 } }]`. It composes with other clauses (`$.age > 18 && $sampleRate(0.1)`). In an expression position the call is still the developer's own MQL, so it passes through: `jsmql.expr("$sampleRate(0.1)")` → `{ $sampleRate: 0.1 }`, and the server answers "Unrecognized expression '$sampleRate'". The catalog carries the same fact as `matchOnly: true`, for the generated types.
+`$sampleRate` has no expression form on the server. Its row lists `filter` alone: `$match($sampleRate(0.1))` → `[{ $match: { $sampleRate: 0.1 } }]`. It composes with other clauses (`$.age > 18 && $sampleRate(0.1)`). In an expression position the call is still the developer's own MQL, so it passes through: `jsmql.expr("$sampleRate(0.1)")` → `{ $sampleRate: 0.1 }`, and the server refuses it. The catalog carries the same fact as `matchOnly: true`, for the generated types.
 
 ## Return kinds
 

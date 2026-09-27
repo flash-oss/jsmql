@@ -50,20 +50,20 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
    * documents mongod refuses outright.
    */
   const SLOTS: [string, string, Position][] = [
-    // {$group:{_id:null,s:{$sum:["$x","$y"]}}} → "The $sum accumulator is a unary operator"
+    // {$group:{_id:null,s:{$sum:["$x","$y"]}}} → refused: the $sum accumulator takes one operand
     ["$group({_id: null, s: $sum($.x)});", "$sum(…)", "group"],
-    // {$geoNear:{…,query:{$eq:["$k","a"]}}} → "unknown top level operator: $eq"
+    // {$geoNear:{…,query:{$eq:["$k","a"]}}} → refused: $eq is not a top-level query operator
     ['$geoNear({near: 1, distanceField: "d", query: $.k === "a"});', "BinaryExpr", "filter"],
     // {$graphLookup:{…,restrictSearchWithMatch:{$eq:["$k","a"]}}} → the same refusal
     ['$graphLookup({from: "t", restrictSearchWithMatch: $.k === "a"});', "BinaryExpr", "filter"],
     // {$setWindowFields:{sortBy:{x:1},output:{r:{$sum:["$x","$y"]}}}} → 0, where
     // the unary form answers 4. Accepted and wrong, which nothing reports.
     ["$setWindowFields({sortBy: {x: 1}, output: {r: $sum($.x)}});", "$sum(…)", "window"],
-    // {$bucket:{…,output:{s:{$sum:["$x","$y"]}}}} → "unary operator", same as $group
+    // {$bucket:{…,output:{s:{$sum:["$x","$y"]}}}} → refused, the same as $group
     ["$bucket({groupBy: $.x, boundaries: [0, 2], output: {s: $sum($.x)}});", "$sum(…)", "group"],
     ["$bucketAuto({groupBy: $.x, buckets: 2, output: {s: $sum($.x)}});", "$sum(…)", "group"],
     // A query document, which is not an expression: {$match:{$gt:["$x",1]}}
-    //   → "unknown top level operator: $gt"
+    //   → refused: $gt is not a top-level query operator
     ["$match($.a > 1);", "BinaryExpr", "filter"],
   ];
 
@@ -79,8 +79,8 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     const lines = census("$group({_id: $.k, s: $sum($.x)});");
     expect(lines).toContain("stageBody[$group:] _id:");
     expect(lines).toContain("group $sum(…)");
-    // `sortBy` is a key spec, not an expression slot: mongod refuses an
-    // expression there with "$meta is the only expression supported by $sort".
+    // `sortBy` is a key spec, not an expression slot: mongod refuses every
+    // expression there except `$meta`.
     expect(positionOfNode("$setWindowFields({sortBy: {x: 1}, output: {r: $rank()}});", "x:")).toBe("value");
   });
 
