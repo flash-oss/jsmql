@@ -20442,8 +20442,8 @@ var letParamsMustNameVars = (params, keys, pos) => new CodegenError(
   `$let's arrow parameters must name its variables: got (${params.join(", ")}) for vars { ${keys.join(", ")} }.`,
   pos
 );
-var rootIsArray = (pos) => new CodegenError(
-  "'$ = \u2026' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
+var rootIsArray = (root2, pos) => new CodegenError(
+  `'${root2} = \u2026' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root2}.<field> = <array>;'.`,
   pos
 );
 var joinNeedsPipeline = (pos) => new CodegenError(
@@ -20504,12 +20504,12 @@ var multiKeyStageDocument = (name2, keys, pos) => new CodegenError(
   `A raw stage document holds exactly one stage, and this one holds ${keys} keys. Write '{ ${name2}: \u2026 }' on its own, and the next stage as its own statement.`,
   pos
 );
-var rootMustBeDocument = (noun, pos) => new CodegenError(
-  `'$ = \u2026' replaces the document, so the value has to BE a document \u2014 ${noun} is not one. Put it under a field ('$ = { value: \u2026 };'), or write to a field instead ('$.value = \u2026;').`,
+var rootMustBeDocument = (root2, noun, pos) => new CodegenError(
+  `'${root2} = \u2026' replaces the document, so the value has to BE a document \u2014 ${noun} is not one. Put it under a field ('${root2} = { value: \u2026 };'), or write to a field instead ('${root2}.value = \u2026;').`,
   pos
 );
 var cannotDeleteRoot = (root2, pos) => new CodegenError(
-  root2 === "$" ? "'delete $' would delete the document itself. To replace it, write '$ = { \u2026 };'; to drop every field but one, write '$ = { keep: $.keep };'." : "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => \u2026);'.",
+  root2 === "$$" ? "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => \u2026);'." : `'delete ${root2}' would delete the document itself. To replace it, write '${root2} = { \u2026 };'; to drop every field but one, write '${root2} = { keep: ${root2}.keep };'.`,
   pos
 );
 var notAWriteTarget = (pos) => new CodegenError(
@@ -20947,8 +20947,8 @@ var noDestination = (pos) => new CodegenError(
   "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = $$$.<coll>.\u2026'), bind it ('let x = $$$.<coll>.\u2026'), or make it the stream ('$$ = $$$.<coll>.\u2026').",
   pos
 );
-var rootNeedsOneDocument = (pos) => new CodegenError(
-  "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.\u2026'.",
+var rootNeedsOneDocument = (root2, pos) => new CodegenError(
+  `The document can only become ONE document, and this chain gives an array. Write '${root2} = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '${root2}.<field> = $$$.<coll>.\u2026'.`,
   pos
 );
 var oneDocumentInStream = (pos) => new CodegenError(
@@ -22615,9 +22615,9 @@ function joinWrite(node, path, env, S) {
   if (l.one !== false) stages.push(unwrap(path, l.one));
   return { stages, type: joinedType(l) };
 }
-function joinRoot(node, env, S) {
+function joinRoot(node, root2, env, S) {
   const l = lookupOf(node, env, S);
-  if (!l.complete || l.one !== "find") throw rootNeedsOneDocument(l.pos);
+  if (!l.complete || l.one !== "find") throw rootNeedsOneDocument(root2, l.pos);
   const slot = env.chain.slot();
   const found2 = l.element === "" ? "$" + slot.path : `$${slot.path}.${l.element}`;
   return [lookupStage(l, slot.path), { $unwind: "$" + slot.path }, { $replaceWith: found2 }];
@@ -25272,6 +25272,9 @@ function targetPath(op, env) {
   if (t.type === "StreamRef") return STREAM_TARGET;
   throw notAWriteTarget(op.pos);
 }
+function rootAsWritten(target) {
+  return target.type === "Ident" ? target.name : "$";
+}
 function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lead, how) {
   if (value.type === "ArrayLiteral" && !holdsSpread(value)) return landed(documentsStages(value, env, written2), env);
   const chainOn = chainBase(value);
@@ -25442,7 +25445,7 @@ function writeStages(uf, env, first) {
       continue;
     }
     if (op.type === "DeleteStmt") {
-      if (path === "") throw cannotDeleteRoot("$", op.pos);
+      if (path === "") throw cannotDeleteRoot(rootAsWritten(op.target), op.pos);
       if (sets !== null) flush();
       (unsets ??= []).push(path);
       prove(path, null);
@@ -25472,7 +25475,7 @@ function writeStages(uf, env, first) {
       const valueEnv = childEnv(inner, op, "value");
       if (path === "") {
         flush();
-        emit(joinRoot(op.value, valueEnv, JOIN));
+        emit(joinRoot(op.value, rootAsWritten(op.target), valueEnv, JOIN));
         continue;
       }
       const w = joinWrite(op.value, path, valueEnv, JOIN);
@@ -25485,12 +25488,13 @@ function writeStages(uf, env, first) {
     }
     const value = readIn(op.value, childEnv(inner, op, "value"));
     if (path === "") {
+      const root2 = rootAsWritten(op.target);
       if (op.value.type === "NullLiteral" || op.value.type === "UndefinedLiteral") {
-        throw rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
+        throw rootMustBeDocument(root2, op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
       }
       const t = typeOf(op.value, childEnv(inner, op, "value"));
-      if (isOnly(t, "array")) throw rootIsArray(op.pos);
-      if (cannotBe(t, "object")) throw rootMustBeDocument(nounOfKinds(t), op.pos);
+      if (isOnly(t, "array")) throw rootIsArray(root2, op.pos);
+      if (cannotBe(t, "object")) throw rootMustBeDocument(root2, nounOfKinds(t), op.pos);
       flush();
       emit([{ $replaceWith: value }]);
       continue;

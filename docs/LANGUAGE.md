@@ -977,6 +977,16 @@ $.orders = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
 
 As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$total`), and a `$.<field>` reference *reads* the outer document, auto-hoisted into `let`.
 
+The reshape follows the rule of `$ = …`: the value has to be a document. A refusal quotes the parameter as you wrote it, so each fix it names works inside the body:
+
+```js
+$.doubled = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
+  o = o.total * 2;
+});
+// → 'o = …' replaces the document, so the value has to BE a document — a number is not one.
+//   Put it under a field ('o = { value: … };'), or write to a field instead ('o.value = …;').
+```
+
 **Why does `.find()` keep JS-faithful cardinality?** MongoDB's `$lookup` always returns an array. JSMQL adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off is one extra in-place `$set` stage. Even when the predicate matches several foreign docs, the row count stays stable, unlike the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out.
 
 **Caveats:**

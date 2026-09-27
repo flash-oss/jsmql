@@ -235,6 +235,15 @@ Each refusal names a concrete fix:
 | `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on '$' at position N. '$' is the whole document, not a field. Write to a field: '$.<field>++'." |
 | `delete $` | "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'." |
 
+**Each refusal quotes the root as written.** A stage body writes its own document through its parameter: `o = …` in `.aggregate(o => { … })`. A `$ = …` fix there would write the OUTER document, and a body over another collection cannot write it ([lookup-stage.md § The join road](lookup-stage.md#the-join-road)). So each refusal above, except the arithmetic one, quotes the spelling the program uses. `rootAsWritten` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) gives the parameter's own name for an `Ident` target, and `$` for the bare root:
+
+| Trigger | Message |
+|---|---|
+| `$$.aggregate(o => { o = o.a * 2; })` | "'o = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('o = { value: … };'), or write to a field instead ('o.value = …;')." |
+| `$$.aggregate(o => { delete o; })` | "'delete o' would delete the document itself. To replace it, write 'o = { … };'; to drop every field but one, write 'o = { keep: o.keep };'." |
+
+A body on the stream (`$$.aggregate(…)`) runs on the same documents as `$`. So a `$ = …` write there compiles, and its refusal keeps the `$` spelling. The arithmetic writes are the exception to the rule. The parser refuses them on the bare `$` only, because only the emit phase knows which name is a body's document. So `o++` in a body reaches the emitter as `o = o + 1`, and it gets the "'o = …' replaces the document" message.
+
 The compiler reads the value's proof, so a value is refused only when it can never be a document: see [types.md § A refusal reads the whole set](types.md#a-refusal-reads-the-whole-set). A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`). So does any value that may be one. The server, not the compiler, refuses `$ = $.f ? $.sub : 5` for a document whose `f` is false. An ARRAY never passes, whatever its elements — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
 
 ## Deferred

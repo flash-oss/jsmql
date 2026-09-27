@@ -383,11 +383,12 @@ export function joinWrite(node: Expr, path: string, env: Env, S: JoinServices): 
  * `$ = $$$.c.find(p);` — each document becomes the one it found. A document
  * that found nothing has nothing to become, and leaves the stream. `$unwind`
  * of an empty slot drops it. (`$replaceWith: { $first: … }` fails on the
- * server for every such document — measured.)
+ * server for every such document — measured.) `root` is the document as
+ * written — `$`, or a body's own parameter — and the refusal quotes it.
  */
-export function joinRoot(node: Expr, env: Env, S: JoinServices): Stage[] {
+export function joinRoot(node: Expr, root: string, env: Env, S: JoinServices): Stage[] {
   const l = lookupOf(node, env, S);
-  if (!l.complete || l.one !== "find") throw E.rootNeedsOneDocument(l.pos);
+  if (!l.complete || l.one !== "find") throw E.rootNeedsOneDocument(root, l.pos);
   const slot = env.chain.slot();
   const found = l.element === "" ? "$" + slot.path : `$${slot.path}.${l.element}`;
   return [lookupStage(l, slot.path), { $unwind: "$" + slot.path }, { $replaceWith: found }];
