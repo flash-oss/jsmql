@@ -84,11 +84,13 @@ a `$replaceWith`: the scratch namespace goes away with the old root.
 ## Element-wise object methods on the root
 
 `$ = $.pick([…])`, `$ = $.omit([…])`, and a chain of such links
-(`$ = $.pick([…]).omit([…])`) take the stream road.
+(`$ = $.pick([…]).omit([…])`) take the stream road. So does the same chain on a body's own
+parameter, `o = o.pick([…])` in `.aggregate(o => { … })`.
 `elementWiseOnDocument` in
 [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) accepts a `MethodCall`
-chain whose base is the bare `$`, with no `?.`, and whose every link is a row spelled on BOTH
-the `object` and the `stream` family (`on` in [src/registry/names.ts](../../src/registry/names.ts)).
+chain whose base is the whole document of the current level, with no `?.`, and whose every link
+is a row spelled on BOTH the `object` and the `stream` family (`on` in
+[src/registry/names.ts](../../src/registry/names.ts)).
 `documentStages` then runs the links through the same loop `$$.pick(…)` runs through
 ([stream-methods.md](stream-methods.md)), with the DOCUMENT as the chain's element. An earlier
 bare `$$.flatMap("items")` leaves `items` as the element, and `$` names the document, not that
@@ -99,7 +101,8 @@ document is what its stream cell makes of each document of the stream. So "the d
 `pick(document)`" and "every document is picked" are the same operation, and the stream cell's
 `$project` is the smaller MQL. MEASURED: `[{ $project: { a: 1, b: 1, _id: 0 } }]` and the value
 form `$replaceWith: { $let: { vars: { jsmqlObj: "$$ROOT" }, in: { a: { $getField: … }, … } } }`
-return the same documents for a present key, a null key, and a missing key. The compiler takes
+return the same documents for a present key, a null key, and a missing key. Inside a
+`$lookup` body, the stage and the value form return the same orders too. The compiler takes
 the stream road only when every argument is a compile-time constant, because a stage reads its
 field list before any document. `$ = $.pick($.keys)` names a list only the server knows, so it
 takes the value road — one `$replaceWith` whose `.pick` reads the document's own keys at query
@@ -110,12 +113,26 @@ A chain with a link on the object family only (`$ = $.pick([…]).mapValues(…)
 (`$ = $?.pick([…])`), takes the value road: one `$replaceWith` over `$$ROOT`, as for every other
 method on the bare `$`.
 
-The stages run over the documents of the level where the write stands. So the bare `$` takes the
-stream road only where the stages run over the root documents. These places are the top, a
-`$facet` branch and a `$$.aggregate(…)` block. Inside a body over another collection, `$` is still the root
-document ([LANG_RULES.md § HR4](../LANG_RULES.md)), and a stage there reshapes the body's own
-document. So `o = $.pick([…])` in `$$$.orders.aggregate(o => { … })` takes the value road, which
-reads the root document through the `$lookup`'s `let`:
+The stages run over the documents of the level where the write stands. So the base must be the
+whole document of that level. `locate` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)
+resolves the base, as it resolves a write target for `targetPath`, and two bases pass:
+
+- the bare `$`, where the stages run over the root documents. These places are the top, a
+  `$facet` branch and a `$$.aggregate(…)` block.
+- a body's own parameter, in its own body. The callback binds it as the document
+  (`{ kind: "document", path: "" }`) on the level of the body.
+
+Inside a body over another collection, `$` is still the root document
+([LANG_RULES.md § HR4](../LANG_RULES.md)), and a stage there reshapes the body's own document.
+So in such a body, the parameter is the one spelling that takes the stream road:
+
+```
+$.x = $$$.orders.aggregate(o => { o = o.pick(["a"]); });
+→ [{ $lookup: { from: "orders", pipeline: [{ $project: { a: 1, _id: 0 } }], as: "x" } }]
+```
+
+A base on another level takes the value road, which reads that document through the `$lookup`'s
+`let`. Such a base is `$` in a body over another collection, or the parameter of an outer body:
 
 ```
 $.x = $$$.orders.aggregate(o => { o = $.pick(["a"]); });
@@ -123,6 +140,10 @@ $.x = $$$.orders.aggregate(o => { o = $.pick(["a"]); });
      { $replaceWith: { $let: { vars: { jsmqlObj: "$$jsmql_f0_root" }, in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } } } } }
    ], as: "x" } }]
 ```
+
+After `$$.flatMap("items")`, a block's parameter is the unwound element, not the document. So
+`o = o.pick([…])` in `$$.flatMap("items").aggregate(o => { … })` writes the field `items`,
+through the value road.
 
 ## Bare `$` is `$$ROOT`
 

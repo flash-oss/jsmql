@@ -1133,18 +1133,19 @@ function refuseUnbuiltSugar(value: Expr): void {
 // ── the stream road ──────────────────────────────────────────────────────────
 
 /**
- * `$.pick(…).omit(…)` — a chain on the bare `$` whose every link is a
- * row spelled on BOTH the object and the stream. This function returns
+ * `$.pick(…).omit(…)` — a chain on the whole DOCUMENT whose every link is
+ * a row spelled on BOTH the object and the stream. This function returns
  * its links, base first, or null. Such a row is element-wise by
  * construction: what it makes of the document is what its stream cell
- * makes of each document. So the two spellings are one lowering. An
- * optional link (`$?.pick(…)`) is not this: the value road reads its
- * `?.`.
+ * makes of each document. So the spellings are one lowering. An optional
+ * link (`$?.pick(…)`) is not this: the value road reads its `?.`.
  *
- * The stages run over the documents of THIS level. Inside a body over
- * another collection, `$` is still the root document (HR4), so a stage
- * there would reshape the wrong document. The value road reads `$`
- * through the body's `let` instead.
+ * The stages run over the documents of THIS level, so the base must be
+ * the whole document of this level. That is the bare `$` at the top, and
+ * a body's own parameter (`o` in `.aggregate(o => { … })`) in its body.
+ * Inside a body over another collection, `$` is still the root document
+ * (HR4), so a stage there would reshape the wrong document. The value
+ * road reads `$` through the body's `let` instead.
  */
 function elementWiseOnDocument(value: Expr, env: Env): readonly Link[] | null {
   const links: Link[] = [];
@@ -1153,7 +1154,9 @@ function elementWiseOnDocument(value: Expr, env: Env): readonly Link[] | null {
     links.unshift(cur);
     cur = cur.object;
   }
-  if (links.length === 0 || cur.type !== "FieldRef" || cur.path !== "" || env.level > 0) return null;
+  if (links.length === 0) return null;
+  const base = locate(cur, env);
+  if (base === null || base.kind !== "f" || base.path !== "" || base.level !== env.level) return null;
   for (const link of links) {
     const on = receiverFamiliesOf(namedRow(link) ?? link.name);
     if (link.optional || on === undefined || on === "any" || !on.includes("object") || !on.includes("stream"))

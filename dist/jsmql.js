@@ -25543,7 +25543,9 @@ function elementWiseOnDocument(value, env) {
     links.unshift(cur);
     cur = cur.object;
   }
-  if (links.length === 0 || cur.type !== "FieldRef" || cur.path !== "" || env.level > 0) return null;
+  if (links.length === 0) return null;
+  const base = locate(cur, env);
+  if (base === null || base.kind !== "f" || base.path !== "" || base.level !== env.level) return null;
   for (const link of links) {
     const on = receiverFamiliesOf(namedRow(link) ?? link.name);
     if (link.optional || on === void 0 || on === "any" || !on.includes("object") || !on.includes("stream"))

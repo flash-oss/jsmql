@@ -211,6 +211,115 @@ describe("compiler/emit/statement — the writes", () => {
     expect(compiled('$$.aggregate(o => { o = $.pick(["a"]); });')).toEqual([{ $project: { a: 1, _id: 0 } }]);
   });
 
+  it("`o = o.pick(…)` on a body's own parameter is the stage that `$ = $.pick(…)` emits", () => {
+    // The parameter IS the document that the body's stages run over, so the spellings are one lowering.
+    expect(compiled('$$.aggregate(o => { o = o.pick(["a"]); });')).toEqual(pipeline('$ = $.pick(["a"]);'));
+    expect(compiled('$$.aggregate(o => { $ = o.omit(["a"]); });')).toEqual(pipeline('$ = $.omit(["a"]);'));
+    expect(compiled('$ = { k: $$.aggregate(o => { o = o.pick(["a"]); }) };')).toEqual([
+      { $facet: { k: [{ $project: { a: 1, _id: 0 } }] } },
+    ]);
+    // Inside a body over another collection, `$` is the root document, so the parameter is the one spelling.
+    expect(compiled('$.x = $$$.orders.aggregate(o => { o = o.pick(["a"]); });')).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $project: { a: 1, _id: 0 } }], as: "x" } },
+    ]);
+    expect(compiled('$.x = $$$.orders.aggregate((o, _i, orders) => { o = o.pick(["a", "b"]).omit(["b"]); });')).toEqual(
+      [
+        {
+          $lookup: {
+            from: "orders",
+            pipeline: [{ $project: { a: 1, b: 1, _id: 0 } }, { $project: { b: 0 } }],
+            as: "x",
+          },
+        },
+      ],
+    );
+    // Each level reshapes its own parameter, and the correlation reads the reshaped `u`.
+    expect(
+      compiled(`$.team = $$$.users.aggregate(u => {
+        $match(u.teamId === $._id);
+        u = u.pick(["_id", "name"]);
+        u.orders = $$$.orders.aggregate(o => { $match(o.userId === u._id); o = o.omit(["audit"]); });
+      });`),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "teamId",
+          pipeline: [
+            { $project: { _id: 1, name: 1 } },
+            {
+              $lookup: {
+                from: "orders",
+                localField: "_id",
+                foreignField: "userId",
+                pipeline: [{ $project: { audit: 0 } }],
+                as: "orders",
+              },
+            },
+          ],
+          as: "team",
+        },
+      },
+    ]);
+    // An OUTER parameter is a document of the level above: the value road reads it through the `let`.
+    expect(
+      compiled(
+        '$.team = $$$.users.aggregate(u => { u.orders = $$$.orders.aggregate(o => { o = u.pick(["name"]); }); });',
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "users",
+          pipeline: [
+            {
+              $lookup: {
+                from: "orders",
+                let: { jsmql_f1_u: "$$ROOT" },
+                pipeline: [
+                  {
+                    $replaceWith: {
+                      $let: {
+                        vars: { jsmqlObj: "$$jsmql_f1_u" },
+                        in: { name: { $getField: { field: "name", input: "$$jsmqlObj" } } },
+                      },
+                    },
+                  },
+                ],
+                as: "orders",
+              },
+            },
+          ],
+          as: "team",
+        },
+      },
+    ]);
+    // What a stage cannot say stays on the value road, as for `$`: a `?.`, a list that only
+    // the server knows, a link on the object family only, and a field of the parameter.
+    for (const reshape of [
+      'o?.pick(["a"])',
+      "o.pick(o.keys)",
+      'o.pick(["a"]).mapValues(v => v)',
+      'o.sub.pick(["a"])',
+    ]) {
+      expect(compiled(`$.x = $$$.orders.aggregate(o => { o = ${reshape}; });`), reshape).toMatchObject([
+        { $lookup: { pipeline: [{ $replaceWith: {} }] } },
+      ]);
+    }
+    // After `.flatMap("items")`, the parameter is the unwound element, not the document: `o = …`
+    // writes the field `items`.
+    expect(compiled('$$.flatMap("items").aggregate(o => { o = o.pick(["a"]); });')).toEqual([
+      { $unwind: "$items" },
+      {
+        $set: {
+          items: {
+            $let: { vars: { jsmqlObj: "$items" }, in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } } },
+          },
+        },
+      },
+    ]);
+  });
+
   it("places a stage that computes a needed value ahead of the stage that uses it", () => {
     expect(compiled("$.n = $$.size();")).toEqual([
       { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
@@ -1110,6 +1219,21 @@ describe("compiler/emit/statement — a reshape in a body over another collectio
       [{ a: 2 }, { a: 2 }, { a: 2 }],
       [{ a: 9 }, { a: 9 }, { a: 9 }],
     ]);
+  });
+
+  it.skipIf(!up)("`o = o.pick([…])` there answers what the value road answers, for each order", async () => {
+    const got = await run('$.x = $$$.orders.aggregate(o => { o = o.pick(["a"]); });');
+    expect(got.map((d) => d.x)).toEqual([
+      [{ a: 100 }, { a: null }, {}],
+      [{ a: 100 }, { a: null }, {}],
+    ]);
+    // `o?.` keeps the value road, and it tests nothing: the body's own document is always there.
+    for (const reshape of ['pick(["a"])', 'omit(["a"])', 'pick(["a", "b"]).omit(["b"])', "pick([])", "omit([])"]) {
+      const stage = `$.x = $$$.orders.aggregate(o => { o = o.${reshape}; });`;
+      const value = `$.x = $$$.orders.aggregate(o => { o = o?.${reshape}; });`;
+      expect(pipeline(stage), reshape).not.toEqual(pipeline(value));
+      expect(await run(stage), reshape).toEqual(await run(value));
+    }
   });
 });
 

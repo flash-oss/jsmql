@@ -949,7 +949,7 @@ $.productIds = $$$.orders.filter(o => o.userId === $._id).map("productIds").flat
 
 The `.size()` / `.reduce` / member-access terminals take precedence — `.filter(p).map(...).size()` emits `$size` against the materialised, transformed slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith`, and a following `.take` etc. lowers to `$limit` there. A `.map(x => { … ; return ({ … }) })` block that returns one does the same. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
 
-**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript, and JSMQL rejects a stage inside it. To run stages *and* reshape, use `.aggregate` and write the reshape as `<param> = <expr>`, which replaces the body's own document — the same `$replaceWith` a `.map` emits. `$` is the OUTER document at every depth, so JSMQL refuses `$ = …` inside a body and names the parameter. The block has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.size()`, and nested `$$$.<coll>` lookups:
+**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript, and JSMQL rejects a stage inside it. To run stages *and* reshape, use `.aggregate` and write the reshape as `<param> = <expr>`, which replaces the body's own document — the same `$replaceWith` a `.map` emits. An object method that also has a stream form, e.g. `o = o.pick([…])`, emits the stage of that form, as `$ = $.pick([…])` does (see [Replace root](#replace-root-via---expr)). `$` is the OUTER document at every depth, so JSMQL refuses `$ = …` inside a body and names the parameter. The block has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.size()`, and nested `$$$.<coll>` lookups:
 
 ```js
 $.orders = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
@@ -3451,6 +3451,9 @@ jsmql('$ = $.pick(["name", "email"]);')
 // → [{ $project: { name: 1, email: 1, _id: 0 } }]
 jsmql('$ = $.omit(["passwordHash"]);')
 // → [{ $project: { passwordHash: 0 } }]
+// The parameter of an `.aggregate` body is the body's own document, so it takes the same stage.
+jsmql('$.recent = $$$.orders.aggregate(o => { o = o.pick(["total", "status"]); });')
+// → [{ $lookup: { from: "orders", pipeline: [{ $project: { total: 1, status: 1, _id: 0 } }], as: "recent" } }]
 // A key list the document carries is read at query time — a stage cannot take it,
 // so the same `.pick` runs as a value under `$replaceWith`.
 jsmql("$ = $.pick($.visibleFields);")
