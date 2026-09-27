@@ -214,9 +214,11 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /**
    * The stream cell's stages give every document back as it arrived — fewer of
    * them, none changed. `.uniq()` groups on a key and `$replaceWith`s the document
-   * it kept, so the `$group` in it replaces nothing a later link can see: the
-   * unwound element of a `.flatMap` before it is still there. Without this fact a
-   * `$replaceWith` in the cell's stages reads as "the document changed".
+   * it kept. So the `$group` in it replaces nothing that a later link or statement
+   * can see. The unwound element of a `.flatMap` before it is still there, and so
+   * is each `let` field. Without this fact a `$replaceWith` in the cell's stages
+   * reads as "the document changed". Every row whose stream cell keeps the first
+   * document per key states it.
    */
   restoresDocuments?: true;
   /**
@@ -7491,6 +7493,7 @@ export const NAMES = {
   }),
 
   intersectionBy: name({
+    restoresDocuments: true,
     doc: "'.intersectionBy()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -9250,6 +9253,7 @@ export const NAMES = {
   }),
 
   intersection: name({
+    restoresDocuments: true,
     doc: "'.intersection()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],

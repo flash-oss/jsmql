@@ -87,8 +87,8 @@ A stream sort method emits a `$sort` stage, so `streamSortAsk` in `src/compiler/
 | `.keyBy(<key>)` | One field key, or none (the identity key, as `.countBy`) | Collapses the stream to the lodash object `{ <keyValue>: <last doc> }` (mirroring value-mode `$.arr.keyBy(...)`) — `$group` with `$last: "$$ROOT"` (last wins) → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). "Last" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters. Clears the let scope |
 | `.uniqBy(<key>)` | One field key | `$group` keeping `$first` per key into the reserved `__jsmqlTmp` group slot, then `$replaceWith` to restore it. "First" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters | `{ $group: { _id: "$<field>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Keeps the let scope: the row states `restoresDocuments` |
 | `.difference(list)` / `.without(...values)` | One list (or the values) — the row states `elementOnly: { when: "always" }`: a stream link only while the chain's element is an unwound field | The predicate `x => ![...(list ?? [])].includes(x)` built as SOURCE (`listOf` pins the argument as an array that is there; a missing list is empty, as lodash reads it) and handed to `predicate`, so the filter road picks the query form or `$expr` exactly as the `.filter` spelling would | One `$match` — `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` otherwise |
-| `.intersection(list)` | One list — `elementOnly` | The predicate `x => [...(list ?? [])].has(x)` through `predicate`, then `keepFirstPer(element().ref)` — lodash keeps each value once | `$match` + `{ $group: { _id: "$<el>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }` |
-| `.differenceBy(list, iteratee)` / `.intersectionBy(list, iteratee)` | A list and an iteratee (the stream slot takes a property path, a matcher object, a pair — no bare callable) — `elementOnly` | `reshape(iteratee)` is the element's key (the parameter bound as the element); `value([...(list ?? [])].map(iteratee))` the list's keys | `{ $match: { $expr: { $not: { $in: [<key>, <keys>] } } } }`; intersection: `$in` then `keepFirstPer(<key>)` |
+| `.intersection(list)` | One list — `elementOnly` | The predicate `x => [...(list ?? [])].has(x)` through `predicate`, then `keepFirstPer(element().ref)` — lodash keeps each value once | `$match` + `{ $group: { _id: "$<el>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Keeps the let scope and the element: the row states `restoresDocuments` |
+| `.differenceBy(list, iteratee)` / `.intersectionBy(list, iteratee)` | A list and an iteratee (the stream slot takes a property path, a matcher object, a pair — no bare callable) — `elementOnly` | `reshape(iteratee)` is the element's key (the parameter bound as the element); `value([...(list ?? [])].map(iteratee))` the list's keys | `{ $match: { $expr: { $not: { $in: [<key>, <keys>] } } } }`; intersection: `$in` then `keepFirstPer(<key>)`, and the row states `restoresDocuments` |
 | `.compact()` | Zero args — `elementOnly` | JavaScript's falsy values as a `$nin` list (no NaN — JSMQL has none); MEASURED, `null` in `$nin` drops a missing field too | `{ $match: { <el>: { $nin: [null, 0, false, ""] } } }` |
 | `.flat()` | Zero args — `elementOnly` | The element is itself an array: one more unwind, in place; the element's path does not change | `{ $unwind: "$<el>" }` |
 | `.sortBy()` / `.sort()` / `.toSorted()` with no argument | Zero args — `elementOnly: { when: "bare" }`: the keyed call is a stream link on any stream, the bare call only after `.flatMap` | The natural order of the values | `{ $sort: { <el>: 1 } }` |
@@ -171,11 +171,12 @@ compiler keeps them apart:
 - **A stage that replaces the document** (a `document` effect on the stage's row that replaces the document — see docs/specs/types.md —
   `$replaceWith`, `$group`, an inclusion `$project`, …) makes the document the
   element again, whether it comes from a link (`streamLink`) or a statement
-  (`afterStages`). A link whose row states `restoresDocuments` (`.uniq`, `.uniqBy`,
-  and their `sorted` twins — a `$group` that keeps `$first: "$$ROOT"` and
-  restores it with `$replaceWith`) changes nothing, for the next link and for
-  the next statement alike (docs/specs/types.md § The document after a stage). The raw stage `$$.$unwind("$items")`
-  is MQL (HR2), and it moves the element nowhere.
+  (`afterStages`). A link whose row states `restoresDocuments` changes nothing,
+  for the next link and for the next statement alike (docs/specs/types.md § The
+  document after a stage). Every row whose stream cell keeps the first document
+  per key (`.uniq()`, for example) states it, and a test in
+  `test/stream-methods.test.ts` holds both directions. The raw stage
+  `$$.$unwind("$items")` is MQL (HR2), and it moves the element nowhere.
 
 The element persists across statements on one chain (`$$.flatMap("items");
 $$.filter(i => …);` reads `items.qty`). Each sub-pipeline has its own chain,

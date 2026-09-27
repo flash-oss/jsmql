@@ -6478,6 +6478,7 @@ var NAMES = {
     )
   }),
   intersectionBy: name({
+    restoresDocuments: true,
     doc: "'.intersectionBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -8173,6 +8174,7 @@ var NAMES = {
     window: unsupported("'.floor()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   intersection: name({
+    restoresDocuments: true,
     doc: "'.intersection()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],

@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — fix: `.intersection()` and `.intersectionBy()` state that they give the documents back
+
+On a stream, `.intersection(list)` keeps the first document per value, and
+`.intersectionBy(list, key)` keeps the first document per key. Each is a
+`$match`, then the `$group` and `$replaceWith` pair that `.uniq()` uses. That
+pair gives each kept document back as it was. The `.uniq()` rows state this as
+`restoresDocuments`, and these two rows did not state it. So the compiler read the pair
+as "the document changed", and the link after it lost the element, each `let`
+and the cleanup. MEASURED on mongod:
+
+```
+$$.flatMap("ids").intersection([1, 2]).map(x => ({ v: x * 2 }));
+→ { $replaceWith: { v: { $multiply: ["$$ROOT", 2] } } }
+→ mongod refused it: "$multiply only supports numeric types, not object"
+let t = $.a; $$.flatMap("ids").intersection([1, 2]);
+→ [{ _id: 1, a: 1, ids: 2, __jsmql: { var: { t: 1 } } }, …]
+```
+
+Both rows now state the fact. A new test in
+[stream-methods.test.ts](../test/stream-methods.test.ts) compiles each stream
+link and holds both directions. A link whose stages keep the first document per
+key states `restoresDocuments`, and each row that states the fact emits those
+stages. Before the fix, the test named these two rows. Tests:
+[stream-methods.test.ts](../test/stream-methods.test.ts) and
+[compiler-types.test.ts](../test/compiler-types.test.ts), live on mongod.
+
+---
+
 ## 2026-09-27 — fix: each group of stages changes the Env once, in the order of the stages
 
 A `let` lives in a `__jsmql.var.<name>` field, and the pipeline ends with

@@ -540,6 +540,64 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
   });
 });
 
+describe.skipIf(up === null)(
+  "types — the server agrees: a link that gives the documents back keeps the element",
+  () => {
+    let client: MongoClient;
+    let coll: Collection;
+    beforeAll(async () => {
+      client = (await liveClient())!;
+      coll = client.db("jsmql_compiler_types").collection("restores");
+      await coll.deleteMany({});
+      await coll.insertMany([
+        {
+          _id: 1,
+          a: 2,
+          ids: [3, 1, 2, 2],
+          items: [
+            { sku: "a", qty: 5 },
+            { sku: "b", qty: 1 },
+          ],
+        },
+        { _id: 2, a: 1, ids: [1], items: [{ sku: "c", qty: 2 }] },
+      ]);
+    });
+    afterAll(async () => {
+      await client?.close();
+    });
+
+    it("the link after `.intersection()` reads the unwound value, as lodash does", async () => {
+      const answer = async (source: string, by: string): Promise<unknown[]> =>
+        await coll.aggregate([...(jsmql(source) as object[]), { $sort: { [by]: 1 } }]).toArray();
+      // lodash: `_.intersection([3, 1, 2, 2, 1], [1, 2])` is `[1, 2]`.
+      expect(await answer('$$.flatMap("ids").intersection([1, 2]).map(x => ({ v: x * 10 }));', "v")).toEqual([
+        { v: 10 },
+        { v: 20 },
+      ]);
+      expect(
+        await answer('$$.flatMap("items").intersectionBy([{ sku: "a" }], "sku").map(i => ({ q: i.qty }));', "q"),
+      ).toEqual([{ q: 5 }]);
+    });
+
+    it("a `let` read after `.intersection()` answers as JavaScript would, and no scratch field reaches the answer", async () => {
+      const out = await coll
+        .aggregate(jsmql('let t = $.a; $$.flatMap("ids").intersection([2]).filter(x => x === t);') as object[])
+        .toArray();
+      expect(out).toEqual([
+        {
+          _id: 1,
+          a: 2,
+          ids: 2,
+          items: [
+            { sku: "a", qty: 5 },
+            { sku: "b", qty: 1 },
+          ],
+        },
+      ]);
+    });
+  },
+);
+
 describe("types — a call's result follows its row's `returns` term", () => {
   it("`.map(f)` proves an array of what the callback returns", () => {
     expect(jsmql("$.names = $.tags.map(t => t.trim()); $.n = $.names[0].length();")[1]).toEqual({

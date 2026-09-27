@@ -7,6 +7,9 @@
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { everyName, listedIn } from "../src/compiler/emit/consult.ts";
+import { restoresDocumentsOf } from "../src/compiler/rows.ts";
+import { GROUP_SLOT } from "../src/registry/vocabulary.ts";
 
 describe(".slice(start, end?) — on $$ (top-level stream)", () => {
   it("two-arg slice lowers to $skip + $limit", () => {
@@ -1404,6 +1407,34 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
     ]);
   });
 
+  it(".intersection / .intersectionBy give each kept document back, so the element and a `let` stay", () => {
+    // The next link reads the unwound value, not the whole document.
+    expect(jsmql('$$.flatMap("ids").intersection([1, 2]).map(x => ({ v: x * 2 }));')).toEqual([
+      { $unwind: "$ids" },
+      { $match: { ids: { $in: [1, 2] } } },
+      { $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+      { $replaceWith: { v: { $multiply: ["$ids", 2] } } },
+    ]);
+    expect(jsmql('$$.flatMap("items").intersectionBy([{ sku: "a" }], "sku").map(i => ({ q: i.qty }));')).toEqual([
+      { $unwind: "$items" },
+      { $match: { $expr: { $in: ["$items.sku", ["a"]] } } },
+      { $group: { _id: "$items.sku", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+      { $replaceWith: { q: "$items.qty" } },
+    ]);
+    // A `let` field is still on the documents, and the cleanup drops it at the end.
+    expect(jsmql('let t = $.a; $$.flatMap("ids").intersection([2]).filter(x => x === t);')).toEqual([
+      { $set: { "__jsmql.var.t": "$a" } },
+      { $unwind: "$ids" },
+      { $match: { ids: { $in: [2] } } },
+      { $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+      { $match: { $expr: { $eq: ["$ids", "$__jsmql.var.t"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
   it(".compact() drops the falsy values; .flat() unwinds an element that is itself an array", () => {
     expect(jsmql('$$.flatMap("ids").compact();')).toEqual([
       { $unwind: "$ids" },
@@ -1476,6 +1507,42 @@ describe("the lodash set methods, .compact, .flat and the bare sorts work on an 
       { $set: { ids: { $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } } } },
       { $unset: "__jsmql" },
     ]);
+  });
+});
+
+describe("a link whose stages keep the first document per key states `restoresDocuments`", () => {
+  // The `$group` and the `$replaceWith` after it give the documents back as they were.
+  // Without the fact the compiler reads the pair as "the document changed", and it drops
+  // each `let`, the element and the cleanup. See docs/specs/types.md § The document after a stage.
+  type Stage = Record<string, unknown>;
+  const keepsFirst = (stages: readonly Stage[]): boolean =>
+    stages.some((st, i) => {
+      const group = st.$group as Record<string, unknown> | undefined;
+      const next = stages[i + 1]?.$replaceWith;
+      return (
+        group !== undefined &&
+        JSON.stringify(group[GROUP_SLOT]) === JSON.stringify({ $first: "$$ROOT" }) &&
+        next === `$${GROUP_SLOT}`
+      );
+    });
+
+  it("every such link states it, and every link that states it is such a link", () => {
+    const found = new Set<string>();
+    for (const name of everyName()) {
+      if (name.startsWith("$") || !listedIn(name, "stream")) continue;
+      for (const head of ["$$", '$$.flatMap("ids")']) {
+        for (const args of ["", '"k"', "[1]", '[{ k: 1 }], "k"']) {
+          let out: unknown;
+          try {
+            out = jsmql(`${head}.${name}(${args});`);
+          } catch {
+            continue;
+          }
+          if (Array.isArray(out) && keepsFirst(out as Stage[])) found.add(name);
+        }
+      }
+    }
+    expect([...found].sort()).toEqual(everyName().filter(restoresDocumentsOf).sort());
   });
 });
 
