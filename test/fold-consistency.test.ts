@@ -17,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
 import { announceSkip, liveClient } from "./fixtures/live.ts";
+import { answersSet, inAnyOrder } from "./support/set-answer.ts";
 
 const client = await liveClient();
 if (!client) {
@@ -364,25 +365,23 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     "[1,2,3,4,5].zipObject([10, 20, 30, 40])": "unequal lengths — the missing pair has no value",
   };
   const SERVER_ERROR = Symbol("server-error");
-  async function serverValue(call: string, val: unknown): Promise<unknown> {
+  /**
+   * The MQL of `$.s<call>`, and the value that the server gives for it.
+   * The receiver comes from the document, so nothing folds.
+   */
+  async function serverValue(call: string, val: unknown): Promise<{ mql: unknown; value: unknown }> {
     try {
-      const addExpr = jsmql.expr(`$.s${call}`);
-      const [row] = await db.aggregate([{ $documents: [{ s: val }] }, { $addFields: { v: addExpr } }]).toArray();
-      return "v" in (row as object) ? (row as { v: unknown }).v : SERVER_ERROR; // missing → skip
+      const mql = jsmql.expr(`$.s${call}`);
+      const [row] = await db.aggregate([{ $documents: [{ s: val }] }, { $addFields: { v: mql } }]).toArray();
+      return { mql, value: "v" in (row as object) ? (row as { v: unknown }).v : SERVER_ERROR }; // missing → skip
     } catch {
-      return SERVER_ERROR;
+      return { mql: null, value: SERVER_ERROR };
     }
   }
 
   // A case that early-returns asserts NOTHING and still reads as green. Counting the
   // ones that actually compared is what stops the suite hollowing out as cases are
   // added — see the floor below.
-  // Methods whose MQL lowering is a set operator. MongoDB leaves their result order
-  // unspecified (verified: `$setUnion` sorted a string array, `$setDifference` did not),
-  // so the fold is compared on membership rather than sequence. See SR2 in LANG_RULES.
-  const UNORDERED_RESULT = /\.(uniq|union|intersection|xor)\(/;
-  const asBag = (v: unknown): unknown => (Array.isArray(v) ? [...v].map((x) => JSON.stringify(x)).sort() : v);
-
   let compared = 0;
   const refused: string[] = [];
   const ALL_CASES = [...stringCases, ...numberCases, ...arrayCases, ...objCases, ...dateCases];
@@ -391,19 +390,17 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     it(`${lit}${call}`, async () => {
       const folded = foldedValue(lit, call);
       if (folded === NOT_FOLDED) return; // withheld fold → runtime; nothing to compare
-      const server = await serverValue(call, val);
+      const { mql, value: server } = await serverValue(call, val);
       if (server === SERVER_ERROR) {
         // named above, or the suite says so — an unlisted refusal is MQL that cannot run
         refused.push(lit + call);
         return;
       }
       compared += 1;
-      if (UNORDERED_RESULT.test(call)) {
-        // MongoDB does not define the order `$setUnion` / `$setIntersection` /
-        // `$setDifference` return, so ANY order is a valid server result and comparing
-        // sequences would fail on a difference that carries no meaning. The fold must
-        // still agree on WHICH values survive — that part is the contract.
-        expect(asBag(folded)).toEqual(asBag(server));
+      if (answersSet(mql)) {
+        // Each order of a set answer is valid. The fold must give the same values,
+        // and each value as many times as the server gives it.
+        expect(inAnyOrder(folded)).toEqual(inAnyOrder(server));
         return;
       }
       expect(folded).toEqual(server);

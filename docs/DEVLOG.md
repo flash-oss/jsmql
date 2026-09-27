@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — test: both fold suites use one rule for an order-free comparison
+
+Two suites compare a constant fold with the server:
+[test/compiler-fold-agrees.test.ts](../test/compiler-fold-agrees.test.ts) and
+[test/fold-consistency.test.ts](../test/fold-consistency.test.ts). A set operator
+gives no element order, so each suite compares a set answer by its values.
+compiler-fold-agrees read the operator at the top of the MQL that the server runs.
+fold-consistency matched the call against a list of method names instead,
+`/\.(uniq|union|intersection|xor)\(/`. The list did not have `.difference()` or
+`.symmetricDifference()`. It also matched a chain such as `.uniq().map(x => x)`,
+where `$map` gives the answer.
+
+Now both suites use [test/support/set-answer.ts](../test/support/set-answer.ts).
+`answersSet(mql)` reads the operator at the top of the MQL, and it examines the
+`in` of a `$let`. `.symmetricDifference()` needs this step, because it puts
+`$setDifference` in a `$let`. `inAnyOrder` keeps each duplicate, so a fold that
+gives a value twice still fails. The change also removes the `Set` test in
+`unfolded()`, because that test is never true. The compiler refuses `new Set(…)`,
+and the suite gives `evaluate` no value from a caller.
+
+Each suite ran before and after the change, with a log of each case that reached
+the comparison. In both runs, the same 15 cases got the order-free comparison: 5
+in compiler-fold-agrees and 10 in fold-consistency. Each of the 15 is a `.uniq()`
+or an `.xor()` call with `$setUnion` at the top. Two changes by hand showed that
+the suites still fail when they must. The old `.xor()` fold, which keeps a
+duplicate, fails on `[3, 1, 3].xor([1])`. An `answersSet` that always gives false
+fails 3 cases, for example `[3,1,2].uniq()` against `[1, 2, 3]` from the server.
+
+---
+
 ## 2026-09-27 — chore: vitest runs only the TypeScript suites under test/
 
 [vitest.config.ts](../vitest.config.ts) sets `include: ["test/**/*.test.ts"]`.
