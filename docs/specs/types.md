@@ -133,7 +133,7 @@ the same way.
 const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.has("x");
 // → [{ $lookup: { from: "orders", pipeline: [{ $match: { status: "a" } }], as: "__jsmql.tmp.0" } }, { $set: { "__jsmql.var.ids": { $setUnion: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.pid" } } } } }, { $set: { hit: { $in: ["x", "$__jsmql.var.ids"] } } }, { $unset: "__jsmql" }]
 $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].name;
-// → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: { $getField: { field: "name", input: { $arrayElemAt: ["$p", 0] } } } } }]
+// → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: { $let: { vars: { jsmqlV: { $arrayElemAt: ["$p", 0] } }, in: "$$jsmqlV.name" } } } }]
 $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price;
 // ✗ '.price' reads a field that '$.p[0]' does not have. It holds '_id', 'name'.
 ```
@@ -489,7 +489,10 @@ whose value was present takes no test: `$.s = "abc"; $.t = $.s.toUpperCase();`
 emits `{ $toUpper: "$s" }` alone. A computed key reads as `""` exactly where the proof
 says `absent`, because `$getField` aborts the query on a null name (`indexAccess` in
 [lower.ts](../../src/compiler/emit/lower.ts)). MEASURED: `{ $getField: { field: null,
-input: {} } }` fails with "$getField requires 'field' to evaluate to type String".
+input: {} } }` fails with "$getField requires 'field' to evaluate to type String". An
+index read takes the empty value of its receiver on the same terms: `{ $ifNull: [o, {}] }`
+where the proof says `o` is `absent`, so a null `o` answers missing, as the path `"$o.p"`
+does. MEASURED: `$getField` answers null for a null input, and missing for `{}`.
 
 ## What proves this spec
 

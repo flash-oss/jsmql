@@ -772,7 +772,12 @@ describe("object spread", () => {
                       $add: [
                         {
                           $ifNull: [
-                            { $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: "$$value" } },
+                            {
+                              $getField: {
+                                field: { $toString: { $ifNull: ["$$this", ""] } },
+                                input: { $ifNull: ["$$value", {}] },
+                              },
+                            },
                             0,
                           ],
                         },
@@ -1753,7 +1758,7 @@ describe("bracket access", () => {
           { case: { $isArray: "$items" }, then: { $arrayElemAt: ["$items", 0] } },
           { case: { $eq: [{ $type: "$items" }, "string"] }, then: { $substrCP: ["$items", 0, 1] } },
         ],
-        default: { $getField: { field: "0", input: "$items" } },
+        default: { $getField: { field: "0", input: { $ifNull: ["$items", {}] } } },
       },
     });
   });
@@ -1770,8 +1775,22 @@ describe("bracket access", () => {
   it("a known-string receiver reads one character — $substrCP, not a field lookup", () => {
     const p = jsmql.pipeline("const s = $.name.trim(); $set({ a: s[0], b: s[2] });");
     expect((p[1] as { $set: Record<string, unknown> }).$set).toEqual({
-      a: { $substrCP: ["$__jsmql.var.s", 0, 1] },
-      b: { $substrCP: ["$__jsmql.var.s", 2, 1] },
+      a: {
+        $switch: {
+          branches: [
+            { case: { $eq: [{ $type: "$__jsmql.var.s" }, "string"] }, then: { $substrCP: ["$__jsmql.var.s", 0, 1] } },
+          ],
+          default: "$$REMOVE",
+        },
+      },
+      b: {
+        $switch: {
+          branches: [
+            { case: { $eq: [{ $type: "$__jsmql.var.s" }, "string"] }, then: { $substrCP: ["$__jsmql.var.s", 2, 1] } },
+          ],
+          default: "$$REMOVE",
+        },
+      },
     });
   });
   it("coerces an unprovable computed key — $getField.field must be a String", () => {
@@ -1782,12 +1801,14 @@ describe("bracket access", () => {
     // own coercion: a property key always coerces, so `obj[0]` is `obj["0"]`.
     expect(jsmql.expr("$.doc[$.k]")).toEqual({
       $switch: {
-        branches: [{ case: { $isArray: "$doc" }, then: { $arrayElemAt: ["$doc", "$k"] } }],
-        default: { $getField: { field: { $toString: { $ifNull: ["$k", ""] } }, input: "$doc" } },
+        branches: [
+          { case: { $and: [{ $isArray: "$doc" }, { $isNumber: "$k" }] }, then: { $arrayElemAt: ["$doc", "$k"] } },
+        ],
+        default: { $getField: { field: { $toString: { $ifNull: ["$k", ""] } }, input: { $ifNull: ["$doc", {}] } } },
       },
     });
     // A PROVABLE string key needs no coercion and keeps the lean shape.
-    expect(jsmql.expr('$.doc["host"]')).toEqual({ $getField: { field: "host", input: "$doc" } });
+    expect(jsmql.expr('$.doc["host"]')).toEqual({ $getField: { field: "host", input: { $ifNull: ["$doc", {}] } } });
     // A string method answers null for a missing string, and `$getField` refuses a null
     // name ("$getField requires 'field' to evaluate to type String, but got null"). So the
     // key takes the `""` guard.
@@ -1799,11 +1820,11 @@ describe("bracket access", () => {
             "",
           ],
         },
-        input: "$doc",
+        input: { $ifNull: ["$doc", {}] },
       },
     });
     expect(jsmql.pipeline('const k = "host"; $set({ v: $.doc[k] });')).toEqual([
-      { $set: { v: { $getField: { field: "host", input: "$doc" } } } },
+      { $set: { v: { $getField: { field: "host", input: { $ifNull: ["$doc", {}] } } } } },
     ]);
   });
   it("a numeric object KEY builds the stringified field name, as JavaScript does", () => {
@@ -1831,23 +1852,33 @@ describe("bracket access", () => {
       $switch: {
         branches: [
           {
-            case: { $isArray: { $getField: { field: "a", input: "$doc" } } },
-            then: { $arrayElemAt: [{ $getField: { field: "a", input: "$doc" } }, 0] },
+            case: { $isArray: { $getField: { field: "a", input: { $ifNull: ["$doc", {}] } } } },
+            then: { $arrayElemAt: [{ $getField: { field: "a", input: { $ifNull: ["$doc", {}] } } }, 0] },
           },
           {
-            case: { $eq: [{ $type: { $getField: { field: "a", input: "$doc" } } }, "string"] },
-            then: { $substrCP: [{ $getField: { field: "a", input: "$doc" } }, 0, 1] },
+            case: { $eq: [{ $type: { $getField: { field: "a", input: { $ifNull: ["$doc", {}] } } } }, "string"] },
+            then: { $substrCP: [{ $getField: { field: "a", input: { $ifNull: ["$doc", {}] } } }, 0, 1] },
           },
         ],
-        default: { $getField: { field: "0", input: { $getField: { field: "a", input: "$doc" } } } },
+        default: {
+          $getField: {
+            field: "0",
+            input: { $ifNull: [{ $getField: { field: "a", input: { $ifNull: ["$doc", {}] } } }, {}] },
+          },
+        },
       },
     });
   });
   it("field index on bare field → runtime $switch", () => {
     expect(jsmql.expr("$.items[$.idx]")).toEqual({
       $switch: {
-        branches: [{ case: { $isArray: "$items" }, then: { $arrayElemAt: ["$items", "$idx"] } }],
-        default: { $getField: { field: { $toString: { $ifNull: ["$idx", ""] } }, input: "$items" } },
+        branches: [
+          {
+            case: { $and: [{ $isArray: "$items" }, { $isNumber: "$idx" }] },
+            then: { $arrayElemAt: ["$items", "$idx"] },
+          },
+        ],
+        default: { $getField: { field: { $toString: { $ifNull: ["$idx", ""] } }, input: { $ifNull: ["$items", {}] } } },
       },
     });
   });
@@ -1855,7 +1886,9 @@ describe("bracket access", () => {
     // A provably-string key means object property access — emit $getField and
     // skip the $isArray/$arrayElemAt guard, which would otherwise make MongoDB
     // reject the string index whenever the receiver is an array at runtime.
-    expect(jsmql.expr('$.config["host"]')).toEqual({ $getField: { field: "host", input: "$config" } });
+    expect(jsmql.expr('$.config["host"]')).toEqual({
+      $getField: { field: "host", input: { $ifNull: ["$config", {}] } },
+    });
   });
   it("string-producing key expression on bare field → $getField directly", () => {
     // `.toLowerCase()` is statically a string, so the key cannot be an array
@@ -1869,7 +1902,7 @@ describe("bracket access", () => {
             "",
           ],
         },
-        input: "$map",
+        input: { $ifNull: ["$map", {}] },
       },
     });
   });
@@ -1879,7 +1912,7 @@ describe("bracket access", () => {
     // to a direct `$getField` property getter — never the `$isArray` guard whose
     // dead `$arrayElemAt[array, "host"]` branch some engines reject.
     expect(jsmql.pipeline('const k = "host";\n$ = { v: $.config[k] };')).toEqual([
-      { $replaceWith: { v: { $getField: { field: "host", input: "$config" } } } },
+      { $replaceWith: { v: { $getField: { field: "host", input: { $ifNull: ["$config", {}] } } } } },
     ]);
   });
   it("string-literal key on the bare root $ → plain field reference (root is never an array)", () => {
@@ -1933,19 +1966,38 @@ describe("bracket access", () => {
         branches: [
           {
             case: {
-              $isArray: {
-                $switch: {
-                  branches: [{ case: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$r"] } }],
-                  default: { $getField: { field: { $toString: { $ifNull: ["$r", ""] } }, input: "$m" } },
+              $and: [
+                {
+                  $isArray: {
+                    $switch: {
+                      branches: [
+                        {
+                          case: { $and: [{ $isArray: "$m" }, { $isNumber: "$r" }] },
+                          then: { $arrayElemAt: ["$m", "$r"] },
+                        },
+                      ],
+                      default: {
+                        $getField: { field: { $toString: { $ifNull: ["$r", ""] } }, input: { $ifNull: ["$m", {}] } },
+                      },
+                    },
+                  },
                 },
-              },
+                { $isNumber: "$c" },
+              ],
             },
             then: {
               $arrayElemAt: [
                 {
                   $switch: {
-                    branches: [{ case: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$r"] } }],
-                    default: { $getField: { field: { $toString: { $ifNull: ["$r", ""] } }, input: "$m" } },
+                    branches: [
+                      {
+                        case: { $and: [{ $isArray: "$m" }, { $isNumber: "$r" }] },
+                        then: { $arrayElemAt: ["$m", "$r"] },
+                      },
+                    ],
+                    default: {
+                      $getField: { field: { $toString: { $ifNull: ["$r", ""] } }, input: { $ifNull: ["$m", {}] } },
+                    },
                   },
                 },
                 "$c",
@@ -1957,10 +2009,22 @@ describe("bracket access", () => {
           $getField: {
             field: { $toString: { $ifNull: ["$c", ""] } },
             input: {
-              $switch: {
-                branches: [{ case: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$r"] } }],
-                default: { $getField: { field: { $toString: { $ifNull: ["$r", ""] } }, input: "$m" } },
-              },
+              $ifNull: [
+                {
+                  $switch: {
+                    branches: [
+                      {
+                        case: { $and: [{ $isArray: "$m" }, { $isNumber: "$r" }] },
+                        then: { $arrayElemAt: ["$m", "$r"] },
+                      },
+                    ],
+                    default: {
+                      $getField: { field: { $toString: { $ifNull: ["$r", ""] } }, input: { $ifNull: ["$m", {}] } },
+                    },
+                  },
+                },
+                {},
+              ],
             },
           },
         },
@@ -1968,7 +2032,9 @@ describe("bracket access", () => {
     });
   });
   it("bracket access on known-array operator result stays compact", () => {
-    expect(jsmql.expr("$reverseArray($.items)[0]")).toEqual({ $arrayElemAt: [{ $reverseArray: "$items" }, 0] });
+    expect(jsmql.expr("$reverseArray($.items)[0]")).toEqual({
+      $arrayElemAt: [{ $ifNull: [{ $reverseArray: "$items" }, []] }, 0],
+    });
   });
   it("bracket access on .map() result stays compact", () => {
     expect(jsmql.expr("$.items.map(x => x.id)[0]")).toEqual({
@@ -1989,7 +2055,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
       $map: {
         input: ["sender", "recipient"],
         as: "party",
-        in: { $getField: { field: "$$party", input: "$cre.result" } },
+        in: { $getField: { field: "$$party", input: { $ifNull: ["$cre.result", {}] } } },
       },
     });
   });
@@ -2000,10 +2066,10 @@ describe("lambda element-type inference (array-method param typed from a provabl
         as: "k",
         cond: {
           $and: [
-            { $ne: [{ $ifNull: [{ $getField: { field: "$$k", input: "$m" } }, null] }, null] },
-            { $ne: [{ $getField: { field: "$$k", input: "$m" } }, false] },
-            { $ne: [{ $getField: { field: "$$k", input: "$m" } }, ""] },
-            { $ne: [{ $getField: { field: "$$k", input: "$m" } }, 0] },
+            { $ne: [{ $ifNull: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, null] }, null] },
+            { $ne: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, false] },
+            { $ne: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, ""] },
+            { $ne: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, 0] },
           ],
         },
       },
@@ -2019,8 +2085,15 @@ describe("lambda element-type inference (array-method param typed from a provabl
             "$$value",
             {
               $switch: {
-                branches: [{ case: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$$this"] } }],
-                default: { $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: "$m" } },
+                branches: [
+                  {
+                    case: { $and: [{ $isArray: "$m" }, { $isNumber: "$$this" }] },
+                    then: { $arrayElemAt: ["$m", "$$this"] },
+                  },
+                ],
+                default: {
+                  $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: { $ifNull: ["$m", {}] } },
+                },
               },
             },
           ],
@@ -2033,7 +2106,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
       $map: {
         input: { $ifNull: [{ $split: ["$csv", ","] }, []] },
         as: "k",
-        in: { $getField: { field: "$$k", input: "$m" } },
+        in: { $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } },
       },
     });
   });
@@ -2055,7 +2128,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
         in: {
           $switch: {
             branches: [{ case: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$$i"] } }],
-            default: { $getField: { field: { $toString: "$$i" }, input: "$m" } },
+            default: { $getField: { field: { $toString: "$$i" }, input: { $ifNull: ["$m", {}] } } },
           },
         },
       },
@@ -2068,8 +2141,10 @@ describe("lambda element-type inference (array-method param typed from a provabl
         as: "t",
         in: {
           $switch: {
-            branches: [{ case: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$$t"] } }],
-            default: { $getField: { field: { $toString: { $ifNull: ["$$t", ""] } }, input: "$m" } },
+            branches: [
+              { case: { $and: [{ $isArray: "$m" }, { $isNumber: "$$t" }] }, then: { $arrayElemAt: ["$m", "$$t"] } },
+            ],
+            default: { $getField: { field: { $toString: { $ifNull: ["$$t", ""] } }, input: { $ifNull: ["$m", {}] } } },
           },
         },
       },
@@ -2090,7 +2165,9 @@ describe("lambda element-type inference (array-method param typed from a provabl
             in: {
               $switch: {
                 branches: [{ case: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$$i"] } }],
-                default: { $getField: { field: { $toString: { $ifNull: ["$$i", ""] } }, input: "$m" } },
+                default: {
+                  $getField: { field: { $toString: { $ifNull: ["$$i", ""] } }, input: { $ifNull: ["$m", {}] } },
+                },
               },
             },
           },
@@ -2202,17 +2279,19 @@ describe("field path regression (FieldRef stops at first segment)", () => {
   });
   it("$.items[0].name produces $getField on bracket-access result", () => {
     expect(jsmql.expr("$.items[0].name")).toEqual({
-      $getField: {
-        field: "name",
-        input: {
-          $switch: {
-            branches: [
-              { case: { $isArray: "$items" }, then: { $arrayElemAt: ["$items", 0] } },
-              { case: { $eq: [{ $type: "$items" }, "string"] }, then: { $substrCP: ["$items", 0, 1] } },
-            ],
-            default: { $getField: { field: "0", input: "$items" } },
+      $let: {
+        vars: {
+          jsmqlV: {
+            $switch: {
+              branches: [
+                { case: { $isArray: "$items" }, then: { $arrayElemAt: ["$items", 0] } },
+                { case: { $eq: [{ $type: "$items" }, "string"] }, then: { $substrCP: ["$items", 0, 1] } },
+              ],
+              default: { $getField: { field: "0", input: { $ifNull: ["$items", {}] } } },
+            },
           },
         },
+        in: "$$jsmqlV.name",
       },
     });
   });
@@ -2389,7 +2468,9 @@ describe("string methods", () => {
     // Bracket access never folds to $size/$strLenCP — it reads a property called
     // "length" like any other key. "length" is a string literal, so it cannot be
     // a numeric array index → $getField directly (no $isArray dispatch).
-    expect(jsmql.expr('$.items["length"]')).toEqual({ $getField: { field: "length", input: "$items" } });
+    expect(jsmql.expr('$.items["length"]')).toEqual({
+      $getField: { field: "length", input: { $ifNull: ["$items", {}] } },
+    });
     // On a known array the same read gives no value: an array has no fields, and
     // `$getField` on an array answers missing. So the compiler refuses it, and names `.size()`.
     expect(() => jsmql.expr('$.csv.split(",")["length"]')).toThrow(
@@ -2820,7 +2901,12 @@ describe("reduce accumulator type narrowing", () => {
                 [
                   {
                     k: "$$this",
-                    v: { $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: "$$value" } },
+                    v: {
+                      $getField: {
+                        field: { $toString: { $ifNull: ["$$this", ""] } },
+                        input: { $ifNull: ["$$value", {}] },
+                      },
+                    },
                   },
                 ],
               ],
@@ -2836,7 +2922,7 @@ describe("reduce accumulator type narrowing", () => {
       $reduce: {
         input: { $ifNull: ["$xs", []] },
         initialValue: [],
-        in: { $concatArrays: [{ $ifNull: ["$$value", []] }, [{ $arrayElemAt: ["$$value", 0] }]] },
+        in: { $concatArrays: [{ $ifNull: ["$$value", []] }, [{ $arrayElemAt: [{ $ifNull: ["$$value", []] }, 0] }]] },
       },
     });
   });
@@ -2851,7 +2937,7 @@ describe("reduce accumulator type narrowing", () => {
       $reduce: {
         input: { $ifNull: ["$xs", []] },
         initialValue: {},
-        in: { $getField: { field: "0", input: "$$value" } },
+        in: { $getField: { field: "0", input: { $ifNull: ["$$value", {}] } } },
       },
     });
   });
@@ -2871,7 +2957,7 @@ describe("reduce accumulator type narrowing", () => {
                     { case: { $isArray: "$$value" }, then: { $arrayElemAt: ["$$value", 0] } },
                     { case: { $eq: [{ $type: "$$value" }, "string"] }, then: { $substrCP: ["$$value", 0, 1] } },
                   ],
-                  default: { $getField: { field: "0", input: "$$value" } },
+                  default: { $getField: { field: "0", input: { $ifNull: ["$$value", {}] } } },
                 },
               },
             },
@@ -2898,7 +2984,7 @@ describe("reduce accumulator type narrowing", () => {
                     { case: { $isArray: "$$this" }, then: { $arrayElemAt: ["$$this", 0] } },
                     { case: { $eq: [{ $type: "$$this" }, "string"] }, then: { $substrCP: ["$$this", 0, 1] } },
                   ],
-                  default: { $getField: { field: "0", input: "$$this" } },
+                  default: { $getField: { field: "0", input: { $ifNull: ["$$this", {}] } } },
                 },
               },
             },
@@ -2929,7 +3015,12 @@ describe("reduce accumulator type narrowing", () => {
                     $reduce: {
                       input: { $ifNull: ["$$x.ys", []] },
                       initialValue: [],
-                      in: { $concatArrays: [{ $ifNull: ["$$value", []] }, [{ $arrayElemAt: ["$$value", 0] }]] },
+                      in: {
+                        $concatArrays: [
+                          { $ifNull: ["$$value", []] },
+                          [{ $arrayElemAt: [{ $ifNull: ["$$value", []] }, 0] }],
+                        ],
+                      },
                     },
                   },
                 },
@@ -2958,11 +3049,15 @@ describe("reduce accumulator type narrowing", () => {
                   {
                     k: "$$this",
                     v: {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$$value", null] }, null] },
-                        then: null,
-                        else: { $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: "$$value" } },
-                      },
+                      $ifNull: [
+                        {
+                          $getField: {
+                            field: { $toString: { $ifNull: ["$$this", ""] } },
+                            input: { $ifNull: ["$$value", {}] },
+                          },
+                        },
+                        null,
+                      ],
                     },
                   },
                 ],
@@ -6562,9 +6657,34 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         },
       },
     });
-    expect(jsmql.expr('$.o.pick(["a"]).a')).toEqual({ $getField: { field: "a", input: picked } });
+    expect(jsmql.expr('$.o.pick(["a"]).a')).toEqual({
+      $let: {
+        vars: {
+          jsmqlV: {
+            $let: {
+              vars: { jsmqlObj: { $ifNull: ["$o", {}] } },
+              in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } },
+            },
+          },
+        },
+        in: "$$jsmqlV.a",
+      },
+    });
     expect(jsmql.expr('$.o.pick(["a"]).keys().size()')).toEqual({
-      $size: { $map: { input: { $objectToArray: picked }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+      $size: {
+        $map: {
+          input: {
+            $objectToArray: {
+              $let: {
+                vars: { jsmqlObj: { $ifNull: ["$o", {}] } },
+                in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } },
+              },
+            },
+          },
+          as: "jsmqlKv",
+          in: "$$jsmqlKv.k",
+        },
+      },
     });
   });
   it("an HR1 $-string receiver stays uncertain — it IS a field reference", () => {
@@ -9190,23 +9310,32 @@ describe("optional chaining (?.)", () => {
   // Bracket access — `obj?.[idx]` wraps with [] for the runtime $cond dispatch.
   it("optional bracket access on a bare field stops the chain", () => {
     expect(jsmql.expr("$.scoresByLevel?.[$.level]")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$scoresByLevel", null] }, null] },
-        then: null,
-        else: {
+      $ifNull: [
+        {
           $switch: {
-            branches: [{ case: { $isArray: "$scoresByLevel" }, then: { $arrayElemAt: ["$scoresByLevel", "$level"] } }],
-            default: { $getField: { field: { $toString: { $ifNull: ["$level", ""] } }, input: "$scoresByLevel" } },
+            branches: [
+              {
+                case: { $and: [{ $isArray: "$scoresByLevel" }, { $isNumber: "$level" }] },
+                then: { $arrayElemAt: ["$scoresByLevel", "$level"] },
+              },
+            ],
+            default: {
+              $getField: {
+                field: { $toString: { $ifNull: ["$level", ""] } },
+                input: { $ifNull: ["$scoresByLevel", {}] },
+              },
+            },
           },
         },
-      },
+        null,
+      ],
     });
   });
   it("optional bracket access on a known array stops the chain", () => {
     // `.toReversed()` is known array-producing, so the bracket access uses
     // the compact $arrayElemAt form. The `?.` adds the wrap on the receiver.
     expect(jsmql.expr("$.items.toReversed()?.[0]")).toEqual({
-      $arrayElemAt: [{ $ifNull: [{ $reverseArray: { $ifNull: ["$items", []] } }, []] }, 0],
+      $ifNull: [{ $arrayElemAt: [{ $reverseArray: { $ifNull: ["$items", []] } }, 0] }, null],
     });
   });
 
@@ -9233,7 +9362,7 @@ describe("optional chaining (?.)", () => {
   // outer `.map()` chain — so the outer .map receiver does NOT get wrapped.
   it("?. inside a lambda body does NOT wrap the outer chain", () => {
     expect(jsmql.expr("$.items.map(x => x?.tags)")).toEqual({
-      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: "$$x.tags" },
+      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $ifNull: ["$$x.tags", null] } },
     });
   });
 });

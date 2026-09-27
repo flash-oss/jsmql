@@ -525,7 +525,9 @@ describe("compile params resolve inside every higher-order callback", () => {
                 $map: {
                   input: { $ifNull: ["$items", []] },
                   as: "x",
-                  in: { $ifNull: [{ $toString: { $getField: { field: "t", input: "$$x" } } }, "null"] },
+                  in: {
+                    $ifNull: [{ $toString: { $getField: { field: "t", input: { $ifNull: ["$$x", {}] } } } }, "null"],
+                  },
                 },
               },
               [],
@@ -540,7 +542,9 @@ describe("compile params resolve inside every higher-order callback", () => {
                 as: "x",
                 cond: {
                   $eq: [
-                    { $ifNull: [{ $toString: { $getField: { field: "t", input: "$$x" } } }, "null"] },
+                    {
+                      $ifNull: [{ $toString: { $getField: { field: "t", input: { $ifNull: ["$$x", {}] } } } }, "null"],
+                    },
                     "$$jsmqlKey",
                   ],
                 },

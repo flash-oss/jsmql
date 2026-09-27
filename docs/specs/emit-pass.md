@@ -96,16 +96,31 @@ for a null input. `.find` (a missing element), `.max` (of an empty array) and
 
 **A `?.` with a CALL after it STOPS the chain.** `stoppedChain`
 (`emit/lower.ts`) walks the receiver spine of a `MemberAccess` /
-`IndexAccess` / `MethodCall` down to its base. When a call runs after the
-`?.`, it answers the value the `?.` guards. `lowerValue` then emits `{ $cond:
+`IndexAccess` / `MethodCall` down to its base. A field read and an index read are
+plain reads: each passes a missing value through as missing. When a call runs after the
+`?.`, the walk answers the value the `?.` guards. `lowerValue` then emits `{ $cond:
 [<that value is null or missing>, null, <the chain with every `?.` on its
 spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH and records
 the path the LAST `?.` tests (`FieldRef.optionalAt`), so the walk also checks the
 base `FieldRef`, and the guard tests `a` alone for `$.a?.b.uniq()`: `a.b` inside
 follows the dot rule. The fold runs bottom-up, so a member after a folded `?.` path
-keeps that path's `optionalAt`: `$.a?.b.c.uniq()` tests `a` too. A `?.` with no call after it answers
-null anyway, because a path through a missing field is missing. So the
-compiler emits no test there, and the consumer's neutral still describes it.
+keeps that path's `optionalAt`: `$.a?.b.c.uniq()` tests `a` too. A `?.` with no call after it
+stops nothing. The reads run as plain reads, and one `{ $ifNull: [<the reads>, null] }`
+stands on top. A `?.` read is JavaScript's `undefined` where the value is not there, and a
+written document holds it as `null`. The folded path takes the same wrap
+(`$.a?.b` is `{ $ifNull: ["$a.b", null] }`), so `$.o?.[k]` and `$.o[k]?.q` answer as
+`$.o?.p` does. `test/compiler-chains.test.ts` runs every chain of a small grammar of these
+reads on the server. It compares each answer with an oracle that states the rules.
+
+**A read after a value reads as a field path.** `memberAccess` binds a value that is
+not a path once, and reads the field reads above it off the variable:
+`$.o[$.k].q` is `{ $let: { vars: { jsmqlV: <the index read> }, in: "$$jsmqlV.q" } }`. A
+variable path answers as a field path does over null, a scalar, an object and an array.
+The proof (`propOf` in type.ts) reads a member the same way. An index read
+(`indexAccess`) reads the empty value of a receiver that the proof cannot show is there.
+So a null receiver answers missing, as a path does. `$arrayElemAt` runs only for a key that
+is a number: MEASURED, the server aborts the query for a string key ("$arrayElemAt's second
+argument must be a numeric value, but is string").
 
 The second branch runs only when the test passed, so the guarded path IS
 there inside it. `Env.proving(path)` records that fact, and `isPresent` reads

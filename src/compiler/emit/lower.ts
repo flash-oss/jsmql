@@ -150,6 +150,10 @@ export function lowerValue(node: Expr, env: Env): unknown {
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
+  // A `?.` read with no call after it is JavaScript's `undefined` where the value is not
+  // there, and a document written with it holds `null`. So `$.o?.[k]` and `$.o[k]?.q` answer
+  // as `$.o?.p` does: the reads run as plain reads, and one `$ifNull` stands on top.
+  if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
   switch (node.type) {
     case "NumberLiteral":
     case "StringLiteral":
@@ -296,9 +300,9 @@ function stoppedChain(node: Expr): Expr | null {
   let cursor: Expr = node;
   let called = false;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
-    // a plain field read passes a missing value through as missing. Anything COMPUTED
-    // (a call, an index, a property row such as `.length`) does not, and is stopped
-    if (cursor.type !== "MemberAccess" || isPropertyRow(cursor)) called = true;
+    // a plain read — a field `.p` or an index `[k]` — passes a missing value through as
+    // missing. A call, or a property row such as `Math.PI`, does not, and is stopped
+    if (!isRead(cursor)) called = true;
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
@@ -307,6 +311,31 @@ function stoppedChain(node: Expr): Expr | null {
   // guards: `user` for `$.user?.name`, so that `name` is read as any other path inside.
   if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
   return cursor.optionalAt === undefined ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
+}
+
+/** A plain read: a field `.p` or an index `[k]`, never a call or a property row such as `Math.PI`. */
+function isRead(e: Expr): e is Extract<Expr, { type: "MemberAccess" | "IndexAccess" }> {
+  return e.type === "IndexAccess" || (e.type === "MemberAccess" && !isPropertyRow(e));
+}
+
+/** Does a `?.` stand among the reads on top of this chain, or on the folded path under them? */
+function readsHaveOptional(e: Expr): boolean {
+  let cursor = e;
+  while (isRead(cursor)) {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
+}
+
+/** The same reads with each `?.` cleared, down to the first node that is not a read. */
+function withoutReadOptional(e: Expr): Expr {
+  if (isRead(e)) return { ...e, optional: false, object: withoutReadOptional(e.object) };
+  if (e.type === "FieldRef" && e.optional === true) {
+    const { optional: _dropped, optionalAt: _at, ...rest } = e;
+    return rest;
+  }
+  return e;
 }
 
 /** The same chain with every `?.` on its spine cleared — what runs once the test passed. */
@@ -589,21 +618,32 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
     throw E.unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
-  const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
-  if (why !== null) {
-    throw E.unreadableField(
-      node.name,
-      why,
-      `${node.optional ? "?." : "."}${node.name}`,
-      holderOf(node.object, env),
-      node.pos,
-    );
-  }
+  refuseUnreadable(node, env);
   const path = pathOf(node, env);
   if (path !== null) return path;
-  const raw = lowerValue(node.object, childEnv(env, node, "object"));
-  const input = node.optional || chainHasOptional(node.object) ? ifNull(raw, {}) : raw;
-  return { $getField: { field: node.name, input } };
+  // A field read after a value that is not a path binds the value once. The field reads
+  // above it are a path off the variable, so they read as a field path does: missing over
+  // null, a scalar or a missing value, and each element's field over an array.
+  // MEASURED: `{ $let: { vars: { v: "$x" }, in: "$$v.q" } }` answers as `"$x.q"` on each of them.
+  const names = [node.name];
+  let base = node.object;
+  let baseEnv = childEnv(env, node, "object");
+  while (base.type === "MemberAccess" && !isPropertyRow(base) && pathOf(base, env) === null) {
+    refuseUnreadable(base, env);
+    names.unshift(base.name);
+    baseEnv = childEnv(baseEnv, base, "object");
+    base = base.object;
+  }
+  const bound = env.fresh("v");
+  return letOne(bound.as, lowerValue(base, baseEnv), `${bound.ref}.${names.join(".")}`);
+}
+
+/** A field read that the proof shows gives no value is refused. See `unreadable` in type.ts. */
+function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): void {
+  const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
+  if (why === null) return;
+  const read = `${node.optional ? "?." : "."}${node.name}`;
+  throw E.unreadableField(node.name, why, read, holderOf(node.object, env), node.pos);
 }
 
 /**
@@ -638,38 +678,50 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
   }
   const raw = lowerValue(node.object, objEnv);
   const idx = lowerValue(node.index, childEnv(env, node, "index"));
-  const optional = node.optional || chainHasOptional(node.object);
   const known =
     node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf(node.object, objEnv));
-  const wrapped = (neutral: unknown) => (optional ? ifNull(raw, neutral) : raw);
+  // HR5: a read of a value that may be null or missing reads its EMPTY value, as a path
+  // does. So `o[k]` over a null `o` answers missing, as `o.p` does, and never null.
+  const absent = !isPresent(node.object, objEnv);
+  const orEmpty = (neutral: unknown) => (absent ? ifNull(raw, neutral) : raw);
   // `$getField` refuses a null name, so a key the proof cannot show is there reads as `""`
   const named = isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] };
-  if (kindOf(node.index, env) === "string") return { $getField: { field: named, input: wrapped({}) } };
+  const keyKind = kindOf(node.index, env);
+  // A name reads a field. `$getField` answers missing on anything but an object, as
+  // JavaScript's `arr["p"]` is `undefined`.
+  if (keyKind === "string") return { $getField: { field: named, input: orEmpty({}) } };
+  const isString = (o: unknown) => boolTruth({ $eq: [{ $type: o }, "string"] });
   const literal = evaluate(node.index, new Map());
   if (literal.ok && typeof literal.value === "number" && Number.isInteger(literal.value)) {
     const i = literal.value;
     if (i < 0) throw E.negativeIndex(i, node.pos);
-    const charAt = (o: unknown) => ({ $substrCP: [o, i, 1] });
-    const fieldAt = (o: unknown) => ({ $getField: { field: String(i), input: o } });
-    if (known === "array") return { $arrayElemAt: [wrapped([]), i] };
-    if (known === "string") return charAt(wrapped(""));
-    if (known === "object") return fieldAt(wrapped({}));
-    const o = wrapped([]);
+    const charAt = { $substrCP: [raw, i, 1] };
+    const fieldAt = { $getField: { field: String(i), input: orEmpty({}) } };
+    if (known === "array") return { $arrayElemAt: [orEmpty([]), i] };
+    if (known === "object") return fieldAt;
+    // `$substrCP` answers "" for null, so a string that may be missing is tested first.
+    if (known === "string") return absent ? switchOn([{ case: isString(raw), then: charAt }], "$$REMOVE") : charAt;
     return switchOn(
       [
-        { case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, i] } },
-        { case: boolTruth({ $eq: [{ $type: o }, "string"] }), then: charAt(o) },
+        { case: boolTruth({ $isArray: raw }), then: { $arrayElemAt: [raw, i] } },
+        { case: isString(raw), then: charAt },
       ],
-      fieldAt(o),
+      fieldAt,
     );
   }
-  const key = { $toString: named };
-  if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
-  if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
-  const o = wrapped([]);
-  return switchOn([{ case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, idx] } }], {
-    $getField: { field: key, input: o },
-  });
+  const fieldAt = { $getField: { field: { $toString: named }, input: orEmpty({}) } };
+  if (known === "object") return fieldAt;
+  // `$arrayElemAt` refuses a key that is not a number: MEASURED, "$arrayElemAt's second
+  // argument must be a numeric value, but is string". JavaScript's `arr["p"]` is `undefined`,
+  // so such a key reads no element.
+  const element = { $arrayElemAt: [orEmpty([]), idx] };
+  if (known === "array") {
+    return keyKind === "number"
+      ? element
+      : switchOn([{ case: boolTruth({ $isNumber: idx }), then: element }], "$$REMOVE");
+  }
+  const onArray = keyKind === "number" ? { $isArray: raw } : { $and: [{ $isArray: raw }, { $isNumber: idx }] };
+  return switchOn([{ case: boolTruth(onArray), then: { $arrayElemAt: [raw, idx] } }], fieldAt);
 }
 
 // ── calls ────────────────────────────────────────────────────────────────────

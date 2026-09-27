@@ -985,10 +985,10 @@ describe("types — a computed key that may be missing reads as the empty name",
   // `$getField` refuses a null name, so the guard stands wherever the proof cannot show the key.
   it("a string key guards what the proof cannot show, and takes no guard where it can", () => {
     expect(jsmql.expr("$.o[$.s.trim()]")).toEqual({
-      $getField: { field: { $ifNull: [{ $trim: { input: "$s" } }, ""] }, input: "$o" },
+      $getField: { field: { $ifNull: [{ $trim: { input: "$s" } }, ""] }, input: { $ifNull: ["$o", {}] } },
     });
     expect(jsmql('$.s = "a"; $.v = $.o[$.s];')[1]).toEqual({
-      $set: { v: { $getField: { field: "$s", input: "$o" } } },
+      $set: { v: { $getField: { field: "$s", input: { $ifNull: ["$o", {}] } } } },
     });
   });
 });
@@ -1040,7 +1040,7 @@ describe("types — a join carries the shape its body made", () => {
           as: "p",
         },
       },
-      { $set: { t: { $getField: { field: "name", input: { $arrayElemAt: ["$p", 0] } } } } },
+      { $set: { t: { $let: { vars: { jsmqlV: { $arrayElemAt: ["$p", 0] } }, in: "$$jsmqlV.name" } } } },
     ]);
     expect(() =>
       jsmql('$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]); $.t = $.p[0].price ? 1 : 2;'),
@@ -1115,8 +1115,33 @@ describe("types — a join carries the shape its body made", () => {
           $cond: {
             if: {
               $and: [
-                { $ne: [{ $ifNull: [{ $arrayElemAt: ["$s", "$i"] }, null] }, null] },
-                { $ne: [{ $arrayElemAt: ["$s", "$i"] }, ""] },
+                {
+                  $ne: [
+                    {
+                      $ifNull: [
+                        {
+                          $switch: {
+                            branches: [{ case: { $isNumber: "$i" }, then: { $arrayElemAt: ["$s", "$i"] } }],
+                            default: "$$REMOVE",
+                          },
+                        },
+                        null,
+                      ],
+                    },
+                    null,
+                  ],
+                },
+                {
+                  $ne: [
+                    {
+                      $switch: {
+                        branches: [{ case: { $isNumber: "$i" }, then: { $arrayElemAt: ["$s", "$i"] } }],
+                        default: "$$REMOVE",
+                      },
+                    },
+                    "",
+                  ],
+                },
               ],
             },
             then: 1,

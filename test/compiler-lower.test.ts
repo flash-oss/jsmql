@@ -123,14 +123,15 @@ describe("compiler/emit/lower — access", () => {
           { case: { $isArray: "$a" }, then: { $arrayElemAt: ["$a", 0] } },
           { case: { $eq: [{ $type: "$a" }, "string"] }, then: { $substrCP: ["$a", 0, 1] } },
         ],
-        default: { $getField: { field: "0", input: "$a" } },
+        default: { $getField: { field: "0", input: { $ifNull: ["$a", {}] } } },
       },
     });
-    expect(expr('$.o["k-1"]')).toEqual({ $getField: { field: "k-1", input: "$o" } });
+    expect(expr('$.o["k-1"]')).toEqual({ $getField: { field: "k-1", input: { $ifNull: ["$o", {}] } } });
+    // `$arrayElemAt` refuses a key that is not a number, so the array branch tests the key too
     expect(expr("$.a[$.i]")).toEqual({
       $switch: {
-        branches: [{ case: { $isArray: "$a" }, then: { $arrayElemAt: ["$a", "$i"] } }],
-        default: { $getField: { field: { $toString: { $ifNull: ["$i", ""] } }, input: "$a" } },
+        branches: [{ case: { $and: [{ $isArray: "$a" }, { $isNumber: "$i" }] }, then: { $arrayElemAt: ["$a", "$i"] } }],
+        default: { $getField: { field: { $toString: { $ifNull: ["$i", ""] } }, input: { $ifNull: ["$a", {}] } } },
       },
     });
     expect(() => expr("$.a[-1]")).toThrow(/Negative bracket index/);

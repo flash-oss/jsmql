@@ -10,31 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-09-27 — fix: a `$facet` branch drops the scratch fields that its documents carry
+## 2026-09-27 — chore: vitest runs only the TypeScript suites under test/
 
-A `$facet` branch is a pipeline over the documents that the `$facet` receives.
-So a `let` field, or another scratch field of the chain around it, is on those
-documents, and the branch can read it. But each branch starts a chain of its
-own, and that chain did not know about the fields. So no branch dropped them.
-The `$facet` then replaced the document, so the outer chain owed no cleanup
-either. The scratch fields reached the answer inside each branch.
-MEASURED on mongod:
+[vitest.config.ts](../vitest.config.ts) sets `include: ["test/**/*.test.ts"]`.
+The default pattern of vitest also takes a `*.test.js` file. On 2026-09-27 the
+main checkout held 58 untracked type-stripped `.js` copies of the source and the
+suites. So a plain `npm test` there ran 102 files, not the 70 suites. In that
+run, 29 tests failed. Seven stale copies failed against the new source. The real
+`test/compiler-sugars.test.ts` also failed, with `E11000 duplicate key`. Its
+copy wrote the same scratch database at the same time.
 
-```
-let x = $.a * 2; $ = { even: $$.filter(o => x === 4), all: $$ };
-→ [{ even: [{ _id: 2, …, __jsmql: { var: { x: 4 } } }], all: [{ _id: 1, …, __jsmql: { var: { x: 2 } } }, …] }]
-```
-
-Now a pipeline body over the same documents starts with the cleanup flag of the
-chain around it (`Env.enter` in [env.ts](../src/compiler/emit/env.ts)). So each
-branch ends with `{ $unset: "__jsmql" }` while its documents carry the
-namespace, and a branch that replaced the document owes nothing. The branches
-of the `$facet(…)` stage call follow the same rule. A `$lookup` or `$unionWith`
-body runs over another collection, and those documents carry no scratch field
-of the outer chain. An `$unset` ahead of the `$facet` cannot do the same work,
-because a branch may read a `let` of the outer chain.
-Tests: [compiler-sugars.test.ts](../test/compiler-sugars.test.ts), live on
-mongod. See [let-bindings.md § Cleanup](specs/let-bindings.md#cleanup).
+The pattern starts at the root. So it also keeps out a copy under `tmp/` and the
+files of another worktree under `.claude/`. The `exclude` of those two
+directories goes. Every suite is a `test/**/*.test.ts` file, so a new suite
+needs no change here.
 
 ---
 
@@ -96,6 +85,34 @@ key states `restoresDocuments`, and each row that states the fact emits those
 stages. Before the fix, the test named these two rows. Tests:
 [stream-methods.test.ts](../test/stream-methods.test.ts) and
 [compiler-types.test.ts](../test/compiler-types.test.ts), live on mongod.
+
+---
+
+## 2026-09-27 — fix: a `$facet` branch drops the scratch fields that its documents carry
+
+A `$facet` branch is a pipeline over the documents that the `$facet` receives.
+So a `let` field, or another scratch field of the chain around it, is on those
+documents, and the branch can read it. But each branch starts a chain of its
+own, and that chain did not know about the fields. So no branch dropped them.
+The `$facet` then replaced the document, so the outer chain owed no cleanup
+either. The scratch fields reached the answer inside each branch.
+MEASURED on mongod:
+
+```
+let x = $.a * 2; $ = { even: $$.filter(o => x === 4), all: $$ };
+→ [{ even: [{ _id: 2, …, __jsmql: { var: { x: 4 } } }], all: [{ _id: 1, …, __jsmql: { var: { x: 2 } } }, …] }]
+```
+
+Now a pipeline body over the same documents starts with the cleanup flag of the
+chain around it (`Env.enter` in [env.ts](../src/compiler/emit/env.ts)). So each
+branch ends with `{ $unset: "__jsmql" }` while its documents carry the
+namespace, and a branch that replaced the document owes nothing. The branches
+of the `$facet(…)` stage call follow the same rule. A `$lookup` or `$unionWith`
+body runs over another collection, and those documents carry no scratch field
+of the outer chain. An `$unset` ahead of the `$facet` cannot do the same work,
+because a branch may read a `let` of the outer chain.
+Tests: [compiler-sugars.test.ts](../test/compiler-sugars.test.ts), live on
+mongod. See [let-bindings.md § Cleanup](specs/let-bindings.md#cleanup).
 
 ---
 
@@ -202,6 +219,53 @@ $.items.currentOp();    ✗ … Write '$$$$.currentOp()' — the cluster referen
 The hint in `refusalFor` (`src/compiler/emit/errors.ts`) now writes the dot, and
 it takes the name with or without its own dot. Test:
 `test/compiler-statement.test.ts`.
+
+---
+
+## 2026-09-27 — fix!: a bracket read answers as a dot read does
+
+The developer asked that `o[expr]` take the guard that `o.prop` takes, and that `o?.[expr]`
+behave as `o?.prop`. A server run of each dot read beside its bracket twin, over documents
+with each kind of value, showed seven of twelve pairs apart. `$getField` answers null for a
+null input, where the path `"$o.p"` answers missing, so `$.o[$.k]` gave null over
+`{ o: null }`. `stoppedChain` counted an index read as a call, so `$.o?.[$.k]` took the
+`$cond` stop test, and it answered missing where `$.o?.p` answers null. A field read after
+a value, for example `$.o[$.k].q` or `$.items.find(p).name`, was a `$getField` over the value.
+It answered null over null, and it did not read through an array as a path does. And the
+run-time dispatch sent a string key to `$arrayElemAt` when the receiver was an array, so
+mongod aborted the whole query: "$arrayElemAt's second argument must be a numeric value, but
+is string". In JavaScript, `arr["p"]` is `undefined`.
+
+Now an index read takes the empty value of a receiver that the proof cannot show is there
+(`{ $ifNull: [o, {}] }`). `$arrayElemAt` runs only for a key that `$isNumber` passes.
+An index read is a plain read, as a field read is. So a `?.` with no call after it takes
+the rule of a bare `?.` read: one `{ $ifNull: [<the reads>, null] }` on top. A field read
+after a value binds the value once, and reads the rest of the path off the variable
+(`"$$jsmqlV.q"`). A variable path answers as a field path does over null, a scalar, an
+object and an array. The proof (`propOf`) already read a member that way. A known
+string that can be missing reads `s[0]` under a type test, because `$substrCP` answers `""`
+for null. All twelve pairs now give the same answer on the server. The answers change for
+null receivers and for a read through an array, so the commit is marked breaking. See
+`indexAccess` and `memberAccess` in [lower.ts](../src/compiler/emit/lower.ts) and
+[docs/specs/emit-pass.md](specs/emit-pass.md).
+
+---
+
+## 2026-09-27 — test: every read chain runs against the rules of HR5
+
+The `?.` fold bug of 2026-09-26 ("a `?.` guards the value before it, however many members
+follow it") showed only when two or more members follow a `?.`. No hand-written case named
+that shape, so no test failed. The developer asked that such a bug never happen again.
+[test/compiler-chains.test.ts](../test/compiler-chains.test.ts) writes 340 read chains from
+a small grammar: `$.a`, then `.b`, `?.b`, `[$.kb]` or `?.[$.kb]` up to three levels deep,
+then no method, or `.trim()` or `.uniq()` under a dot or a `?.`. It runs each chain on
+mongod over documents that hold each kind of value at each level. It compares each answer
+with an oracle that states HR5 in plain JavaScript and never calls the compiler.
+
+The suite fails where it must. With the fold fix taken out, it reports 39 wrong answers,
+for example `$.a.b?.c.d.uniq()` over `{ a: { b: {} } }` gives null where HR5 gives `[]`.
+With the bracket reads as they were before the fix of today, it reports 270. A new kind of
+read extends the grammar, and the oracle states its rule.
 
 ---
 
@@ -1120,6 +1184,43 @@ A new live case in `test/compiler-methods.test.ts` reads each hint out of its
 message, fills in the placeholder, and runs it on four documents. A sweep of
 every other concrete spelling in the refusal texts of `names.ts`, `errors.ts`,
 the parser and the passes found no other hint that aborts on a missing field.
+
+---
+
+## 2026-09-26 — fix: the constant fold of .xor() keeps each value once, as the server does
+
+The fold of `.xor()` gave a value twice when one side held it twice.
+`[3, 1, 3].xor([1])` folded to `[3, 3]`. The value lowering of `.xor()` is
+`$setUnion` over two `$setDifference` operands. On the fixture mongod, it gives
+`[3]`. The `_.xor` function of lodash also gives `[3]`. The fold of `.xorBy()`
+had the same problem. Its lowering keeps the first element per key. So
+`[{ n: 3, t: "a" }, { n: 1 }, { n: 3, t: "b" }].xorBy([{ n: 1 }], o => o.n)`
+gives `[{ n: 3, t: "a" }]` on the server. The fold kept both elements with
+`n: 3`. A fold must not change the answer (see
+[docs/specs/desugar-pass.md](specs/desugar-pass.md) § Constant folding). So each
+fold now keeps a value, or a key, once.
+
+One helper, `firstPerKey` in
+[src/compiler/passes/fold-methods.ts](../src/compiler/passes/fold-methods.ts),
+keeps the first element for each key. `.uniq()`, `.uniqBy()` and `.unionBy()`
+each had a copy of this loop. Now they call the helper too. MongoDB does not
+specify the order of a set operator's output. For example, the server gave
+`[1, 2, 3]` for `[3, 1, 3].xor([2])`. The fold gives `[3, 1, 2]`, the order in
+which each value first occurs. This order is the same at each compile. The
+`_.xor` function gives the same order. A sort into the server's order would copy a
+behaviour that MongoDB does not promise. The spec now states this rule for a set
+answer.
+
+Four new cases in
+[test/compiler-fold-agrees.test.ts](../test/compiler-fold-agrees.test.ts) hold a
+value or a key twice on one side, for `.xor()` and `.xorBy()`. The suite
+compared the exact sequence of each answer. Its set cases passed only because
+the fold and the server gave the same order by chance. Now, when the top
+operator of the MQL is `$setUnion`, `$setIntersection` or `$setDifference`, the
+suite compares the elements in any order. A duplicate still counts. So the old
+fold fails the new cases. The rule reads the MQL that the server runs, not a
+list of method names. So a set method that gets a fold later needs no change to
+the suite.
 
 ---
 

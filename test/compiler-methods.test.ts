@@ -691,14 +691,16 @@ describe("compiler/emit — object methods", () => {
             $objectToArray: {
               $ifNull: [
                 {
-                  $getField: {
-                    field: "o",
-                    input: {
-                      $let: {
-                        vars: { jsmqlObj: "$$ROOT" },
-                        in: { o: { $getField: { field: "o", input: "$$jsmqlObj" } } },
+                  $let: {
+                    vars: {
+                      jsmqlV: {
+                        $let: {
+                          vars: { jsmqlObj: "$$ROOT" },
+                          in: { o: { $getField: { field: "o", input: "$$jsmqlObj" } } },
+                        },
                       },
                     },
+                    in: "$$jsmqlV.o",
                   },
                 },
                 {},

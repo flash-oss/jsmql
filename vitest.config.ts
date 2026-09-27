@@ -1,5 +1,7 @@
-import { defineConfig, configDefaults } from "vitest/config";
+import { defineConfig } from "vitest/config";
 
-// `tmp/` is scratch: probe scripts, harvested copies of the suites, and whatever a
-// running agent left there. A copy of a suite under it is not the suite.
-export default defineConfig({ test: { exclude: [...configDefaults.exclude, ".claude/**", "tmp/**"] } });
+// Vitest runs only the TypeScript suites under test/. A copy of a suite is not the
+// suite. Examples are a type-stripped `.js` twin, a file under tmp/ and a file in
+// another worktree under .claude/. The pattern starts at the root, so it matches none
+// of them.
+export default defineConfig({ test: { include: ["test/**/*.test.ts"] } });

@@ -608,7 +608,7 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
     // Bracket access reads a property called "length"; "length" is a string key (never a
     // numeric index), so it lowers to $getField.
     expect(jsmql('[$match($.items["length"] === 3)]')).toEqual([
-      { $match: { $expr: { $eq: [{ $getField: { field: "length", input: "$items" } }, 3] } } },
+      { $match: { $expr: { $eq: [{ $getField: { field: "length", input: { $ifNull: ["$items", {}] } } }, 3] } } },
     ]);
     // A string-literal key on the bare root is a plain field reference.
     expect(jsmql('[$match($["cart.field.length"] === 5)]')).toEqual([

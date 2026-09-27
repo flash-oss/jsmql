@@ -504,6 +504,30 @@ JSMQL threads the root-document read through `$lookup.let` for you; see
 
 > **JSMQL interprets dot access; it reads bracket access raw.** A `.member` access is a field read, and a `.method()` call after it is a JSMQL method: `$.x.length` is the field named `length` inside `x`, and `$.x.length()` is the character count of `x`. Square brackets never carry compiler meaning: `$.x["length"]`, `$.x["anything"]`, `$.x[$.dynamicKey]` are all **direct property access**. JSMQL does not interpret what sits inside the brackets — whatever you write is the property you get. So when you mean "the data at this key, exactly as written" (including a field literally named `length`), use brackets. When JSMQL proves that the value has no such field, for example an array or a string, the read is a compile error: see [A read that gives no value](#a-read-that-gives-no-value).
 
+**A bracket read follows the null rule of a dot.** Over a value that is null or missing,
+`o[k]` answers missing, as `o.p` does, and `o?.[k]` answers null, as `o?.p` does. A key that
+is not a number reads no element of an array, as `arr["p"]` is `undefined` in JavaScript.
+`$arrayElemAt` refuses such a key and aborts the query, so the array branch tests the key
+first:
+
+```js
+$.o[$.k]
+// → { $switch: {
+//       branches: [{ case: { $and: [{ $isArray: "$o" }, { $isNumber: "$k" }] }, then: { $arrayElemAt: ["$o", "$k"] } }],
+//       default: { $getField: { field: { $toString: { $ifNull: ["$k", ""] } }, input: { $ifNull: ["$o", {}] } } }
+//     } }
+$.o?.[$.k]    // → { $ifNull: [<the read above>, null] }
+```
+
+**A field read after a value reads as a field path.** `$.o[$.k].q` and
+`$.items.find(i => i.ok).name` bind the value once, and read the rest of the path off the
+variable. So they answer as `$.o.p.q` does: missing over null or a scalar, and the field of
+each element over an array.
+
+```js
+$.o[$.k].q    // → { $let: { vars: { jsmqlV: <the read of $.o[$.k]> }, in: "$$jsmqlV.q" } }
+```
+
 Use square brackets for computed index/key access. The compiled MQL depends on the receiver type:
 
 ```js
@@ -532,7 +556,7 @@ $.items[0]
 //         { case: { $isArray: "$items" }, then: { $arrayElemAt: ["$items", 0] } },
 //         { case: { $eq: [{ $type: "$items" }, "string"] }, then: { $substrCP: ["$items", 0, 1] } }
 //       ],
-//       default: { $getField: { field: "0", input: "$items" } }
+//       default: { $getField: { field: "0", input: { $ifNull: ["$items", {}] } } }
 //     } }
 ```
 
@@ -542,7 +566,7 @@ constant — a `$lookup.let` variable, a `jsmql.compile` parameter — a `$cond`
 branch that does not apply, and MongoDB refuses the whole pipeline before it reads a document
 (`$.o = $$$.products.find({ _id: $.arr[0] })` answered *"cannot convert from BSON type
 array to String"*). A `$switch` drops a branch whose case is false without evaluating it,
-so every receiver type answers the same as it always did before.
+so each receiver type gets the answer of its own branch.
 
 **A numeric object key builds the stringified field name.** JavaScript coerces every
 property key to a string, so `{ 0: 1 }` is the field `"0"` and `{ 0x10: 1 }` is `"16"` —
@@ -580,15 +604,13 @@ A string key that can be missing reads as `""`, because `$getField` refuses a nu
 string method answers null for a missing string, so `.toLowerCase()` takes this guard:
 
 ```js
-$.config["host"]              // → { $getField: { field: "host", input: "$config" } }
-$.scores[$.key.toLowerCase()] // → { $getField: { field: { $ifNull: [{ $cond: { if: { $eq: [{ $ifNull: ["$key", null] }, null] }, then: null, else: { $toLower: "$key" } } }, ""] }, input: "$scores" } }
+$.config["host"]              // → { $getField: { field: "host", input: { $ifNull: ["$config", {}] } } }
+$.scores[$.key.toLowerCase()] // → { $getField: { field: { $ifNull: [{ $cond: { if: { $eq: [{ $ifNull: ["$key", null] }, null] }, then: null, else: { $toLower: "$key" } } }, ""] }, input: { $ifNull: ["$scores", {}] } } }
 
 // `party` iterates a string array → typed `string`, so `$.cre.result[party]` is a getter:
 ["sender", "recipient"].map(party => $.cre.result[party])
-// → { $map: { input: ["sender","recipient"], as: "party", in: { $cond: {
-//       if: { $isArray: "$cre.result" },
-//       then: { $arrayElemAt: ["$cre.result", "$$party"] },
-//       else: { $getField: { field: { $toString: { $ifNull: ["$$party", ""] } }, input: "$cre.result" } } } } } }
+// → { $map: { input: ["sender", "recipient"], as: "party",
+//       in: { $getField: { field: "$$party", input: { $ifNull: ["$cre.result", {}] } } } } }
 ```
 
 When the key is **not** provably a string, JSMQL coerces it — `{ $toString: { $ifNull: [k, ""] } }`
@@ -634,18 +656,18 @@ $.a.uniq()           // no ?. — an array method on a field that may be missing
 // → { $setUnion: { $ifNull: ["$a", []] } }
 ```
 
-**A `?.` with no call after it changes nothing.** There is nothing to stop: the chain's value is the field, and a path through a missing field already answers missing. So the consumer supplies its own empty value, as the table below shows. That table covers every `?.` EXCEPT a chain that calls something.
+**A `?.` with no call after it answers null.** There is nothing to stop. The chain reads as it does with a dot. Where the value is missing, it answers `null`: JavaScript's `undefined`, which a written document holds as `null`. A bracket read is a read too, so `$.o?.[$.k]` answers as `$.o?.p` does. A consumer that takes an empty value supplies its own, as the table below shows.
 
 | Consumer category | Wrapped with | Example |
 |---|---|---|
-| Bare read | nothing (sugar only) | `$.user?.name` → `"$user.name"` |
+| Bare read | `null` for a missing value | `$.user?.name` → `{ $ifNull: ["$user.name", null] }` |
 | Array spread | `[]` — under `.` as well: a missing array spreads as an empty array (HR5) | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
-| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user.name", null] }, null] }, then: null, else: { $trim: { input: "$user.name" } } } }` |
+| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user", null] }, null] }, then: null, else: { $trim: { input: "$user.name" } } } }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
-| `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user.tags", null] }, null] }, then: null, else: { $size: "$user.tags" } } }` |
-| Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
-| Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
+| `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user", null] }, null] }, then: null, else: { $size: { $ifNull: ["$user.tags", []] } } } }` |
+| Index access (`obj?.[k]`, or a `?.` earlier in the chain) | `null` for a missing value, as a bare read | `$.scoresByLevel?.[$.level]` → `{ $ifNull: [<the index read>, null] }` |
+| A field read after a value | `null` for a missing value, as a bare read | `$.items[0]?.label` → `{ $ifNull: [{ $let: { vars: { jsmqlV: <the read of $.items[0]> }, in: "$$jsmqlV.label" } }, null] }` |
 
 A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so the chain stops and answers `null`. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument: `Object.keys($.user?.profile)` takes `{}` for a missing profile.
 
