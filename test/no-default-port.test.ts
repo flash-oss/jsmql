@@ -12,7 +12,7 @@
  *      the scratch user holds. A suite that writes elsewhere gets an authentication
  *      error, and a self-skipping suite would turn that into a silent green.
  *
- * docs/DEVLOG.md is exempt from the first check: it is the historical record, and
+ * docs/DEVLOG/ is exempt from the first check: it is the historical record, and
  * history says what used to be true.
  */
 import { describe, it, expect } from "vitest";
@@ -24,8 +24,10 @@ import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Directories that hold no source of ours — a hit there says nothing about this project. */
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "vendor", "tmp", ".idea", "coverage"]);
+/** Directories that hold no source of ours — a hit there says nothing about this project.
+ * `DEVLOG` is docs/DEVLOG/: the historical record states what was once true, so it is
+ * exempt the same way test/no-default-port.test.ts itself is (see EXEMPT below). */
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "vendor", "tmp", ".idea", "coverage", "DEVLOG"]);
 /**
  * Is this directory a checkout of its own — a nested git worktree?
  *
@@ -36,7 +38,7 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "vendor", "tmp", ".id
  */
 const isOwnCheckout = (dir: string): boolean => existsSync(join(dir, ".git"));
 /** The historical record states what was once true; every other file states what IS true. */
-const EXEMPT = new Set(["docs/DEVLOG.md", "test/no-default-port.test.ts"]);
+const EXEMPT = new Set(["test/no-default-port.test.ts"]);
 const READABLE = /\.(ts|tsx|mts|mjs|js|json|md|html|yml|yaml|sh|txt)$/;
 
 function repoFiles(dir: string, out: string[] = []): string[] {

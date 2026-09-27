@@ -440,11 +440,12 @@ export const letParamsMustNameVars = (params: readonly string[], keys: readonly 
 
 /**
  * `$ = <array>` — the root takes ONE document, and the stream is what takes an array.
- * The destination has to say which: `$` is the document, `$$` is the stream.
+ * The destination has to say which: `$` is the document, `$$` is the stream. `root`
+ * is the document as written: `$`, or a body's own parameter.
  */
-export const rootIsArray = (pos: number): CodegenError =>
+export const rootIsArray = (root: string, pos: number): CodegenError =>
   new CodegenError(
-    "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
+    `'${root} = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '${root}.<field> = <array>;'.`,
     pos,
   );
 
@@ -570,20 +571,25 @@ export const multiKeyStageDocument = (name: string, keys: number, pos: number): 
  * `$ = 5` — a root replacement whose value cannot BE a document. Measured: the
  * server refuses `{ $replaceWith: 5 }`, `"x"`, `[1, 2]` and `null` alike,
  * because none of them is an object. It accepts a field path, because only the
- * run can tell what it holds.
+ * run can tell what it holds. `root` is the document as written: `$`, or a
+ * body's own parameter (`o = 5` in `.aggregate(o => { … })`).
  */
-export const rootMustBeDocument = (noun: string, pos: number): CodegenError =>
+export const rootMustBeDocument = (root: string, noun: string, pos: number): CodegenError =>
   new CodegenError(
-    `'$ = …' replaces the document, so the value has to BE a document — ${noun} is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').`,
+    `'${root} = …' replaces the document, so the value has to BE a document — ${noun} is not one. Put it under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`,
     pos,
   );
 
-/** `delete $` and `delete $$` — neither root is a field, and a pipeline that drops it has no shape. */
-export const cannotDeleteRoot = (root: "$" | "$$", pos: number): CodegenError =>
+/**
+ * `delete $` and `delete $$` — neither root is a field, and a pipeline that drops it
+ * has no shape. `root` is the target as written: `$$` is the stream, and any other
+ * spelling is the document — `$`, or a body's own parameter.
+ */
+export const cannotDeleteRoot = (root: string, pos: number): CodegenError =>
   new CodegenError(
-    root === "$"
-      ? "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'."
-      : "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'.",
+    root === "$$"
+      ? "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'."
+      : `'delete ${root}' would delete the document itself. To replace it, write '${root} = { … };'; to drop every field but one, write '${root} = { keep: ${root}.keep };'.`,
     pos,
   );
 
@@ -1382,10 +1388,10 @@ export const noDestination = (pos: number): CodegenError =>
     pos,
   );
 
-/** `$ = $$$.c.filter(p)` — the new root must be ONE document. */
-export const rootNeedsOneDocument = (pos: number): CodegenError =>
+/** `$ = $$$.c.filter(p)` — the new root must be ONE document. `root` is the document as written. */
+export const rootNeedsOneDocument = (root: string, pos: number): CodegenError =>
   new CodegenError(
-    "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.…'.",
+    `The document can only become ONE document, and this chain gives an array. Write '${root} = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '${root}.<field> = $$$.<coll>.…'.`,
     pos,
   );
 

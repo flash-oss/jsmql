@@ -651,6 +651,15 @@ function targetPath(op: UpdateOp, env: Env): string {
 }
 
 /**
+ * The document root as the developer wrote it: the bare `$`, or a body's own
+ * parameter (`o` in `.aggregate(o => { … })`). A refusal of a root write quotes
+ * this spelling, so each fix it names works where the write stands.
+ */
+function rootAsWritten(target: Expr): string {
+  return target.type === "Ident" ? target.name : "$";
+}
+
+/**
  * The stages that make a value the STREAM — one document per element.
  *
  * `$$ = <value>;` is this, and so is every write into a collection from a
@@ -1004,7 +1013,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       continue;
     }
     if (op.type === "DeleteStmt") {
-      if (path === "") throw E.cannotDeleteRoot("$", op.pos);
+      if (path === "") throw E.cannotDeleteRoot(rootAsWritten(op.target), op.pos);
       if (sets !== null) flush();
       (unsets ??= []).push(path);
       prove(path, null);
@@ -1042,7 +1051,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       const valueEnv = childEnv(inner, op, "value");
       if (path === "") {
         flush();
-        emit(joinRoot(op.value, valueEnv, JOIN));
+        emit(joinRoot(op.value, rootAsWritten(op.target), valueEnv, JOIN));
         continue;
       }
       // `$.o = $$$.c.filter(p)` — the target IS the stage's `as`; a chain that goes
@@ -1058,16 +1067,17 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     const value = readIn(op.value, childEnv(inner, op, "value"));
     // The root is not a field: replacing it is its own stage, and nothing groups with it.
     if (path === "") {
+      const root = rootAsWritten(op.target);
       // `null` is not a kind the registry can prove, and the server refuses it here.
       if (op.value.type === "NullLiteral" || op.value.type === "UndefinedLiteral") {
-        throw E.rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
+        throw E.rootMustBeDocument(root, op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
       }
       const t = typeOf(op.value, childEnv(inner, op, "value"));
       // `$` is ONE document and `$$` is the stream, so an array names the wrong
       // destination. The message says which spelling takes it. A value that can
       // NEVER be a document is refused; one that may be passes, and the server judges.
-      if (isOnly(t, "array")) throw E.rootIsArray(op.pos);
-      if (cannotBe(t, "object")) throw E.rootMustBeDocument(E.nounOfKinds(t), op.pos);
+      if (isOnly(t, "array")) throw E.rootIsArray(root, op.pos);
+      if (cannotBe(t, "object")) throw E.rootMustBeDocument(root, E.nounOfKinds(t), op.pos);
       flush();
       emit([{ $replaceWith: value }]);
       continue;

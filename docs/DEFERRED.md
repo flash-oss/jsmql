@@ -2,7 +2,7 @@
 
 This file lists every feature that JSMQL refuses, defers, or does not yet build. §A rows stay in ID order. A row leaves the file when the item ships.
 
-This file exists so the project does not forget an open item. Every "not yet supported" / "future work" / "deferred" / "out of scope" marker in the live surface of JSMQL (except historical `DEVLOG.md` entries) must carry a `[DEF-NNN]` tag and have a row below. The drift-protection test in [`test/deferred-coverage.test.ts`](../test/deferred-coverage.test.ts) enforces this in both directions:
+This file exists so the project does not forget an open item. Every "not yet supported" / "future work" / "deferred" / "out of scope" marker in the live surface of JSMQL (except historical entries under `docs/DEVLOG/`) must carry a `[DEF-NNN]` tag and have a row below. The drift-protection test in [`test/deferred-coverage.test.ts`](../test/deferred-coverage.test.ts) enforces this in both directions:
 
 - Forward gate: every `[DEF-NNN]` tag must have a matching row here.
 - Reverse gate: every row here must have at least one `[DEF-NNN]` tag in the live surface, or the row's status must be `design-only`.

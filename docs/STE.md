@@ -32,7 +32,7 @@ All prose: this repository's documents, code comments, test titles, error
 messages, commit messages, pull-request text, and the replies Claude writes in
 chat.
 
-Three things are excluded. [docs/DEVLOG.md](DEVLOG.md) keeps the voice of its own
+Three things are excluded. [docs/DEVLOG/](DEVLOG) keeps the voice of its own
 history, but each new entry is STE. A generated file follows its generator, so
 never edit `src/globals.ts` or `playground.html` by hand. Code is not prose, so a
 code block, an inline code span and a `// →` claim pair stay exact.

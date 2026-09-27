@@ -135,7 +135,7 @@ lowers to exactly what `.filter(o => o.userId === $._id)` does, including the in
 `$lookup`.
 
 Future methods extend this table — see
-[docs/DEVLOG.md](../DEVLOG.md) for the per-commit chronology.
+[docs/DEVLOG/](../DEVLOG) for the per-commit chronology.
 
 ## The element after `.flatMap`
 
@@ -356,7 +356,7 @@ the reason names `.filter(p).take(1)` / `.slice(n, n + 1)`, and for `.find` on
 1. Add the `stream` cell to the method's row in [src/registry/names.ts](../../src/registry/names.ts). State the stages it emits (`// MEASURED:` where a shape's validity was proved on `mongod`), or state `unsupported(reason)` with the spelling that works.
 2. Add a row to the table above with the args and lowering.
 3. Add a case to [test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) (the root stream) and [test/compiler-join.test.ts](../../test/compiler-join.test.ts) (a `$$$.<coll>` head). Run each case on `mongod` and compare it with JavaScript's answer.
-4. Document the method in [docs/LANGUAGE.md](../LANGUAGE.md) and add a [DEVLOG.md](../DEVLOG.md) entry.
+4. Document the method in [docs/LANGUAGE.md](../LANGUAGE.md) and add an entry to the current month's file in [docs/DEVLOG/](../DEVLOG).
 
 A cell that needs what the chain emitted before it reads `sortedBy()` — the last `$sort`'s spec — and never rewrites an earlier stage. `.takeWhile` / `.dropWhile` are the readers, and they show the safe shape: they **read** the sort (never rewrite it), and **refuse** when there is none (never guess one). The contrast is the "from the end" family (§ below), which could work only by rewriting the preceding stage AND falling back to `_id` when it is absent — a wrong answer with no diagnostic. Read; do not rewrite. Refuse; do not guess.
 

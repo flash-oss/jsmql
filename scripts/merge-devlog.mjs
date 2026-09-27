@@ -1,22 +1,30 @@
 #!/usr/bin/env node
 /**
- * Auto-resolve a `docs/DEVLOG.md` merge conflict.
+ * Auto-resolve a `docs/DEVLOG/*.md` merge conflict.
  *
- * DEVLOG entries are append-only and separated by `\n\n---\n\n`. When two
- * branches each add a new entry at the top, git cannot pick a correct answer and asks
- * for a manual conflict resolution. This script does the structural merge instead:
- * split each side into entries, take the union (deduplicated by the `## YYYY-MM-DD — Title`
- * heading), and sort newest-first.
+ * DEVLOG entries are append-only, one file per month (`docs/DEVLOG/YYYY-MM.md`),
+ * separated by `\n\n---\n\n`. When two branches each add a new entry to the same
+ * month's file, git cannot pick a correct answer and asks for a manual conflict
+ * resolution. This script does the structural merge instead: split each side into
+ * entries, take the union (deduplicated by the `## YYYY-MM-DD — Title` heading),
+ * and sort newest-first.
  *
- * Run it after a merge stops on `docs/DEVLOG.md`:
+ * Run it after a merge stops on one or more files under `docs/DEVLOG/`:
  *
  *     ./scripts/merge-devlog.mjs
  *
- * The script reads the three index stages (base, ours, theirs) that git preserves during
- * an unresolved conflict, writes the merged file, and runs `git add` on it. Continue
- * the merge with `git merge --continue` or `git commit` afterwards. If the merge is not
- * auto-resolvable (header diverged, a past entry edited differently on both sides),
- * the script exits non-zero and leaves the conflicted file unchanged.
+ * With no argument, it finds every unmerged `docs/DEVLOG/YYYY-MM.md` path on its
+ * own and resolves each one. Pass one or more paths to resolve only those:
+ *
+ *     ./scripts/merge-devlog.mjs docs/DEVLOG/2026-09.md
+ *
+ * The script reads the three index stages (base, ours, theirs) that git preserves
+ * during an unresolved conflict, writes the merged file, and runs `git add` on it.
+ * A file added on both sides (a new month, with no base stage) merges the same
+ * way, reading its missing base as empty. Continue the merge with
+ * `git merge --continue` or `git commit` afterwards. If a file is not
+ * auto-resolvable (header diverged, a past entry edited differently on both
+ * sides), the script reports that file, exits non-zero, and leaves it unchanged.
  */
 
 import { spawnSync } from "node:child_process";
@@ -24,7 +32,7 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const SEP = "\n\n---\n\n";
-const TARGET = "docs/DEVLOG.md";
+const MONTH_FILE_RE = /^docs\/DEVLOG\/\d{4}-\d{2}\.md$/;
 
 export function parse(text) {
   const chunks = text.split(SEP);
@@ -102,50 +110,74 @@ export function mergeDevlog(baseText, oursText, theirsText) {
   return { ok: true, result: header + SEP + sorted.join(SEP) + "\n" };
 }
 
-function readStage(stage) {
-  // The DEVLOG is append-only and already more than one megabyte. `spawnSync` has its own
-  // default maximum buffer size. Without a bigger one, the read fails with ENOBUFS and reports
-  // itself as "not conflicted", which is the opposite of what actually happened.
-  const r = spawnSync("git", ["show", `:${stage}:${TARGET}`], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
-  if (r.error !== undefined) {
-    process.stderr.write(`merge-devlog: could not run git to read stage ${stage} of ${TARGET}: ${r.error.message}\n`);
-    process.exit(2);
-  }
+function git(args) {
+  // The DEVLOG grows across a month, and `spawnSync` has its own default maximum
+  // buffer size. Without a bigger one, a read fails with ENOBUFS and reports itself
+  // as "not conflicted", which is the opposite of what actually happened.
+  return spawnSync("git", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+}
+
+/** Reads one conflict stage of a path. A path absent from a stage (an add/add
+ * conflict, where the file is new on one or both sides) reads as empty text —
+ * the same as a month's file that does not exist yet. */
+function readStageOrEmpty(stage, path) {
+  const r = git(["show", `:${stage}:${path}`]);
+  if (r.status === 0) return r.stdout;
+  return "";
+}
+
+function findConflictedDevlogPaths() {
+  const r = git(["diff", "--name-only", "--diff-filter=U"]);
   if (r.status !== 0) {
-    process.stderr.write(
-      `merge-devlog: cannot read stage ${stage} of ${TARGET}. ` +
-        `Is ${TARGET} actually conflicted? (run during an unresolved merge)\n${r.stderr}`,
-    );
+    process.stderr.write(`merge-devlog: could not list unmerged paths: ${r.stderr}`);
     process.exit(2);
   }
-  return r.stdout;
+  return r.stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => MONTH_FILE_RE.test(l));
+}
+
+function resolveOne(path) {
+  const result = mergeDevlog(readStageOrEmpty(1, path), readStageOrEmpty(2, path), readStageOrEmpty(3, path));
+  if (!result.ok) {
+    process.stderr.write(`merge-devlog: cannot auto-merge ${path} — ${result.reason}.\n`);
+    return false;
+  }
+  writeFileSync(path, result.result);
+  const add = git(["add", path]);
+  if (add.status !== 0) {
+    process.stderr.write(`merge-devlog: could not stage ${path}: ${add.stderr}`);
+    return false;
+  }
+  process.stdout.write(`merge-devlog: ${path} merged and staged.\n`);
+  return true;
 }
 
 function main() {
-  // Confirm we're inside a git work tree at its root.
-  const root = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  const root = git(["rev-parse", "--show-toplevel"]);
   if (root.status !== 0) {
     process.stderr.write("merge-devlog: not in a git repository.\n");
     process.exit(2);
   }
   process.chdir(root.stdout.trim());
 
-  const result = mergeDevlog(readStage(1), readStage(2), readStage(3));
-  if (!result.ok) {
+  const argPaths = process.argv.slice(2);
+  const paths = argPaths.length > 0 ? argPaths : findConflictedDevlogPaths();
+  if (paths.length === 0) {
     process.stderr.write(
-      `merge-devlog: cannot auto-merge — ${result.reason}.\n` +
-        `Resolve ${TARGET} by hand, then \`git add ${TARGET}\`.\n`,
+      "merge-devlog: no conflicted docs/DEVLOG/YYYY-MM.md file found. " +
+        "Run this during an unresolved merge, or name a path directly.\n",
     );
-    process.exit(1);
+    process.exit(2);
   }
 
-  writeFileSync(TARGET, result.result);
-  const add = spawnSync("git", ["add", TARGET], { stdio: "inherit" });
-  if (add.status !== 0) process.exit(add.status ?? 1);
-
-  process.stdout.write(
-    `merge-devlog: ${TARGET} merged and staged. ` + `Continue with \`git merge --continue\` or \`git commit\`.\n`,
-  );
+  const failed = paths.filter((p) => !resolveOne(p));
+  if (failed.length > 0) {
+    process.stderr.write(`merge-devlog: resolve ${failed.join(", ")} by hand, then \`git add\` each.\n`);
+    process.exit(1);
+  }
+  process.stdout.write("Continue with `git merge --continue` or `git commit`.\n");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

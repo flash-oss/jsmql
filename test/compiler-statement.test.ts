@@ -782,6 +782,52 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(() => pipeline("delete $;")).toThrow(/delete the document itself/);
   });
 
+  it("quotes the root as written when it refuses a root write in a body, and each fix it names compiles", () => {
+    // A body writes its own document through its parameter, so the refusal quotes
+    // the parameter. In a body over another collection, a `$ = …` fix would write
+    // the OUTER document, and the compiler refuses that write.
+    const notADocument = (root: string, noun: string): string =>
+      `'${root} = …' replaces the document, so the value has to BE a document — ${noun} is not one. Put it under a field ('${root} = { value: … };'), or write to a field instead ('${root}.value = …;').`;
+    expect(() => pipeline("$$.aggregate(o => { o = 5; });")).toThrow(notADocument("o", "a number"));
+    expect(() => pipeline("$$.aggregate(o => { o = o.a * 2; });")).toThrow(notADocument("o", "a number"));
+    expect(() => pipeline("$$.aggregate(o => { o = null; });")).toThrow(notADocument("o", "null"));
+    expect(() => pipeline("$$.aggregate(function (doc) { doc = 5; });")).toThrow(notADocument("doc", "a number"));
+    // A body over another collection quotes its parameter the same way.
+    expect(() => pipeline("$$ = $$$.orders.aggregate(o => { o = 5; });")).toThrow(notADocument("o", "a number"));
+    expect(() => pipeline("$.x = $$$.orders.filter(o => o.uid === $._id).aggregate(o => { o = 5; });")).toThrow(
+      notADocument("o", "a number"),
+    );
+    // A body on the stream reads the same document as `$`, so `$ = …` stays what you wrote.
+    expect(() => pipeline("$$.aggregate(o => { $ = 5; });")).toThrow(notADocument("$", "a number"));
+    expect(() => pipeline("$$.aggregate(o => { o = [1, 2]; });")).toThrow(
+      "'o = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write 'o.<field> = <array>;'.",
+    );
+    expect(() => pipeline("$$.aggregate(o => { delete o; });")).toThrow(
+      "'delete o' would delete the document itself. To replace it, write 'o = { … };'; to drop every field but one, write 'o = { keep: o.keep };'.",
+    );
+    expect(() => pipeline("$$.aggregate(o => { o = $$$.orders.filter(p => p.a === o.b); });")).toThrow(
+      "The document can only become ONE document, and this chain gives an array. Write 'o = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: 'o.<field> = $$$.<coll>.…'.",
+    );
+    // Each fix, in the body where the refusal stands.
+    expect(compiled("$$.aggregate(o => { o = { value: 5 }; });")).toEqual([{ $replaceWith: { value: 5 } }]);
+    expect(compiled("$$.aggregate(o => { o.value = o.a * 2; });")).toEqual([
+      { $set: { value: { $multiply: ["$a", 2] } } },
+    ]);
+    expect(compiled("$$.aggregate(o => { o.list = [1, 2]; });")).toEqual([{ $set: { list: [1, 2] } }]);
+    expect(compiled("$$.aggregate(o => { o = { keep: o.a }; });")).toEqual([{ $replaceWith: { keep: "$a" } }]);
+    expect(compiled("$$.aggregate(o => { o = $$$.orders.find(p => p.a === o.b); });")).toEqual([
+      {
+        $lookup: { from: "orders", localField: "b", foreignField: "a", pipeline: [{ $limit: 1 }], as: "__jsmql.tmp.0" },
+      },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0" },
+    ]);
+    expect(compiled("$$ = $$$.orders.aggregate(o => { o = { value: 5 }; });")).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { coll: "orders", pipeline: [{ $replaceWith: { value: 5 } }] } },
+    ]);
+  });
+
   it("passes a body that the server refuses through as written, because you wrote it", () => {
     // DELIBERATELY invalid shapes. Each comment says why mongod refuses one.
     // mongod: the `$count` field name takes no `$` prefix
