@@ -21305,7 +21305,12 @@ var Env = class _Env {
     };
     return new _Env(this.scope, site, this.chain, this.documents);
   }
-  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. A body over another collection starts a document level of its own. */
+  /**
+   * Into a sub-pipeline: a new chain, the boundary recorded, statement position. A
+   * body over another collection starts a document level of its own. A pipeline
+   * body over the SAME documents (a `$facet` branch) gets each scratch field that
+   * the outer chain left on them. So the cleanup of the body owes those fields too.
+   */
   enter(boundary, chain) {
     const site = {
       ...this.site,
@@ -21313,6 +21318,7 @@ var Env = class _Env {
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }]
     };
     const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
+    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain.dirty ||= this.chain.dirty;
     return new _Env(this.scope, site, chain, documents);
   }
   /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */

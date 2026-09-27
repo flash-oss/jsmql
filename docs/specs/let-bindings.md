@@ -326,7 +326,7 @@ A block over the SAME documents — a `$facet` branch, a top-level callback — 
 
 ### Cleanup
 
-The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace still on the documents (`Chain.dirty`): a `let` slot, a join's scratch slot, and the stream count share the namespace and the one cleanup. A stage that replaced the document clears the flag, so nothing gets unset that is already gone. A scratch field that a later stage writes sets the flag again: the flag follows the stages in the order they stand. A program whose `let`s all folded emits no trace of the machinery.
+The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace still on the documents (`Chain.dirty`): a `let` slot, a join's scratch slot, and the stream count share the namespace and the one cleanup. A stage that replaced the document clears the flag, so the cleanup never unsets a field that is already gone. A scratch field that a later stage writes sets the flag again: the flag follows the stages in the order they stand. A `$facet` branch is a pipeline over the documents that the `$facet` receives. So its chain starts with the flag of the chain around it (`Env.enter`). So each branch ends with its own cleanup, and the `$facet` output holds no scratch field. A program whose `let`s all folded emits no trace of the machinery.
 
 ## Output stability
 

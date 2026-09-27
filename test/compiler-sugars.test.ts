@@ -62,6 +62,27 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
     expect(() => pipeline("let x = $.a; $ = { k: $$.take(1) }; $.z = x;")).toThrow(/cannot be read after `\$facet`/);
   });
 
+  it("each branch drops the scratch fields that its documents carry", () => {
+    // A branch runs over the documents that the `$facet` receives, so a `let` field is on
+    // them. The branch reads it, and the cleanup of the branch drops it.
+    expect(
+      compiled("let x = $.a * 2; $ = { even: $$.filter(o => x === 4), all: $$ };", [{ even: [2], all: [1, 2, 3] }]),
+    ).toEqual([
+      { $set: { "__jsmql.var.x": { $multiply: ["$a", 2] } } },
+      {
+        $facet: {
+          even: [{ $match: { $expr: { $eq: ["$__jsmql.var.x", 4] } } }, { $unset: "__jsmql" }],
+          all: [{ $unset: "__jsmql" }],
+        },
+      },
+    ]);
+    // The branches of the `$facet` stage call are the same.
+    expect(compiled("let x = $.a * 2; $facet({ even: [$match(x === 4)] });", [{ even: [2] }])).toEqual([
+      { $set: { "__jsmql.var.x": { $multiply: ["$a", 2] } } },
+      { $facet: { even: [{ $match: { $expr: { $eq: ["$__jsmql.var.x", 4] } } }, { $unset: "__jsmql" }] } },
+    ]);
+  });
+
   it("refuses what no server accepts, naming the way out", () => {
     expect(() => pipeline("$ = { a: $$.filter(o => o.a > 1), lit: 1 };")).toThrow(/every entry must be one: 'lit'/);
     expect(() => pipeline('$ = { "a.b": $$.take(1) };')).toThrow(/cannot name a '\$facet' branch/);

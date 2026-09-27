@@ -25,7 +25,7 @@ import { Capture, Scope, scratchSlot } from "./names.ts";
 import { DOCUMENT, at, present, removed, written } from "./type.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
-import { pipelineOverOf, preservesCountOf } from "../rows.ts";
+import { pipelineOverOf, preservesCountOf, statementBodyOf } from "../rows.ts";
 import { noCorrelationSlot, readInUpdateDocument, readsEnclosingVariable } from "./errors.ts";
 
 /**
@@ -422,7 +422,12 @@ export class Env {
     return new Env(this.scope, site, this.chain, this.documents);
   }
 
-  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. A body over another collection starts a document level of its own. */
+  /**
+   * Into a sub-pipeline: a new chain, the boundary recorded, statement position. A
+   * body over another collection starts a document level of its own. A pipeline
+   * body over the SAME documents (a `$facet` branch) gets each scratch field that
+   * the outer chain left on them. So the cleanup of the body owes those fields too.
+   */
   enter(boundary: Boundary, chain: Chain): Env {
     const site: Site = {
       ...this.site,
@@ -430,6 +435,7 @@ export class Env {
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }],
     };
     const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
+    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain.dirty ||= this.chain.dirty;
     return new Env(this.scope, site, chain, documents);
   }
 

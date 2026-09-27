@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — fix: a `$facet` branch drops the scratch fields that its documents carry
+
+A `$facet` branch is a pipeline over the documents that the `$facet` receives.
+So a `let` field, or another scratch field of the chain around it, is on those
+documents, and the branch can read it. But each branch starts a chain of its
+own, and that chain did not know about the fields. So no branch dropped them.
+The `$facet` then replaced the document, so the outer chain owed no cleanup
+either. The scratch fields reached the answer inside each branch.
+MEASURED on mongod:
+
+```
+let x = $.a * 2; $ = { even: $$.filter(o => x === 4), all: $$ };
+→ [{ even: [{ _id: 2, …, __jsmql: { var: { x: 4 } } }], all: [{ _id: 1, …, __jsmql: { var: { x: 2 } } }, …] }]
+```
+
+Now a pipeline body over the same documents starts with the cleanup flag of the
+chain around it (`Env.enter` in [env.ts](../src/compiler/emit/env.ts)). So each
+branch ends with `{ $unset: "__jsmql" }` while its documents carry the
+namespace, and a branch that replaced the document owes nothing. The branches
+of the `$facet(…)` stage call follow the same rule. A `$lookup` or `$unionWith`
+body runs over another collection, and those documents carry no scratch field
+of the outer chain. An `$unset` ahead of the `$facet` cannot do the same work,
+because a branch may read a `let` of the outer chain.
+Tests: [compiler-sugars.test.ts](../test/compiler-sugars.test.ts), live on
+mongod. See [let-bindings.md § Cleanup](specs/let-bindings.md#cleanup).
+
+---
+
 ## 2026-09-27 — feat: `$$.uniq()` on whole documents groups on the document alone
 
 `$$.uniq()` kept each distinct document in a second copy of it:
