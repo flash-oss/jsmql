@@ -122,7 +122,7 @@ describe("$out — LHS shape errors", () => {
     );
   });
 
-  it("a computed bracket is refused, and the hint asks for a literal collection name", () => {
+  it("JSMQL refuses a computed bracket, and the hint asks for a literal collection name", () => {
     expect(() => jsmql("$$$[someVar] = $$;")).toThrow(
       "The collection is named when the pipeline is written: '$$$.<coll>' or '$$$[\"<coll>\"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.",
     );
@@ -255,7 +255,7 @@ describe("$out — ParamRef in bracket-LHS (jsmql.compile binding)", () => {
     expect(fn({ dbName: "warehouse", collName: "users" })).toEqual([{ $out: { db: "warehouse", coll: "users" } }]);
   });
 
-  it("non-string binding is rejected, and the hint asks for a string name", () => {
+  it("JSMQL rejects a non-string binding, and the hint asks for a string name", () => {
     const fn = jsmql.compile(({ n }) => ($$$[n] = $$));
     expect(() => fn({ n: 42 })).toThrow(/named when the pipeline is written|must be a string/);
   });

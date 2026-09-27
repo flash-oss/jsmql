@@ -61,7 +61,7 @@ It has no tokens or AST nodes of its own. The shape is `AssignExpr { target: Str
 - **A chain on `$$$.<coll>`** → the join road, `joinStream` ([lookup-stage.md § The join road](lookup-stage.md)): the chain's links become the sub-pipeline. When the body read the outer document, JSMQL replaces the stream per outer document (`$lookup` + `$unwind` + `$replaceWith`); otherwise it drops the current stream (`$match: { $expr: false }`) and unions in the other collection's pipeline. `.find` is refused here — one document is not a stream.
 - **An array literal** → `$documents`, valid only as the first statement (MongoDB places `$documents` at the head); later, `$$.push(…)` appends documents.
 
-**Bindings after a source switch.** An outer read inside the switched-in chain makes the source switch correlated. An outer read is a read of the outer document, of the root `$$.size()`, or of an outer `let` or `const`. The `$lookup` then carries each value through its `let`. After the switch the documents are the other collection's, and a `let` bound before it becomes unreadable. The compiler refuses a later read, and the message names the stage that replaced the document ([let-bindings.md](let-bindings.md)).
+**Bindings after a source switch.** An outer read inside the switched-in chain makes the source switch correlated. An outer read is a read of the outer document, of `$$.size()`, or of an outer `let` or `const`. The `$lookup` then passes each value through its `let`. After the switch the documents are the other collection's, and a `let` bound before it becomes unreadable. The compiler refuses a later read, and the message names the stage that replaced the document ([let-bindings.md](let-bindings.md)).
 
 ## Rejections
 
@@ -78,7 +78,7 @@ followers.
 
 A predicate's parameter is the document; `$.<field>` inside it is the OUTER
 document (HR4). A `$unionWith` body cannot reach the outer document, so an outer
-read makes the source switch correlated, and the `$lookup` carries the value.
+read makes the source switch correlated, and the `$lookup` passes the value.
 
 `$$ = [<docs>]` lowers its documents under that same `$unionWith` boundary, so the
 list holds only what the program spells out — the rule and its two refusals live with
@@ -99,8 +99,8 @@ For the source-switch form, later `$.x = …` ops operate on the *new*
 docs (from the foreign collection), not the pre-switch docs. Any prior
 `let` becomes unreadable: the compiler refuses
 `let cutoff = $.limit; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`,
-because the documents after the switch do not carry `cutoff`. The message names
-two fixes: write `cutoff` again after the switch, or carry the value as a
+because the documents after the switch do not hold `cutoff`. The message names
+two fixes: write `cutoff` again after the switch, or write the value as a
 field of the new document.
 
 ## Not supported (by design)

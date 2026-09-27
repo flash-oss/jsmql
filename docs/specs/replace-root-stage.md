@@ -70,7 +70,7 @@ the user's first cue to what the statement does to the document.
 | `$ = $.mapValues(v => v + 1)` | `{ $replaceWith: { $arrayToObject: { $map: { input: { $objectToArray: "$$ROOT" }, … } } } }` — a method on the bare `$` reads the document |
 | `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, pipeline: [ …, { $limit: 1 }], as: "__jsmql.tmp.N" } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — a document whose `.find` matched nothing leaves the stream (by design) |
 | `$ = { n: $.foo + $$$.coll.find(pred).count }` (buried lookup) | the `$lookup` hoisted ahead into a scratch slot, `{ $set: { slot: { $first: "$slot" } } }`, then `{ $replaceWith: { n: { $add: ["$foo", "$slot.count"] } } }` |
-| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (any array) | refused — the root takes one document; the message names `$$ = <array>;` for an array |
+| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (any array) | refused — `$` takes one document; the message names `$$ = <array>;` for an array |
 | `$$ = [{…}, {…}]` / `$$ = $.items.map(…)` (the same array, on the STREAM) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root) |
 
 The direct-lookup form unwinds the slot instead of reading `$first`:
@@ -230,8 +230,8 @@ Each refusal names a concrete fix:
 | Trigger | The refusal |
 |---|---|
 | a value that can never be a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = $.points * 1.1`) | the value must be a document; the message names two fixes: put it under a field (`$ = { value: … };`), or write to a field (`$.value = …;`) |
-| `$ = $$$.<coll>.filter(p)` (an array of documents) | the root takes one document, and the chain gives an array; the message names `$ = $$$.<coll>.find(pred)` for the first match, or a field for the array |
-| any array (`$ = []`, `$ = [1, 2]`, `$ = [{…}]`, `$ = $.items.map(…)`) | the root takes one document; the message names `$$ = <array>;` for one document per element, or `$.<field> = <array>;` to keep the array as a field |
+| `$ = $$$.<coll>.filter(p)` (an array of documents) | `$` takes one document, and the chain gives an array; the message names `$ = $$$.<coll>.find(pred)` for the first match, or a field for the array |
+| any array (`$ = []`, `$ = [1, 2]`, `$ = [{…}]`, `$ = $.items.map(…)`) | `$` takes one document; the message names `$$ = <array>;` for one document per element, or `$.<field> = <array>;` to keep the array as a field |
 | `$++`, `$ += 5`, `$--`, `$ *= 2` | `$` is the whole document, not a field; the message names a write to a field (`$.<field>++`) |
 | `delete $` | the statement would delete the document itself; the message names `$ = { … };` to replace it, and `$ = { keep: $.keep };` to keep one field |
 

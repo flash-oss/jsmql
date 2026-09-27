@@ -98,7 +98,7 @@ This file exists so the project does not forget an open item. Every "not yet sup
 - **Why blocked.** A Filter is a single expression with no statement list. Threading a declaration into it needs a separate declaration channel, or a textual-inline pass apart from the pipeline `$let` expansion. The output shape differs from the pipeline form — an inlined body instead of a `$let` — so the design stays separate on purpose.
 - **Attempted approaches.** None. The developer asked to record this as the likely next step for Filters.
 - **Success criteria.** Not yet decided; it depends on the inline design. `db.coll.find(jsmql("const adult = (p) => p.age >= 18; adult($)"))`, or a Filter-specific syntax, would produce a query document with the body inlined.
-- **Rejection site(s).** None. There is no dedicated throw. The parser's general rule covers it: it refuses a declaration outside a pipeline, because only the top level of a pipeline can declare a reusable function.
+- **Rejection site(s).** None. There is no dedicated throw. The parser's general rule covers it: it refuses a declaration outside a pipeline. Only the top level of a pipeline can declare a reusable function.
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** design-only
 - **Effort.** M

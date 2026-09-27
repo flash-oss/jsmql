@@ -114,7 +114,7 @@ See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#o
 
 The compiler refuses everything else, each with the form that works:
 
-- a computed bracket (`$$$[$.x] = $$`) — the name must be known when the pipeline is built. The message names the literal forms, and `jsmql.compile` for a name chosen at run time.
+- a computed bracket (`$$$[$.x] = $$`) — the compiler must know the name when it builds the pipeline. The message names the literal forms, and `jsmql.compile` for a name chosen at run time.
 - too many segments (`$$$.a.b = $$`) — the message names `$$$.<coll> = $$` for the current database, and `$$$$.<db>.<coll> = $$` for another.
 - a database alone (`$$$$.db = $$`) — the message asks for the collection too.
 
@@ -127,7 +127,7 @@ The target's shape is unambiguous against its neighbours. `$ = …` has the bare
 | `$$$.<a>.<b> = …` (three `$`, two LHS segments) | too many segments; the message names `$$$$.<db>.<coll>` for another database, and `$$$.<coll>` for the current one |
 | `$$$$.<x> = …` (four `$`, one LHS segment) | the collection is missing; the message names `$$$$.<db>.<coll>`, and `$$$.<coll>` for the current database |
 | `$$$$.<a>.<b>.<c> = …` (three or more segments) | too many segments, with the same two forms |
-| `$$$[<non-literal>] = …` (computed bracket on the LHS) | the name must be known when the pipeline is built; the message names the literal forms and `jsmql.compile` |
+| `$$$[<non-literal>] = …` (computed bracket on the LHS) | the compiler must know the name when it builds the pipeline; the message names the literal forms and `jsmql.compile` |
 | RHS not rooted at `$$` (for example `$$$.coll = $.x`) | the right side must be the stream; the message names the forms that work |
 | A link whose row has no `stream` cell | the stream road's refusal, with the nearest name that a `$$` receiver accepts ([stream-methods.md](stream-methods.md)) |
 | `$$.filter(<predicate>)` arity wrong | the arity refusal: `.filter` takes one predicate |

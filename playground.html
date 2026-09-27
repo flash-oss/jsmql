@@ -2037,8 +2037,8 @@
         const prefix = `({ ${keys.join(", ")} }) => { `;
         // Close the block on its OWN line. If `query` ends with a `// line
         // comment` and no trailing newline, appending `}` on the same line
-        // would comment out the closing brace. The parser would then hit EOF
-        // and refuse the input. The leading newline terminates any
+        // would comment out the closing brace. The parser would then reach the end
+        // of the input and refuse it. The leading newline terminates any
         // trailing line comment before the brace — mirrors `parseVars`, which
         // puts a `\n` before its closing `)` for the same reason.
         return { src: prefix + query + "\n}", prefixLen: prefix.length };
@@ -2262,9 +2262,9 @@
         }
 
         // A malformed variables object blocks compilation. The query may be
-        // fine, but the script cannot bind values to it. This shows the precise vars error,
-        // rather than silently dropping the variables. Without the variables, the compiler
-        // does not know the names that the user clearly meant to bind, and it refuses them.
+        // fine, but the script cannot bind values to it. So this shows the precise error
+        // about the variables, and does not silently ignore them. Without the variables,
+        // the compiler does not know the names that the user meant to bind. So it refuses them.
         if (vars.error) {
           clearErrorMarker();
           outputCm.setOption("mode", null);

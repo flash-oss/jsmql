@@ -120,8 +120,8 @@ site cannot.
 ### Call expansion
 
 `callExpression` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)
-dispatches on the callee: a name bound to a function expands it; a name bound to
-anything else is refused, with a `didYouMean` over the declared names
+dispatches on the callee: a name bound to a function expands it; JSMQL refuses a
+name bound to anything else, with a `didYouMean` over the declared names
 and every global that a program calls by its bare name (`bareCallableNames` in
 [src/compiler/rows.ts](../../src/compiler/rows.ts), e.g. `Numberr(x)` names `Number(...)`);
 a lambda takes the IIFE path. Both expansions run `applyLambda`. The lowering lowers
@@ -129,8 +129,8 @@ each argument in the CALLER's Env, binds each parameter once by `$let` so a
 multiply-read argument is not computed twice, and lowers the body under them. A call
 with no parameters binds nothing, so no `$let` wraps the body (`const two = () =>
 $.a * 2; two()` → `{ $multiply: ["$a", 2] }`). Inside the body the function's own
-name is bound to a refusal, so direct or mutual recursion is refused. MQL gives
-an expression no way to call itself.
+name is bound to a refusal, so direct or mutual recursion is refused. An
+expression cannot call itself in MQL.
 
 ### Free-variable capture
 

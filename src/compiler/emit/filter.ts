@@ -408,7 +408,7 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     );
   }
   // A query-only JavaScript spelling applies to the top-level document. Inside an
-  // `$elemMatch` body the server refuses it, and it has no value form that the
+  // `$elemMatch` body, the server refuses it, and it has no value form that the
   // compiler can use instead.
   if (!escape && !listedIn(name, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
     throw E.queryOnlyInsideElement(name, node.pos);

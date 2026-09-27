@@ -1343,7 +1343,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
 
     it(`a ${label} predicate hits the same Filter-mode gate as its arrow`, () => {
       // Detection drives the mode gate too: an undetected shorthand falls through
-      // to the generic refusal of a bare `$$$` reference, instead of the actionable
+      // to the generic refusal of a `$$$` reference alone, instead of the actionable
       // refusal that names Pipeline mode.
       expect(() => jsmql(`$$$.orders.filter(${shorthand}).size() > 0`)).toThrow(/needs Pipeline mode/);
     });

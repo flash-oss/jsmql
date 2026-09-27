@@ -50,7 +50,7 @@ are the two such rows among the JavaScript methods: every other method reads one
 family, and its row states a `sibling` sentence per family it refuses. The
 refusal (`errors.ts`) puts that sentence after its head. For example, for
 `.length()` on an array, the message names `string` as the family that has the
-method. It also names `.size()` for the number of elements. A branch whose
+method. It also suggests `.size()` to count the elements. A branch whose
 `slotType` cannot take a PROVEN argument kind drops
 out of the dispatch (`argsFit` in `select.ts`), and one branch left runs alone;
 `checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven
@@ -173,7 +173,7 @@ operator or a function names its call:
 
 ```js
 $.items.$sort({ a: 1 })   // ❌ a stage takes no value receiver; the value form is $sortArray(…)
-$.a.$size($.b)            // ❌ an operator in the method position; the refusal names the call form $size(…)
+$.a.$size($.b)            // ❌ an operator called as a method; the refusal names the call form $size(…)
 $$.$sort({ a: 1 });       // [{ $sort: { a: 1 } }] — the stream is the one receiver that a stage takes
 ```
 
@@ -417,7 +417,7 @@ Three things end a group, each measured on the server.
 |---|---|---|
 | `$.a = 1, $.b = 2` | one `$set` | one `$set` evaluates every value against the document it received |
 | `$.x = 1, $.z = $.x` | two `$set`s | the second must read the NEW `x`, and one stage would read the old one |
-| `$.a = 1, $.a.b = 2` | two `$set`s | the server refuses a parent and its own child in one `$set` |
+| `$.a = 1, $.a.b = 2` | two `$set`s | the server refuses a parent with its own child in one `$set` |
 | `$.a = 1, delete $.b` | `$set` then `$unset` | two stages, because they are two stages |
 
 A write to the document ROOT is its own stage: it replaces what the next
@@ -439,7 +439,7 @@ a stage that the developer names too, because the place of a stage stays checked
 | the row says | the target does | measured |
 |---|---|---|
 | `only: ["stageFirst"]` | refuses the stage anywhere but first, and anywhere its own body needs a hoisted stage | the server refuses `$documents` and `$geoNear` anywhere but first |
-| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, refuses a statement after it, and refuses a body that READS a scratch field | the server refuses `$out` anywhere but last, and refuses a body that reads a dropped scratch field |
+| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, refuses a statement after it, and refuses a body that READS a scratch field | the server refuses `$out` anywhere but last, and refuses a body that reads a removed scratch field |
 | `forbiddenIn: […]` | refuses it inside those containers | the server refuses a write stage in a sub-pipeline |
 | `bodyPositions` | reads each body key in the position it names | the server refuses an aggregation expression in `$geoNear`'s `query`, which is a query document |
 | `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
@@ -733,7 +733,7 @@ among branches, naming the key — and a bare `$$` is the stream unchanged
 (`[]`). Branch names follow the server's field rules (not empty, no `.`, no
 leading `$`; measured). The facet is a document-replacing stage, so the
 bindings end with it. The compiler refuses a chain on `$$` anywhere else than
-the root replace, because the chain is a stream, and points at the facet form.
+the root replace. The chain is a stream, not a value, and the facet form is the only destination for it.
 
 **`$$.push(…)` and `.concat(…)` are `$unionWith`** (`emit/union.ts`), one
 stage per source in order: `...$$$.c` is `{ $unionWith: "c" }`,

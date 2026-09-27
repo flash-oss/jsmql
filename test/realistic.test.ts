@@ -2781,9 +2781,9 @@ describe("guard against corrupt data before aggregating (`assert`)", { features:
       // Before rolling up revenue we refuse to silently ingest corrupt rows: a
       // negative quantity should fail the whole aggregate loudly rather than
       // skew the totals. `assert(cond, msg)` lowers to a `$match` whose
-      // `$convert` throws an error that carries `msg` when the condition
-      // fails (no deprecated server-side JS); a holding assertion passes the
-      // document through untouched.
+      // When the condition fails, `$convert` throws an error, and its message
+      // contains `msg`. This needs no deprecated server-side JavaScript. When
+      // the assertion holds, the document passes through with no change.
       expect(
         jsmql`
 $$.filter({ status: "paid" });

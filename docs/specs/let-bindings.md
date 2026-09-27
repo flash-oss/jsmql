@@ -308,11 +308,11 @@ Every name lives in the Env's `Scope` ([src/compiler/emit/env.ts](../../src/comp
 
 ### Stages that replace the document
 
-`afterStages` reads each emitted stage's row. A stage whose `document` effect replaces the document — `fields`, `value` or `unknown` (`$group`, `$bucket`, `$replaceWith`, and others; see docs/specs/types.md) — or a `projection` in INCLUSION mode (every value `1` / `true`, apart from `_id: 0`) — takes every field-carried binding and the scratch namespace with it. A later read is refused, and the message names the stage. It also names two fixes: write the binding again after the stage (`x = …`), or carry the value as a field of the new document.
+`afterStages` reads each emitted stage's row. A stage whose `document` effect replaces the document — `fields`, `value` or `unknown` (`$group`, `$bucket`, `$replaceWith`, and others; see docs/specs/types.md) — or a `projection` in INCLUSION mode (every value `1` / `true`, apart from `_id: 0`) — takes every field-carried binding and the scratch namespace with it. A later read is refused, and the message names the stage. It also names two fixes: write the binding again after the stage (`x = …`), or write the value as a field of the new document.
 
 ```
 let x = $.a; $group({ _id: null }); $.y = x
-// ✗ $group replaced the document that carried x
+// ✗ $group replaces the document, so x has no value after it
 ```
 
 `$project({ b: 0 })` (exclusion mode) and `$project({ x: $.y + 1 })` (expression mode) leave the rest of the document alone, `__jsmql` included, so the bindings survive them. So does a chain link whose row states `restoresDocuments` (`.uniq()`): its `$group` and `$replaceWith` give the documents back as they were. The Env takes each group of stages once, in the order of the stages. So the same refusal holds for a write later in the same `,` run. See docs/specs/types.md § The document after a stage.

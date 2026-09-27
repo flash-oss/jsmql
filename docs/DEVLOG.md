@@ -10,9 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — docs: the notes that replace error quotes say what happens, in plain words
+
+The developer found the notes from "docs: no prose quotes an error message" hard
+to read. For example, a note said that `$group` "dropped" a binding, and a reader
+cannot tell what that does. Each note now says what happens, in words that a
+reader who knows only JavaScript and MongoDB understands:
+
+```
+$match(total > 100);  // ✗ $group dropped total                                          before
+$match(total > 100);  // ✗ $group replaces the document, so total has no value after it   now
+```
+
+Cheap sub-agents and a script checked each line of prose that those commits
+added. They replaced unclear words such as "drop", "carry", "bare", "slot",
+"the root", "a field read" and "the method position". They also split long
+sentences, and they replaced "-ing" verbs and passive sentences. A comment in
+[vocabulary.ts](../src/registry/vocabulary.ts) now uses an example that the
+compiler really refuses. The rule in [CLAUDE.md](../CLAUDE.md) now asks for a
+note that a reader who knows only JavaScript and MongoDB understands.
+
+---
+
 ## 2026-09-27 — docs: CLAUDE.md asks for the simplest form of everything, to keep drift small
 
-The developer asked for a standing principle: simplify the code, the project
+The developer asked for a permanent principle: simplify the code, the project
 and the prose, so that drift of every kind stays small. Drift is a disagreement
 between two places that state one fact. The work of this day found many
 examples. Error-message quotes no longer matched the compiler. Doc examples
@@ -22,8 +44,8 @@ test asserted a compile. Some comments no longer matched the code.
 The principle is now the first rule under § Rules in [CLAUDE.md](../CLAUDE.md).
 It asks for fewer lines, files and words. It prefers the removal of a copy to a
 tool that checks the copy, as in "chore: remove scripts/check-doc-claims.mjs and
-the instructions that name it". It asks a session to correct or remove a stale
-comment, doc or test title, in its own commit. The single-source-of-truth rule
+the instructions that name it". It asks a session to correct or remove an
+incorrect comment, doc or test title, in its own commit. The single-source-of-truth rule
 and the no-history rule apply it.
 
 ---
@@ -32,17 +54,18 @@ and the no-history rule apply it.
 
 The script read each `<jsmql>  // → <MQL>` pair in the docs, compiled the
 source, and printed each pair that disagreed with the compiler. So it was a tool
-that checked copies of the compiler's output. It skipped every quoted refusal,
-so the stale quotes that "docs: no prose quotes an error message" removed never
-showed in its report. The developer asked to remove the script, and each
+that checked copies of the compiler's output. It skipped every quoted refusal.
+So its report never showed the incorrect quotes that "docs: no prose quotes an
+error message" removed. The developer asked to remove the script, and each
 instruction that names it.
 
 This commit deletes the script, the file-map line in [CLAUDE.md](../CLAUDE.md)
 and the sentence in [docs/CLAUDE.md](CLAUDE.md). It also deletes the section in
 [scripts/CLAUDE.md](../scripts/CLAUDE.md), the bullet in [STE.md](STE.md)
-§ Machine-read prose, and the row in [mql-stringify.md](specs/mql-stringify.md). No npm script, hook or test called
-the script. At its last run it checked 269 `// →` examples, and all of them
-agreed. From now on, nothing compares such an example with the compiler.
+§ Machine-read prose, and the row in [mql-stringify.md](specs/mql-stringify.md).
+No npm script, hook or test called the script. At its last run it checked 269
+`// →` examples, and all of them agreed. From now on, nothing compares such an
+example with the compiler.
 
 ---
 
@@ -51,9 +74,9 @@ agreed. From now on, nothing compares such an example with the compiler.
 The prose of the project quoted error messages in many places:
 [LANGUAGE.md](LANGUAGE.md), [README.md](../README.md), the specs, the CLAUDE.md
 files, code comments and test titles. Each quote was a second copy of wording
-that the code owns. Many copies were stale. Some described a refusal that no
-longer happens. The developer decided that no prose quotes an error message.
-This entry supersedes "2026-09-27 — docs: each quote of the refusal for a
+that has its source in the code. Many copies no longer matched the code. Some
+described a refusal that no longer happens. The developer decided that no prose
+quotes an error message. This entry supersedes "2026-09-27 — docs: each quote of the refusal for a
 dropped `let` matches the compiler", which refreshed four quotes in LANGUAGE.md.
 
 Each place now describes the refusal in generic words: what JSMQL refuses, why,
@@ -61,7 +84,7 @@ and what to write instead. A code block marks a refused line with `// ✗` and a
 short note:
 
 ```
-$match(total > 100);  // ✗ $group dropped total
+$match(total > 100);  // ✗ $group replaces the document, so total has no value after it
 ```
 
 The rule is in [CLAUDE.md](../CLAUDE.md) § Single source of truth. It covers
@@ -76,7 +99,7 @@ now states what the compiler does:
 
 ```
 $ = $.lineItems;                                        → [{ $replaceWith: "$lineItems" }]   not refused
-const k = $.a; $$ = $$$.orders.map(o => ({ v: k }));    → a $lookup whose let: carries k      not refused
+const k = $.a; $$ = $$$.orders.map(o => ({ v: k }));    → a $lookup that passes k in its let:  not refused
 jsmql.update("$match({ age: 18 })")                     → { $match: { age: 18 } }             your own MQL, passed through
 let t = $.a; $project({a:0}); $.b = t                   → compiles (a comment said this of $project({a:1}), which is refused)
 ```

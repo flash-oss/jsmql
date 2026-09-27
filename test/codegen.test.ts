@@ -63,7 +63,7 @@ describe("array-shape operators", () => {
   // aggregation operands `{ $gt: [a, b] }` (HR2 — see docs/LANG_RULES.md). In
   // aggregation-expression position the single-value form is your own MQL, and it
   // passes through as written. DELIBERATELY invalid: mongod refuses it, because
-  // `$gt` takes exactly two operands there…
+  // `$gt` takes exactly two operands.
   it("a comparison single arg in aggregation position passes through as written", () => {
     expect(jsmql.expr("$gt($.x)")).toEqual({ $gt: "$x" });
     expect(jsmql.expr("$eq(5)")).toEqual({ $eq: 5 });
@@ -239,7 +239,7 @@ describe("an operator's object form is your own MQL (required / unknown keys)", 
   it("an unknown key passes through as written", () => {
     // mongod: `iff` is an unknown key of `$cond`
     expect(jsmql.expr("$cond({ iff: $.a, then: 1, else: 2 })")).toEqual({ $cond: { iff: "$a", then: 1, else: 2 } });
-    // mongod: `startdate` is an unknown key of `$dateAdd`, which spells it `startDate`
+    // mongod: `startdate` is an unknown key of `$dateAdd`; use `startDate` instead
     expect(jsmql.expr('$dateAdd({ startdate: $.t, unit: "day", amount: 1 })')).toEqual({
       $dateAdd: { startdate: "$t", unit: "day", amount: 1 },
     });
@@ -288,7 +288,7 @@ describe("an operator's operand count is your own MQL (array / flex shapes)", ()
     expect(jsmql.expr("({ $size: [[1, 2, 3]] })")).toEqual({ $size: [[1, 2, 3]] });
     expect(jsmql.expr("$size($.a)")).toEqual({ $size: "$a" });
     // Three spellings of the one document `{ $size: [1, 2] }`. DELIBERATELY invalid:
-    // mongod reads two operands there, and `$size` takes exactly one.
+    // `$size` takes one operand, not two.
     expect(jsmql.expr("$size([1, 2])")).toEqual({ $size: [1, 2] });
     expect(jsmql.expr("({ $size: [1, 2] })")).toEqual({ $size: [1, 2] });
     expect(jsmql.expr("$size(1, 2)")).toEqual({ $size: [1, 2] });
@@ -590,7 +590,7 @@ describe("zero-arg operators", () => {
     // mongod: `$rand` takes no arguments
     expect(jsmql.expr("$rand(1, 2)")).toEqual({ $rand: [1, 2] });
     expect(jsmql.expr("$rand({ x: 1 })")).toEqual({ $rand: { x: 1 } });
-    // mongod: `$createObjectId` takes only the empty document; `$toObjectId` converts a value
+    // mongod: `$createObjectId` takes only the empty document; `$toObjectId` converts a value to an ObjectId
     expect(jsmql.expr("$createObjectId($.x)")).toEqual({ $createObjectId: "$x" });
     expect(() => jsmql.expr("$count(5)")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`). It received a top-level '$count' stage call instead. Use jsmql.pipeline().",
@@ -2687,7 +2687,7 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   it("a callback method rejects JavaScript's trailing thisArg instead of dropping it", () => {
     // `.map(fn, thisArg)` is valid JavaScript, so compiling it and silently discarding the
     // second argument is the wrong answer — the same shape as `.trim("x")`. The message names what
-    // the argument would have been, because a bare count of arguments does not help a reader
+    // the argument would have been, because a count of arguments alone does not help a reader
     // who knows the JS signature.
     for (const src of ["$.a.map(x => x, 1)", "$.a.filter(x => x, 1)", "$.a.some(x => x, 1)"]) {
       expect(() => jsmql.expr(src)).toThrow(/got 2 — JavaScript's trailing 'thisArg'/);
@@ -10986,7 +10986,7 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
     it("bare $$ without . or [ → a codegen error at position 0", () => {
       // The parser accepts a bare `$$`, because `$$$.coll = $$` uses it. A bare `$$`
       // statement does nothing, so codegen refuses it, and the message names what to
-      // chain on the stream. The typo `$$foo` (no separator) is a parse error; see the
+      // chain on the stream. The typo `$$foo` (no separator) is a parse error. See the
       // next test.
       const r = jsmql.validate("$$");
       expect(r.valid).toBe(false);

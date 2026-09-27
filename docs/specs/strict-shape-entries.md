@@ -35,7 +35,7 @@ jsmql.filter("$match($.age > 18)")
 // ✗ a stage call is a Pipeline; the message names jsmql.pipeline()
 
 jsmql.pipeline("$.age > 18")
-// ✗ a bare predicate is a Filter; the message names jsmql.filter() and the $match(…) wrapper
+// ✗ an unwrapped predicate is a Filter; the message names jsmql.filter() and the $match(…) wrapper
 
 jsmql.expr("$.score = 100")
 // ✗ a write is not an expression; the message names jsmql.update() and jsmql.pipeline()

@@ -97,7 +97,7 @@ or `[` after `$$` already accommodates `.push(...)`.
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (an outer read) | the no-`let` refusal above |
 | `$$.push(...$$$$.<db>.<coll>…)` (cross-database) | the cross-database refusal ([lookup-stage.md](lookup-stage.md)) |
 | `$$.push({ n: $$$.<coll>.find(p).<field> })` / `$$ = [{ n: … }]` — a value needing a stage | the value needs a `$lookup` stage, and the list cannot hold one; the message names the append of the other collection's documents, and a constant or a `jsmql.compile` parameter |
-| `$$.push(...)` inside a `$lookup` body | a body over another collection cannot reach the root stream; the message names the callback's third parameter and the stage form |
+| `$$.push(...)` inside a `$lookup` body | a body over another collection cannot reach the outer stream; the message names the callback's third parameter and the stage form |
 | `jsmql.filter("$$.push(...)")` | the strict-shape refusal: the push is a stage call; the message names `jsmql.pipeline()` |
 | `jsmql.update("$$.push(...)")` | the update-document refusal: the push is neither a write nor an update operator |
 

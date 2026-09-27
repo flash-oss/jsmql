@@ -616,8 +616,8 @@ type ParamKind =
  *
  * A list can be SHORTER than the API it names, and 13 of the lists are. That is
  * deliberate, not an omission, and each refusal says which parameter it drops:
- *   $.a.findIndex((v, i, arr) => arr)
- *     → refused: the list stops at (element, index); read the receiver itself
+ *   $.a.reduce((acc, v, i, arr) => arr, 0)
+ *     → refused: the callback takes at most (acc, element, index); to use the array, write $.a
  * So a list records what JSMQL accepts, and the API name says where to look for
  * the difference. It shows one difference between two close names: `.filter` takes
  * the index, and `.reject`, its own negation, does not.

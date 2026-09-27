@@ -32,7 +32,7 @@ the receiver.
 | `$$$.<coll>.<chain>` | another collection's stream | the `$lookup` body the join road assembles ([lookup-stage.md](lookup-stage.md)); `$$ = $$$.<coll>.<chain>` then unwinds it into the stream, or unions it in when nothing correlates |
 | `stream.<chain>` — a callback's third parameter | the inner stream of a body over another collection | that body |
 
-A link whose row has no `stream` cell is refused with the nearest name that a `$$` receiver accepts (`streamReceiverNames` in [src/compiler/rows.ts](../../src/compiler/rows.ts)): a stream method, a stage link, the union road's `.push()`, or `.size()`. A value terminal (`.size()`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination, so it is refused; on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position. Both lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
+A link whose row has no `stream` cell is refused with the nearest name that a `$$` receiver accepts (`streamReceiverNames` in [src/compiler/rows.ts](../../src/compiler/rows.ts)): a stream method, a stage link, `.push()` (for union operations), or `.size()`. A value terminal (`.size()`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination, so it is refused; on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position. Both lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
 
 ## The cell
 

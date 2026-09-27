@@ -470,7 +470,7 @@ $project({ name: 1, recentOrders: 1 });`,
 
   // assert(cond, msg) that FAILS for some document: it lowers to a $match whose
   // $convert names the message as a bson type, so MongoDB aborts the WHOLE
-  // aggregate. The server does not know that type name. Its error carries the
+  // aggregate. The server does not know that type name. Its error holds the
   // message. This is the load-bearing behaviour — proving the server really
   // rejects, not that we emit a plausible-looking shape.
   it("pipeline: a failing assert aborts the whole aggregate with its message", async () => {

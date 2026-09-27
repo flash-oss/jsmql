@@ -784,10 +784,9 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   });
 
   // Outer context referenced INSIDE a source-switch's chain body (vs the prior
-  // test, which references it in a later top-level stage). A bare
-  // A `$$ = $$$.<coll>.map(…)` body that reads the outer context (an outer `let`, a
-  // root `$.<field>`) joins through `$lookup.let`, so the value is carried in (see
-  // stream-size.test.ts "the root count, the doc field, the const, and the handle count").
+  // test, which references it in a later top-level stage). The body reads the outer
+  // context (an outer `let` or a root `$.<field>`) through `$lookup.let`, so the
+  // value is available (see stream-size.test.ts "the root count, the doc field, the const, and the handle count").
   it("an outer `let` read inside a source-switch `.map` body joins through `$lookup.let`", () => {
     expect(jsmql(`const k = $.min + 1; $$ = $$$.orders.map(o => ({ v: k }));`)).toEqual([
       { $set: { "__jsmql.var.k": { $add: ["$min", 1] } } },

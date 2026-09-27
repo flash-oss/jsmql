@@ -1370,7 +1370,7 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
     ]);
   });
 
-  it("zero-arg .toSorted() on whole documents is rejected, and the hint asks for a sort key", () => {
+  it("JSMQL rejects zero-arg .toSorted() on whole documents, and the hint asks for a sort key", () => {
     expect(() => jsmql("$$ = $$.toSorted();")).toThrow(
       "'.toSorted()' isn't available on '$$' — a stream of documents has no natural order, so a key is required: '.toSorted(\"<field>\")'. After '.flatMap(\"<field>\")' the bare call sorts by the unwound values.",
     );

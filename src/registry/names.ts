@@ -488,7 +488,7 @@ type MongoSpec<
    * `DocumentEffect`. Stated on every row that has a `body`, and on no other.
    * The scope tracker, the namespace-cleanup peephole and the stream-chain form
    * all read this one fact. MEASURED, for the drop of a `let` binding:
-   *   let t = $.a; $group({_id:$.k}); $.b = t   → refused: $group dropped t
+   *   let t = $.a; $group({_id:$.k}); $.b = t   → refused: $group replaces the document, so t has no value after it
    *   let t = $.a; $project({a:0});   $.b = t   → compiles ("projection": an exclusion keeps the rest)
    *   let t = $.a; $sort({a:1});      $.b = t   → compiles ("keeps")
    * MEASURED for `$project`: the binding survived `{ $project: { x: 0 } }` and went

@@ -654,9 +654,9 @@ function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: En
  * OPTIMISES a `$cond`'s branches before it reads the test: MEASURED, a receiver
  * the server holds as a constant — a `$lookup.let` variable, an injected value
  * inside `$literal` — folds the branch that does not apply and the whole pipeline
- * is refused before a document is read (`$.o = $$$.c.find({ _id: $.arr[0] })`
- * over an array failed in the string branch; a string receiver failed in the
- * array branch). A `$switch` drops a
+ * is refused before a document is read. For example, `$.o = $$$.c.find({ _id: $.arr[0] })`
+ * over an array failed in the string branch. A string receiver failed in the
+ * array branch. A `$switch` drops a
  * branch whose case folds to false without optimising it, so every receiver type
  * — array, string, document, number, null, missing — answers as it always did
  * (measured, the two shapes agree on each). It is the flatter document too, and

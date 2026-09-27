@@ -139,7 +139,7 @@ export type Ref =
   /**
    * A binding a document-replacing stage destroyed. Reading it is the
    * developer's error, and `fix` is the row's own advice:
-   *   let t = $.a; $group({ _id: $.k }); $.b = t   → refused: $group dropped t
+   *   let t = $.a; $group({ _id: $.k }); $.b = t   → refused: $group replaces the document, so t has no value after it
    */
   /**
    * A name with no value here. Its read says why: a binding a document-replacing

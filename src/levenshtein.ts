@@ -1,6 +1,6 @@
 // Cheap Levenshtein distance + closest-name lookup. It builds the suggestion tail
 // for every refusal against a CLOSED SET of names. The `didYouMean` helper is the
-// one writer of that tail, so each new closed-set refusal gets the same suggestion
+// only way to write that tail, so each new closed-set refusal gets the same suggestion
 // automatically. See the DX rules in CLAUDE.md.
 
 export function levenshtein(a: string, b: string): number {

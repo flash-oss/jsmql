@@ -964,8 +964,8 @@ class Parser {
       t === "ClusterRef";
     if (isPlace) return;
     // A method call is spelled by the CALL that the source wrote, not by the rule that built its receiver.
-    // `$.s.trim()` is a `MethodCall` node whose rule is `.field`. A message that names the `.field` rule
-    // names a form that the reader never typed.
+    // `$.s.trim()` is a `MethodCall` node whose rule is `.field`. A message about the `.field` rule
+    // identifies a form the reader never typed.
     if (target.expr.type === "MethodCall") {
       const call = `.${target.expr.wrote ?? target.expr.name}()`;
       throw new ParseError(

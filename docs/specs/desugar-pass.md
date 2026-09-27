@@ -306,7 +306,7 @@ stream, and the union road reads that spread itself.
 Math.max(...$.a, 1)
   packed   → {"$max":{"$concatArrays":["$a",[1]]}}
 $.a.indexOf(...$.b)
-  not packed (the rule reads one argument) → ✗ the spread is refused
+  not packed (the rule reads one argument) → ✗ refused: the spread
 ```
 
 **Group body before iteratee shorthand.** Both read an object argument, and the

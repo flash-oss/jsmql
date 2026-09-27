@@ -602,7 +602,7 @@ describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that
   // document ITS stage receives — so the `$lookup` belongs directly ahead of that
   // stage, not ahead of the statement. MEASURED with the `$lookup` at the front
   // instead: the server refused `$size` of a slot that `$sortByCount` dropped earlier,
-  // because a missing slot is not an array.
+  // because a missing field is not an array.
   it("joins on the group key a reshaping stage made, not on the source document", () => {
     expect(
       compiled(
