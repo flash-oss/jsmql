@@ -235,12 +235,12 @@ Each refusal names a concrete fix:
 | `$++`, `$ += 5`, `$--`, `$ *= 2` | `$` is the whole document, not a field; the message names a write to a field (`$.<field>++`) |
 | `delete $` | the statement would delete the document itself; the message names `$ = { … };` to replace it, and `$ = { keep: $.keep };` to keep one field |
 
-**Each refusal quotes the root as written.** A stage body writes its own document through its parameter: `o = …` in `.aggregate(o => { … })`. A `$ = …` fix there would write the OUTER document, and a body over another collection cannot write it ([lookup-stage.md § The join road](lookup-stage.md#the-join-road)). So each refusal above, except the arithmetic one, quotes the spelling the program uses. `rootAsWritten` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) gives the parameter's own name for an `Ident` target, and `$` for the bare root:
+**Each refusal uses the spelling that you wrote.** A stage body writes its own document through its parameter: `o = …` in `.aggregate(o => { … })`. A `$ = …` fix there would write the OUTER document, and a body over another collection cannot write it ([lookup-stage.md § The join road](lookup-stage.md#the-join-road)). So each refusal above, except the arithmetic one, quotes the spelling the program uses. `rootAsWritten` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) gives the parameter's own name for an `Ident` target, and `$` for the bare root:
 
-| Trigger | Message |
+| Trigger | The refusal |
 |---|---|
-| `$$.aggregate(o => { o = o.a * 2; })` | "'o = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('o = { value: … };'), or write to a field instead ('o.value = …;')." |
-| `$$.aggregate(o => { delete o; })` | "'delete o' would delete the document itself. To replace it, write 'o = { … };'; to drop every field but one, write 'o = { keep: o.keep };'." |
+| `$$.aggregate(o => { o = o.a * 2; })` | the value must be a document; the message names `o = { value: … };` and `o.value = …;`, with the `o` that you wrote |
+| `$$.aggregate(o => { delete o; })` | the statement would delete the document itself; the message names `o = { … };` to replace it, and `o = { keep: o.keep };` to keep one field |
 
 A body on the stream (`$$.aggregate(…)`) runs on the same documents as `$`. So a `$ = …` write there compiles, and its refusal keeps the `$` spelling. The arithmetic writes are the exception to the rule. The parser refuses them on the bare `$` only, because only the emit phase knows which name is a body's document. So `o++` in a body reaches the emitter as `o = o + 1`, and it gets the "'o = …' replaces the document" message.
 
