@@ -114,18 +114,16 @@ on it must first cast it to the field's own type — see the `keyBy`/`groupBy`/`
 pitfall in [LANGUAGE.md](../LANGUAGE.md#lodash-array-methods) for the `ObjectId` case.
 
 **A `.map` body must be a document.** `.map` lowers to `$replaceWith: <body>`, and
-MongoDB requires this to be an object root. The `map` row's `streamBody: "document"` fact gates the
-body in the same way as the `$ = <expr>` guard in
-[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts). A **provably** non-document body — a `Number`/`String`/`Boolean`/
-`Null`/`RegExp`/`Array` literal — is rejected at compile time (parity with `$ = 5`).
-This applies to both the top-level expression path and the correlated-lookup expression
-path (the block paths route through the shared `$ = <expr>` guard). A field ref,
-a member access, or an operator call is **data-dependent** (the field could be a
-sub-document), and it passes. So `.map("userId")` / `.map(d => d.userId)` emit
-`$replaceWith: "$userId"`, and, if `userId` is a scalar at runtime, they error on the server,
-exactly as `$ = $.userId` does. Arithmetic bodies (`d.a + d.b`) share the same
-pre-existing gap as `$ = <expr>` and are not caught (this would need type inference JSMQL
-does not do for `$replaceWith`).
+MongoDB requires an object root there. The stream cell reads the body through the
+`document` service of `stageInputs` in
+[src/compiler/emit/inputs.ts](../../src/compiler/emit/inputs.ts). The service refuses a
+body whose proof can never be an object, for example `d => 5` or `d => d.price * 2`.
+A block body's `return` value and the document that the array reducer appends take
+the same check. The proof is the type tracker's, and the `$ = <expr>` check reads the
+same rule: see [types.md § A refusal reads the whole set](types.md#a-refusal-reads-the-whole-set).
+A body that may be a document passes, and the server judges each document. So
+`.map("userId")` and `.map(d => d.userId)` emit `$replaceWith: "$userId"`. The server
+refuses a document whose `userId` holds a scalar, as it does for `$ = $.userId`.
 
 A chain link may also be a **pipeline stage** (`$$.$match({…}).$limit(5)`). Stage links interleave with these methods in every container. They are not registry entries, and [aggregation-stages.md](aggregation-stages.md#chained-stage-calls) owns them.
 

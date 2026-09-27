@@ -9,7 +9,9 @@
 // The suite builds each call from two existing things in the repo: the vendored spec's
 // `arguments[].type` (what each operand must resolve to) and the registry's own
 // `shape` (how the operands are written). A new operator gains coverage the day its
-// row lands. Only the calls a generator cannot express are listed here.
+// row lands. Only the calls a generator cannot express are listed here. The suite
+// measures an operator PRODUCTION, e.g. `*`, through its own lowering: the compiler
+// writes its lexeme between operands of each kind.
 //
 // This suite skips itself when no mongod is listening, so `npm test` stays green.
 
@@ -19,6 +21,7 @@ import { resolve } from "node:path";
 import yaml from "js-yaml";
 import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MongoClient, ObjectId, Timestamp } from "mongodb";
 import { NAMES } from "../src/registry/names.ts";
+import { PRODUCTIONS } from "../src/registry/productions.ts";
 import type { Position, TypeExpr } from "../src/registry/vocabulary.ts";
 import { topKindOf } from "../src/compiler/rows.ts";
 import { jsmql } from "../src/index.ts";
@@ -498,6 +501,60 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       if (VARIES_BY_OPERAND[name] === undefined) unproven.push(name);
     }
     expect(unproven).toEqual([]);
+  });
+
+  it("gives, for each operator production, the kinds that its row states and no other", async () => {
+    // Each call is the lexeme between two operands, and the compiler lowers it. An operand is
+    // a field, whose kind the compiler cannot prove, or a literal that is not a string. So `+`
+    // takes the `$add` road that its row states. A pair that the compiler or the server
+    // refuses proves nothing. A stated kind that no pair gives is a claim with no measurement.
+    const OPERANDS = [
+      ...["$.int", "$.dbl", "$.lng", "$.dec", "$.date", "$.str", "$.obj", "$.arr", "$.bool", "$.oid", "$.ts"],
+      ...["$.nul", "$.nope", "null", "[1, 2]"],
+    ];
+    const statedKinds = (r: TypeExpr): readonly string[] | null => {
+      if (r === "unknown") return null;
+      if (typeof r === "object" && "oneOf" in r) return (r as { oneOf: readonly TypeExpr[] }).oneOf.map(topKindOf);
+      return [topKindOf(r)];
+    };
+    type Production = { becomes: unknown; tokens: readonly string[]; returns: TypeExpr };
+    const wrong: string[] = [];
+    let measured = 0;
+    for (const [key, p] of Object.entries(PRODUCTIONS) as [string, Production][]) {
+      if (p.becomes !== "BinaryExpr" && p.becomes !== "UnaryExpr") continue;
+      const kinds = statedKinds(p.returns);
+      // `??`, `&&` and `||` give one of their operands.
+      if (kinds === null) continue;
+      const lexeme = p.tokens[0];
+      const sources =
+        p.becomes === "UnaryExpr"
+          ? OPERANDS.map((a) => `${lexeme} ${a}`)
+          : OPERANDS.flatMap((a) => OPERANDS.map((b) => `${a} ${lexeme} ${b}`));
+      const answers = await Promise.all(
+        sources.map(async (src) => {
+          let expr: unknown;
+          try {
+            expr = jsmql.expr(src);
+          } catch {
+            return [];
+          }
+          const r = await kindsOf(expr, "value");
+          return r.ok ? r.kinds.map((kind) => ({ src, kind })) : [];
+        }),
+      );
+      const given = new Set<string>();
+      for (const { src, kind } of answers.flat()) {
+        given.add(kind);
+        if (!kinds.includes(kind))
+          wrong.push(`${key}: '${src}' gives ${kind}, and the row states ${kinds.join(" or ")}`);
+      }
+      for (const kind of kinds)
+        if (!given.has(kind)) wrong.push(`${key}: the row states ${kind}, and no pair gives it`);
+      measured++;
+    }
+    expect(wrong).toEqual([]);
+    // The loop measures each operator production that states a kind. The guard fails at one more.
+    expect(measured).toBeGreaterThanOrEqual(22);
   });
 
   it("counts an array literal as mongod does, whatever its elements hold", async () => {

@@ -1528,19 +1528,13 @@ describe("logical operators", () => {
     expect(jsmql.expr("!($.a > 0)")).toEqual({ $not: { $gt: ["$a", 0] } });
   });
   it("&& with non-pure-ref LHS uses $let to bind once", () => {
+    // `$add` gives a number, a date or null, so only the null test and the zero test can fail.
     expect(jsmql.expr("($.a + $.b) && $.c")).toEqual({
       $let: {
         vars: { jsmqlV: { $add: ["$a", "$b"] } },
         in: {
           $cond: {
-            if: {
-              $and: [
-                { $ne: [{ $ifNull: ["$$jsmqlV", null] }, null] },
-                { $ne: ["$$jsmqlV", false] },
-                { $ne: ["$$jsmqlV", ""] },
-                { $ne: ["$$jsmqlV", 0] },
-              ],
-            },
+            if: { $and: [{ $ne: [{ $ifNull: ["$$jsmqlV", null] }, null] }, { $ne: ["$$jsmqlV", 0] }] },
             then: "$c",
             else: "$$jsmqlV",
           },
@@ -4558,23 +4552,11 @@ describe("bitwise infix operators", () => {
   });
   it("&& binds looser than | (so a | b && c → (a | b) && c)", () => {
     // LHS `$.a | $.b` is non-pure-ref → $let binds it once for the cond chain.
+    // `$bitOr` gives a number or null, so the value is its own truth.
     expect(jsmql.expr("$.a | $.b && $.c")).toEqual({
       $let: {
         vars: { jsmqlV: { $bitOr: ["$a", "$b"] } },
-        in: {
-          $cond: {
-            if: {
-              $and: [
-                { $ne: [{ $ifNull: ["$$jsmqlV", null] }, null] },
-                { $ne: ["$$jsmqlV", false] },
-                { $ne: ["$$jsmqlV", ""] },
-                { $ne: ["$$jsmqlV", 0] },
-              ],
-            },
-            then: "$c",
-            else: "$$jsmqlV",
-          },
-        },
+        in: { $cond: { if: "$$jsmqlV", then: "$c", else: "$$jsmqlV" } },
       },
     });
   });

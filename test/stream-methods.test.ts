@@ -853,6 +853,61 @@ describe("lodash iteratee shorthands on stream methods", () => {
     expect(jsmql('$$ = $$.map(d => "$sub");')).toEqual([{ $replaceWith: "$sub" }]);
   });
 
+  it("rejects a computed .map body that the type tracker proves is not a document", () => {
+    // `*` lowers to `$multiply`, which gives a number or null. MEASURED, the server refuses
+    // both as the root: "'replacement document' must evaluate to an object".
+    expect(() => jsmql("$$.map(d => d.a * 2);")).toThrow(
+      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+    );
+    // After `.flatMap`, the parameter is the element, and the body is still a number.
+    expect(() => jsmql('$$.flatMap("ids").map(x => x * 2);')).toThrow(
+      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+    );
+    // `-` and `+` give a number or a date: a date minus a number is a date.
+    expect(() => jsmql("$$.map(d => d.end - d.start);")).toThrow(
+      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number or a date is not one. Return '({ value: … })' to keep it under a field.",
+    );
+    expect(() => jsmql("$$.map(d => d.a + d.b);")).toThrow(
+      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number or a date is not one. Return '({ value: … })' to keep it under a field.",
+    );
+    // A block body returns its value, and the array reducer appends one: both replace the document.
+    expect(() => jsmql("$$.map(d => { const x = d.a; return x * 2; });")).toThrow(
+      "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+    );
+    expect(() => jsmql("$$ = $$.reduce((acc, d) => acc.concat(d.a * 2), []);")).toThrow(
+      "'.reduce(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. Return '({ value: … })' to keep it under a field.",
+    );
+  });
+
+  it("keeps a computed .map body that may be a document, and the server judges it", () => {
+    // `d.a ?? 1` is `d.a` when `a` is there, and `a` can hold a sub-document.
+    expect(jsmql("$$.map(d => d.a ?? 1);")).toEqual([{ $replaceWith: { $ifNull: ["$a", 1] } }]);
+    // One branch may be a document, so the whole value may be one.
+    expect(jsmql("$$.map(d => d.flag ? d.sub : d.a * 2);")).toEqual([
+      {
+        $replaceWith: {
+          $cond: {
+            if: {
+              $and: [
+                { $ne: [{ $ifNull: ["$flag", null] }, null] },
+                { $ne: ["$flag", false] },
+                { $ne: ["$flag", ""] },
+                { $ne: ["$flag", 0] },
+              ],
+            },
+            then: "$sub",
+            else: { $multiply: ["$a", 2] },
+          },
+        },
+      },
+    ]);
+    // The number under a field is the fix that the message names.
+    expect(jsmql('$$.flatMap("ids").map(x => ({ id: x, twice: x * 2 }));')).toEqual([
+      { $unwind: "$ids" },
+      { $replaceWith: { id: "$ids", twice: { $multiply: ["$ids", 2] } } },
+    ]);
+  });
+
   it('.flatMap("field") unwinds by field name → $unwind', () => {
     expect(jsmql('$$ = $$.flatMap("productIds");')).toEqual([{ $unwind: "$productIds" }]);
   });

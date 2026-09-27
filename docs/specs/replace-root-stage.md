@@ -229,13 +229,13 @@ Each refusal names a concrete fix:
 
 | Trigger | Message |
 |---|---|
-| a value that is not a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = true`) | "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;')." |
+| a value that can never be a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = $.points * 1.1`) | "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;')." |
 | `$ = $$$.<coll>.filter(p)` (an array of documents) | "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.…'." |
 | any array (`$ = []`, `$ = [1, 2]`, `$ = [{…}]`, `$ = $.items.map(…)`) | "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'." |
 | `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on '$' at position N. '$' is the whole document, not a field. Write to a field: '$.<field>++'." |
 | `delete $` | "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'." |
 
-A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`), and so does any expression the compiler cannot prove is not a document — the server, not the compiler, refuses `$ = $.points * 1.1`. An ARRAY never passes, whatever its elements — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
+The compiler reads the value's proof, so a value is refused only when it can never be a document: see [types.md § A refusal reads the whole set](types.md#a-refusal-reads-the-whole-set). A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`). So does any value that may be one. The server, not the compiler, refuses `$ = $.f ? $.sub : 5` for a document whose `f` is false. An ARRAY never passes, whatever its elements — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
 
 ## Deferred
 
@@ -249,9 +249,3 @@ A field path that resolves to a document at run time passes (`$ = $.profile`, `$
   `$replaceRoot({ newRoot: <expr> })` directly — the stage-call form stays
   unchanged. The project offers no knob that makes `$ = …` lower to the
   verbose form.
-- **Type-aware non-document rejection.** Beyond the literal-type
-  rejections above, the compiler could in principle detect
-  `$ = <BinaryExpr with arithmetic ops>` as obviously not a document. The
-  project skips this: the MongoDB runtime error names the offending stage
-  and is precise enough, and the extra rule would risk a false positive on
-  a legitimate `{ $cond: … }` or `$let`-style expression.

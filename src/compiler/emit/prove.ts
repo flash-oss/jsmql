@@ -474,11 +474,11 @@ function kindsOf(node: Expr, env: Env): Type {
       if (node.op === "+") {
         // The result is `$concat` when either operand is a string, and `$add`
         // otherwise. `$add` of a date returns a date. So only two numbers
-        // prove a number.
+        // prove a number, and the row states what the rest of the `$add` road gives.
         const l = kindOf(node.left, env);
         const r = kindOf(node.right, env);
         if (l === "string" || r === "string") return of("string");
-        return l === "number" && r === "number" ? of("number") : ANY;
+        if (l === "number" && r === "number") return of("number");
       }
       if (node.op === "??") {
         // `a ?? b` is `b` exactly when `a` is null or missing: the result is there when `b` is.

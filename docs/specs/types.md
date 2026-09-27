@@ -149,6 +149,17 @@ measures its top kind on mongod, the registry audits read it, and the globals
 generator can turn it into a TypeScript signature. A row whose result no term
 describes states `"unknown"`.
 
+**An operator production states its result in the same way.** `*` lowers to
+`$multiply`, so its row states a number. `-` states a number or a date (`oneOf`),
+because a date minus a number is a date. `+` has two roads: a string operand makes
+it `$concat`, and `kindsOf` in [prove.ts](../../src/compiler/emit/prove.ts) proves
+that road a string. Its row states the `$add` road, a number or a date, and two
+numbers prove a number. An operator that gives one of its operands, e.g. `??`,
+states `"unknown"`, and `kindsOf` joins the operands' proofs.
+[test/compiler-returns-agrees.test.ts](../../test/compiler-returns-agrees.test.ts)
+measures each production that states a kind. The compiler writes the operator
+between operands of each kind, and each answer from mongod must be a stated kind.
+
 The receiver's family picks the term of a per-family map. For an **unproven**
 receiver the call is on one of the families the row names, or the server raises
 an error; so the result is the row's answers over its field families, joined.
@@ -424,8 +435,9 @@ that *may* be it through for the server to judge: "possible" is not "proven". Th
 message names every kind the value can be (`nounOfKinds` in
 [errors.ts](../../src/compiler/emit/errors.ts)): `$.x = $.f ? "s" : 5; $ = $.x;`
 is refused as "a string or a number is not one", while `$.f ? { a: 1 } : 5` passes.
-A spread of a value proven a string keeps its own message, which names the
-character-wise spelling.
+The proof of an operator's value counts in the same way: `$$.map(d => d.end - d.start)`
+is refused as "a number or a date is not one". A spread of a value proven a string keeps
+its own message, which names the character-wise spelling.
 
 ### A read that gives no value
 

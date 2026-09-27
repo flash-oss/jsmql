@@ -776,6 +776,104 @@ describe("types — a refusal reads the whole kind set", () => {
     expect(() => jsmql("$.b = $.f ? 1 : true; $$.push($.b);")).toThrow("this is a number or a boolean");
     expect(() => jsmql("$$ = $.tags.map(t => t.length());")).toThrow("these elements are numbers");
   });
+
+  it("an operator proves the kind that its MQL gives, so each of these positions reads it", () => {
+    // `*`, `/`, `%`, `**`, `-x` and the bitwise operators give a number. `-` and `+` give a
+    // number or a date. See the `returns` of each production in src/registry/productions.ts.
+    expect(() => jsmql("$ = $.a * 2;")).toThrow(
+      "'$ = …' replaces the document, so the value has to BE a document — a number is not one.",
+    );
+    expect(() => jsmql("$ = $.end - $.start;")).toThrow("a number or a date is not one");
+    expect(() => jsmql("$$ = $.a * 2;")).toThrow("a number is one value");
+    expect(() => jsmql("$.y = { ...($.a % 2) };")).toThrow(
+      "'...' in an object spreads a DOCUMENT's fields, and this value is a number.",
+    );
+    expect(() => jsmql("$.y = [...($.a ** 2)];")).toThrow(
+      "'...' in an array spreads an ARRAY, and this value is a number.",
+    );
+    expect(() => jsmql("$$$.out.push($.a / 2);")).toThrow("a number is not a document");
+    expect(() => jsmql("$$.push(-$.a);")).toThrow("A stream holds documents, and this is a number.");
+    expect(() => jsmql("$$.map(d => d.flags & 1);")).toThrow("has to return a document — a number is not one.");
+    // One branch may be a document, so the value may be one, and it passes.
+    expect(jsmql("$ = $.f ? $.sub : $.a * 2;")).toEqual([
+      {
+        $replaceWith: {
+          $cond: {
+            if: {
+              $and: [
+                { $ne: [{ $ifNull: ["$f", null] }, null] },
+                { $ne: ["$f", false] },
+                { $ne: ["$f", ""] },
+                { $ne: ["$f", 0] },
+              ],
+            },
+            then: "$sub",
+            else: { $multiply: ["$a", 2] },
+          },
+        },
+      },
+    ]);
+  });
+});
+
+describe.skipIf(up === null)("types — the server refuses each operator's value as the document", () => {
+  let client: MongoClient;
+  let coll: Collection;
+  beforeAll(async () => {
+    client = (await liveClient())!;
+    coll = client.db("jsmql_compiler_types").collection("roots");
+    await coll.deleteMany({});
+    await coll.insertMany([
+      { _id: 1, a: 3, b: 4, i: 6, end: new Date("2020-01-02T00:00:00Z"), start: 1000, f: true, sub: { k: 1 } },
+      { _id: 2, f: false },
+    ]);
+  });
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  // The test reads each body twice: over the stream parameter `d`, and over `$` for its value.
+  const BODIES = [
+    "d.a * 2",
+    "d.a / 2",
+    "d.a % 2",
+    "d.a ** 2",
+    "-d.a",
+    "d.a + d.b",
+    "d.end - d.start",
+    "d.i & 1",
+    "d.i | 1",
+    "d.i ^ 1",
+    "~d.i",
+  ];
+
+  it("the server refuses each value as the document, over a number, a date and a missing field alike", async () => {
+    for (const body of BODIES) {
+      expect(() => jsmql(`$$.map(d => ${body});`), body).toThrow("has to return a document");
+      const value = jsmql.expr(body.split("d.").join("$."));
+      for (const _id of [1, 2]) {
+        await expect(
+          coll.aggregate([{ $match: { _id } }, { $replaceWith: value as object }]).toArray(),
+          `${body} on document ${_id}`,
+        ).rejects.toThrow("must evaluate to an object");
+      }
+    }
+  });
+
+  it("runs a body that may be a document, and a document that it makes", async () => {
+    const out = await coll
+      .aggregate([...(jsmql("$$.filter(d => d.f).map(d => d.f ? d.sub : d.a * 2);") as object[])])
+      .toArray();
+    expect(out).toEqual([{ k: 1 }]);
+    const made = await coll
+      .aggregate(jsmql("$$.map(d => ({ id: d._id, twice: d.a * 2 })).sortBy(d => d.id);") as object[])
+      .toArray();
+    // `$multiply` gives null over a missing field, and the document keeps the null.
+    expect(made).toEqual([
+      { id: 1, twice: 6 },
+      { id: 2, twice: null },
+    ]);
+  });
 });
 
 describe("types — a read that the proof shows gives no value is refused", () => {
