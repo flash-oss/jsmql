@@ -8,7 +8,7 @@ directory with a `SKILL.md` file. The file has YAML frontmatter — the `name` a
 repo shares each skill with the whole team.
 
 A path inside a `SKILL.md` file is **repo-root-relative** (`test/probe`,
-`docs/DEVLOG.md`). A loaded skill runs with the working directory at the project
+`docs/DEVLOG/`). A loaded skill runs with the working directory at the project
 root. A `../`-relative link from the skill file would point outside the repo.
 
 ## Skills
@@ -16,13 +16,13 @@ root. A `../`-relative link from the skill file would point outside the repo.
 | Skill | Triggers on | Encodes |
 |---|---|---|
 | [verify-mql](verify-mql/SKILL.md) | About to assert/trust emitted MQL; adding an operator/stage/method; "does this run?" | The HR3 "run it on a real `mongod` before trusting it" ritual — `jsmql` CLI → `test/probe` (or the MongoDB MCP). Canonical authority: [test/CLAUDE.md](../../test/CLAUDE.md). |
-| [devlog](devlog/SKILL.md) | Wrapping up any observable change to commit; DEVLOG merge conflicts | The `docs/DEVLOG.md` entry format + the `scripts/merge-devlog.mjs` resolver. Canonical authority: the [DEVLOG header](../../docs/DEVLOG.md). |
+| [devlog](devlog/SKILL.md) | Wrapping up any observable change to commit; DEVLOG merge conflicts | The `docs/DEVLOG/YYYY-MM.md` entry format + the `scripts/merge-devlog.mjs` resolver. Canonical authority: [docs/DEVLOG/CLAUDE.md](../../docs/DEVLOG/CLAUDE.md). |
 
 ## Conventions
 
 - A skill is a **pointer that acts**, not a second source of truth. Keep the
-  authoritative rules in their canonical home (a spec, a `CLAUDE.md` file, the
-  DEVLOG header). Make the skill link to that home, to match the repo's
+  authoritative rules in their canonical home (a spec, a `CLAUDE.md` file).
+  Make the skill link to that home, to match the repo's
   single-source-of-truth rule. Follow the "describe the invariant, not the
   current inventory" rule here too. Do not list an evolving set, such as
   operators or stages, inside a skill.

@@ -1,14 +1,15 @@
 ---
 name: devlog
 description: >-
-  Add or update an entry in docs/DEVLOG.md — jsmql's single historical record of
-  decisions and changes. Use this whenever you make an observable change to jsmql
-  (a feature, fix, refactor, rename, or documentation/naming decision) and are
-  preparing to commit, because every such change requires a DEVLOG entry in the
-  same commit. Also use when the user says "add a devlog entry", "log this",
-  "record why we did X", "note this decision", or when a `git merge` reports a
-  conflict on docs/DEVLOG.md. Handles the exact heading format (newest-on-top, UTC
-  date, conventional-commit-typed title), the what+why body, the "supersede, don't
+  Add or update an entry in docs/DEVLOG/ — jsmql's single historical record of
+  decisions and changes, one file per month (docs/DEVLOG/YYYY-MM.md). Use this
+  whenever you make an observable change to jsmql (a feature, fix, refactor,
+  rename, or documentation/naming decision) and are preparing to commit, because
+  every such change requires a DEVLOG entry in the same commit. Also use when
+  the user says "add a devlog entry", "log this", "record why we did X", "note
+  this decision", or when a `git merge` reports a conflict on a file under
+  docs/DEVLOG/. Handles the exact heading format (newest-on-top, UTC date,
+  conventional-commit-typed title), the what+why body, the "supersede, don't
   delete" rule, and the merge-devlog.mjs conflict resolver. Trigger even when the
   user doesn't say the word "devlog" but is clearly wrapping up a change to commit.
 ---
@@ -17,16 +18,17 @@ description: >-
 
 ## What the DEVLOG is
 
-[docs/DEVLOG.md](docs/DEVLOG.md) is JSMQL's **single historical record**. It
+[docs/DEVLOG/](docs/DEVLOG) is JSMQL's **single historical record**. It
 answers future "why is X this way?" questions, and it is the closest thing the
 project has to a ticket tracker. The project keeps no separate CHANGELOG or
 ROADMAP file, by design. **Every observable change gets an entry**, in the
 *same commit* as the change itself. A feature, a fix, a refactor, a rename, or
 a doc or naming decision each counts as an observable change.
 
-This file is the one place where the repo allows prose to restate a fact. So a
-DEVLOG entry should explain the reasoning in full. It is not a one-line
-changelog bullet.
+The folder holds one file per month, named `YYYY-MM.md`
+([docs/DEVLOG/CLAUDE.md](docs/DEVLOG/CLAUDE.md) gives the full layout). This is
+the one place where the repo allows prose to restate a fact. So a DEVLOG entry
+should explain the reasoning in full. It is not a one-line changelog bullet.
 
 ## Writing an entry
 
@@ -37,11 +39,23 @@ it:
 date -u +%F      # e.g. 2026-07-04
 ```
 
-**2. Prepend the entry to the top of the file.** The newest entry always comes
+**2. Find this month's file, `docs/DEVLOG/YYYY-MM.md`, using the UTC year and
+month from step 1.** When it does not exist yet, create it with this header,
+then the entry:
+
+```markdown
+# DEVLOG — YYYY-MM
+
+See [docs/DEVLOG/CLAUDE.md](CLAUDE.md) for the entry format and conventions.
+
+---
+```
+
+**3. Prepend the entry to the top of that file.** The newest entry always comes
 first, directly under the `---` line that closes the header block. A
 blank-line-`---`-blank-line mark separates each entry from the next.
 
-**3. Write the heading in this shape.** The header block requires only a UTC
+**4. Write the heading in this shape.** The header block requires only a UTC
 date and a short title:
 
 ```
@@ -61,13 +75,13 @@ date and a short title:
   matching its **exact heading line**, so two entries on the same day need
   different titles.
 
-**4. Write a body of 1 to 3 paragraphs that answers *what* and *why*.** The
+**5. Write a body of 1 to 3 paragraphs that answers *what* and *why*.** The
 *why* is the whole point. A future contributor reads this to understand a
 decision the diff alone cannot show. Add a file reference as a markdown link
 where relevant. Do not just describe the code change. State the reasoning, the
 alternative you rejected, and any constraint that forced the shape.
 
-**5. Do not write a version number in an entry, before version 1.0.** The
+**6. Do not write a version number in an entry, before version 1.0.** The
 package stays at `0.1.0` until the public API is ready for a commitment, so do
 not write a `v1`, `v2`, or other release marker.
 
@@ -94,24 +108,26 @@ decision in it, and link back to the old entry by its heading. The append-only
 history is what makes the DEVLOG trustworthy. Rewriting an old entry destroys
 the record.
 
-## Resolving a merge conflict on DEVLOG.md
+## Resolving a merge conflict on a docs/DEVLOG/ file
 
-Parallel branches often each prepend an entry, and git cannot merge these
-automatically. Do **not** resolve the conflict by hand. Run the structural
-resolver instead:
+Parallel branches often each prepend an entry to the same month's file, and
+git cannot merge these automatically. Do **not** resolve the conflict by hand.
+Run the structural resolver instead:
 
 ```sh
 ./scripts/merge-devlog.mjs      # run at repo root during the unresolved merge
 git merge --continue            # (or `git commit`) once it reports success
 ```
 
-The script reads the three conflict stages. It takes the union of the entries,
-removes a duplicate by its `## YYYY-MM-DD — Title` heading, sorts the result
-newest-first, and runs `git add` on it. The script exits with a non-zero
-status and leaves the file untouched only when it cannot decide — for example,
-a diverging header edit, or the same past entry edited two different ways.
-When this happens, resolve the conflict by hand, then run
-`git add docs/DEVLOG.md`.
+With no argument, the script finds every unmerged `docs/DEVLOG/YYYY-MM.md`
+path on its own and resolves each one; pass a path to target only that file.
+For each file, it reads the three conflict stages, takes the union of the
+entries, removes a duplicate by its `## YYYY-MM-DD — Title` heading, sorts the
+result newest-first, and runs `git add` on it. It reports a file, exits with a
+non-zero status, and leaves that file untouched only when it cannot decide —
+for example, a diverging header edit, or the same past entry edited two
+different ways. When this happens, resolve that file's conflict by hand, then
+run `git add` on it.
 
 ## Pre-commit checklist
 

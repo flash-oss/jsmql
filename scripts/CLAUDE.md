@@ -50,9 +50,9 @@ The script runs as the second half of `npm run build`, after `tsc`. The [`test/s
 
 ### `merge-devlog.mjs`
 
-This script resolves `git merge` conflicts on `docs/DEVLOG.md` automatically. It splits both sides on `---`. It removes duplicates by date and title heading. It sorts the entries newest first. Then it stages the result.
+This script resolves `git merge` conflicts on a `docs/DEVLOG/YYYY-MM.md` file automatically. With no argument, it finds every conflicted month file on its own; it also accepts one or more paths. For each file, it splits both sides on `---`. It removes duplicates by date and title heading. It sorts the entries newest first. Then it stages the result.
 
-Run this script when `git merge` reports a conflict on the devlog. It falls back to a manual conflict only when both sides edited one past entry in different ways.
+Run this script when `git merge` reports a conflict under `docs/DEVLOG/`. It falls back to a manual conflict, for the affected file, only when both sides edited one past entry in different ways.
 
 ### `hook-post-edit-realistic.sh`
 

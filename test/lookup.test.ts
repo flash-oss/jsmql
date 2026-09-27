@@ -1187,7 +1187,7 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
 
 describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial review)", () => {
   // Each of these emitted invalid or wrong MQL before the generic-head change fixed them;
-  // verified against a live mongod. See docs/DEVLOG.md.
+  // verified against a live mongod. See docs/DEVLOG/.
   it("a lone shorthand .filter({obj}) head lowers exactly like the equivalent arrow", () => {
     // The shorthand is rewritten to its arrow by the desugar pass, before any road
     // reads it, so it takes the same direct-lookup path — including the

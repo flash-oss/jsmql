@@ -309,7 +309,7 @@ echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
 - **[jsmql.js.org](https://jsmql.js.org)** — the project site. It explains what JSMQL is, how it compiles, and where to go next. Your browser compiles every MQL document on the site, using the same bundle npm ships.
 - **[Live playground](https://jsmql.js.org/playground.html)** — write JSMQL, and watch the MQL JSON update live. It comes pre-loaded with real-world recipes: tiered discounts, slug generation, audit logs, pivot tables, parameterised reports, and more.
 - **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, update-filter rules, `$match` query translation, `jsmql.compile` parameter semantics, `jsmql.expr` for raw aggregation expressions, the strict-shape entry points (`jsmql.filter` / `jsmql.pipeline` / `jsmql.update`), `jsmql.stringify` for printing a document, the `@koresar/jsmql/globals` import, the error catalogue, and the server-side-JS migration guide.
-- **[docs/DEVLOG.md](docs/DEVLOG.md)** — the running record of language decisions and the reasoning behind each one.
+- **[docs/DEVLOG/](docs/DEVLOG)** — the running record of language decisions and the reasoning behind each one, one file per month.
 
 ## License
 
