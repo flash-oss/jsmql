@@ -130,6 +130,16 @@ scripts/
 
 ## Rules
 
+### Simplify everything to keep drift minimal
+Drift is a disagreement between two places that state one fact. Examples are code and its comment, a doc and the code, and a test title and its test. Each copy of a fact can drift. So keep the code, the project and the prose as simple as possible. Spend effort to remove each source of drift:
+
+- Remove a copy before you add a tool that checks the copy.
+- Write less. Fewer lines, fewer files and fewer words hold fewer facts that can go stale.
+- Describe a rule in generic words. Do not copy a value that another place owns, such as an error message, a list or a count.
+- When you find a stale comment, doc or test title, correct it or remove it, in its own commit.
+
+The rules below apply this principle, for example § Single source of truth and § No development history outside DEVLOG.
+
 ### Write in Simplified Technical English
 All prose follows **ASD-STE100** — documents, code comments, test titles, error
 messages, commit messages, PR text, and replies in chat. The full digest, the

@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — docs: CLAUDE.md asks for the simplest form of everything, to keep drift small
+
+The developer asked for a standing principle: simplify the code, the project
+and the prose, so that drift of every kind stays small. Drift is a disagreement
+between two places that state one fact. The work of this day found many
+examples. Error-message quotes no longer matched the compiler. Doc examples
+showed refusals that no longer happen. Test titles claimed a refusal, while the
+test asserted a compile. Some comments no longer matched the code.
+
+The principle is now the first rule under § Rules in [CLAUDE.md](../CLAUDE.md).
+It asks for fewer lines, files and words. It prefers the removal of a copy to a
+tool that checks the copy, as in "chore: remove scripts/check-doc-claims.mjs and
+the instructions that name it". It asks a session to correct or remove a stale
+comment, doc or test title, in its own commit. The single-source-of-truth rule
+and the no-history rule apply it.
+
+---
+
 ## 2026-09-27 — chore: remove scripts/check-doc-claims.mjs and the instructions that name it
 
 The script read each `<jsmql>  // → <MQL>` pair in the docs, compiled the
