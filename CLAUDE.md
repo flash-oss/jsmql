@@ -123,7 +123,6 @@ scripts/
   build-cjs.mjs                 Bundles dist/cjs/*.cjs with esbuild for the `require` condition.
   merge-devlog.mjs              Resolves a docs/DEVLOG.md merge conflict without help.
   regen-expectations.mjs        Rewrites a suite's expected MQL with the compiler's answers, and you review the result as a diff. convert-expectations.mjs flips the polarity of the cases it lists.
-  check-doc-claims.mjs          Re-derives every `<jsmql>  // → <MQL>` pair in the prose from the compiler, and prints the pairs that disagree.
   sync-playground.mjs           Builds the committed pure-ESM bundle dist/jsmql.js, and generates playground.html from the skeleton and the realistic examples. sync-playground-loader.mjs and -vitest-shim.mjs let it read the examples without a test run.
   hook-post-edit-realistic.sh   A PostToolUse dispatcher that runs sync-playground.
 ```

@@ -74,22 +74,6 @@ Review both outputs as a diff before you commit them. A wrong answer regenerates
 
 After the edits land, the file goes through `oxfmt`. So the formatter owns the layout, and the diff holds only the answers that changed, with no re-wrapped line that did not change.
 
-### `check-doc-claims.mjs`
-
-Run `node scripts/check-doc-claims.mjs [file …]`. By default it checks `README.md`, `docs/LANGUAGE.md`, `docs/LANG_RULES.md`, and every file in `docs/specs/`. It re-derives every `<jsmql source>  // → <MQL>` pair in the prose from the compiler, and it prints the pairs that disagree.
-
-A doc example is a promise about what JSMQL emits, and prose has no test to keep it honest. This script catches a promise that the compiler stopped keeping.
-
-This is an AUDIT tool, not a gate. It parses markdown, so it can report a false positive: a template tag that interpolates a value, a claim that shows one stage of a longer pipeline, or host code around a `jsmql(…)` call. A human must classify each report.
-
-A claim may share its source's line (`$.a + $.b   // → { $add: … }`), or it may follow the source line. The script ignores a trailing `// note` on a claim line, a trailing comma before a closing bracket, and prose after the shape.
-
-The source may be a quoted string, a template tag without `${…}`, or a `jsmql.stringify(<call>)` call around either form. The script holds a `jsmql.validate(…)` claim to what `validate` returns.
-
-The script skips a claim that elides anything (`…`, `/* … */`, `<…>`), because such a claim is illustrative by design. It also skips a claim that opens on a key rather than a bracket (`let: { … }`), for the same reason.
-
-The script prints the compiler's answer with `jsmql.stringify`, the same printer that the docs' examples use. So a claim that spells a Date or an ObjectId compares as written. On both sides, the script normalises away quoting and spacing differences.
-
 ## Conventions
 
 - Each script is `.mjs` (ESM) and may import directly from a `src/*.ts` file. Node 22.18+ and 24.3+ strip TS syntax natively, without a flag (unflagged in 22.18.0 LTS and in 24.3.0; stable in 25.2.0).

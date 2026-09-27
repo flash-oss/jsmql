@@ -115,7 +115,6 @@ the reader in the same commit:
   `test/deferred-allowlist.txt` pins case-sensitive substrings of live prose.
 - `scripts/sync-playground.mjs` copies the `it()` titles of
   `test/realistic.test.ts` into the published `playground.html`.
-- `scripts/check-doc-claims.mjs` re-derives every `<jsmql>  // → <MQL>` pair.
 
 ## Example
 

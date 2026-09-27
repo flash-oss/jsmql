@@ -19,7 +19,8 @@ Do not put implementation detail in `LANGUAGE.md`. Do not put user-facing exampl
 
 This is the canonical user-facing reference. It must stay in sync with `src/index.ts` and with the behaviour of `jsmql()`, `jsmql.compile()`, and `jsmql.validate()`. Each of these is polymorphic over the three call shapes: string, arrow, and template tag.
 
-A new operator or syntax feature lands as a row in the registry. You update the LANGUAGE.md table row or example in the same commit. The drift tests enforce this recipe; it is in § Adding a new MongoDB operator in the root `CLAUDE.md`. `scripts/check-doc-claims.mjs` re-derives every `<jsmql>  // → <MQL>` pair here from the compiler. Run it after a shape change.
+A new operator or syntax feature lands as a row in the registry. You update the LANGUAGE.md table row or example in the same commit. The drift tests enforce this recipe; it is in § Adding a new MongoDB operator in the root `CLAUDE.md`.
+
 ## docs/specs/
 
 ### Current spec files

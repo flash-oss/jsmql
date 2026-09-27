@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — chore: remove scripts/check-doc-claims.mjs and the instructions that name it
+
+The script read each `<jsmql>  // → <MQL>` pair in the docs, compiled the
+source, and printed each pair that disagreed with the compiler. So it was a tool
+that checked copies of the compiler's output. It skipped every quoted refusal,
+so the stale quotes that "docs: no prose quotes an error message" removed never
+showed in its report. The developer asked to remove the script, and each
+instruction that names it.
+
+This commit deletes the script, the file-map line in [CLAUDE.md](../CLAUDE.md)
+and the sentence in [docs/CLAUDE.md](CLAUDE.md). It also deletes the section in
+[scripts/CLAUDE.md](../scripts/CLAUDE.md), the bullet in [STE.md](STE.md)
+§ Machine-read prose, and the row in [mql-stringify.md](specs/mql-stringify.md). No npm script, hook or test called
+the script. At its last run it checked 269 `// →` examples, and all of them
+agreed. From now on, nothing compares such an example with the compiler.
+
+---
+
 ## 2026-09-27 — docs: no prose quotes an error message
 
 The prose of the project quoted error messages in many places:
