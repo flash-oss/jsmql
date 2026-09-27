@@ -23818,6 +23818,7 @@ function lowerValue(node, env) {
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     return cond2(gone, null, lowerValue(withoutOptional(node), proved));
   }
+  if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
   switch (node.type) {
     case "NumberLiteral":
     case "StringLiteral":
@@ -23930,12 +23931,31 @@ function stoppedChain(node) {
   let cursor = node;
   let called = false;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
-    if (cursor.type !== "MemberAccess" || isPropertyRow(cursor)) called = true;
+    if (!isRead(cursor)) called = true;
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
   if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
   return cursor.optionalAt === void 0 ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
+}
+function isRead(e) {
+  return e.type === "IndexAccess" || e.type === "MemberAccess" && !isPropertyRow(e);
+}
+function readsHaveOptional(e) {
+  let cursor = e;
+  while (isRead(cursor)) {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
+}
+function withoutReadOptional(e) {
+  if (isRead(e)) return { ...e, optional: false, object: withoutReadOptional(e.object) };
+  if (e.type === "FieldRef" && e.optional === true) {
+    const { optional: _dropped, optionalAt: _at, ...rest } = e;
+    return rest;
+  }
+  return e;
 }
 function withoutOptional(e) {
   if (e.type === "MemberAccess" || e.type === "IndexAccess" || e.type === "MethodCall") {
@@ -24141,21 +24161,26 @@ function memberAccess(node, env) {
     throw unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
-  const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
-  if (why !== null) {
-    throw unreadableField(
-      node.name,
-      why,
-      `${node.optional ? "?." : "."}${node.name}`,
-      holderOf(node.object, env),
-      node.pos
-    );
-  }
+  refuseUnreadable(node, env);
   const path = pathOf(node, env);
   if (path !== null) return path;
-  const raw = lowerValue(node.object, childEnv(env, node, "object"));
-  const input = node.optional || chainHasOptional(node.object) ? ifNull(raw, {}) : raw;
-  return { $getField: { field: node.name, input } };
+  const names = [node.name];
+  let base = node.object;
+  let baseEnv = childEnv(env, node, "object");
+  while (base.type === "MemberAccess" && !isPropertyRow(base) && pathOf(base, env) === null) {
+    refuseUnreadable(base, env);
+    names.unshift(base.name);
+    baseEnv = childEnv(baseEnv, base, "object");
+    base = base.object;
+  }
+  const bound = env.fresh("v");
+  return letOne(bound.as, lowerValue(base, baseEnv), `${bound.ref}.${names.join(".")}`);
+}
+function refuseUnreadable(node, env) {
+  const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
+  if (why === null) return;
+  const read = `${node.optional ? "?." : "."}${node.name}`;
+  throw unreadableField(node.name, why, read, holderOf(node.object, env), node.pos);
 }
 function indexAccess(node, env) {
   const objEnv = childEnv(env, node, "object");
@@ -24172,36 +24197,38 @@ function indexAccess(node, env) {
   }
   const raw = lowerValue(node.object, objEnv);
   const idx = lowerValue(node.index, childEnv(env, node, "index"));
-  const optional = node.optional || chainHasOptional(node.object);
   const known = node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf3(node.object, objEnv));
-  const wrapped = (neutral) => optional ? ifNull(raw, neutral) : raw;
+  const absent = !isPresent(node.object, objEnv);
+  const orEmpty = (neutral) => absent ? ifNull(raw, neutral) : raw;
   const named = isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] };
-  if (kindOf3(node.index, env) === "string") return { $getField: { field: named, input: wrapped({}) } };
+  const keyKind = kindOf3(node.index, env);
+  if (keyKind === "string") return { $getField: { field: named, input: orEmpty({}) } };
+  const isString = (o) => boolTruth({ $eq: [{ $type: o }, "string"] });
   const literal2 = evaluate(node.index, /* @__PURE__ */ new Map());
   if (literal2.ok && typeof literal2.value === "number" && Number.isInteger(literal2.value)) {
     const i = literal2.value;
     if (i < 0) throw negativeIndex(i, node.pos);
-    const charAt = (o3) => ({ $substrCP: [o3, i, 1] });
-    const fieldAt = (o3) => ({ $getField: { field: String(i), input: o3 } });
-    if (known === "array") return { $arrayElemAt: [wrapped([]), i] };
-    if (known === "string") return charAt(wrapped(""));
-    if (known === "object") return fieldAt(wrapped({}));
-    const o2 = wrapped([]);
+    const charAt = { $substrCP: [raw, i, 1] };
+    const fieldAt2 = { $getField: { field: String(i), input: orEmpty({}) } };
+    if (known === "array") return { $arrayElemAt: [orEmpty([]), i] };
+    if (known === "object") return fieldAt2;
+    if (known === "string") return absent ? switchOn([{ case: isString(raw), then: charAt }], "$$REMOVE") : charAt;
     return switchOn(
       [
-        { case: boolTruth({ $isArray: o2 }), then: { $arrayElemAt: [o2, i] } },
-        { case: boolTruth({ $eq: [{ $type: o2 }, "string"] }), then: charAt(o2) }
+        { case: boolTruth({ $isArray: raw }), then: { $arrayElemAt: [raw, i] } },
+        { case: isString(raw), then: charAt }
       ],
-      fieldAt(o2)
+      fieldAt2
     );
   }
-  const key = { $toString: named };
-  if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
-  if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
-  const o = wrapped([]);
-  return switchOn([{ case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, idx] } }], {
-    $getField: { field: key, input: o }
-  });
+  const fieldAt = { $getField: { field: { $toString: named }, input: orEmpty({}) } };
+  if (known === "object") return fieldAt;
+  const element2 = { $arrayElemAt: [orEmpty([]), idx] };
+  if (known === "array") {
+    return keyKind === "number" ? element2 : switchOn([{ case: boolTruth({ $isNumber: idx }), then: element2 }], "$$REMOVE");
+  }
+  const onArray = keyKind === "number" ? { $isArray: raw } : { $and: [{ $isArray: raw }, { $isNumber: idx }] };
+  return switchOn([{ case: boolTruth(onArray), then: { $arrayElemAt: [raw, idx] } }], fieldAt);
 }
 function receiverOf(recv, env) {
   const src = sourceFamily(recv);

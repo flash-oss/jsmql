@@ -239,20 +239,22 @@ $$ = candidateProductIds
                         $getField: { field: { $toString: "$$id" }, input: "$__jsmql.var.candidateProductIdCounts" },
                       },
                       name: {
-                        $getField: {
-                          field: "name",
-                          input: {
-                            $arrayElemAt: [
-                              {
-                                $filter: {
-                                  input: "$__jsmql.var.candidateProducts",
-                                  as: "x",
-                                  cond: { $eq: ["$$x._id", "$$id"] },
+                        $let: {
+                          vars: {
+                            jsmqlV: {
+                              $arrayElemAt: [
+                                {
+                                  $filter: {
+                                    input: "$__jsmql.var.candidateProducts",
+                                    as: "x",
+                                    cond: { $eq: ["$$x._id", "$$id"] },
+                                  },
                                 },
-                              },
-                              0,
-                            ],
+                                0,
+                              ],
+                            },
                           },
+                          in: "$$jsmqlV.name",
                         },
                       },
                     },
@@ -433,7 +435,10 @@ $project({
                               {
                                 $ifNull: [
                                   {
-                                    $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: "$$value" },
+                                    $getField: {
+                                      field: { $toString: { $ifNull: ["$$this", ""] } },
+                                      input: { $ifNull: ["$$value", {}] },
+                                    },
                                   },
                                   0,
                                 ],
@@ -912,16 +917,12 @@ $$ = ["sender", "recipient"].map(party => {
                     $let: {
                       vars: {
                         leg: {
-                          $cond: {
-                            if: { $eq: [{ $ifNull: ["$legs", null] }, null] },
-                            then: null,
-                            else: { $getField: { field: "$$party", input: "$legs" } },
-                          },
+                          $ifNull: [{ $getField: { field: "$$party", input: { $ifNull: ["$legs", {}] } } }, null],
                         },
                       },
                       in: {
                         $let: {
-                          vars: { score: "$$leg.riskScore" },
+                          vars: { score: { $ifNull: ["$$leg.riskScore", null] } },
                           in: {
                             $cond: {
                               if: {
@@ -1314,8 +1315,18 @@ describe(
       // not apply and refuse the pipeline.
       expect(jsmql.expr(`$.cart.field[$.mainSide]`)).toEqual({
         $switch: {
-          branches: [{ case: { $isArray: "$cart.field" }, then: { $arrayElemAt: ["$cart.field", "$mainSide"] } }],
-          default: { $getField: { field: { $toString: { $ifNull: ["$mainSide", ""] } }, input: "$cart.field" } },
+          branches: [
+            {
+              case: { $and: [{ $isArray: "$cart.field" }, { $isNumber: "$mainSide" }] },
+              then: { $arrayElemAt: ["$cart.field", "$mainSide"] },
+            },
+          ],
+          default: {
+            $getField: {
+              field: { $toString: { $ifNull: ["$mainSide", ""] } },
+              input: { $ifNull: ["$cart.field", {}] },
+            },
+          },
         },
       });
     });

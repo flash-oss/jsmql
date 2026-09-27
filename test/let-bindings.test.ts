@@ -647,7 +647,7 @@ describe("let bindings — member / method / index access", () => {
                   then: { $substrCP: ["$__jsmql.var.xs", 0, 1] },
                 },
               ],
-              default: { $getField: { field: "0", input: "$__jsmql.var.xs" } },
+              default: { $getField: { field: "0", input: { $ifNull: ["$__jsmql.var.xs", {}] } } },
             },
           },
         },

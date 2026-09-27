@@ -123,7 +123,9 @@ describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest b
             {
               $match: {
                 qty: { $gt: 0 },
-                $expr: { $eq: ["$ref", { $getField: { field: "sub-id", input: "$$jsmql_f0_meta" } }] },
+                $expr: {
+                  $eq: ["$ref", { $getField: { field: "sub-id", input: { $ifNull: ["$$jsmql_f0_meta", {}] } } }],
+                },
               },
             },
           ],
@@ -147,8 +149,8 @@ describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest b
               $match: {
                 $expr: {
                   $and: [
-                    { $eq: ["$a", { $getField: { field: "sub-id", input: "$$jsmql_f0_meta" } }] },
-                    { $eq: ["$b", { $getField: { field: "sub_id", input: "$$jsmql_f0_meta" } }] },
+                    { $eq: ["$a", { $getField: { field: "sub-id", input: { $ifNull: ["$$jsmql_f0_meta", {}] } } }] },
+                    { $eq: ["$b", { $getField: { field: "sub_id", input: { $ifNull: ["$$jsmql_f0_meta", {}] } } }] },
                   ],
                 },
               },
@@ -2151,7 +2153,7 @@ describe("$$$.coll.aggregate — error cases", () => {
     it("a field read and a document method on the same terminal still compile", () => {
       expect(jsmql("$.r = $$$.orders.head().total;")).toEqual([
         { $lookup: { from: "orders", pipeline: [], as: "__jsmql.tmp.0" } },
-        { $set: { r: { $getField: { field: "total", input: { $first: "$__jsmql.tmp.0" } } } } },
+        { $set: { r: { $let: { vars: { jsmqlV: { $first: "$__jsmql.tmp.0" } }, in: "$$jsmqlV.total" } } } },
         { $unset: "__jsmql" },
       ]);
       expect(jsmql("$.r = $$$.orders.head().keys();")).toEqual([
@@ -2176,7 +2178,7 @@ describe("$$$.coll.aggregate — error cases", () => {
       // proof belongs to the binding, and only a plain read of it carries one.
       expect(jsmql("$.r = $$$.orders.map(o => ({ t: o.total })).head().t;")).toEqual([
         { $lookup: { from: "orders", pipeline: [{ $replaceWith: { t: "$total" } }], as: "__jsmql.tmp.0" } },
-        { $set: { r: { $getField: { field: "t", input: { $first: "$__jsmql.tmp.0" } } } } },
+        { $set: { r: { $let: { vars: { jsmqlV: { $first: "$__jsmql.tmp.0" } }, in: "$$jsmqlV.t" } } } },
         { $unset: "__jsmql" },
       ]);
     });

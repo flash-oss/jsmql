@@ -831,7 +831,7 @@ describe("compiler/emit/join — a correlated key the server holds as a constant
                             then: { $substrCP: ["$$jsmql_f0_ids", 0, 1] },
                           },
                         ],
-                        default: { $getField: { field: "0", input: "$$jsmql_f0_ids" } },
+                        default: { $getField: { field: "0", input: { $ifNull: ["$$jsmql_f0_ids", {}] } } },
                       },
                     },
                   ],

@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — fix!: a bracket read answers as a dot read does
+
+The developer asked that `o[expr]` take the guard that `o.prop` takes, and that `o?.[expr]`
+behave as `o?.prop`. A server run of each dot read beside its bracket twin, over documents
+with each kind of value, showed seven of twelve pairs apart. `$getField` answers null for a
+null input, where the path `"$o.p"` answers missing, so `$.o[$.k]` gave null over
+`{ o: null }`. `stoppedChain` counted an index read as a call, so `$.o?.[$.k]` took the
+`$cond` stop test, and it answered missing where `$.o?.p` answers null. A field read after
+a value, for example `$.o[$.k].q` or `$.items.find(p).name`, was a `$getField` over the value.
+It answered null over null, and it did not read through an array as a path does. And the
+run-time dispatch sent a string key to `$arrayElemAt` when the receiver was an array, so
+mongod aborted the whole query: "$arrayElemAt's second argument must be a numeric value, but
+is string". In JavaScript, `arr["p"]` is `undefined`.
+
+Now an index read takes the empty value of a receiver that the proof cannot show is there
+(`{ $ifNull: [o, {}] }`). `$arrayElemAt` runs only for a key that `$isNumber` passes.
+An index read is a plain read, as a field read is. So a `?.` with no call after it takes
+the rule of a bare `?.` read: one `{ $ifNull: [<the reads>, null] }` on top. A field read
+after a value binds the value once, and reads the rest of the path off the variable
+(`"$$jsmqlV.q"`). A variable path answers as a field path does over null, a scalar, an
+object and an array. The proof (`propOf`) already read a member that way. A known
+string that can be missing reads `s[0]` under a type test, because `$substrCP` answers `""`
+for null. All twelve pairs now give the same answer on the server. The answers change for
+null receivers and for a read through an array, so the commit is marked breaking. See
+`indexAccess` and `memberAccess` in [lower.ts](../src/compiler/emit/lower.ts) and
+[docs/specs/emit-pass.md](specs/emit-pass.md).
+
+---
+
 ## 2026-09-27 — fix: the compiler refuses a stage, an operator or a global function on a value
 
 A MongoDB operator, a stage and a global function read no receiver: each one is
