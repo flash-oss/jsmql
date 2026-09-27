@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — chore: vitest runs only the TypeScript suites under test/
+
+[vitest.config.ts](../vitest.config.ts) sets `include: ["test/**/*.test.ts"]`.
+The default pattern of vitest also takes a `*.test.js` file. On 2026-09-27 the
+main checkout held 58 untracked type-stripped `.js` copies of the source and the
+suites. So a plain `npm test` there ran 102 files, not the 70 suites. In that
+run, 29 tests failed. Seven stale copies failed against the new source. The real
+`test/compiler-sugars.test.ts` also failed, with `E11000 duplicate key`. Its
+copy wrote the same scratch database at the same time.
+
+The pattern starts at the root. So it also keeps out a copy under `tmp/` and the
+files of another worktree under `.claude/`. The `exclude` of those two
+directories goes. Every suite is a `test/**/*.test.ts` file, so a new suite
+needs no change here.
+
+---
+
 ## 2026-09-27 — test: every read chain runs against the rules of HR5
 
 The `?.` fold bug of 2026-09-26 ("a `?.` guards the value before it, however many members
