@@ -7,7 +7,7 @@
 // See docs/specs/types.md.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoClient, type Collection } from "mongodb";
+import { Double, MongoClient, type Collection } from "mongodb";
 import { jsmql } from "../src/index.ts";
 import { DOCUMENT, at, kindsOf, of, written } from "../src/compiler/emit/type.ts";
 import { liveClient } from "./fixtures/live.ts";
@@ -397,6 +397,68 @@ describe("types — the document after a stage, read off the stage itself", () =
     // `.uniq()` gives the documents back as they were, so the `let` field is still there.
     expect(() => jsmql("let t = $.a; $$.uniq().filter(d => d.x === t);")).not.toThrow();
   });
+
+  it("the statement after a chain reads the Env that the chain's last link left", () => {
+    // `.uniq()` gives the documents back as they were. The `let` field is still on them, so a
+    // later link and a later statement read it, and the cleanup drops it at the end.
+    const kept = [
+      { $set: { "__jsmql.var.t": "$a" } },
+      { $group: { _id: "$$ROOT" } },
+      { $replaceWith: "$_id" },
+      { $match: { $expr: { $eq: ["$x", "$__jsmql.var.t"] } } },
+      { $unset: "__jsmql" },
+    ];
+    expect(jsmql("let t = $.a; $$.uniq().filter(d => d.x === t);")).toEqual(kept);
+    expect(jsmql("let t = $.a; $$.uniq(); $match($.x === t);")).toEqual(kept);
+    expect(jsmql("let t = $.a; $$ = $$.uniq(); $match($.x === t);")).toEqual(kept);
+    expect(jsmql("let t = $.a; $$ = $$.uniq().filter(d => d.x === t);")).toEqual(kept);
+    // Each row that states `restoresDocuments` keeps the binding.
+    for (const link of ['uniqBy("x")', "sortedUniq()", 'sortedUniqBy("x")']) {
+      expect((jsmql(`let t = $.a; $$.${link}; $match($.x === t);`) as object[]).slice(-2)).toEqual(kept.slice(-2));
+    }
+    // The element after `.flatMap` stays for the next statement: `x` is the unwound id.
+    expect(jsmql('$$.flatMap("ids").uniq(); $$.map(x => ({ v: x * 2 }));')).toEqual([
+      { $unwind: "$ids" },
+      { $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+      { $replaceWith: { v: { $multiply: ["$ids", 2] } } },
+    ]);
+    // The cleanup stands ahead of the stage that writes the stream to a collection.
+    expect(jsmql("let t = $.a; $$$.out = $$.uniq();")).toEqual([...kept.slice(0, 3), kept[4], { $out: "out" }]);
+    expect(jsmql("let t = $.a; $$$.c.concat($$.uniq());")).toEqual([...kept.slice(0, 3), kept[4], { $merge: "c" }]);
+  });
+
+  it("a scratch field that a stage writes after a replace is still cleaned up", () => {
+    // `.shuffle()` writes its sort key after `.map` replaced the document.
+    expect(jsmql("$$.map(d => ({ a: d.a })).shuffle();")).toEqual([
+      { $replaceWith: { a: "$a" } },
+      { $addFields: { "__jsmql.tmp.0": { $rand: {} } } },
+      { $sort: { "__jsmql.tmp.0": 1 } },
+      { $unset: "__jsmql" },
+    ]);
+    // The stream count lands after `$ = …` in the same run.
+    expect(jsmql("$ = { a: $.a }, $.n = $$.size();")).toEqual([
+      { $replaceWith: { a: "$a" } },
+      { $setWindowFields: { output: { "__jsmql.size": { $count: {} } } } },
+      { $set: { n: "$__jsmql.size" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("a write run takes each stage in the order that the stages stand", () => {
+    // A write after `$ = …` cannot read the `let` that the stage took, as the next statement cannot.
+    expect(() => jsmql("let t = $.a; $ = { a: $.a }, $.x = t;")).toThrow(
+      "`t` is a `let` binding. It cannot be read after `$replaceWith`, because that stage replaced the document that carried it.",
+    );
+    // A write after the stage carries the `let` again, and the next statement reads it.
+    expect(jsmql("let t = $.a; $ = { a: $.a }, t = 1; $.y = t;")).toEqual([
+      { $set: { "__jsmql.var.t": "$a" } },
+      { $replaceWith: { a: "$a" } },
+      { $set: { "__jsmql.var.t": 1 } },
+      { $set: { y: "$__jsmql.var.t" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
 });
 
 describe.skipIf(up === null)("types — the server agrees with the stage effects", () => {
@@ -450,7 +512,108 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
       .toArray();
     expect(out).toEqual([{ n: null }, { n: null }, { n: null }]);
   });
+
+  it("a `let` read after `.uniq()` answers as JavaScript would, and no scratch field reaches the answer", async () => {
+    const answer = async (source: string, by: string): Promise<unknown[]> =>
+      await coll.aggregate([...(jsmql(source) as object[]), { $sort: { [by]: 1 } }]).toArray();
+    // The two `{ k: "a" }` documents are one after `.uniq()`.
+    expect(await answer("$$.map(d => ({ k: d.k })); let t = $.k; $$.uniq().filter(d => d.k === t);", "k")).toEqual([
+      { k: "a" },
+      { k: "b" },
+    ]);
+    expect(await answer("let t = $.amount; $$.uniq(); $match($.amount === t);", "_id")).toEqual([
+      { _id: 1, k: "a", amount: 5, item: "x" },
+      { _id: 2, k: "a", amount: 7, item: "y" },
+      { _id: 3, k: "b", amount: 0, item: "z" },
+    ]);
+  });
+
+  it("a scratch field that a stage writes after a replace does not reach the answer", async () => {
+    const answer = async (source: string): Promise<unknown[]> =>
+      await coll.aggregate([...(jsmql(source) as object[]), { $sort: { k: 1 } }]).toArray();
+    expect(await answer("$$.map(d => ({ k: d.k })).shuffle();")).toEqual([{ k: "a" }, { k: "a" }, { k: "b" }]);
+    expect(await answer("$ = { k: $.k }, $.n = $$.size();")).toEqual([
+      { k: "a", n: 3 },
+      { k: "a", n: 3 },
+      { k: "b", n: 3 },
+    ]);
+  });
 });
+
+describe.skipIf(up === null)(
+  "types — the server agrees: a link that gives the documents back gives them as they were",
+  () => {
+    let client: MongoClient;
+    let coll: Collection;
+    beforeAll(async () => {
+      client = (await liveClient())!;
+      coll = client.db("jsmql_compiler_types").collection("restores");
+      await coll.deleteMany({});
+      await coll.insertMany([
+        {
+          _id: 1,
+          a: 2,
+          ids: [3, 1, 2, 2],
+          items: [
+            { sku: "a", qty: 5 },
+            { sku: "b", qty: 1 },
+          ],
+        },
+        { _id: 2, a: 1, ids: [1], items: [{ sku: "c", qty: 2 }] },
+      ]);
+    });
+    afterAll(async () => {
+      await client?.close();
+    });
+
+    it("the link after `.intersection()` reads the unwound value, as lodash does", async () => {
+      const answer = async (source: string, by: string): Promise<unknown[]> =>
+        await coll.aggregate([...(jsmql(source) as object[]), { $sort: { [by]: 1 } }]).toArray();
+      // lodash: `_.intersection([3, 1, 2, 2, 1], [1, 2])` is `[1, 2]`.
+      expect(await answer('$$.flatMap("ids").intersection([1, 2]).map(x => ({ v: x * 10 }));', "v")).toEqual([
+        { v: 10 },
+        { v: 20 },
+      ]);
+      expect(
+        await answer('$$.flatMap("items").intersectionBy([{ sku: "a" }], "sku").map(i => ({ q: i.qty }));', "q"),
+      ).toEqual([{ q: 5 }]);
+    });
+
+    it("a `let` read after `.intersection()` answers as JavaScript would, and no scratch field reaches the answer", async () => {
+      const out = await coll
+        .aggregate(jsmql('let t = $.a; $$.flatMap("ids").intersection([2]).filter(x => x === t);') as object[])
+        .toArray();
+      expect(out).toEqual([
+        {
+          _id: 1,
+          a: 2,
+          ids: 2,
+          items: [
+            { sku: "a", qty: 5 },
+            { sku: "b", qty: 1 },
+          ],
+        },
+      ]);
+    });
+
+    it("`.uniq()` on whole documents gives back the first of two equal documents", async () => {
+      // An int and a double of one value compare equal, so `.uniq()` keeps one document,
+      // and lodash keeps the first one. `$type` shows which document came back.
+      const pair = client.db("jsmql_compiler_types").collection("first_kept");
+      await pair.deleteMany({});
+      await pair.insertMany([
+        { _id: 1, v: 1 },
+        { _id: 2, v: new Double(1) },
+      ]);
+      const kept = async (order: string): Promise<unknown[]> =>
+        await pair
+          .aggregate(jsmql(`$$.${order}.map(d => ({ v: d.v })).uniq(); $.t = $type($.v);`) as object[])
+          .toArray();
+      expect(await kept('sortBy("_id")')).toEqual([{ v: 1, t: "int" }]);
+      expect(await kept('orderBy("_id", "desc")')).toEqual([{ v: 1, t: "double" }]);
+    });
+  },
+);
 
 describe("types — a call's result follows its row's `returns` term", () => {
   it("`.map(f)` proves an array of what the callback returns", () => {

@@ -25,7 +25,7 @@ import { Capture, Scope, scratchSlot } from "./names.ts";
 import { DOCUMENT, at, present, removed, written } from "./type.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
-import { pipelineOverOf, preservesCountOf } from "../rows.ts";
+import { pipelineOverOf, preservesCountOf, statementBodyOf } from "../rows.ts";
 import { noCorrelationSlot, readInUpdateDocument, readsEnclosingVariable } from "./errors.ts";
 
 /**
@@ -391,6 +391,15 @@ export class Env {
     return new Env(this.scope, { ...this.site, where }, this.chain, this.documents);
   }
 
+  /**
+   * The same bindings and proofs, back where `parent` stands. A statement lowers
+   * its values under a child's Env, and the next statement stands where this one
+   * stood.
+   */
+  backAt(parent: Env): Env {
+    return new Env(this.scope, parent.site, this.chain, this.documents);
+  }
+
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name: string | null): Env {
     return new Env(this.scope, { ...this.site, inside: name }, this.chain, this.documents);
@@ -413,7 +422,12 @@ export class Env {
     return new Env(this.scope, site, this.chain, this.documents);
   }
 
-  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. A body over another collection starts a document level of its own. */
+  /**
+   * Into a sub-pipeline: a new chain, the boundary recorded, statement position. A
+   * body over another collection starts a document level of its own. A pipeline
+   * body over the SAME documents (a `$facet` branch) gets each scratch field that
+   * the outer chain left on them. So the cleanup of the body owes those fields too.
+   */
   enter(boundary: Boundary, chain: Chain): Env {
     const site: Site = {
       ...this.site,
@@ -421,6 +435,7 @@ export class Env {
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }],
     };
     const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
+    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain.dirty ||= this.chain.dirty;
     return new Env(this.scope, site, chain, documents);
   }
 

@@ -318,7 +318,7 @@ let x = $.a; $group({ _id: null }); $.y = x
 //   that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document.
 ```
 
-`$project({ b: 0 })` (exclusion mode) and `$project({ x: $.y + 1 })` (expression mode) leave the rest of the document alone, `__jsmql` included, so the bindings survive them.
+`$project({ b: 0 })` (exclusion mode) and `$project({ x: $.y + 1 })` (expression mode) leave the rest of the document alone, `__jsmql` included, so the bindings survive them. So does a chain link whose row states `restoresDocuments` (`.uniq()`): its `$group` and `$replaceWith` give the documents back as they were. The Env takes each group of stages once, in the order of the stages. So the same refusal holds for a write later in the same `,` run. See docs/specs/types.md § The document after a stage.
 
 ### Blocks and sub-pipelines
 
@@ -326,7 +326,7 @@ A block over the SAME documents — a `$facet` branch, a top-level callback — 
 
 ### Cleanup
 
-The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace still on the documents (`Chain.dirty`): a `let` slot, a join's scratch slot, and the stream count share the namespace and the one cleanup. A stage that replaced the document clears the flag, so nothing gets unset that is already gone. A program whose `let`s all folded emits no trace of the machinery.
+The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace still on the documents (`Chain.dirty`): a `let` slot, a join's scratch slot, and the stream count share the namespace and the one cleanup. A stage that replaced the document clears the flag, so the cleanup never unsets a field that is already gone. A scratch field that a later stage writes sets the flag again: the flag follows the stages in the order they stand. A `$facet` branch is a pipeline over the documents that the `$facet` receives. So its chain starts with the flag of the chain around it (`Env.enter`). So each branch ends with its own cleanup, and the `$facet` output holds no scratch field. A program whose `let`s all folded emits no trace of the machinery.
 
 ## Output stability
 

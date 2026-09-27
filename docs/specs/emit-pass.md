@@ -565,7 +565,9 @@ let x = $.a; $group({ _id: x });     // → the group drops every field, the cle
 ```
 
 The scope THREADS through the program: each statement answers the Env the
-next one lowers under. A stage whose `document` effect replaces the document (see docs/specs/types.md) takes
+next one lowers under. Inside a statement, each group of stages changes the Env
+once, in the order of the stages. A group is a chain link, a write of a `,` run
+or a stage call. See docs/specs/types.md § The document after a stage. A stage whose `document` effect replaces the document (see docs/specs/types.md) takes
 every field-carried binding with it — `true` for `$group`, `$replaceWith`,
 `$count` and their kind, `"inclusion"` for a `$project` whose body names
 fields to keep — and the compiler refuses a read after that, naming the

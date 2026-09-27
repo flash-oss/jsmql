@@ -4401,6 +4401,8 @@ jsmql`
 
 `$project` clears the scope in **inclusion** mode only. Naming the fields to keep drops `__jsmql` with the rest, so a later let read gives the same compile-time error that `$group` gives. An expression-mode projection (`{ x: $.y + 1 }`) and an exclusion-mode projection (`{ a: 0 }`) preserve the document, and the let survives them. The row states this as `document: "projection"`.
 
+A chain link that groups the stream, and then gives each document it keeps back as it was, keeps the let. So `let t = $.a; $$.uniq(); $match($.x === t);` reads `t`. The row states this as `restoresDocuments`. The rule is the same inside one `,` run: after `$ = { a: $.a }`, a later write in the same run cannot read the let either.
+
 **Indexing pitfall.** A let materialises through `$addFields` / `$set`. A `$match` on a let-bound value cannot use an index, and the optimiser cannot push that `$match` past the `$set` that produced the field. Place an index-eligible `$match` on a real document field **before** your `let` binding:
 
 ```js

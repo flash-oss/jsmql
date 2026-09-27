@@ -57,50 +57,140 @@ needs no change here.
 
 ---
 
-## 2026-09-27 — test: every read chain runs against the rules of HR5
+## 2026-09-27 — feat: `$$.uniq()` on whole documents groups on the document alone
 
-The `?.` fold bug of 2026-09-26 ("a `?.` guards the value before it, however many members
-follow it") showed only when two or more members follow a `?.`. No hand-written case named
-that shape, so no test failed. The developer asked that such a bug never happen again.
-[test/compiler-chains.test.ts](../test/compiler-chains.test.ts) writes 340 read chains from
-a small grammar: `$.a`, then `.b`, `?.b`, `[$.kb]` or `?.[$.kb]` up to three levels deep,
-then no method, or `.trim()` or `.uniq()` under a dot or a `?.`. It runs each chain on
-mongod over documents that hold each kind of value at each level. It compares each answer
-with an oracle that states HR5 in plain JavaScript and never calls the compiler.
+`$$.uniq()` kept each distinct document in a second copy of it:
 
-The suite fails where it must. With the fold fix taken out, it reports 39 wrong answers,
-for example `$.a.b?.c.d.uniq()` over `{ a: { b: {} } }` gives null where HR5 gives `[]`.
-With the bracket reads as they were before the fix of today, it reports 270. A new kind of
-read extends the grammar, and the oracle states its rule.
+```
+$$.uniq();
+→ [{ $group: { _id: "$$ROOT", __jsmqlTmp: { $first: "$$ROOT" } } }, { $replaceWith: "$__jsmqlTmp" }]   before
+→ [{ $group: { _id: "$$ROOT" } }, { $replaceWith: "$_id" }]                                             now
+```
+
+The group key is the document already, so the copy says nothing. The shorter
+pair has the same meaning. MEASURED on mongod: of two documents that compare
+equal, both pairs give back the first one. The measured pairs:
+
+- an int and a double of one value, in both orders;
+- a `Long` and an int, and a `Decimal128` and an int;
+- "A" and "a" under a collation that ignores case.
+
+The old `$group` also held each document twice, and the new one holds it once. `.sortedUniq()` and
+`.uniqBy(d => d)` key on the document too, so they take the same pair. A key that
+is not the document keeps `$first`: the element after `.flatMap`, or a field of
+`.uniqBy`. The group key then is not the document that the link must give back.
+
+The four `uniq` rows now build their stages through `keepFirstPer` in
+[names.ts](../src/registry/names.ts), the helper that `.intersection()` used
+already. So one helper holds the one shape. The new pair still gives the
+documents back as they were, so the rows keep `restoresDocuments`, and the test
+of that fact knows both pairs. Tests: [stream-methods.test.ts](../test/stream-methods.test.ts),
+[compiler-statement.test.ts](../test/compiler-statement.test.ts), and
+[compiler-types.test.ts](../test/compiler-types.test.ts), live on mongod.
 
 ---
 
-## 2026-09-27 — fix!: a bracket read answers as a dot read does
+## 2026-09-27 — fix: `.intersection()` and `.intersectionBy()` state that they give the documents back
 
-The developer asked that `o[expr]` take the guard that `o.prop` takes, and that `o?.[expr]`
-behave as `o?.prop`. A server run of each dot read beside its bracket twin, over documents
-with each kind of value, showed seven of twelve pairs apart. `$getField` answers null for a
-null input, where the path `"$o.p"` answers missing, so `$.o[$.k]` gave null over
-`{ o: null }`. `stoppedChain` counted an index read as a call, so `$.o?.[$.k]` took the
-`$cond` stop test, and it answered missing where `$.o?.p` answers null. A field read after
-a value, for example `$.o[$.k].q` or `$.items.find(p).name`, was a `$getField` over the value.
-It answered null over null, and it did not read through an array as a path does. And the
-run-time dispatch sent a string key to `$arrayElemAt` when the receiver was an array, so
-mongod aborted the whole query: "$arrayElemAt's second argument must be a numeric value, but
-is string". In JavaScript, `arr["p"]` is `undefined`.
+On a stream, `.intersection(list)` keeps the first document per value, and
+`.intersectionBy(list, key)` keeps the first document per key. Each is a
+`$match`, then the `$group` and `$replaceWith` pair that `.uniq()` uses. That
+pair gives each kept document back as it was. The `.uniq()` rows state this as
+`restoresDocuments`, and these two rows did not state it. So the compiler read the pair
+as "the document changed", and the link after it lost the element, each `let`
+and the cleanup. MEASURED on mongod:
 
-Now an index read takes the empty value of a receiver that the proof cannot show is there
-(`{ $ifNull: [o, {}] }`). `$arrayElemAt` runs only for a key that `$isNumber` passes.
-An index read is a plain read, as a field read is. So a `?.` with no call after it takes
-the rule of a bare `?.` read: one `{ $ifNull: [<the reads>, null] }` on top. A field read
-after a value binds the value once, and reads the rest of the path off the variable
-(`"$$jsmqlV.q"`). A variable path answers as a field path does over null, a scalar, an
-object and an array. The proof (`propOf`) already read a member that way. A known
-string that can be missing reads `s[0]` under a type test, because `$substrCP` answers `""`
-for null. All twelve pairs now give the same answer on the server. The answers change for
-null receivers and for a read through an array, so the commit is marked breaking. See
-`indexAccess` and `memberAccess` in [lower.ts](../src/compiler/emit/lower.ts) and
-[docs/specs/emit-pass.md](specs/emit-pass.md).
+```
+$$.flatMap("ids").intersection([1, 2]).map(x => ({ v: x * 2 }));
+→ { $replaceWith: { v: { $multiply: ["$$ROOT", 2] } } }
+→ mongod refused it: "$multiply only supports numeric types, not object"
+let t = $.a; $$.flatMap("ids").intersection([1, 2]);
+→ [{ _id: 1, a: 1, ids: 2, __jsmql: { var: { t: 1 } } }, …]
+```
+
+Both rows now state the fact. A new test in
+[stream-methods.test.ts](../test/stream-methods.test.ts) compiles each stream
+link and holds both directions. A link whose stages keep the first document per
+key states `restoresDocuments`, and each row that states the fact emits those
+stages. Before the fix, the test named these two rows. Tests:
+[stream-methods.test.ts](../test/stream-methods.test.ts) and
+[compiler-types.test.ts](../test/compiler-types.test.ts), live on mongod.
+
+---
+
+## 2026-09-27 — fix: a `$facet` branch drops the scratch fields that its documents carry
+
+A `$facet` branch is a pipeline over the documents that the `$facet` receives.
+So a `let` field, or another scratch field of the chain around it, is on those
+documents, and the branch can read it. But each branch starts a chain of its
+own, and that chain did not know about the fields. So no branch dropped them.
+The `$facet` then replaced the document, so the outer chain owed no cleanup
+either. The scratch fields reached the answer inside each branch.
+MEASURED on mongod:
+
+```
+let x = $.a * 2; $ = { even: $$.filter(o => x === 4), all: $$ };
+→ [{ even: [{ _id: 2, …, __jsmql: { var: { x: 4 } } }], all: [{ _id: 1, …, __jsmql: { var: { x: 2 } } }, …] }]
+```
+
+Now a pipeline body over the same documents starts with the cleanup flag of the
+chain around it (`Env.enter` in [env.ts](../src/compiler/emit/env.ts)). So each
+branch ends with `{ $unset: "__jsmql" }` while its documents carry the
+namespace, and a branch that replaced the document owes nothing. The branches
+of the `$facet(…)` stage call follow the same rule. A `$lookup` or `$unionWith`
+body runs over another collection, and those documents carry no scratch field
+of the outer chain. An `$unset` ahead of the `$facet` cannot do the same work,
+because a branch may read a `let` of the outer chain.
+Tests: [compiler-sugars.test.ts](../test/compiler-sugars.test.ts), live on
+mongod. See [let-bindings.md § Cleanup](specs/let-bindings.md#cleanup).
+
+---
+
+## 2026-09-27 — fix: each group of stages changes the Env once, in the order of the stages
+
+A `let` lives in a `__jsmql.var.<name>` field, and the pipeline ends with
+`{ $unset: "__jsmql" }`. After a `.uniq()` link the cleanup was missing, so the
+scratch field reached the answer. MEASURED on mongod:
+
+```
+let t = $.a; $$.uniq().filter(d => d.x === t);
+→ [{ $set: { "__jsmql.var.t": "$a" } }, { $group: … }, { $replaceWith: "$__jsmqlTmp" },
+   { $match: { $expr: { $eq: ["$x", "$__jsmql.var.t"] } } }]
+→ [{ _id: 1, a: 1, x: 1, __jsmql: { var: { t: 1 } } }]
+```
+
+The same cause refused a correct program: `let t = $.a; $$.uniq(); $match($.x === t);`
+answered "`t` … cannot be read after `$group`". The chain walker read the
+`restoresDocuments` fact of the `.uniq()` row, so `afterLink` kept the binding
+and the cleanup. Then the statement read the same stages a second time
+(`afterStages` over the whole list of the chain). That reading saw a `$group` and
+a `$replaceWith`, and it could not see the link. So it dropped the binding and
+cleared `Chain.dirty`. The write road also read its stages once, at the end of
+the run. Both readings lost the ORDER of the stages, so a scratch field that a
+stage wrote after a replace lost its cleanup too:
+
+```
+$$.map(d => ({ a: d.a })).shuffle();                   → `__jsmql.tmp.0` in the answer
+$ = { a: $.a }, $.n = $$.size();                       → `__jsmql.size` in the answer
+let t = $.a; $$$.out = $$.uniq();                      → `__jsmql.var.t` written into `out`
+$$.flatMap("ids").uniq(); $$.map(x => ({ v: x * 2 }));  → `x` read the document, not the id
+let t = $.a; $ = { a: $.a }, $.x = t;                  → `x` read a field that the stage took
+```
+
+Now each group of stages changes the Env once, where the group stands: a chain
+link, a write of a `,` run, a stage call. A road that walks a chain returns a
+`Step`: its stages, and the Env that its last link left. No caller reads those
+stages again (`streamStages`, `becomeStream`, `outStages`, `mergeStages` and
+`stageStatement` in [statement.ts](../src/compiler/emit/statement.ts)). The
+write road threads ONE Env through the run, in order, so the second Env
+(`revived`) and the replay of the proofs are gone. `Env.backAt` gives the result
+back at the site of the statement. So the last program above is now refused, as
+the same program with `;` was. `x = …` after the stage in the same run carries
+the `let` again. The other fix considered was a mark on the stages of a
+restoring link. A mark fixes `.uniq()` alone. The second reading still clears the
+cleanup after a later scratch write. Also, a road that copies a stage loses the
+mark. Tests: [compiler-types.test.ts](../test/compiler-types.test.ts), live on
+mongod too. See [types.md § The document after a stage](specs/types.md#the-document-after-a-stage).
 
 ---
 
@@ -159,6 +249,53 @@ $.items.currentOp();    ✗ … Write '$$$$.currentOp()' — the cluster referen
 The hint in `refusalFor` (`src/compiler/emit/errors.ts`) now writes the dot, and
 it takes the name with or without its own dot. Test:
 `test/compiler-statement.test.ts`.
+
+---
+
+## 2026-09-27 — fix!: a bracket read answers as a dot read does
+
+The developer asked that `o[expr]` take the guard that `o.prop` takes, and that `o?.[expr]`
+behave as `o?.prop`. A server run of each dot read beside its bracket twin, over documents
+with each kind of value, showed seven of twelve pairs apart. `$getField` answers null for a
+null input, where the path `"$o.p"` answers missing, so `$.o[$.k]` gave null over
+`{ o: null }`. `stoppedChain` counted an index read as a call, so `$.o?.[$.k]` took the
+`$cond` stop test, and it answered missing where `$.o?.p` answers null. A field read after
+a value, for example `$.o[$.k].q` or `$.items.find(p).name`, was a `$getField` over the value.
+It answered null over null, and it did not read through an array as a path does. And the
+run-time dispatch sent a string key to `$arrayElemAt` when the receiver was an array, so
+mongod aborted the whole query: "$arrayElemAt's second argument must be a numeric value, but
+is string". In JavaScript, `arr["p"]` is `undefined`.
+
+Now an index read takes the empty value of a receiver that the proof cannot show is there
+(`{ $ifNull: [o, {}] }`). `$arrayElemAt` runs only for a key that `$isNumber` passes.
+An index read is a plain read, as a field read is. So a `?.` with no call after it takes
+the rule of a bare `?.` read: one `{ $ifNull: [<the reads>, null] }` on top. A field read
+after a value binds the value once, and reads the rest of the path off the variable
+(`"$$jsmqlV.q"`). A variable path answers as a field path does over null, a scalar, an
+object and an array. The proof (`propOf`) already read a member that way. A known
+string that can be missing reads `s[0]` under a type test, because `$substrCP` answers `""`
+for null. All twelve pairs now give the same answer on the server. The answers change for
+null receivers and for a read through an array, so the commit is marked breaking. See
+`indexAccess` and `memberAccess` in [lower.ts](../src/compiler/emit/lower.ts) and
+[docs/specs/emit-pass.md](specs/emit-pass.md).
+
+---
+
+## 2026-09-27 — test: every read chain runs against the rules of HR5
+
+The `?.` fold bug of 2026-09-26 ("a `?.` guards the value before it, however many members
+follow it") showed only when two or more members follow a `?.`. No hand-written case named
+that shape, so no test failed. The developer asked that such a bug never happen again.
+[test/compiler-chains.test.ts](../test/compiler-chains.test.ts) writes 340 read chains from
+a small grammar: `$.a`, then `.b`, `?.b`, `[$.kb]` or `?.[$.kb]` up to three levels deep,
+then no method, or `.trim()` or `.uniq()` under a dot or a `?.`. It runs each chain on
+mongod over documents that hold each kind of value at each level. It compares each answer
+with an oracle that states HR5 in plain JavaScript and never calls the compiler.
+
+The suite fails where it must. With the fold fix taken out, it reports 39 wrong answers,
+for example `$.a.b?.c.d.uniq()` over `{ a: { b: {} } }` gives null where HR5 gives `[]`.
+With the bracket reads as they were before the fix of today, it reports 270. A new kind of
+read extends the grammar, and the oracle states its rule.
 
 ---
 
