@@ -174,7 +174,7 @@ describe("compiler/emit — `$$$.<coll> = <stream>` is $out", () => {
     expect(() => pipeline("$$$[$.name] = $$;")).toThrow(/named when the pipeline is written/);
     expect(() => pipeline('$$$[""] = $$;')).toThrow(/cannot name a collection to write/);
     expect(() => pipeline('$$$["$x"] = $$;')).toThrow(/cannot name a collection to write/);
-    expect(() => pipeline("$$$.x = $$; $.y = 1;")).toThrow(/Nothing can follow '\$out'/);
+    expect(() => pipeline("$$$.x = $$; $.y = 1;")).toThrow(/Nothing can follow '\$\$\$\.x = …'/);
   });
 });
 

@@ -357,14 +357,18 @@ describe("types — the document after a stage, read off the stage itself", () =
     ]);
   });
 
-  it("a `$project` inclusion keeps the named fields' types and forgets the rest; an exclusion removes its fields", () => {
-    expect(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length(); $.m = $.b ? 1 : 2;')).toEqual([
+  it("a `$project` inclusion keeps the named fields' types and closes the document; an exclusion removes its fields", () => {
+    expect(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length();')).toEqual([
       { $set: { a: "x" } },
       { $set: { b: 1 } },
       { $project: { a: 1, _id: 0 } },
       { $set: { n: { $strLenCP: "$a" } } },
-      { $set: { m: 2 } },
     ]);
+    // The document holds `a` alone, so a read of `b` gives no value.
+    expect(() => jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.m = $.b ? 1 : 2;')).toThrow(
+      "'$.b' reads a field that the document does not have. It holds 'a'.",
+    );
+    // An exclusion leaves the document open, and `a` certainly missing.
     expect(jsmql('$.a = "x"; $project({ a: 0 }); $.n = $.a ? 1 : 2;')[2]).toEqual({ $set: { n: 2 } });
   });
 
@@ -373,6 +377,25 @@ describe("types — the document after a stage, read off the stage itself", () =
     expect(jsmql('$.a = "x"; $sortByCount($.a); $.n = $.a.length();')[2]).toEqual({
       $set: { n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } } },
     });
+  });
+
+  it("each link of a stream chain reads the document that the link before it made", () => {
+    // The `$set` link wrote `a` from a field the proof cannot show, so the `.map` link guards the read.
+    expect(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));')).toEqual([
+      { $set: { a: "x" } },
+      { $set: { a: "$label" } },
+      {
+        $replaceWith: {
+          n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } },
+        },
+      },
+    ]);
+    // A link that replaced the document took the `let` field with it, as a stage statement does.
+    expect(() => jsmql("let t = $.a; $$.map(d => ({ x: 1 })).filter(d => d.x === t);")).toThrow(
+      "`t` is a `let` binding. It cannot be read after `$replaceWith`, because that stage replaced the document that carried it.",
+    );
+    // `.uniq()` gives the documents back as they were, so the `let` field is still there.
+    expect(() => jsmql("let t = $.a; $$.uniq().filter(d => d.x === t);")).not.toThrow();
   });
 });
 
@@ -408,14 +431,24 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
     ]);
   });
 
-  it("the projected program answers as JavaScript would", async () => {
+  it("the projected program answers as JavaScript would, and the read it refuses gives no value", async () => {
     const out = await coll
       .aggregate([
-        ...(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length(); $.m = $.b ? 1 : 2;') as object[]),
+        ...(jsmql('$.a = "x"; $.b = 1; $ = $.pick(["a"]); $.n = $.a.length();') as object[]),
+        // The read `$.b` that the compiler refuses after the projection, written as raw MQL.
+        { $set: { m: "$b" } },
         { $limit: 1 },
       ])
       .toArray();
-    expect(out).toEqual([{ a: "x", n: 1, m: 2 }]);
+    expect(out).toEqual([{ a: "x", n: 1 }]);
+  });
+
+  it("the chain link after a `$set` answers as JavaScript would", async () => {
+    // No fixture document has `label`, so `a` is missing after the `$set`, and `.length()` answers null.
+    const out = await coll
+      .aggregate(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));') as object[])
+      .toArray();
+    expect(out).toEqual([{ n: null }, { n: null }, { n: null }]);
   });
 });
 
@@ -449,9 +482,12 @@ describe("types — a call's result follows its row's `returns` term", () => {
   });
 
   it("`.pick()` keeps the named properties and nothing else", () => {
-    expect(
-      jsmql('$.o = { a: "x", b: 1 }; $.p = $.o.pick(["a"]); $.n = $.p.a.length(); $.m = $.p.b ? 1 : 2;').slice(2),
-    ).toEqual([{ $set: { n: { $strLenCP: "$p.a" } } }, { $set: { m: 2 } }]);
+    expect(jsmql('$.o = { a: "x", b: 1 }; $.p = $.o.pick(["a"]); $.n = $.p.a.length();').slice(2)).toEqual([
+      { $set: { n: { $strLenCP: "$p.a" } } },
+    ]);
+    expect(() => jsmql('$.o = { a: "x", b: 1 }; $.p = $.o.pick(["a"]); $.m = $.p.b ? 1 : 2;')).toThrow(
+      "'$.p.b' reads a field that '$.p' does not have. It holds 'a'.",
+    );
   });
 
   it("`.filter(p)` keeps the elements; `.head()` may find nothing, so a property of it may be missing", () => {
@@ -579,6 +615,249 @@ describe("types — a refusal reads the whole kind set", () => {
   });
 });
 
+describe("types — a read that the proof shows gives no value is refused", () => {
+  // Each row: the entry, the source, the whole message, and the text the caret lands on.
+  const REFUSED: [entry: "expr" | "pipeline", src: string, message: string, at: string][] = [
+    // a field of an array, a string or another scalar
+    [
+      "expr",
+      "$.tags.uniq().size",
+      "'.size' reads a field, and an array has no fields. Write '.size()' to call the method.",
+      ".size",
+    ],
+    [
+      "expr",
+      "$.tags.uniq().length",
+      "'.length' reads a field, and an array has no fields. For the number of elements, write '.size()'.",
+      ".length",
+    ],
+    [
+      "expr",
+      "$.items.uniq().total",
+      "'.total' reads a field, and an array has no fields. To read the field of each element, write '.map(e => e.total)'.",
+      ".total",
+    ],
+    [
+      "expr",
+      '$.csv.split(",")["length"]',
+      `'["length"]' reads a field, and an array has no fields. For the number of elements, write '.size()'.`,
+      '["length"]',
+    ],
+    [
+      "expr",
+      "$.name.trim().length",
+      "'.length' reads a field, and a string has no fields. Write '.length()' to call the method.",
+      ".length",
+    ],
+    [
+      "expr",
+      "[1, 2].length",
+      "'.length' reads a field, and an array has no fields. For the number of elements, write '.size()'.",
+      ".length",
+    ],
+    [
+      "expr",
+      '$.at.startOf("day").year',
+      "'.year' reads a field, and a date has no fields. Call a method instead, for example '.getFullYear()'.",
+      ".year",
+    ],
+    [
+      "pipeline",
+      "$.n = 1; $.y = $.n.value;",
+      "'$.n.value' reads a field, and a number has no fields. Call a method instead, for example '.round()'.",
+      "$.n.value",
+    ],
+    // a field that a closed object does not hold
+    ["expr", '$.o.pick(["a"]).b', "'.b' reads a field that this object does not have. It holds 'a'.", ".b"],
+    [
+      "expr",
+      '$.o.pick(["a"]).keys',
+      "'.keys' reads a field that this object does not have. It holds 'a'. Write '.keys()' to call the method.",
+      ".keys",
+    ],
+    [
+      "pipeline",
+      "$group({ _id: $.k, n: $sum(1) }); $.y = $.total;",
+      "'$.total' reads a field that the document does not have. It holds '_id', 'n'.",
+      "$.total",
+    ],
+    [
+      "pipeline",
+      "$group({ _id: $.k, n: $sum(1) }); $match($.total > 5);",
+      "'$.total' reads a field that the document does not have. It holds '_id', 'n'.",
+      "$.total",
+    ],
+    [
+      "pipeline",
+      "$group({ _id: $.k, n: $sum(1) }); $$.filter(d => d.total > 5);",
+      "'.total' reads a field that 'd' does not have. It holds '_id', 'n'.",
+      ".total",
+    ],
+    [
+      "pipeline",
+      '$group({ _id: $.k, n: $sum(1) }); $$.sortBy("total");',
+      "'total' reads a field that the document does not have. It holds '_id', 'n'.",
+      '"total"',
+    ],
+    [
+      "pipeline",
+      '$.p = $$$.products.pick(["_id", "name"]).filter(p => p.price > 1);',
+      "'.price' reads a field that 'p' does not have. It holds '_id', 'name'.",
+      ".price",
+    ],
+    // a query path through an array whose elements cannot hold the field
+    [
+      "pipeline",
+      '$.tags = $.csv.split(","); $match($.tags.length > 0);',
+      "'$.tags.length' reads a field, and an array has no fields. For the number of elements, write '.size()'.",
+      "$.tags.length",
+    ],
+    [
+      "pipeline",
+      "$.items = [{ q: 1 }]; $match($.items.z === 1);",
+      "'$.items.z' reads a field that the elements of '$.items' do not have. They hold 'q'.",
+      "$.items.z",
+    ],
+    // a shorthand's parameter is named by what it stands for
+    [
+      "pipeline",
+      '$$.map(o => ({ id: o.id })).filter({ type: "a" });',
+      "'.type' reads a field that the document does not have. It holds 'id'.",
+      ".filter",
+    ],
+    [
+      "pipeline",
+      '$.items = [{ q: 1 }]; $.s = $.items.sortBy("z");',
+      "'z' reads a field that the element does not have. It holds 'q'.",
+      '"z"',
+    ],
+    // a value that is always null or missing
+    [
+      "pipeline",
+      "$.a = null; $.b = $.a.c;",
+      "'$.a' is always null or missing here, so '$.a.c' has no value to read. Remove the read, or write a value before the read.",
+      "$.a.c",
+    ],
+    [
+      "pipeline",
+      '$.a = "x"; $unset("a"); $.n = $.a.length();',
+      "'$.a' is always null or missing here, so '.length()' has no value to read. Remove the read, or write a value before the read.",
+      ".length",
+    ],
+  ];
+
+  it.each(REFUSED)("%s: %s", (entry, src, message, at) => {
+    expect(() => jsmql[entry](src)).toThrow(message);
+    const result = jsmql.validate(src);
+    expect(result.errors.map((e) => [e.message, e.pos])).toEqual([[message, src.indexOf(at)]]);
+  });
+
+  it("a read that the proof cannot rule out compiles", () => {
+    // Nothing is known about `a`, so `.length` reads its field `length` (HR5).
+    expect(jsmql.expr("$.a.length")).toBe("$a.length");
+    expect(jsmql.expr("$.a.b.c")).toBe("$a.b.c");
+    expect(jsmql("$group({ _id: $.k, n: $sum(1) }); $.y = $.n + 1;")[1]).toEqual({ $set: { y: { $add: ["$n", 1] } } });
+    // A value of several kinds, or an open object, can hold the field.
+    expect(jsmql('$.v = $.flag ? "s" : { a: 1 }; $.y = $.v.a;')[1]).toEqual({ $set: { y: "$v.a" } });
+    expect(jsmql("$.o = { a: 1, ...$.rest }; $.y = $.o.b;")[1]).toEqual({ $set: { y: "$o.b" } });
+    // A query keeps MongoDB's path through an array (SR2), where an element can hold the field.
+    expect(jsmql('$.orders = $$$.orders.filter(o => o.uid === $._id); $match($.orders.status === "open");')[1]).toEqual(
+      { $match: { "orders.status": "open" } },
+    );
+    expect(jsmql("$.items = [{ q: 1 }]; $match($.items.q === 1);")[1]).toEqual({ $match: { "items.q": 1 } });
+    expect(jsmql("$.a = []; $.a.push({ x: 1 }); $match($.a.x === 1);")[2]).toEqual({ $match: { "a.x": 1 } });
+    // Each link reads what the link before it made.
+    expect(jsmql("$group({ _id: $.k, n: $sum(1) }); $$.map(d => ({ total: d.n })).filter(d => d.total > 1);")).toEqual([
+      { $group: { _id: "$k", n: { $sum: 1 } } },
+      { $replaceWith: { total: "$n" } },
+      { $match: { total: { $gt: 1 } } },
+    ]);
+  });
+});
+
+describe.skipIf(up === null)("types — the server gives no value for a read that the compiler refuses", () => {
+  let client: MongoClient;
+  let coll: Collection;
+  beforeAll(async () => {
+    client = (await liveClient())!;
+    coll = client.db("jsmql_compiler_types").collection("reads");
+    await coll.deleteMany({});
+    await coll.insertMany([{ _id: 1, k: "a", n: 1, s: "abc", arr: [1, 2], o: { a: 1 } }]);
+  });
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  it("a field of a scalar, of an array, or one that a closed object does not hold is missing", async () => {
+    const [doc] = await coll
+      .aggregate([
+        {
+          $set: {
+            ofArray: { $getField: { field: "size", input: "$arr" } },
+            ofString: { $getField: { field: "length", input: "$s" } },
+            ofObject: { $getField: { field: "b", input: "$o" } },
+            numberPath: "$n.value",
+            stringPath: "$s.length",
+            // A field path through an array lists each element's field: numbers have none.
+            arrayPath: "$arr.size",
+          },
+        },
+      ])
+      .toArray();
+    expect(doc).toEqual({ _id: 1, k: "a", n: 1, s: "abc", arr: [1, 2], o: { a: 1 }, arrayPath: [] });
+  });
+
+  it("a query path through an array of numbers matches no document", async () => {
+    expect(await coll.find({ "arr.size": { $exists: true } }).toArray()).toEqual([]);
+    expect(await coll.find({ "arr.length": { $gt: 0 } }).toArray()).toEqual([]);
+  });
+
+  it("a field that a `$group` did not make is missing", async () => {
+    const out = await coll.aggregate([{ $group: { _id: "$k", n: { $sum: 1 } } }, { $set: { y: "$total" } }]).toArray();
+    expect(out).toEqual([{ _id: "a", n: 1 }]);
+  });
+});
+
+describe("types — a computed key that may be missing reads as the empty name", () => {
+  // `$getField` refuses a null name, so the guard stands wherever the proof cannot show the key.
+  it("a string key guards what the proof cannot show, and takes no guard where it can", () => {
+    expect(jsmql.expr("$.o[$.s.trim()]")).toEqual({
+      $getField: { field: { $ifNull: [{ $trim: { input: "$s" } }, ""] }, input: "$o" },
+    });
+    expect(jsmql('$.s = "a"; $.v = $.o[$.s];')[1]).toEqual({
+      $set: { v: { $getField: { field: "$s", input: "$o" } } },
+    });
+  });
+});
+
+describe.skipIf(up === null)("types — the server runs a computed key that may be missing", () => {
+  let client: MongoClient;
+  let coll: Collection;
+  beforeAll(async () => {
+    client = (await liveClient())!;
+    coll = client.db("jsmql_compiler_types").collection("keys");
+    await coll.deleteMany({});
+    await coll.insertMany([
+      { _id: 1, o: { a: 1 }, s: " a ", k: "a", x: 5 },
+      { _id: 2, o: { a: 1 }, x: 6 },
+    ]);
+  });
+  afterAll(async () => {
+    await client?.close();
+  });
+
+  it("a key that is missing reads no field, as JavaScript's `o[undefined]` does", async () => {
+    const out = await coll
+      .aggregate([{ $set: { v: jsmql.expr("$.o[$.s.trim()]") } }, { $project: { v: 1 } }, { $sort: { _id: 1 } }])
+      .toArray();
+    expect(out).toEqual([{ _id: 1, v: 1 }, { _id: 2 }]);
+    const mapped = await coll
+      .aggregate([...(jsmql.pipeline('const M = { a: "x" };\n$ = { v: $[M[$.k]] };') as object[])])
+      .toArray();
+    expect(mapped).toEqual([{ v: 5 }, {}]);
+  });
+});
+
 describe("types — a join carries the shape its body made", () => {
   it("a `const` bound to a join is a present array: `.has` needs no guard", () => {
     expect(jsmql('const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq(); $.hit = ids.has("x");')).toEqual([
@@ -589,10 +868,8 @@ describe("types — a join carries the shape its body made", () => {
     ]);
   });
 
-  it("a `.pick` in the body closes the element: a field it did not keep is certainly missing", () => {
-    expect(
-      jsmql('$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]); $.t = $.p[0].price ? 1 : 2;'),
-    ).toEqual([
+  it("a `.pick` in the body closes the element: a read of a field that it did not keep is refused", () => {
+    expect(jsmql('$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]); $.t = $.p[0].name;')).toEqual([
       {
         $lookup: {
           from: "products",
@@ -600,8 +877,11 @@ describe("types — a join carries the shape its body made", () => {
           as: "p",
         },
       },
-      { $set: { t: 2 } },
+      { $set: { t: { $getField: { field: "name", input: { $arrayElemAt: ["$p", 0] } } } } },
     ]);
+    expect(() =>
+      jsmql('$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]); $.t = $.p[0].price ? 1 : 2;'),
+    ).toThrow("'.price' reads a field that '$.p[0]' does not have. It holds '_id', 'name'.");
   });
 
   it("a `.countBy()` in the body is a present record of numbers: a key read is its own truth", () => {
@@ -738,13 +1018,12 @@ describe.skipIf(up === null)("types — the server agrees with the join's proof"
       $.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);
       $.hit = ids.has($.pid);
       $.c = counts[$.pid] ? counts[$.pid] : 0;
-      $.t = $.p[0].price ? 1 : 2;
       $.name = $.p.find({ _id: "x" }).name;
     `;
     const out = await users.aggregate([...(jsmql(src) as object[]), { $sort: { _id: 1 } }]).toArray();
-    expect(out.map((d) => [d.hit, d.c, d.t, d.name])).toEqual([
-      [true, 2, 2, "X"],
-      [false, 0, 2, "X"],
+    expect(out.map((d) => [d.hit, d.c, d.name])).toEqual([
+      [true, 2, "X"],
+      [false, 0, "X"],
     ]);
   });
 });

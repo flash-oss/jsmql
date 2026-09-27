@@ -102,7 +102,8 @@ for a null input. `.find` (a missing element), `.max` (of an empty array) and
 spine cleared>] }`. The fold moves a `?.` on a plain read onto the PATH and records
 the path the LAST `?.` tests (`FieldRef.optionalAt`), so the walk also checks the
 base `FieldRef`, and the guard tests `a` alone for `$.a?.b.uniq()`: `a.b` inside
-follows the dot rule. A `?.` with no call after it answers
+follows the dot rule. The fold runs bottom-up, so a member after a folded `?.` path
+keeps that path's `optionalAt`: `$.a?.b.c.uniq()` tests `a` too. A `?.` with no call after it answers
 null anyway, because a path through a missing field is missing. So the
 compiler emits no test there, and the consumer's neutral still describes it.
 
@@ -145,21 +146,40 @@ arrays — `.sort()` says to write `.toSorted()`, which is right for an array
 and wrong for `$.s.trim()`, a string that has neither method. There the proof
 answers first.
 
+**A call that reads no receiver refuses one.** A `mongo` row (an operator or a
+stage) and a `global` row (a function such as `Number`) take no receiver. A `$`
+name that no row holds is a MongoDB name too (`takesNoReceiver` in
+`src/compiler/rows.ts`). The cell of such a row reads its arguments alone, so a
+method spelling on a value loses the receiver. Each road refuses the method
+spelling before it reads the row: the value road in `dispatchOn`, the filter road
+in `leaf`, and the statement road in `stageStatement`. One message covers the
+three roads (`noReceiver` in `errors.ts`). A stage names its value twin, and an
+operator or a function names its call:
+
+```js
+$.items.$sort({ a: 1 })   // ❌ '.$sort()' is a pipeline stage … For the value form, use '$sortArray(…)'.
+$.a.$size($.b)            // ❌ '.$size()' takes no receiver. … write '$size(…)' with every operand inside the parentheses.
+$$.$sort({ a: 1 });       // [{ $sort: { a: 1 } }] — the stream is the one receiver that a stage takes
+```
+
 ## Operand shapes and the checks
 
-A MongoDB operator's `shape` is applied at the call, not in the renderer:
+A MongoDB operator's `shape` is applied at the call, not in the renderer. A
+`$op(…)` call is the developer's own MQL, and HR3 does not apply to it. So the
+row's rule runs where the arguments fit it, and every other call takes HR2's
+plain form (`plainOperator` in `lower.ts`). The server judges the result:
 
 ```js
 $setUnion([$.a, $.b])   // → {$setUnion:["$a","$b"]}     one array literal IS the operand list (HR2)
-$eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex operator; counted by its elements
-$setUnion($.a)          // → {$setUnion:"$a"}               one operand, as the server reads it: the row's count takes one
-$divide(10)             // refused: the row's count takes two, and the server refuses one too
-$and([])                // → {$and:[]}                    an explicit empty list passes where the row states `emptyList`
-$divide([])             // refused: nothing was written, and `$divide` states no empty list
+$eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex operator
+$setUnion($.a)          // → {$setUnion:"$a"}               one operand, as the server reads it
+$divide(10)             // → {$divide:10}                 one operand, as written: the server refuses it
+$and([])                // → {$and:[]}                    an explicit empty list, as written
+$divide([])             // → {$divide:[]}                 an explicit empty list: the server refuses it
 $concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:[{$ifNull:["$a",[]]},[[1]]]}}  a list with a spread is one array-valued expression
 $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto the first positional key
-$size([$.a])            // → {$size:["$a"]}               a 1-operand operator: one element is the operand list as written
-$size([$.a, 2])         // refused: two operands — the array literal is the operand list, as in MQL
+$size([$.a])            // → {$size:["$a"]}               one element is the operand list as written
+$size([$.a, 2])         // → {$size:["$a",2]}             two operands, as written: the server refuses them
 $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       shape "verbatim": the operand is a value, never a list
 [$.a, 2].size()         // → 2                            an array LITERAL holds one element per entry (`sizeOf`)
 ```
@@ -170,32 +190,34 @@ carry the spelling of one variable encoder: `$let({ v_x: 1 }, (v_x) => v_x)` →
 (`ROOT`) becomes one it takes. The compiler never folds `Number(<constant>)`:
 `$toDouble("3")` is a double on the server, and a written `3` is an int.
 
-`check.ts` holds the literal-gated checks. Each one reads a `BodyRule` or
-`Arity` field the row states: required and closed keys (with a suggestion),
-enums, flag sets, key and slot types, `elementType` over every operand,
-`nullRefused` slots (a per-row fact: the server refuses `$size(null)`, but
-`$reverseArray(null)` answers null), `constant` slots and `constantKeys`, and
-the two refusals for a spread or a computed key inside an operator body. The
-checks also cover the body facts the server enforces — `nonEmpty`,
-`minimums`, `sortedList`, `atLeastOneOf` / `exactlyOneOf`, `requiresWhen` (a
-key required once another holds a given value), and `nested` bodies whose
-every value is checked (`eachValue`). A method row's `elements: "scalar"`
+`check.ts` holds the literal-gated checks for JSMQL code: a method, a global
+and a production. A `$op(…)` call and a `$stage(…)` call meet only the two
+refusals for a spread or a computed key inside an object body
+(`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check
+reads an `Arity` field the row states — slot types, ranges, enums, `constant`
+slots, a non-empty or non-zero slot — or a `BodyRule` field of a method's
+options document (`args.body`): required and closed keys (with a suggestion),
+enums, key types, `constantKeys`, and keys that never come together
+(`notTogether`). A method row's `elements: "scalar"`
 refuses a receiver that provably holds arrays (a literal of literals,
 `.partition(…)`) before its rule runs. The checks never judge a slot that is a
-field path, an expression or a spread. The checks run on every rule — an
-operator's, a method's, a production's — and
-`test/registry-fields-read.test.ts` makes sure that every stated rule field
-has a reader.
+field path, an expression or a spread. The checks run on every rule of a
+method, a global and a production, and `test/registry-fields-read.test.ts`
+makes sure that every stated rule field has a reader.
 
 ## Truthiness
 
 A JavaScript spelling checks missing, null, `false`, `""` and `0` — and only
 the tests the value's proof can fail: the subtractive rule and its constant
 folding live in [docs/specs/types.md § The truthiness rule](types.md#the-truthiness-rule).
-The `$op(...)` escape hatch keeps MongoDB's own rules. The compiler does not
-check NaN. `mode.ts` is the one minter of `Truth`, and `mql.ts` builds every
-slot that reads one. The table in [docs/LANG_RULES.md](../LANG_RULES.md) states
-the rule for developers.
+A `$op(…)` call keeps MongoDB's own truthiness where no JavaScript spelling
+reads it, because the call is the developer's own MQL: in a filter, `$foo($.a)`
+is `{ $expr: { $foo: "$a" } }` (`mongoTruthy`). Under `&&`, `||` and `!`, and in
+a lambda body, the JavaScript spelling checks the call's value (`jsRead` in
+`filter.ts`). The compiler does not check NaN. `mode.ts` is the one minter of
+`Truth`, and `mql.ts` builds every slot that reads one. The table in
+[docs/LANGUAGE.md § Truthy and falsy](../LANGUAGE.md#truthy-and-falsy) states the
+rule for developers.
 
 ## The filter target
 
@@ -217,7 +239,7 @@ $.tags.has("a") && $.tags.has("b")  // → {"tags":{"$all":["a","b"]}}
 $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
 $.tags.some(t => t === "red")          // → {"tags":{"$elemMatch":{"$eq":"red"}}}   the element itself is the path "", one operator document
 { status: "a", x: $gt($.y) }           // → {"status":"a","$expr":{"$gt":["$x","$y"]}}   a raw document keeps its keys, but an operand that READS the document has no query form and lifts through the row's `liftsTo` twin
-$abs($.delta)                          // → {"$expr":<truth of $abs>}            a value operator is a predicate through its truth
+$abs($.delta)                          // → {"$expr":{"$abs":"$delta"}}           a `$op(…)` call keeps MongoDB's truthiness
 ```
 
 Wrapping the whole `||` in `$expr` as soon as one branch needs it changes what
@@ -254,9 +276,9 @@ spells: the first argument is the field, and the rest is the operand. An
 operator that also has an expression form answers the clause when the field
 is a path and the operand a constant (a literal list or document of constants
 counts as one), and answers null otherwise, so `$gt($.a, $.b)` takes the
-expression road. A query-only operator must answer, so the compiler refuses by
-name a first argument that is not a field path, and an operand read at run
-time. The raw spelling keeps MongoDB's own reading — the compiler adds no
+expression road. A query-only operator whose arguments do not fit the clause
+takes HR2's plain form, because the call is the developer's own MQL:
+`$exists(1)` → `{"$exists":1}`, and the server refuses it. The raw spelling keeps MongoDB's own reading — the compiler adds no
 own-value clause — while an `$elemMatch` ARROW is a JavaScript spelling over
 the element and reads it as one. `$and` / `$or` / `$nor` list their
 predicates, each a filter of its own, as a call and as a key of a raw
@@ -266,10 +288,13 @@ is `{ $expr: <expression> }`. `$text`, `$comment`, `$where` and `$jsonSchema`
 take their literal.
 
 A FRAGMENT — `$box` inside `$geoWithin`, `$case` inside `$switch`, the row's
-`onlyInside` — is valid only as an argument of the operator it names. The
-Env's site records the operator whose arguments the compiler lowers now
-(`inside`); any other call boundary clears it. The compiler refuses by name a
-fragment met elsewhere, in both the filter and the value target. A literal
+`onlyInside` — has a meaning only as an argument of the operator it names. A
+fragment met elsewhere passes through, because the call is the developer's own
+MQL: `$box([[0, 0], [1, 1]])` → `{"$box":[[0,0],[1,1]]}`, and the server
+refuses it. The Env's site records the operator whose arguments the compiler
+lowers now (`inside`). An object, an entry and an array keep it, and every
+other node clears it. A regex literal reads it: under an operator it is a BSON
+regex, and in JavaScript code it is refused. A literal
 list or document of constants is a literal for the raw operators alone
 (`literalIn`). A JavaScript spelling reads it by reference — `$.tags === [1,
 2]` is never true in JavaScript — and takes the expression road, where `$eq`
@@ -328,12 +353,12 @@ A query cell is a row fact. The comparison productions carry
 `strictEqualityQuery` and its family (the type test, the presence test, the
 modulo test, the null test, a field against a constant — in that order), and
 `includes`/`startsWith`/`endsWith`/`match`/`some`/`inRange` carry theirs.
-`$sampleRate` states its one slot `constant`, a `number` in the range `[0,
-1]`. Each cell answers null where the operands are not a path and a constant,
-and null is the `FilterOut` contract for "wrap my value form". A row with no
-value form (a query-only operator) has nothing to wrap. So inside an
-`$elemMatch` boundary — where the server refuses it — the leaf throws a worded
-refusal before the cell runs. `FilterIn` hands a cell `pathOf` (a `.length()` call is
+`$sampleRate` reads its one slot through `literal`, and a rate read at run time
+takes HR2's plain form. Each cell answers null where the operands are not a
+path and a constant, and null is the `FilterOut` contract for "wrap my value
+form". A row with no value form (a query-only operator) has nothing to wrap.
+Inside an `$elemMatch` boundary the call is still the developer's own MQL, so
+it passes through there, and the server refuses it. `FilterIn` hands a cell `pathOf` (a `.length()` call is
 never a path segment; inside a `.some` callback the INNERMOST element is the
 root, and only its fields are paths — an outer callback's parameter read
 inside a nested one has no query form and takes the `$expr` road; the
@@ -392,8 +417,9 @@ This is how `$match`'s predicate becomes a query document and a `$group`
 output key becomes an accumulator, without either cell knowing which reading
 it asked for. `readIn` is that hub.
 
-The compiler applies four facts the row states where the statement stands,
-each because the server enforces it and no renderer implies it.
+The compiler applies these facts the row states where the statement stands,
+each because the server enforces it and no renderer implies it. Each applies to
+a stage that the developer names too, because the place of a stage stays checked.
 
 | the row says | the target does | measured |
 |---|---|---|
@@ -403,7 +429,6 @@ each because the server enforces it and no renderer implies it.
 | `bodyPositions` | reads each body key in the position it names | `$geoNear`'s `query` as an aggregation expression: "unknown top level operator: $eq" |
 | `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
 | `statementBody` | says what a `statement` slot HOLDS: a pipeline of its own, or an update spec and the stages it runs | "$sort is not allowed to be used within an update" |
-| `literalKeys` | judges a `$`-led string against the closed set, because the server reads the key as a word | `{ $merge: { whenMatched: "$g" } }` → "Enumeration value '$g' for field 'whenMatched' is not a valid value" |
 
 A stage's own body sub-pipeline runs under its OWN chain, with the container
 recorded as a boundary. Without the chain, a stage filed as LAST files onto
@@ -459,15 +484,14 @@ The compiler asks which DOCUMENT the whole program becomes once, at the
 entry: a folded constant array (`[1,2].slice(2,2)` settles to `[]`) is a
 VALUE, and read as a program it would compile to no stages at all.
 
-The compiler checks a stage's BODY from the row's own facts, through the same
-two mechanisms an operator's arguments use: `args` for a body that is not an
-object (`slotType`, `constant`, `slotRange`), and `body` — a `BodyRule` — for
-one that is. The valuable half is `constant`: a slot the server reads before
-any document exists accepts a field path SILENTLY, and `$unionWith($.c)`
-unions a collection literally named `$c` rather than saying so. `fieldName`
-is the ArgType for a slot that NAMES a field to write, where a `$`-led string
-is the error rather than a run-time value — the one place the literal gate is
-bypassed, because the server refuses `{ $count: "$n" }`.
+A stage that the developer names — `$limit(…)`, a raw `{ $unwind: … }`
+document, a `$$.$sort(…)` link — is the developer's own MQL (HR2), and HR3
+does not apply to it. So the compiler checks no key, count or value of its
+body, and the server judges it: `$unionWith($.c)` → `[{"$unionWith":"$c"}]`
+unions a collection named `$c`. The body keeps two refusals, because a
+JavaScript spread or a computed key has no lowering there (`checkBodyKeys`).
+The place of the stage stays checked, by the table above. A JavaScript
+spelling that lowers to a stage keeps every check of its own row.
 
 ### The stream road
 
@@ -838,7 +862,9 @@ A set method reads its list argument as `[]` when it is missing, as lodash
 reads a missing list: `$.a.union($.b)` is
 `{ $setUnion: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }`. The set
 operators answer null for a null operand, so without the wrap a missing
-argument makes the whole value null.
+argument makes the whole value null. A list argument that the proof shows present
+takes no wrap: `$.z.union($.a.uniq())` reads the `.uniq()` as it is. See
+[types.md](types.md) § Presence.
 
 The globals follow JavaScript where the two number differently or the server
 holds a different equality. `new Date(y, m, d, …)` and `Date.UTC(…)` count
@@ -865,8 +891,11 @@ are `$first`, `.last()` is `$last`, `.max()` / `.min()` are their operators.
 `{ $sum: { $sum: <map> } }`, `{ $avg: { $avg: <map> } }` — because the
 accumulator alone ignores an array operand (`$sum` of an array is 0, and
 `$avg` of one is null, measured). So `.meanBy` in a group is the mean of the
-per-document means. A `GroupIn` carries the receiver and `iteratee` for these
-cells; an operator call passes null.
+per-document means. A receiver that renders as an array LITERAL is reduced the same
+way (`slotAggregate` in `src/registry/mql.ts`), because a slot reads
+`{ $sum: [ … ] }` as an operand list, and a `$group` slot refuses it:
+`[$.n, $.m].sum()` is `{ $sum: { $sum: ["$n", "$m"] } }`. A `GroupIn` carries the
+receiver and `iteratee` for these cells; an operator call passes null.
 
 ```
 $group({ _id: $.tag, total: $.a.sum(), f: $.a.first() });
@@ -899,10 +928,13 @@ root), and names the pipeline form as the way to compute.
 | `$.tags.pop()` / `.shift()` | `$pop: 1` / `$pop: -1` |
 | `$inc({ n: 2 })`, `{ $inc: { n: 2 } }` | the row's `updateDoc` cell, as written |
 
-The compiler refuses a field written twice in one document, as the conflict
-the server would raise. The update operators' `updateDoc` cells pass their
-document through. The fragments (`$each`, `$slice`, `$sort`, `$position`) are
-valid only inside `$push` / `$addToSet`, which `onlyInside` enforces.
+The compiler merges the statements into one document, so it refuses a field
+written twice there, as the conflict the server raises. It also refuses two
+writes of one operator when one operand is not a document of fields, because
+the two cannot merge. An update operator that the developer calls is the
+developer's own MQL, and its operand passes through as written. So does a
+fragment outside its host: `$each([1])` → `{"$each":[1]}`, and the server
+answers "Unknown modifier: $each".
 
 ```
 $.n += 2; $.tags.push(3, 4); $.b = $.a; delete $.a;
@@ -916,8 +948,10 @@ $.a = $.b + 1
 `undefined` (compare with it instead), a regex outside its methods, a lambda
 outside a callback, `$$`/`$$$`/`$$$$` (the root rows' own texts), a declared
 function read without a call, and a `let` a document-replacing stage dropped.
-Each refusal lives in `errors.ts`, worded once, and every rejection that
-comes from a row quotes the row.
+A field read that the proof shows gives no value has none either, and neither has
+a call on a value that is always null or missing. See docs/specs/types.md § A read
+that gives no value. Each refusal lives in `errors.ts`, worded once, and every
+rejection that comes from a row quotes the row.
 
 A refusal that names a spelling to write instead names one that runs on every
 document: a present value, an empty one, a null one and a missing field. For

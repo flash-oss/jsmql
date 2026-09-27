@@ -1117,9 +1117,9 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
     // field paths / object keys (it is a valid JS property name).
     expect(jsmql.expr("$.const > 5")).toEqual({ $gt: ["$const", 5] });
     expect(jsmql.expr("$.user.const")).toEqual("$user.const");
-    expect(jsmql("$project({ const: 1 }); $match($.x > 1);")).toEqual([
+    expect(jsmql("$project({ const: 1 }); $match($.const > 1);")).toEqual([
       { $project: { const: 1 } },
-      { $match: { x: { $gt: 1 } } },
+      { $match: { const: { $gt: 1 } } },
     ]);
   });
 });

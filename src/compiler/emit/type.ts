@@ -120,6 +120,57 @@ export function propOf(t: Type, name: string): Type {
   return t.absent ? maybeAbsent(own) : own;
 }
 
+/**
+ * Why a property read can give no value: the value has no fields, or it is a closed
+ * object without the name. `elements` marks a query path through an array whose
+ * elements are such closed objects.
+ */
+export type Unreadable =
+  | { readonly kind: "noFields"; readonly kinds: readonly Kind[] }
+  | { readonly kind: "closed"; readonly keys: readonly string[]; readonly elements?: true };
+
+/**
+ * Why a read of property `name` gives NO value, by the proof of the value before the
+ * dot, or null when it can give one. Only an object has fields, and a closed object
+ * has only the fields it names. `throughArrays` keeps MongoDB's path through an array,
+ * as a query reads it: `{ "items.sku": "a" }` matches an element's `sku`. MEASURED:
+ * `{ $getField: { field: "size", input: [1, 2] } }` and `{ $getField: { field: "b",
+ * input: { a: 1 } } }` both answer missing.
+ */
+export function unreadable(t: Type, name: string, throughArrays: boolean): Unreadable | null {
+  // A stream read has its own refusal, which names the stream form (`$$.first()`).
+  if (t.kinds === "any" || t.kinds.has("stream")) return null;
+  if (throughArrays && t.kinds.has("array")) {
+    // A query reads the field off each element, so the path passes where an element can hold it.
+    if (t.kinds.size > 1) return null;
+    const inner = unreadable(t.element ?? ANY, name, true);
+    if (inner === null) return null;
+    // Elements with no fields leave the read on the array itself, and an array has no fields.
+    return inner.kind === "closed" ? { ...inner, elements: true } : { kind: "noFields", kinds: ["array"] };
+  }
+  if (!t.kinds.has("object")) return { kind: "noFields", kinds: [...t.kinds] };
+  // Another possible kind, an open object, or a field the object names can hold a value.
+  if (t.kinds.size > 1 || t.open || t.props?.has(name) === true) return null;
+  return { kind: "closed", keys: [...(t.props?.keys() ?? [])] };
+}
+
+/**
+ * The first segment of the dotted `path` that the proof `t` shows can give no value,
+ * and why. Null when each segment can give one. `index` counts from 0.
+ */
+export function unreadableAt(
+  t: Type,
+  path: string,
+  throughArrays: boolean,
+): { readonly index: number; readonly why: Unreadable } | null {
+  const segments = path.split(".");
+  for (let i = 0; i < segments.length; i++) {
+    const why = unreadable(at(t, segments.slice(0, i).join(".")), segments[i], throughArrays);
+    if (why !== null) return { index: i, why };
+  }
+  return null;
+}
+
 /** The property an OBJECT value holds under `name`. */
 function ownProp(t: Type, name: string): Type {
   const known = t.props?.get(name);

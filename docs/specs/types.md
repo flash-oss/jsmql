@@ -117,7 +117,10 @@ whose body is the peeled links, and the value is the rest of the chain over the
 the other collection's, `DOCUMENT`, run through the body's stages by
 `documentAfter` — so a `.pick([...])` link (a `$project`) closes the element, a
 `.flatMap("f")` link (an `$unwind`) types it by the field, and a `.countBy()`
-link (two `$group`s and a `$replaceWith`) makes it a record of numbers. The
+link (two `$group`s and a `$replaceWith`) makes it a record of numbers. Each link
+of the body runs over the documents that the link before it made, so its callback
+parameter holds that proof. The outer bindings stay: the body reads them through
+`let`, never off the foreign document. The
 joined value is then the array of those documents, present, because the server
 always writes `as`; one such document, maybe absent, after a `.find`; or the one
 collapsed document, present, because the unwrap answers `{}` for nothing. The
@@ -129,8 +132,10 @@ the same way.
 ```js
 const ids = $$$.orders.filter({ status: "a" }).map("pid").uniq();  $.hit = ids.has("x");
 // → [{ $lookup: { from: "orders", pipeline: [{ $match: { status: "a" } }], as: "__jsmql.tmp.0" } }, { $set: { "__jsmql.var.ids": { $setUnion: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.pid" } } } } }, { $set: { hit: { $in: ["x", "$__jsmql.var.ids"] } } }, { $unset: "__jsmql" }]
-$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price ? 1 : 2;   // `price` was not kept: certainly missing
-// → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: 2 } }]
+$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].name;
+// → [{ $lookup: { from: "products", pipeline: [{ $match: { active: true } }, { $project: { _id: 1, name: 1 } }], as: "p" } }, { $set: { t: { $getField: { field: "name", input: { $arrayElemAt: ["$p", 0] } } } } }]
+$.p = $$$.products.filter({ active: true }).pick(["_id", "name"]);  $.t = $.p[0].price;
+// ✗ '.price' reads a field that '$.p[0]' does not have. It holds '_id', 'name'.
 ```
 
 ### A row's `returns`
@@ -181,18 +186,36 @@ exactly what they hold.
 ### Presence
 
 A proof's `absent` flag comes from the row or the source where either states it
-(`statedPresence` in [prove.ts](../../src/compiler/emit/prove.ts)): a literal is
-present; a call is present when its row states `neverNull` and its receiver and
-value arguments are present; an `Injected` value is present unless it is null. A
-`? :` is present when both branches are; a property read carries the object's
-proof; a binding carries what its value proved. `a ?? b` is present exactly when
-`b` is. An array or object method under a dot is present whatever its receiver:
-HR5 reads a missing receiver as `[]` or `{}` (`dispatchOn` in
-[lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()`
-guards `a` once and `.size()` adds nothing. A `?.` on the spine takes that away:
-the chain stops, and the value may be null. MEASURED: `{ $size: null }` and
-`{ $in: [x, null] }` abort the command, so a cell guards with `$ifNull` exactly
-where the proof says `absent`.
+(`statedPresence` in [prove.ts](../../src/compiler/emit/prove.ts)). A literal is
+present, and an `Injected` value is present unless it is null. A `? :` is present
+when both branches are; a property read carries the object's proof; a binding
+carries what its value proved. `a ?? b` is present exactly when `b` is.
+
+A call is present when its row states `neverNull` and its receiver and value
+arguments are present. A row that states `neverNull: "always"` reads a missing
+argument itself (the cell wraps a missing list in `[]`), or its operator answers a
+value for any operand (`$eq`, `$type`). So only its receiver counts:
+`$.a.intersection($.b)` is present, and `.size()` after it adds no `$ifNull`. A raw
+operator's literal object operand is a body (`$map({ input, … })`, `$hour({ date })`),
+and it proves nothing, because no row states which key is the input.
+
+An array or object method under a dot is present whatever its receiver: HR5 reads a
+missing receiver as `[]` or `{}` (`dispatchOn` in
+[lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()` guards
+`a` once. A row that states `readsNullAsEmpty` takes no wrap at all, because its
+operator gives the same answer for null: `$.a.sum()` is `{ $sum: "$a" }`. A `?.` on
+the spine takes the presence away: the chain stops, and the value may be null.
+
+A cell guards with `$ifNull` exactly where the proof says `absent`. MEASURED:
+`{ $size: null }` and `{ $in: [x, null] }` abort the command. The same rule holds for
+an argument: a list argument that the proof shows present takes no guard
+(`listArgument` in [names.ts](../../src/registry/names.ts)). Inside the body of a null
+test, the receiver is present, so its length takes no `""` guard.
+[test/compiler-methods.test.ts](../../test/compiler-methods.test.ts) measures each
+`neverNull` and `readsNullAsEmpty` claim of a JavaScript row on mongod, and
+[test/compiler-returns-agrees.test.ts](../../test/compiler-returns-agrees.test.ts)
+measures each claim of an operator. The same suite drops each guard of a set of cases,
+one at a time, and fails when no answer changes.
 
 ### The document after a stage
 
@@ -232,11 +255,21 @@ states `neverNull`, whatever its operand.
 Inside one statement the same reader runs at each replacing stage, so a write
 after `$ = …` lands on what that stage made.
 
+A stream chain applies the same reader after each link. The next link runs under
+the Env that a statement gets after the same stages. That Env holds the document's
+proof after them, and no field-carried binding that a replaced document took with
+it. A link
+whose row states `restoresDocuments` (`.uniq()`) gives the documents back as they
+were, so it keeps both. See `afterLink` in
+[statement.ts](../../src/compiler/emit/statement.ts).
+
 ```js
 $group({ _id: $.k, total: $sum($.amount), items: $push($.item) });  $.t = $.total ? 1 : 2;
 // → …, { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } }
 $.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length();
 // → …, { $replaceWith: "$p" }, { $set: { c: { $strLenCP: "$b" } } }
+$.a = "x";  $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));
+// → …, { $replaceWith: { n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } } } }
 ```
 
 ### A filter narrows the document
@@ -380,12 +413,69 @@ is refused as "a string or a number is not one", while `$.f ? { a: 1 } : 5` pass
 A spread of a value proven a string keeps its own message, which names the
 character-wise spelling.
 
+### A read that gives no value
+
+A property read that the proof shows can give no value is a compile error.
+`unreadable` in [type.ts](../../src/compiler/emit/type.ts) states the rule, and
+`unreadableAt` walks a dotted path with it:
+
+- Only an object has fields. A read of a field of an array, a string, a number, a
+  date or another scalar gives no value. MEASURED: `$getField` answers missing for
+  an input that is not an object, and a field path through a scalar is missing.
+- A closed object holds only the fields that it names. A read of another field
+  gives no value. MEASURED: `{ $getField: { field: "b", input: { a: 1 } } }` is
+  missing, and so is `"$total"` after a `$group` that did not make `total`.
+- A value that is always null or missing (`NOTHING`) has no value to read. A method
+  call on it is refused with the same message (`alwaysAbsent` in
+  [errors.ts](../../src/compiler/emit/errors.ts)).
+- A value of several kinds, an open object, and a value that nothing is proven
+  about pass. The proof cannot rule the field out there.
+- A read on the stream keeps its own refusal, which names the stream form.
+
+| Read | Where | Through an array |
+|---|---|---|
+| A folded path, `$.a.b` | `readablePath` in [lower.ts](../../src/compiler/emit/lower.ts) | value: no; query: yes |
+| A member read, `x.b` or `x["b"]` | `memberAccess` and `indexAccess` in lower.ts | no |
+| A query path off a callback's document parameter | `pathOfIn` in [filter.ts](../../src/compiler/emit/filter.ts) | yes |
+| A sort key by name | `readableSort` in [inputs.ts](../../src/compiler/emit/inputs.ts) | yes |
+| A method call on a value that is always absent | `dispatchOn` in lower.ts | — |
+
+A query and a sort key keep MongoDB's path through an array (SR2): `{ "items.sku":
+"a" }` matches an element's `sku`, and `{ $sort: { "items.qty": 1 } }` sorts by
+the elements' `qty`. So an array in the path passes there, where an element can hold
+the field. When no element can, the path matches no document. Elements with no fields
+leave the read on the array itself. Closed elements name the fields that they hold
+(`elements` on the `closed` reason). The value road reads a member as JavaScript
+does: an array has no fields, and the message names `.map(e => e.<field>)`.
+
+A stream callback's first parameter holds the document's proof at the chain's
+element (`stageInputs` in inputs.ts). So a read inside `$$.filter(d => …)` of a
+field that a `$group` did not make is refused too. A parameter that the desugar
+pass wrote for a short spelling (`{ type: "a" }`) carries `minted` on its `Ident`.
+The message then names what the parameter stands for: the document, or the element.
+
+An exclusion `$project` leaves the document open, with the excluded field
+`NOTHING`. A field written null is `NOTHING` too, and the proof cannot tell the two
+apart. So a bare read of such a field passes, and a read or a call after it is refused.
+
+```js
+$.tags.uniq().size
+// ✗ '.size' reads a field, and an array has no fields. Write '.size()' to call the method.
+$group({ _id: $.k, n: $sum(1) });  $$.filter(d => d.total > 5);
+// ✗ '.total' reads a field that 'd' does not have. It holds '_id', 'n'.
+$.orders = $$$.orders.filter(o => o.uid === $._id);  $match($.orders.status === "open");
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "orders" } }, { $match: { "orders.status": "open" } }]
+```
+
 ### The null guard
 
 A cell that would abort or answer a value on null tests the receiver first
 (`nullOr` in `names.ts`) exactly where the proof says `absent`. A written field
 whose value was present takes no test: `$.s = "abc"; $.t = $.s.toUpperCase();`
-emits `{ $toUpper: "$s" }` alone.
+emits `{ $toUpper: "$s" }` alone. A computed key reads as `""` exactly where the proof
+says `absent`, because `$getField` aborts the query on a null name (`indexAccess` in
+[lower.ts](../../src/compiler/emit/lower.ts)). MEASURED: `{ $getField: { field: null,
+input: {} } }` fails with "$getField requires 'field' to evaluate to type String".
 
 ## What proves this spec
 

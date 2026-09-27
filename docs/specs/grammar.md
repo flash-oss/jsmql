@@ -324,14 +324,11 @@ Comments are trivia: `skipTrivia()` discards them during tokenisation (it altern
 
 `...expr` is a valid construct anywhere positional args, array literal elements, or object literal entries appear. The AST represents it as a `SpreadElement`. Codegen handles spread in:
 
-- Variadic operator/method calls — single spread → bare value; mixed → `$concatArrays`-wrapped per-arg
-- `Math.min`/`Math.max` — same as variadic
-- `Object.assign` — same
-- Unknown operators — single spread passes through
+- A JavaScript call that takes a list (`Math.min` / `Math.max`, `Object.assign`, …) — a single spread → the bare value; mixed → `$concatArrays`-wrapped per argument
 - Array literals — `$concatArrays` with consecutive non-spread elements grouped into one literal-array operand; a lone `[...x]` returns `x` directly
 - Object literals — `$mergeObjects` with consecutive non-spread entries grouped into one operand; a lone `{...x}` returns `x` directly
 
-Non-variadic operators (single/object/none shapes) reject spread with a clear error.
+A `$op(…)` call, known or unknown, refuses a spread, because a spread has no MQL of its own. The message names the forms that work. See docs/DEFERRED.md § B.
 
 > **Note on negative numbers:** The lexer never produces a negative number token.
 > It always lexes a leading `-` as a `Minus` token, and the `unary` rule handles

@@ -157,7 +157,9 @@ compiler keeps them apart:
   carries the path in its binding (`{ kind: "document", path }`), so `i.qty` locates
   `items.qty` on the value road ([lower.ts](../../src/compiler/emit/lower.ts)
   `locate`) and on the query road ([filter.ts](../../src/compiler/emit/filter.ts)
-  `pathOfIn`) alike. The sort readings prefix their keys, and a whole-element
+  `pathOfIn`) alike. The binding also carries the documents' proof at that path, so
+  a read of a field that they do not hold is refused (docs/specs/types.md § A read
+  that gives no value). The sort readings prefix their keys, and a whole-element
   comparator names the field (`streamSortAsk` in
   [sort-spec.ts](../../src/compiler/emit/sort-spec.ts)); `.pick` / `.omit`
   prefix their field lists; `.uniq()` groups on `element().ref`.

@@ -54,6 +54,17 @@ const _staged = $$.filter((d) => d.active)
 void _staged;
 $$.$sort({ score: -1 }).$out("archive");
 
+// ── A `$` call never errors ──────────────────────────────────────────────────
+// A `$op(…)` or `$stage(…)` call is your own MQL (HR2), so the compiler takes it with
+// any arguments, and each name carries a catch-all overload after its documented
+// signatures. The positional form of an object-form operator, a string stage body,
+// and a count that the server refuses all type-check.
+declare const input: any;
+$trim(input, " ");
+$trim({ input, chars: " " });
+$unwind("$items");
+$size(1, 2);
+
 // The document root is NOT an ambient global — it reaches the body through the
 // arrow's toolbox destructure (`({ $ }) => …`), typed `any` there. Stand in for
 // that here so the correlated forms below read the way real source does.

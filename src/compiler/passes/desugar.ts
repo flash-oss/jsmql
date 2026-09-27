@@ -221,6 +221,7 @@ const fieldPath: Rule = {
       path?: string;
       pos?: number;
       optional?: boolean;
+      optionalAt?: string;
     };
     while (base.type === "MemberAccess") {
       const name = base.name as string;
@@ -241,6 +242,9 @@ const fieldPath: Rule = {
       if (before !== "") optionalAt = before;
       break;
     }
+    // The walk runs bottom-up, so the base can be a path that an earlier `?.` folded:
+    // the walk folds `$.a?.b` before `.c`. With no `?.` after it, its tested path stays the last one.
+    if (!members.some((m) => m.optional)) optionalAt = base.optionalAt;
     const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
     if (!optional) return folded as object;
     return (
@@ -445,7 +449,7 @@ const packSpread: Rule = {
 
 /** `x` → `x.a.b`, one MemberAccess per dotted segment. */
 function pathOn(param: string, path: string, pos: number): object {
-  let out: object = { type: "Ident", name: param, pos };
+  let out: object = { type: "Ident", name: param, pos, minted: true };
   for (const segment of path.split(".")) {
     out = { type: "MemberAccess", object: out, name: segment, optional: false, pos };
   }
@@ -483,7 +487,7 @@ function asArrow(arg: object | undefined, forms: readonly string[], pos: number)
   if (arg === undefined) {
     if (!accepts("omitted")) return undefined;
     const param = "x";
-    return { type: "Lambda", params: [param], body: { type: "Ident", name: param, pos }, pos };
+    return { type: "Lambda", params: [param], body: { type: "Ident", name: param, pos, minted: true }, pos };
   }
 
   const a = arg as { type: string; value?: unknown; entries?: readonly object[]; elements?: readonly object[] };
@@ -567,7 +571,7 @@ const CONSTANT_LITERALS = new Set(["NumberLiteral", "StringLiteral", "BooleanLit
 
 /** `String` → `String(x)`; `Math.abs` → `Math.abs(x)`. Anything that is not a callable global maps to undefined. */
 function bareCall(callee: Node, param: string, pos: number): object | undefined {
-  const arg = { type: "Ident", name: param, pos };
+  const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {
     if (!isGlobalName(callee.name) || !isCallable(callee.name) || newKeywordOf(callee.name) === "required")
       return undefined;

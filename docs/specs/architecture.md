@@ -61,7 +61,8 @@ Inside a target, a position is a cell of the row. A stream link
 its `group` cell. A `$setWindowFields.output` entry runs its `window` cell.
 `emit/consult.ts` finds the cell. `emit/select.ts` picks the rule that the
 receiver and the arguments select. `emit/check.ts` runs the literal-gated
-checks the row states (`args`, `body`). `emit/inputs.ts` builds the record a
+checks the row states (`args`, `body`) on JSMQL code. A `$op(…)` or
+`$stage(…)` call is the developer's own MQL, so it meets none of them (HR3). `emit/inputs.ts` builds the record a
 cell receives (`ExprIn`, `FilterIn`, `StageIn`, `GroupIn`): the services a
 lowering needs, never an import.
 

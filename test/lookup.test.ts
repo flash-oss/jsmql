@@ -578,30 +578,11 @@ describe("$$$.coll.find/filter — error cases", () => {
     });
   });
 
-  it("a bare foreign param (`o` alone) as a predicate tests the whole foreign document", () => {
-    // `o` alone is the foreign document itself, so it lowers to `$$ROOT` under the
-    // truthiness test.
+  it("a bare foreign param (`o` alone) as a predicate is the whole foreign document, which is always truthy", () => {
+    // `o` alone is the foreign document itself. A document is always there and always
+    // truthy, so the truthiness test folds to `true`.
     expect(jsmql("$.users = $$$.users.filter(o => o);")).toEqual([
-      {
-        $lookup: {
-          from: "users",
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $ne: [{ $ifNull: ["$$ROOT", null] }, null] },
-                    { $ne: ["$$ROOT", false] },
-                    { $ne: ["$$ROOT", ""] },
-                    { $ne: ["$$ROOT", 0] },
-                  ],
-                },
-              },
-            },
-          ],
-          as: "users",
-        },
-      },
+      { $lookup: { from: "users", pipeline: [{ $match: { $expr: true } }], as: "users" } },
     ]);
   });
 
@@ -2410,9 +2391,14 @@ describe("chained stage calls on $$$.<coll>", () => {
     );
   });
 
-  it("rejects an unknown stage name in a foreign chain with a suggestion", () => {
-    expect(() => jsmql("$.t = $$$.orders.$sortt({ a: 1 });")).toThrow(
-      "Unknown method '.$sortt()' at position 16. Did you mean '.sort()'?",
+  it("passes an unknown `$` stage in a foreign chain through, and suggests for a JavaScript name", () => {
+    // A `$`-named link is your own MQL. DELIBERATELY invalid: mongod says
+    // "Unrecognized pipeline stage name: '$sortt'".
+    expect(jsmql("$.t = $$$.orders.$sortt({ a: 1 });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $sortt: { a: 1 } }], as: "t" } },
+    ]);
+    expect(() => jsmql("$.t = $$$.orders.sortt({ a: 1 });")).toThrow(
+      "Unknown method '.sortt()' at position 16. Did you mean '.sort()'?",
     );
   });
 });

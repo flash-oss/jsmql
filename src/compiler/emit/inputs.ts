@@ -7,9 +7,10 @@
 // type, and there is exactly one constructor, so a renderer cannot be handed a
 // record with a service missing.
 
-import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth } from "../../registry/vocabulary.ts";
+import { regexValue } from "../../bson.ts";
+import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth, Type } from "../../registry/vocabulary.ts";
 import type { Pipeline } from "../../registry/ast.ts";
-import { orderBySpec, sortSpecOf, streamSortAsk } from "./sort-spec.ts";
+import { orderBySpec, sortSpecOf, streamSortAsk, type SortAsk } from "./sort-spec.ts";
 import { constantIn, literalIn, pathOfIn } from "./filter.ts";
 import { internalError } from "../../errors.ts";
 import {
@@ -34,14 +35,33 @@ import {
   elementNeedsQuery,
   needsPrecedingSort,
   streamHandleAfterReplace,
+  unreadableField,
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
 import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
-import { ANY, DOCUMENT, cannotBe, flattenOnce, maybeAbsent, of } from "./type.ts";
+import { ANY, DOCUMENT, cannotBe, flattenOnce, maybeAbsent, of, unreadableAt } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { indexedPairs, mongoRegexOptions, sizeOf } from "../../registry/mql.ts";
 import { edge } from "../passes/position.ts";
+
+/**
+ * A sort by NAME reads each key off the documents, or off the elements. A key that
+ * the proof `t` shows gives no value is refused, as a read of it is. A sort key keeps
+ * MongoDB's path through an array, as a query does: `{ "items.qty": 1 }` sorts by
+ * an element's `qty`. `holder` names what `t` proves, for the message.
+ */
+function readableSort<A extends SortAsk>(ask: A, t: Type, holder: string, pos: number): A {
+  if (ask.kind !== "keys") return ask;
+  for (const key of Object.keys(ask.spec)) {
+    const bad = unreadableAt(t, key, true);
+    if (bad === null) continue;
+    const segments = key.split(".");
+    const prefix = segments.slice(0, bad.index).join(".");
+    throw unreadableField(segments[bad.index], bad.why, key, prefix === "" ? holder : `'${prefix}'`, pos);
+  }
+  return ask;
+}
 
 /** The two readings of an expression, supplied by lower.ts. */
 export type Reader = { value: (node: Expr, env: Env) => unknown; truth: (node: Expr, env: Env) => Truth };
@@ -51,12 +71,12 @@ export const childEnv = (env: Env, node: object, key: string): Env => {
   const at = env.at(edge(node, key, env.site.where));
   const n = node as { type?: string; name?: string };
   // An operator's arguments are INSIDE it. A fragment like `$case` or `$box` is valid only inside it.
-  // Any other call boundary is inside nothing.
   if (n.type === "OperatorCall" && key === "args") return at.inside(n.name ?? null);
-  if (n.type === "MethodCall" || n.type === "CallExpression" || n.type === "NewExpression" || n.type === "Lambda") {
-    return at.inside(null);
-  }
-  return at;
+  // A document or a list keeps the operator it stands in: `$switch({ branches: [$case(…)] })`,
+  // `$regexMatch({ regex: /x/ })`. Every other node is JavaScript that lowers to MQL of its
+  // own — `===` is `$eq`, a method is its operator — so a value below it is inside nothing.
+  if (n.type === "ObjectLiteral" || n.type === "KeyValueEntry" || n.type === "ArrayLiteral") return at;
+  return at.inside(null);
 };
 
 /**
@@ -269,6 +289,8 @@ export function exprInputs(
 ): ExprIn {
   const argEnv = childEnv(env, node, "args");
   const value = (e: Expr): unknown => (overrides.has(e) ? overrides.get(e) : read.value(e, argEnv));
+  // What one element of the receiver is, for a sort by name.
+  const elementOfRecv = (): Type => (recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env)));
   return {
     name,
     recv,
@@ -286,8 +308,8 @@ export function exprInputs(
       arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name, present),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name),
-    sortSpec: (e, objects) => sortSpecOf(e, name, objects),
-    orderBy: (keys, orders) => orderBySpec(keys, orders, name),
+    sortSpec: (e, objects) => readableSort(sortSpecOf(e, name, objects), elementOfRecv(), "the element", e.pos),
+    orderBy: (keys, orders) => readableSort(orderBySpec(keys, orders, name), elementOfRecv(), "the element", keys.pos),
     objIteratee: (cb, mode) => {
       if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name, (cb as { pos: number }).pos);
@@ -433,7 +455,7 @@ export function filterInputs(
       return path;
     },
     literal: (e) => {
-      if (e.type === "RegexLiteral") return new RegExp(e.pattern, mongoRegexOptions(e.flags));
+      if (e.type === "RegexLiteral") return regexValue(e.pattern, mongoRegexOptions(e.flags));
       const c = literalIn(e);
       if (c === null) throw needsLiteral(name, (e as { pos: number }).pos);
       return c.value;
@@ -487,6 +509,14 @@ export function stageInputs(
 ): StageIn & { keys: readonly string[] } {
   const argEnv = childEnv(env, node, "args");
   const before: readonly Stage[] = [...env.chain.emitted, ...soFar];
+  // A sort by name reads its keys off the documents at the chain's element.
+  const readableKeys = <A extends SortAsk>(ask: A, pos: number): A =>
+    readableSort(
+      ask,
+      env.typeAt(env.chain.element),
+      env.chain.element === "" ? "the document" : `'$.${env.chain.element}'`,
+      pos,
+    );
   /**
    * A callback's FIRST parameter IS the stream's element: the document itself, so
    * its fields are top-level paths — or, after `.flatMap("items")`, the unwound
@@ -499,9 +529,10 @@ export function stageInputs(
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;
     let e = argEnv;
     if (cb.params.length >= 1) {
+      // The parameter holds what the document's proof holds at the element.
       e = e.bind(cb.params[0], {
         ref: { kind: "document", path: env.chain.element },
-        type: ANY,
+        type: env.typeAt(env.chain.element),
         mutable: false,
         pos: cb.pos,
       });
@@ -623,8 +654,10 @@ export function stageInputs(
       if (stages === undefined) throw valueWhereBlockExpected(written, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name, objects), name, env.chain.element, e.pos),
-    orderBy: (keys, orders) => streamSortAsk(orderBySpec(keys, orders, name), name, env.chain.element, keys.pos),
+    sortSpec: (e, objects = true) =>
+      streamSortAsk(readableKeys(sortSpecOf(e, name, objects), e.pos), name, env.chain.element, e.pos),
+    orderBy: (keys, orders) =>
+      streamSortAsk(readableKeys(orderBySpec(keys, orders, name), keys.pos), name, env.chain.element, keys.pos),
     slot: () => env.chain.slot().path,
     bind: (hint) => {
       const b = env.fresh(hint);

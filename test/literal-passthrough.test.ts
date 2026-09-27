@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import {
   argCountOf,
-  bodyRuleOf,
   everyOperatorName,
   everyStageName,
   operandShapeOf,
@@ -43,21 +42,6 @@ function arrayArgCount(name: string): number {
   return a.exact ?? a.allowed?.[0] ?? 2;
 }
 
-// A valid sample value for an enum'd slot, so the pass-through probe stays
-// arg-valid (the enum check would reject the `$f` sentinel). The non-enum slots
-// still carry the sentinel — those are what the pass-through assertion checks.
-const ENUM_SAMPLE: Record<string, string> = {
-  timeUnit: "day",
-  weekday: "monday",
-  bsonTypeName: "string",
-  regexFlags: "i",
-};
-function slotLiteral(name: string, key: string): string {
-  const ref = bodyRuleOf(name)?.enums?.[key];
-  if (ref !== undefined) return JSON.stringify(Array.isArray(ref) ? ref[0] : ENUM_SAMPLE[ref]);
-  return JSON.stringify(SENTINEL);
-}
-
 /** Build a minimal `$op(...)` call source from the operator's registry shape. */
 function callSource(name: string): string {
   const q = JSON.stringify(SENTINEL);
@@ -67,10 +51,10 @@ function callSource(name: string): string {
     case "array":
       return `${name}(${Array(arrayArgCount(name)).fill(q).join(", ")})`;
     case "object":
-      // Fill every positional slot (each maps to a named key); enum'd slots get a
-      // valid sample value, the rest the `$`-string sentinel under test.
+      // Fill every positional slot (each maps to a named key) with the `$`-string
+      // sentinel under test. A `$op(…)` call is your own MQL, so no slot is checked.
       return `${name}(${positionalKeysOf(name)
-        .map((k) => slotLiteral(name, k))
+        .map(() => q)
         .join(", ")})`;
     case "flex":
       // flex defaults to the single-value form (1 arg); but an arity rule
@@ -132,8 +116,14 @@ describe("literal pass-through — every $unwind spelling and its siblings", () 
     expect(jsmql(`$project({ x: $literal("$y") });`)).toEqual([{ $project: { x: { $literal: "$y" } } }]);
   });
 
-  it("a non-$ literal string is still rejected as a $replaceWith new-root", () => {
-    expect(() => jsmql(`$replaceWith("hello");`)).toThrow("'$replaceWith' expects a document, but got a string.");
+  it("a non-$ literal string passes through as a $replaceWith new-root, and `$ =` refuses it", () => {
+    // `$replaceWith` is your own MQL. DELIBERATELY invalid: mongod says "'replacement
+    // document'  must evaluate to an object, but resulting value was: "hello". …"
+    expect(jsmql(`$replaceWith("hello");`)).toEqual([{ $replaceWith: "hello" }]);
+    // `$ = …` is JSMQL code, so the compiler owns its lowering and refuses the string.
+    expect(() => jsmql(`$ = "hello";`)).toThrow(
+      "'$ = …' replaces the document, so the value has to BE a document — a string is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+    );
   });
 });
 

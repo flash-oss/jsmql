@@ -20,7 +20,7 @@ import yaml from "js-yaml";
 import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MongoClient, ObjectId, Timestamp } from "mongodb";
 import { NAMES } from "../src/registry/names.ts";
 import type { Position, TypeExpr } from "../src/registry/vocabulary.ts";
-import { operandShapeOf, topKindOf } from "../src/compiler/rows.ts";
+import { topKindOf } from "../src/compiler/rows.ts";
 import { jsmql } from "../src/index.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
@@ -87,6 +87,8 @@ const FOR_TYPE: Readonly<Record<string, string>> = {
   resolvesToNull: "$nul",
   resolvesToAny: "$int",
   any: "$int",
+  // an enum type takes one of its own words, as a literal
+  timeUnit: "day",
 };
 
 /** A mongod `$type` string → the coarse kind the registry states. */
@@ -313,13 +315,14 @@ function loadSpecs(): Map<string, Spec> {
   return out;
 }
 
-type Shape = "single" | "array" | "none" | "flex" | { object: BodyShape };
-type BodyShape = {
-  required: readonly string[];
-  optional: readonly string[];
-  enums?: Record<string, readonly string[]>;
+type Shape = "single" | "array" | "none" | "flex" | "verbatim" | "object";
+type Row = {
+  kind?: string;
+  where?: readonly Position[];
+  shape?: Shape;
+  returns?: TypeExpr;
+  neverNull?: true | "always";
 };
-type Row = { kind?: string; where?: readonly Position[]; shape?: Shape; returns?: TypeExpr };
 
 /** The kind a row's `returns` states for the server to confirm: the term's top kind. */
 const stated = (row: Row): string => (row.returns === undefined ? "unknown" : topKindOf(row.returns));
@@ -335,14 +338,11 @@ function buildCall(name: string, row: Row, spec: Spec | undefined): unknown {
   const required = (spec?.arguments ?? []).filter((a) => a.optional !== true);
   const shape = row.shape;
   if (shape === "none") return { [name]: {} };
-  if (typeof shape === "object") {
-    const keys = shape.object.required.length > 0 ? shape.object.required : shape.object.optional;
+  if (shape === "object") {
+    // The body's keys and their types come from the vendored spec: every required key,
+    // or every key when the spec requires none.
     const body: Record<string, unknown> = {};
-    for (const k of keys) {
-      const enums = shape.object.enums?.[k];
-      const arg = (spec?.arguments ?? []).find((a) => a.name === k);
-      body[k] = enums !== undefined ? enums[0] : arg !== undefined ? operandFor(arg) : "$int";
-    }
+    for (const a of required.length > 0 ? required : (spec?.arguments ?? [])) body[a.name] = operandFor(a);
     return { [name]: body };
   }
   if (required.length === 0) return { [name]: "$int" };
@@ -500,58 +500,6 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     expect(unproven).toEqual([]);
   });
 
-  it("takes ONE operand of a list operator exactly where mongod does (HR1, HR3)", async () => {
-    // MEASURED: the server reads a lone operand that is not an array as one operand.
-    // `{ $add: "$x" }` answers `$x`, and `{ $divide: 10 }` is refused ("takes exactly
-    // 2 arguments"). The row's count says which is which. So the compiler must take
-    // the raw document unchanged where the server takes it (HR1), refuse it where the
-    // server refuses it (HR3), and give the call spelling the same answer (HR2).
-    const disagree: string[] = [];
-    const gated: string[] = [];
-    let checked = 0;
-    const compile = (src: string): unknown => {
-      try {
-        return jsmql.expr(src);
-      } catch {
-        return null;
-      }
-    };
-    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
-      if (row.kind !== "mongo" || operandShapeOf(name) !== "array" || !row.where?.includes("value")) continue;
-      const raw = { [name]: "$nope" };
-      let refusal: string | null = null;
-      try {
-        await coll.aggregate([{ $addFields: { __v: raw } }]).toArray();
-      } catch (e) {
-        refusal = String((e as Error).message).replace(/\s+/g, " ");
-      }
-      if (refusal !== null && environmental(refusal)) {
-        gated.push(name);
-        continue;
-      }
-      checked++;
-      const written = compile(`{ ${name}: "$nope" }`);
-      const called = compile(`${name}($.nope)`);
-      if ((written !== null) !== (refusal === null)) {
-        disagree.push(
-          `${name}: the compiler ${written === null ? "refuses" : "takes"} one operand; mongod ${refusal ?? "takes it"}`,
-        );
-      }
-      if (written !== null && JSON.stringify(written) !== JSON.stringify(raw)) {
-        disagree.push(`${name}: the raw document became ${JSON.stringify(written)}`);
-      }
-      if (JSON.stringify(called) !== JSON.stringify(written)) {
-        disagree.push(
-          `${name}: the call spelling gives ${JSON.stringify(called)}, the raw one ${JSON.stringify(written)}`,
-        );
-      }
-    }
-    expect(disagree).toEqual([]);
-    // A check that silently stops comparing is worse than none.
-    expect(checked).toBeGreaterThanOrEqual(30);
-    expect(gated.length, `not on this server: ${gated.join(", ")}`).toBeLessThan(checked / 4);
-  });
-
   it("counts an array literal as mongod does, whatever its elements hold", async () => {
     // `.size()` of an array literal is written as its element count, with no `$size`
     // at run time. That is safe only if the server counts the same way, a missing
@@ -567,6 +515,42 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
         disagree.push(`${literal}.size(): written ${JSON.stringify(counted)}, mongod ${out.__v}`);
     }
     expect(disagree).toEqual([]);
+  });
+
+  it("answers a value for each operator that states `neverNull`, over missing operands too for `always`", async () => {
+    // The presence proof leaves out an `$ifNull` on the strength of this fact, so a wrong
+    // claim is a wrong answer. `always` reads every field operand as a missing field.
+    const missing = (v: unknown): unknown =>
+      typeof v === "string"
+        ? v.startsWith("$") && !v.startsWith("$$")
+          ? "$__missing"
+          : v
+        : Array.isArray(v)
+          ? v.map(missing)
+          : v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype
+            ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, missing(x)]))
+            : v;
+    const wrong: string[] = [];
+    let measured = 0;
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      if (row.kind !== "mongo" || row.neverNull === undefined) continue;
+      if (row.where?.includes("value") !== true) continue;
+      if (CANNOT_MEASURE[name] !== undefined) {
+        wrong.push(`${name}: states neverNull, and the server cannot measure it`);
+        continue;
+      }
+      const call = BY_HAND[name]?.value ?? buildCall(name, row, specs.get(name));
+      for (const c of row.neverNull === "always" ? [call, missing(call)] : [call]) {
+        const rows = await coll
+          .aggregate([{ $addFields: { __v: c } }, { $project: { t: { $type: "$__v" } } }])
+          .toArray();
+        const empty = rows.filter((r) => r.t === "null" || r.t === "missing");
+        if (empty.length > 0) wrong.push(`${name}: ${JSON.stringify(c)} answered ${empty[0].t}`);
+      }
+      measured++;
+    }
+    expect(wrong).toEqual([]);
+    expect(measured).toBeGreaterThan(0);
   });
 
   it("cannot measure exactly the operators it says it cannot", async () => {

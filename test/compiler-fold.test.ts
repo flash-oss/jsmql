@@ -23,7 +23,9 @@ const valueOf = (src: string): unknown => {
 };
 
 /** The whole program after folding and desugaring, with positions erased. */
-const shape = (src: string): string => JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : v));
+// `minted` marks a parameter name that no source spells: provenance, not meaning.
+const shape = (src: string): string =>
+  JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : k === "minted" ? undefined : v));
 
 describe("compiler/passes/fold — a constant declaration becomes its value", () => {
   it("turns a computed constant into a Filter", () => {

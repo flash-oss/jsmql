@@ -202,30 +202,77 @@ describe("compiler/rows — the body-layout resolver", () => {
     // object here must keep descending. `$merge("out")` needs the first with the
     // second true — a string body under a layout that names `whenMatched` has no
     // keys to descend into, and must still get a position.
-    expect(bodySlotAt("$setWindowFields", [])).toEqual({ at: "value", otherwise: "value", deeper: true });
-    expect(bodySlotAt("$setWindowFields", ["output"])).toEqual({ at: "value", otherwise: "value", deeper: true });
+    expect(bodySlotAt("$setWindowFields", [])).toEqual({
+      at: "value",
+      otherwise: "value",
+      deeper: true,
+      evaluated: false,
+    });
+    expect(bodySlotAt("$setWindowFields", ["output"])).toEqual({
+      at: "value",
+      otherwise: "value",
+      deeper: true,
+      evaluated: false,
+    });
     expect(bodySlotAt("$setWindowFields", ["output", "r"])).toEqual({
       at: "window",
       otherwise: "window",
       deeper: false,
+      evaluated: false,
     });
-    expect(bodySlotAt("$setWindowFields", ["sortBy"])).toEqual({ at: "value", otherwise: "value", deeper: false });
+    expect(bodySlotAt("$setWindowFields", ["sortBy"])).toEqual({
+      at: "value",
+      otherwise: "value",
+      deeper: false,
+      evaluated: false,
+    });
     // $match names no key, so its body is a leaf at once and everything in the
     // query document below it is query too.
-    expect(bodySlotAt("$match", [])).toEqual({ at: "filter", otherwise: "filter", deeper: false });
+    expect(bodySlotAt("$match", [])).toEqual({ at: "filter", otherwise: "filter", deeper: false, evaluated: false });
   });
 
   it("answers a two-shape slot with a position per shape", () => {
     // '$merge.whenMatched' takes an update pipeline or one of four words, and the
     // two read differently — a bracketed list is stages, a word is a value.
-    expect(bodySlotAt("$merge", ["whenMatched"])).toEqual({ at: "statement", otherwise: "value", deeper: false });
-    expect(bodySlotAt("$merge", ["whenNotMatched"])).toEqual({ at: "value", otherwise: "value", deeper: false });
+    expect(bodySlotAt("$merge", ["whenMatched"])).toEqual({
+      at: "statement",
+      otherwise: "value",
+      deeper: false,
+      evaluated: false,
+    });
+    expect(bodySlotAt("$merge", ["whenNotMatched"])).toEqual({
+      at: "value",
+      otherwise: "value",
+      deeper: false,
+      evaluated: false,
+    });
   });
 
   it("prefers a literal key over a `*` of the same depth", () => {
-    expect(bodySlotAt("$group", ["_id"])).toEqual({ at: "value", otherwise: "value", deeper: false });
-    expect(bodySlotAt("$group", ["total"])).toEqual({ at: "group", otherwise: "group", deeper: false });
-    expect(bodySlotAt("$group", [null])).toEqual({ at: "group", otherwise: "group", deeper: false });
+    expect(bodySlotAt("$group", ["_id"])).toEqual({ at: "value", otherwise: "value", deeper: false, evaluated: true });
+    expect(bodySlotAt("$group", ["total"])).toEqual({
+      at: "group",
+      otherwise: "group",
+      deeper: false,
+      evaluated: false,
+    });
+    expect(bodySlotAt("$group", [null])).toEqual({ at: "group", otherwise: "group", deeper: false, evaluated: false });
+  });
+
+  it("says whether the server evaluates the value under a path, and descends to reach an evaluated path", () => {
+    // `$set` evaluates each key's value, but the body itself is no one value.
+    expect(bodySlotAt("$set", [])).toMatchObject({ at: "value", deeper: true, evaluated: false });
+    expect(bodySlotAt("$set", ["x"])).toMatchObject({ at: "value", deeper: false, evaluated: true });
+    // `$lookup` evaluates its `let`, and reads `from` as written.
+    expect(bodySlotAt("$lookup", ["let", "v"])).toMatchObject({ evaluated: true });
+    expect(bodySlotAt("$lookup", ["from"])).toMatchObject({ evaluated: false });
+    // An evaluated path three levels down keeps the walk descending until it arrives.
+    expect(bodySlotAt("$fill", ["output"])).toMatchObject({ deeper: true, evaluated: false });
+    expect(bodySlotAt("$fill", ["output", "z", "value"])).toMatchObject({ deeper: false, evaluated: true });
+    expect(bodySlotAt("$fill", ["output", "z", "method"])).toMatchObject({ evaluated: false });
+    // A body that IS one expression.
+    expect(bodySlotAt("$replaceWith", [])).toMatchObject({ evaluated: true });
+    expect(bodySlotAt("$unwind", [])).toMatchObject({ evaluated: false });
   });
 
   it("answers nothing for a name that is not a stage", () => {

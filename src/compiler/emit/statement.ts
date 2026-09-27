@@ -33,7 +33,6 @@ import {
   receiverFamiliesOf,
   documentOf,
   restoresDocumentsOf,
-  stageBodyRuleOf,
   pipelineOverOf,
   mergesIntoOf,
   unionsOf,
@@ -44,7 +43,7 @@ import {
   streamReceiverNames,
 } from "../rows.ts";
 import { consult, everyName, listedIn } from "./consult.ts";
-import { checkBody, checkSlots } from "./check.ts";
+import { checkBodyKeys, checkSlots } from "./check.ts";
 import { Chain, Env } from "./env.ts";
 import { Capture, fieldSlot, type Declared } from "./names.ts";
 import { bindingSlot, JSMQL_NS } from "../../namespace.ts";
@@ -56,7 +55,7 @@ import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, typ
 import { documentAfter, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
-import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
+import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf, takesLetOf, takesNoReceiver } from "../rows.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
@@ -105,8 +104,12 @@ function stageBody(node: Expr, env: Env): unknown {
     if (key === null) return lowerValue(node, env);
     const slot = childEnv(entries, entry, "value");
     const at = slot.site.where.at;
-    out[key] =
-      at === "statement" || at === "stream"
+    setKey(
+      out,
+      key,
+      // A slot that holds a pipeline takes a bracketed list of stages. Any other value
+      // is the developer's own MQL, and it lowers as a value: `pipeline: $.p` → "$p".
+      (at === "statement" || at === "stream") && entry.value.type === "ArrayLiteral"
         ? pipelineBody(
             entry.value,
             slot,
@@ -114,7 +117,10 @@ function stageBody(node: Expr, env: Env): unknown {
             [...(env.site.where.at === "stageBody" ? env.site.where.path : []), key],
             captures,
           )
-        : readIn(entry.value, slot);
+        : at === "statement" || at === "stream"
+          ? lowerValue(entry.value, slot)
+          : readIn(entry.value, slot),
+    );
   }
   // What the body read of the outer document goes into the stage's `let`, beside
   // whatever the developer wrote there; the `jsmql_` names cannot collide with theirs.
@@ -127,13 +133,13 @@ function stageBody(node: Expr, env: Env): unknown {
 }
 
 /** A `[ … ]` of statements as a list of stages, under the chain `env` already carries. */
-function subPipeline(node: Expr, env: Env, slot: { stage: string; key: string } | null = null): Stage[] {
-  if (node.type !== "ArrayLiteral") throw E.needsStageList(slot, node.pos);
+function subPipeline(node: Expr, env: Env): Stage[] {
+  if (node.type !== "ArrayLiteral") throw E.needsStageList(node.pos);
   const out: Stage[] = [];
   let scope = childEnv(env, node, "elements");
   for (const el of node.elements) {
     if (el.type === "SpreadElement") throw E.spreadInStageList(el.pos);
-    if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
+    if (env.chain.terminal !== null) throw E.afterTerminalStage(env.chain.terminal.spelled, el.pos);
     const step = statementStages(el as PipelineStmt, scope, out.length === 0);
     out.push(...env.chain.ahead(), ...step.stages);
     scope = step.env;
@@ -161,23 +167,19 @@ function pipelineBody(node: Expr, env: Env, stage: string, path: BodyPath, captu
   const capture = pipelineOverOf(stage) === "foreign" ? (hasLet(stage) ? new Capture(env.level) : null) : undefined;
   if (capture) captures.push(capture);
   const body = env.enter({ stage, path, capture }, new Chain());
-  const key = path[path.length - 1];
-  body.chain.emitted.push(...subPipeline(node, body, stage !== "" && typeof key === "string" ? { stage, key } : null));
+  body.chain.emitted.push(...subPipeline(node, body));
   return body.chain.close();
 }
 
-/** Does this stage's body take a `let`? The row's body rule says. */
-function hasLet(stage: string): boolean {
-  const rule = stageBodyRuleOf(stage);
-  return rule !== undefined && [...(rule.required ?? []), ...(rule.optional ?? [])].includes("let");
-}
+/** Does this stage's body take a `let`? The row's `takesLet` says. */
+const hasLet = (stage: string): boolean => takesLetOf(stage);
 
 /** The services a stage cell reads: each reading of an argument this file can give. */
 const READ = {
   value: readIn,
   truth: lowerTruth,
-  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. */
-  predicate: (body: Expr, env: Env): QueryDoc => lowerFilter(body, env.at(FILTER)),
+  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. A lambda body is a JavaScript spelling. */
+  predicate: (body: Expr, env: Env): QueryDoc => lowerFilter(body, env.at(FILTER), true),
   reshape: lowerValue,
   /** The statements of a stage block, each as its stages, under the parameter's env. */
   block: (stages: Pipeline, env: Env): Stage[] => {
@@ -211,7 +213,7 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
     // `__jsmql` cleanup precedes it, but the compiler must still write it
     // last.
     if (env.chain.terminal !== null) {
-      throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], (stmt as { pos: number }).pos);
+      throw E.afterTerminalStage(env.chain.terminal.spelled, (stmt as { pos: number }).pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
     // `let a = …, b = …;` is one declaration, so it is one stage — the way
@@ -507,9 +509,10 @@ function namesWithin(
  * stage in the pipeline", and `$.b = 2; $documents([…]);` is refused
  * with "$documents is only valid as the first stage". A stage that must
  * be LAST is filed on the chain, not emitted. So nothing can land after
- * it, and the `__jsmql` cleanup always precedes it.
+ * it, and the `__jsmql` cleanup always precedes it. `spelled` is how the
+ * source wrote the stage, for the message of a statement after it.
  */
-function place(name: string, stage: Stage, env: Env, first: boolean, pos: number): Stage[] {
+function place(name: string, stage: Stage, env: Env, first: boolean, pos: number, spelled = name): Stage[] {
   const only = onlyOf(name);
   // A value in this stage's own body can hoist a stage of its own, which
   // then stands AHEAD of it. So the stage is no longer first, whatever
@@ -566,14 +569,14 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
   }
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
-    if (already !== null) throw E.twoTerminalStages(name, Object.keys(already)[0], pos);
+    if (already !== null) throw E.twoTerminalStages(spelled, already.spelled, pos);
     // The `__jsmql` cleanup is the stage BEFORE the one that writes the
     // output. Nothing may run after that one. So a body reading a
     // scratch field reads one that is already gone. MEASURED:
     // `$merge({ let: { v: $$.size() } })` answered "Use of undefined
     // variable: v".
     if (readsScratch(stage)) throw E.terminalReadsScratch(name, pos);
-    env.chain.terminal = stage;
+    env.chain.terminal = { stage, spelled };
     return [];
   }
   return [stage];
@@ -699,7 +702,7 @@ function outTarget(t: Expr): string | { db: string; coll: string } | null {
   let cur: Expr = t;
   while (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
     if (cur.type === "IndexAccess") {
-      if (cur.index.type !== "StringLiteral") throw E.collectionNameMustBeConstant(cur.index.pos);
+      if (cur.index.type !== "StringLiteral") throw E.collectionNameFrom(cur.index);
       segments.unshift(cur.index.value);
     } else segments.unshift(cur.name);
     cur = cur.object;
@@ -710,6 +713,12 @@ function outTarget(t: Expr): string | { db: string; coll: string } | null {
   if (segments.length > need) throw E.outTooManySegments(t.pos);
   for (const s of segments) if (s === "" || s.startsWith("$")) throw E.badOutTarget(s, t.pos);
   return need === 1 ? segments[0] : { db: segments[0], coll: segments[1] };
+}
+
+/** A write target as the source spells it: `$$$.archive`, `$$$["my-coll"]`, `$$$$.logs.archive`. */
+function targetSpelling(target: string | { db: string; coll: string }): string {
+  const seg = (s: string): string => (/^[A-Za-z_$][\w$]*$/.test(s) ? `.${s}` : `[${JSON.stringify(s)}]`);
+  return typeof target === "string" ? `$$$${seg(target)}` : `$$$$${seg(target.db)}${seg(target.coll)}`;
 }
 
 /**
@@ -736,7 +745,8 @@ function outStages(
   const base = chainBase(rhs) as { type: string };
   if (base.type !== "StreamRef") throw E.outNeedsStream(rhs.pos);
   const stages = rhs.type === "StreamRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
-  return [...stages, ...place(name, { [name]: target }, env, first && stages.length === 0, op.pos)];
+  const spelled = `${targetSpelling(target)} ${op.op} …`;
+  return [...stages, ...place(name, { [name]: target }, env, first && stages.length === 0, op.pos, spelled)];
 }
 
 /**
@@ -778,7 +788,8 @@ function mergeStages(node: Extract<Expr, { type: "MethodCall" }>, env: Env, firs
           `'${spelling}' writes MANY documents into the collection`,
           "Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or ONE document ('$$$.<coll>.push({ … });').",
         );
-  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos)];
+  const spelled = `${targetSpelling(target)}.${node.name}(…)`;
+  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos, spelled)];
 }
 
 /** `$$$.<coll>.push(<document>);` — one document per document of the stream. */
@@ -1163,22 +1174,37 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
 
 type Link = Extract<Expr, { type: "MethodCall" }>;
 
-/** The links of a chain, base first, as their stages. */
+/** The links of a chain, base first, as their stages. Each link runs over what the link before it made. */
 function linkStages(links: readonly Link[], env: Env, first: boolean): Stage[] {
   const out: Stage[] = [];
+  let here = env;
   for (const link of links) {
     // `$$?.filter(…)` — the stream is never null; the `?.` is a misreading of `$$`.
     if (link.optional) throw E.optionalOnStream(link.pos);
-    const stages = streamLink(link, env, first && out.length === 0, undefined, out);
+    const stages = streamLink(link, here, first && out.length === 0, undefined, out);
     if (stages === null) {
       throw E.notAStreamLink(link.name, streamReceiverNames(), link.pos);
     }
     // What this link's own callbacks hoisted stands directly ahead of the link, not
     // ahead of the chain: `g` in `.$sortByCount(k).map(g => …)` is the document
     // `$sortByCount` MADE, and a `$lookup` placed before it would read the other one.
-    out.push(...env.chain.ahead(), ...stages);
+    const made = [...env.chain.ahead(), ...stages];
+    out.push(...made);
+    here = afterLink(link, made, here);
   }
   return out;
+}
+
+/**
+ * The Env the next link of a chain runs under. It is the Env a statement gets after
+ * the same stages: the document's proof after them, and no binding that a replaced
+ * document carried. A link whose row gives the documents back as they were
+ * (`.uniq()`) keeps both.
+ */
+function afterLink(link: Link, made: readonly Stage[], env: Env): Env {
+  if (!restoresDocumentsOf(namedRow(link) ?? link.name)) return afterStages(made, env);
+  env.chain.advance(made);
+  return env;
 }
 
 /**
@@ -1205,19 +1231,26 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
         ? { kind: "namespace", name: "cluster" }
         : { kind: "none" };
   const sel = select(consult(name, "statement"), receiver, { kind: "multiple" }, node.args.length);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`statement '${name}' selected a receiver dispatch`);
-    const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-    throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
-  }
+  const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
+  if (sel.kind === "dispatch") internalError(`statement '${name}' selected a receiver dispatch`);
   const args = node.args as readonly Expr[];
-  checkSlots(node.name, sel.rule.args, args, false);
-  // A stage spelled on a reference meets the same body rule as the stage statement.
-  const bodyRule = stageBodyRuleOf(name);
-  if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
-    checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
+  // A `$`-named stage on a reference is the developer's own MQL, as the bare stage
+  // call is: no body is checked, and its place stays checked.
+  const escape = node.name.startsWith("$");
+  let stages: Stage[];
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
+    // A stage body of named keys: a JavaScript spread or computed key has no lowering there.
+    if (args.length === 1 && isStageName(name)) checkBodyKeys(args[0]);
+    stages =
+      sel.kind === "rule"
+        ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[])
+        : [plainStage(name, node, args, env)];
+  } else {
+    if (sel.kind !== "rule") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
+    checkSlots(node.name, sel.rule.args, args, false);
+    stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   }
-  const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   const out: Stage[] = [];
   for (const stage of stages)
     out.push(...place(Object.keys(stage)[0], stage, env, first && out.length === 0, node.pos));
@@ -1238,7 +1271,7 @@ function streamLink(
   row: string = namedRow(link) ?? link.name,
   soFar: readonly Stage[] = [],
 ): Stage[] | null {
-  if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
+  if (env.chain.terminal !== null) throw E.afterTerminalStage(env.chain.terminal.spelled, link.pos);
   const name = row;
   // A diagnostic stage reports on the deployment, so it is a SOURCE stage and has
   // no link form. Without this, `$$.$indexStats({})` would compile and
@@ -1248,7 +1281,11 @@ function streamLink(
   // `.concat(…)` — documents unioned into this stream, wherever the chain stands.
   if (unionsOf(name)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name, "stream", "stream");
-  if (verdict.kind === "unknown" || verdict.kind === "noCell") return null;
+  // A `$`-named link is the developer's own MQL (HR3 does not apply to it): a name
+  // that no row knows, a name with no link form, or a count that its form does not
+  // take, gives HR2's plain form, and no body is checked. Its place stays checked.
+  const escape = link.name.startsWith("$");
+  if ((verdict.kind === "unknown" || verdict.kind === "noCell") && !escape) return null;
   // A cell that reads the ELEMENT has nothing to read on a stream of whole documents.
   const only = elementOnlyOf(name);
   if (only !== null && env.chain.element === "" && (only.when === "always" || link.args.length === 0)) {
@@ -1262,22 +1299,26 @@ function streamLink(
     );
   }
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
-    throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-  }
+  if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
   const args = link.args as readonly Expr[];
-  const bodyRule = stageBodyRuleOf(name);
-  checkSlots(link.name, sel.rule.args, args, bodyRule !== undefined);
-  // A stage link's body meets the same rule as the stage statement's body.
-  if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
-    checkBody(name, bodyRule, args, positionalKeysOf(name), link.pos);
+  let stages: Stage[];
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    // A stage body of named keys: a JavaScript spread or computed key has no lowering there.
+    if (args.length === 1 && isStageName(name)) checkBodyKeys(args[0]);
+    stages =
+      sel.kind === "rule"
+        ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ, soFar, link.name)) as Stage[])
+        : [plainStage(name, link, args, env)];
+  } else {
+    if (sel.kind !== "rule") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    checkSlots(link.name, sel.rule.args, args, false);
+    // `name` is the row that runs; `link.name` is what the developer typed. A message
+    // that swaps them tells the reader about a method they did not write.
+    stages = sel.rule.emit(
+      stageInputs(name, args, positionalKeysOf(name), env, link, READ, soFar, link.name),
+    ) as Stage[];
   }
-  // `name` is the row that runs; `link.name` is what the developer typed. A message
-  // that swaps them tells the reader about a method they did not write.
-  const stages = sel.rule.emit(
-    stageInputs(name, args, positionalKeysOf(name), env, link, READ, soFar, link.name),
-  ) as Stage[];
   const out: Stage[] = [];
   for (const stage of stages) out.push(...place(name, stage, env, first && out.length === 0, link.pos));
   // A link whose stages replace the document leaves no unwound element to point at —
@@ -1293,6 +1334,9 @@ function streamLink(
  */
 function peels(link: Extract<Expr, { type: "MethodCall" }>, env?: Env): boolean {
   const name = namedRow(link) ?? link.name;
+  // A `$`-named link is a stage of the developer's own MQL, known or not. A diagnostic
+  // stage is a source, so `streamLink` refuses it by name.
+  if (link.name.startsWith("$")) return true;
   const verdict = consult(name, "stream", "stream");
   if (verdict.kind === "unknown" || verdict.kind === "noCell" || verdict.kind === "refused") return false;
   const only = env === undefined ? null : elementOnlyOf(name);
@@ -1406,20 +1450,26 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   if (node.type === "StreamRef") throw E.bareContextRef("$$", node.pos);
   if (node.type === "DatabaseRef") throw E.bareContextRef("$$$", node.pos);
   if (node.type === "ClusterRef") throw E.bareContextRef("$$$$", node.pos);
+  // `{ $match: …, $sort: … }` — two stages in one raw document. MEASURED: the server
+  // refuses it ("must contain exactly one field"), and the place of each stage needs
+  // the one name its document holds.
+  if (name === null && node.type === "ObjectLiteral" && node.entries.length > 1) {
+    const head = staticKey(node.entries[0]);
+    if (head !== null && head.startsWith("$")) throw E.multiKeyStageDocument(head, node.entries.length, node.pos);
+  }
   if (name === null) throw E.notAStatement(node.pos);
 
-  // The raw document form. Its one entry's value is the body, in the
-  // position the row states for it — phase 4 already decides this. It
-  // is the SAME road as the call: the body takes every check the row
-  // states, because `{ $unwind: "items" }` is invalid on every
-  // deployment. HR1's round-trip promise is not a promise to emit what
-  // no server accepts.
+  // A `$`-named stage — a call, or the raw document `{ $match: … }` that HR1 lets the
+  // developer paste — is the developer's own MQL, and HR3 does not apply to it. The
+  // compiler checks no body. A name with no statement form, or a count that the form
+  // does not take, gives HR2's plain form. The place of each stage stays checked
+  // (`place`), as docs/LANG_RULES.md says.
+  const escape = name.startsWith("$");
   let bodyEnv: Env | null = null;
   let args: readonly Expr[];
   if (node.type === "ObjectLiteral") {
-    if (!isStageName(name)) throw E.notAStage(name, everyName().filter(isStageName), node.pos);
+    if (!escape && !isStageName(name)) throw E.notAStage(name, everyName().filter(isStageName), node.pos);
     const entries = childEnv(env, node, "entries");
-    if (node.entries.length !== 1) throw E.multiKeyStageDocument(name, node.entries.length, node.pos);
     const entry = node.entries[0];
     if (entry.type !== "KeyValueEntry" || staticKey(entry) === null) throw E.notAStatement(node.pos);
     bodyEnv = childEnv(entries, entry, "value");
@@ -1433,40 +1483,55 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   }
   // A mutator writes its receiver; one on a receiver that is neither a field nor a binding has nowhere to write.
   if (node.type === "MethodCall" && isMutator(name)) throw E.mutatorNeedsField(name, node.pos);
+  // A stage, an operator or a global function reads no receiver, and its statement form
+  // is the bare call. The stage document of `$.items.$sort(…);` has no place for `$.items`.
+  if (node.type === "MethodCall" && takesNoReceiver(name)) throw E.noReceiver(name, node.pos);
   const verdict = consult(name, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
+  if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw E.refusalFor(sel, name, "", "statement", node.pos, []);
+    // A name that no row knows is a stage of a newer server, or a typo: the server
+    // judges it. A near-miss suggestion refuses each new MongoDB name that is near a
+    // known one. See docs/DEFERRED.md § B.
+    // A stage body of named keys: a JavaScript spread or computed key has no lowering there.
+    if (args.length === 1 && isStageName(name)) checkBodyKeys(args[0]);
+    const stages: Stage[] =
+      bodyEnv !== null
+        ? [{ [name]: readIn(args[0], bodyEnv) }]
+        : sel.kind === "rule"
+          ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[])
+          : [plainStage(name, node, args, env)];
+    return stages.flatMap((st) => place(Object.keys(st)[0] ?? name, st, env, first, node.pos));
+  }
   if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
-    if (sel.kind === "unknown" && !name.startsWith("$")) throw unknownCall(sel, node, env);
-    // a misspelled stage gets the nearest one: the stages are the names with a statement form
-    throw E.refusalFor(
-      sel,
-      name,
-      "",
-      "statement",
-      node.pos,
-      name.startsWith("$") ? everyName().filter((n) => n.startsWith("$") && listedIn(n, "statement")) : [],
-      (s) => s,
-    );
+    if (sel.kind === "unknown") throw unknownCall(sel, node, env);
+    throw E.refusalFor(sel, name, "", "statement", node.pos, [], (s) => s);
   }
-  const bodyRule = stageBodyRuleOf(name);
-  checkSlots(name, sel.rule.args, args, bodyRule !== undefined);
-  // A stage's `body` rule describes an OBJECT body, and several stages
-  // take either an object or a string — `$out("c")`, `$unionWith("c")`,
-  // `$merge("c")`. The rule runs on the object form alone. On a string
-  // body, `checkBody` would take its positional branch and demand the
-  // object's required keys of a name.
-  if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
-    checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
-  }
-  const stages =
-    bodyEnv === null
-      ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[])
-      : [{ [name]: readIn(args[0], bodyEnv) }];
+  checkSlots(name, sel.rule.args, args, false);
+  const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   // A cell answers with the stages its name means. Where they may
   // STAND is the row's other fact, and the compiler applies that fact
   // to each stage.
   return stages.flatMap((st) => place(Object.keys(st)[0] ?? name, st, env, first, node.pos));
+}
+
+/**
+ * HR2's plain form of a `$`-named call as a stage: `$op()` is `{ $op: {} }`, `$op(x)`
+ * is `{ $op: x }`, and `$op(a, b)` is `{ $op: [a, b] }`. The body lowers where the
+ * position pass puts it: the stage row's layout, or a value for a name with none. HR3
+ * does not apply to the escape hatch. A spread has no MQL of its own.
+ */
+function plainStage(name: string, node: Expr, args: readonly Expr[], env: Env): Stage {
+  const all = "args" in node ? (node.args as readonly { type: string; pos: number }[]) : [];
+  const spread = all.find((a) => a.type === "SpreadElement");
+  if (spread !== undefined) {
+    throw E.refusalFor({ kind: "spreadRefused", name, sig: "…" }, name, "", "statement", spread.pos, []);
+  }
+  const inner = childEnv(env, node, "args");
+  if (args.length === 0) return { [name]: {} };
+  if (args.length === 1) return { [name]: readIn(args[0], inner) };
+  return { [name]: args.map((a) => readIn(a, inner)) };
 }
 
 /** The array reducer as stages: `$match` when the body tests, then `$replaceWith` of the appended document. */

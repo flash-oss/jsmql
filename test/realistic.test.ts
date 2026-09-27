@@ -1753,9 +1753,7 @@ describe("cart subtotal through .sumBy", { features: ["Array methods"] }, () => 
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { subtotal: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.items.sumBy(item => item.qty * item.price)`)).toEqual({
-        $sum: {
-          $map: { input: { $ifNull: ["$items", []] }, as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } },
-        },
+        $sum: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } } },
       });
     },
   );
@@ -2220,14 +2218,7 @@ describe("shopping cart total with 10_000 cap", { features: ["Numeric separators
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { total: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Math.min(10_000, $.lines.sumBy(l => l.qty * l.price))`)).toEqual({
-        $min: [
-          10000,
-          {
-            $sum: {
-              $map: { input: { $ifNull: ["$lines", []] }, as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } },
-            },
-          },
-        ],
+        $min: [10000, { $sum: { $map: { input: "$lines", as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } } } }],
       });
     },
   );
@@ -2730,7 +2721,9 @@ describe("jsmql rejects a second write stage in a $out chain", { features: ["Pip
       // Easy slip when fanning one pipeline out to two destinations: the LHS
       // assignment IS the write, so a `.$out(...)` link inside the chain would be
       // a second one. jsmql catches it where the server would.
-      expect(() => jsmql(`$$$.archive = $$.$out("other");`)).toThrow(/'\$out' writes the pipeline's output/);
+      expect(() => jsmql(`$$$.archive = $$.$out("other");`)).toThrow(
+        /'\$\$\$\.archive = …' writes the pipeline's output and has to be its last stage, and '\$out' already is/,
+      );
     },
   );
 });
@@ -3377,56 +3370,13 @@ describe("invalid stage placement — validate() catches a misplaced $merge", { 
 });
 
 // ---------------------------------------------------------------------------
-// Pre-flight guard rails — `kind: "err"` examples. Each shows a frequent
-// developer mistake that jsmql rejects at compile time (the stage-body checks),
-// so the playground can demonstrate the guard with a red error panel
-// instead of letting a broken query reach the server. Written in throwing-call
-// form so the test verifies the guard AND exposes an extractable `jsmql(...)`
-// call for the playground sync. See docs/specs/aggregation-stages.md.
+// Pre-flight guard rails — `kind: "err"` examples. Each one shows a frequent
+// mistake that JSMQL refuses at compile time: a stage in a place where the
+// server refuses it. The playground shows each refusal in a red error panel.
+// Each test uses the throwing-call form. So the test checks the refusal, and
+// the playground sync can extract the `jsmql(...)` call. See
+// docs/specs/aggregation-stages.md.
 // ---------------------------------------------------------------------------
-
-describe("jsmql rejects $group without _id at compile time", { features: ["Pipelines"] }, () => {
-  it(
-    "jsmql catches the missing grouping key before the server does",
-    { kind: "err", usage: "db.orders.aggregate(jsmql(...))" },
-    () => {
-      // Beginner slip: forgetting that every $group needs an _id (use `_id: null`
-      // to aggregate the whole collection).
-      expect(() => jsmql(`$group({ total: $sum($.amount) });`)).toThrow(/'\$group' requires the '_id' field/);
-    },
-  );
-});
-
-describe("$unwind path must start with $", { features: ["Pipelines"] }, () => {
-  it(
-    "jsmql rejects a bare field name — $unwind takes a field path",
-    { kind: "err", usage: "db.orders.aggregate(jsmql(...))" },
-    () => {
-      // Easy to forget the `$`: $unwind wants a field PATH ("$items"), not a
-      // field name ("items").
-      expect(() => jsmql(`$unwind("items");`)).toThrow(/reads a field PATH/);
-    },
-  );
-});
-
-describe("$project cannot mix inclusion and exclusion", { features: ["Pipelines"] }, () => {
-  it(
-    "jsmql rejects 1-and-0 in the same $project (except _id)",
-    { kind: "err", usage: "db.users.aggregate(jsmql(...))" },
-    () => {
-      // Classic mistake: trying to keep `name` and drop `internalNote` in one
-      // $project. MongoDB allows only all-include or all-exclude (besides _id).
-      expect(() => jsmql(`$project({ name: 1, internalNote: 0 });`)).toThrow(/is either an inclusion or an exclusion/);
-    },
-  );
-});
-
-describe("$sort takes 1 or -1, not a SQL-style direction", { features: ["Pipelines"] }, () => {
-  it(`jsmql rejects a string direction like "desc"`, { kind: "err", usage: "db.events.aggregate(jsmql(...))" }, () => {
-    // SQL habit: writing `"desc"` instead of `-1`. jsmql names the legal values.
-    expect(() => jsmql(`$sort({ createdAt: "desc" });`)).toThrow(/'\$sort' takes 1 or -1 for every key/);
-  });
-});
 
 describe("$merge must be the last stage", { features: ["Pipelines"] }, () => {
   it(
