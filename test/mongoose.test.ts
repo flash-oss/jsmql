@@ -179,10 +179,12 @@ describe("@koresar/jsmql/mongoose — Filter + update slots", () => {
     expect(() => Model.updateOne({}, "$.age > 18")).toThrow(/An update document is made of writes/);
   });
 
-  it("an out-of-whitelist stage inside an update surfaces the named error", () => {
+  it("a field written twice inside an update surfaces the named error", () => {
     const { mongoose, Model } = buildMockMongoose();
     jsmqlMongoose(mongoose);
-    expect(() => Model.updateMany({}, "$set({ a: 1 }); $sort({ a: 1 })")).toThrow(/'\$sort' is a fragment of '\$push'/);
+    expect(() => Model.updateMany({}, "$set({ a: 1 }); $sort({ a: 1 })")).toThrow(
+      /'a' is written twice in one update \('\$set' and '\$sort'\)/,
+    );
   });
 });
 

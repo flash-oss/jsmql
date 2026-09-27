@@ -13,8 +13,8 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
   initialises after the code that reads it.
 - **Every fact is stated, never derived.** A phase might compute a fact from
   other fields, but the registry still writes it down, so a reader sees it and
-  a test can check it. `bodyPositions`, `returns`, `document`, `binds` and `alsoTypes` are
-  all measured on a running `mongod`, and the `// MEASURED:` comment beside
+  a test can check it. `bodyPositions`, `evaluates`, `returns`, `document`, `binds` and
+  `alsoTypes` are all measured on a running `mongod`, and the `// MEASURED:` comment beside
   each one shows the command and the answer. `neverNull` and `readsNullAsEmpty`
   are measured by a table in test/compiler-methods.test.ts (and, for an
   operator, by test/compiler-returns-agrees.test.ts). The test fails when a row
@@ -32,7 +32,9 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
   constants only, so this cell is always a refusal. A row adds this cell when
   the general sentence for the position (`NO_CELL` in
   `src/compiler/emit/errors.ts`) cannot name the row's own alternative — for
-  example `new Date()` → `$currentDate`.
+  example `new Date()` → `$currentDate`. A `$op` row (`mongo`) states no
+  refusal: a `$op(…)` call is the developer's own MQL, and it takes HR2's plain
+  form wherever its row states no rule (HR3 does not apply to it).
 
 ## The types hold the rules, and each check must fail once
 
@@ -61,8 +63,10 @@ confirm.
 
 - **A name** (`.foo()`, `$foo`, `Foo`, `$`) needs one row in `names.ts`,
   through the constructor for its kind (`name`, `mongo`, `global_`, `root`).
-  Fill every cell. When a position's `where` omits a cell, that cell still
-  says why.
+  A JavaScript name fills every cell: when its `where` omits a position, that
+  cell still says why. A `$op` row states a rule for each position that its
+  `where` lists, and no cell for any other position, except the filter's
+  `viaFallback`. The types hold both rules.
 - **A construct** (an operator spelling, a statement form) needs a row in
   `productions.ts`. Its lexemes are keys of `tokens.ts` and `keywords.ts`.
 - **A new fact about rows** needs a field on the spec type. Give it a doc

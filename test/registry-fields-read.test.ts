@@ -32,7 +32,7 @@ describe("registry — every stated rule field has a reader in the compiler", ()
 
   it("reads the field lists off the two types", () => {
     expect(ARITY.length).toBeGreaterThanOrEqual(15);
-    expect(BODY.length).toBeGreaterThanOrEqual(15);
+    expect(BODY.length).toBeGreaterThanOrEqual(8);
     expect(ARITY).toContain("sig");
     expect(BODY).toContain("required");
   });

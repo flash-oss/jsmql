@@ -61,26 +61,43 @@ export type Site = {
   readonly envelope: "none" | "$literal";
   /** The sub-pipeline boundaries crossed to reach here, outermost first. */
   readonly boundaries: readonly Boundary[];
-  /** The operator whose ARGUMENT this is — what a fragment like `$case` or `$box` is only valid inside of — or null. */
+  /**
+   * The operator whose ARGUMENT this is — what a fragment like `$case` or `$box` is
+   * only valid inside of — or null. It stays set through a document, a list and a
+   * value under a `$` key, which are MQL structure. Any JavaScript node resets it,
+   * because that node lowers to MQL of its own. A regex literal reads it: set, the
+   * literal is in the developer's own MQL (HR1).
+   */
   readonly inside: string | null;
 };
 
 /**
- * HR1's one gate. Take a string injected at runtime — a `jsmql.compile`
- * parameter, or a template `${…}` — that starts with `$`. The compiler wraps
- * it in `$literal` exactly where the server would otherwise read it as a field
- * reference: in a VALUE slot the server evaluates — an expression, a stage
- * body, a `$set` value — outside a `$literal` the developer already wrote. Two
- * places evaluate nothing and take the string as written: a query slot, and an
- * update DOCUMENT (`{ $set: { x: "$b" } }` stores the string "$b"; measured).
+ * HR1's one gate, for a value that arrives at run time — a `jsmql.compile`
+ * parameter, or a template `${…}` — and reads as MQL: a string that starts with
+ * `$`, or a document with a `$` key. Such a value is a value, never MQL, so it
+ * may stand in three places only:
+ *
+ *   "literal"    a slot that the server EVALUATES as an expression, outside a
+ *                `$literal` the developer already wrote. The value goes in
+ *                `$literal`, so the server cannot read it as a field or an operator.
+ *   "asWritten"  a place that evaluates nothing: inside the developer's own
+ *                `$literal`, a query slot (the query language compares the value
+ *                as written), and an update DOCUMENT (`{ $set: { x: "$b" } }`
+ *                stores the string "$b"; measured).
+ *   "refused"    every other slot: one that the server reads as written (a stage
+ *                option, a name, a path), an accumulator, a window function, a
+ *                statement. There the value becomes part of the MQL.
  *
  *   jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })         → { $add: ["$a", { $literal: "$b" }] }
  *   jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" }) → [{ $set: { x: { $literal: "$b" } } }]
- *   jsmql.compile(({ s }, { $ }) => $.a === s)({ s: "$b" })            → { a: { $eq: "$b", $not: { $type: "array" } } }
  *   jsmql.update.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })   → { $set: { x: "$b" } }
+ *   jsmql.pipeline.compile(({ p }, { $ }) => { $unwind(p); })({ p: "$items" })   → refused
  */
-export const injectedNeedsLiteral = (site: Site): boolean =>
-  site.where.at === "value" && site.root !== "updateDoc" && site.envelope === "none";
+export function injectedPlacement(site: Site): "literal" | "asWritten" | "refused" {
+  if (site.envelope === "$literal" || site.root === "updateDoc" || site.where.at === "filter") return "asWritten";
+  if (site.where.at === "value" && site.where.written === undefined) return "literal";
+  return "refused";
+}
 
 /**
  * The (sub-)pipeline under assembly. Held by reference on purpose: two
@@ -107,9 +124,10 @@ export class Chain {
   /**
    * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
    * rather than emitting it, so nothing can land after it, and the cleanup
-   * always precedes it.
+   * always precedes it. `spelled` is how the source wrote it — `$out`, or the
+   * sugar `$$$.<coll> = …` — so a message names what the developer wrote.
    */
-  terminal: Stage | null = null;
+  terminal: { readonly stage: Stage; readonly spelled: string } | null = null;
   /**
    * Where the stream's ELEMENT lives on its documents: `""` when the element IS
    * the document, or the unwound field's path after `.flatMap("items")` — a
@@ -232,7 +250,7 @@ export class Chain {
     this.flush();
     const out = [...this.emitted];
     if (this.dirty) out.push({ $unset: JSMQL_NS });
-    if (this.terminal !== null) out.push(this.terminal);
+    if (this.terminal !== null) out.push(this.terminal.stage);
     return out;
   }
 }

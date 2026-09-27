@@ -85,7 +85,8 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
   prove.ts     what a node PROVABLY is: a literal's type, a row's `returns` at its
                call site, a binding's type, the document's proof at a field path.
   inputs.ts    the one constructor of the `In` record a renderer receives.
-  check.ts     the literal-gated argument checks. Each check reads a stated rule.
+  check.ts     the literal-gated argument checks on JSMQL code. Each check reads a
+               stated rule. A `$op(…)` or `$stage(…)` call meets none of them (HR3).
   errors.ts    every message the phase can produce, worded once.
   lower.ts     the value and truth readings over every node type. See
                docs/specs/emit-pass.md.
@@ -118,8 +119,8 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
   (`BINARY_OPS` in ast.ts, `EVALUABLE_TYPES` and `NOT_ASKED_TYPES` in fold.ts).
   Never keep a hand copy of it in a second file.
 - **Every rejection quotes the registry.** A message is either a row's own
-  `unsupported(...)` text or built from a row's `args.sig`. No phase writes prose
-  the registry could have carried.
+  `unsupported(...)` text or built from a row's facts (`args.sig`, `valueTwin`).
+  No phase writes prose the registry could have carried.
 - **Positions come from `where`, never from a tree probe.** If a construct is
   legal somewhere, its row says so, and phase 4 reads this. A stage body can mix
   positions. The row states the layout in `bodyPositions`; never derive the

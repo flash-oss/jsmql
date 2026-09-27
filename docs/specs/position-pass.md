@@ -121,36 +121,24 @@ the second way is the dangerous one:
 { $setWindowFields: { …, output: { r: { $sum: "$x" } } } }        → 4
 ```
 
-So every operand-shaped accumulator cell states `exact: 1` and renders through one
-emitter, `accumulated`
-([vocabulary.ts](../../src/registry/vocabulary.ts)). Two audits hold the rule: a
-`group` or `window` cell may never state `atLeast`, because an accumulator slot has
-a ceiling, and a cell that uses `accumulated` must state `exact: 1`, because the
-emitter reads `args[0]` and nothing else.
+A `$op(…)` call in such a slot is the developer's own MQL (HR2), and HR3 does not
+apply to it. So the call renders as written, through the one emitter `single`
+([vocabulary.ts](../../src/registry/vocabulary.ts)), and its raw spelling gives the
+same document. The server judges the count:
+
+```
+$group({ _id: null, r: $push([$.x, $.y]) });     → [{ $group: { _id: null, r: { $push: ["$x","$y"] } } }]
+$group({ _id: null, r: { $push: [$.x, $.y] } }); → the same document: the server refuses it as "a unary operator"
+```
 
 `$covariancePop` and `$covarianceSamp` are the exception the registry states rather
 than derives: their window slot genuinely takes an array of two, and one operand
 answers `null`.
 
-### The array shield
-
-An operand that RENDERS as an array needs shielding, because MongoDB reads
-`{ acc: [ … ] }` as an operand list wherever it appears. For `$push([$.x, $.y])`,
-whose one argument is an array literal:
-
-```
-{ $group: { _id: null, r: { $push: ["$x","$y"] } } }                       refused
-{ $group: { _id: null, r: { $push: { $let: { vars: {}, in: ["$x","$y"] } } } } }  → [[1,2],[3,4]]
-```
-
-which gives the same answer the bare array already gives in a window slot. The
-shield is needed only in a `$group` slot; both cells use the one emitter anyway,
-so JSMQL states the rule once and the two slots cannot drift apart.
-
+A JavaScript aggregate in such a slot (`$.a.sum()`, `.first()`, `.sumBy(fn)`) is
+the compiler's own lowering, so HR3 applies to it: the cell must emit ONE operand.
 [test/compiler-accumulator-agrees.test.ts](../../test/compiler-accumulator-agrees.test.ts)
-runs each of these documents, emitted by the registry itself, on a live mongod, and
-checks that the shielded form answers exactly what the bare form answers wherever
-the bare form runs. A fix may not change an answer to buy a shape.
+compiles each of these spellings, and runs the result on a live mongod.
 
 ## A stream is a chain rooted in a context reference
 
@@ -175,6 +163,27 @@ when the chain's top is a value to its parent — `$.o = $$$.orders.filter(p).$g
 …, s: $sum($.x) })` puts `$sum` at `group`, exactly as `$group({ … });` does. And a
 callee whose row says `blockBody: "stages"` takes them as an array too:
 `$$.aggregate([$match(…)])` puts each element at `statement`.
+
+## A value slot that the server reads as written
+
+A stage row also states `evaluates`: the body paths whose value the server
+evaluates as an expression. At a value leaf of a stage body, the pass reads it
+(`bodySlotAt` answers `evaluated`). A leaf that no `evaluates` path covers takes
+`{ at: "value", written: { stage, path } }`, and every node below it takes the same
+answer, with each key added to the path. A name, a path, a number, a word or a sort
+order stands in such a slot:
+
+```
+$unwind({ path: <v> })         path ["path"]   → { at: "value", written: { stage: "$unwind", path: ["path"] } }
+$lookup({ from: <v>, … })      path ["from"]   → written
+$lookup({ let: { w: <v> }, … })  path ["let"]  → { at: "value" }           `let` is evaluated
+$set({ x: <v> })               path ["x"]      → { at: "value" }           every key of `$set` is evaluated
+```
+
+An `evaluates` path below the leaf keeps the walk descending, the same as a
+`bodyPositions` key does: `$fill`'s `output.*.value` reaches its own slot, and
+`output.<field>.method` beside it is written. HR1's gate reads the answer (see
+[aggregation-stages.md § `$`-string pass-through](aggregation-stages.md)).
 
 ## The three answers that are not positions
 

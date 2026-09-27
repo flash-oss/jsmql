@@ -264,6 +264,23 @@ export const firstOf = (a: unknown): Record<string, unknown> => ({ $first: singl
 export const lastOf = (a: unknown): Record<string, unknown> => ({ $last: singleArrayArg(a) });
 export const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $reverseArray: singleArrayArg(a) });
 
+/**
+ * A JavaScript aggregate in an ACCUMULATOR slot — a `$group` output, a
+ * `$setWindowFields.output` entry. The receiver is the accumulator's operand:
+ * `$.a.sum()` is `{ $sum: "$a" }`. A receiver that renders as an array LITERAL holds
+ * one array on each document, and the slot reads `{ $sum: [ … ] }` as an operand LIST.
+ * MEASURED: a `$group` slot refuses it ("The $sum accumulator is a unary operator"),
+ * and a window slot answers 0. So `perDocument` reduces the array on each document
+ * first, as `.sumBy` does, and the slot accumulates that value:
+ *   [$.n, $.m].sum()     → { $sum: { $sum: ["$n", "$m"] } }          → Σ (n + m)
+ *   [$.n, $.m].first()   → { $first: { $first: [["$n", "$m"]] } }    → n of the first document
+ */
+export const slotAggregate = (
+  op: string,
+  recv: unknown,
+  perDocument: (a: unknown) => unknown,
+): Record<string, unknown> => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
+
 /** The JavaScript truth of a lowered value: not missing, and not null, false, "" or 0. */
 export const jsTruth = (value: unknown): unknown => ({
   $and: [

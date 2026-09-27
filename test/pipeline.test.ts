@@ -184,12 +184,11 @@ describe("pipeline — sub-pipelines", () => {
     ]);
   });
 
-  it("$lookup pipeline: a field ref is rejected (HR3 — pipeline must be a constant array)", () => {
-    // The server rejects `{ $lookup: { pipeline: "$someVar" } }` ("A pipeline must
-    // be an array of objects"), so a non-array pipeline slot throws at compile time.
-    expect(() => jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toThrow(
-      "'$lookup' pipeline is a sub-pipeline: write it as a bracketed list of stages, 'pipeline: [$match(…), $sort(…)]'.",
-    );
+  it("$lookup pipeline: a field ref passes through as written (HR1 — your own MQL)", () => {
+    // DELIBERATELY invalid: mongod says "A pipeline must be an array of objects".
+    expect(jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toEqual([
+      { $lookup: { from: "x", pipeline: "$someVar", as: "y" } },
+    ]);
   });
 
   it("$facet recurses into every value", () => {
@@ -237,12 +236,11 @@ describe("raw MQL stage bodies pass through UNGUARDED (escape hatch — see src/
 });
 
 describe("pipeline — error cases", () => {
-  it("rejects unknown stage name with did-you-mean suggestion", () => {
-    expect(() => jsmql("[{ $macth: $.age > 18 }]")).toThrow(/'\$match'/);
-  });
-
-  it("rejects unknown stage name in stage-call form", () => {
-    expect(() => jsmql("[$prject({ name: 1 })]")).toThrow(/'\$project'/);
+  // An unknown stage is your own MQL, so it passes through with no suggestion.
+  // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$macth'".
+  it("passes an unknown stage name through, in both spellings", () => {
+    expect(jsmql("[{ $macth: $.age > 18 }]")).toEqual([{ $macth: { $gt: ["$age", 18] } }]);
+    expect(jsmql("[$prject({ name: 1 })]")).toEqual([{ $prject: { name: 1 } }]);
   });
 
   it("once first element is a stage, every element must be a stage", () => {
@@ -252,14 +250,17 @@ describe("pipeline — error cases", () => {
   });
 
   it("multi-key object cannot be a stage element", () => {
-    expect(() => jsmql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(/single-key stage object/);
+    // MEASURED: "A pipeline stage specification object must contain exactly one field."
+    expect(() => jsmql("[{ $match: { age: 1 }, $sort: { age: 1 } }]")).toThrow(
+      "A raw stage document holds exactly one stage, and this one holds 2 keys. Write '{ $match: … }' on its own, and the next stage as its own statement.",
+    );
   });
 
   it("jsmql.validate() surfaces pipeline errors as CODEGEN_ERROR", () => {
-    const r = jsmql.validate("[{ $macth: $.age > 18 }]");
+    const r = jsmql.validate("[{ $match: { age: 1 }, $sort: { age: 1 } }]");
     expect(r.valid).toBe(false);
     expect(r.errors[0].code).toBe("CODEGEN_ERROR");
-    expect(r.errors[0].message).toMatch(/\$match/);
+    expect(r.errors[0].message).toMatch(/holds exactly one stage/);
   });
 });
 
@@ -1923,21 +1924,25 @@ describe("chained stage calls on the current stream", () => {
   });
 
   describe("errors", () => {
-    it("rejects an unknown stage name with a suggestion", () => {
-      expect(() => jsmql("$$.$prject({ a: 1 });")).toThrow(
-        "'.$prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
+    it("passes an unknown stage name through, and suggests for a JavaScript name", () => {
+      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$prject'".
+      expect(jsmql("$$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }]);
+      expect(() => jsmql("$$.prject({ a: 1 });")).toThrow(
+        "'.prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
       );
     });
 
-    it("rejects an expression operator chained as a stage", () => {
-      expect(() => jsmql("$$.$abs(1);")).toThrow(
-        "'$abs' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $abs(…);'",
-      );
+    // A `$`-named link is your own MQL, so it passes through as the stage you named.
+    it("passes an expression operator chained as a stage through as written", () => {
+      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$abs'".
+      expect(jsmql("$$.$abs(1);")).toEqual([{ $abs: 1 }]);
     });
 
-    it("rejects the wrong argument count", () => {
-      expect(() => jsmql("$$.$limit();")).toThrow("'.$limit(body)' requires exactly 1 argument, got 0");
-      expect(() => jsmql("$$.$limit(5, 6);")).toThrow("'.$limit(body)' requires exactly 1 argument, got 2");
+    it("passes a stage link with any argument count through, in HR2's plain form", () => {
+      // DELIBERATELY invalid: mongod says "invalid argument to $limit stage: Expected a number in: $limit: {}".
+      expect(jsmql("$$.$limit();")).toEqual([{ $limit: {} }]);
+      // mongod: "invalid argument to $limit stage: Expected a number in: $limit: [ 5, 6 ]"
+      expect(jsmql("$$.$limit(5, 6);")).toEqual([{ $limit: [5, 6] }]);
     });
 
     it("rejects a bare `.$stage` with no call", () => {
@@ -1954,13 +1959,17 @@ describe("chained stage calls on the current stream", () => {
 
     it("rejects a stage link whose receiver is a value, not a stream", () => {
       expect(() => jsmql("$.out = $.items.$match({ a: 1 });")).toThrow(
-        "'$match' is a pipeline stage, not an expression — MongoDB has no '$match' expression operator, so '{ $match: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$match(…);') or as a chain link ('$$.$match(…)'). For the value-position equivalent, use '$filter(…)'.",
+        "'.$match()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.$match(…)') or as a pipeline statement ('$match(…);'). For the value form, use '$filter(…)'.",
+      );
+      // A stage with no value twin names the two stream spellings alone.
+      expect(() => jsmql("$.out = $.items.$bucket({ groupBy: 1 });")).toThrow(
+        "'.$bucket()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.$bucket(…)') or as a pipeline statement ('$bucket(…);').",
       );
     });
 
     it("rejects a stage link after the chain has collapsed to a value", () => {
       expect(() => jsmql("$.out = $$$.orders.filter({ a: 1 }).map('x').uniq().$limit(5);")).toThrow(
-        "'$limit' is a pipeline stage, not an expression — MongoDB has no '$limit' expression operator, so '{ $limit: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(…);') or as a chain link ('$$.$limit(…)'). For the value-position equivalent, use '$slice(…)'.",
+        "'.$limit()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.$limit(…)') or as a pipeline statement ('$limit(…);'). For the value form, use '$slice(…)'.",
       );
     });
   });

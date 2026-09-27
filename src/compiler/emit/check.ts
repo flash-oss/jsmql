@@ -1,4 +1,6 @@
-// Phase 5 — EMIT. These are the literal-gated checks on the arguments of a MongoDB operator.
+// Phase 5 — EMIT. These are the literal-gated checks on the arguments of JSMQL code: a
+// JavaScript method, a global and a production. A `$op(…)` or `$stage(…)` call is the
+// developer's own MQL, so it meets none of them (HR3), apart from `checkBodyKeys`.
 //
 // Each check here inspects only what is fully static — a literal string in an
 // enum slot, or the keys of an object literal. Each check answers nothing when
@@ -11,13 +13,10 @@
 import type { Arity, ArgType, BodyRule, Expr, Kind } from "../../registry/vocabulary.ts";
 import { kindFits } from "./select.ts";
 import { CodegenError } from "../../errors.ts";
-import { stringify } from "../../stringify.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
-import { bodyExampleOf, bodySlotAt } from "../rows.ts";
-import { computedKeyInOperatorBody, spreadInOperatorBody, tooManySortKeys } from "./errors.ts";
+import { computedKeyInOperatorBody, spreadInOperatorBody } from "./errors.ts";
 import { evaluate } from "../passes/evaluate.ts";
-import { isDate } from "../../bson.ts";
 
 type Lit = { kind: "number" | "string" | "bool" | "null" | "array" | "object" | "regex" | "bigint"; value: Expr };
 
@@ -107,12 +106,10 @@ const EXPECTS: Record<ArgType, string> = {
   timestamp: "expects a timestamp",
 };
 
-const hint = (name: string, expected: ArgType): string => {
+const hint = (expected: ArgType): string => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
-  // A stage answers with its OWN smallest correct call: $group's is not $sample's.
-  const example = expected === "object" ? bodyExampleOf(name) : undefined;
-  return example === undefined ? "" : ` Write the body as a document. For example: '${example}'.`;
+  return "";
 };
 
 /**
@@ -192,7 +189,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
   throw new CodegenError(
-    `'${name}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(name, expected)}`,
+    `'${name}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(expected)}`,
     e.pos,
   );
 }
@@ -212,38 +209,34 @@ function checkEnum(
   allowed: readonly string[],
   caseInsensitive: boolean,
   isConstantSlot = false,
-  /** The key ALSO takes a sub-pipeline, so the refusal names both forms. */
-  alsoStages = false,
 ): void {
   if (e.type !== "StringLiteral" || (e.value.startsWith("$") && !isConstantSlot)) return;
   const v = caseInsensitive ? e.value.toLowerCase() : e.value;
   if (allowed.includes(v)) return;
   const near = didYouMean(v, allowed, (s) => s);
-  throw new CodegenError(
-    alsoStages
-      ? `'${name}' ${key} is one of: ${allowed.join(", ")}. It can also take a bracketed list of stages: '${key}: [$set({ … })]'. It got '${e.value}'.${near}`
-      : `'${name}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`,
-    e.pos,
-  );
+  throw new CodegenError(`'${name}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
 }
 
-/** A literal flag string with a character outside the set. */
-function checkCharSet(name: string, key: string, e: Expr, set: string): void {
-  if (e.type !== "StringLiteral" || e.value.startsWith("$")) return;
-  for (const ch of e.value) {
-    if (!set.includes(ch)) {
-      throw new CodegenError(
-        `'${name}' ${key} has an invalid flag '${ch}'. MongoDB allows only ${[...set].join(", ")}. It does not support a JavaScript 'g' or 'y' flag.`,
-        e.pos,
-      );
-    }
+/**
+ * A body of named keys — an object-form operator's, a stage's — is MQL syntax. A
+ * JavaScript spread or computed key there lowers to `$mergeObjects` or
+ * `$arrayToObject`, which the operator or the stage does not take as its body. That
+ * MQL is the compiler's own, so HR3 refuses it, inside the escape hatch too.
+ */
+export function checkBodyKeys(body: Expr): void {
+  if (body.type !== "ObjectLiteral") return;
+  for (const e of body.entries) {
+    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
+    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
   }
 }
 
 /**
- * An object-shaped operator's body, in either call form: the keys it must have,
- * the keys it may not have (with a suggestion), and each key's enum, flag set
- * and type. `args` are the call's arguments; `keys` the row's positional order.
+ * The options document of a JavaScript method (`args.body`), for example the parts of
+ * `.set({ year, month })`: the keys it must have, the keys it may not have (with a
+ * suggestion), and each key's enum and type. `args` are the call's arguments; `keys`
+ * the row's positional order. A `$op(…)` or `$stage(…)` body is the developer's own
+ * MQL, and no rule judges it (HR3).
  */
 export function checkBody(
   name: string,
@@ -252,23 +245,17 @@ export function checkBody(
   keys: readonly string[],
   pos: number,
 ): void {
-  // A body the call supplied whole (`$dateDiff(${parts})`) is a value, and its keys are the server's to judge.
+  // A body the call supplied whole (`.set(${parts})`) is a value, and its keys are the server's to judge.
   if (args.length === 1 && args[0].type === "Injected") return;
   let present: readonly string[];
-  let hasSpread = false;
   let valueOf: (k: string) => Expr | undefined;
   const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
   if (body !== null) {
-    const entries = body.entries;
-    // The keys of an operator's body are its wire format: neither a spread nor a
-    // computed key can produce one, and the server refuses the document either way.
-    for (const e of entries) {
-      if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
-      if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
-    }
-    hasSpread = false;
+    // The keys of the body are its wire format: neither a spread nor a computed key
+    // can produce one, and the server refuses the document either way.
+    checkBodyKeys(body);
     const byKey = new Map<string, Expr>();
-    for (const e of entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
+    for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
     present = [...byKey.keys()];
     valueOf = (k) => byKey.get(k);
   } else {
@@ -279,7 +266,7 @@ export function checkBody(
     };
   }
   const closed = [...rule.required, ...rule.optional];
-  if (body !== null && !hasSpread && rule.closed) {
+  if (body !== null && rule.closed) {
     for (const k of present) {
       if (!closed.includes(k)) {
         throw new CodegenError(
@@ -289,217 +276,42 @@ export function checkBody(
       }
     }
   }
-  if (!hasSpread) {
-    for (const k of rule.required) {
-      if (!present.includes(k)) throw new CodegenError(`'${name}' requires the '${k}' field, but it is missing.`, pos);
-    }
-    for (const group of rule.exactlyOneOf ?? []) {
-      const found = group.filter((k) => present.includes(k));
-      if (found.length !== 1) {
-        throw new CodegenError(
-          `'${name}' requires exactly one of ${group.map((k) => `'${k}'`).join(", ")}${found.length === 0 ? ", but none is present" : `, but got ${found.map((k) => `'${k}'`).join(" and ")}`}.`,
-          pos,
-        );
-      }
-    }
-    for (const group of rule.atLeastOneOf ?? []) {
-      if (!group.some((k) => present.includes(k))) {
-        throw new CodegenError(
-          `'${name}' needs at least one of ${group.map((k) => `'${k}'`).join(", ")}, and none is present.`,
-          pos,
-        );
-      }
-    }
-    for (const [a, b] of rule.notTogether ?? []) {
-      const inA = present.filter((k) => a.includes(k));
-      const inB = present.filter((k) => b.includes(k));
-      if (inA.length > 0 && inB.length > 0) {
-        throw new CodegenError(
-          `'${name}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
-          pos,
-        );
-      }
-    }
-    for (const group of rule.together ?? []) {
-      const found = group.filter((k) => present.includes(k));
-      if (found.length !== 0 && found.length !== group.length) {
-        const missing = group.filter((k) => !present.includes(k));
-        throw new CodegenError(
-          `'${name}' takes ${group.map((k) => `'${k}'`).join(" and ")} together or neither: ${missing.map((k) => `'${k}'`).join(" and ")} ${missing.length === 1 ? "is" : "are"} missing.`,
-          pos,
-        );
-      }
-    }
+  for (const k of rule.required) {
+    if (!present.includes(k)) throw new CodegenError(`'${name}' requires the '${k}' field, but it is missing.`, pos);
   }
-  const allowed = rule.everyValueIn ?? [];
-  for (const k of rule.everyValueIn === undefined ? [] : present) {
-    const v = valueOf(k);
-    if (v === undefined) continue;
-    const lit = literal(v);
-    // A document is a value in its own right — `{ $meta: "textScore" }` is a real
-    // sort key — and anything the gate cannot read is the runtime's business.
-    if (lit === null || lit.kind === "object") continue;
-    const held =
-      lit.kind === "number" ? numberOf(v) : lit.kind === "string" && v.type === "StringLiteral" ? v.value : null;
-    if (held === null || !allowed.includes(held)) {
+  for (const [a, b] of rule.notTogether ?? []) {
+    const inA = present.filter((k) => a.includes(k));
+    const inB = present.filter((k) => b.includes(k));
+    if (inA.length > 0 && inB.length > 0) {
       throw new CodegenError(
-        `'${name}' takes ${allowed.map((one) => stringify(one)).join(" or ")} for every key, and '${k}' has ${held === null ? NOUN[lit.kind] : stringify(held)}.`,
-        v.pos,
+        `'${name}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
+        pos,
       );
-    }
-  }
-  if (rule.onePolarity === true && body !== null) {
-    let seen: { key: string; on: boolean } | null = null;
-    for (const k of present) {
-      if (k === "_id") continue;
-      const v = valueOf(k);
-      if (v === undefined) continue;
-      const on =
-        v.type === "NumberLiteral" && (v.value === 1 || v.value === 0)
-          ? v.value === 1
-          : v.type === "BooleanLiteral"
-            ? v.value
-            : null;
-      if (on === null) continue;
-      if (seen !== null && seen.on !== on) {
-        throw new CodegenError(
-          `'${name}' is either an inclusion or an exclusion, not both. '${seen.key}' ${seen.on ? "includes" : "excludes"} and '${k}' ${on ? "includes" : "excludes"} ('_id' alone may be excluded from an inclusion). The server refuses the mix.`,
-          v.pos,
-        );
-      }
-      seen ??= { key: k, on };
     }
   }
   const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
   for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
     const v = valueOf(k);
     // A `$`-led string in a CONSTANT key is read by the server as itself, so the
-    // closed set applies to it there — measured, `{ $bucketAuto: { granularity:
-    // "$g" } }` answers "granularity must be one of: R5, R10, …".
-    if (v !== undefined) {
-      const readAsWritten = (rule.constantKeys ?? []).includes(k) || (rule.literalKeys ?? []).includes(k);
-      // A key that reads a bracketed list one way, and every other shape another
-      // way, takes a sub-pipeline as well as a word. The refusal names both.
-      const slot = bodySlotAt(name, [k]);
-      const alsoStages = slot !== undefined && slot.at !== slot.otherwise;
-      checkEnum(name, k, v, allowed, caseInsensitive.has(k), readAsWritten, alsoStages);
-    }
-  }
-  for (const [k, set] of Object.entries(rule.charSets ?? {})) {
-    const v = valueOf(k);
-    if (v !== undefined) checkCharSet(name, k, v, set);
+    // closed set applies to it there.
+    if (v !== undefined) checkEnum(name, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
   }
   for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
     const v = valueOf(k);
     if (v !== undefined) checkType(name, k, v, t);
   }
-  // A nested rule reads the key's value, which both call forms hand over: `$top({ output, sortBy })` and `$top(output, sortBy)`.
-  for (const [k, inner] of Object.entries(rule.nested ?? {})) {
-    const v = valueOf(k);
-    if (v !== undefined && v.type === "ObjectLiteral") checkBody(`${name}.${k}`, inner, [v], [], v.pos);
-  }
-  if (body !== null) {
-    if (rule.eachValue !== undefined) {
-      for (const k of present) {
-        const v = valueOf(k);
-        if (v !== undefined && v.type === "ObjectLiteral") checkBody(`${name}.${k}`, rule.eachValue, [v], [], v.pos);
-      }
-    }
-    for (const req of rule.requiresWhen ?? []) {
-      if (valueOf(req.requires) !== undefined) continue;
-      const hit = walkBody(body, req.path).find((v) => v.type === "StringLiteral" && req.equals.includes(v.value));
-      if (hit !== undefined) {
-        throw new CodegenError(
-          `'${name}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => stringify(e)).join(" or ")}. The server refuses it without one.`,
-          hit.pos,
-        );
-      }
-    }
-  }
-  if (rule.maxSortKeys !== undefined && body !== null && present.length > rule.maxSortKeys) {
-    throw tooManySortKeys(name, present.length, rule.maxSortKeys, pos);
-  }
-  if (rule.nonEmpty === true && body !== null && present.length === 0) {
-    throw new CodegenError(
-      `'${name}' takes at least one field. An empty body names none, and the server refuses it.`,
-      pos,
-    );
-  }
-  for (const [k, min] of Object.entries(rule.minimums ?? {})) {
-    const v = valueOf(k);
-    if (v === undefined) continue;
-    const held = numberOf(v);
-    if (held !== null && held < min) {
-      throw new CodegenError(
-        `'${name}' ${k} must be ${min === 0 ? "zero or more" : `at least ${min}`}. It got ${held}. The server refuses it.`,
-        v.pos,
-      );
-    }
-  }
-  for (const [k, min] of Object.entries(rule.sortedList ?? {})) {
-    const v = valueOf(k);
-    if (v === undefined || v.type !== "ArrayLiteral") continue;
-    const held: unknown[] = [];
-    for (const el of v.elements) {
-      if (el.type === "SpreadElement") {
-        held.length = 0;
-        break;
-      }
-      const r = evaluate(el as Expr, new Map());
-      if (!r.ok) {
-        held.length = 0;
-        break;
-      }
-      held.push(r.value);
-    }
-    if (held.length === 0 && v.elements.length > 0) continue; // not all constants: the server judges
-    if (held.length < min) {
-      throw new CodegenError(
-        `'${name}' ${k} needs at least ${min} values. It got ${held.length}. The server refuses it.`,
-        v.pos,
-      );
-    }
-    for (let i = 1; i < held.length; i++) {
-      const a = held[i - 1],
-        b = held[i];
-      const ordered =
-        typeof a === typeof b && (typeof a === "number" || typeof a === "string" || isDate(a))
-          ? (a as number) < (b as number)
-          : true;
-      if (!ordered) {
-        throw new CodegenError(
-          `'${name}' ${k} must be sorted ascending. ${stringify(a)} is not less than ${stringify(b)}. The server refuses it.`,
-          v.elements[i].pos,
-        );
-      }
-    }
-  }
-  // A key the server reads at compile time — `$bucket.boundaries`, `$lookup.pipeline` —
-  // must hold a constant. The server refuses a field path or an expression there.
+  // A key the server reads at compile time must hold a constant. The server refuses a
+  // field path or an expression there.
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf(k);
-    if (v !== undefined && !evaluate(v, new Map()).ok) {
+    // A run-time value is a constant too: the call supplies it before the compile.
+    if (v !== undefined && v.type !== "Injected" && !evaluate(v, new Map()).ok) {
       throw new CodegenError(
         `'${name}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         v.pos,
       );
     }
   }
-}
-
-/** The values a dotted path with `*` wildcards reaches inside an object literal, written out. */
-function walkBody(node: Expr, path: readonly string[]): Expr[] {
-  if (path.length === 0) return [node];
-  if (node.type !== "ObjectLiteral") return [];
-  const [head, ...rest] = path;
-  const out: Expr[] = [];
-  for (const e of node.entries) {
-    if (e.type !== "KeyValueEntry") continue;
-    const key = staticKey(e);
-    if (key === null || (head !== "*" && key !== head)) continue;
-    out.push(...walkBody(e.value, rest));
-  }
-  return out;
 }
 
 /** The per-slot literal checks an `Arity` states — `slotType`, `slotEnums` — over positional operands. */
@@ -520,15 +332,6 @@ export function checkSlots(
    */
   hasObjectForm = true,
 ): void {
-  for (const i of args.nullRefused ?? []) {
-    const e = operands[i];
-    if (e !== undefined && e.type === "NullLiteral") {
-      throw new CodegenError(
-        `'${name}' does not accept null. The server refuses it instead of answering null. Guard the operand: '$ifNull(<value>, <fallback>)'.`,
-        e.pos,
-      );
-    }
-  }
   for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
     const e = operands[Number(i)];
     if (e !== undefined && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
@@ -548,7 +351,7 @@ export function checkSlots(
   }
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
-    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], rule.positional ?? [], e.pos);
+    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], [], e.pos);
   }
   for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
     const e = operands[Number(i)];
@@ -583,9 +386,6 @@ export function checkSlots(
       e.pos,
     );
   }
-  if (args.elementType !== undefined) {
-    for (const e of operands) checkType(name, "", e, args.elementType);
-  }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
     if (e === undefined || e.type !== "ArrayLiteral") continue;
@@ -618,7 +418,8 @@ export function checkSlots(
     // a name OR a document, the row's `body` rule describes its keys, and several
     // of those keys hold expressions. `$unionWith("c")` must be constant;
     // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
-    if (e !== undefined && e.type !== "ObjectLiteral" && !evaluate(e, new Map()).ok) {
+    // A run-time value is a constant too: the call supplies it before the compile.
+    if (e !== undefined && e.type !== "ObjectLiteral" && e.type !== "Injected" && !evaluate(e, new Map()).ok) {
       throw new CodegenError(
         `'${name}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         e.pos,

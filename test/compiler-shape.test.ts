@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/compiler/parse/parser.ts";
-import { shapeOf } from "../src/compiler/passes/shape.ts";
+import { isStageList, shapeOf } from "../src/compiler/passes/shape.ts";
 
 // The shape is read off the PARSED program: an entry picks the desugar root from it, and the
 // statement-root desugar turns a lone mutator call into the write it means.
@@ -79,18 +79,24 @@ describe("compiler/passes/shape — an expression makes a filter", () => {
   });
 });
 
-describe("compiler/passes/shape — a bracketed literal is decided by its first element", () => {
+describe("compiler/passes/shape — a bracketed literal is a pipeline, whatever it holds", () => {
   it("is a pipeline when the first element is a statement", () => {
     expect(shape("[$match($.a > 1)]")).toBe("pipeline");
     expect(shape("[$.a = 1]")).toBe("pipeline");
     expect(shape("[function double(x) { return x * 2 }, $set({ a: double($.p) })]")).toBe("pipeline");
   });
 
-  it("is a value array otherwise", () => {
-    expect(shape("[1, 2, 3]")).toBe("filter");
-    expect(shape("[]")).toBe("filter");
-    // One of the two readings has to win before the rest can be checked: the
-    // compiler refuses `$match` here for not being an expression.
-    expect(shape("[1, $match($.a > 1)]")).toBe("filter");
+  it("is a pipeline otherwise too, as a raw MQL pipeline is", () => {
+    // `[]` is the empty pipeline. The lowering refuses an element that is not a stage.
+    expect(shape("[]")).toBe("pipeline");
+    expect(shape("[1, 2, 3]")).toBe("pipeline");
+    expect(shape("[1, $match($.a > 1)]")).toBe("pipeline");
+  });
+
+  it("names a stage list apart, for the expression entry", () => {
+    // `jsmql.expr` reads any other bracketed literal as an array value.
+    expect(isStageList(parse("[$match($.a > 1)]"))).toBe(true);
+    expect(isStageList(parse("[1, $match($.a > 1)]"))).toBe(false);
+    expect(isStageList(parse("[]"))).toBe(false);
   });
 });

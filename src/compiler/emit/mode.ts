@@ -49,6 +49,14 @@ export const constantOf = (t: Truth): boolean | null => (t === TRUE ? true : t =
 export const boolTruth = (doc: unknown): Truth => mint(doc);
 
 /**
+ * MongoDB's own truthiness: the value as `$expr` reads it. A `$op(…)` call that
+ * stands as a predicate keeps it, because the call is the developer's own MQL, and
+ * no JavaScript spelling reads its truth. MEASURED: `{ $expr: "$s" }` reads false,
+ * null, missing and 0 as false, and "" and [] as true.
+ */
+export const mongoTruthy = (value: unknown): Truth => mint(value);
+
+/**
  * A lowered value read as a condition, under what the compiler proves of it.
  *
  *   $.a ? 1 : 2      a: unknown         → { $and: [{ $ne: [{ $ifNull: ["$a", null] }, null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] }

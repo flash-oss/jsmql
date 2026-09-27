@@ -676,28 +676,6 @@ export type Arity = {
    */
   nonZero?: readonly number[];
   /**
-   * Slots that refuse a literal `null`. The server raises an error there, and does
-   * not answer null. This is a fact per ROW. MEASURED: the server refuses
-   * `$size: null` and `$strLenCP: null` ("must be an array" / "requires a string
-   * argument"), and `$reverseArray: null`, `$toUpper: null` and `$year: null`
-   * answer null or "". The slot index keys it, as it keys `slotType`.
-   */
-  nullRefused?: readonly number[];
-  /**
-   * An explicit EMPTY operand list is valid — `$and([])` → `{ $and: [] }` (true),
-   * and `$concat([])` → "". This is a different fact from the positional count.
-   * `atLeast` still refuses `$and()` with no argument, because the developer wrote
-   * nothing. MEASURED per row: the server refuses `$divide([])` and `$ifNull([])`.
-   */
-  emptyList?: true;
-  /**
-   * The literal type that EVERY operand must have, for a list operator.
-   * `$multiply` takes numbers, and `$add` takes numbers or dates. The compiler
-   * tests only a literal operand. So it refuses `$multiply($.a, "x")`, and it
-   * accepts `$multiply($.a, $.b)`.
-   */
-  elementType?: ArgType;
-  /**
    * A closed set of values per slot. The compiler tests it only on a literal slot.
    *   $.d.plus(1, "day")   → accepted
    *   $.d.plus(30, "days") → refused, the plural is not a unit
@@ -763,134 +741,26 @@ export type IterateeSlots =
 export const isSlotLayout = (l: IterateeSlots): l is Readonly<Record<number, readonly SlotForm[]>> =>
   !("arrowOnly" in l) && !("sortSpec" in l);
 
-/** An object-shaped body: operators in object style, and every stage. */
+/**
+ * The options document of a JavaScript method — the parts of `.set({ year, month })`,
+ * the options of `.plus(n, unit, { timezone })` — as the method's `args.body` states
+ * it. A `$op(…)` or `$stage(…)` body is the developer's own MQL, and no rule judges it
+ * (HR3 does not apply to it).
+ */
 export type BodyRule = {
   required: readonly string[];
   optional: readonly string[];
-  /** false = an extra key passes through (HR2 passthrough). */
+  /** false = an extra key passes through. */
   closed: boolean;
   /** A key whose literal value must come from a closed list. */
   enums?: Readonly<Record<string, readonly string[]>>;
-  /**
-   * A key whose literal value is a STRING OF FLAGS. Every character of it must be
-   * in the given set. This is not an `enums` entry, because the value does not
-   * come from a list. It is any combination of the characters. The `options` key
-   * of `$regexMatch` accepts "imxs", and refuses the JavaScript "g" or "y".
-   */
-  charSets?: Readonly<Record<string, string>>;
   /** Keys whose literal value the compiler compares without regard to case — `startOfWeek`. */
   caseInsensitiveKeys?: readonly string[];
   keyTypes?: Readonly<Record<string, ArgType>>;
   /** Keys whose value must be a constant at compile time. */
   constantKeys?: readonly string[];
-  /**
-   * Keys whose string the server reads as ITSELF, and never as a field path. So
-   * the closed set also judges a string with a `$` at the start. MEASURED on
-   * `$merge`: `{ whenMatched: "$g" }` → "Enumeration value '$g' for field
-   * 'whenMatched' is not a valid value". `constantKeys` includes this rule and
-   * says more, because those keys also refuse an expression. A key that can hold
-   * a sub-pipeline states this rule alone, because a pipeline is not a constant.
-   */
-  literalKeys?: readonly string[];
-  /**
-   * Every literal 0/1/false/true value of the body must agree. A projection holds
-   * all inclusions or all exclusions, and `_id` is the one exception. MEASURED:
-   * `{ $project: { a: 1, b: 0 } }` → "Cannot do exclusion on field b in inclusion
-   * projection".
-   */
-  onePolarity?: true;
-  /**
-   * A rule for the OBJECT that a key holds — `$setWindowFields.output`. The
-   * compiler applies it when the developer writes the value as an object literal.
-   */
-  nested?: Readonly<Record<string, BodyRule>>;
-  /**
-   * A rule for EVERY value of the body that is an object literal: each entry of
-   * `$fill.output`, and each output of `$setWindowFields.output`.
-   */
-  eachValue?: BodyRule;
-  /**
-   * A key that becomes necessary when a value elsewhere in the body holds one of
-   * the listed literals. The `sortBy` of `$fill` is an example, when any
-   * `output.<k>.method` is "linear". `path` walks the body, and `"*"` stands for
-   * any key. MEASURED: "$linearFill must be specified with a top level sortBy
-   * expression".
-   */
-  requiresWhen?: readonly { path: readonly string[]; equals: readonly string[]; requires: string }[];
-  /**
-   * The body must name at least one key. MEASURED: `{ $project: {} }` →
-   * "projection specification must have at least one field".
-   */
-  nonEmpty?: true;
-  /**
-   * A key whose literal number must be at least the stated minimum. MEASURED:
-   * `$sample.size` 0 → "must be a positive integer", `$bucketAuto.buckets` 0 →
-   * "must be greater than 0", `$graphLookup.maxDepth` -1 → "requires a nonnegative argument".
-   */
-  minimums?: Readonly<Record<string, number>>;
-  /**
-   * A key whose literal array must hold at least the stated number of constants,
-   * in ascending order. MEASURED on `$bucket.boundaries`: `[1]` → "must have at
-   * least 2 values", and `[3, 1, 2]` → "must be sorted".
-   */
-  sortedList?: Readonly<Record<string, number>>;
-  /**
-   * Each inner list is a set of keys, of which EXACTLY ONE must be present.
-   * `required` and `optional` cannot say this, and both cases are real:
-   *   {$expMovingAvg:{input:"$a"}} → "either an 'N' field or an 'alpha' field"
-   *   {$dateFromParts:{}}          → "requires either 'year' or 'isoWeekYear'"
-   */
-  exactlyOneOf?: readonly (readonly string[])[];
-  /**
-   * Each inner list is a set of keys that must be ALL present or ALL absent.
-   * `required` cannot say this, because every key of the set is optional on its
-   * own, and `exactlyOneOf` says the opposite. MEASURED: the server refuses
-   * `{ $lookup: { from: "o", as: "j", localField: "a" } }` with "$lookup requires
-   * both or neither of 'localField' and 'foreignField' to be specified".
-   */
-  together?: readonly (readonly string[])[];
-  /**
-   * Each inner list is a set of keys, of which AT LEAST ONE must be present.
-   * Unlike `exactlyOneOf`, more than one key is correct here. MEASURED on
-   * `$lookup`: it joins by the `localField`/`foreignField` pair, or by a
-   * `pipeline`, or by both together. With none of them, the server refuses it
-   * ("requires both or neither of 'localField' and 'foreignField'", and with no
-   * `from` at all, "must specify 'pipeline' when 'from' is empty").
-   */
-  atLeastOneOf?: readonly (readonly string[])[];
-  /**
-   * Every VALUE of the body must be one of these literals. This is a rule about
-   * the values, and not about the keys, because the keys are the field names of
-   * the developer. MEASURED on `$sort`: a direction is 1 or -1 and nothing else
-   * ("$sort key ordering must be 1 (for ascending) or -1 (for descending)", and a
-   * string answers "Illegal key in $sort specification"). A value that is not a
-   * literal passes, and so does a document, because `{ $meta: "textScore" }` is a
-   * real sort key.
-   */
-  everyValueIn?: readonly (string | number)[];
-  /**
-   * The body is a sort spec, and it names at most this many keys. MEASURED: a
-   * `$sort` of 33 keys answers "too many compound keys". See `SORT_KEY_LIMIT`
-   * in mql.ts for each slot that states it.
-   */
-  maxSortKeys?: number;
   /** Groups of keys that never come together: the ISO-week parts and the calendar parts of a date. */
   notTogether?: readonly (readonly (readonly string[])[])[];
-  /**
-   * The order of keys onto which a POSITIONAL call maps, for an operator in object shape:
-   *   $dateTrunc($.t, "day")  → { date: "$t", unit: "day" }
-   *   $hash($.s, "sha256")    → { input: "$s", algorithm: "sha256" }
-   *
-   * This is the order of JSMQL itself, and a public commitment. It is NOT the key
-   * order of the vendored YAML. The two differ for $top, $topN, $firstN, $lastN
-   * and $map. The order of the YAML emits valid MQL that answers a different
-   * question:
-   *   $top($.score, { score: -1 })
-   *     jsmql  → { $top: { output: "$score", sortBy: { score: -1 } } }
-   *     YAML   → { $top: { sortBy: "$score", output: { score: -1 } } }
-   * Both run. One is the query the user wrote.
-   */
-  positional?: readonly string[];
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -944,7 +814,7 @@ export type FilterIn = {
   /** The receiver as SOURCE. A filter renders field paths, not lowered values. Null for no receiver. */
   recv: Expr | null;
   args: readonly Expr[];
-  /** The `shape.positional` key order of this entry. It is empty when the entry has none. */
+  /** The `keys` order of this entry, for its positional form. It is empty when the entry has none. */
   keys: readonly string[];
   /**
    * The field path that an expression names ("a.b.c"), or null when the expression
@@ -1533,30 +1403,6 @@ export type On = Family | readonly Family[] | "any";
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * The rendering that every ACCUMULATOR slot shares: the output of `$group` and
- * `$setWindowFields.output`, both.
- *
- * It is ONE plain operand. It is never a list of one element, which every
- * accumulator refuses:
- *   {$group:{_id:null,r:{$push:["$a"]}}}  → "The $push accumulator is a unary operator"
- *   {$group:{_id:null,r:{$push:"$a"}}}    → accepted
- *
- * An operand that RENDERS as an array needs the shield, because a reader takes
- * `{acc: [ … ]}` there as an operand LIST. MEASURED for `$push([$.x, $.y])`, whose
- * one argument is an array literal:
- *   {$group:{_id:null,r:{$push:["$x","$y"]}}}                      refused, as above
- *   {$group:{_id:null,r:{$push:{$let:{vars:{},in:["$x","$y"]}}}}}   → [[1,2],[3,4]]
- * Only a $group slot NEEDS the shield. A window slot evaluates a bare array as an
- * expression, and answers the same [[1,2],[3,4]] without it. Both cells use this
- * one emitter, so the rule stays in one place and the two slots cannot drift
- * apart.
- */
-export const accumulated = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => {
-  const operand = input.value(input.args[0]);
-  return { [input.name]: Array.isArray(operand) ? { $let: { vars: {}, in: operand } } : operand };
-};
-
-/**
  * The rendering that every SINGLE-operand operator shares: `{ $op: <operand> }`,
  * with the operand as the developer wrote it. This is HR2. `$size([$.a])` is the
  * operand list of the developer, and it round-trips as `{ $size: ["$a"] }`, which
@@ -1564,6 +1410,12 @@ export const accumulated = (input: { name: string; args: readonly Expr[]; value:
  * lowering that hands an ARRAY LITERAL to such an operator (`[$.a, 2].length`)
  * adds the wrap itself, because there the array is the value and not a list. See
  * the `length` row.
+ *
+ * An accumulator slot (`$group`, `$setWindowFields.output`) renders the same way:
+ * `$push([$.x, $.y])` is `{ $push: ["$x", "$y"] }`, as its raw spelling is.
+ * MEASURED: the server refuses that operand list in a `$group` slot ("The $push
+ * accumulator is a unary operator"). The call is the developer's own MQL, so the
+ * server judges it.
  */
 export const single = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => ({
   [input.name]: input.value(input.args[0]),
@@ -1574,7 +1426,7 @@ export const single = (input: { name: string; args: readonly Expr[]; value: (e: 
  *
  * One argument is the object-literal call, and it passes straight through. Two or
  * more arguments make a POSITIONAL call. The emitter zips them onto the key order
- * that the entry states in `shape.positional`, and `keys` hands that order back.
+ * that the row states in `keys`, and the `keys` input hands that order back.
  * So each row writes the order once, and not twice:
  *   $dateTrunc({ date: $.t, unit: "day" })  → { $dateTrunc: { date: "$t", unit: "day" } }
  *   $dateTrunc($.t, "day")                  → the same document

@@ -23,7 +23,17 @@ import { chainBase, isContextRef, namedRow, namesSomething, readsAContextRef, st
  * position in the registry's `Position` becomes a position here on the same day.
  */
 export type Where =
-  | { at: Position }
+  | {
+      at: Position;
+      /**
+       * A value slot of a stage body that the server reads AS WRITTEN: the stage's
+       * `evaluates` does not cover the path. A name, a path, a number, a word or a
+       * sort order stands here. HR1's gate refuses a run-time value that reads as
+       * MQL in such a slot, because there it becomes part of the MQL. Every node
+       * below the slot carries the same answer.
+       */
+      written?: { stage: string; path: BodyPath };
+    }
   /** The left of `=`, the operand of `delete`, or the callee of a call. It is NAMED, not evaluated. */
   | { at: "target" }
   /** Inside a stage body, part-way down a path the stage's row still owns. */
@@ -62,7 +72,9 @@ function reached(stage: string, path: BodyPath, slot: BodySlot, child: unknown):
   if (slot.deeper && type === "ObjectLiteral") return { at: "stageBody", stage, path };
   // A slot reads a bracketed list one way, and reads everything else another way:
   // `whenMatched: [$set(…)]` is a pipeline, `whenMatched: "replace"` is a word.
-  return { at: type === "ArrayLiteral" ? slot.at : slot.otherwise };
+  const at = type === "ArrayLiteral" ? slot.at : slot.otherwise;
+  // A value that the server does not evaluate is read as written: `$unwind`'s path, `$lookup`'s `from`.
+  return at === "value" && !slot.evaluated ? { at, written: { stage, path } } : { at };
 }
 
 /**
@@ -165,6 +177,14 @@ export function edge(node: object, key: string, here: Where): Where {
   // position: the arguments of the operators, and the documents and lists
   // under them. So `$each` inside `$push` is read by its update-document cell.
   if (here.at === "updateDoc") return here;
+
+  // Below a slot that the server reads as written, every value is read as written
+  // too. A key of a document adds itself to the path, so a message names the key.
+  if (here.at === "value" && here.written !== undefined) {
+    if (n.type !== "KeyValueEntry" || key !== "value") return here;
+    const { stage, path } = here.written;
+    return { at: "value", written: { stage, path: [...path, staticKey(n)] } };
+  }
 
   return VALUE;
 }

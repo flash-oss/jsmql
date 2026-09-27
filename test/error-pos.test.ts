@@ -36,7 +36,7 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
     expect(firstError("$.name.charAt()", ".charAt").code).toBe("CODEGEN_ERROR");
     const regex = firstError("$.name === /hello/", "/hello/");
     expect(regex.code).toBe("CODEGEN_ERROR");
-    expect(regex.message).toMatch(/Regex literals/);
+    expect(regex.message).toMatch(/a regex literal is valid only as an argument of/);
     expect(firstError("$.age > minAge", "minAge").code).toBe("CODEGEN_ERROR");
     expect(firstError("$.age == 18", "==").code).toBe("CODEGEN_ERROR");
   });
@@ -62,7 +62,7 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
 
   it("chain links caret at the offending link, not the chain root", () => {
     firstError("$$.filter(p => p.a > 1).flat(1).take(2);", ".flat");
-    firstError("$$.$match({ a: 1 }).$prject({ b: 1 });", ".$prject");
+    firstError("$$.$match({ a: 1 }).prject({ b: 1 });", ".prject");
     firstError("$.n + $.items.every(x => x.ok).map(y => y)", ".map");
   });
 

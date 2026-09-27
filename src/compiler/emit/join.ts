@@ -70,7 +70,7 @@ function foreignChain(node: Expr): { from: string; links: Link[]; pos: number } 
   if ((chainBase(cur) as { type: string }).type === "ClusterRef") throw E.crossDatabaseRead(node.pos);
   if (cur.type === "MemberAccess" && cur.object.type === "DatabaseRef") return { from: cur.name, links, pos: node.pos };
   if (cur.type === "IndexAccess" && cur.object.type === "DatabaseRef") {
-    if (cur.index.type !== "StringLiteral") throw E.collectionNameMustBeConstant(cur.index.pos);
+    if (cur.index.type !== "StringLiteral") throw E.collectionNameFrom(cur.index);
     if (cur.index.value === "") throw E.emptyCollectionName(cur.index.pos);
     return { from: cur.index.value, links, pos: node.pos };
   }

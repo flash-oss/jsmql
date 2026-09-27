@@ -12,10 +12,9 @@
 import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { didYouMean } from "../../levenshtein.ts";
-import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId } from "../../bson.ts";
+import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
-import { setKey } from "../../registry/mql.ts";
+import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -25,14 +24,12 @@ import {
   flattensChain,
   isCallable,
   isGlobalName,
-  isStageName,
   namespaceNames,
   newKeywordOf,
   positionalKeysOf,
   productionForNode,
   productionForOperator,
   rowForNodeType,
-  onlyInsideOf,
   elementsOf,
   soleFieldFamilyOf,
   hasStreamValueCell,
@@ -41,10 +38,11 @@ import {
   constructibleNames,
   positionsOf,
   readsNullAsEmptyOf,
+  takesNoReceiver,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
-import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
-import { operandShapeOf, bodyRuleOf } from "../rows.ts";
+import { checkBodyKeys, checkSlotKinds, checkSlots } from "./check.ts";
+import { operandShapeOf } from "../rows.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
@@ -56,7 +54,7 @@ import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
 import { ANY, cannotBe, isNothing, isOnly, kindsOf, maybeAbsent, unreadable, unreadableAt } from "./type.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
-import { injectedNeedsLiteral } from "./env.ts";
+import { injectedPlacement } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
 const NAMESPACES = namespaceNames();
@@ -167,8 +165,12 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "UndefinedLiteral":
       throw E.undefinedAsValue(node.pos);
     case "RegexLiteral":
-      // A RegExp the CALL supplied is a value in its own right. A source regex has no value form.
+      // A RegExp the CALL supplied is a value in its own right.
       if (node.injected !== undefined) return node.injected;
+      // Inside MQL the developer wrote — an argument of a `$`-named call, a value under a
+      // `$` key — a regex literal is a BSON regex, as HR1 says. JavaScript code reads a
+      // regex only through the regex methods.
+      if (env.site.inside !== null) return regexValue(node.pattern, mongoRegexOptions(node.flags));
       throw E.regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);
@@ -179,8 +181,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "ObjectLiteral":
       return objectLiteral(node, node.entries, env);
     case "Injected":
-      // HR1: a value the call supplied is a VALUE — never an operator or a field reference
-      return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
+      return injectedValue(node, env);
     case "FieldRef": {
       readablePath(node, env);
       const path = reachable(env.render(locate(node, env) as Located, node.pos));
@@ -320,45 +321,7 @@ function withoutOptional(e: Expr): Expr {
   return e;
 }
 
-/** Every stage name the registry has, for the suggestion a mistyped stage gets. */
-const STAGE_NAMES = everyName().filter(isStageName);
-
-/**
- * A bracketed STAGE LIST — `[$match(…), $sort(…)]`, `[{ $match: … }]` — is a
- * pipeline. It has no value, and lowering it as an array of operators produces a
- * document the server refuses on every input; the developer is told what it is.
- * The judgement is by the FIRST element: a `$`-named call, or an object whose
- * single key is `$`-led. A mistyped stage gets the stage it meant.
- */
-function refuseStageList(node: Expr, elements: readonly ArrayElement[]): void {
-  const first = elements[0];
-  if (first === undefined) return;
-  const stageLike = (el: ArrayElement): { name: string; keys: number } | null => {
-    if (el.type === "OperatorCall") return { name: el.name, keys: 1 };
-    if (el.type === "ObjectLiteral") {
-      const keys = el.entries.map(staticKey);
-      if (keys.length > 0 && keys[0] !== null && keys[0].startsWith("$")) return { name: keys[0], keys: keys.length };
-    }
-    return null;
-  };
-  const head = stageLike(first);
-  if (head === null) return;
-  // A known stage, or a name the registry does not know that is NEAR a stage
-  // (`$macth`). A known operator (`[$abs($.a), 1]`) or an unknown name near no
-  // stage is an array of values — HR2 passes it through.
-  const near = consult(head.name, "value").kind === "unknown" && didYouMean(head.name, STAGE_NAMES) !== "";
-  if (!isStageName(head.name) && !near) return;
-  elements.forEach((el, i) => {
-    const s = stageLike(el);
-    if (s === null) return;
-    if (s.keys !== 1) throw E.multiKeyStage(i, s.keys, el.pos);
-    if (!isStageName(s.name)) throw E.unknownStage(i, s.name, STAGE_NAMES, el.pos);
-  });
-  throw E.stageListAsValue(node.pos);
-}
-
 function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): unknown {
-  refuseStageList(node, elements);
   const inner = childEnv(env, node, "elements");
   // The desugar pass refuses a statement in a value, with the spelling the developer wrote.
   for (const el of elements) {
@@ -399,6 +362,23 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
   return operands.length === 1 ? operands[0] : { $concatArrays: operands };
 }
 
+/**
+ * HR1: a value the call supplied is a VALUE — never an operator or a field reference.
+ * One that reads as MQL takes `$literal` where the server evaluates the slot, and the
+ * compiler refuses it where the value becomes part of the MQL. See `injectedPlacement`.
+ */
+function injectedValue(node: Extract<Expr, { type: "Injected" }>, env: Env): unknown {
+  if (!isMqlShaped(node.value)) return node.value;
+  switch (injectedPlacement(env.site)) {
+    case "literal":
+      return { $literal: node.value };
+    case "asWritten":
+      return node.value;
+    case "refused":
+      throw E.runTimeValueAsMql(node.value, env.site.where, node.pos);
+  }
+}
+
 function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): unknown {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list: readonly ObjectEntry[]): unknown => {
@@ -407,7 +387,7 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
       const pairs = list.map((e) => {
         if (e.type !== "KeyValueEntry") internalError("a spread reached the computed-key path");
         const k = e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, inner);
-        return { k, v: lowerValue(e.value, inner) };
+        return { k, v: lowerValue(e.value, childEnv(inner, e, "value")) };
       });
       return { $arrayToObject: [pairs] };
     }
@@ -421,24 +401,9 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
         if (doc !== null && typeof doc === "object") Object.assign(out, doc as Record<string, unknown>);
         continue;
       }
-      // `{ $add: "$x" }` — a list-only operator with ONE operand that is not an array
-      // literal — and `{ $size: [1, 2] }` — a one-operand operator with a written operand
-      // list. The call spelling lowers each, so the row's count judges both spellings
-      // (HR2): `{ $add: "$x" }` and `{ $size: [[1, 2]] }` stay as written, and
-      // `{ $divide: 10 }` and `{ $size: [1, 2] }` are refused as their calls are, because
-      // the server refuses them.
-      const keyShape = e.key.name.startsWith("$") ? operandShapeOf(e.key.name) : undefined;
-      if (
-        (keyShape === "array" && e.value.type !== "ArrayLiteral") ||
-        (keyShape === "single" && e.value.type === "ArrayLiteral")
-      ) {
-        const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
-        const own = doc !== null && typeof doc === "object" ? (doc as Record<string, unknown>)[e.key.name] : undefined;
-        if (own === undefined) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
-        setKey(out, e.key.name, own);
-        continue;
-      }
-      setKey(out, e.key.name, lowerValue(e.value, inner));
+      // A value under a `$` key is the operand of that operator, as in `$op(…)` (HR2).
+      const at = childEnv(inner, e, "value");
+      setKey(out, e.key.name, lowerValue(e.value, e.key.name.startsWith("$") ? at.inside(e.key.name) : at));
     }
     return out;
   };
@@ -774,6 +739,11 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name)) {
     throw E.streamAsValue(node.pos);
   }
+  // `$.items.$match(…)` and `$.a.$size($.b)` are JSMQL code with no MQL: a stage runs
+  // on a stream, and an operator or a global function reads no receiver.
+  if (node.type === "MethodCall" && receiver.kind !== "stream" && takesNoReceiver(name)) {
+    throw E.noReceiver(name, node.pos);
+  }
   const exprArgs = args.filter(isExpr);
   // What each argument PROVABLY is. A branch whose slot cannot take it drops out
   // of the dispatch, and a rule whose slot cannot take it is refused.
@@ -998,54 +968,38 @@ function applyLambda(
 function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): unknown {
   const position = positionIn(env);
   const verdict = consult(node.name, position);
-  if (verdict.kind === "unknown") return unknownOperator(node, node.args, env);
-  const hosts = onlyInsideOf(node.name, position);
-  if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(node.name, hosts, node.pos);
+  // HR3 does not apply to the escape hatch: the MQL is the developer's, and the server
+  // judges it. A position where the row states no lowering, and a count that its
+  // lowering does not take, give HR2's plain form. The compiler checks nothing here.
+  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return plainOperator(node, env);
   // The operand LIST of a list-only operator may be written as one array literal:
   // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone operand that is not an array
   // literal is ONE operand (HR1, HR2): `$add($.x)` is `{ $add: "$x" }`, as the server
-  // reads it. The row's count decides whether one operand is enough — `$divide`
-  // takes exactly two. MEASURED on every list-only row.
-  // The operand shape is the EXPRESSION form's. In an update document the row's updateDoc cell states its own.
+  // reads it. The operand shape is the EXPRESSION form's. In an update document the
+  // row's updateDoc cell states its own.
   const shape = position === "updateDoc" ? undefined : operandShapeOf(node.name);
   const first = node.args[0];
   const lone = node.args.length === 1 && first.type === "ArrayLiteral" ? first : null;
   // HR2: one array literal IS the operand list, as written — `$eq([$.n, 4])` is
-  // `{ $eq: ["$n", 4] }`, `$size([$.a])` is `{ $size: ["$a"] }`. It is COUNTED and
-  // CHECKED by its elements, and emitted as the developer spelled it.
+  // `{ $eq: ["$n", 4] }`, `$size([$.a])` is `{ $size: ["$a"] }`. It is COUNTED by its
+  // elements, and emitted as the developer spelled it.
   let args: readonly CallArg[] = node.args;
-  let operands: readonly Expr[] = node.args.filter(isExpr);
   let count = node.args.length;
   const overrides = new Map<Expr, unknown>();
-  if (lone !== null && shape !== undefined && shape !== "object" && shape !== "verbatim") {
-    if (lone.elements.some((el) => el.type === "SpreadElement")) {
-      // A list with a spread is one array-valued expression: the operand list at runtime.
-      if (shape === "array") return { [node.name]: lowerValue(lone, childEnv(env, node, "args")) };
-    } else {
-      operands = lone.elements.filter(isExpr);
-      count = operands.length;
-      // An EMPTY list is valid only where the row states it: `{ $and: [] }` is
-      // true, `{ $divide: [] }` is refused. Nothing was written, so no count
-      // applies — the fact is the row's `emptyList`.
-      if (count === 0 && shape === "array") {
-        if (ruleArgsOf(verdict)?.emptyList === true) return { [node.name]: [] };
-      }
-      // A list operator renders the elements. A single or flex one renders the array as written.
-      if (shape === "array") args = operands;
-    }
+  if (lone !== null && shape === "array") {
+    // A list with a spread is one array-valued expression: the operand list at run time.
+    if (lone.elements.some((el) => el.type === "SpreadElement")) return plainOperator(node, env);
+    args = lone.elements.filter(isExpr);
+    count = args.length;
   }
   const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr);
   const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
-    // `$size([1, 2])` is two operands, not one array: say so, where the count alone would not.
-    if (sel.kind === "wrongCount" && lone !== null) throw E.operandListCount(node.name, sel.args, sel.got, node.pos);
-    throw E.refusalFor(sel, node.name, "", position, node.pos, []);
-  }
-  const body = bodyRuleOf(node.name);
-  if (body !== undefined) checkBody(node.name, body, exprArgs, positionalKeysOf(node.name), node.pos);
-  checkSlots(node.name, sel.rule.args, operands);
+  if (sel.kind === "spreadRefused") throw E.refusalFor(sel, node.name, "", position, node.pos, []);
+  if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
+  if (sel.kind !== "rule") return plainOperator(node, env);
+  // A body of named keys: a JavaScript spread or computed key has no lowering there.
+  if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
   // An operator that BINDS variables: an arrow in a visible slot is lowered under
   // them, so `$let({ x: 1 }, (x) => x + 1)` reads `x` as `$$x`.
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
@@ -1101,19 +1055,15 @@ function boundArrowOverrides(
   return out;
 }
 
-/** The count rule a `lower` verdict's cell states, or undefined. */
-function ruleArgsOf(verdict: ReturnType<typeof consult>): { emptyList?: true } | undefined {
-  if (verdict.kind !== "lower") return undefined;
-  const cell = verdict.cell as { args?: { emptyList?: true } } | null;
-  return cell !== null && typeof cell === "object" ? cell.args : undefined;
-}
-
-/** HR2: an operator the registry does not know passes through as written. */
-function unknownOperator(node: Extract<Expr, { type: "OperatorCall" }>, all: readonly CallArg[], env: Env): unknown {
-  // A spread has no meaning in the `$op(…)` escape hatch, whatever the operator: the
-  // same refusal the registry's rows make. See docs/DEFERRED.md § B.
-  const spread = all.find((a) => a.type === "SpreadElement");
-  const args = all.filter(isExpr);
+/**
+ * HR2's plain form: `$op()` is `{ $op: {} }`, `$op(x)` is `{ $op: x }`, and
+ * `$op(a, b)` is `{ $op: [a, b] }`. It serves an operator the registry does not
+ * know, and a known one where its row states no lowering for the position or the
+ * count. The compiler checks nothing here (HR3 does not apply to the escape hatch).
+ * A spread has no MQL of its own, whatever the operator. See docs/DEFERRED.md § B.
+ */
+function plainOperator(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): unknown {
+  const spread = node.args.find((a) => a.type === "SpreadElement");
   if (spread !== undefined) {
     throw E.refusalFor(
       { kind: "spreadRefused", name: node.name, sig: "…" },
@@ -1124,6 +1074,7 @@ function unknownOperator(node: Extract<Expr, { type: "OperatorCall" }>, all: rea
       [],
     );
   }
+  const args = node.args.filter(isExpr);
   const inner = childEnv(env, node, "args");
   if (args.length === 0) return { [node.name]: {} };
   if (args.length === 1) return { [node.name]: lowerValue(args[0], inner) };

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { consult, everyName, listedIn, positionOf, refusalSentence } from "../src/compiler/emit/consult.ts";
 import type { Arity, Position } from "../src/registry/vocabulary.ts";
 import { NAMES } from "../src/registry/names.ts";
-import { accumulated } from "../src/registry/vocabulary.ts";
+import { single } from "../src/registry/vocabulary.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 
 const POSITIONS: readonly Position[] = ["value", "filter", "stream", "statement", "group", "window", "updateDoc"];
@@ -97,7 +97,9 @@ describe("compiler/emit/consult — the other verdicts", () => {
     // A production has four cells and a name has six, and both are right. Only a
     // MongoDB operator is ever specific to an update document, and a production is
     // never an accumulator: `$cond` inside `$group` sits in an accumulator's
-    // ARGUMENT, which is value position, not the accumulator slot itself.
+    // ARGUMENT, which is value position, not the accumulator slot itself. A `$op` row
+    // has a cell exactly where its `where` lists the position: a call anywhere else
+    // is the developer's own MQL, and it takes HR2's plain form.
     const allowed: Readonly<Record<string, readonly Position[]>> = {
       production: ["group", "window", "updateDoc"],
       name: ["updateDoc"],
@@ -105,9 +107,10 @@ describe("compiler/emit/consult — the other verdicts", () => {
     const odd = pairs()
       .filter(([n, p]) => consult(n, p).kind === "noCell")
       .filter(([n, p]) => {
+        const row = (NAMES as Record<string, { kind?: string; where?: readonly string[] }>)[n];
+        if (row?.kind === "mongo") return row.where?.includes(p) === true;
         const kind = n in PRODUCTIONS ? "production" : "name";
-        const mongo = (NAMES as Record<string, { kind?: string }>)[n]?.kind === "mongo";
-        return mongo || !allowed[kind].includes(p);
+        return !allowed[kind].includes(p);
       })
       .map(([n, p]) => `${n} @ ${p}`);
     expect(odd).toEqual([]);
@@ -266,9 +269,9 @@ describe("registry — a stage is one construct with two spellings", () => {
 });
 
 describe("registry — an operator cannot accept more operands than it renders", () => {
-  type Shape = "single" | "verbatim" | "array" | "none" | "flex" | { object: { positional?: readonly string[] } };
+  type Shape = "single" | "verbatim" | "array" | "none" | "flex" | { object: unknown };
   type Cell = { args?: Arity; emit?: unknown };
-  type Row = { kind?: string; shape?: Shape } & Partial<Record<Position, Cell>>;
+  type Row = { kind?: string; shape?: Shape; keys?: readonly string[] } & Partial<Record<Position, Cell>>;
 
   /**
    * The cells whose rendering is governed by the row's `shape` — the ones that
@@ -286,10 +289,11 @@ describe("registry — an operator cannot accept more operands than it renders",
     );
 
   /** How many operands the row's SHAPE can actually put into a document. */
-  const renders = (shape: Shape): number => {
+  const renders = (row: Row): number => {
+    const shape = row.shape as Shape;
     if (shape === "none") return 0;
     if (shape === "single" || shape === "verbatim") return 1;
-    if (typeof shape === "object") return shape.object.positional?.length ?? 1;
+    if (typeof shape === "object") return row.keys?.length ?? 1;
     return Infinity; // "array" and "flex" render the whole list
   };
 
@@ -307,11 +311,11 @@ describe("registry — an operator cannot accept more operands than it renders",
     // to emit `{"$abs":"$a"}` — valid MQL and the wrong answer — and the three
     // object-shaped date operators emitted a shape mongod refuses outright:
     //   {$dateDiff:"$a"} → "$dateDiff only supports an object as its argument"
-    // `BodyRule.positional`'s own doc records this regression once already.
+    // The `keys` field's own doc records this regression once already.
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "mongo" || row.shape === undefined) continue;
-      const capacity = renders(row.shape);
+      const capacity = renders(row);
       for (const cell of arityCells(row)) {
         if (cell.emit === undefined) continue;
         const ceiling = accepts(cell.args);
@@ -339,14 +343,14 @@ describe("registry — an operator cannot accept more operands than it renders",
     expect(unbounded).toEqual([]);
   });
 
-  it("states `exact: 1` wherever the accumulator emitter renders the operand", () => {
-    // `accumulated` reads args[0] and nothing else. Any other count would drop
+  it("states `exact: 1` wherever an accumulator slot renders through `single`", () => {
+    // `single` reads args[0] and nothing else. Any other count would drop
     // an operand the row said it would accept.
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       for (const pos of ["group", "window"] as const) {
         const cell = row[pos];
-        if (cell === undefined || typeof cell !== "object" || cell.emit !== accumulated) continue;
+        if (cell === undefined || typeof cell !== "object" || cell.emit !== single) continue;
         if ((cell.args as { exact?: number } | undefined)?.exact !== 1) wrong.push(`${name}.${pos}`);
       }
     }
@@ -360,7 +364,7 @@ describe("registry — an operator cannot accept more operands than it renders",
       // One argument is the object literal itself and needs no key order.
       const ceiling = Math.max(0, ...arityCells(row).map((c) => accepts(c.args)));
       if (ceiling <= 1) continue;
-      if (row.shape.object.positional === undefined) missing.push(name);
+      if (row.keys === undefined) missing.push(name);
     }
     expect(missing).toEqual([]);
   });

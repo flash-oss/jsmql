@@ -102,12 +102,25 @@ describe("compiler/emit/update — writes become their operators", () => {
     expect(() => update("$.a = $.b + 1")).toThrow(/takes constants/);
     expect(() => update("$set({ a: $.b })")).toThrow(/takes constants/);
     expect(() => update("$.a = $.b")).toThrow(/copies a field/);
-    expect(() => update("$each([1])")).toThrow(/fragment of '\$push'/);
     expect(() => update("$.a = 1; $.a = 2;")).toThrow(/written twice/);
+    // The compiler merges two writes of one operator, so it refuses a merge it cannot make.
+    expect(() => update("$set(5); $set({ b: 2 });")).toThrow(
+      "'$set' stands twice in one update, and one of its operands is not a document of fields, so the two cannot merge. Write '$set' once.",
+    );
     expect(() => update("$.tags.sort()")).toThrow(/no document-form update/);
     expect(() => update("{ a: 1 }")).toThrow(/keys are update operators/);
     expect(() => update("$.a")).toThrow(/An update document is made of writes/);
     expect(() => update('$.n += "x"')).toThrow(/takes a number/);
+  });
+
+  it("passes an update operator that you call through as written", () => {
+    // DELIBERATELY invalid shapes: each one is your own MQL, and the server judges it.
+    // mongod: "Unknown modifier: $each. Expected a valid update modifier or pipeline-style update specified as an array"
+    expect(update("$each([1])")).toEqual({ $each: [1] });
+    // mongod: "Unknown modifier: $sort. …"
+    expect(update("$sort({ a: 1 })")).toEqual({ $sort: { a: 1 } });
+    // mongod: "Modifiers operate on fields but we found type int instead. …"
+    expect(update("$set(5)")).toEqual({ $set: 5 });
   });
 
   it("quotes the read that the user wrote, as the server would see it", () => {
