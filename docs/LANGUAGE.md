@@ -109,10 +109,11 @@ jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
 jsmql("$.status === 'active' && $.name.trim() === 'alice'");
 // → {status:"active",$expr:{$eq:[{$trim:{input:"$name"}},"alice"]}}
 
-// A value that is not a predicate — the JavaScript truthiness test rides in $expr
+// A value that is not a predicate — the JavaScript truthiness test rides in $expr.
+// A sum is a number or a date, so only the null test and the zero test can fail.
 jsmql("$.a + $.b");
 // → { $expr: { $and: [{ $ne: [{ $ifNull: [{ $add: ["$a", "$b"] }, null] }, null] },
-//                     { $ne: [{ $add: ["$a", "$b"] }, false] }, { $ne: [{ $add: ["$a", "$b"] }, ""] }, { $ne: [{ $add: ["$a", "$b"] }, 0] }] } }
+//                     { $ne: [{ $add: ["$a", "$b"] }, 0] }] } }
 
 // A `$op(…)` call is your own MQL, so its truth is MongoDB's own: "" and [] are true there
 jsmql("$foo($.a)");
@@ -3477,7 +3478,7 @@ Compile-time rejections (each with an actionable hint):
 |---|---|
 | `$ = []` | An empty array discards every document. Fan out a data-dependent array (`$ = $.items.filter(...)`) to drop documents conditionally, or use `$$ = []` to empty the stream. |
 | `$ = [1, 2]`, `$ = ["a"]` | Each fanned-out element becomes a document root, so each element must be a document. Wrap it: `$ = [{ value: ... }]`. |
-| `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null` | A scalar is not a document. Wrap it: `$ = { value: ... }`. |
+| `$ = 5`, `$ = "foo"`, `$ = true`, `$ = null`, `$ = $.price * 2` | A scalar is not a document, and an arithmetic operator never gives one. Wrap it: `$ = { value: ... }`. |
 | `$ = undefined` | `undefined` has meaning only in `$match` position. Use `null` for the present-but-null case, or move the comparison into `$match`. |
 | `$ = $$$.users.filter(...)` | `.filter()` on a collection is a join that returns an array. Use `.find()` for a single document. |
 | `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a field. Write to a field (`$.n += 5`), or merge fields with `$ = { ...$, ...overrides }`. |
@@ -3822,7 +3823,7 @@ In a **value** position the chain is JavaScript's value. `$$$.orders.flatMap("it
 
 On three methods, an object means something richer than a matcher, so JSMQL reads it that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 
-`.map(d => …)` / `.map("field")` replaces each document with the body through `$replaceWith`, so the **body must resolve to a document**, because MongoDB requires an object root. JSMQL rejects a provably non-document body at compile time — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])`. A field reference that turns out to be a scalar at runtime, for example `.map("userId")` where `userId` is an ObjectId, is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
+`.map(d => …)` / `.map("field")` replaces each document with the body through `$replaceWith`, so the **body must resolve to a document**, because MongoDB requires an object root. JSMQL rejects a provably non-document body at compile time — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])`, and a computed value such as `.map(d => d.price * 2)`, because `*` never gives a document. A body that may be a document passes, for example `.map(d => d.flag ? d.sub : 0)`. A field reference that turns out to be a scalar at runtime, for example `.map("userId")` where `userId` is an ObjectId, is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
 
 The methods that count **from the end** (`.takeRight(n)`, `.dropRight(n)`, `.initial()`, `.toReversed()`) are also deliberately not on this list. A MongoDB stream has no order except the one a `$sort` gives it, and no stage reverses one (`$reverseArray` is an *expression*, for an array inside a document). So "the last 3" has nothing to count back from. Say the order you want, and take from the **front**:
 

@@ -10195,7 +10195,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitOr` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitOr: args.map(value) }) },
@@ -10212,7 +10213,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitXor` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitXor: args.map(value) }) },
@@ -10229,7 +10231,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitAnd` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitAnd: args.map(value) }) },
@@ -10408,7 +10411,10 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // This row states the `$add` road. A string operand makes it `$concat`, which
+    // src/compiler/emit/prove.ts proves a string. MEASURED: `$add` over each pair of
+    // operand kinds gives a number, a date, null or an error.
+    returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: inCode("src/compiler/emit/lower.ts"),
@@ -10424,7 +10430,9 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$subtract` over each pair of operand kinds gives a number, a date, null or
+    // an error. A date minus a date is a long, and a date minus a number is a date.
+    returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10444,7 +10452,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$multiply` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $multiply: args.map(value) }) },
@@ -10460,7 +10469,8 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$divide` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10479,7 +10489,8 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$mod` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: {
@@ -10499,7 +10510,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     leftOperandNot: ["logicalNot", "bitwiseNot", "typeCheck", "negation"],
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$pow` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10534,7 +10546,8 @@ var PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `{ $multiply: [x, -1] }` over each operand kind gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $multiply: [value(args[0]), -1] }) },
@@ -10550,7 +10563,8 @@ var PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$bitNot` over each operand kind gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $bitNot: value(args[0]) }) },
@@ -22155,7 +22169,7 @@ function kindsOf2(node, env) {
         const l = kindOf3(node.left, env);
         const r = kindOf3(node.right, env);
         if (l === "string" || r === "string") return of("string");
-        return l === "number" && r === "number" ? of("number") : ANY;
+        if (l === "number" && r === "number") return of("number");
       }
       if (node.op === "??") {
         const r = kindsOf2(node.right, env);

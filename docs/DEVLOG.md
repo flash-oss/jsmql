@@ -139,6 +139,84 @@ compiler's message, character for character. No behaviour changes.
 
 ---
 
+## 2026-09-27 — fix: an operator proves the kind of its value, so `$$.map(d => d.a * 2)` is refused
+
+A stream `.map` replaces each document with what its arrow returns, so the arrow
+must return a document. The cell refused a body whose proof can never be an
+object: a literal, a comparison, `.trim()`, `$multiply(…)`. But the arithmetic and
+bitwise productions stated `returns: "unknown"`. So the proof of `d.a * 2` was
+`ANY`, and the compiler emitted MQL that the server refuses (HR3):
+
+```
+$$.map(d => d.a * 2);
+→ [{ $replaceWith: { $multiply: ["$a", 2] } }]   before — mongod: "'replacement document' must evaluate to an object"
+→ ✗ '.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a number is not one. …   now
+```
+
+Each of the eleven productions in [productions.ts](../src/registry/productions.ts)
+now states the kind that its MQL gives. MEASURED on :27018, over each pair of
+operand kinds: `*`, `/`, `%`, `**`, `-x`, `~`, `&`, `|` and `^` give a number,
+null or an error. `$subtract` and `$add` give a number, a date, null or an error,
+so `-` and `+` state `{ oneOf: ["number", "date"] }`. `+` keeps its `$concat` road
+in [prove.ts](../src/compiler/emit/prove.ts), and its row states the `$add` road.
+The `$op` twins (`$multiply`, …) stated these kinds already, so the escape hatch
+was refused and the JavaScript spelling of the same MQL was not. The fix is in the
+type tracker, so each position that takes one kind reads it: `$ = …`, `$$ = …`,
+`$$$.<coll>.push(<document>)`, `$$.push(…)`, both spreads, a `.map` block body and
+the array reducer. A body that may be a document still passes: `d.a ?? 1`,
+`d.f ? d.sub : d.a * 2`. This extends
+[the literal rule for the stream `.map`](#2026-07-18--fix-stream-mapd---rejects-a-provably-non-document-body).
+A note in [replace-root-stage.md](specs/replace-root-stage.md) said that the project
+skips this rule for `$ = …`. The note goes. That road refused `$ = $abs($.a)` by its
+proof already. A proof passes a `$cond` or `$let` value, so the false positive that
+the note feared does not occur.
+
+The more exact proof has three other effects. The truth test of an operator's value
+is smaller: a number is its own truth (`if: "$$jsmqlV"`), and a number or a date
+loses the `false` and `""` tests. MEASURED, the old and the new shapes give the same
+answer on each document, a `Long` zero and a `Decimal128` zero included. A computed
+index proven a number takes the number arm, as each number-proven key does. So
+`$.items[$.i * 2]` drops its `$isNumber` test, and a null key there reads null, not
+missing. `($.a * 2).indexOf(1)` is now a compile error: it emitted `$indexOfArray`
+over a number, which the server refuses.
+[compiler-returns-agrees.test.ts](../test/compiler-returns-agrees.test.ts) now
+measures each operator production that states a kind.
+[stream-methods.test.ts](../test/stream-methods.test.ts) and
+[compiler-types.test.ts](../test/compiler-types.test.ts) hold the refusals, and the
+second suite runs each refused value on mongod.
+
+---
+
+## 2026-09-27 — test: both fold suites use one rule for an order-free comparison
+
+Two suites compare a constant fold with the server:
+[test/compiler-fold-agrees.test.ts](../test/compiler-fold-agrees.test.ts) and
+[test/fold-consistency.test.ts](../test/fold-consistency.test.ts). A set operator
+gives no element order, so each suite compares a set answer by its values.
+compiler-fold-agrees read the operator at the top of the MQL that the server runs.
+fold-consistency matched the call against a list of method names instead,
+`/\.(uniq|union|intersection|xor)\(/`. The list did not have `.difference()` or
+`.symmetricDifference()`. It also matched a chain such as `.uniq().map(x => x)`,
+where `$map` gives the answer.
+
+Now both suites use [test/support/set-answer.ts](../test/support/set-answer.ts).
+`answersSet(mql)` reads the operator at the top of the MQL, and it examines the
+`in` of a `$let`. `.symmetricDifference()` needs this step, because it puts
+`$setDifference` in a `$let`. `inAnyOrder` keeps each duplicate, so a fold that
+gives a value twice still fails. The change also removes the `Set` test in
+`unfolded()`, because that test is never true. The compiler refuses `new Set(…)`,
+and the suite gives `evaluate` no value from a caller.
+
+Each suite ran before and after the change, with a log of each case that reached
+the comparison. In both runs, the same 15 cases got the order-free comparison: 5
+in compiler-fold-agrees and 10 in fold-consistency. Each of the 15 is a `.uniq()`
+or an `.xor()` call with `$setUnion` at the top. Two changes by hand showed that
+the suites still fail when they must. The old `.xor()` fold, which keeps a
+duplicate, fails on `[3, 1, 3].xor([1])`. An `answersSet` that always gives false
+fails 3 cases, for example `[3,1,2].uniq()` against `[1, 2, 3]` from the server.
+
+---
+
 ## 2026-09-27 — chore: vitest runs only the TypeScript suites under test/
 
 [vitest.config.ts](../vitest.config.ts) sets `include: ["test/**/*.test.ts"]`.
