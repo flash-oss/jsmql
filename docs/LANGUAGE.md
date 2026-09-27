@@ -3559,7 +3559,7 @@ Compile-time rejections (each with an actionable hint):
 | `$++`, `$ += 5`, `$--`, `$ *= 2`, etc. | `$` is the whole document, not a field. Write to a field (`$.n += 5`), or merge fields with `$ = { ...$, ...overrides }`. |
 | `delete $` | Bare `$` is the whole document. Use `$ = <newDoc>` to replace it, or `delete $.<field>` to drop a single field. |
 
-`$replaceWith` is a **reshape-clearing stage**: any `let` binding declared before it is gone. A later reference produces a precise error: `` `x` is a `let` binding and can't be read after `$replaceWith` — the stage replaces the document. ``
+`$replaceWith` is a **reshape-clearing stage**: any `let` binding declared before it is gone. A later reference produces a precise error. For `let x = $.a; $ = { b: $.c }; $match(x > 1);`, the message is `` `x` is a `let` binding. It cannot be read after `$replaceWith`, because that stage replaced the document that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document. ``
 
 #### Fan-out: one document to many documents
 
@@ -3626,7 +3626,7 @@ Rules:
 - **Every value must be a chain on `$$`.** Write a `.filter(<lambda>)`, a run of stage calls (`$$.$sort({…}).$limit(10)`), or any mix. A static value (`b: 1`) or a spread (`...rest`) is a compile-time error. Without this check the parser would silently fall through to `$replaceWith`, and that would show a confusing "$$ is statement-only" error inside code generation.
 - **A `.filter` / `.reject` branch takes exactly one lambda parameter.** Name the document explicitly, so the error message for a stray `$.<field>` reference can point at the right replacement. A stage-call chain has no lambda.
 - **Use `o.<field>`, not `$.<field>`.** Inside a facet sub-pipeline, the lambda parameter IS the current document. Supporting both spellings would only invite drift. JSMQL rejects `$.x` inside the predicate, with a precise hint.
-- **`$facet` clears the let scope**, because it replaces the document with `{ facetName: [docs], … }`. A later reference to a `let` binding produces the standard "can't be read after undefined" error.
+- **`$facet` clears the let scope**, because it replaces the document with `{ facetName: [docs], … }`. A later reference to a `let` binding produces the same error as after the other stages that replace the document. For `let x = $.a; $ = { top: $$.$limit(10) }; $match(x > 1);`, the message is `` `x` is a `let` binding. It cannot be read after `$facet`, because that stage replaced the document that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document. ``
 
 To filter the current stream as a top-level stage (one `$match`, not split into facets), write `$$.filter(<predicate>);`. This is the bare-stream-chain spelling, and it emits exactly that one `$match`. `$match(<predicate>);` writes the same stage as a stage call. See [Bare-statement stream operations](#bare-statement-stream-operations).
 
@@ -3744,7 +3744,7 @@ Compile-time rejections:
 | `$$ += …`, `$$++` | `$$` is the root stream, not a field. Write to a field: `$.<field> += …`. |
 | `delete $$` | `$$` is the root stream. Write `$$ = []` to keep no documents, or `$$.filter(d => …)` to keep some. |
 
-**Let scope.** The narrow form (`$$.filter(p)`) is just a `$match`, and it preserves any prior `let` binding: a reference resolves to the binding's field as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's documents are gone after the never-matching `$match`, so any prior `let` becomes unreadable. The next reference produces `` `x` is a `let` binding and can't be read after `$unionWith` … ``.
+**Let scope.** The narrow form (`$$.filter(p)`) is just a `$match`, and it preserves any prior `let` binding: a reference resolves to the binding's field as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's documents are gone after the never-matching `$match`, so any prior `let` becomes unreadable. The next reference produces an error. For `let x = $.a; $$ = $$$.users.filter(u => u.active); $match(x > 1);`, the message is `` `x` is a `let` binding. It cannot be read after `$unionWith`, because that stage replaced the document that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document. ``
 
 #### Stream methods chained after the RHS
 
@@ -4394,9 +4394,9 @@ jsmql`
   $group({ _id: $.cat });
   $match(total > 100);  // ← error
 `;
-// → CodegenError: `total` is a `let` binding and can't be read after `$group` —
-//   the stage replaces the document. Inline the expression into the $group body,
-//   or rebind after the stage with another `let`.
+// → CodegenError: `total` is a `let` binding. It cannot be read after `$group`,
+//   because that stage replaced the document that carried it. Assign it again after
+//   the stage (`total = …`), or carry the value as a field of the new document.
 ```
 
 `$project` clears the scope in **inclusion** mode only. Naming the fields to keep drops `__jsmql` with the rest, so a later let read gives the same compile-time error that `$group` gives. An expression-mode projection (`{ x: $.y + 1 }`) and an exclusion-mode projection (`{ a: 0 }`) preserve the document, and the let survives them. The row states this as `document: "projection"`.

@@ -61,7 +61,7 @@ It has no tokens or AST nodes of its own. The shape is `AssignExpr { target: Str
 - **A chain on `$$$.<coll>`** → the join road, `joinStream` ([lookup-stage.md § The join road](lookup-stage.md)): the chain's links become the sub-pipeline. When the body read the outer document, JSMQL replaces the stream per outer document (`$lookup` + `$unwind` + `$replaceWith`); otherwise it drops the current stream (`$match: { $expr: false }`) and unions in the other collection's pipeline. `.find` is refused here — one document is not a stream.
 - **An array literal** → `$documents`, valid only as the first statement (MongoDB places `$documents` at the head); later, `$$.push(…)` appends documents.
 
-**Bindings after a source switch.** A `$unionWith` body has no `let`, so JSMQL refuses an outer `let` or a `$.<field>` read inside the switched-in chain, and points to the correlated form (`.filter(u => u.x === $.y)`), which lowers to `$lookup` and does carry the outer document. After the switch the documents are the other collection's, and a `let` bound before it becomes unreadable: a later read is refused precisely (`… can't be read after \`$unionWith\` …`, [let-bindings.md](let-bindings.md)).
+**Bindings after a source switch.** A `$unionWith` body has no `let`, so JSMQL refuses an outer `let` or a `$.<field>` read inside the switched-in chain, and points to the correlated form (`.filter(u => u.x === $.y)`), which lowers to `$lookup` and does carry the outer document. After the switch the documents are the other collection's, and a `let` bound before it becomes unreadable: a later read is refused precisely (`` … It cannot be read after `$unionWith`, because that stage replaced the document that carried it. … ``, [let-bindings.md](let-bindings.md)).
 
 ## Rejections
 
@@ -100,8 +100,8 @@ The update buffer flushes before `$$ = …`, so
 
 For the source-switch form, later `$.x = …` ops operate on the *new*
 docs (from the foreign collection), not the pre-switch docs. Any prior
-`let` becomes unreadable: `let cutoff = 10; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`
-produces `` `cutoff` is a `let` binding and can't be read after `$unionWith` … ``.
+`let` becomes unreadable: `let cutoff = $.limit; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`
+produces `` `cutoff` is a `let` binding. It cannot be read after `$unionWith`, because that stage replaced the document that carried it. Assign it again after the stage (`cutoff = …`), or carry the value as a field of the new document. ``
 
 ## Not supported (by design)
 

@@ -314,7 +314,7 @@ Every name lives in the Env's `Scope` ([src/compiler/emit/env.ts](../../src/comp
 
 ```
 let x = $.a; $group({ _id: null }); $.y = x
-// ✗ `x` is a `let` binding and can't be read after `$group` — that stage replaced the document
+// ✗ `x` is a `let` binding. It cannot be read after `$group`, because that stage replaced the document
 //   that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document.
 ```
 

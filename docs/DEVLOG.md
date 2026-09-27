@@ -10,6 +10,56 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-27 — docs: each quote of the refusal for a dropped `let` matches the compiler
+
+JSMQL refuses a read of a `let` binding after a stage that replaced the
+document. `afterReplace` in [errors.ts](../src/compiler/emit/errors.ts) holds
+the wording. [LANGUAGE.md](LANGUAGE.md) quoted an older wording in four places.
+One of them gave the stage name as "undefined". Each place now quotes the
+message that the CLI gives for one example:
+
+```
+let total = $.price * $.qty; $group({ _id: $.cat }); $match(total > 100);
+→ `total` is a `let` binding. It cannot be read after `$group`, because that stage replaced
+  the document that carried it. Assign it again after the stage (`total = …`), or carry the
+  value as a field of the new document.
+```
+
+The passages on `$replaceWith`, `$facet` and `$unionWith` quote the same
+message, each with its own stage name. The old § Scope rules text also told the
+reader to "rebind after the stage with another `let`". That advice was wrong,
+because JSMQL refuses a second `let` of one name in a block. The message names
+the correct fix. The binding stays declared, so an assignment after the stage
+gives it a value again:
+
+```
+let total = $.price * $.qty; $group({ _id: $.cat, sum: $sum($.price * $.qty) }); let total = $.sum; $match(total > 100);
+→ `let total` at position 81 is already declared earlier in this block, which JavaScript refuses. Pick a different name.
+
+let total = $.price * $.qty; $group({ _id: $.cat, sum: $sum($.price * $.qty) }); total = $.sum; $match(total > 100);
+→ [
+    { $set: { "__jsmql.var.total": { $multiply: ["$price", "$qty"] } } },
+    { $group: { _id: "$cat", sum: { $sum: { $multiply: ["$price", "$qty"] } } } },
+    { $set: { "__jsmql.var.total": "$sum" } },
+    { $match: { $expr: { $gt: ["$__jsmql.var.total", 100] } } },
+    { $unset: "__jsmql" }
+  ]
+```
+
+The specs [let-bindings.md](specs/let-bindings.md) and
+[replace-stream-stage.md](specs/replace-stream-stage.md) quoted the same old
+wording. They now quote the current message. One example in
+replace-stream-stage.md bound a constant:
+`let cutoff = 10; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`. A
+constant folds into each read, so that program compiles, and its last stage is
+`{ $set: { flagged: 10 } }`. The example now binds `$.limit`.
+`scripts/check-doc-claims.mjs` checks only a claim that starts with `{` or `[`,
+so it does not check a refusal. It gave "269 exact claims checked, 0 disagree"
+before and after the change. A scratch script compared each new quote with the
+compiler's message, character for character. No behaviour changes.
+
+---
+
 ## 2026-09-27 — chore: vitest runs only the TypeScript suites under test/
 
 [vitest.config.ts](../vitest.config.ts) sets `include: ["test/**/*.test.ts"]`.
