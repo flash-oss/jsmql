@@ -13,10 +13,13 @@ import { mapTreeIn } from "../src/compiler/passes/walk.ts";
 
 /** The tree, with source offsets erased — two spellings sit at different columns. */
 // `mutates` is the emitter's note that a write came from a mutator, not part of what the source means.
-// `pos`, `mutates` and `wrote` are provenance, not meaning: `wrote` records the name the
-// source spelled so a refusal can name it, and a sugar still MEANS the plain form.
+// `pos`, `mutates`, `wrote` and `minted` are provenance, not meaning: `wrote` records the name the
+// source spelled so a refusal can name it, `minted` marks a parameter name that no source
+// spells, and a sugar still MEANS the plain form.
 const shape = (src: string): string =>
-  JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : k === "mutates" || k === "wrote" ? undefined : v));
+  JSON.stringify(desugar(parse(src)), (k, v) =>
+    k === "pos" ? 0 : k === "mutates" || k === "wrote" || k === "minted" ? undefined : v,
+  );
 
 /** Each pair: the sugar, and the source it means. */
 const EQUIVALENT: [string, string][] = [
@@ -98,25 +101,11 @@ describe("compiler/passes/desugar — a sugar becomes the source it means", () =
   });
 });
 
-describe("compiler/passes/desugar — the guards run BEFORE the rewrite", () => {
-  // Rewriting first would turn a tailored refusal into valid-looking MQL:
-  // `$ += 1` would become `$ = $ + 1`, which compiles to a $replaceWith.
-  const refused: [string, RegExp][] = [
-    ["$ += 1;", /Cannot use '\+=' on bare '\$'/],
-    ["$ -= 1;", /Cannot use '-=' on bare '\$'/],
-    ["$++;", /Cannot use '\+\+' on bare '\$'/],
-    ["$$ += 1;", /Cannot use '\+=' on '\$\$'/],
-    ["$$++;", /Cannot use '\+\+' on '\$\$'/],
-  ];
-  for (const [src, message] of refused) {
-    it(`refuses ${src}`, () => {
-      expect(() => desugar(parse(src))).toThrow(message);
-    });
-  }
-
+describe("compiler/passes/desugar — a compound write on a field is its '=' form", () => {
+  // The parser refuses the same operators on `$` and `$$` (see compiler-parse.test.ts).
   it("still allows the same operators on a field of the document", () => {
-    expect(() => desugar(parse("$.n += 1;"))).not.toThrow();
-    expect(() => desugar(parse("$.n++;"))).not.toThrow();
+    expect(shape("$.n += 1;")).toBe(shape("$.n = $.n + 1;"));
+    expect(shape("$.n++;")).toBe(shape("$.n = $.n + 1;"));
   });
 });
 
@@ -133,8 +122,10 @@ describe("compiler/passes/desugar — the driver", () => {
   });
 
   it("reaches a fixpoint on every input in the equivalence table", () => {
+    // A fixpoint is a tree that one more round leaves unchanged.
     for (const [sugar] of EQUIVALENT) {
-      expect(() => desugarVerbose(parse(sugar)), sugar).not.toThrow();
+      const settled = desugarVerbose(parse(sugar)).program;
+      expect(desugarVerbose(settled).rounds, sugar).toBe(1);
     }
   });
 });
@@ -212,7 +203,7 @@ describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement
     expect(became("$.items.shift();")).toBe("write(MethodCall)");
     expect(became("$.items.fill(0);")).toBe("write(MethodCall)");
     expect(became("$.items.copyWithin(0, 3);")).toBe("write(ArrayLiteral)");
-    expect(() => became("$.items.pop(1);")).toThrow(/'\.pop\(\)' takes exactly 0 arguments, got 1/);
+    expect(() => became("$.items.pop(1);")).toThrow("'.pop()' at position 7 takes exactly 0 arguments, got 1.");
   });
 });
 

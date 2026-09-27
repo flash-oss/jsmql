@@ -5,6 +5,7 @@
 // jsmql program is valid JavaScript syntax.
 
 import { readdirSync, readFileSync } from "node:fs";
+import { Script } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { parse, parseEntry, parseExpression } from "../src/compiler/parse/parser.ts";
@@ -37,30 +38,141 @@ const only = (src: string): { type: string } & Record<string, unknown> => {
   return n.type === "Pipeline" && n.stmts?.length === 1 ? (n.stmts[0] as typeof n) : n;
 };
 
-describe("compiler/parse — parses every source the suite compiles", () => {
-  it("has no input the compiler accepts and the parser cannot read", () => {
-    const failures: string[] = [];
-    for (const src of harvestInputs()) {
-      let oldOk = true;
+describe("compiler/parse — every source the compiler accepts is JavaScript syntax", () => {
+  /** Does JavaScript parse the source, as a script or as one parenthesised expression? */
+  const isJs = (src: string): boolean => {
+    for (const text of [src, `(${src}\n)`]) {
       try {
-        jsmql(src);
+        new Script(text);
+        return true;
       } catch {
-        oldOk = false;
-      }
-      if (!oldOk) continue;
-      try {
-        parse(src);
-      } catch (e) {
-        // an entry form (`({ $ }) => …`) is a program the ENTRY parser reads
-        try {
-          parseEntry(src);
-        } catch {
-          failures.push(`${JSON.stringify(src)} — ${(e as Error).message}`);
-        }
+        // try the other reading
       }
     }
+    return false;
+  };
+  const compiles = (src: string): boolean => {
+    try {
+      jsmql(src);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("parses every string source the suites compile as JavaScript", () => {
+    const accepted = harvestInputs().filter(compiles);
+    // The harvest reads every suite in test/. A regex that stops matching reads nothing.
+    expect(accepted.length).toBeGreaterThan(1000);
+    const failures = accepted.filter((src) => !isJs(src));
     expect(failures).toEqual([]);
   });
+});
+
+describe("compiler/parse — a program is JavaScript syntax: the refusals, word for word", () => {
+  const TRAILING = (pos: number, next: string): string =>
+    `A ',' with no write after it, before ${next} at position ${pos}. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').`;
+  const ELEMENT = (wrote: string, pos: number): string =>
+    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. A sub-pipeline takes its statements in an '.aggregate' block: \`$.<field> = $$$.<coll>.aggregate(() => { ${wrote}; $match(…); })\` for a '$lookup', \`$$.push(...$$$.<coll>.aggregate(() => { … }))\` for a '$unionWith', and \`$ = { k: $$.aggregate(() => { … }) }\` for a '$facet' branch.`;
+  const PARAM = (wrote: string, name: string, pos: number): string =>
+    `\`${wrote}\` re-declares the parameter \`${name}\` at position ${pos}, which JavaScript refuses. Pick a different name.`;
+  const AGAIN = (wrote: string, pos: number): string =>
+    `\`${wrote}\` at position ${pos} is already declared earlier in this block, which JavaScript refuses. Pick a different name.`;
+  const TWICE = (name: string, pos: number): string =>
+    `The parameter name '${name}' appears twice in one parameter list, at position ${pos}. JavaScript refuses a duplicate parameter name here. Give each parameter its own name, for example '(x, i) => …'.`;
+
+  // [source, message, .pos]. JavaScript refuses each source too; the test asks `node:vm` for that answer.
+  const refused: [string, string, number][] = [
+    ["$.a = 1,", TRAILING(7, "end of input"), 7],
+    ["$.lineTotal = $.qty * $.unitPrice, $.invoiceCount += 1, ", TRAILING(54, "end of input"), 54],
+    ["$.a = 1, $.b = 2,;", TRAILING(16, "';'"), 16],
+    ["({ $ }) => { $.a = 1, $.b = 2, }", TRAILING(29, "'}'"), 29],
+    ["($.a = 1, $.b = 2,);", TRAILING(17, "')'"), 17],
+    ["[let x = $.a + 1, $match(x > 5)]", ELEMENT("let x = …", 1), 1],
+    ["[ const double = (x) => x * 2, $set({ a: double($.price) }) ]", ELEMENT("const double = …", 2), 2],
+    ["[$match($.x > 0), let y = $.x * 2, $sort({ y: 1 })]", ELEMENT("let y = …", 18), 18],
+    ["$.v = $.items.map(x => { const x = 99; return x });", PARAM("const x", "x", 25), 25],
+    ["$.v = $.items.map(([a, b]) => { const a = 1; return a + b });", PARAM("const a", "a", 32), 32],
+    ["function g(x) { let x = 1; return x } $.v = g(1);", PARAM("let x", "x", 16), 16],
+    ["({ a }, { $ }) => { const a = 1; $.x = a; }", PARAM("const a", "a", 20), 20],
+    ["$$.aggregate((o) => { let o = 1; $.y = o; });", PARAM("let o", "o", 22), 22],
+    // The fold inlines a constant, so only the parser can see this pair.
+    ["$.v = [1, 2].map((x) => { const y = 1; const y = 2; return y });", AGAIN("const y", 39), 39],
+    ["let a = 1; let a = 2; $.x = a;", AGAIN("let a", 11), 11],
+    ["let x = $.a, x = $.b; $.c = x;", AGAIN("let x", 13), 13],
+    ["$.v = $.items.map((x, x) => x);", TWICE("x", 22), 22],
+    ["({ a, a }, { $ }) => $.x > a", TWICE("a", 6), 6],
+  ];
+  const jsRefuses = (src: string): boolean => {
+    for (const text of [src, `(${src}\n)`]) {
+      try {
+        new Script(text);
+        return false;
+      } catch {
+        // try the other reading
+      }
+    }
+    return true;
+  };
+  for (const [src, message, pos] of refused) {
+    it(`refuses ${src}`, () => {
+      expect(jsRefuses(src)).toBe(true);
+      let thrown: unknown = null;
+      try {
+        jsmql(src);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toBe(message);
+      expect((thrown as { pos: number }).pos).toBe(pos);
+    });
+  }
+
+  // The legal neighbour of each refusal. JavaScript parses it, and so does jsmql.
+  const kept: [string, unknown][] = [
+    ["$.a = 1, $.b = 2", [{ $set: { a: 1, b: 2 } }]],
+    ["[$.a = 1, $.b = 2,]", [{ $set: { a: 1, b: 2 } }]],
+    [
+      "let x = $.a + 1; $match(x > 5);",
+      [
+        { $set: { "__jsmql.var.x": { $add: ["$a", 1] } } },
+        { $match: { $expr: { $gt: ["$__jsmql.var.x", 5] } } },
+        { $unset: "__jsmql" },
+      ],
+    ],
+    [
+      // A nested function opens a scope of its own, so its `const x` shadows the outer parameter.
+      "$.v = $.items.map((x) => $.other.map((y) => { const x = 2; return x + y }));",
+      [
+        {
+          $set: {
+            v: {
+              $map: {
+                input: { $ifNull: ["$items", []] },
+                as: "x",
+                in: {
+                  $map: {
+                    input: { $ifNull: ["$other", []] },
+                    as: "y",
+                    in: { $let: { vars: { x: 2 }, in: { $add: ["$$x", "$$y"] } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    ],
+    // A plain `function` list may name a parameter twice; the last one wins, as in JavaScript.
+    ["$.v = [5, 6].map(function (x, x) { return x });", [{ $set: { v: [0, 1] } }]],
+  ];
+  for (const [src, mql] of kept) {
+    it(`keeps ${src}`, () => {
+      expect(jsRefuses(src)).toBe(false);
+      expect(jsmql(src)).toEqual(mql);
+    });
+  }
 });
 
 describe("compiler/parse — the forms JavaScript itself refuses", () => {
@@ -81,10 +193,157 @@ describe("compiler/parse — the forms JavaScript itself refuses", () => {
     });
   }
 
-  it("still accepts each of them when parenthesised", () => {
-    expect(() => parseExpression("($.a ?? $.b) || $.c")).not.toThrow();
-    expect(() => parseExpression("(typeof $.a) ** $.b")).not.toThrow();
-    expect(() => parse("$.a.b = 1")).not.toThrow();
+  /** A parse tree as a compact S-expression, so a test states the exact grouping. */
+  const sx = (n: unknown): string => {
+    const t = n as Record<string, unknown> & { type: string };
+    switch (t.type) {
+      case "FieldRef":
+        return `$.${t.path as string}`;
+      case "NumberLiteral":
+        return String(t.value);
+      case "MemberAccess":
+        return `${sx(t.object)}.${t.name as string}`;
+      case "UnaryExpr":
+        return `(${t.op as string} ${sx(t.argument)})`;
+      case "BinaryExpr":
+        return `(${t.op as string} ${sx(t.left)} ${sx(t.right)})`;
+      case "UpdateFilter":
+        return (t.ops as { target: unknown; op: string; value: unknown }[])
+          .map((o) => `(${o.op} ${sx(o.target)} ${sx(o.value)})`)
+          .join(" ");
+      default:
+        return t.type;
+    }
+  };
+
+  it("accepts each of them when parenthesised, grouped as the parentheses say", () => {
+    const grouped: [string, string][] = [
+      ["($.a ?? $.b) || $.c", "(|| (?? $.a $.b) $.c)"],
+      ["($.a || $.b) ?? $.c", "(?? (|| $.a $.b) $.c)"],
+      ["($.a ?? $.b) && $.c", "(&& (?? $.a $.b) $.c)"],
+      ["(typeof $.a) ** $.b", "(** (typeof $.a) $.b)"],
+      ["(!$.a) ** $.b", "(** (! $.a) $.b)"],
+      ["(~$.a) ** $.b", "(** (~ $.a) $.b)"],
+    ];
+    for (const [src, tree] of grouped) expect(sx(parseExpression(src)), src).toBe(tree);
+    // the `?.` forms without the `?.` are a write to a path
+    expect(sx(parse("$.a.b = 1"))).toBe("(= $.a.b 1)");
+    expect(sx(parse("$.a.b += 1"))).toBe("(+= $.a.b 1)");
+  });
+});
+
+describe("compiler/parse — a write inside a value: JavaScript's grouping, one refusal", () => {
+  // JavaScript binds a postfix `++` tighter than every prefix and binary operator,
+  // so `1 + $.x++` is `1 + ($.x++)`. Each source is valid JavaScript; the write sits
+  // inside a value, and a write stands only as a statement.
+  const IN_VALUE = (wrote: string, statement: string, place: string, side: string, pos: number): string =>
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value, and read '${place}' there.`;
+  const refused: [string, string, number][] = [
+    ["1 + $.x++", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 7), 7],
+    ["$.y = $.x++;", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 9), 9],
+    ["$.y = ($.x++);", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 10), 10],
+    ["$.y = -$.x++;", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 10), 10],
+    ["$.y = $.x-- * 2;", IN_VALUE("$.x--", "$.x -= 1", "$.x", "after", 9), 9],
+    ["$match($.n++ > 1);", IN_VALUE("$.n++", "$.n += 1", "$.n", "after", 10), 10],
+    ["$.x++ + 1;", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 3), 3],
+    ["let n = 1; $.y = n++;", IN_VALUE("n++", "n += 1", "n", "after", 18), 18],
+    ["$.y = ++$.x;", IN_VALUE("++$.x", "$.x += 1", "$.x", "before", 6), 6],
+    ["$.y = 1 + --$.a.b;", IN_VALUE("--$.a.b", "$.a.b -= 1", "$.a.b", "before", 10), 10],
+    ["++$.x + 1;", IN_VALUE("++$.x", "$.x += 1", "$.x", "before", 0), 0],
+    // The assignment operators are the same rule: JavaScript gives the value after the write.
+    ["1 + ($.a = 5);", IN_VALUE("$.a = 5", "$.a = 5", "$.a", "before", 9), 9],
+    ["$.y = ($.a += 1);", IN_VALUE("$.a += 1", "$.a += 1", "$.a", "before", 11), 11],
+    ["$.y = $.a *= 2;", IN_VALUE("$.a *= 2", "$.a *= 2", "$.a", "before", 10), 10],
+    ["$.y = f($.a = 5);", IN_VALUE("$.a = 5", "$.a = 5", "$.a", "before", 12), 12],
+    ["$.y = { k: $.a = 5 };", IN_VALUE("$.a = 5", "$.a = 5", "$.a", "before", 15), 15],
+  ];
+  const jsAccepts = (src: string): boolean => {
+    try {
+      new Script(src);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (const [src, message, pos] of refused) {
+    it(`refuses ${src}`, () => {
+      expect(jsAccepts(src)).toBe(true);
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toBe(message);
+      expect(result.errors[0].pos).toBe(pos);
+    });
+  }
+
+  // A write in an ARRAY reads as a pipeline element to the parser. The position
+  // pass puts the array in a value, and the desugar pass gives the same refusal.
+  const DELETE_IN_VALUE = (place: string, pos: number): string =>
+    `'delete ${place}' is a write inside a value at position ${pos}. A write stands only as a statement. Write 'delete ${place};' as its own statement before the statement that uses the value.`;
+  const inArrays: [string, string, number][] = [
+    ["$.y = [$.x++];", IN_VALUE("$.x++", "$.x += 1", "$.x", "after", 10), 10],
+    ["$.y = [++$.x];", IN_VALUE("++$.x", "$.x += 1", "$.x", "before", 7), 7],
+    ["$.y = [$.a = 1];", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 11), 11],
+    ["$.y = [1, $.a += 2];", IN_VALUE("$.a += …", "$.a += …", "$.a", "before", 14), 14],
+    ["$.y = [($.a = 5)];", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 12), 12],
+    ["$.y = { k: [$.a = 1] };", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 16), 16],
+    ["$match([$.a = 1]);", IN_VALUE("$.a = …", "$.a = …", "$.a", "before", 12), 12],
+    ["$.y = [1, delete $.a];", DELETE_IN_VALUE("$.a", 10), 10],
+    // JavaScript reads `delete` as a value too.
+    ["$.y = f(delete $.a);", DELETE_IN_VALUE("$.a", 8), 8],
+    ["$.y = 1 + (delete $.a.b);", DELETE_IN_VALUE("$.a.b", 11), 11],
+  ];
+  for (const [src, message, pos] of inArrays) {
+    it(`refuses ${src}`, () => {
+      expect(jsAccepts(src)).toBe(true);
+      const result = jsmql.validate(src);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].message).toBe(message);
+      expect(result.errors[0].pos).toBe(pos);
+    });
+  }
+
+  it("refuses a function in a value, which MQL cannot hold", () => {
+    expect(() => jsmql("$.y = [function f(x) { return x }];")).toThrow(
+      "'function f(…)' is a function inside a value at position 7. MQL has no function values. Write the function as its own statement at the top level of the pipeline, and call 'f(…)' where the value goes.",
+    );
+  });
+
+  it("keeps a write in a pipeline array and in a sub-pipeline", () => {
+    expect(jsmql("[$.a = 1, $sort({ a: 1 })]")).toEqual([{ $set: { a: 1 } }, { $sort: { a: 1 } }]);
+    expect(jsmql("$facet({ a: [$.x = 1] });")).toEqual([{ $facet: { a: [{ $set: { x: 1 } }] } }]);
+  });
+
+  it("gives the JavaScript answer for the statement the refusal names", () => {
+    // `$.y = $.x++` in JavaScript: y gets the old x, then x grows by one.
+    const doc = { x: 1, y: 0 };
+    doc.y = doc.x++;
+    expect(doc).toEqual({ x: 2, y: 1 });
+    // The two statements the refusal names emit the same order: read first, then write.
+    expect(jsmql("$.y = $.x; $.x += 1;")).toEqual([{ $set: { y: "$x" } }, { $set: { x: { $add: ["$x", 1] } } }]);
+  });
+
+  it("keeps each statement form of the write", () => {
+    const kept: [string, unknown][] = [
+      ["$.x++;", [{ $set: { x: { $add: ["$x", 1] } } }]],
+      ["++$.x;", [{ $set: { x: { $add: ["$x", 1] } } }]],
+      ["$.x--;", [{ $set: { x: { $subtract: ["$x", 1] } } }]],
+      ["$.x ++;", [{ $set: { x: { $add: ["$x", 1] } } }]],
+      ["($.a++);", [{ $set: { a: { $add: ["$a", 1] } } }]],
+      ["$.a++, --$.b;", [{ $set: { a: { $add: ["$a", 1] }, b: { $subtract: ["$b", 1] } } }]],
+      ["[$.a++, $match($.b > 1)]", [{ $set: { a: { $add: ["$a", 1] } } }, { $match: { b: { $gt: 1 } } }]],
+      ["$.y = $.a = 5;", [{ $set: { y: 5, a: 5 } }]],
+    ];
+    for (const [src, mql] of kept) expect(jsmql(src), src).toEqual(mql);
+  });
+
+  it("refuses a callback parameter default, which is not a write", () => {
+    const src = "$.v = $.a.map((x = 1) => x);";
+    expect(jsAccepts(src)).toBe(true);
+    const result = jsmql.validate(src);
+    expect(result.errors[0].message).toBe(
+      "A callback parameter is a plain name, and a default value ('x = …') is not one, at position 15. Name the parameter, and write the default where the body reads it: 'x => x ?? <default>'.",
+    );
+    expect(result.errors[0].pos).toBe(15);
   });
 });
 
@@ -268,9 +527,8 @@ describe("compiler/parse — a run of writes is ONE element, and keeps every op"
     expect(elements("[...$.a, ...$.b]")).toEqual(["SpreadElement", "SpreadElement"]);
   });
 
-  it("accepts the trailing comma a formatter leaves before a closing brace", () => {
-    const block = parseEntry("({ $ }) => { $.a = 1, $.b = 2, }").program as { ops: unknown[] };
-    expect(block.ops).toHaveLength(2);
+  it("accepts the trailing comma a formatter leaves before a closing bracket", () => {
+    // `[a, b,]` is a list, so JavaScript allows its trailing comma. A statement is not a list.
     expect((parse("[$.a = 1, $.b = 2,]") as { elements: { ops: unknown[] }[] }).elements[0].ops).toHaveLength(2);
   });
 
@@ -380,11 +638,6 @@ describe("compiler/parse — the `**` restriction is one-sided, as JavaScript st
     expect(() => parseExpression("2 ** -1")).not.toThrow();
     expect(() => parseExpression("2 ** typeof $.a")).not.toThrow();
     expect(() => parseExpression("(-2) ** 2")).not.toThrow();
-  });
-
-  it("keeps `??` symmetric", () => {
-    expect(() => parseExpression("$.a ?? $.b || $.c")).toThrow(/without parentheses/);
-    expect(() => parseExpression("$.a || $.b ?? $.c")).toThrow(/without parentheses/);
   });
 });
 
@@ -557,9 +810,41 @@ describe("compiler/parse — a write target is a place, and an optional chain is
   });
 
   it("refuses a target that is not a place", () => {
-    for (const src of ["$.a + 1 = 2;", "1 = 2;", '"x" = 1;', "$.a = 1 = 2;", "++$.a + 1;", "f() = 1;"]) {
+    for (const src of ["$.a + 1 = 2;", "1 = 2;", '"x" = 1;', "$.a = 1 = 2;", "++(1 + $.a);", "f() = 1;", "f()++;"]) {
       expect(() => parse(src), src).toThrow(/Cannot apply|cannot be assigned/);
     }
+  });
+
+  it("quotes the target as the source spells it", () => {
+    const NOT_A_PLACE = (op: string, target: string, pos: number): string =>
+      `Cannot apply '${op}' to '${target}' at position ${pos}. You can write only to a field, a binding, '$', '$$' or a collection.`;
+    expect(() => parse("1++;")).toThrow(NOT_A_PLACE("++", "1", 1));
+    expect(() => parse("delete 1;")).toThrow(NOT_A_PLACE("delete", "1", 0));
+    expect(() => parse("$.a + 1 = 2;")).toThrow(NOT_A_PLACE("=", "$.a + 1", 8));
+    expect(() => parse("$.a = 1 = 2;")).toThrow(NOT_A_PLACE("=", "1", 8));
+  });
+
+  it("refuses an arithmetic write on '$' or '$$', which is not a field", () => {
+    // Without this refusal, `$ += 1` would become the valid-looking `$ = $ + 1`.
+    const WHOLE = (op: string, target: string, what: string, field: string, pos: number): string =>
+      `Cannot use '${op}' on '${target}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`;
+    const DOC = "'$' is the whole document";
+    const STREAM = "'$$' is the root stream";
+    const refused: [string, string][] = [
+      ["$ += 1;", WHOLE("+=", "$", DOC, "$.<field> += …", 2)],
+      ["$ -= 1;", WHOLE("-=", "$", DOC, "$.<field> -= …", 2)],
+      ["$++;", WHOLE("++", "$", DOC, "$.<field>++", 1)],
+      ["++$;", WHOLE("++", "$", DOC, "$.<field>++", 0)],
+      ["$$ += 1;", WHOLE("+=", "$$", STREAM, "$.<field> += …", 3)],
+      ["$$++;", WHOLE("++", "$$", STREAM, "$.<field>++", 2)],
+      // The value form gets the same answer, not a statement that the parser refuses too.
+      ["$.y = $$++;", WHOLE("++", "$$", STREAM, "$.<field>++", 8)],
+    ];
+    for (const [src, message] of refused) expect(() => parse(src), src).toThrow(message);
+    // `=` replaces the document or the stream, and a collection takes `+=` as a `$merge`.
+    expect(jsmql("$ = { a: 1 };")).toEqual([{ $replaceWith: { a: 1 } }]);
+    expect(jsmql("$$$.archive += $$;")).toEqual([{ $merge: "archive" }]);
+    expect(jsmql("$.n += 1;")).toEqual([{ $set: { n: { $add: ["$n", 1] } } }]);
   });
 
   it("accepts a parenthesised target", () => {

@@ -2,45 +2,53 @@
 
 One file carries what JSMQL knows about MongoDB's expression, accumulator, and query operators.
 
-- [`src/registry/names.ts`](../../src/registry/names.ts) — **this row states how an operator lowers, and what it is.** Every `$op` is a `$op: mongo({ … })` row. The row states where the operator may stand (`where`), and one cell per position (`expr`, `filter`, `group`, `window`, `stream`, `statement`, `updateDoc`, `body`). It states the argument rule (`args`: a signature and the counts it takes, or `byArgs` for a call whose shape follows its arguments), and the keys of an object-form operator. It states `returns` — the kind of its result, measured on a running `mongod`. A cell either states a lowering or refuses the call and names the alternative. The row also states what the operator IS: its `category` (from `OPERATOR_CATEGORIES` in [`src/registry/vocabulary.ts`](../../src/registry/vocabulary.ts)) and the one-sentence `doc` lifted from the vendored spec. The globals generator and the playground sync read these two facts, through the accessors in [`src/compiler/rows.ts`](../../src/compiler/rows.ts). The compiler reads nothing else to lower a call. [emit-pass.md](emit-pass.md) is the spec of that reading.
+- [`src/registry/names.ts`](../../src/registry/names.ts) — **this row states how an operator lowers, and what it is.** Every `$op` is a `$op: mongo({ … })` row. The row states where the operator may stand (`where`), and one rule cell per position that `where` lists (`expr`, `filter`, `group`, `window`, `stream`, `statement`, `updateDoc`). A position that `where` omits states no cell, except the filter's `viaFallback`. It states the argument rule (`args`: a signature and the counts it takes, or `byArgs` for a call whose shape follows its arguments), and the keys of an object-form operator, in the order that its positional form fills them (`keys`). It states `returns` — the kind of its result, measured on a running `mongod`. A cell states a lowering. Where a cell states none for a `$op(…)` call, the call takes HR2's plain form. The row also states what the operator IS: its `category` (from `OPERATOR_CATEGORIES` in [`src/registry/vocabulary.ts`](../../src/registry/vocabulary.ts)) and the one-sentence `doc` lifted from the vendored spec. The globals generator and the playground sync read these two facts, through the accessors in [`src/compiler/rows.ts`](../../src/compiler/rows.ts). The compiler reads nothing else to lower a call. [emit-pass.md](emit-pass.md) is the spec of that reading.
 
 A test checks that the rows and the vendored spec agree: `test/registry-agrees.test.ts` checks the cross-references inside the registry, and `test/operator-spec-coverage.test.ts` checks the rows against `mongodb/mql-specifications`.
 
 ## Call shapes
 
-A row's `args` states what the call takes. The shapes below are what the rows say, with an example for each. Every refusal names the way out.
+A `$op(…)` call is the developer's own MQL (HR2). HR3 does not apply to it (see [LANG_RULES.md](../LANG_RULES.md)), so the compiler checks no count, key, enum or literal there. The row's lowering runs where the arguments fit it. Every other call takes HR2's plain form: `$op()` is `{ $op: {} }`, `$op(x)` is `{ $op: x }`, and `$op(a, b)` is `{ $op: [a, b] }`. The server checks the result. The shapes below are what the rows say, with an example for each.
 
-**A list operator** (`$add`, `$setUnion`, `$concat`, …) takes its operands one by one, or ONE array literal that IS the operand list (HR2's round-trip of `{ $op: [ … ] }`). One operand that is not an array literal is ONE operand, as the server reads it. The row's count decides if one is enough: `$add` and `$setUnion` state `atLeast: 1`, and `$divide` states `exact: 2`. MEASURED on every list-only row, and `test/compiler-returns-agrees.test.ts` asks the server again for each row. The raw document and the call take one lowering, so they agree:
+**A list operator** (`$add`, `$setUnion`, `$concat`, …) takes its operands one by one, or ONE array literal that IS the operand list (HR2's round-trip of `{ $op: [ … ] }`). One operand that is not an array literal is ONE operand, as the server reads it. The raw document and the call take one lowering, so they agree. `test/compiler-lower.test.ts` holds this for every list-only row:
 
 ```
 $add($.a, $.b, $.c)     →  { $add: ["$a", "$b", "$c"] }
 $setUnion([$.a, $.b])   →  { $setUnion: ["$a", "$b"] }
 $add($.x)               →  { $add: "$x" }
 ({ $setUnion: $.x })    →  { $setUnion: "$x" }          raw MQL passes unchanged (HR1)
-$divide(10)             →  ✗ "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1"
-({ $divide: 10 })       →  ✗ the same sentence: HR3 governs raw MQL too
+$divide(10)             →  { $divide: 10 }              the server refuses one operand
+({ $divide: 10 })       →  { $divide: 10 }              the same document
 ```
 
-A query document follows the query language: `$and`, `$or` and `$mod` take a list there. So `{ $and: true }` in a filter is refused. MEASURED: "$and argument must be an array".
-
-**A comparison operator** takes exactly two operands in an expression and has a query form in a filter:
+**A comparison operator** takes two operands in an expression, and has a query form in a filter:
 
 ```
 $gt($.a, $.b)           →  { $gt: ["$a", "$b"] }              (expression)
 $gt($.a, 1)             →  { a: { $gt: 1 } }                  (filter: MongoDB's reading, no array exclusion)
-$gt($.x)                →  ✗ "'$gt(expr1, expr2)' requires exactly 2 arguments, got 1"
+$gt($.x)                →  { $gt: "$x" }                      (expression: the server refuses one operand)
 ```
 
-**An object-form operator** (`$trim`, `$dateAdd`, `$regexMatch`, …) takes its keys positionally, or as one object literal. The compiler checks an object literal's keys against the row. It refuses a wrong key and names the nearest right one:
+**An object-form operator** (`$trim`, `$dateAdd`, `$regexMatch`, …) takes its keys positionally, or as one object literal. The row's `keys` give the positional order. A call with more arguments than keys takes the plain form. The compiler does not check the keys of an object literal:
 
 ```
 $trim($.name, " ")                     →  { $trim: { input: "$name", chars: " " } }
 $trim({ input: $.name, chars: " " })   →  { $trim: { input: "$name", chars: " " } }
+$trim($.name, " ", "x")                →  { $trim: ["$name", " ", "x"] }
 $dateAdd({ startdate: $.t, unit: "day", amount: 1 })
-  →  ✗ "'$dateAdd' has no parameter 'startdate'. Did you mean 'startDate'? Valid keys: startDate, unit, amount, timezone."
+  →  { $dateAdd: { startdate: "$t", unit: "day", amount: 1 } }      the server names the right key
 ```
 
-On an operator that is NOT object-form, a lone object literal is a value (`$mergeObjects({ a: 1 })` → `{ $mergeObjects: { a: 1 } }`). A no-argument operator emits `{ $op: {} }` (`$rand()` → `{ $rand: {} }`). For an operator with both a single and a list form (`$min`, `$round`, …), the argument count decides which form applies. Every `$op(…)` call refuses a JavaScript spread. The refusal names the JS form that takes it (`Math.min(...xs)`), or the single-array form.
+**A query operator** has a call form in a filter, where its arguments fit that form. A call whose arguments do not fit takes the plain form:
+
+```
+$exists($.a)            →  { a: { $exists: true } }
+$exists(1)              →  { $exists: 1 }                     the server refuses it at the top level
+```
+
+On an operator that is NOT object-form, a lone object literal is a value (`$mergeObjects({ a: 1 })` → `{ $mergeObjects: { a: 1 } }`). A no-argument call emits `{ $op: {} }` (`$rand()` → `{ $rand: {} }`). For an operator with both a single and a list form (`$min`, `$round`, …), the argument count decides which form applies.
+
+The compiler refuses JSMQL code that has no MQL inside a `$op(…)` call. A JavaScript spread is one example: the refusal names the JS form that takes it (`Math.min(...xs)`), or the single-array form. A spread or a computed key in the object body of an object-form operator is another one. An arrow gets the checks of its own lowering, for example the element predicate of `$elemMatch`.
 
 ## `$literal`
 
@@ -48,7 +56,7 @@ On an operator that is NOT object-form, a lone object literal is a value (`$merg
 
 ## Unknown operators
 
-A `$name` with no row passes through by its argument count. So JSMQL runs a MongoDB operator it has no row for yet:
+A `$name` with no row passes through by its argument count, in every position. So JSMQL runs a MongoDB operator or stage it has no row for yet. The position gives the name its role: a stage in a statement or a stream link, an expression in a value, and `{ $expr: { $foo: … } }` in a filter, with MongoDB's own truthiness. The compiler gives no "Did you mean" suggestion for a `$name`, because a suggestion refuses each new MongoDB name that is near a known one (docs/DEFERRED.md § B):
 
 | Args | Output |
 |---|---|
@@ -59,7 +67,7 @@ A `$name` with no row passes through by its argument count. So JSMQL runs a Mong
 
 ## Query-position-only operators
 
-`$sampleRate` has no expression form on the server. Its row lists `filter` alone: `$match($sampleRate(0.1))` → `[{ $match: { $sampleRate: 0.1 } }]`. It composes with other clauses (`$.age > 18 && $sampleRate(0.1)`). An expression position refuses it — "$sampleRate is a query operator — it only works as a '$match' condition … Write it as a predicate: '$match($sampleRate(<value>))'". The catalog carries the same fact as `matchOnly: true`, for the generated types.
+`$sampleRate` has no expression form on the server. Its row lists `filter` alone: `$match($sampleRate(0.1))` → `[{ $match: { $sampleRate: 0.1 } }]`. It composes with other clauses (`$.age > 18 && $sampleRate(0.1)`). In an expression position the call is still the developer's own MQL, so it passes through: `jsmql.expr("$sampleRate(0.1)")` → `{ $sampleRate: 0.1 }`, and the server answers "Unrecognized expression '$sampleRate'". The catalog carries the same fact as `matchOnly: true`, for the generated types.
 
 ## Return kinds
 
@@ -73,7 +81,7 @@ The recipe lives in [CLAUDE.md § Adding a new MongoDB operator](../../CLAUDE.md
 
 `test/operator-spec-coverage.test.ts` runs on every `npm test`. It asserts that the rows stay in sync with `mongodb/mql-specifications`:
 
-- Every operator in `definitions/expression/`, `definitions/accumulator/`, and `definitions/query/` has a row. A name that JSMQL does not support still needs a row — an empty `where` and a refusal that names the alternative is a row.
+- Every operator in `definitions/expression/`, `definitions/accumulator/`, and `definitions/query/` has a row. A name that JSMQL has no lowering for still needs a row — a row with an empty `where` states no cell, and a call of it takes HR2's plain form.
 - Every operator row is a name the spec defines, except the names documented in `REGISTRY_ONLY` (for example, the update-document operators, which the pinned spec commit has no folder for).
 - Every stage row is a name `definitions/stage/` defines, and every one of those has a stage row.
 - Every callable operator states a non-empty description and a known `category`.

@@ -1,7 +1,24 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { Long } from "../src/bson.ts";
-import { truthy } from "./truthy.ts";
+
+/** The refusal of a declaration as an array element. JavaScript refuses it there too. */
+const NOT_AN_ELEMENT = (wrote: string, pos: number): string =>
+  `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. A sub-pipeline takes its statements in an '.aggregate' block: \`$.<field> = $$$.<coll>.aggregate(() => { ${wrote}; $match(…); })\` for a '$lookup', \`$$.push(...$$$.<coll>.aggregate(() => { … }))\` for a '$unionWith', and \`$ = { k: $$.aggregate(() => { … }) }\` for a '$facet' branch.`;
+
+/** The refusal of a second declaration of one name in one block. */
+const DECLARED_AGAIN = (wrote: string, pos: number): string =>
+  `\`${wrote}\` at position ${pos} is already declared earlier in this block, which JavaScript refuses. Pick a different name.`;
+
+/** The message and the position a compile raises. */
+const refusal = (src: string): { message: string; pos: number } => {
+  try {
+    jsmql(src);
+  } catch (e) {
+    return { message: (e as Error).message, pos: (e as { pos: number }).pos };
+  }
+  throw new Error(`expected a refusal: ${src}`);
+};
 
 describe("let bindings — basic shape", () => {
   it("a single let materialises under __jsmql, with a trailing $unset", () => {
@@ -155,7 +172,7 @@ describe("let bindings — declaration lists", () => {
     // One lowering, one output: the `;` spelling of this program is the SAME
     // document, scratch-slot numbers included. The taken-back lowering gives its
     // slot back, so the two spellings cannot drift to `tmp.0` and `tmp.1`.
-    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).size(); $.o = b;")).toEqual([
+    expect(jsmql("let a = $.x; let b = $$$.probe.filter(o => o.k === a).size(); $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
@@ -175,7 +192,8 @@ describe("let bindings — declaration lists", () => {
       { $set: { o: { $add: ["$__jsmql.var.a", 5, "$__jsmql.var.c"] } } },
       { $unset: "__jsmql" },
     ]);
-    expect(jsmql("let a = $.x; let b = 5, c = $.y; $.o = a + b + c;")).toEqual([
+    // …the same document as three separate declarations.
+    expect(jsmql("let a = $.x; let b = 5; let c = $.y; $.o = a + b + c;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
       { $set: { "__jsmql.var.c": "$y" } },
       { $set: { o: { $add: ["$__jsmql.var.a", 5, "$__jsmql.var.c"] } } },
@@ -250,10 +268,13 @@ describe("let bindings — declaration lists", () => {
     expect(() => jsmql("const a = 1, b = 2,; $.x = a;")).toThrow("Expected identifier but got ';'");
   });
 
-  it("leaves the bracketed pipeline's `,` as its element separator", () => {
-    // Inside `[…]` the comma already separates statements, so each element
-    // carries its own keyword.
-    expect(jsmql("[let x = $.a, let y = x + 1, $match(y > 5)]")).toEqual([
+  it("refuses a declaration as a bracketed pipeline's element, and the statement form keeps the stages", () => {
+    // `[let x = …]` is a JavaScript SyntaxError, so each declaration is a statement.
+    expect(refusal("[let x = $.a, let y = x + 1, $match(y > 5)]")).toEqual({
+      message: NOT_AN_ELEMENT("let x = …", 1),
+      pos: 1,
+    });
+    expect(jsmql("let x = $.a; let y = x + 1; $match(y > 5);")).toEqual([
       { $set: { "__jsmql.var.x": "$a" } },
       { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
       { $match: { $expr: { $gt: ["$__jsmql.var.y", 5] } } },
@@ -262,20 +283,25 @@ describe("let bindings — declaration lists", () => {
   });
 });
 
-describe("let bindings — bracketed pipeline form", () => {
-  it("works as the first element of a [...] pipeline", () => {
-    expect(jsmql("[let x = $.a + 1, $match(x > 5)]")).toEqual([
+describe("let bindings — a declaration is not an element of a bracketed pipeline", () => {
+  it("refuses `let` as the first element, and the statement form keeps the stages", () => {
+    expect(refusal("[let x = $.a + 1, $match(x > 5)]")).toEqual({ message: NOT_AN_ELEMENT("let x = …", 1), pos: 1 });
+    expect(jsmql("let x = $.a + 1; $match(x > 5);")).toEqual([
       { $set: { "__jsmql.var.x": { $add: ["$a", 1] } } },
       { $match: { $expr: { $gt: ["$__jsmql.var.x", 5] } } },
       { $unset: "__jsmql" },
     ]);
   });
 
-  it("works interleaved with update ops and stages", () => {
-    // The update op buffer flushes around the let, so `$.a = 1` and the let
+  it("refuses `let` between update ops and stages, and the statement form keeps the stages", () => {
+    expect(refusal("[$match($.x > 0), let y = $.x * 2, $.flag = true, $sort({ y: 1 })]")).toEqual({
+      message: NOT_AN_ELEMENT("let y = …", 18),
+      pos: 18,
+    });
+    // The update op buffer flushes around the let, so `$.flag = true` and the let
     // each contribute their own stage. The trailing `$unset` is for the let,
     // not the update op.
-    expect(jsmql("[$match($.x > 0), let y = $.x * 2, $.flag = true, $sort({ y: 1 })]")).toEqual([
+    expect(jsmql("$match($.x > 0); let y = $.x * 2; $.flag = true; $sort({ y: 1 });")).toEqual([
       { $match: { x: { $gt: 0 } } },
       { $set: { "__jsmql.var.y": { $multiply: ["$x", 2] } } },
       { $set: { flag: true } },
@@ -336,9 +362,7 @@ describe("let bindings — scope-reshaping stages clear the binding", () => {
 
 describe("let bindings — duplicate declaration", () => {
   it("errors on re-declaring the same name in the same scope", () => {
-    expect(() => jsmql("let x = 1; let x = 2; $project({ x })")).toThrow(
-      "`let x` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
-    );
+    expect(refusal("let x = 1; let x = 2; $project({ x })")).toEqual({ message: DECLARED_AGAIN("let x", 11), pos: 11 });
   });
 });
 
@@ -358,34 +382,25 @@ describe("let bindings — context rules", () => {
   });
 
   it("`let` is rejected as a value-array element", () => {
-    // A non-pipeline array (no stage-leading element) with a `let` is malformed.
-    // First element is a number, so isPipelineAst returns false and we fall
-    // through to expression-mode array-literal codegen, which rejects.
-    expect(() => jsmql("[1, let x = 5]")).toThrow(
-      "`let` is a statement, not a value. It is only valid at the top level or as a pipeline-array element.",
-    );
+    expect(refusal("[1, let x = 5]")).toEqual({ message: NOT_AN_ELEMENT("let x = …", 4), pos: 4 });
   });
 });
 
 describe("let bindings — sub-pipeline boundaries", () => {
-  it("a sub-pipeline inside $lookup can declare its own lets independently", () => {
+  it("a sub-pipeline over another collection can declare its own lets independently", () => {
+    // The block of `.aggregate` holds statements. `$` is still the outer document (HR4).
     expect(
-      jsmql(`[
-        $lookup({
-          from: "orders",
-          let: { uid: $._id },
-          pipeline: [
-            let recent = $.createdAt > "2026-01-01",
-            $match(recent)
-          ],
-          as: "userOrders"
-        })
-      ]`),
+      jsmql(`
+        $.userOrders = $$$.orders.aggregate(() => {
+          let recent = $.createdAt > "2026-01-01";
+          $match(recent);
+        });
+      `),
     ).toEqual([
       {
         $lookup: {
           from: "orders",
-          let: { uid: "$_id", jsmql_f0_createdAt: "$createdAt" },
+          let: { jsmql_f0_createdAt: "$createdAt" },
           pipeline: [
             { $set: { "__jsmql.var.recent": { $gt: ["$$jsmql_f0_createdAt", "2026-01-01"] } } },
             { $match: { $expr: "$__jsmql.var.recent" } },
@@ -426,13 +441,12 @@ describe("let bindings — sub-pipeline boundaries", () => {
 });
 
 describe("let bindings — jsmql.validate() integration", () => {
-  it("a duplicate-let error surfaces as CODEGEN_ERROR through jsmql.validate()", () => {
-    const result = jsmql.validate("let x = 1; let x = 2; $project({ x })");
-    expect(result.valid).toBe(false);
-    expect(result.errors[0].code).toBe("CODEGEN_ERROR");
-    expect(result.errors[0].message).toMatch(
-      "`let x` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
-    );
+  it("a duplicate-let error surfaces as SYNTAX_ERROR through jsmql.validate(), with the position of the second `let`", () => {
+    // JavaScript raises a SyntaxError for this program, so the parser refuses it.
+    expect(jsmql.validate("let x = 1; let x = 2; $project({ x })")).toEqual({
+      valid: false,
+      errors: [{ message: DECLARED_AGAIN("let x", 11), pos: 11, code: "SYNTAX_ERROR" }],
+    });
   });
 
   it("a post-$group let-read error surfaces as CODEGEN_ERROR through jsmql.validate()", () => {
@@ -633,7 +647,7 @@ describe("let bindings — member / method / index access", () => {
                   then: { $substrCP: ["$__jsmql.var.xs", 0, 1] },
                 },
               ],
-              default: { $getField: { field: "0", input: "$__jsmql.var.xs" } },
+              default: { $getField: { field: "0", input: { $ifNull: ["$__jsmql.var.xs", {}] } } },
             },
           },
         },
@@ -676,18 +690,18 @@ describe("let bindings — interaction with update ops", () => {
 // ── Re-declaration across scope boundaries ────────────────────────────────────
 
 describe("let bindings — re-declaration across boundaries", () => {
-  it("re-declaring the same name after $group is allowed (scope was cleared)", () => {
-    expect(() =>
-      jsmql("let v = $.x; $group({ _id: $.c, sum: $sum($.a) }); let v = $.sum * 2; $project({ v })"),
-    ).toThrow(
-      "`let v` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
-    );
+  it("re-declaring the same name after $group is refused, as in JavaScript: the name stays declared", () => {
+    expect(refusal("let v = $.x; $group({ _id: $.c, sum: $sum($.a) }); let v = $.sum * 2; $project({ v })")).toEqual({
+      message: DECLARED_AGAIN("let v", 51),
+      pos: 51,
+    });
   });
 
   it("re-declaring after $sort (NOT a reshape stage) is still rejected", () => {
-    expect(() => jsmql("let v = $.x; $sort({ x: 1 }); let v = $.y;")).toThrow(
-      "`let v` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
-    );
+    expect(refusal("let v = $.x; $sort({ x: 1 }); let v = $.y;")).toEqual({
+      message: DECLARED_AGAIN("let v", 30),
+      pos: 30,
+    });
   });
 });
 
@@ -790,18 +804,14 @@ describe("let bindings — lambda interaction", () => {
 describe("let bindings — sub-pipeline depth", () => {
   it("a sub-pipeline let with the same name as an outer let is independent", () => {
     expect(
-      jsmql(`[
-        let x = $.a,
-        $lookup({
-          from: "orders",
-          pipeline: [
-            let x = $.b,
-            $match(x > 0)
-          ],
-          as: "matched"
-        }),
-        $match(x < 100)
-      ]`),
+      jsmql(`
+        let x = $.a;
+        $.matched = $$$.orders.aggregate(() => {
+          let x = $.b;
+          $match(x > 0);
+        });
+        $match(x < 100);
+      `),
     ).toEqual([
       { $set: { "__jsmql.var.x": "$a" } },
       {
@@ -821,17 +831,13 @@ describe("let bindings — sub-pipeline depth", () => {
     ]);
   });
 
-  it("a $facet branch can have its own let — outer lets are not visible inside", () => {
-    expect(
-      jsmql(`[
-        $facet({
-          summary: [
-            let avg = $avg($.score),
-            $project({ avg })
-          ]
-        })
-      ]`),
-    ).toEqual([
+  it("a bracketed sub-pipeline holds no `let`; each '.aggregate' block form the refusal names takes one", () => {
+    expect(refusal("[ $facet({ summary: [ let avg = $avg($.score), $project({ avg }) ] }) ]")).toEqual({
+      message: NOT_AN_ELEMENT("let avg = …", 22),
+      pos: 22,
+    });
+    // A `$facet` branch.
+    expect(jsmql("$ = { summary: $$.aggregate(() => { let avg = $avg($.score); $project({ avg }); }) };")).toEqual([
       {
         $facet: {
           summary: [
@@ -841,6 +847,25 @@ describe("let bindings — sub-pipeline depth", () => {
           ],
         },
       },
+    ]);
+    // A `$lookup`.
+    expect(jsmql("$.o = $$$.orders.aggregate(() => { let x = $.b * 2; $match({ y: x }); });")).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_b: "$b" },
+          pipeline: [
+            { $set: { "__jsmql.var.x": { $multiply: ["$$jsmql_f0_b", 2] } } },
+            { $match: { $expr: { $eq: ["$y", "$__jsmql.var.x"] } } },
+            { $unset: "__jsmql" },
+          ],
+          as: "o",
+        },
+      },
+    ]);
+    // A `$unionWith`.
+    expect(jsmql("$$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));")).toEqual([
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { y: 1 } }] } },
     ]);
   });
 });
@@ -897,11 +922,13 @@ describe("let bindings — function-form input", () => {
     ]);
   });
 
-  it("expression-body arrow rejects a top-level let with the precise error", () => {
-    // `({ $ }) => let x = 5` would be a single-statement expression body — no
-    // pipeline context, so the parser raises the "only valid inside a pipeline"
-    // error. (The block-body form above is the way to get pipeline-mode here.)
-    expect(() => jsmql(({ $ }) => (eval as any)("let x = 5"))).toThrow(); // any throw is acceptable
+  it("an expression-body arrow cannot hold a `let`, and a call to `eval` is an unknown function", () => {
+    // `({ $ }) => let x = 5` is a JavaScript syntax error, so an expression body
+    // can never declare a binding. The block-body form above is the way to get
+    // pipeline mode here. A string passed to `eval` is not JSMQL source.
+    expect(() => jsmql(({ $ }) => (eval as any)("let x = 5"))).toThrow(
+      "Unknown function 'eval(...)'. Declare it first with `const eval = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$eval(...)`; for a method, `receiver.eval(...)`.",
+    );
   });
 });
 
@@ -927,15 +954,11 @@ describe("let bindings — all reshape-clearing stages drop the scope", () => {
 
 // ── $project subtlety (NOT a reshape-clearing stage) ──────────────────────────
 
-describe("let bindings — $project keeps the let scope (documented trade-off)", () => {
-  it("a let stays visible after $project even if inclusion mode drops __jsmql at runtime", () => {
-    // The compiler does not statically prevent this — it is documented in
-    // LANGUAGE.md as a pitfall parallel to today's `$.tmp = ...` + `delete`
-    // pattern. The point of the test is to lock in the *compile-time*
-    // behaviour: scope is preserved, no error is raised, codegen produces
-    // a reference to `$__jsmql.var.x` even though the user's pipeline will see
-    // null at runtime if their cluster runs it. The user is responsible for
-    // putting inclusion-mode $projects last.
+describe("let bindings — $project in inclusion mode clears the let scope", () => {
+  it("an inclusion-mode $project clears the let scope, so a later read is refused", () => {
+    // Naming the fields to keep drops `__jsmql` with the rest, so the binding is
+    // gone at runtime. The compiler refuses the read at compile time, as it does
+    // after `$group` (docs/specs/let-bindings.md § Stages that replace the document).
     expect(() => jsmql("let x = $.a; $project({ x: 1 }); $match(x > 0)")).toThrow(
       "`x` is a `let` binding. It cannot be read after `$project`, because that stage replaced the document that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document.",
     );
@@ -978,13 +1001,11 @@ describe("let bindings — reassignment", () => {
     ]);
   });
 
-  it("reassignment works in the bracketed pipeline form", () => {
-    expect(jsmql("[ let x = $.a, x = x + 1, $project({ x }) ]")).toEqual([
-      { $set: { "__jsmql.var.x": "$a" } },
-      { $set: { "__jsmql.var.x": { $add: ["$__jsmql.var.x", 1] } } },
-      { $project: { x: "$__jsmql.var.x" } },
-      { $unset: "__jsmql" },
-    ]);
+  it("refuses the declaration a bracketed pipeline would need before a reassignment", () => {
+    expect(refusal("[ let x = $.a, x = x + 1, $project({ x }) ]")).toEqual({
+      message: NOT_AN_ELEMENT("let x = …", 2),
+      pos: 2,
+    });
   });
 
   it("throws a `const` error when the code reassigns a `const`-bound name", () => {
@@ -999,7 +1020,7 @@ describe("let bindings — reassignment", () => {
     );
   });
 
-  it("gives a precise error when the code reassigns a `let` after a reshape stage", () => {
+  it("a reassignment after a reshape stage writes the slot again, so a later read works", () => {
     expect(jsmql("let v = $.x; $group({ _id: $.cat }); v = 5; $match(v > 0)")).toEqual([
       { $set: { "__jsmql.var.v": "$x" } },
       { $group: { _id: "$cat" } },
@@ -1013,7 +1034,7 @@ describe("let bindings — reassignment", () => {
     const result = jsmql.validate("x = 5");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch("Unknown identifier 'x'. Did you mean '$.x'?");
-    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
+    expect(result.errors[0].pos).toBe(0); // the `x` itself
   });
 });
 
@@ -1047,19 +1068,18 @@ describe("let bindings — Object.assign mutation", () => {
     ]);
   });
 
-  it("works in the bracketed pipeline form", () => {
-    expect(jsmql("[ let r = {}, Object.assign(r, { a: $.foo }), $ = r ]")).toEqual([
-      { $set: { "__jsmql.var.r": {} } },
-      { $set: { "__jsmql.var.r": { $mergeObjects: ["$__jsmql.var.r", { a: "$foo" }] } } },
-      { $replaceWith: "$__jsmql.var.r" },
-    ]);
+  it("refuses the declaration a bracketed pipeline would need before the merge", () => {
+    expect(refusal("[ let r = {}, Object.assign(r, { a: $.foo }), $ = r ]")).toEqual({
+      message: NOT_AN_ELEMENT("let r = …", 2),
+      pos: 2,
+    });
   });
 
   it("Object.assign on an out-of-scope identifier throws an actionable error with a meaningful .pos", () => {
     const result = jsmql.validate("Object.assign(zzz, { a: 1 });");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch("Unknown identifier 'zzz'. Did you mean '$.zzz'?");
-    expect(result.errors[0].pos).toBeGreaterThanOrEqual(0);
+    expect(result.errors[0].pos).toBe("Object.assign(".length); // the `zzz` argument
   });
 });
 
@@ -1075,19 +1095,14 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
       { $match: { $expr: { $eq: ["$parent", "$__jsmql.var.x"] } } },
       { $unset: "__jsmql" },
     ]);
-    expect(fromConst).toEqual([
-      { $set: { "__jsmql.var.x": "$foo" } },
-      { $match: { $expr: { $eq: ["$parent", "$__jsmql.var.x"] } } },
-      { $unset: "__jsmql" },
-    ]);
+    expect(fromLet).toEqual(fromConst);
   });
 
-  it("`const` works in the bracketed pipeline form", () => {
-    expect(jsmql("[ const x = $.foo, $match($.parent === x) ]")).toEqual([
-      { $set: { "__jsmql.var.x": "$foo" } },
-      { $match: { $expr: { $eq: ["$parent", "$__jsmql.var.x"] } } },
-      { $unset: "__jsmql" },
-    ]);
+  it("`const` is refused as a bracketed pipeline's element, the same as `let`", () => {
+    expect(refusal("[ const x = $.foo, $match($.parent === x) ]")).toEqual({
+      message: NOT_AN_ELEMENT("const x = …", 2),
+      pos: 2,
+    });
   });
 
   it("parser errors echo the `const` keyword the user actually wrote", () => {
@@ -1102,9 +1117,9 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
     // field paths / object keys (it is a valid JS property name).
     expect(jsmql.expr("$.const > 5")).toEqual({ $gt: ["$const", 5] });
     expect(jsmql.expr("$.user.const")).toEqual("$user.const");
-    expect(jsmql("$project({ const: 1 }); $match($.x > 1);")).toEqual([
+    expect(jsmql("$project({ const: 1 }); $match($.const > 1);")).toEqual([
       { $project: { const: 1 } },
-      { $match: { x: { $gt: 1 } } },
+      { $match: { const: { $gt: 1 } } },
     ]);
   });
 });
@@ -1152,11 +1167,5 @@ describe("a let tombstone survives every lambda depth", () => {
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
-  });
-
-  it("does not degrade to the generic unknown-identifier message", () => {
-    expect(() => jsmql("let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));")).not.toThrow(
-      /Unknown identifier/,
-    );
   });
 });

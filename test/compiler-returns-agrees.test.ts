@@ -9,7 +9,9 @@
 // The suite builds each call from two existing things in the repo: the vendored spec's
 // `arguments[].type` (what each operand must resolve to) and the registry's own
 // `shape` (how the operands are written). A new operator gains coverage the day its
-// row lands. Only the calls a generator cannot express are listed here.
+// row lands. Only the calls a generator cannot express are listed here. The suite
+// measures an operator PRODUCTION, e.g. `*`, through its own lowering: the compiler
+// writes its lexeme between operands of each kind.
 //
 // This suite skips itself when no mongod is listening, so `npm test` stays green.
 
@@ -19,8 +21,9 @@ import { resolve } from "node:path";
 import yaml from "js-yaml";
 import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MongoClient, ObjectId, Timestamp } from "mongodb";
 import { NAMES } from "../src/registry/names.ts";
+import { PRODUCTIONS } from "../src/registry/productions.ts";
 import type { Position, TypeExpr } from "../src/registry/vocabulary.ts";
-import { operandShapeOf, topKindOf } from "../src/compiler/rows.ts";
+import { topKindOf } from "../src/compiler/rows.ts";
 import { jsmql } from "../src/index.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
@@ -87,6 +90,8 @@ const FOR_TYPE: Readonly<Record<string, string>> = {
   resolvesToNull: "$nul",
   resolvesToAny: "$int",
   any: "$int",
+  // an enum type takes one of its own words, as a literal
+  timeUnit: "day",
 };
 
 /** A mongod `$type` string → the coarse kind the registry states. */
@@ -185,9 +190,10 @@ const BY_HAND: Readonly<Record<string, Call>> = {
 };
 
 /**
- * Operators the SERVER cannot be asked about, with the reason. Not a filter — the
- * suite asserts this set is exactly the set it failed to measure, so an operator
- * that silently stops running shows up as a new name here.
+ * Operators the SERVER cannot be asked about, with the reason. Not a filter: the
+ * last test sends each one the call in PROBE and fails when the server answers,
+ * so an entry that goes stale shows up at once. An operator that the first test
+ * cannot measure and that this table does not name fails that test.
  */
 const CANNOT_MEASURE: Readonly<Record<string, string>> = {
   $encStrContains:
@@ -197,6 +203,16 @@ const CANNOT_MEASURE: Readonly<Record<string, string>> = {
   $encStrStartsWith: "Queryable Encryption, as above",
   $meta: "needs $search metadata, which a non-Atlas server does not produce",
   $case: "not an operator on its own — a branch key inside $switch",
+};
+
+/** The call the last test sends for each CANNOT_MEASURE name. Each one was measured to fail. */
+const PROBE: Readonly<Record<string, { slot: Slot; call: unknown }>> = {
+  $encStrContains: { slot: "value", call: { $encStrContains: { input: "$str", substring: "a" } } },
+  $encStrEndsWith: { slot: "value", call: { $encStrEndsWith: { input: "$str", suffix: "c" } } },
+  $encStrNormalizedEq: { slot: "value", call: { $encStrNormalizedEq: { input: "$str", string: "abc" } } },
+  $encStrStartsWith: { slot: "value", call: { $encStrStartsWith: { input: "$str", prefix: "a" } } },
+  $meta: { slot: "value", call: { $meta: "searchScore" } },
+  $case: { slot: "value", call: { $case: { case: true, then: "$int" } } },
 };
 
 /**
@@ -302,13 +318,14 @@ function loadSpecs(): Map<string, Spec> {
   return out;
 }
 
-type Shape = "single" | "array" | "none" | "flex" | { object: BodyShape };
-type BodyShape = {
-  required: readonly string[];
-  optional: readonly string[];
-  enums?: Record<string, readonly string[]>;
+type Shape = "single" | "array" | "none" | "flex" | "verbatim" | "object";
+type Row = {
+  kind?: string;
+  where?: readonly Position[];
+  shape?: Shape;
+  returns?: TypeExpr;
+  neverNull?: true | "always";
 };
-type Row = { kind?: string; where?: readonly Position[]; shape?: Shape; returns?: TypeExpr };
 
 /** The kind a row's `returns` states for the server to confirm: the term's top kind. */
 const stated = (row: Row): string => (row.returns === undefined ? "unknown" : topKindOf(row.returns));
@@ -324,14 +341,11 @@ function buildCall(name: string, row: Row, spec: Spec | undefined): unknown {
   const required = (spec?.arguments ?? []).filter((a) => a.optional !== true);
   const shape = row.shape;
   if (shape === "none") return { [name]: {} };
-  if (typeof shape === "object") {
-    const keys = shape.object.required.length > 0 ? shape.object.required : shape.object.optional;
+  if (shape === "object") {
+    // The body's keys and their types come from the vendored spec: every required key,
+    // or every key when the spec requires none.
     const body: Record<string, unknown> = {};
-    for (const k of keys) {
-      const enums = shape.object.enums?.[k];
-      const arg = (spec?.arguments ?? []).find((a) => a.name === k);
-      body[k] = enums !== undefined ? enums[0] : arg !== undefined ? operandFor(arg) : "$int";
-    }
+    for (const a of required.length > 0 ? required : (spec?.arguments ?? [])) body[a.name] = operandFor(a);
     return { [name]: body };
   }
   if (required.length === 0) return { [name]: "$int" };
@@ -449,6 +463,8 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     // invariant is the more dangerous of the two — it makes the type check reject
     // valid code. So each pair decides what its row must say.
     const wrong: string[] = [];
+    const refused: string[] = [];
+    let measured = 0;
     for (const [name, pair] of Object.entries(VARIES_BY_OPERAND)) {
       const row = (NAMES as Record<string, Row>)[name];
       expect(row, `${name} has a varying-operand pair but no row`).toBeDefined();
@@ -456,7 +472,11 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       const b = await kindsOf(pair.b, pair.slot);
       // An operand the server refuses is itself proof the type is constrained,
       // and says nothing about whether the accepted one varies.
-      if (!a.ok || !b.ok) continue;
+      if (!a.ok || !b.ok) {
+        refused.push(`${name}: ${(a as { why?: string }).why ?? ""} ${(b as { why?: string }).why ?? ""}`);
+        continue;
+      }
+      measured++;
       const varies = a.kinds.join("/") !== b.kinds.join("/");
       if (varies && stated(row) !== "unknown") {
         wrong.push(`${name}: answers ${a.kinds.join("/")} and ${b.kinds.join("/")}, but the row says ${stated(row)}`);
@@ -466,6 +486,9 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
       }
     }
     expect(wrong).toEqual([]);
+    // A pair that the server refuses proves nothing, so every pair must reach it.
+    expect(refused).toEqual([]);
+    expect(measured).toBe(Object.keys(VARIES_BY_OPERAND).length);
   });
 
   it("proves or names every `unknown` row", async () => {
@@ -480,56 +503,58 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     expect(unproven).toEqual([]);
   });
 
-  it("takes ONE operand of a list operator exactly where mongod does (HR1, HR3)", async () => {
-    // MEASURED: the server reads a lone operand that is not an array as one operand.
-    // `{ $add: "$x" }` answers `$x`, and `{ $divide: 10 }` is refused ("takes exactly
-    // 2 arguments"). The row's count says which is which. So the compiler must take
-    // the raw document unchanged where the server takes it (HR1), refuse it where the
-    // server refuses it (HR3), and give the call spelling the same answer (HR2).
-    const disagree: string[] = [];
-    const gated: string[] = [];
-    let checked = 0;
-    const compile = (src: string): unknown => {
-      try {
-        return jsmql.expr(src);
-      } catch {
-        return null;
-      }
+  it("gives, for each operator production, the kinds that its row states and no other", async () => {
+    // Each call is the lexeme between two operands, and the compiler lowers it. An operand is
+    // a field, whose kind the compiler cannot prove, or a literal that is not a string. So `+`
+    // takes the `$add` road that its row states. A pair that the compiler or the server
+    // refuses proves nothing. A stated kind that no pair gives is a claim with no measurement.
+    const OPERANDS = [
+      ...["$.int", "$.dbl", "$.lng", "$.dec", "$.date", "$.str", "$.obj", "$.arr", "$.bool", "$.oid", "$.ts"],
+      ...["$.nul", "$.nope", "null", "[1, 2]"],
+    ];
+    const statedKinds = (r: TypeExpr): readonly string[] | null => {
+      if (r === "unknown") return null;
+      if (typeof r === "object" && "oneOf" in r) return (r as { oneOf: readonly TypeExpr[] }).oneOf.map(topKindOf);
+      return [topKindOf(r)];
     };
-    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
-      if (row.kind !== "mongo" || operandShapeOf(name) !== "array" || !row.where?.includes("value")) continue;
-      const raw = { [name]: "$nope" };
-      let refusal: string | null = null;
-      try {
-        await coll.aggregate([{ $addFields: { __v: raw } }]).toArray();
-      } catch (e) {
-        refusal = String((e as Error).message).replace(/\s+/g, " ");
+    type Production = { becomes: unknown; tokens: readonly string[]; returns: TypeExpr };
+    const wrong: string[] = [];
+    let measured = 0;
+    for (const [key, p] of Object.entries(PRODUCTIONS) as [string, Production][]) {
+      if (p.becomes !== "BinaryExpr" && p.becomes !== "UnaryExpr") continue;
+      const kinds = statedKinds(p.returns);
+      // `??`, `&&` and `||` give one of their operands.
+      if (kinds === null) continue;
+      const lexeme = p.tokens[0];
+      const sources =
+        p.becomes === "UnaryExpr"
+          ? OPERANDS.map((a) => `${lexeme} ${a}`)
+          : OPERANDS.flatMap((a) => OPERANDS.map((b) => `${a} ${lexeme} ${b}`));
+      const answers = await Promise.all(
+        sources.map(async (src) => {
+          let expr: unknown;
+          try {
+            expr = jsmql.expr(src);
+          } catch {
+            return [];
+          }
+          const r = await kindsOf(expr, "value");
+          return r.ok ? r.kinds.map((kind) => ({ src, kind })) : [];
+        }),
+      );
+      const given = new Set<string>();
+      for (const { src, kind } of answers.flat()) {
+        given.add(kind);
+        if (!kinds.includes(kind))
+          wrong.push(`${key}: '${src}' gives ${kind}, and the row states ${kinds.join(" or ")}`);
       }
-      if (refusal !== null && environmental(refusal)) {
-        gated.push(name);
-        continue;
-      }
-      checked++;
-      const written = compile(`{ ${name}: "$nope" }`);
-      const called = compile(`${name}($.nope)`);
-      if ((written !== null) !== (refusal === null)) {
-        disagree.push(
-          `${name}: the compiler ${written === null ? "refuses" : "takes"} one operand; mongod ${refusal ?? "takes it"}`,
-        );
-      }
-      if (written !== null && JSON.stringify(written) !== JSON.stringify(raw)) {
-        disagree.push(`${name}: the raw document became ${JSON.stringify(written)}`);
-      }
-      if (JSON.stringify(called) !== JSON.stringify(written)) {
-        disagree.push(
-          `${name}: the call spelling gives ${JSON.stringify(called)}, the raw one ${JSON.stringify(written)}`,
-        );
-      }
+      for (const kind of kinds)
+        if (!given.has(kind)) wrong.push(`${key}: the row states ${kind}, and no pair gives it`);
+      measured++;
     }
-    expect(disagree).toEqual([]);
-    // A check that silently stops comparing is worse than none.
-    expect(checked).toBeGreaterThanOrEqual(30);
-    expect(gated.length, `not on this server: ${gated.join(", ")}`).toBeLessThan(checked / 4);
+    expect(wrong).toEqual([]);
+    // The loop measures each operator production that states a kind. The guard fails at one more.
+    expect(measured).toBeGreaterThanOrEqual(22);
   });
 
   it("counts an array literal as mongod does, whatever its elements hold", async () => {
@@ -549,20 +574,57 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
     expect(disagree).toEqual([]);
   });
 
+  it("answers a value for each operator that states `neverNull`, over missing operands too for `always`", async () => {
+    // The presence proof leaves out an `$ifNull` on the strength of this fact, so a wrong
+    // claim is a wrong answer. `always` reads every field operand as a missing field.
+    const missing = (v: unknown): unknown =>
+      typeof v === "string"
+        ? v.startsWith("$") && !v.startsWith("$$")
+          ? "$__missing"
+          : v
+        : Array.isArray(v)
+          ? v.map(missing)
+          : v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype
+            ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, missing(x)]))
+            : v;
+    const wrong: string[] = [];
+    let measured = 0;
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      if (row.kind !== "mongo" || row.neverNull === undefined) continue;
+      if (row.where?.includes("value") !== true) continue;
+      if (CANNOT_MEASURE[name] !== undefined) {
+        wrong.push(`${name}: states neverNull, and the server cannot measure it`);
+        continue;
+      }
+      const call = BY_HAND[name]?.value ?? buildCall(name, row, specs.get(name));
+      for (const c of row.neverNull === "always" ? [call, missing(call)] : [call]) {
+        const rows = await coll
+          .aggregate([{ $addFields: { __v: c } }, { $project: { t: { $type: "$__v" } } }])
+          .toArray();
+        const empty = rows.filter((r) => r.t === "null" || r.t === "missing");
+        if (empty.length > 0) wrong.push(`${name}: ${JSON.stringify(c)} answered ${empty[0].t}`);
+      }
+      measured++;
+    }
+    expect(wrong).toEqual([]);
+    expect(measured).toBeGreaterThan(0);
+  });
+
   it("cannot measure exactly the operators it says it cannot", async () => {
     // The names in CANNOT_MEASURE are claims about the SERVER. If one starts
     // working, the entry is stale and the row should be measured like the rest.
+    expect(Object.keys(PROBE).sort()).toEqual(Object.keys(CANNOT_MEASURE).sort());
     const nowWorking: string[] = [];
+    let tried = 0;
     for (const [name, reason] of Object.entries(CANNOT_MEASURE)) {
       const row = (NAMES as Record<string, Row>)[name];
       expect(row, `${name} is named unmeasurable but has no row`).toBeDefined();
-      const hand = BY_HAND[name];
-      if (hand === undefined) continue; // no call to try — nothing can start working
-      for (const [slot, expr] of Object.entries(hand) as [Slot, unknown][]) {
-        const r = await kindsOf(expr, slot);
-        if (r.ok) nowWorking.push(`${name} now answers ${r.kinds.join("/")} — drop it (${reason})`);
-      }
+      const { slot, call } = PROBE[name];
+      const r = await kindsOf(call, slot);
+      tried++;
+      if (r.ok) nowWorking.push(`${name} answers ${r.kinds.join("/")}, so the entry is stale — remove it (${reason})`);
     }
+    expect(tried).toBe(Object.keys(CANNOT_MEASURE).length);
     expect(nowWorking).toEqual([]);
   });
 });

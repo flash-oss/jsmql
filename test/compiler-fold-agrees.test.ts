@@ -1,6 +1,7 @@
 // THE proof that constant folding is safe: for every expression the fold can
 // compute, the value it computes equals the value MongoDB computes for the SAME
-// expression left alone.
+// expression left alone: the first constant operand is read from a document, and
+// the tree lowers with no fold, so the server does the arithmetic itself.
 //
 // Nothing else can establish this. A `toEqual` on emitted MQL proves what jsmql
 // writes down, never that the server agrees — and "agrees" is the entire claim a
@@ -13,12 +14,16 @@
 // It skips itself when no mongod is listening, so `npm test` stays green.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoClient } from "mongodb";
-import { jsmql } from "../src/index.ts";
+import type { MongoClient } from "mongodb";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { evaluate } from "../src/compiler/passes/evaluate.ts";
+import { desugar } from "../src/compiler/passes/desugar.ts";
+import { VALUE } from "../src/compiler/passes/position.ts";
+import { Env } from "../src/compiler/emit/env.ts";
+import { lowerValue } from "../src/compiler/emit/lower.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
 import { liveClientNow, liveUp } from "./fixtures/live.ts";
+import { answersSet, inAnyOrder } from "./support/set-answer.ts";
 
 const URI = SCRATCH_URI;
 
@@ -84,6 +89,8 @@ const EXPRESSIONS: readonly string[] = [
   "Object.keys({ a: 1, b: 2 })",
   "Object.values({ a: 1, b: 2 })",
   "Object.entries({ a: 1 })",
+  'Object.entries({ a: 1, b: "x" })',
+  'Object.fromEntries([["a", 1], ["b", 2]])',
   "Object.assign({ a: 1 }, { b: 2 })",
   // string methods
   '"aBc".toUpperCase()',
@@ -168,6 +175,9 @@ const EXPRESSIONS: readonly string[] = [
   "[1, 2, 3, 2].without(2)",
   "[1, 2, 3, 2].without(2, 3)",
   "[1, 2].xor([2, 3])",
+  // a value that one side holds twice: the server gives it once
+  "[3, 1, 3].xor([1])",
+  "[5].xor([2, 2])",
   "[0, 1, '', null, 2, false].compact()",
   "[1, [2, [3]]].flatten()",
   "[1, 2, 3, 4, 5].chunk(2)",
@@ -200,6 +210,9 @@ const EXPRESSIONS: readonly string[] = [
   "[{ n: 1 }, { n: 2 }].differenceBy([{ n: 2 }], o => o.n)",
   "[{ n: 1 }, { n: 2 }].intersectionBy([{ n: 2 }], o => o.n)",
   "[{ n: 1 }].unionBy([{ n: 1 }, { n: 2 }], o => o.n)",
+  // a key that one side holds twice: the server keeps the first element with that key
+  "[{ n: 3, t: 'a' }, { n: 1 }, { n: 3, t: 'b' }].xorBy([{ n: 1 }], o => o.n)",
+  "[{ n: 1 }].xorBy([{ n: 2, t: 'x' }, { n: 2, t: 'y' }], o => o.n)",
   // named conversions and constructors
   'String("a")',
   "String(true)",
@@ -212,8 +225,6 @@ const EXPRESSIONS: readonly string[] = [
   'ObjectId("507f1f77bcf86cd799439011")',
   'new ObjectId("507f1f77bcf86cd799439011")',
   "Date.UTC(2020, 1, 1)",
-  "new Set([1, 2, 2, 3])",
-  "new Set([])",
   // dates: UTC, and MongoDB's own numbering
   'new Date("2020-03-05T20:30:40.123Z").getFullYear()',
   'new Date("2020-03-05T20:30:40.123Z").getMonth()',
@@ -249,6 +260,8 @@ const EXPRESSIONS: readonly string[] = [
   "({ a: 'x', b: 'y' }).invert()",
   "({ a: 1, b: 2 }).toPairs()",
   "({ a: 1, b: 2 }).pickBy(v => v > 1)",
+  "({ a: '', b: 1, c: 0, d: null, e: 'x' }).pickBy(v => v)",
+  "({ a: '', b: 1, c: 0, d: null, e: 'x' }).omitBy(v => v)",
   "({ a: 1, b: 2 }).mapKeys((v, k) => k + '!')",
   // the strings `$toString` writes as JavaScript does
   "String(42)",
@@ -332,26 +345,81 @@ const EXPRESSIONS: readonly string[] = [
   'new Date("2026-09-16T13:45:30.123Z").set({ year: 9999, month: 13 })',
 ];
 
+/** A tree node, read without its variant type: the rewrite below walks any shape. */
+type Node = { type: string; pos: number } & Record<string, unknown>;
+const isNode = (v: unknown): v is Node =>
+  typeof v === "object" && v !== null && typeof (v as { type?: unknown }).type === "string";
+
+/** The value lowering the compiler runs after its fold. */
+function lowerTree(tree: Node): unknown {
+  const program = desugar(tree as Parameters<typeof desugar>[0], VALUE);
+  return lowerValue(program as Parameters<typeof lowerValue>[0], Env.root(program, "value"));
+}
+
+/** Does the MQL read a field of the seeded document? */
+const readsSeed = (mql: unknown): boolean => JSON.stringify(mql).includes('"$f0');
+
+/**
+ * The expression with its first constant operand moved into a document.
+ *
+ * The compiler folds a constant expression before it lowers it, so `jsmql.expr("1 + 2")`
+ * sends `3` and the server computes nothing. Here the first constant operand of the top
+ * node (a receiver, a left operand, a first argument, a first entry) becomes a field of
+ * a seeded document, and the tree lowers with no fold. The server then computes the SAME
+ * operation on the SAME value. The other operands stay written, because an argument read
+ * from a field can take a different lowering (a computed index, an options document).
+ */
+function unfolded(src: string): { mql: unknown; doc: Record<string, unknown> } {
+  const root = parseExpression(src) as unknown as Node;
+  const slots: [Record<string | number, unknown>, string | number][] = [];
+  const add = (holder: Record<string | number, unknown>, key: string | number): void => {
+    const v = holder[key] as Node;
+    // an entry of an object or an array literal holds its operand one level down
+    if (v.type === "KeyValueEntry") slots.push([v, "value"]);
+    else if (v.type === "SpreadElement") slots.push([v, "argument"]);
+    else slots.push([holder, key]);
+  };
+  for (const [key, value] of Object.entries(root)) {
+    if (isNode(value)) add(root, key);
+    else if (Array.isArray(value)) {
+      const list = value as unknown as Record<number, unknown>;
+      value.forEach((x, i) => isNode(x) && add(list, i));
+    }
+  }
+  for (const [holder, key] of slots) {
+    const child = holder[key] as Node;
+    const settled = evaluate(child as Parameters<typeof evaluate>[0], new Map());
+    if (!settled.ok) continue;
+    holder[key] = { type: "FieldRef", path: "f0", pos: child.pos };
+    try {
+      return { mql: lowerTree(root), doc: { f0: settled.value } };
+    } catch {
+      holder[key] = child; // this slot takes a constant only
+    }
+  }
+  return { mql: lowerTree(root), doc: {} };
+}
+
+/**
+ * The expressions whose top node has no operand to seed. The server receives their
+ * constant, so they prove nothing here; the list keeps that set explicit.
+ */
+const NO_OPERAND: readonly string[] = ["Math.PI", "Math.E"];
+
 describe.skipIf(!up)("compiler/passes/fold — the value it computes is the value the server computes", () => {
   let client: MongoClient;
-  let run: (src: string) => Promise<unknown>;
+  let run: (mql: unknown, doc: Record<string, unknown>) => Promise<unknown>;
 
   beforeAll(async () => {
     client = await liveClientNow();
-    const coll = client.db("jsmql_fold_agrees").collection("probe");
-    await coll.deleteMany({});
-    await coll.insertOne({ _id: 1 });
-    run = async (src: string): Promise<unknown> => {
-      const out = await coll.aggregate([{ $addFields: { v: jsmql.expr(src) } }]).toArray();
+    const db = client.db("jsmql_fold_agrees");
+    run = async (mql, doc) => {
+      const out = await db.aggregate([{ $documents: [doc] }, { $addFields: { v: mql } }]).toArray();
       return out[0].v;
     };
   }, 20_000);
 
   afterAll(async () => {
-    await client
-      ?.db("jsmql_fold_agrees")
-      .dropDatabase()
-      .catch(() => {});
     await client?.close().catch(() => {});
   });
 
@@ -364,16 +432,29 @@ describe.skipIf(!up)("compiler/passes/fold — the value it computes is the valu
     expect(refused).toEqual([]);
   });
 
+  it("sends the server an operation on document fields, never the folded constant", () => {
+    const constant = EXPRESSIONS.filter((src) => !readsSeed(unfolded(src).mql));
+    expect(constant).toEqual(NO_OPERAND);
+  });
+
   it("agrees with the server on every one of them", async () => {
     const disagree: string[] = [];
     for (const src of EXPRESSIONS) {
       const folded = evaluate(parseExpression(src), new Map());
       if (!folded.ok) continue;
-      const server = await run(src);
+      const { mql, doc } = unfolded(src);
+      let server: unknown;
+      try {
+        server = await run(mql, doc);
+      } catch (e) {
+        disagree.push(`${src}  fold=${JSON.stringify(folded.value)}  server refused: ${(e as Error).message}`);
+        continue;
+      }
       // A Date compares by the instant it names; the driver hands back its own.
       const mine = folded.value instanceof Date ? folded.value.toISOString() : folded.value;
       const theirs = server instanceof Date ? server.toISOString() : server;
-      if (JSON.stringify(mine) !== JSON.stringify(theirs)) {
+      const [left, right] = answersSet(mql) ? [inAnyOrder(mine), inAnyOrder(theirs)] : [mine, theirs];
+      if (JSON.stringify(left) !== JSON.stringify(right)) {
         disagree.push(`${src}  fold=${JSON.stringify(mine)}  server=${JSON.stringify(theirs)}`);
       }
     }

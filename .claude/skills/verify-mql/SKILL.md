@@ -6,7 +6,7 @@ description: >-
   output in a test, (b) add or change an operator, stage, method alias, or a
   stage-lowering, or (c) claim a shape is valid — and whenever there is the
   slightest doubt that an emitted document would run. This enforces language rule
-  HR3 (jsmql never knowingly emits invalid MQL): a green `toEqual` proves only
+  HR3 (jsmql never knowingly emits invalid MQL from JSMQL code): a green `toEqual` proves only
   what jsmql *emits*, never that mongod *accepts* it. Runs the MQL through
   `test/probe` (or the MongoDB MCP) against the project's own mongod on :27018 —
   never MongoDB's default port, which is the developer's own instance. Trigger even when the
@@ -19,7 +19,9 @@ description: >-
 
 JSMQL's whole pitch is that it produces *runnable* MQL. HR3 (see
 [docs/LANG_RULES.md](docs/LANG_RULES.md)) says JSMQL never *knowingly* emits
-invalid MQL. The only way to *know* a shape is valid is to run it on a real
+invalid MQL from JSMQL code. The developer's own MQL — a `$op(…)` call, a
+`$stage(…)` call, a raw MQL document — passes through unchecked, and the server
+judges it. The only way to *know* a shape is valid is to run it on a real
 server. A passing `toEqual(...)` in a test proves only that JSMQL emitted a
 given document. It says nothing about whether MongoDB would accept it. Many real
 bugs — the `$arrayToObject` double-array bug and the constant-only-slot

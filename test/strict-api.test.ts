@@ -45,8 +45,17 @@ describe("jsmql.filter() — strict Filter shape", () => {
     );
     expect(() => jsmql.filter("{ $match: $.x > 0 }")).toThrow(/top-level '\$match' stage call/);
   });
-  it("refuses an array-literal Pipeline", () => {
-    expect(() => jsmql.filter("[{ $match: $.x > 0 }]")).toThrow(/Pipeline array/);
+  it("reads a stage on a value as a value, so each entry names the stage's value twin", () => {
+    // `$.items.$sort(…)` is no top-level stage call: a stage runs on a stream.
+    const onValue = /^'\.\$sort\(\)' is a pipeline stage, and a stage runs on a stream, not on a value\./;
+    for (const entry of [jsmql, jsmql.filter, jsmql.expr, jsmql.pipeline]) {
+      expect(() => entry("$.items.$sort({ a: 1 })")).toThrow(onValue);
+    }
+    expect(jsmql.validate("$.items.$sort({ a: 1 })").errors[0]).toMatchObject({ pos: 7 });
+  });
+  it("refuses a bracketed list, which is a Pipeline", () => {
+    expect(() => jsmql.filter("[{ $match: $.x > 0 }]")).toThrow(/a bracketed list, which is a Pipeline/);
+    expect(() => jsmql.filter("[1, 2]")).toThrow(/a bracketed list, which is a Pipeline/);
   });
   it("rejects non-string / non-function / non-template inputs by name", () => {
     expect(() => (jsmql.filter as (n: unknown) => unknown)(42)).toThrow(
@@ -73,6 +82,17 @@ describe("jsmql.pipeline() — strict Pipeline shape", () => {
       { $match: { x: { $gt: 0 } } },
       { $sort: { x: 1 } },
     ]);
+  });
+  it("reads every bracketed literal as a pipeline, in each entry but the expression entry", () => {
+    // `[]` is the empty pipeline that you wrote (HR1); mongod runs `aggregate([])`.
+    expect(jsmql.pipeline("[]")).toEqual([]);
+    expect(jsmql("[]")).toEqual([]);
+    // An element that is not a stage is refused by the lowering, not taken as an array value.
+    expect(() => jsmql("[1, 2, 3]")).toThrow(/A pipeline statement writes something/);
+    // The expression entry reads a list as an array value, and refuses a stage list.
+    expect(jsmql.expr("[1, 2]")).toEqual([1, 2]);
+    expect(jsmql.expr("[]")).toEqual([]);
+    expect(() => jsmql.expr("[$match($.a > 1)]")).toThrow(/a bracketed list, which is a Pipeline/);
   });
   it("accepts the template-tag form with an interpolated value", () => {
     const cutoff = 100;
@@ -115,9 +135,16 @@ describe("jsmql.update() — the update document", () => {
   it("refuses a bare predicate", () => {
     expect(() => jsmql.update("$.age > 18")).toThrow(/An update document is made of writes/);
   });
-  it("refuses a fragment or a stage where an update operator belongs", () => {
-    expect(() => jsmql.update("$set({ x: 1 }); $sort({ x: 1 })")).toThrow(/'\$sort' is a fragment of '\$push'/);
-    expect(() => jsmql.update("$match($.x > 0)")).toThrow(/not valid in an update document/);
+  it("passes a fragment or a stage that you call through, and refuses what the compiler merges", () => {
+    // DELIBERATELY invalid: each call is your own MQL. mongod says "Unknown modifier: $sort. …"
+    expect(jsmql.update("$sort({ x: 1 })")).toEqual({ $sort: { x: 1 } });
+    expect(jsmql.update("$match({ x: 1 })")).toEqual({ $match: { x: 1 } });
+    // The compiler merges the statements into one document, so it refuses a field written twice.
+    expect(() => jsmql.update("$set({ x: 1 }); $sort({ x: 1 })")).toThrow(
+      "'x' is written twice in one update ('$set' and '$sort'). The server refuses this as a conflict. Write each field once.",
+    );
+    // `$.x > 0` is JSMQL code, and a document-form update takes constants only.
+    expect(() => jsmql.update("$match($.x > 0)")).toThrow(/^'>' is computed on the server/);
   });
   it("accepts the template-tag and arrow forms", () => {
     const bump = 5;
@@ -167,6 +194,8 @@ describe("strict-shape `.compile` builders", () => {
     expect(() => jsmql.pipeline.compile(42 as never)).toThrow(/jsmql\.pipeline\.compile\(\) expects an arrow function/);
   });
   it("a string that is not the entry form is refused", () => {
-    expect(() => jsmql.compile("$.age > 18")).toThrow(/takes the entry form/);
+    expect(() => jsmql.compile("$.age > 18")).toThrow(
+      "The source at position 0 is not the entry form '(params, { $, … }) => …' that jsmql.compile() takes: an arrow whose first destructure names the parameters.",
+    );
   });
 });

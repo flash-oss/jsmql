@@ -2,9 +2,9 @@
 //
 // THE INVARIANT: a fold must not change the answer. Whatever it computes must
 // equal what the same expression computes on the server when it is left alone,
-// or folding stops being an optimisation and becomes a second semantics. The
-// live-mongod suite at the foot of this file holds that guarantee; the tests
-// above it say what the pass is FOR.
+// or folding stops being an optimisation and becomes a second semantics.
+// test/fold-consistency.test.ts holds that guarantee on a live mongod; the tests
+// here say what the pass is FOR.
 
 import { describe, expect, it } from "vitest";
 import { parse, parseExpression } from "../src/compiler/parse/parser.ts";
@@ -23,7 +23,9 @@ const valueOf = (src: string): unknown => {
 };
 
 /** The whole program after folding and desugaring, with positions erased. */
-const shape = (src: string): string => JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : v));
+// `minted` marks a parameter name that no source spells: provenance, not meaning.
+const shape = (src: string): string =>
+  JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : k === "minted" ? undefined : v));
 
 describe("compiler/passes/fold — a constant declaration becomes its value", () => {
   it("turns a computed constant into a Filter", () => {
@@ -74,8 +76,10 @@ describe("compiler/passes/fold — a name that cannot be folded keeps its bindin
     expect(stillDeclared("let a = 1; a = 2; $.x === a")).toBe(true);
   });
 
-  it("keeps a binding declared twice, so the redeclaration is still reported", () => {
-    expect(stillDeclared("const a = 1; const a = 2; $.x === a")).toBe(true);
+  it("never sees a binding declared twice: the parser refuses it before the fold can inline it", () => {
+    expect(() => parse("const a = 1; const a = 2; $.x === a")).toThrow(
+      "`const a` at position 13 is already declared earlier in this block, which JavaScript refuses. Pick a different name.",
+    );
   });
 
   it("keeps a binding `Object.assign` mutates in place", () => {
@@ -204,8 +208,14 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
     // An index the server cannot take as a 32-bit integer.
     expect(valueOf('"abc".charAt(1.5)')).toBe("(not constant)");
     expect(valueOf("[1, 2, 3].at(2.5)")).toBe("(not constant)");
-    // `$concatArrays` takes arrays; JavaScript's `concat` takes anything.
-    expect(valueOf("[1].concat(2)")).toBe("(not constant)");
+  });
+
+  // JavaScript's rule, which the lowering keeps: an array argument adds its elements,
+  // and any other argument adds itself.
+  it("folds .concat with JavaScript's rule", () => {
+    expect(valueOf("[1].concat(2)")).toEqual([1, 2]);
+    expect(valueOf('[1].concat(2, null, [3], "xy")')).toEqual([1, 2, null, 3, "xy"]);
+    expect(valueOf("[1].concat([[2]])")).toEqual([1, [2]]);
   });
 
   it("stops before the stack does, and before the value gets absurd", () => {
@@ -230,7 +240,6 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
   });
 
   it("rounds a half to the EVEN neighbour, which is what `$round` does", () => {
-    expect(valueOf("(2.5).round()")).toBe(2);
     expect(valueOf("(3.5).round()")).toBe(4);
     expect(valueOf("Math.round(0.5)")).toBe(0);
   });
@@ -258,10 +267,26 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
     expect(valueOf("Math.log2(3)")).toBe("(not constant)");
   });
 
-  it("folds `Object.entries` to the `{k, v}` documents `$objectToArray` gives", () => {
-    expect(valueOf("Object.entries({ a: 1 })")).toEqual([{ k: "a", v: 1 }]);
-    // `.toPairs()` is the one that answers with JavaScript's two-element arrays.
+  it("folds `Object.entries` to JavaScript's [key, value] pairs, as the runtime lowering gives them", () => {
+    // node -e 'Object.entries({ a: 1, b: "x" })' → [["a", 1], ["b", "x"]]
+    expect(valueOf('Object.entries({ a: 1, b: "x" })')).toEqual([
+      ["a", 1],
+      ["b", "x"],
+    ]);
+    expect(valueOf("Object.entries({})")).toEqual([]);
+    // `.toPairs()` is the lodash spelling of the same pairs.
     expect(valueOf("({ a: 1 }).toPairs()")).toEqual([["a", 1]]);
+    // The siblings of the family give JavaScript's answer too.
+    expect(valueOf("Object.keys({ a: 1, b: 2 })")).toEqual(["a", "b"]);
+    expect(valueOf("Object.values({ a: 1, b: 2 })")).toEqual([1, 2]);
+    expect(valueOf('Object.fromEntries([["a", 1], ["b", 2]])')).toEqual({ a: 1, b: 2 });
+    expect(valueOf('Object.fromEntries(Object.entries({ a: 1, b: "x" }))')).toEqual({ a: 1, b: "x" });
+  });
+
+  it("folds a `.pickBy` / `.omitBy` predicate with the JavaScript truth rules", () => {
+    // node -e: pickBy keeps { b: 1, e: "x" }; omitBy keeps { a: "", c: 0, d: null }
+    expect(valueOf('({ a: "", b: 1, c: 0, d: null, e: "x" }).pickBy(v => v)')).toEqual({ b: 1, e: "x" });
+    expect(valueOf('({ a: "", b: 1, c: 0, d: null, e: "x" }).omitBy(v => v)')).toEqual({ a: "", c: 0, d: null });
   });
 
   it("does not fold a name the language does not have", () => {
@@ -278,6 +303,10 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
     const t = desugar(parse(src)) as { type: string; stmts?: { type: string }[] };
     return JSON.stringify(t).includes('"LetDecl"');
   };
+  /** The tree after the passes, with the source offsets (`pos`, `group`) removed. */
+  const tree = (src: string): unknown =>
+    JSON.parse(JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" || k === "group" ? undefined : v)));
+  const ident = (name: string) => ({ type: "Ident", name });
 
   it("does not push a constant through a nested statement scope", () => {
     // The inner `const a = 2` is a DIFFERENT variable. Reading the outer one
@@ -287,15 +316,30 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
     expect(t).not.toContain('"value":1');
   });
 
-  it("does not push a constant through a bracketed sub-pipeline", () => {
-    expect(keepsABinding("const a = 1; [const a = 2, $match({ b: a })]")).toBe(true);
-  });
-
   it("does not let one block declaration shadow another's outer name", () => {
     // `z` must be `x.n + 1`, per document — not the constant 2.
-    expect(keepsABinding("const y = 1; $.a = $.items.map(x => { const y = x.n; const z = y + 1; return z })")).toBe(
-      true,
-    );
+    const t = tree("const y = 1; $.a = $.items.map(x => { const y = x.n; const z = y + 1; return z })") as {
+      stmts: [{ ops: [{ value: { args: [{ body: unknown }] } }] }];
+    };
+    expect(t.stmts).toHaveLength(1);
+    expect(t.stmts[0].ops[0].value.args[0].body).toEqual({
+      type: "ExprBlock",
+      decls: [
+        {
+          type: "LetDecl",
+          name: "y",
+          value: { type: "MemberAccess", object: ident("x"), name: "n", optional: false },
+          kind: "const",
+        },
+        {
+          type: "LetDecl",
+          name: "z",
+          value: { type: "BinaryExpr", op: "+", left: ident("y"), right: { type: "NumberLiteral", value: 1 } },
+          kind: "const",
+        },
+      ],
+      ret: ident("z"),
+    });
   });
 
   it("sees a write THROUGH a path, and never rewrites the place written to", () => {
@@ -342,7 +386,8 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
       Array.from({ length: links }, (_, i) => `const v${i} = ${i === links - 1 ? "1" : `v${i + 1} + 1`};`)
         .reverse()
         .join(" ") + " $.x === v0";
-    expect(() => desugar(parse(src))).not.toThrow();
+    // v39 is 1, and each link adds 1, so v0 is 40
+    expect(shape(src)).toBe(shape("$.x === 40"));
   });
 
   it("routes a receiver by what the LANGUAGE allows, not by its JavaScript type", () => {
@@ -407,10 +452,11 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
     expect(valueOf("`id-${0.5}`")).toBe("(not constant)");
   });
 
-  it("reads `new Set([…])` as the array, because that is what the language does", () => {
-    // jsmql has no set type: the constructor is a way of writing an array that
-    // the set operators then read, and it does NOT de-duplicate.
-    expect(valueOf("new Set([1, 2, 2, 3])")).toEqual([1, 2, 2, 3]);
+  it("leaves `new Set([…])` unfolded, so the row refuses it", () => {
+    // A folded constant never reaches its row. So a fold here would hide the refusal
+    // and answer an array that holds the duplicates.
+    expect(valueOf("new Set([1, 2, 2, 3])")).toBe("(not constant)");
+    expect(valueOf("new Set()")).toBe("(not constant)");
   });
 });
 

@@ -192,6 +192,14 @@ spliced into the body mention. See `freshParam`.
 
 ## The driver
 
+Before the first round, one walk refuses a write that stands in a value: a write
+or a `delete` as an element of an array that is a value (`$.y = [$.x++]`), and a
+function there. The parser reads such an element as a pipeline element, because
+only the position pass knows which arrays are pipelines. The walk runs before
+any rule rewrites the write, so the refusal quotes the write as the source
+spells it. It is the refusal the parser gives `$.y = $.x++`. See
+[update-filter.md § Error message conventions](update-filter.md#error-message-conventions).
+
 The rules run in order, then the fold runs, and the whole round repeats until a
 round changes nothing. Identity is the test, because `mapTree` returns the same
 object when no rule fires.
@@ -230,7 +238,19 @@ JavaScript computes where the two differ. That is why a month added to 31
 January gives the last day of February (`$dateAdd` clamps). That is why
 `.startOf("week")` gives the Sunday (`$dateTrunc`'s default). That is why
 `.diff` counts the boundaries crossed (`$dateDiff`). That is why
-`Math.round(0.5)` gives 0.
+`Math.round(0.5)` gives 0. The server's answer is the answer of JSMQL's own
+lowering, not of the nearest raw operator. So `Object.entries({ a: 1 })` folds
+to `[["a", 1]]`, which its `$map` over `$objectToArray` gives. Only a raw
+`$objectToArray(…)` gives `{ k, v }` documents.
+
+**A set answer has no order.** A set operator such as `$setUnion` gives each
+value once, in an order that MongoDB does not specify (see
+[LANGUAGE.md § Set operations on arrays](../LANGUAGE.md#set-operations-on-arrays)).
+So the fold of a set method, for example `.xor()`, gives each value once, at the
+position where the value first occurs. The same input always gives the same
+order. That order is not part of the answer.
+[`test/compiler-fold-agrees.test.ts`](../../test/compiler-fold-agrees.test.ts)
+compares the fold with the server by the values of a set answer, not by their order.
 
 The pass leaves a form to the server when it cannot reproduce the answer with
 certainty: a date method with a timezone or another option (a named zone

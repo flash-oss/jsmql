@@ -25,7 +25,7 @@ import { Capture, Scope, scratchSlot } from "./names.ts";
 import { DOCUMENT, at, present, removed, written } from "./type.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
-import { pipelineOverOf, preservesCountOf } from "../rows.ts";
+import { pipelineOverOf, preservesCountOf, statementBodyOf } from "../rows.ts";
 import { noCorrelationSlot, readInUpdateDocument, readsEnclosingVariable } from "./errors.ts";
 
 /**
@@ -61,26 +61,43 @@ export type Site = {
   readonly envelope: "none" | "$literal";
   /** The sub-pipeline boundaries crossed to reach here, outermost first. */
   readonly boundaries: readonly Boundary[];
-  /** The operator whose ARGUMENT this is — what a fragment like `$case` or `$box` is only valid inside of — or null. */
+  /**
+   * The operator whose ARGUMENT this is — what a fragment like `$case` or `$box` is
+   * only valid inside of — or null. It stays set through a document, a list and a
+   * value under a `$` key, which are MQL structure. Any JavaScript node resets it,
+   * because that node lowers to MQL of its own. A regex literal reads it: set, the
+   * literal is in the developer's own MQL (HR1).
+   */
   readonly inside: string | null;
 };
 
 /**
- * HR1's one gate. Take a string injected at runtime — a `jsmql.compile`
- * parameter, or a template `${…}` — that starts with `$`. The compiler wraps
- * it in `$literal` exactly where the server would otherwise read it as a field
- * reference: in a VALUE slot the server evaluates — an expression, a stage
- * body, a `$set` value — outside a `$literal` the developer already wrote. Two
- * places evaluate nothing and take the string as written: a query slot, and an
- * update DOCUMENT (`{ $set: { x: "$b" } }` stores the string "$b"; measured).
+ * HR1's one gate, for a value that arrives at run time — a `jsmql.compile`
+ * parameter, or a template `${…}` — and reads as MQL: a string that starts with
+ * `$`, or a document with a `$` key. Such a value is a value, never MQL, so it
+ * may stand in three places only:
+ *
+ *   "literal"    a slot that the server EVALUATES as an expression, outside a
+ *                `$literal` the developer already wrote. The value goes in
+ *                `$literal`, so the server cannot read it as a field or an operator.
+ *   "asWritten"  a place that evaluates nothing: inside the developer's own
+ *                `$literal`, a query slot (the query language compares the value
+ *                as written), and an update DOCUMENT (`{ $set: { x: "$b" } }`
+ *                stores the string "$b"; measured).
+ *   "refused"    every other slot: one that the server reads as written (a stage
+ *                option, a name, a path), an accumulator, a window function, a
+ *                statement. There the value becomes part of the MQL.
  *
  *   jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })         → { $add: ["$a", { $literal: "$b" }] }
  *   jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" }) → [{ $set: { x: { $literal: "$b" } } }]
- *   jsmql.compile(({ s }, { $ }) => $.a === s)({ s: "$b" })            → { a: { $eq: "$b", $not: { $type: "array" } } }
  *   jsmql.update.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })   → { $set: { x: "$b" } }
+ *   jsmql.pipeline.compile(({ p }, { $ }) => { $unwind(p); })({ p: "$items" })   → refused
  */
-export const injectedNeedsLiteral = (site: Site): boolean =>
-  site.where.at === "value" && site.root !== "updateDoc" && site.envelope === "none";
+export function injectedPlacement(site: Site): "literal" | "asWritten" | "refused" {
+  if (site.envelope === "$literal" || site.root === "updateDoc" || site.where.at === "filter") return "asWritten";
+  if (site.where.at === "value" && site.where.written === undefined) return "literal";
+  return "refused";
+}
 
 /**
  * The (sub-)pipeline under assembly. Held by reference on purpose: two
@@ -107,9 +124,10 @@ export class Chain {
   /**
    * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
    * rather than emitting it, so nothing can land after it, and the cleanup
-   * always precedes it.
+   * always precedes it. `spelled` is how the source wrote it — `$out`, or the
+   * sugar `$$$.<coll> = …` — so a message names what the developer wrote.
    */
-  terminal: Stage | null = null;
+  terminal: { readonly stage: Stage; readonly spelled: string } | null = null;
   /**
    * Where the stream's ELEMENT lives on its documents: `""` when the element IS
    * the document, or the unwound field's path after `.flatMap("items")` — a
@@ -232,7 +250,7 @@ export class Chain {
     this.flush();
     const out = [...this.emitted];
     if (this.dirty) out.push({ $unset: JSMQL_NS });
-    if (this.terminal !== null) out.push(this.terminal);
+    if (this.terminal !== null) out.push(this.terminal.stage);
     return out;
   }
 }
@@ -329,8 +347,8 @@ export class Env {
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }
-    if (this.site.root === "updateDoc") throw readInUpdateDocument(pos);
     const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
+    if (this.site.root === "updateDoc") throw readInUpdateDocument(value, pos);
     if (loc.level === this.level) return value;
     // The boundary whose `let` evaluates against level-`loc.level` documents.
     const boundary = this.foreign()[loc.level];
@@ -358,11 +376,6 @@ export class Env {
     return new Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
   }
 
-  /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
-  block(): Env {
-    return new Env(this.scope.block(), this.site, this.chain, this.documents);
-  }
-
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js: string, type: Type, pos: number): Bound {
     return this.bound(this.scope.param(js, type, pos, this.level));
@@ -376,6 +389,15 @@ export class Env {
   /** Move to where phase 4 says a child stands. */
   at(where: Where): Env {
     return new Env(this.scope, { ...this.site, where }, this.chain, this.documents);
+  }
+
+  /**
+   * The same bindings and proofs, back where `parent` stands. A statement lowers
+   * its values under a child's Env, and the next statement stands where this one
+   * stood.
+   */
+  backAt(parent: Env): Env {
+    return new Env(this.scope, parent.site, this.chain, this.documents);
   }
 
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
@@ -400,7 +422,12 @@ export class Env {
     return new Env(this.scope, site, this.chain, this.documents);
   }
 
-  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. A body over another collection starts a document level of its own. */
+  /**
+   * Into a sub-pipeline: a new chain, the boundary recorded, statement position. A
+   * body over another collection starts a document level of its own. A pipeline
+   * body over the SAME documents (a `$facet` branch) gets each scratch field that
+   * the outer chain left on them. So the cleanup of the body owes those fields too.
+   */
   enter(boundary: Boundary, chain: Chain): Env {
     const site: Site = {
       ...this.site,
@@ -408,6 +435,7 @@ export class Env {
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }],
     };
     const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
+    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain.dirty ||= this.chain.dirty;
     return new Env(this.scope, site, chain, documents);
   }
 

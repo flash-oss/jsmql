@@ -7,8 +7,9 @@
 //
 // `precedence` goes from 1 (loosest, `conditional`) to 14 (tightest, postfix). It
 // follows the order of the 14 cascade methods of the parser. It is absent on a row
-// that is not an operator. `++` and `--` are statement-level and appear nowhere in
-// that cascade, so a number for them has no source.
+// that is not an operator. `++` and `--` sit at 14, because JavaScript binds a
+// postfix `++` tighter than every prefix and binary operator: `-$.x++` is
+// `-($.x++)`, and `1 + $.x++` is `1 + ($.x++)`.
 //
 // `becomes` holds a LIST where one rule builds more than one node (`namespacedCall`
 // covers seven). It holds `{ notANode: … }` where a rule makes something that the
@@ -113,6 +114,14 @@ export type ProductionSpec<
    * does not cover `delete`, because `delete a?.b` is legal.
    */
   neverAWriteTarget?: { instead: string };
+  /**
+   * The rule builds a write that JavaScript also reads as a VALUE: `$.y = $.x++`.
+   * A write stands only as a statement, so the parser refuses the value reading.
+   * The refusal names this compound write as the statement to write instead:
+   * `$.x += 1;`. A postfix spelling gives the value from before the write, so the
+   * refusal places the statement after the read. A prefix spelling places it before.
+   */
+  asStatement?: string;
   filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, FilterOut<Lists<W, "value">>, C>;
   expr: Cell<Lists<W, "value">, Of<O>, ExprIn, OutOf["value"], C>;
   /** A link in a `$$ = $$…` chain. */
@@ -406,7 +415,8 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitOr` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitOr: args.map(value) }) },
@@ -424,7 +434,8 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitXor` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitXor: args.map(value) }) },
@@ -442,7 +453,8 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitAnd` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitAnd: args.map(value) }) },
@@ -631,7 +643,10 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // This row states the `$add` road. A string operand makes it `$concat`, which
+    // src/compiler/emit/prove.ts proves a string. MEASURED: `$add` over each pair of
+    // operand kinds gives a number, a date, null or an error.
+    returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: inCode("src/compiler/emit/lower.ts"),
@@ -648,7 +663,9 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$subtract` over each pair of operand kinds gives a number, a date, null or
+    // an error. A date minus a date is a long, and a date minus a number is a date.
+    returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -669,7 +686,8 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$multiply` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $multiply: args.map(value) }) },
@@ -686,7 +704,8 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$divide` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -706,7 +725,8 @@ export const PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$mod` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: {
@@ -727,7 +747,8 @@ export const PRODUCTIONS = {
     fixity: "infix",
     leftOperandNot: ["logicalNot", "bitwiseNot", "typeCheck", "negation"],
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$pow` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -764,7 +785,8 @@ export const PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `{ $multiply: [x, -1] }` over each operand kind gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $multiply: [value(args[0]), -1] }) },
@@ -781,7 +803,8 @@ export const PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$bitNot` over each operand kind gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $bitNot: value(args[0]) }) },
@@ -943,7 +966,7 @@ export const PRODUCTIONS = {
   }),
 
   constructorCall: production({
-    doc: "`new Date(…)`, `new Set(…)`, `new ObjectId(…)`. What each constructor means is in names.ts.",
+    doc: "`new Date(…)`, `new ObjectId(…)`, `new Decimal128(…)`. What each constructor means is in names.ts.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
     // One node for every `new X(…)`. names.ts says which constructor it is.
@@ -1340,7 +1363,7 @@ export const PRODUCTIONS = {
   }),
 
   constantBinding: production({
-    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration.",
+    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration. A statement, never an array element: JavaScript refuses `[const x = …]`. One scope declares a name once, its function's parameters included.",
     tokens: ["const", "=", "identifier", ","],
     spelling: "const x = …",
     becomes: "LetDecl",
@@ -1354,7 +1377,7 @@ export const PRODUCTIONS = {
   }),
 
   mutableBinding: production({
-    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration.",
+    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration. A statement, never an array element: JavaScript refuses `[let x = …]`. One scope declares a name once, its function's parameters included.",
     tokens: ["let", "=", "identifier", ","],
     spelling: "let x = …",
     becomes: "LetDecl",
@@ -1397,7 +1420,7 @@ export const PRODUCTIONS = {
   }),
 
   fieldAssignment: production({
-    doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node.",
+    doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node. A `,` joins two writes; it cannot end the run, because JavaScript refuses `$.a = 1,`.",
     tokens: ["=", "+=", "-=", "*=", "/=", ",", "(", ")"],
     spelling: "$.field = …",
     becomes: ["AssignExpr", "UpdateFilter"],
@@ -1411,11 +1434,13 @@ export const PRODUCTIONS = {
   }),
 
   increment: production({
-    doc: "Adds one to a field. `++$.a` and `$.a++` are the same.",
+    doc: "Adds one to a field. As a statement, `++$.a` and `$.a++` are the same write. Inside a value, the parser refuses both.",
     tokens: ["++"],
     spelling: "++",
     becomes: ["AssignExpr", "UpdateFilter"],
+    precedence: 14,
     fixity: "prefixOrPostfix",
+    asStatement: "+= 1",
     on: "any",
     returns: "unknown",
     where: ["statement"],
@@ -1426,11 +1451,13 @@ export const PRODUCTIONS = {
   }),
 
   decrement: production({
-    doc: "Subtracts one from a field. `--$.a` and `$.a--` are the same.",
+    doc: "Subtracts one from a field. As a statement, `--$.a` and `$.a--` are the same write. Inside a value, the parser refuses both.",
     tokens: ["--"],
     spelling: "--",
     becomes: ["AssignExpr", "UpdateFilter"],
+    precedence: 14,
     fixity: "prefixOrPostfix",
+    asStatement: "-= 1",
     on: "any",
     returns: "unknown",
     where: ["statement"],

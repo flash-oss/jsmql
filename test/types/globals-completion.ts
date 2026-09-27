@@ -54,6 +54,17 @@ const _staged = $$.filter((d) => d.active)
 void _staged;
 $$.$sort({ score: -1 }).$out("archive");
 
+// ── A `$` call never errors ──────────────────────────────────────────────────
+// A `$op(…)` or `$stage(…)` call is your own MQL (HR2), so the compiler takes it with
+// any arguments, and each name carries a catch-all overload after its documented
+// signatures. The positional form of an object-form operator, a string stage body,
+// and a count that the server refuses all type-check.
+declare const input: any;
+$trim(input, " ");
+$trim({ input, chars: " " });
+$unwind("$items");
+$size(1, 2);
+
 // The document root is NOT an ambient global — it reaches the body through the
 // arrow's toolbox destructure (`({ $ }) => …`), typed `any` there. Stand in for
 // that here so the correlated forms below read the way real source does.
@@ -105,6 +116,13 @@ const _histogram: Record<string, number> = nums.countBy();
 const _byValue: Record<string, number[]> = nums.groupBy();
 const _keyed: Record<string, number> = nums.keyBy();
 void [_sum, _chunks, _first, _byParity, _topNums, _histogram, _byValue, _keyed];
+// The set operations are array methods: an array of values, or a boolean for a relation.
+declare const more: number[];
+const _union: number[] = nums.union(more);
+const _common: number[] = nums.intersection(more).difference([0]);
+const _related: boolean = nums.isSubsetOf(more) && nums.isSupersetOf(more) && nums.isDisjointFrom(more);
+const _oneSide: number[] = nums.symmetricDifference(more).xor(more);
+void [_union, _common, _related, _oneSide];
 
 interface Order {
   total: number;
@@ -159,6 +177,8 @@ void [_month, _hours, _q, _sameDay, _reset, _iso, _bounded, _inYear, _epoch, _is
 nums.uniq().chunkz(2);
 // @ts-expect-error — an array method must not exist on a string result.
 label.capitalize().uniq();
+// @ts-expect-error — a set relation is a boolean, not an array.
+nums.isSubsetOf(more).uniq();
 // @ts-expect-error — a string method must not exist on a number result.
 price.clamp(0, 1).capitalize();
 // @ts-expect-error — a value method must not leak onto an object result.

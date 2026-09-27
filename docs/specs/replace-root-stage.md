@@ -151,7 +151,7 @@ $ = {
 
 **Detection is all-or-nothing.** `isFacet` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the object literal. When no entry is a chain on `$$`, it is an ordinary `$replaceWith` body. When at least one is, every entry must be one, and the compiler refuses a mixed object and names the entry — "'$ = { … }' with a '$$' chain is a '$facet', and every entry must be one: 'b' is not a chain on '$$'. Make it one ('b: $$.filter(…)'), or move it out of the object." It refuses a spread entry or a computed key in that mode too.
 
-**Each entry is one sub-pipeline.** `facetStages` lowers each chain through the stream road ([stream-methods.md § Where a chain runs](stream-methods.md)) in an Env that has crossed the `$facet` boundary over the SAME documents: a predicate lowers through the filter road with the parameter as the document, a stage link becomes the stage, and the outer bindings and `$$.size()` stay readable inside the branch ([let-bindings.md § Blocks and sub-pipelines](let-bindings.md)). `$facet` replaces the document — its output is `{ <branch>: […], … }` — so every field-carried binding is dropped after it, and a later read is refused, with a precise message.
+**Each entry is one sub-pipeline.** `facetStages` lowers each chain through the stream road ([stream-methods.md § Where a chain runs](stream-methods.md)) in an Env that has crossed the `$facet` boundary over the SAME documents: a predicate lowers through the filter road with the parameter as the document, a stage link becomes the stage, and the outer bindings and `$$.size()` stay readable inside the branch ([let-bindings.md § Blocks and sub-pipelines](let-bindings.md)). Each branch ends with the cleanup of the scratch fields that its documents carry ([let-bindings.md § Cleanup](let-bindings.md#cleanup)). `$facet` replaces the document — its output is `{ <branch>: […], … }` — so every field-carried binding is dropped after it, and a later read is refused, with a precise message.
 
 **Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement position is valid: it lowers to `$match`, as the stream road's own spelling (see [stream-methods.md § Bare-statement stream chains](./stream-methods.md)). Only inside `$ = { … }` does the same call name a facet branch.
 
@@ -229,13 +229,13 @@ Each refusal names a concrete fix:
 
 | Trigger | Message |
 |---|---|
-| a value that is not a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = true`) | "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;')." |
+| a value that can never be a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = $.points * 1.1`) | "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;')." |
 | `$ = $$$.<coll>.filter(p)` (an array of documents) | "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.…'." |
 | any array (`$ = []`, `$ = [1, 2]`, `$ = [{…}]`, `$ = $.items.map(…)`) | "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'." |
-| `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on bare '$' — it is the whole document, not a scalar. Write the field: '$.<field> ++ …'" |
+| `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on '$' at position N. '$' is the whole document, not a field. Write to a field: '$.<field>++'." |
 | `delete $` | "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'." |
 
-A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`), and so does any expression the compiler cannot prove is not a document — the server, not the compiler, refuses `$ = $.points * 1.1`. An ARRAY never passes, whatever its elements — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
+The compiler reads the value's proof, so a value is refused only when it can never be a document: see [types.md § A refusal reads the whole set](types.md#a-refusal-reads-the-whole-set). A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`). So does any value that may be one. The server, not the compiler, refuses `$ = $.f ? $.sub : 5` for a document whose `f` is false. An ARRAY never passes, whatever its elements — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root).
 
 ## Deferred
 
@@ -249,9 +249,3 @@ A field path that resolves to a document at run time passes (`$ = $.profile`, `$
   `$replaceRoot({ newRoot: <expr> })` directly — the stage-call form stays
   unchanged. The project offers no knob that makes `$ = …` lower to the
   verbose form.
-- **Type-aware non-document rejection.** Beyond the literal-type
-  rejections above, the compiler could in principle detect
-  `$ = <BinaryExpr with arithmetic ops>` as obviously not a document. The
-  project skips this: the MongoDB runtime error names the offending stage
-  and is precise enough, and the extra rule would risk a false positive on
-  a legitimate `{ $cond: … }` or `$let`-style expression.

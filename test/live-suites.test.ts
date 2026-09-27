@@ -76,3 +76,51 @@ describe("every live suite connects through test/fixtures/live.ts", () => {
     ).toEqual([]);
   });
 });
+
+// A suite that connects through a fixture module inherits that module's idea of
+// "no server". So each fixture module a suite reaches obeys the same rules, plus
+// one more: a `catch` may answer "not running" (false or null) only after it asks
+// `isUnreachable` from live.ts. `live.ts` holds the rule itself, so it is exempt.
+const FIXTURE_DIR = join(TEST_DIR, "fixtures");
+const fixtureText = (f: string) => readFileSync(join(FIXTURE_DIR, f), "utf8");
+const importsOf = (text: string, prefix: string) =>
+  [...text.matchAll(new RegExp(`from\\s+["']${prefix}([\\w-]+\\.ts)["']`, "g"))].map((m) => m[1]);
+const reached = new Set(suites.flatMap((s) => importsOf(s.text, "\\./fixtures/")));
+for (const f of [...reached]) for (const g of importsOf(fixtureText(f), "\\./")) reached.add(g);
+const fixtureModules = [...reached]
+  .filter((f) => f !== "live.ts" && readdirSync(FIXTURE_DIR).includes(f))
+  .map((f) => ({ name: `fixtures/${f}`, text: fixtureText(f) }));
+
+/** The body of each `catch { … }`, with one level of nested braces. */
+const catchBodies = (text: string) =>
+  [...text.matchAll(/catch\s*(?:\([^)]*\))?\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)].map((m) => m[1]);
+
+describe("every fixture module a suite reaches keeps the skip rule", () => {
+  it("finds a fixture module that builds a client — an empty list would pass every rule below", () => {
+    expect(fixtureModules.filter((m) => /new MongoClient\(/.test(m.text)).length).toBeGreaterThan(0);
+  });
+
+  it("none of them turns a failure into a skip by nulling its client", () => {
+    const nulling = /catch\s*(?:\([^)]*\))?\s*\{[^}]*\b(?:client|coll|db|mainColl)\s*=\s*null/;
+    expect(fixtureModules.filter((m) => nulling.test(m.text)).map((m) => m.name)).toEqual([]);
+  });
+
+  it("none of them keeps its own reachability probe", () => {
+    const probe = /async function (reachable|tryConnect)\b/;
+    expect(fixtureModules.filter((m) => probe.test(m.text)).map((m) => m.name)).toEqual([]);
+  });
+
+  it("no catch answers 'not running' unless isUnreachable() said so", () => {
+    const offenders = fixtureModules
+      .filter((m) =>
+        catchBodies(m.text).some((body) => /\breturn\s+(?:false|null)\b/.test(body) && !/\bisUnreachable\(/.test(body)),
+      )
+      .map((m) => `${m.name}: a catch returns a skip answer for every failure`);
+    expect(
+      offenders,
+      `That catch reads a wrong password, a missing user and a stale dataset as "no server", ` +
+        `and the suite then skips green. Return false only when isUnreachable(e) is true; throw otherwise:\n  ` +
+        offenders.join("\n  "),
+    ).toEqual([]);
+  });
+});

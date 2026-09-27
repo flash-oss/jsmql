@@ -124,15 +124,7 @@ describe("site: landing-page examples", () => {
   );
 
   it.each(EXAMPLES.map((e, i) => [i, e.chip, e.source.split("\n")[0]] as const))(
-    "example %i (%s): `%s` compiles",
-    (i) => {
-      const { mode, source } = EXAMPLES[i];
-      expect(() => ENTRIES[mode](source)).not.toThrow();
-    },
-  );
-
-  it.each(EXAMPLES.map((e, i) => [i, e.chip] as const))(
-    "example %i output is the shape its %s label promises",
+    "example %i (%s): `%s` compiles to the shape its label promises",
     (i, chip) => {
       const { mode, source } = EXAMPLES[i];
       expect(CHIP_IS_ARRAY).toHaveProperty(chip);

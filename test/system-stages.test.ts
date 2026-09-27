@@ -78,11 +78,6 @@ describe("system stages — pipeline composition", () => {
     ]);
   });
 
-  it("a bare single statement (no `;`, no brackets) auto-wraps into Pipeline mode", () => {
-    expect(jsmql("$$$$.currentOp()")).toEqual([{ $currentOp: {} }]);
-    expect(jsmql("$$$$.shardedDataDistribution()")).toEqual([{ $shardedDataDistribution: {} }]);
-  });
-
   it("jsmql.pipeline() accepts a diagnostic source stage", () => {
     expect(jsmql.pipeline("$$.indexStats()")).toEqual([{ $indexStats: {} }]);
   });
@@ -95,10 +90,11 @@ describe("system stages — first-stage-only enforcement", () => {
     );
   });
 
-  it("the error carries the call-site position (non-zero past the leading stage)", () => {
-    const r = jsmql.validate("$match($.x > 1); $$.indexStats()");
+  it("the error carries the position of the misplaced call", () => {
+    const src = "$match($.x > 1); $$.indexStats()";
+    const r = jsmql.validate(src);
     expect(r.valid).toBe(false);
-    expect(r.errors[0].pos).toBeGreaterThan(0);
+    expect(r.errors[0].pos).toBe(src.indexOf(".indexStats"));
   });
 });
 

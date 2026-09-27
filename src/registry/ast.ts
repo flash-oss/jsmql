@@ -84,16 +84,16 @@ export type ObjectEntry = KeyValueEntry | SpreadElement;
 /**
  * An array literal's element. An element can be a STATEMENT, because the
  * bracketed pipeline form writes its stages as an array:
- *   [const double = x => x * 2, $set({ y: double($.x) })]
+ *   [$.total = $.qty * $.price, $match($.total > 100)]
  * The position phase answers which array literals can hold one, not the
- * parser. The parser only records what the developer wrote.
+ * parser. The parser only records what the developer wrote. A `let` or a
+ * `const` is never an element: JavaScript refuses a declaration there.
+ *
+ * The write cases are what make a bracketed literal a PIPELINE, and a
+ * `,`-joined run of them is one `UpdateFilter` — one element, one stage,
+ * however many fields it writes.
  */
-/**
- * One element of an array literal. The write cases are what make a bracketed
- * literal a PIPELINE, and a `,`-joined run of them is one `UpdateFilter` — one
- * element, one stage, however many fields it writes.
- */
-export type ArrayElement = Expr | SpreadElement | LetDecl | FuncDecl | UpdateOp | UpdateFilter;
+export type ArrayElement = Expr | SpreadElement | FuncDecl | UpdateOp | UpdateFilter;
 export type CallArg = Expr | SpreadElement;
 
 /**
@@ -185,7 +185,16 @@ export type Expr =
    * declared function — all of them. WHICH it is comes from scope and from
    * `names.ts`, never from the parser.
    */
-  | { type: "Ident"; name: string; pos: number }
+  | {
+      type: "Ident";
+      name: string;
+      pos: number;
+      /**
+       * The desugar pass wrote this name for a short spelling (`"name"`, `{ type: "a" }`).
+       * No source spells it, so a message names what it stands for, not the name.
+       */
+      minted?: true;
+    }
 
   // ── access and application ────────────────────────────────────────────────
   | { type: "MemberAccess"; object: Expr; name: string; optional: boolean; pos: number }

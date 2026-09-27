@@ -182,9 +182,31 @@ Negation has subtle null/missing interactions in MongoDB. A silent flip between 
 
 The developer rejected this. In JSMQL, `x in [ … ]` is MongoDB's own `$in`, an element test, and that is the meaning a query reads. JavaScript's `in` tests a key, and an operator that means an element test with a list on the right and a key test with an object on the right has two meanings. The compiler accepts one right side, a list spelled in the source, and refuses every other one with the spelling for the intent: `.has(x)` for an element of an array value, `.key !== undefined` or `.keys().has(k)` for a key of an object. Both spellings emit the same MQL the key test did (`{ "o.k": { $exists: true } }` in a filter, `$objectToArray` over the keys for a computed key).
 
+### `Set` is not part of JSMQL (`new Set(…)`, `Set(…)`)
+
+The developer rejected this. MongoDB has no set type, so `new Set(x)` can only lower to `x` itself, and each duplicate stays. `new Set($.a)` reads back as `[3, 1, 3, 2, 1]`, where JavaScript gives `[3, 1, 2]`. The compiler refuses both spellings, and the message names the array methods.
+
+The array methods do each set operation, with the lodash name where lodash has one. `.uniq()` gives the unique values, and `.union()`, `.intersection()`, `.difference()`, `.xor()` and the three relations (`.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()`) compare two arrays. `.difference()` is the set difference, `$setDifference`, so it gives each value once, as a `Set` does. The mapping from each `Set` member to its array method is in [docs/LANGUAGE.md § Set operations on arrays](LANGUAGE.md#set-operations-on-arrays).
+
+Reconsider only if MongoDB gains a set type.
+
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 
 The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`Math.max(...)`, `Object.assign(...)`, `[...a, ...b]`, `.concat()`).
+
+### Checks on the escape hatch (`$op(…)`, `$stage(…)`, a raw `{ $op: … }` document)
+
+The developer decided that the compiler does not check the MQL that you write yourself. HR3 does not apply to the escape hatches of HR1 and HR2. So `$eq(1)` compiles to `{ $eq: 1 }`, and the server gives the error. There are three reasons:
+
+- A check on raw MQL can refuse MQL that the server accepts, and that breaks HR1. For example, `{ $setUnion: "$a" }` is valid: the server reads one operand.
+- A check copies the validation of the server. The copy goes stale when a new server version adds a key or a value.
+- The server checks this MQL before it reads a document, and its message names the problem.
+
+Two checks stay, because the developer decided so. The first is the place of each stage in the pipeline, your stages too. The second is the list of query operators that an aggregation `$match` refuses (`$near`, `$nearSphere`, `$where`). The compiler also refuses a spread in `$op(…)`, because no MQL exists for it.
+
+### A "Did you mean" refusal for an unknown `$name`
+
+The developer decided that an unknown `$name` passes through, with no suggestion. `$mtach($.a > 1);` compiles to `[{ $mtach: { $gt: ["$a", 1] } }]`, and the server gives the error "Unrecognized pipeline stage name: '$mtach'". A suggestion refuses each new MongoDB name that is near a known name. Many real names are near each other: `$gt` and `$gte`, `$sin` and `$sinh`, `$min` and `$minN`. A JavaScript name such as `.pushh()` or `Numberr(x)` keeps its suggestion, because JSMQL owns that closed set.
 
 ### Spreading a STRING into its characters (`[..."abc"]`)
 
@@ -192,7 +214,7 @@ JavaScript spreads a string into one element per character. `[..."abc"]` is `["a
 
 Emitting the string unchanged is worse than a refusal. `[..."abc"]` would silently answer the bare string `"abc"`, with no error at compile time or run time. Where a sibling element follows, the server instead refuses the emitted `{ "$concatArrays": ["abc", ["d"]] }`. This is the same wrong shape, found later.
 
-So the compiler refuses the spread wherever the operand is PROVABLY a string: a string literal, or an expression whose row measures a string return. A field path proves nothing, so `[...$.s]` still compiles. The compiler cannot know the type there, so the server answers instead. The refusal names the spelling that does produce the characters: `$range(0, <string>.length()).map(i => <string>.charAt(i))`. This reads one code point at a time, so it agrees with JavaScript on a multi-byte character.
+So the compiler refuses the spread wherever the operand is PROVABLY a string: a string literal, or an expression whose row measures a string return. A field path proves nothing, so `[...$.s]` still compiles. The compiler cannot know the type there, so the server answers instead. The refusal names the spelling that does produce the characters: `$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))`. This reads one code point at a time, so it agrees with JavaScript on a multi-byte character.
 
 Reconsider only if MongoDB gains a string-to-array operator.
 
@@ -202,7 +224,7 @@ When a downstream expression reads a `let` exactly once, with no reshape between
 
 ### Compile-time validation of runtime-dependent pipeline constraints
 
-The pre-flight validator (`docs/specs/emit-pass.md`) throws only on a violation that is 100% certain from the source. A whole class of server-enforced constraint depends on runtime state the compiler cannot know:
+The compiler checks the MQL that it makes from JSMQL code, and the place of each stage (HR3 in [docs/LANG_RULES.md](LANG_RULES.md)). It throws only on a violation that is certain from the source. A whole class of server-enforced constraint depends on runtime state the compiler cannot know:
 
 - sharding (`$out` to a sharded collection, `$unionWith` inside `$lookup` on a sharded `coll`)
 - transactions

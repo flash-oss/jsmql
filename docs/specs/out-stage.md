@@ -130,7 +130,7 @@ The target's shape is unambiguous against its neighbours. `$ = …` has the bare
 | `$$$$.<a>.<b>.<c> = …` (three or more segments) | `Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').` |
 | `$$$[<non-literal>] = …` (computed bracket on the LHS) | `The collection is named when the pipeline is written: '$$$.<coll>' or '$$$["<coll>"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.` |
 | RHS not rooted at `$$` (for example `$$$.coll = $.x`) | `The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.` |
-| A link whose row has no `stream` cell | the stream road's refusal, with the nearest name that has one ([stream-methods.md](stream-methods.md)) |
+| A link whose row has no `stream` cell | the stream road's refusal, with the nearest name that a `$$` receiver accepts ([stream-methods.md](stream-methods.md)) |
 | `$$.filter(<predicate>)` arity wrong | `'$$.filter(<predicate>)' takes exactly one predicate argument, got N.` |
 | `$$.filter(<not-a-predicate>)` | `'$$.filter(<predicate>)' in a '\$out' write chain takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.` (shared gate — see [emit-pass.md](emit-pass.md)) |
 | `$.x` inside the `$$.filter` predicate | `$.` is the document the predicate runs over (HR4), so it lowers like the parameter — no refusal; the two spellings mean the same field |

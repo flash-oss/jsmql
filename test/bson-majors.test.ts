@@ -80,6 +80,9 @@ describe.each(MAJORS)("%s — the behaviour src/bson.ts is built on", (_label, B
   });
 
   it("throws where jsmql lets the throw stand in for its own check", () => {
+    // A bare `toThrow()` on purpose: the claim is THAT the class throws, and the
+    // message text is bson's own, which differs between the two majors. jsmql wraps
+    // the throw in its own message (compiler-bson.test.ts asserts that text).
     expect(() => B.Decimal128.fromString("abc")).toThrow();
     expect(() => B.Decimal128.fromString("1.2345678901234567890123456789012345678")).toThrow();
     expect(() => new B.UUID("nothex")).toThrow();
@@ -114,6 +117,10 @@ describe.each(MAJORS)("%s — a value from this copy flows through the compiler"
       price: { $gt: bson7.Decimal128.fromString("9.99") },
     });
     expect(jsmql.filter`$.grade === ${new B.MinKey()}`).toEqual({ grade: new bson7.MinKey() });
+    // `toEqual` holds a MinKey equal to a MaxKey (neither has an own property), so
+    // the type tag is the assertion that tells them apart.
+    const grade = (jsmql.filter`$.grade === ${new B.MinKey()}` as { grade: { _bsontype?: string } }).grade;
+    expect(grade._bsontype).toBe("MinKey");
   });
 
   it("prints as the constructor call that rebuilds it", () => {

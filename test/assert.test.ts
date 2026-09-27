@@ -147,18 +147,6 @@ describe("assert — call forms", () => {
     ]);
   });
 
-  it("works as a lone string with no `;` (auto-wrapped to a one-stage pipeline)", () => {
-    expect(jsmql("assert($.qty >= 0, 'm')")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $convert: { input: true, to: { $cond: [{ $gte: ["$qty", 0] }, "bool", "jsmql assertion failed: m"] } },
-          },
-        },
-      },
-    ]);
-  });
-
   it("works inside a bracketed pipeline array", () => {
     expect(jsmql("[assert($.q >= 0, 'm'), $sort({ q: 1 })]")).toEqual([
       {
@@ -227,6 +215,8 @@ describe("assert — rejections", () => {
   it("yields to a user-declared `const assert` (no shadowing surprise)", () => {
     // A reusable function named `assert` takes precedence; calling it as a bare
     // statement is not a stage, so the generic not-a-stage error fires.
-    expect(() => jsmql("const assert = (x) => x; assert($.y)")).toThrow();
+    expect(() => jsmql("const assert = (x) => x; assert($.y)")).toThrow(
+      "A pipeline statement writes something: a field ('$.total = …;'), the document ('$ = { … };'), a deletion ('delete $.x;'), or a stage ('$match(…);'). This expression only computes a value — assign it to a field, or wrap a predicate as '$match(…)'.",
+    );
   });
 });

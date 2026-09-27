@@ -180,8 +180,44 @@ const STREAM_TERMINALS = [
   "map('total')",
 ];
 
+// What each stream reshaper reads off the document. A reshaper that builds a
+// closed document also states the fields it keeps. A link that reads a field the
+// link before it did not keep gives no value, so the compiler refuses the chain:
+// `$$.map(o => ({ id: o.id, v: o.val })).filter(o => o.val > 2)` filters on `val`,
+// which no document holds after the `.map`. This table is written by hand, so the
+// refused pairs never come from the compiler under test.
+const STREAM_READS: Readonly<Record<string, readonly string[]>> = {
+  "filter(o => o.val > 2)": ["val"],
+  "filter({ type: 'a' })": ["type"],
+  "reject(o => o.val > 8)": ["val"],
+  "map(o => ({ id: o.id, v: o.val }))": ["id", "val"],
+  "sort('val')": ["val"],
+  "toSorted('val')": ["val"],
+  "sortBy('val')": ["val"],
+  "orderBy(['val'], ['desc'])": ["val"],
+  "take(3)": [],
+  "drop(1)": [],
+  "tail()": [],
+  "slice(0, 3)": [],
+  "uniqBy('type')": ["type"],
+  // lodash's pick and omit take a missing key as it is: they read nothing that must be there.
+  "pick(['id', 'val'])": [],
+  "omit(['items'])": [],
+  "sample()": [],
+  "sampleSize(2)": [],
+  "shuffle()": [],
+  "flatMap('items')": ["items"],
+};
+const STREAM_KEEPS: Readonly<Record<string, readonly string[]>> = {
+  "map(o => ({ id: o.id, v: o.val }))": ["id", "v"],
+  "pick(['id', 'val'])": ["id", "val"],
+};
+const readsWhatWasDropped = (a: string, b: string): boolean =>
+  STREAM_KEEPS[a] !== undefined && STREAM_READS[b].some((f) => !STREAM_KEEPS[a].includes(f));
+
 // ── chain builders ───────────────────────────────────────────────────────────
-type Chain = { kind: "expr" | "pipe"; src: string };
+/** `refused`: the compiler must refuse the chain, because a link reads a field that is not there. */
+type Chain = { kind: "expr" | "pipe"; src: string; refused?: true };
 const chains: Chain[] = [];
 // value: reshaper × reshaper → `.size()` (any array → number, so the whole chain
 // is a concrete scalar; this exercises every reshaper-after-reshaper pair).
@@ -192,7 +228,11 @@ for (const a of OBJ_RESHAPERS)
   for (const b of OBJ_RESHAPERS) chains.push({ kind: "expr", src: `$.objs.${a}.${b}.size()` });
 for (const r of OBJ_RESHAPERS) for (const t of OBJ_TERMINALS) chains.push({ kind: "expr", src: `$.objs.${r}.${t}` });
 // stream: reshaper × reshaper (bare statement chain → pipeline stages).
-for (const a of STREAM_RESHAPERS) for (const b of STREAM_RESHAPERS) chains.push({ kind: "pipe", src: `$$.${a}.${b};` });
+for (const a of STREAM_RESHAPERS) {
+  for (const b of STREAM_RESHAPERS) {
+    chains.push({ kind: "pipe", src: `$$.${a}.${b};`, ...(readsWhatWasDropped(a, b) ? { refused: true } : {}) });
+  }
+}
 // stream value-terminals in a VALUE position (assignment RHS over a lookup result):
 // reshaper stages build the $lookup sub-pipeline, the terminal peels to value-mode.
 for (const r of STREAM_LOOKUP_RESHAPERS) {
@@ -293,12 +333,19 @@ async function checkAll(subset: Chain[]) {
   const compileFails: string[] = [];
   const runFails: string[] = [];
   let ran = 0;
-  for (const { kind, src } of subset) {
+  for (const { kind, src, refused } of subset) {
     let mql: unknown;
     try {
       mql = kind === "expr" ? jsmql.expr(src) : jsmql(src);
     } catch (e) {
-      compileFails.push(`${src}  ::  ${(e as Error).message.split("\n")[0]}`);
+      const message = (e as Error).message.split("\n")[0];
+      if (refused !== true || !/reads a field that .* does not have\. It holds /.test(message)) {
+        compileFails.push(`${src}  ::  ${message}`);
+      }
+      continue;
+    }
+    if (refused === true) {
+      compileFails.push(`${src}  ::  compiled, but a link reads a field that the link before it did not keep`);
       continue;
     }
     if (mainColl !== null) {
@@ -341,6 +388,13 @@ describe("lodash chain permutations (chinese wall)", () => {
     expect(chains.length).toBeGreaterThan(1500);
   });
 
+  it("states what each stream reshaper reads, and refuses the pairs that read a dropped field", () => {
+    expect(Object.keys(STREAM_READS).sort()).toEqual([...STREAM_RESHAPERS].sort());
+    expect(chains.filter((c) => c.refused === true).map((c) => c.src)).toContain(
+      "$$.map(o => ({ id: o.id, v: o.val })).filter(o => o.val > 2);",
+    );
+  });
+
   it("reports whether the server half ran, so a green run cannot hide a skip", () => {
     // Compiling every chain proves jsmql does not throw. It says nothing about whether
     // the emitted MQL RUNS, which is the half that has caught the real bugs here. A
@@ -351,6 +405,6 @@ describe("lodash chain permutations (chinese wall)", () => {
       expect(served).toBe(0);
       return;
     }
-    expect(served).toBe(chains.length);
+    expect(served).toBe(chains.filter((c) => c.refused !== true).length);
   });
 });

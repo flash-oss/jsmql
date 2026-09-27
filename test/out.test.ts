@@ -92,13 +92,13 @@ describe("$out — composes with preceding stages", () => {
 describe("$out — last-stage enforcement", () => {
   it("a statement after the $out sugar throws an actionable trailing-stage error", () => {
     expect(() => jsmql("$$$.x = $$; $.y = 1;")).toThrow(
-      "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "Nothing can follow '$$$.x = …': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
   });
 
   it("two $out statements in one pipeline throw through the same guard", () => {
     expect(() => jsmql("$$$.a = $$; $$$.b = $$;")).toThrow(
-      "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "Nothing can follow '$$$.a = …': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
   });
 });
@@ -167,7 +167,7 @@ describe("$out — RHS shape errors", () => {
     );
   });
 
-  it("`$.<field>` inside a $$.filter on the RHS is rejected with a 'use the lambda param' hint", () => {
+  it("`$.<field>` inside a $$.filter on the RHS reads the same document as the lambda param", () => {
     expect(jsmql("$$$.coll = $$.filter(o => o.x === $.threshold);")).toEqual([
       { $match: { $expr: { $eq: ["$x", "$threshold"] } } },
       { $out: "coll" },
@@ -222,7 +222,7 @@ describe("$out — .reject is .filter negated", () => {
 
   it("emits exactly what the same .reject emits in a `$$ =` chain", () => {
     expect(jsmql("$$$.live = $$.reject({ archived: true });")).toEqual([
-      { $match: { $nor: [{ archived: true }] } },
+      ...(jsmql("$$ = $$.reject({ archived: true });") as unknown[]),
       { $out: "live" },
     ]);
   });
@@ -300,7 +300,7 @@ describe("$out — validate() carries meaningful positions", () => {
     const v = jsmql.validate("$$$.x = $$; $.y = 1;");
     expect(v.valid).toBe(false);
     expect(v.errors[0].message).toMatch(
-      "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "Nothing can follow '$$$.x = …': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
     expect(v.errors[0].pos).toBeGreaterThan(0);
   });
@@ -329,11 +329,9 @@ describe("$out RHS accepts chained stage calls", () => {
 
   // Same stages, whichever way they are written.
   it("is identical to writing the stages as statements before the write", () => {
-    expect(jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });')).toEqual([
-      { $match: { s: "x" } },
-      { $sort: { a: -1 } },
-      { $out: "archive" },
-    ]);
+    const chain = jsmql('$$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });');
+    expect(chain).toEqual([{ $match: { s: "x" } }, { $sort: { a: -1 } }, { $out: "archive" }]);
+    expect(chain).toEqual(jsmql('$match({ s: "x" }); $sort({ a: -1 }); $$$.archive = $$;'));
   });
 
   it("carries the cross-database write destination", () => {
@@ -347,7 +345,7 @@ describe("$out RHS accepts chained stage calls", () => {
     // The `$out` always follows, so a second write stage can never be last.
     it("rejects a write stage in the chain", () => {
       expect(() => jsmql('$$$.archive = $$.$out("other");')).toThrow(
-        "'$out' writes the pipeline's output and has to be its last stage, and '$out' already is. A pipeline writes to one destination — keep one of them.",
+        "'$$$.archive = …' writes the pipeline's output and has to be its last stage, and '$out' already is. A pipeline writes to one destination — keep one of them.",
       );
     });
     it("rejects a source stage that is not first", () => {
@@ -355,10 +353,9 @@ describe("$out RHS accepts chained stage calls", () => {
         "'$documents' produces the pipeline's source documents, so it has to be the FIRST stage. The server refuses it anywhere else. Move it to the top of the program.",
       );
     });
-    it("rejects an unknown stage name with a suggestion", () => {
-      expect(() => jsmql("$$$.archive = $$.$prject({ a: 1 });")).toThrow(
-        "'.$prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
-      );
+    it("passes an unknown stage name through, as your own MQL", () => {
+      // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$prject'".
+      expect(jsmql("$$$.archive = $$.$prject({ a: 1 });")).toEqual([{ $prject: { a: 1 } }, { $out: "archive" }]);
     });
   });
 });
@@ -430,9 +427,9 @@ describe("$merge — adding to a collection", () => {
 
   it("nothing may follow the write, and the message names the stage that is there", () => {
     expect(() => jsmql("$$$.metrics.concat($$); $.a = 1;")).toThrow(
-      "Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "Nothing can follow '$$$.metrics.concat(…)': it writes the pipeline's output and the server requires it last. Move this statement above it.",
     );
-    expect(() => jsmql("$$$.metrics = $$; $.a = 1;")).toThrow("Nothing can follow '$out':");
+    expect(() => jsmql("$$$.metrics = $$; $.a = 1;")).toThrow("Nothing can follow '$$$.metrics = …':");
   });
 
   it("refuses the writes that name no documents, each naming a spelling that works", () => {

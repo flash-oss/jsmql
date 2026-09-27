@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { truthy } from "./truthy.ts";
 
 describe("update filters: simple assignment (=)", () => {
   // `jsmql()` always returns an aggregation-pipeline array for update-filter
@@ -176,25 +175,31 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
   it("rejects inc/dec on a bare identifier", () => {
     const result = jsmql.validate("x++");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch(/field path|bare identifier|Unknown identifier/i);
+    expect(result.errors[0].message).toBe("Unknown identifier 'x'. Did you mean '$.x'?");
   });
 
   it("rejects prefix inc/dec on a bare identifier", () => {
     const result = jsmql.validate("++x");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch(/field path|bare identifier|Unknown identifier/i);
+    expect(result.errors[0].message).toBe("Unknown identifier 'x'. Did you mean '$.x'?");
   });
 
   it("rejects inc/dec on index access", () => {
     const result = jsmql.validate("$.items[0]++");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch(/index access|computed/i);
+    expect(result.errors[0].message).toBe(
+      "A write names a field: '$.total = …', '$.a.b = …', or the document itself, '$ = { … }'. A computed destination ('$[expr] = …') has no field name at compile time. Use '$setField({ field: <expr>, input: $, value: … })' when the name is a value.",
+    );
   });
 
   it("rejects inc/dec used as a value (postfix in expression context)", () => {
-    // `1 + $.x++` — $.x++ is a statement, not a value
+    // JavaScript reads `1 + $.x++` as `1 + ($.x++)`: a write inside a value.
     const result = jsmql.validate("1 + $.x++");
     expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toBe(
+      "'$.x++' is a write inside a value at position 7. A write stands only as a statement. Write '$.x += 1;' as its own statement after the statement that uses the value, and read '$.x' there.",
+    );
+    expect(result.errors[0].pos).toBe(7);
   });
 
   it("regression: `5 - -3` still parses (whitespace separates the minuses)", () => {
@@ -228,8 +233,18 @@ describe("update filters: sequencing", () => {
     expect(jsmql("$.a = 1, $.b = $.a, $.c = 3")).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a", c: 3 } }]);
   });
 
-  it("allows a trailing comma", () => {
-    expect(jsmql("$.a = 1,")).toEqual([{ $set: { a: 1 } }]);
+  it("refuses a trailing comma, as JavaScript does", () => {
+    expect(jsmql.validate("$.a = 1, $.b = 2,")).toEqual({
+      valid: false,
+      errors: [
+        {
+          message:
+            "A ',' with no write after it, before end of input at position 16. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').",
+          pos: 16,
+          code: "SYNTAX_ERROR",
+        },
+      ],
+    });
   });
 });
 
@@ -466,53 +481,66 @@ describe("update filters: validation errors", () => {
   it("rejects bare identifier as target", () => {
     const result = jsmql.validate("x = 5");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch(/field path|bare identifier|Unknown identifier/i);
+    expect(result.errors[0].message).toBe("Unknown identifier 'x'. Did you mean '$.x'?");
   });
 
   it("rejects bare identifier in delete", () => {
     const result = jsmql.validate("delete x");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch(/field path|bare identifier|Unknown identifier/i);
+    expect(result.errors[0].message).toBe("Unknown identifier 'x'. Did you mean '$.x'?");
   });
 
   it("rejects index-access target", () => {
     const result = jsmql.validate("$.items[0] = 5");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch(/index access|computed/i);
+    expect(result.errors[0].message).toBe(
+      "A write names a field: '$.total = …', '$.a.b = …', or the document itself, '$ = { … }'. A computed destination ('$[expr] = …') has no field name at compile time. Use '$setField({ field: <expr>, input: $, value: … })' when the name is a value.",
+    );
   });
 
   it("rejects assignment inside lambda body", () => {
     const result = jsmql.validate("$.list.map(x => $.a = x)");
     expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toBe(
+      "'$.a = x' is a write inside a value at position 20. A write stands only as a statement. Write '$.a = x;' as its own statement before the statement that uses the value, and read '$.a' there.",
+    );
+    expect(result.errors[0].pos).toBe(20);
   });
 
   it("rejects compound chained assignment", () => {
+    // JavaScript reads `$.a += $.b += 1` as `$.a += ($.b += 1)`: the inner write is a value.
     const result = jsmql.validate("$.a += $.b += 1");
     expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch("Expected ';' but got '+=' at position 11");
+    expect(result.errors[0].message).toBe(
+      "'$.b += 1' is a write inside a value at position 11. A write stands only as a statement. Write '$.b += 1;' as its own statement before the statement that uses the value, and read '$.b' there.",
+    );
+    expect(result.errors[0].pos).toBe(11);
   });
 
   it("rejects missing RHS", () => {
     const result = jsmql.validate("$.a =");
     expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toBe("Unexpected end of input at position 5");
   });
 
   it("rejects bare delete with no target", () => {
     const result = jsmql.validate("delete");
     expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toBe("Unexpected end of input at position 6");
   });
 
   it("rejects update op inside parenthesized expression context", () => {
-    // ($.a = 1) + 2 — assignment used as a value (codegen-level rejection
-    // since parseGrouped now accepts the parens-form syntactically)
+    // ($.a = 1) + 2 — an assignment used as a value: the parser ends the
+    // statement at the closing paren, and the `+` after it has no place.
     const result = jsmql.validate("($.a = 1) + 2");
     expect(result.valid).toBe(false);
     expect(result.errors[0].message).toMatch("Expected ';' but got '+' at position 10");
   });
 
-  it("rejects chained assignment inside parens", () => {
-    const result = jsmql.validate("($.a = $.b = 5)");
-    expect(result.valid).toBe(true);
+  it("accepts chained assignment inside parens, as it does without them", () => {
+    expect(jsmql.validate("($.a = $.b = 5)").valid).toBe(true);
+    expect(jsmql("($.a = $.b = 5)")).toEqual([{ $set: { a: 5, b: 5 } }]);
+    expect(jsmql("($.a = $.b = 5)")).toEqual(jsmql("$.a = $.b = 5"));
   });
 });
 

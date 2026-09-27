@@ -21,11 +21,11 @@ import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
 import {
   callbackParamsOf,
-  constructedFamilyOf,
   documentOf,
   familiesOf,
   isCallable,
   namespaceNames,
+  neverNullAlwaysOf,
   neverNullOf,
   productionForOperator,
   returnsOf,
@@ -73,7 +73,9 @@ const NAMESPACES = namespaceNames();
  * whether it is (a `$lookup`'s array, a `let` of a present value). A call
  * is, when its row states `neverNull` and its receiver and every value
  * argument are also present — `$map` over an array that is there gives an
- * array that is there. A field path is present only where the document's
+ * array that is there. A row that states `"always"` reads a missing argument
+ * itself, so only its receiver counts: `$.a.union($.b)` is there, because a
+ * dot wraps `a` and the cell wraps `b`. A field path is present only where the document's
  * proof says so: the document may lack it, and every array operator returns
  * null for a missing input. A `? :` is present when both branches are; a
  * property read is present when the object's proof says so.
@@ -116,18 +118,24 @@ function statedPresence(node: Expr, env: Env): boolean | null {
         node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES.has(node.object.name)
           ? true
           : wrapped || isPresent(node.object, env);
-      return receiver && node.args.every((a) => argPresent(a, env));
+      return receiver && argsThere(name, node.args, env);
     }
     case "OperatorCall":
-      return neverNullOf(node.name) && node.args.every((a) => argPresent(a, env));
+      // A literal object operand is a body (`$map({ input: …, as, in })`, `$hour({ date: … })`),
+      // and which of its keys is the input is no fact of the row: it proves nothing.
+      return (
+        neverNullOf(node.name) &&
+        (neverNullAlwaysOf(node.name) ||
+          node.args.every((a) => !(a.type === "ObjectLiteral" && namedRow(a) === null) && argPresent(a, env)))
+      );
     case "CallExpression":
       if (node.callee.type === "Ident" && !env.scope.has(node.callee.name)) {
-        return neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env));
+        return neverNullOf(node.callee.name) && argsThere(node.callee.name, node.args, env);
       }
       return null;
     case "NewExpression":
       return node.callee.type === "Ident" && !env.scope.has(node.callee.name)
-        ? neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env))
+        ? neverNullOf(node.callee.name) && argsThere(node.callee.name, node.args, env)
         : false;
     case "UnaryExpr": {
       const key = productionForOperator("UnaryExpr", node.op);
@@ -179,6 +187,11 @@ export function chainHasOptional(e: Expr): boolean {
   return cursor.type === "FieldRef" && cursor.optional === true;
 }
 
+/** The arguments of a `neverNull` call are there, or the row reads a missing one as a value of its own (`"always"`). */
+function argsThere(name: string, args: readonly CallArg[], env: Env): boolean {
+  return neverNullAlwaysOf(name) || args.every((a) => argPresent(a, env));
+}
+
 /** An argument as written: a callback is not a value and says nothing; a spread is its list; a value must be present. */
 function argPresent(a: CallArg, env: Env): boolean {
   if (a.type === "SpreadElement") return isPresent(a.argument, env);
@@ -200,12 +213,10 @@ export function familyOfKind(k: Known): FieldFamily | null {
   }
 }
 
-/** The receiver family a node names as SOURCE, before any kind: a namespace, a regex, a set — or null. */
-export function sourceFamily(node: Expr): FieldFamily | "regexp" | "set" | string | null {
+/** The receiver family a node names as SOURCE, before any kind: a namespace or a regex — or null. */
+export function sourceFamily(node: Expr): FieldFamily | "regexp" | string | null {
   if (node.type === "Ident" && NAMESPACES.has(node.name)) return node.name;
   if (node.type === "RegexLiteral") return "regexp";
-  if (node.type === "NewExpression" && node.callee.type === "Ident")
-    return constructedFamilyOf(node.callee.name) ?? null;
   return null;
 }
 
@@ -216,7 +227,7 @@ export const kindOf = (node: Expr, env: Env): Known => single(typeOf(node, env))
 export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(typeOf(node, env)));
 
 /** The receiver family a node has, for a row's per-family `returns`: a source family, else its kind's. */
-export function receiverFamilyOf(node: Expr, env: Env): FieldFamily | "regexp" | "set" | string | null {
+export function receiverFamilyOf(node: Expr, env: Env): FieldFamily | "regexp" | string | null {
   const src = sourceFamily(node);
   if (src !== null) return src;
   if (node.type === "StreamRef") return "stream";
@@ -270,7 +281,7 @@ function callbackAnswer(
   const cb = args[n];
   if (cb === undefined || cb.type !== "Lambda" || cb.body === undefined) return ANY;
   const kinds = callbackParamsOf(name, "value") ?? [];
-  let bodyEnv = env.block();
+  let bodyEnv = env;
   cb.params.forEach((p, i) => {
     const kind = kinds[i];
     const t =
@@ -463,11 +474,11 @@ function kindsOf(node: Expr, env: Env): Type {
       if (node.op === "+") {
         // The result is `$concat` when either operand is a string, and `$add`
         // otherwise. `$add` of a date returns a date. So only two numbers
-        // prove a number.
+        // prove a number, and the row states what the rest of the `$add` road gives.
         const l = kindOf(node.left, env);
         const r = kindOf(node.right, env);
         if (l === "string" || r === "string") return of("string");
-        return l === "number" && r === "number" ? of("number") : ANY;
+        if (l === "number" && r === "number") return of("number");
       }
       if (node.op === "??") {
         // `a ?? b` is `b` exactly when `a` is null or missing: the result is there when `b` is.
@@ -556,7 +567,10 @@ export function typeOfEmitted(value: unknown, doc: Type): Type {
       names: null,
     };
     const result = evaluate(returnsOf(op), site);
-    const isPresent = neverNullOf(op) && args.every((a) => !typeOfEmitted(a, doc).absent);
+    // A literal object operand is a body, and proves nothing: see `OperatorCall` in `statedPresence`.
+    const body = (a: unknown): boolean => isPlainObject(a) && operatorKeyOf(a) === null;
+    const isPresent =
+      neverNullAlwaysOf(op) || (neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent));
     return isPresent ? present(result) : maybeAbsent(result);
   }
   if (isPlainObject(value)) {
@@ -618,7 +632,7 @@ export function documentAfter(stage: Record<string, unknown>, doc: Type): Type {
     case "element": {
       const spec =
         typeof body === "string" ? { path: body } : (body as { path?: string; preserveNullAndEmptyArrays?: boolean });
-      const path = spec.path?.startsWith("$") ? spec.path.slice(1) : null;
+      const path = typeof spec.path === "string" && spec.path.startsWith("$") ? spec.path.slice(1) : null;
       if (path === null) return doc;
       const element = elementOf(at(doc, path));
       return written(doc, path, spec.preserveNullAndEmptyArrays === true ? maybeAbsent(element) : present(element));

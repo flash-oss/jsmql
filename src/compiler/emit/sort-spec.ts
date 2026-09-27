@@ -20,6 +20,8 @@
 
 import type { Expr } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
+import { SORT_KEY_LIMIT } from "../../registry/mql.ts";
+import { tooManySortKeys } from "./errors.ts";
 
 export type SortSpec = Record<string, 1 | -1>;
 
@@ -270,10 +272,13 @@ export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string
  * start with '$'". So an element that IS the document has nowhere to go as a key.
  * An unwound element has a name — `.flatMap("tags").sort((a, b) => a - b)` sorts
  * by `tags` — and its fields sit under that name: `.flatMap("items").sortBy("qty")` sorts
- * by `items.qty`.
+ * by `items.qty`. A `$sort` stage takes at most `SORT_KEY_LIMIT` keys; `pos` is the
+ * sort argument, where a longer spec is refused.
  */
-export function streamSortAsk(ask: SortAsk, method: string, element = ""): StageSortAsk {
+export function streamSortAsk(ask: SortAsk, method: string, element: string, pos: number): StageSortAsk {
   if (ask.kind === "keys") {
+    const count = Object.keys(ask.spec).length;
+    if (count > SORT_KEY_LIMIT) throw tooManySortKeys(`.${method}()`, count, SORT_KEY_LIMIT, pos);
     if (element === "") return ask;
     return { kind: "keys", spec: Object.fromEntries(Object.entries(ask.spec).map(([k, d]) => [`${element}.${k}`, d])) };
   }

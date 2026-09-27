@@ -41,13 +41,15 @@ export function filter(source: string): Record<string, unknown> {
  * of the program becomes stages, in the order it was written.
  */
 export function pipeline(source: string): unknown[] {
-  const program = desugar(fold(parse(source)), STATEMENT);
+  const parsed = parse(source);
   // Which DOCUMENT the program becomes is phase 4's other answer, and no single
-  // step can see it. Without asking, a folded constant array — `[1,2].slice(2,2)`
-  // settles to `[]` — reads as the empty pipeline instead of as a value.
-  if (shapeOf(program) !== "pipeline") throw notAPipeline((program as { pos: number }).pos);
+  // step can see it. The compiler asks it of the WRITTEN program: a folded constant
+  // array — `[1,2].slice(2,2)` settles to `[]` — is a value, and `[]` as written is
+  // the empty pipeline.
+  if (shapeOf(parsed) !== "pipeline") throw notAPipeline((parsed as { pos: number }).pos);
+  const program = desugar(fold(parsed), STATEMENT);
   const stages = lowerProgram(program, Env.root(program, "statement"));
-  if (stages.length === 0) throw noStages((program as { pos: number }).pos);
+  if (stages.length === 0 && parsed.type !== "ArrayLiteral") throw noStages((program as { pos: number }).pos);
   return stages;
 }
 

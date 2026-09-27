@@ -145,6 +145,23 @@ describe("compiler/emit/filter — && and ||", () => {
   });
 });
 
+describe("compiler/emit/filter — the truth of a `$op(…)` call is split by spelling", () => {
+  it("keeps MongoDB's truthiness for a call that no JavaScript spelling reads", () => {
+    // MEASURED: `{ $expr: "$s" }` reads false, null, missing and 0 as false, and "" and [] as true.
+    expect(filter("$foo($.a)")).toEqual({ $expr: { $foo: "$a" } });
+    expect(filter("$ifNull($.a, 0)")).toEqual({ $expr: { $ifNull: ["$a", 0] } });
+    expect(filter("$and($foo($.a), $.b > 1)")).toEqual({ $and: [{ $expr: { $foo: "$a" } }, { b: { $gt: 1 } }] });
+  });
+
+  it("checks JavaScript's falsy values where a JavaScript spelling reads the call", () => {
+    const js = (v: unknown) => ({
+      $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
+    });
+    expect(filter("!$foo($.a)")).toEqual({ $expr: { $not: js({ $foo: "$a" }) } });
+    expect(filter("$foo($.a) && $.b > 1")).toEqual({ b: { $gt: 1 }, $expr: js({ $foo: "$a" }) });
+  });
+});
+
 describe("compiler/emit/filter — a raw query document", () => {
   it("keeps the developer's own MQL, and refuses JavaScript the query language cannot read", () => {
     // Raw MQL passes through, keys as written (HR1) — including a name this build
@@ -218,16 +235,25 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
     });
     expect(filter('$comment("c")')).toEqual({ $comment: "c" });
     expect(filter('$jsonSchema({ required: ["a"] })')).toEqual({ $jsonSchema: { required: ["a"] } });
-    // `$where` runs JavaScript on the server: the call form is refused with the JSMQL predicate; a raw document passes (HR1)
-    expect(() => filter('$where("this.n > 3")')).toThrow(/runs JavaScript on the server/);
+    // `$where` is your own MQL in both spellings (HR1, HR2), and a find() filter takes it.
+    expect(filter('$where("this.n > 3")')).toEqual({ $where: "this.n > 3" });
     expect(filter('{ $where: "this.n > 3" }')).toEqual({ $where: "this.n > 3" });
   });
 
-  it("refuses a non-field first argument, a run-time operand, and an element predicate with no query form", () => {
-    expect(() => filter("$exists(1)")).toThrow(/tests a field: its first argument is a field path/);
-    expect(() => filter("$all($.tags, $.other)")).toThrow(/must be a compile-time constant/);
+  it("takes HR2's plain form where the arguments do not fit the call form", () => {
+    // DELIBERATELY invalid: mongod says "unknown top level operator: $exists" (and $all, $box).
+    expect(filter("$exists(1)")).toEqual({ $exists: 1 });
+    expect(filter("$all($.tags, $.other)")).toEqual({ $all: ["$tags", "$other"] });
+    expect(filter("$box([[0, 0], [1, 1]])")).toEqual({
+      $box: [
+        [0, 0],
+        [1, 1],
+      ],
+    });
+  });
+
+  it("refuses an element predicate with no query form, because the arrow is JSMQL code", () => {
     expect(() => filter("$elemMatch($.items, x => x.q > $.min)")).toThrow(/query test of the element alone/);
-    expect(() => filter("$box([[0, 0], [1, 1]])")).toThrow(/\$geoWithin/);
   });
 });
 
@@ -271,9 +297,14 @@ describe("compiler/emit/filter — methods and operators", () => {
       t: { $gte: new Date("2024-01-01T00:00:00.000Z"), $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
     // a bound read at run time cannot order here, and keeps the $min/$max expression
-    expect(filter("$.n.inRange($.lo, $.hi)")).toHaveProperty("$expr");
+    expect(filter("$.n.inRange($.lo, $.hi)")).toEqual({
+      $expr: { $and: [{ $gte: ["$n", { $min: ["$lo", "$hi"] }] }, { $lt: ["$n", { $max: ["$lo", "$hi"] }] }] },
+    });
     // a number against a date does not compare, so the pair keeps the expression form too
-    expect(filter('$.t.inRange(new Date("2024-01-01"))')).toHaveProperty("$expr");
+    const d = new Date("2024-01-01T00:00:00.000Z");
+    expect(filter('$.t.inRange(new Date("2024-01-01"))')).toEqual({
+      $expr: { $and: [{ $gte: ["$t", { $min: [0, d] }] }, { $lt: ["$t", { $max: [0, d] }] }] },
+    });
   });
 
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
@@ -281,12 +312,24 @@ describe("compiler/emit/filter — methods and operators", () => {
     // arrives under `$expr`.
     // A receiver PROVEN to be no string is refused before either: `$abs` returns a number.
     expect(() => filter('$abs($.n).startsWith("A")')).toThrow(/not available on a 'number'/);
-    expect(filter("$.items.every(i => i.q > 2)")).toHaveProperty("$expr");
-    expect(filter("$.items.some(i => i.q > $.min)")).toHaveProperty("$expr");
+    /** The `.some` / `.every` value lowering over `input`; a missing array reads as empty (HR5). */
+    const overItems = (input: string, op: "$anyElementTrue" | "$allElementsTrue", as: string, body: unknown) => ({
+      [op]: { $map: { input: { $ifNull: [input, []] }, as, in: body } },
+    });
+    expect(filter("$.items.every(i => i.q > 2)")).toEqual({
+      $expr: overItems("$items", "$allElementsTrue", "i", { $gt: ["$$i.q", 2] }),
+    });
+    expect(filter("$.items.some(i => i.q > $.min)")).toEqual({
+      $expr: overItems("$items", "$anyElementTrue", "i", { $gt: ["$$i.q", "$min"] }),
+    });
     // inside $elemMatch the OUTER document has no path: `$.flag` must not become the element's `flag`
-    expect(filter("$.items.some(i => i.q > 2 && $.flag === true)")).toHaveProperty("$expr");
+    expect(filter("$.items.some(i => i.q > 2 && $.flag === true)")).toEqual({
+      $expr: overItems("$items", "$anyElementTrue", "i", { $and: [{ $gt: ["$$i.q", 2] }, { $eq: ["$flag", true] }] }),
+    });
     // and an OUTER element's fields are not the inner element's
-    expect(filter("$.a.some(i => i.b.some(j => i.c === 1))")).toHaveProperty("$expr");
+    expect(filter("$.a.some(i => i.b.some(j => i.c === 1))")).toEqual({
+      $expr: overItems("$a", "$anyElementTrue", "i", overItems("$$i.b", "$anyElementTrue", "j", { $eq: ["$$i.c", 1] })),
+    });
     expect(filter("$.a.some(i => i.b.some(j => j.c === 1))")).toEqual({
       a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } },
     });
@@ -302,14 +345,20 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
   });
 
-  it("lowers a query-only operator to its query form and refuses a non-constant", () => {
+  it("lowers a query-only operator to its query form, and passes the rest of your MQL through", () => {
     expect(filter("$.a === 1 && $sampleRate(0.5)")).toEqual({ a: 1, $sampleRate: 0.5 });
-    expect(() => filter("$sampleRate($.r)")).toThrow(/must be a compile-time constant/);
-    expect(() => filter("$sampleRate(2)")).toThrow(/from 0 to 1/);
-    expect(() => filter('$sampleRate("0.5")')).toThrow(/expects a number/);
-    expect(() => filter("$.items.some(i => $sampleRate(0.5))")).toThrow(/top-level document only/);
+    // DELIBERATELY invalid shapes. Each comment quotes mongod's answer.
+    // mongod: "argument to $sampleRate must be a numeric type"
+    expect(filter("$sampleRate($.r)")).toEqual({ $sampleRate: "$r" });
+    expect(filter('$sampleRate("0.5")')).toEqual({ $sampleRate: "0.5" });
+    // mongod: "numeric argument to $sampleRate must be in [0, 1]"
+    expect(filter("$sampleRate(2)")).toEqual({ $sampleRate: 2 });
+    // mongod: "$sampleRate can only be applied to the top-level document"
+    expect(filter("$.items.some(i => $sampleRate(0.5))")).toEqual({ items: { $elemMatch: { $sampleRate: 0.5 } } });
+    // `%` is JSMQL code, so the compiler owns its lowering and refuses a zero divisor.
     expect(() => filter("$.a % 0 === 1")).toThrow(/divide by zero/);
-    expect(() => filter("$divide($.a, 0) > 1")).toThrow(/divide by zero/);
+    // `$divide` is your own MQL. DELIBERATELY invalid: mongod says "can't $divide by zero".
+    expect(filter("$divide($.a, 0) > 1")).toEqual({ $expr: { $gt: [{ $divide: ["$a", 0] }, 1] } });
     expect(filter("$log10($.a) > 1")).toEqual({ $expr: { $gt: [{ $log10: "$a" }, 1] } });
   });
 
@@ -322,7 +371,8 @@ describe("compiler/emit/filter — methods and operators", () => {
     // a one-operand $op inside a raw document is the query operator, at any depth
     expect(filter("{ a: $not($gt(1)) }")).toEqual({ a: { $not: { $gt: 1 } } });
     expect(filter("{ a: $size(2) }")).toEqual({ a: { $size: 2 } });
-    expect(() => filter("({ $setUnion: $.x })")).toThrow(/operates on a list of operands/);
+    // DELIBERATELY invalid: mongod says "unknown top level operator: $setUnion".
+    expect(filter("({ $setUnion: $.x })")).toEqual({ $setUnion: "$x" });
   });
 
   it("drops a branch the fold settled, and keeps the rest as written", () => {
@@ -373,23 +423,23 @@ describe("compiler/emit/filter — a read inside a raw query value has no query 
     );
   });
 
-  it("raw MQL with no read passes through, byte for byte", () => {
-    for (const src of [
-      "{ a: 1 }",
-      "{ a: [1, 2] }",
-      "{ a: { $gt: 1 } }",
-      "{ a: { $size: 2 } }",
-      "{ a: { $exists: true } }",
-      "{ a: { $type: 'string' } }",
-      "{ a: { $mod: [4, 0] } }",
-      "{ a: { $not: 1 } }",
-      "{ a: { $all: [1, 2] } }",
-      "{ a: { $elemMatch: { x: 2 } } }",
-      "{ a: $gt(1) }",
-      '{ x: $gt("$y") }',
-    ]) {
-      expect(() => filter(src)).not.toThrow();
-      expect(JSON.stringify(filter(src))).not.toContain("$expr");
-    }
+  it("raw MQL with no read passes through, as written", () => {
+    const cases: [string, unknown][] = [
+      ["{ a: 1 }", { a: 1 }],
+      ["{ a: [1, 2] }", { a: [1, 2] }],
+      ["{ a: { $gt: 1 } }", { a: { $gt: 1 } }],
+      ["{ a: { $size: 2 } }", { a: { $size: 2 } }],
+      ["{ a: { $exists: true } }", { a: { $exists: true } }],
+      ["{ a: { $type: 'string' } }", { a: { $type: "string" } }],
+      ["{ a: { $mod: [4, 0] } }", { a: { $mod: [4, 0] } }],
+      // the developer's own MQL (HR1), kept as written; the server refuses it:
+      // "$not argument must be a regex or an object"
+      ["{ a: { $not: 1 } }", { a: { $not: 1 } }],
+      ["{ a: { $all: [1, 2] } }", { a: { $all: [1, 2] } }],
+      ["{ a: { $elemMatch: { x: 2 } } }", { a: { $elemMatch: { x: 2 } } }],
+      ["{ a: $gt(1) }", { a: { $gt: 1 } }],
+      ['{ x: $gt("$y") }', { x: { $gt: "$y" } }],
+    ];
+    for (const [src, mql] of cases) expect(filter(src), src).toEqual(mql);
   });
 });

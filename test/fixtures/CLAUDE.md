@@ -86,9 +86,13 @@ Three invariants make exact assertions possible:
 
 `DATASET_HASH` is a content fingerprint: a canonical serialization run through
 sha1. The seeder stores this fingerprint in `__fixture_meta`, and re-injects the
-data **only** when the fingerprint changes. `fixtureReady()` and
-`assertIntegrity()` in `client.ts` use the fingerprint to skip a stale run, and
-to fail loudly when the data has drifted.
+data **only** when the fingerprint changes. `fixtureReady()` in `client.ts`
+skips the integration suite for one reason only: no server answers on the port
+(`isUnreachable()` in [live.ts](live.ts) decides this). When a server answers,
+`fixtureReady()` and `assertIntegrity()` fail the suite on a refused login, a
+stale fingerprint or a wrong document count, and the message names the command
+that repairs it. [`test/live-suites.test.ts`](../live-suites.test.ts) keeps
+every fixture module that a suite reaches on this rule.
 
 ## Growing and changing the data
 
@@ -136,3 +140,4 @@ Follow these rules when you edit [dataset.ts](dataset.ts):
 | [dataset.ts](dataset.ts) | The deterministic documents, `DATASET_HASH`, `EXPECTED_COUNTS`, `validateDataset()`, and the `ID` helpers. |
 | [instance.ts](instance.ts) | The lifecycle CLI: up, seed, status, down, reset. It starts `mongod`, bootstraps the users, and seeds the data idempotently. This is the **only** writer. |
 | [client.ts](client.ts) | Read-only access for tests: `connectReadOnly()`, `fixtureReady()`, `assertIntegrity()`. |
+| [live.ts](live.ts) | The skip rule for every live suite: `isUnreachable()`, `liveClient()`, `liveUp()`, `liveClientNow()`. |

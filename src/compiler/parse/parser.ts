@@ -46,6 +46,7 @@ import { replaceIdents } from "../passes/inject.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import {
   ASSIGN_TRIGGERS,
+  asStatementOf,
   INFIX,
   MAX_PRECEDENCE,
   mixingRefused,
@@ -77,7 +78,7 @@ function assertPlausibleObjectId(hex: string, pos: number): void {
 }
 
 export function parse(source: string): Program {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const program = p.program();
   p.finish();
   return program;
@@ -98,7 +99,7 @@ export function parse(source: string): Program {
 export type EntryForm = { params: readonly ParamBinding[]; toolbox: readonly ParamBinding[]; program: Program };
 
 export function parseEntry(source: string): EntryForm {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const entry = p.entry();
   p.finish();
   return entry;
@@ -106,7 +107,7 @@ export function parseEntry(source: string): EntryForm {
 
 /** This is exposed for the tests, and for phases that already hold tokens. */
 export function parseExpression(source: string): Expr {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const e = p.expression();
   p.expectEnd();
   p.finish();
@@ -163,8 +164,9 @@ function statementSpelling(stmt: PipelineStmt): string {
  */
 function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   const wrote = statementSpelling(stmt);
+  const pos = (stmt as { pos: number }).pos;
   if (stmt.type === "FuncDecl") {
-    return `\`${wrote}\` declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(…)' inside the callback.`;
+    return `\`${wrote}\` at position ${pos} declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(…)' inside the callback.`;
   }
   // '.aggregate' is the one method whose block IS a list of stages, so every way
   // out names it. Deleting only the 'return' leaves the same block on the same
@@ -173,9 +175,9 @@ function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   const link = stmt.type === "OperatorCall" ? `'$$.$${(stmt as { name: string }).name.replace(/^\$/, "")}(…)'` : null;
   const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
   if (retPos !== null) {
-    return `\`${wrote}\` at position ${(stmt as { pos: number }).pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
+    return `\`${wrote}\` at position ${pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
   }
-  return `\`${wrote}\` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
+  return `\`${wrote}\` at position ${pos} is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
 }
 
 /** `$.a.b` for a field target, or the bare name otherwise. */
@@ -199,7 +201,7 @@ type PatternPart = { readonly key: string; readonly name: string; readonly pos: 
  * a parameter at all.
  */
 type ParamRead =
-  | { readonly kind: "name"; readonly name: string }
+  | { readonly kind: "name"; readonly name: string; readonly pos: number }
   | { readonly kind: "array"; readonly parts: readonly (PatternPart | null)[]; readonly pos: number }
   | { readonly kind: "object"; readonly parts: readonly PatternPart[]; readonly pos: number }
   | { readonly kind: "refused"; readonly error: ParseError }
@@ -210,6 +212,158 @@ function notAPlainPattern(pos: number, wrote?: string): ParseError {
   const got = wrote === undefined ? "" : ` ('${wrote}')`;
   return new ParseError(
     `A destructured parameter lists plain names only — '([id, count]) => …', '({ sku, qty: n }) => …'. A default value, a rest element, a nested pattern or a computed key${got} is not one of them, at position ${pos}. Name the parameter. Read its parts instead: 'x => x[0]', 'x => x.sku ?? 1', 'x => x.slice(1)'.`,
+    pos,
+  );
+}
+
+/** `(x = 1) => …`: a parameter with a default value. The callback reads the element that MQL gives it. */
+function parameterDefault(name: Token): ParseError {
+  return new ParseError(
+    `A callback parameter is a plain name, and a default value ('${name.text} = …') is not one, at position ${name.pos}. Name the parameter, and write the default where the body reads it: '${name.text} => ${name.text} ?? <default>'.`,
+    name.pos,
+  );
+}
+
+/** One name that a scope binds: a parameter, or a declaration at the top of a block. */
+type Binder = { readonly name: string; readonly pos: number };
+
+/**
+ * `(x, x) => …`: JavaScript refuses one parameter name twice in an arrow's list,
+ * and in every list that holds a destructuring pattern. It allows the name twice
+ * only in a plain `function (x, x)` list, and so does this parser.
+ */
+function refuseDuplicateParams(binders: readonly Binder[]): void {
+  const seen = new Set<string>();
+  for (const b of binders) {
+    if (seen.has(b.name)) {
+      throw new ParseError(
+        `The parameter name '${b.name}' appears twice in one parameter list, at position ${b.pos}. JavaScript refuses a duplicate parameter name here. Give each parameter its own name, for example '(x, i) => …'.`,
+        b.pos,
+      );
+    }
+    seen.add(b.name);
+  }
+}
+
+/**
+ * JavaScript declares a name once per scope. A function's parameters and the
+ * declarations at the top of its block share one scope. So `x => { const x = 1; … }`
+ * is a SyntaxError ("Identifier 'x' has already been declared"), and so is a
+ * second `let a` in one block. A nested function opens a scope of its own, and a
+ * declaration there may shadow the outer name. The parser holds this rule, because
+ * the fold inlines a constant declaration before any later phase can see it.
+ */
+function declare(scope: Map<string, "parameter" | "declaration">, stmt: PipelineStmt): void {
+  if (stmt.type !== "LetDecl" && stmt.type !== "FuncDecl") return;
+  const wrote = `${stmt.type === "FuncDecl" && stmt.form === "function" ? "function" : stmt.kind} ${stmt.name}`;
+  const earlier = scope.get(stmt.name);
+  if (earlier === "parameter") {
+    throw new ParseError(
+      `\`${wrote}\` re-declares the parameter \`${stmt.name}\` at position ${stmt.pos}, which JavaScript refuses. Pick a different name.`,
+      stmt.pos,
+    );
+  }
+  if (earlier === "declaration") {
+    throw new ParseError(
+      `\`${wrote}\` at position ${stmt.pos} is already declared earlier in this block, which JavaScript refuses. Pick a different name.`,
+      stmt.pos,
+    );
+  }
+  scope.set(stmt.name, "declaration");
+}
+
+/**
+ * `[let x = $.a, $match(x > 5)]`: JavaScript refuses a declaration as an array
+ * element. The statement form says the same thing: `let x = $.a; $match(x > 5);`.
+ */
+function declarationAsElement(kw: Token, name: Token): ParseError {
+  const wrote = `${kw.text} ${name.type === "Ident" ? name.text : "x"} = …`;
+  return new ParseError(
+    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${kw.pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(…);\`. A sub-pipeline takes its statements in an '.aggregate' block: \`$.<field> = $$$.<coll>.aggregate(() => { ${wrote}; $match(…); })\` for a '$lookup', \`$$.push(...$$$.<coll>.aggregate(() => { … }))\` for a '$unionWith', and \`$ = { k: $$.aggregate(() => { … }) }\` for a '$facet' branch.`,
+    kw.pos,
+  );
+}
+
+/**
+ * `$.a = 1,`: a `,` with no write after it. JavaScript allows a trailing `,` in a
+ * list, but an expression statement is not a list, so it refuses this one.
+ */
+function trailingComma(comma: Token, next: Token): ParseError {
+  return new ParseError(
+    `A ',' with no write after it, before ${found(next)} at position ${comma.pos}. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').`,
+    comma.pos,
+  );
+}
+
+/**
+ * A write where JavaScript reads a value: `1 + $.x++`, `$.y = ($.a = 5)`.
+ * JavaScript gives the write a value, but a write stands only as a statement.
+ * The message names the statement to write instead, and which side of the read
+ * it goes on: a postfix `++` gives the value from before the write, and every
+ * other write gives the value from after it. A `delete` leaves nothing to read,
+ * so its `place` is null.
+ */
+function writeInValue(
+  wrote: string,
+  statement: string,
+  place: string | null,
+  side: "before" | "after",
+  pos: number,
+): ParseError {
+  const read = place === null ? "" : `, and read '${place}' there`;
+  return new ParseError(
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value${read}.`,
+    pos,
+  );
+}
+
+/**
+ * The same refusal, for a write the parser read as a pipeline element. Only the
+ * position pass knows that the array in `$.y = [$.x++]` is a value, so the
+ * desugar pass asks here, before any rule rewrites the write.
+ */
+export function writeInValueOf(node: UpdateOp | UpdateFilter): ParseError {
+  const op = node.type === "UpdateFilter" ? node.ops[0] : node;
+  const place = targetSpelling(op.target);
+  if (op.type === "DeleteStmt") return writeInValue(`delete ${place}`, `delete ${place}`, null, "before", op.pos);
+  const update = asStatementOf(op.op);
+  if (update === null) return writeInValue(`${place} ${op.op} …`, `${place} ${op.op} …`, place, "before", op.pos);
+  // The parser gives the write the position of its operator, so a prefix `++`
+  // stands before its target and a postfix one after it.
+  const prefix = op.pos < (op.target as { pos: number }).pos;
+  const wrote = prefix ? `${op.op}${place}` : `${place}${op.op}`;
+  return writeInValue(wrote, `${place} ${update}`, place, prefix ? "before" : "after", op.pos);
+}
+
+/**
+ * `$.y = [function f(x) { … }]`: a function as an element of a value. MQL has no
+ * function values, so a function stands only as its own statement.
+ */
+export function functionInValueOf(node: FuncDecl): ParseError {
+  return new ParseError(
+    `'function ${node.name}(…)' is a function inside a value at position ${node.pos}. MQL has no function values. Write the function as its own statement at the top level of the pipeline, and call '${node.name}(…)' where the value goes.`,
+    node.pos,
+  );
+}
+
+/**
+ * `$ += 1` and `$$++`: an arithmetic write needs a field. `$` is the whole
+ * document and `$$` is the root stream, so neither can take one.
+ * A `=` replaces either one, and a collection (`$$$.<coll> += …`) takes the
+ * write as a `$merge`, so both of those stay legal.
+ */
+function refuseWholeTarget(target: Expr, op: string, pos: number): void {
+  if (op === "=" || op === "delete") return;
+  const what =
+    target.type === "StreamRef"
+      ? "'$$' is the root stream"
+      : target.type === "FieldRef" && target.path === ""
+        ? "'$' is the whole document"
+        : null;
+  if (what === null) return;
+  const field = asStatementOf(op) === null ? `$.<field> ${op} …` : `$.<field>${op}`;
+  throw new ParseError(
+    `Cannot use '${op}' on '${target.type === "StreamRef" ? "$$" : "$"}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`,
     pos,
   );
 }
@@ -226,8 +380,12 @@ class Parser {
    */
   private readonly unclaimedStages = new Map<Lambda, number>();
 
-  constructor(toks: readonly Token[]) {
+  /** The source text. A refusal quotes the span that the developer wrote. */
+  private readonly src: string;
+
+  constructor(toks: readonly Token[], src: string) {
     this.c = new Cursor(toks);
+    this.src = src;
   }
 
   expectEnd(): void {
@@ -290,10 +448,13 @@ class Parser {
     }
     const toolbox = slots.find(isToolbox) ?? [];
     const params = slots.find((sl) => sl !== toolbox && isParams(sl)) ?? [];
+    // A destructure is a pattern, so JavaScript refuses a name twice in either spelling of the entry.
+    const binders = slots.flat();
+    refuseDuplicateParams(binders);
     if (!isFunction) this.c.expect("Arrow");
     // The body is a whole program: an expression, or `{ … }` that holds statements.
     // A `function` body is always the block form.
-    const program = this.c.is("LBrace") ? this.entryBlock() : this.program();
+    const program = this.c.is("LBrace") ? this.entryBlock(binders) : this.program();
     return { params, toolbox, program };
   }
 
@@ -316,7 +477,7 @@ class Parser {
         // `{ a = 1 }`: a value reaches a compiled query only through the params object, at call time.
         if (this.c.is("Eq")) {
           throw new ParseError(
-            `jsmql does not support a default value in the params destructure ('${key.text} = …'). Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
+            `jsmql does not support a default value in the params destructure ('${key.text} = …') at position ${this.c.peek().pos}. Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
             this.c.peek().pos,
           );
         }
@@ -367,9 +528,9 @@ class Parser {
   }
 
   /** `{ … }` as an entry body: statements, with an optional trailing `return`. */
-  private entryBlock(): Program {
+  private entryBlock(params: readonly Binder[]): Program {
     this.c.expect("LBrace");
-    const { stmts, ret, retPos, sawSemi } = this.block("RBrace");
+    const { stmts, ret, retPos, sawSemi } = this.block("RBrace", params);
     if (ret !== null) {
       // A `return` in an entry block yields the expression itself. So a bare
       // predicate stays a predicate, and the position phase reads it as a Filter.
@@ -419,8 +580,9 @@ class Parser {
    * A `return` may appear only where a `}` closes the block. At the top level it
    * reaches `statement()`, and the parser refuses it as an unexpected token.
    */
-  private block(terminator: "RBrace" | "EOF"): Block {
+  private block(terminator: "RBrace" | "EOF", params: readonly Binder[] = []): Block {
     const stmts: PipelineStmt[] = [];
+    const scope = new Map<string, "parameter" | "declaration">(params.map((p) => [p.name, "parameter"]));
     let sawSemi = false;
     let endPos = this.c.peek().pos;
     for (;;) {
@@ -449,6 +611,7 @@ class Parser {
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
+      for (const stmt of run) declare(scope, stmt);
       stmts.push(...run);
       // `function f(x) { … }` ends with its closing brace, so the separator after
       // it is optional. This is the same rule that JavaScript uses.
@@ -513,7 +676,7 @@ class Parser {
     this.refuseGenerator();
     const name = this.c.expect("Ident");
     const params = this.paramList();
-    const lambda = this.lambdaOf(params, kw.pos);
+    const lambda = this.lambdaOf(params, kw.pos, false);
     return { type: "FuncDecl", name: name.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
 
@@ -543,7 +706,7 @@ class Parser {
     this.refuseGenerator();
     if (this.c.is("Ident")) this.c.next();
     const params = this.paramList();
-    return this.lambdaOf(params, kw.pos);
+    return this.lambdaOf(params, kw.pos, false);
   }
 
   /**
@@ -560,12 +723,6 @@ class Parser {
     const out = [this.declarator(kind, kw.pos, kw.pos)];
     while (this.c.eat("Comma")) out.push(this.declarator(kind, null, kw.pos));
     return out;
-  }
-
-  /** `let x = …` / `const x = …`, one declarator: a bracketed pipeline's element, where `,` separates elements. */
-  private binding(): LetDecl | FuncDecl {
-    const kw = this.c.next();
-    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
   }
 
   /**
@@ -667,23 +824,35 @@ class Parser {
     if (this.c.is("LParen") && this.parenWriteAhead()) {
       this.c.next();
       const ops: UpdateOp[] = [];
-      do {
+      for (;;) {
         ops.push(...this.writeGroup());
-      } while (this.c.eat("Comma") && !this.c.is("RParen"));
+        if (!this.c.is("Comma")) break;
+        const comma = this.c.next();
+        // `($.a = 1,)` is a SyntaxError too: a parenthesised expression is not a list.
+        if (this.c.is("RParen")) throw trailingComma(comma, this.c.peek());
+      }
       this.c.expect("RParen");
       return ops;
     }
     if (this.c.is("Delete")) {
       const kw = this.c.next();
+      const targetStart = this.c.peek().pos;
       const target = this.pratt(1);
       // `delete a?.b` is legal JavaScript, unlike `a?.b = 1`. So only the
       // "is it a place at all" half of the check applies here.
-      this.requirePlace(target, kw.pos, "delete");
+      this.requirePlace(target, kw.pos, "delete", this.src.slice(targetStart, this.c.lastEnd()));
       return [{ type: "DeleteStmt", target: target.expr, pos: kw.pos }];
     }
-    // `++$.a` and `$.a++` mean the same write. The row says `prefixOrPostfix`.
-    const prefix = this.c.is("PlusPlus") || this.c.is("MinusMinus") ? this.c.next() : null;
-    const target = this.pratt(1);
+    // `++$.a` and `$.a++` mean the same write. The row says `prefixOrPostfix`,
+    // and its `asStatement` says that the rule is a write.
+    const lead = PREFIX.get(this.c.type);
+    const prefix = lead !== undefined && lead.asStatement !== null ? this.c.next() : null;
+    const start = prefix?.pos ?? this.c.peek().pos;
+    const placeStart = this.c.peek().pos;
+    // A prefix write reads its operand at its own level, so `++$.a + 1` is
+    // `(++$.a) + 1`. A postfix write ends the target: the Pratt loop stops at it.
+    const target = prefix !== null && lead !== undefined ? this.pratt(lead.prec) : this.pratt(1, true);
+    const placeEnd = this.c.lastEnd();
     const op = prefix ?? this.c.next();
     if (!ASSIGN_TRIGGERS.has(op.type)) {
       throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
@@ -691,33 +860,62 @@ class Parser {
     // The token's own text IS the spelling: `=`, `+=`, `++`. So no table maps
     // a token type back to the operator it was lexed from.
     const spelling = op.text as AssignOp;
-    this.requireWriteTarget(target, op.pos, spelling);
+    this.requireWriteTarget(target, op.pos, spelling, this.src.slice(placeStart, placeEnd));
+    const update = PREFIX.get(op.type)?.asStatement ?? null;
+    if (update !== null) {
+      // `$.a++ + 1;` is `($.a++) + 1` to JavaScript: a value around the write.
+      if (INFIX.has(this.c.type) || ASSIGN_TRIGGERS.has(this.c.type)) {
+        const place = this.src.slice(placeStart, placeEnd);
+        const wrote = this.src.slice(start, prefix !== null ? placeEnd : op.end);
+        throw writeInValue(wrote, `${place} ${update}`, place, prefix !== null ? "before" : "after", op.pos);
+      }
+      return [{ type: "AssignExpr", target: target.expr, op: spelling, value: target.expr, pos: op.pos }];
+    }
     // `$.a = $.b = 1`: every target in the chain takes the SAME value. So the
     // chain is one write per target, not a nested assignment expression.
     if (spelling === "=") {
       const targets = [target.expr];
+      let valueStart = this.c.peek().pos;
       let value = this.pratt(1);
       while (this.c.is("Eq")) {
+        const wrote = this.src.slice(valueStart, this.c.lastEnd());
         const eq = this.c.next();
-        this.requireWriteTarget(value, eq.pos, "=");
+        this.requireWriteTarget(value, eq.pos, "=", wrote);
         targets.push(value.expr);
+        valueStart = this.c.peek().pos;
         value = this.pratt(1);
       }
+      // `$.a = $.b += 1`: a compound write is not a link of the chain.
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(value, valueStart);
       return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=" as const, value: value.expr, pos: op.pos }));
     }
-    const value = spelling === "++" || spelling === "--" ? target.expr : this.expression();
-    return [{ type: "AssignExpr", target: target.expr, op: spelling, value, pos: op.pos }];
+    return [{ type: "AssignExpr", target: target.expr, op: spelling, value: this.expression(), pos: op.pos }];
+  }
+
+  /**
+   * `1 + ($.a = 5)`: an assignment where JavaScript reads a value. The cursor
+   * stands at the operator. This method reads the right side too, so the message
+   * quotes the whole write.
+   */
+  private refuseAssignInValue(target: Parsed, start: number): never {
+    const place = this.src.slice(start, this.c.lastEnd());
+    const op = this.c.next();
+    this.requireWriteTarget(target, op.pos, op.text, place);
+    this.expression();
+    const wrote = this.src.slice(start, this.c.lastEnd());
+    throw writeInValue(wrote, wrote, place, "before", op.pos);
   }
 
   /** The `;` form: a `,` continues the run until the `;` or the end of input. */
   private writes(): UpdateFilter {
     const pos = this.c.peek().pos;
     const ops: UpdateOp[] = [];
-    do {
+    for (;;) {
       ops.push(...this.writeGroup());
-      // `}` ends the run as surely as `;` does. A callback block is a statement
-      // list too, and a formatter puts a trailing comma before its brace.
-    } while (this.c.eat("Comma") && !this.c.is("EOF") && !this.c.is("Semi") && !this.c.is("RBrace"));
+      if (!this.c.is("Comma")) break;
+      const comma = this.c.next();
+      if (this.c.is("EOF") || this.c.is("Semi") || this.c.is("RBrace")) throw trailingComma(comma, this.c.peek());
+    }
     return { type: "UpdateFilter", ops, pos };
   }
 
@@ -751,9 +949,10 @@ class Parser {
   /**
    * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
    * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not places.
-   * JavaScript refuses them, and so does JSMQL.
+   * JavaScript refuses them, and so does JSMQL. `wrote` is the target as the
+   * source spells it, so the message quotes the developer's own text.
    */
-  private requirePlace(target: Parsed, pos: number, op: string): void {
+  private requirePlace(target: Parsed, pos: number, op: string, wrote: string): void {
     const t = target.expr.type;
     const isPlace =
       t === "FieldRef" ||
@@ -774,9 +973,8 @@ class Parser {
         pos,
       );
     }
-    const what = target.rule === null ? `a ${t}` : `a '${spelled(target.rule)}' expression`;
     throw new ParseError(
-      `Cannot apply '${op}' to ${what}. You can write only to a field, a binding, '$', '$$' or a collection.`,
+      `Cannot apply '${op}' to '${wrote}' at position ${pos}. You can write only to a field, a binding, '$', '$$' or a collection.`,
       pos,
     );
   }
@@ -788,8 +986,9 @@ class Parser {
    * This method reads the row rather than testing `.optional`. So the next rule
    * that says so needs no branch here.
    */
-  private requireWriteTarget(target: Parsed, pos: number, op: string): void {
-    this.requirePlace(target, pos, op);
+  private requireWriteTarget(target: Parsed, pos: number, op: string, wrote: string): void {
+    this.requirePlace(target, pos, op, wrote);
+    refuseWholeTarget(target.expr, op, pos);
     if (target.rule === null) return;
     const refusal = NEVER_A_WRITE_TARGET.get(target.rule);
     if (refusal === undefined) return;
@@ -811,20 +1010,38 @@ class Parser {
       );
     }
     try {
-      return this.pratt(1).expr;
+      const start = this.c.peek().pos;
+      const out = this.pratt(1);
+      // A value ends here, so an assignment operator after it is a write inside the value.
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(out, start);
+      return out.expr;
     } finally {
       this.depth--;
     }
   }
 
-  private pratt(minPrec: number): Parsed {
+  /**
+   * One Pratt level. `endsAtWrite` is true only where a statement reads the
+   * target of a write. There a postfix write (`$.a++`) ends the target, and the
+   * caller reads the operator. Everywhere else, the write stands inside a value.
+   */
+  private pratt(minPrec: number, endsAtWrite = false): Parsed {
+    const start = this.c.peek().pos;
     let left = this.unary();
     for (;;) {
       const rule = INFIX.get(this.c.type);
       // A level of 0 means the row declares no precedence, so it never binds
-      // inside an expression. `$.b++` in a value slot is a parse error, not a
-      // silently-accepted increment.
+      // inside an expression.
       if (rule === undefined || rule.prec === 0 || rule.prec < minPrec) return left;
+
+      // `$.y = $.x++`: JavaScript reads the postfix write as a value.
+      if (rule.asStatement !== null) {
+        if (endsAtWrite) return left;
+        const place = this.src.slice(start, this.c.lastEnd());
+        const op = this.c.next();
+        this.requireWriteTarget(left, op.pos, op.text, place);
+        throw writeInValue(this.src.slice(start, op.end), `${place} ${rule.asStatement}`, place, "after", op.pos);
+      }
 
       // JavaScript forbids the pair outright, at any precedence level.
       if (mixingRefused(rule, left.rule, "left")) {
@@ -883,7 +1100,20 @@ class Parser {
     const rule = PREFIX.get(this.c.type);
     if (rule !== undefined && rule.prec > 0) {
       const op = this.c.next();
+      const placeStart = this.c.peek().pos;
       const argument = this.pratt(rule.prec);
+      // `$.y = ++$.x`: JavaScript reads the prefix write as a value.
+      if (rule.asStatement !== null) {
+        const place = this.src.slice(placeStart, this.c.lastEnd());
+        this.requireWriteTarget(argument, op.pos, op.text, place);
+        throw writeInValue(
+          this.src.slice(op.pos, this.c.lastEnd()),
+          `${place} ${rule.asStatement}`,
+          place,
+          "before",
+          op.pos,
+        );
+      }
       // A prefix operator's operand stands on its RIGHT side.
       if (mixingRefused(rule, argument.rule, "right")) {
         throw new ParseError(
@@ -896,6 +1126,16 @@ class Parser {
         expr: { type: "UnaryExpr", op: op.text as UnaryOp, argument: argument.expr, pos: op.pos },
         rule: rule.rules[0],
       };
+    }
+    // `f(delete $.a)`: JavaScript reads `delete` as a value too, but a write
+    // stands only as a statement.
+    if (this.c.is("Delete")) {
+      const kw = this.c.next();
+      const placeStart = this.c.peek().pos;
+      const target = this.pratt(MAX_PRECEDENCE);
+      const place = this.src.slice(placeStart, this.c.lastEnd());
+      this.requirePlace(target, kw.pos, "delete", place);
+      throw writeInValue(`delete ${place}`, `delete ${place}`, null, "before", kw.pos);
     }
     return this.postfix(this.atom());
   }
@@ -1128,7 +1368,7 @@ class Parser {
     const t = this.c.next();
     if (this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaBody([t.text], arrow.pos);
+      return this.lambdaBody([t.text], arrow.pos, [{ name: t.text, pos: t.pos }]);
     }
     return { type: "Ident", name: t.text, pos: t.pos };
   }
@@ -1152,7 +1392,7 @@ class Parser {
     }
     if (looksLikeParams && this.c.eat("RParen") && this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaOf(params, arrow.pos);
+      return this.lambdaOf(params, arrow.pos, true);
     }
     this.c.reset(save);
     this.c.expect("LParen");
@@ -1177,7 +1417,15 @@ class Parser {
    * `([...a, b])` is a legal expression.
    */
   private param(): ParamRead {
-    if (this.c.is("Ident")) return { kind: "name", name: this.c.next().text };
+    if (this.c.is("Ident")) {
+      const t = this.c.next();
+      // `(x = 1) => …`: a default value. Without an arrow, `(x = 1)` is a write in parentheses.
+      if (this.c.is("Eq")) {
+        if (!this.skipPatternPart()) return null;
+        return { kind: "refused", error: parameterDefault(t) };
+      }
+      return { kind: "name", name: t.text, pos: t.pos };
+    }
     if (this.c.is("LBracket")) {
       const open = this.c.next();
       const parts: (PatternPart | null)[] = [];
@@ -1261,7 +1509,9 @@ class Parser {
     for (;;) {
       const t = this.c.peek();
       if (t.type === "EOF") return false;
-      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace")) return true;
+      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace" || t.type === "RParen")) {
+        return true;
+      }
       if (t.type === "LParen" || t.type === "LBracket" || t.type === "LBrace") depth++;
       if (t.type === "RParen" || t.type === "RBracket" || t.type === "RBrace") depth--;
       this.c.next();
@@ -1276,17 +1526,25 @@ class Parser {
    * its shape for every reader (a sort key sees the minus, a filter sees the
    * comparison).
    */
-  private lambdaOf(params: readonly ParamRead[], pos: number): Lambda {
+  private lambdaOf(params: readonly ParamRead[], pos: number, arrow: boolean): Lambda {
     for (const p of params) if (p !== null && p.kind === "refused") throw p.error;
     const named = params as readonly Exclude<ParamRead, null | { kind: "refused" }>[];
+    // Every name the list binds, a pattern's parts included: the body's block shares their scope.
+    const binders: Binder[] = [];
+    for (const p of named) {
+      if (p.kind === "name") binders.push({ name: p.name, pos: p.pos });
+      else for (const part of p.parts) if (part !== null) binders.push(part);
+    }
+    if (arrow || named.some((p) => p.kind !== "name")) refuseDuplicateParams(binders);
     if (named.every((p) => p.kind === "name")) {
       return this.lambdaBody(
         named.map((p) => (p as { name: string }).name),
         pos,
+        binders,
       );
     }
     const plain = named.map((p) => (p.kind === "name" ? p.name : ""));
-    const parsed = this.lambdaBody(plain, pos);
+    const parsed = this.lambdaBody(plain, pos, binders);
     // The fresh names step aside from every name that the body mentions, and from
     // every other parameter. So no part can capture a name that the developer wrote.
     const taken: object[] = [parsed, ...plain.filter((n) => n !== "").map((n) => ({ type: "Ident", name: n }))];
@@ -1333,12 +1591,12 @@ class Parser {
    * `blockBody: "stages"`. The callee claims it in `args()`, and `finish()`
    * refuses a stages body that nobody claimed.
    */
-  private lambdaBody(params: readonly string[], pos: number): Lambda {
+  private lambdaBody(params: readonly string[], pos: number, binders: readonly Binder[]): Lambda {
     if (!this.c.is("LBrace")) {
       return { type: "Lambda", params, body: this.expression(), pos };
     }
     const open = this.c.next();
-    const { stmts, ret, retPos, endPos } = this.block("RBrace");
+    const { stmts, ret, retPos, endPos } = this.block("RBrace", binders);
     // A `return` makes the block JavaScript: declarations, then one result.
     if (ret !== null) {
       const decls = stmts.filter((st): st is LetDecl => st.type === "LetDecl");
@@ -1414,11 +1672,12 @@ class Parser {
   }
 
   /**
-   * One element of an array literal. A declaration or a write makes the literal a
-   * bracketed pipeline. Anything else is a value.
+   * One element of an array literal. A write or a `function` makes the literal a
+   * bracketed pipeline. Anything else is a value. A `let` or a `const` is not an
+   * element at all: JavaScript refuses it there.
    */
   private arrayElement(): ArrayElement {
-    if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    if (this.c.is("Let") || this.c.is("Const")) throw declarationAsElement(this.c.peek(), this.c.peek(1));
     // `[ function double(x) { … }, $set(…) ]`: a declaration, not a function
     // VALUE. Without this check it parsed as a lambda, and the lambda made the
     // literal look like an array of values rather than a pipeline.

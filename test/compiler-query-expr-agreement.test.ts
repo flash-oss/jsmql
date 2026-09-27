@@ -62,16 +62,24 @@ const AGREE: readonly string[] = [
   "$.a === 1 || $.b === 2",
   "$.b === 2 && $.n > 1",
   "$.a",
-  "!$.a",
   "$.a && $.b",
   "$.a || $.b",
+];
+
+/**
+ * Sources with no query clause. The query road wraps the expression road's own
+ * document in `$expr`, so the two roads run one query, and a server comparison
+ * proves nothing. The test asserts that identity instead. A source that gains a
+ * query form fails here, and moves to AGREE or DIVERGE.
+ */
+const SAME_QUERY: readonly string[] = [
+  "!$.a",
   "$.a ? $.b === 1 : $.b === 2",
   "$.n > $.b",
   "$.n + 1 > 5",
   "$abs($.n) > 5",
 ];
 
-/** Sources the language DOCUMENTS as selecting different documents, and why. */
 /**
  * The query road emits the document a MongoDB developer writes by hand, so the
  * server reads an ARRAY value element-wise there. The expression road compares the
@@ -80,6 +88,7 @@ const AGREE: readonly string[] = [
 const ARRAY_ELEMENT_WISE =
   "The query road emits the plain query document, and MongoDB satisfies a field comparison when any ELEMENT of an array value satisfies it. The expression road compares the whole value, so an array document is selected by one road and not the other.";
 
+/** Sources the language DOCUMENTS as selecting different documents, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
   { src: "$.a === 1", why: ARRAY_ELEMENT_WISE },
   { src: 'typeof $.a === "object"', why: ARRAY_ELEMENT_WISE },
@@ -129,6 +138,21 @@ async function bothRoads(src: string): Promise<{ query: number[]; expr: number[]
 
 let ran = 0;
 let skipped = 0;
+
+/** True when the query road is the expression road's document under `$expr`. */
+const sameQuery = (src: string): boolean => JSON.stringify(filter(src)) === JSON.stringify({ $expr: expr(src) });
+
+describe("compiler — every compared source has two different queries", () => {
+  // A row whose two roads emit one query compares the server with itself.
+  it("no AGREE or DIVERGE row emits the same query on both roads", () => {
+    const same = [...AGREE, ...DIVERGE.map((d) => d.src)].filter(sameQuery);
+    expect(same, "move these rows to SAME_QUERY").toEqual([]);
+  });
+
+  it.each(SAME_QUERY)("%s emits one query on both roads", (src) => {
+    expect(filter(src)).toEqual({ $expr: expr(src) });
+  });
+});
 
 describe("compiler — the query and the expression road select the same documents", () => {
   for (const src of AGREE) {

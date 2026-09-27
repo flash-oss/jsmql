@@ -82,7 +82,13 @@ export function isStageName(name: string): boolean {
  * window position; without the first, `$merge("out")` — a body with no keys to
  * descend into — would never reach any position at all.
  */
-export type BodySlot = { at: Position; otherwise: Position; deeper: boolean };
+export type BodySlot = {
+  at: Position;
+  otherwise: Position;
+  deeper: boolean;
+  /** Does the server evaluate a value under this path as an expression? The row's `evaluates` says. */
+  evaluated: boolean;
+};
 
 /** A body path, one segment per key. `null` is a COMPUTED key — `{ [k]: … }`. */
 export type BodyPath = readonly (string | null)[];
@@ -114,7 +120,13 @@ export function bodySlotAt(stage: string, path: BodyPath): BodySlot | undefined 
   const layout = bodyLayoutOf(stage);
   if (layout === undefined) return undefined;
   const keys = Object.keys(layout).map((key) => ({ key, seg: segmentsOf(key) }));
-  const deeper = keys.some(({ seg }) => seg.length > path.length && covers(seg.slice(0, path.length), path));
+  const evaluatedPaths = evaluatesOf(stage).map(segmentsOf);
+  // A longer key still claims something below this path: a position the layout
+  // states, or a path whose value the server evaluates.
+  const below = (seg: readonly string[]): boolean =>
+    seg.length > path.length && covers(seg.slice(0, path.length), path);
+  const deeper = keys.some(({ seg }) => below(seg)) || evaluatedPaths.some(below);
+  const evaluated = evaluatedPaths.some((seg) => covers(seg, path));
   let best: { key: string; seg: readonly string[] } | undefined;
   for (const cand of keys) {
     if (!covers(cand.seg, path)) continue;
@@ -125,8 +137,13 @@ export function bodySlotAt(stage: string, path: BodyPath): BodySlot | undefined 
   if (best === undefined) return undefined;
   const stated = layout[best.key];
   return typeof stated === "string"
-    ? { at: stated, otherwise: stated, deeper }
-    : { at: stated.list, otherwise: stated.otherwise, deeper };
+    ? { at: stated, otherwise: stated, deeper, evaluated }
+    : { at: stated.list, otherwise: stated.otherwise, deeper, evaluated };
+}
+
+/** The body paths whose value the server evaluates as an expression — the stage row's `evaluates`. */
+function evaluatesOf(stage: string): readonly string[] {
+  return (row(stage) as { evaluates?: readonly string[] } | undefined)?.evaluates ?? [];
 }
 
 /**
@@ -328,7 +345,7 @@ export function lists(name: string, where: Position): boolean {
 
 // ── the facts the emit phase reads ───────────────────────────────────────────
 
-import type { Binds, BodyRule, DocumentEffect, TypeExpr } from "../registry/vocabulary.ts";
+import type { Binds, DocumentEffect, TypeExpr } from "../registry/vocabulary.ts";
 import type { CallbackParams } from "../registry/vocabulary.ts";
 import { PRODUCTIONS } from "../registry/productions.ts";
 
@@ -336,7 +353,7 @@ type EmitRow = {
   returns?: TypeExpr;
   params?: CallbackParams;
   binds?: Binds;
-  shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
+  shape?: "single" | "array" | "none" | "flex" | "verbatim" | "object";
   family?: Family;
   spreadAlternative?: string;
   newKeyword?: "required" | "optional" | "forbidden";
@@ -422,14 +439,12 @@ export function bindsOf(name: string): Binds | undefined {
 
 /** The key order a positional call to an object-shaped operator maps onto; empty when it has none. */
 export function positionalKeysOf(name: string): readonly string[] {
-  const shape = emitRow(name)?.shape;
-  return typeof shape === "object" && shape !== null ? (shape.object.positional ?? []) : [];
+  return (emitRow(name) as { keys?: readonly string[] } | undefined)?.keys ?? [];
 }
 
-/** The object-shaped operator's body rule, or undefined for any other shape. */
-export function bodyRuleOf(name: string): BodyRule | undefined {
-  const shape = emitRow(name)?.shape;
-  return typeof shape === "object" && shape !== null ? (shape.object as BodyRule) : undefined;
+/** Does the stage's body take a `let` document? The row's `takesLet` says. */
+export function takesLetOf(stage: string): boolean {
+  return (row(stage) as { takesLet?: true } | undefined)?.takesLet === true;
 }
 
 /** The position a row states for its OPERAND, where it is not the row's own language. */
@@ -443,33 +458,28 @@ export function liftsToOf(name: string): { op: string; negated?: true } | undefi
 }
 
 /**
- * A STAGE's stated body rule, or undefined when the row states none.
- * A stage's body is its own field, not the `shape.object` an operator uses.
+ * Is `name` a call that reads no receiver: a MongoDB operator or stage, or a global
+ * function? A `$` name that no row holds is a MongoDB name too (HR2). So a method
+ * spelling on a value, as in `$.a.$size()`, has no MQL.
  */
-export function stageBodyRuleOf(name: string): BodyRule | undefined {
-  return (row(name) as { body?: BodyRule } | undefined)?.body;
+export function takesNoReceiver(name: string): boolean {
+  const kind = (row(name) as { kind?: string } | undefined)?.kind;
+  return name.startsWith("$") || kind === "mongo" || kind === "global";
 }
 
-/** A STAGE's own smallest correct call, for the refusal of a wrong-type body; undefined when the row states none. */
-export function bodyExampleOf(name: string): string | undefined {
-  return (row(name) as { bodyExample?: string } | undefined)?.bodyExample;
+/** The operator that does a STAGE's job on a value (`$match` → `$filter`), or undefined. */
+export function valueTwinOf(name: string): string | undefined {
+  return (row(name) as { valueTwin?: string } | undefined)?.valueTwin;
 }
 
 /** How a MongoDB operator's operand list is written, or undefined for a stage or a name. */
 export function operandShapeOf(name: string): "single" | "array" | "none" | "flex" | "verbatim" | "object" | undefined {
-  const shape = emitRow(name)?.shape;
-  if (shape === undefined) return undefined;
-  return typeof shape === "string" ? shape : "object";
+  return emitRow(name)?.shape;
 }
 
 /** The JavaScript form that takes a spread and lowers to this operator, or undefined. */
 export function spreadAlternativeOf(name: string): string | undefined {
   return emitRow(name)?.spreadAlternative;
-}
-
-/** The receiver family a value built by this global belongs to (`Set` → "set"), or undefined. */
-export function constructedFamilyOf(name: string): Family | undefined {
-  return emitRow(name)?.family;
 }
 
 /** The production that builds `nodeType` on its own — the first row whose `becomes` is exactly it. */
@@ -527,12 +537,23 @@ export function hasStreamValueCell(name: string): boolean {
 
 /** Does the value cell answer null only for a null or missing input — never for an input that is there? */
 export function neverNullOf(name: string): boolean {
-  return (row(name) as { neverNull?: true } | undefined)?.neverNull === true;
+  const stated = (row(name) as { neverNull?: true | "always" } | undefined)?.neverNull;
+  return stated === true || stated === "always";
+}
+
+/** Does the value cell answer a value WHATEVER its arguments are — a missing one read as the empty value of its slot? */
+export function neverNullAlwaysOf(name: string): boolean {
+  return (row(name) as { neverNull?: true | "always" } | undefined)?.neverNull === "always";
+}
+
+/** Does the operator answer a null receiver as it answers the empty one, so HR5 needs no `$ifNull`? */
+export function readsNullAsEmptyOf(name: string): boolean {
+  return (row(name) as { readsNullAsEmpty?: true } | undefined)?.readsNullAsEmpty === true;
 }
 
 /**
- * HR5: the EMPTY value that an array, set or object method runs on when its receiver is
- * null or missing — `[]` for an array or a set, `{}` for an object — or null for a method
+ * HR5: the EMPTY value that an array or object method runs on when its receiver is
+ * null or missing — `[]` for an array, `{}` for an object — or null for a method
  * of another family. `family` is the receiver's proven family, or null; then the row's own
  * field families decide, and they must agree on one empty value.
  */
@@ -545,7 +566,7 @@ export function emptyValueOf(name: string, family: string | null): [] | Record<s
         ? []
         : own.filter((f) => FIELD_FAMILIES.includes(f));
   if (fams.length === 0) return null;
-  if (fams.every((f) => f === "array" || f === "set")) return [];
+  if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
   return null;
 }
@@ -674,13 +695,16 @@ export function newKeywordOf(name: string): "required" | "optional" | "forbidden
  * `ObjectId`, `Decimal128`, `MinKey`, `Date`, and their mongosh spellings.
  *
  * Read for the ambient `declare global` block (scripts/generate-globals.mjs), so a
- * tenth constructor is one ROW and no generator edit. `Set` is not here: its row
- * demands `new` and it builds an array, not a BSON value.
+ * tenth constructor is one ROW and no generator edit.
  */
 export function constructorGlobals(): readonly { name: string; newKeyword: string; doc: string }[] {
   const out: { name: string; newKeyword: string; doc: string }[] = [];
-  for (const [name, r] of Object.entries(ROWS) as [string, { kind?: string; newKeyword?: string; doc?: string }][]) {
-    if (r?.kind !== "global" || r.newKeyword !== "optional") continue;
+  for (const [name, r] of Object.entries(ROWS) as [
+    string,
+    { kind?: string; newKeyword?: string; doc?: string; where?: readonly string[] },
+  ][]) {
+    // A row that lists no position is a refusal (`RegExp`), not a constructor a program uses.
+    if (r?.kind !== "global" || r.newKeyword !== "optional" || (r.where?.length ?? 0) === 0) continue;
     out.push({ name, newKeyword: r.newKeyword, doc: r.doc ?? "" });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -743,13 +767,6 @@ export function mutatorFormOf(name: string): MutatorForm | undefined {
   return (row(name) as { mutatorForm?: MutatorForm } | undefined)?.mutatorForm;
 }
 
-/** The operators this name is a FRAGMENT of at `position` — `$case` inside `$switch`, `$box` inside `$geoWithin` — or undefined when it stands on its own. */
-export function onlyInsideOf(name: string, position: Position): readonly string[] | undefined {
-  return (row(name) as { onlyInside?: Partial<Record<Position, readonly string[]>> } | undefined)?.onlyInside?.[
-    position
-  ];
-}
-
 // ── the vocabulary the globals generator reads ──────────────────────────────
 //
 // `scripts/generate-globals.mjs` types the ambient `$$` / `$$$` chains and the
@@ -791,6 +808,34 @@ export function streamMethodNames(): string[] {
   return everyMethodRow().filter(
     (n) => lists(n, "stream") && (isRuleCell((row(n) as { stream?: unknown }).stream) || unionsOf(n)),
   );
+}
+
+/**
+ * Every name that a `$$` receiver accepts in some position: a stream link
+ * (`.filter`), a stage link (`.$match`), the union road (`.push`, `.concat`),
+ * and `.size()`. A refusal of a link on the stream suggests from this set.
+ */
+export function streamReceiverNames(): string[] {
+  return Object.keys(ROWS).filter((n) => lists(n, "stream") || familiesOf(n)?.includes("stream") === true);
+}
+
+/**
+ * Every global that a program calls by its bare name: `Number(…)`, `assert(…)`, `new Date(…)`.
+ * A row that lists no position (`Math`, `Array`) is a namespace or a refusal, so no
+ * suggestion names it.
+ */
+export function bareCallableNames(): string[] {
+  return Object.keys(ROWS).filter(
+    (n) => !n.startsWith("$") && isGlobalName(n) && isCallable(n) && (positionsOf(n)?.length ?? 0) > 0,
+  );
+}
+
+/** Every global that `new` builds: `new Date(…)`, `new ObjectId(…)`, `new Decimal128(…)`. */
+export function constructibleNames(): string[] {
+  return bareCallableNames().filter((n) => {
+    const k = newKeywordOf(n);
+    return k === "required" || k === "optional";
+  });
 }
 
 /** The methods that END a `$$$.<coll>` chain with a value: an array value rule and no stream rule. */

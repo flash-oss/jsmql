@@ -12,10 +12,9 @@
 import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { didYouMean } from "../../levenshtein.ts";
-import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId } from "../../bson.ts";
+import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
-import { setKey } from "../../registry/mql.ts";
+import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -25,22 +24,25 @@ import {
   flattensChain,
   isCallable,
   isGlobalName,
-  isStageName,
   namespaceNames,
   newKeywordOf,
   positionalKeysOf,
   productionForNode,
   productionForOperator,
   rowForNodeType,
-  onlyInsideOf,
   elementsOf,
   soleFieldFamilyOf,
   hasStreamValueCell,
   emptyValueOf,
+  bareCallableNames,
+  constructibleNames,
+  positionsOf,
+  readsNullAsEmptyOf,
+  takesNoReceiver,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
-import { checkBody, checkSlotKinds, checkSlots } from "./check.ts";
-import { operandShapeOf, bodyRuleOf } from "../rows.ts";
+import { checkBodyKeys, checkSlotKinds, checkSlots } from "./check.ts";
+import { operandShapeOf } from "../rows.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
@@ -50,9 +52,9 @@ import { cond, letOne, readsRef, switchOn, switchOver } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
-import { ANY, cannotBe, isOnly, kindsOf, maybeAbsent } from "./type.ts";
+import { ANY, cannotBe, isNothing, isOnly, kindsOf, maybeAbsent, unreadable, unreadableAt } from "./type.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
-import { injectedNeedsLiteral } from "./env.ts";
+import { injectedPlacement } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
 const NAMESPACES = namespaceNames();
@@ -64,7 +66,6 @@ const positionIn = (env: Env): Position => positionOf(env.site.where) ?? "value"
 /** The element and argument types that are NOT expressions, held against the tree's own names. */
 const NOT_EXPR: ReadonlySet<Exclude<CallArg | ArrayElement, Expr>["type"]> = new Set([
   "SpreadElement",
-  "LetDecl",
   "FuncDecl",
   "AssignExpr",
   "DeleteStmt",
@@ -123,7 +124,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     return joinRoad(node, env);
   }
   // A constant is its VALUE, before any row is read. The fold writes back what has
-  // a source spelling. A Date, an ObjectId or a Set has none and stays a node, so
+  // a source spelling. A Date or an ObjectId has none and stays a node, so
   // the evaluator is asked here — with its own exclusions (an operator call is the
   // developer's MQL and is never evaluated).
   if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
@@ -149,6 +150,10 @@ export function lowerValue(node: Expr, env: Env): unknown {
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
+  // A `?.` read with no call after it is JavaScript's `undefined` where the value is not
+  // there, and a document written with it holds `null`. So `$.o?.[k]` and `$.o[k]?.q` answer
+  // as `$.o?.p` does: the reads run as plain reads, and one `$ifNull` stands on top.
+  if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
   switch (node.type) {
     case "NumberLiteral":
     case "StringLiteral":
@@ -164,8 +169,12 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "UndefinedLiteral":
       throw E.undefinedAsValue(node.pos);
     case "RegexLiteral":
-      // A RegExp the CALL supplied is a value in its own right. A source regex has no value form.
+      // A RegExp the CALL supplied is a value in its own right.
       if (node.injected !== undefined) return node.injected;
+      // Inside MQL the developer wrote — an argument of a `$`-named call, a value under a
+      // `$` key — a regex literal is a BSON regex, as HR1 says. JavaScript code reads a
+      // regex only through the regex methods.
+      if (env.site.inside !== null) return regexValue(node.pattern, mongoRegexOptions(node.flags));
       throw E.regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);
@@ -176,9 +185,9 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "ObjectLiteral":
       return objectLiteral(node, node.entries, env);
     case "Injected":
-      // HR1: a value the call supplied is a VALUE — never an operator or a field reference
-      return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
+      return injectedValue(node, env);
     case "FieldRef": {
+      readablePath(node, env);
       const path = reachable(env.render(locate(node, env) as Located, node.pos));
       // `$.user?.name` is JavaScript's `undefined` when `user` is not there, and a document
       // written with it holds the key: `x: null`. A bare path would leave the key out.
@@ -291,9 +300,9 @@ function stoppedChain(node: Expr): Expr | null {
   let cursor: Expr = node;
   let called = false;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
-    // a plain field read passes a missing value through as missing. Anything COMPUTED
-    // (a call, an index, a property row such as `.length`) does not, and is stopped
-    if (cursor.type !== "MemberAccess" || isPropertyRow(cursor)) called = true;
+    // a plain read — a field `.p` or an index `[k]` — passes a missing value through as
+    // missing. A call, or a property row such as `Math.PI`, does not, and is stopped
+    if (!isRead(cursor)) called = true;
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
@@ -302,6 +311,31 @@ function stoppedChain(node: Expr): Expr | null {
   // guards: `user` for `$.user?.name`, so that `name` is read as any other path inside.
   if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
   return cursor.optionalAt === undefined ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
+}
+
+/** A plain read: a field `.p` or an index `[k]`, never a call or a property row such as `Math.PI`. */
+function isRead(e: Expr): e is Extract<Expr, { type: "MemberAccess" | "IndexAccess" }> {
+  return e.type === "IndexAccess" || (e.type === "MemberAccess" && !isPropertyRow(e));
+}
+
+/** Does a `?.` stand among the reads on top of this chain, or on the folded path under them? */
+function readsHaveOptional(e: Expr): boolean {
+  let cursor = e;
+  while (isRead(cursor)) {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
+}
+
+/** The same reads with each `?.` cleared, down to the first node that is not a read. */
+function withoutReadOptional(e: Expr): Expr {
+  if (isRead(e)) return { ...e, optional: false, object: withoutReadOptional(e.object) };
+  if (e.type === "FieldRef" && e.optional === true) {
+    const { optional: _dropped, optionalAt: _at, ...rest } = e;
+    return rest;
+  }
+  return e;
 }
 
 /** The same chain with every `?.` on its spine cleared — what runs once the test passed. */
@@ -316,51 +350,12 @@ function withoutOptional(e: Expr): Expr {
   return e;
 }
 
-/** Every stage name the registry has, for the suggestion a mistyped stage gets. */
-const STAGE_NAMES = everyName().filter(isStageName);
-
-/**
- * A bracketed STAGE LIST — `[$match(…), $sort(…)]`, `[{ $match: … }]` — is a
- * pipeline. It has no value, and lowering it as an array of operators produces a
- * document the server refuses on every input; the developer is told what it is.
- * The judgement is by the FIRST element: a `$`-named call, or an object whose
- * single key is `$`-led. A mistyped stage gets the stage it meant.
- */
-function refuseStageList(node: Expr, elements: readonly ArrayElement[]): void {
-  const first = elements[0];
-  if (first === undefined) return;
-  const stageLike = (el: ArrayElement): { name: string; keys: number } | null => {
-    if (el.type === "OperatorCall") return { name: el.name, keys: 1 };
-    if (el.type === "ObjectLiteral") {
-      const keys = el.entries.map(staticKey);
-      if (keys.length > 0 && keys[0] !== null && keys[0].startsWith("$")) return { name: keys[0], keys: keys.length };
-    }
-    return null;
-  };
-  const head = stageLike(first);
-  if (head === null) return;
-  // A known stage, or a name the registry does not know that is NEAR a stage
-  // (`$macth`). A known operator (`[$abs($.a), 1]`) or an unknown name near no
-  // stage is an array of values — HR2 passes it through.
-  const near = consult(head.name, "value").kind === "unknown" && didYouMean(head.name, STAGE_NAMES) !== "";
-  if (!isStageName(head.name) && !near) return;
-  elements.forEach((el, i) => {
-    const s = stageLike(el);
-    if (s === null) return;
-    if (s.keys !== 1) throw E.multiKeyStage(i, s.keys, el.pos);
-    if (!isStageName(s.name)) throw E.unknownStage(i, s.name, STAGE_NAMES, el.pos);
-  });
-  throw E.stageListAsValue(node.pos);
-}
-
 function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): unknown {
-  refuseStageList(node, elements);
   const inner = childEnv(env, node, "elements");
+  // The desugar pass refuses a statement in a value, with the spelling the developer wrote.
   for (const el of elements) {
-    if (el.type === "AssignExpr" || el.type === "UpdateFilter") throw E.statementInValue("Assignment", el.pos);
-    if (el.type === "DeleteStmt") throw E.statementInValue("delete", el.pos);
-    if (el.type === "LetDecl") throw E.statementInValue("`let`", el.pos);
-    if (el.type === "FuncDecl") throw E.statementInValue("A function declaration", el.pos);
+    if (el.type === "AssignExpr" || el.type === "UpdateFilter" || el.type === "DeleteStmt" || el.type === "FuncDecl")
+      internalError(`a '${el.type}' reached a value array`, el.pos);
   }
   if (!elements.some((el) => el.type === "SpreadElement"))
     return elements.filter(isExpr).map((el) => lowerValue(el, inner));
@@ -396,6 +391,23 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
   return operands.length === 1 ? operands[0] : { $concatArrays: operands };
 }
 
+/**
+ * HR1: a value the call supplied is a VALUE — never an operator or a field reference.
+ * One that reads as MQL takes `$literal` where the server evaluates the slot, and the
+ * compiler refuses it where the value becomes part of the MQL. See `injectedPlacement`.
+ */
+function injectedValue(node: Extract<Expr, { type: "Injected" }>, env: Env): unknown {
+  if (!isMqlShaped(node.value)) return node.value;
+  switch (injectedPlacement(env.site)) {
+    case "literal":
+      return { $literal: node.value };
+    case "asWritten":
+      return node.value;
+    case "refused":
+      throw E.runTimeValueAsMql(node.value, env.site.where, node.pos);
+  }
+}
+
 function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): unknown {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list: readonly ObjectEntry[]): unknown => {
@@ -404,7 +416,7 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
       const pairs = list.map((e) => {
         if (e.type !== "KeyValueEntry") internalError("a spread reached the computed-key path");
         const k = e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, inner);
-        return { k, v: lowerValue(e.value, inner) };
+        return { k, v: lowerValue(e.value, childEnv(inner, e, "value")) };
       });
       return { $arrayToObject: [pairs] };
     }
@@ -418,24 +430,9 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
         if (doc !== null && typeof doc === "object") Object.assign(out, doc as Record<string, unknown>);
         continue;
       }
-      // `{ $add: "$x" }` — a list-only operator with ONE operand that is not an array
-      // literal — and `{ $size: [1, 2] }` — a one-operand operator with a written operand
-      // list. The call spelling lowers each, so the row's count judges both spellings
-      // (HR2): `{ $add: "$x" }` and `{ $size: [[1, 2]] }` stay as written, and
-      // `{ $divide: 10 }` and `{ $size: [1, 2] }` are refused as their calls are, because
-      // the server refuses them.
-      const keyShape = e.key.name.startsWith("$") ? operandShapeOf(e.key.name) : undefined;
-      if (
-        (keyShape === "array" && e.value.type !== "ArrayLiteral") ||
-        (keyShape === "single" && e.value.type === "ArrayLiteral")
-      ) {
-        const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
-        const own = doc !== null && typeof doc === "object" ? (doc as Record<string, unknown>)[e.key.name] : undefined;
-        if (own === undefined) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
-        setKey(out, e.key.name, own);
-        continue;
-      }
-      setKey(out, e.key.name, lowerValue(e.value, inner));
+      // A value under a `$` key is the operand of that operator, as in `$op(…)` (HR2).
+      const at = childEnv(inner, e, "value");
+      setKey(out, e.key.name, lowerValue(e.value, e.key.name.startsWith("$") ? at.inside(e.key.name) : at));
     }
     return out;
   };
@@ -564,17 +561,89 @@ function isPropertyRow(node: Extract<Expr, { type: "MemberAccess" }>): boolean {
   return sourceFamily(node.object) !== null || !isCallable(node.name);
 }
 
+/**
+ * A folded path `$.a.b.c` reads each segment off the one before. The first segment
+ * that the document's proof shows can give no value is refused: a field of a string,
+ * of an array, or one that a closed document does not hold. See `unreadable` in type.ts.
+ * A QUERY keeps MongoDB's path through an array (`throughArrays`): `{ "items.sku": "a" }`.
+ */
+export function readablePath(node: Extract<Expr, { type: "FieldRef" }>, env: Env, throughArrays = false): void {
+  if (node.path === "") return;
+  const bad = unreadableAt(env.typeAt("", 0), node.path, throughArrays);
+  if (bad === null) return;
+  const holder = bad.index === 0 ? "the document" : `'${spelledPath(node, bad.index)}'`;
+  throw E.unreadableField(node.path.split(".")[bad.index], bad.why, spelledPath(node, bad.index + 1), holder, node.pos);
+}
+
+/** The first `count` segments of a folded path as the source spells them, with its last `?.`: `$.a?.b`. */
+function spelledPath(node: Extract<Expr, { type: "FieldRef" }>, count: number): string {
+  const segments = node.path.split(".").slice(0, count);
+  const tested = node.optional !== true ? count : node.optionalAt === undefined ? 0 : node.optionalAt.split(".").length;
+  if (tested >= segments.length) return `$.${segments.join(".")}`;
+  const tail = segments.slice(tested).join(".");
+  return tested === 0 ? `$?.${tail}` : `$.${segments.slice(0, tested).join(".")}?.${tail}`;
+}
+
+/** A simple read as the source spells it (`$.p[0]`, `row.a`), or null for any other node. */
+function spelledRead(e: Expr): string | null {
+  if (e.type === "FieldRef") return e.path === "" ? "$" : spelledPath(e, e.path.split(".").length);
+  if (e.type === "Ident") return e.minted === true ? null : e.name;
+  if (e.type !== "MemberAccess" && e.type !== "IndexAccess") return null;
+  const object = spelledRead(e.object);
+  if (object === null) return null;
+  if (e.type === "MemberAccess") return `${object}${e.optional ? "?." : "."}${e.name}`;
+  if (e.index.type !== "NumberLiteral" && e.index.type !== "StringLiteral") return null;
+  return `${object}${e.optional ? "?." : ""}[${JSON.stringify(e.index.value)}]`;
+}
+
+/**
+ * How a message names the value before a read. A name that the desugar pass wrote
+ * for a short spelling (`{ type: "a" }`) is named by what it stands for: the
+ * document, or the element.
+ */
+export function holderOf(e: Expr, env: Env): string | null {
+  if (e.type === "FieldRef" && e.path === "") return "the document";
+  if (e.type === "Ident" && e.minted === true && env.scope.has(e.name)) {
+    const ref = env.lookup(e.name, e.pos).ref;
+    if (ref.kind !== "document") return "the element";
+    return ref.path === "" ? "the document" : `'$.${ref.path}'`;
+  }
+  const spelled = spelledRead(e);
+  return spelled === null ? null : `'${spelled}'`;
+}
+
 function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): unknown {
   // `Math.abs` on its own names a function. Only a call or a callback slot gives it a value.
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
     throw E.unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
+  refuseUnreadable(node, env);
   const path = pathOf(node, env);
   if (path !== null) return path;
-  const raw = lowerValue(node.object, childEnv(env, node, "object"));
-  const input = node.optional || chainHasOptional(node.object) ? ifNull(raw, {}) : raw;
-  return { $getField: { field: node.name, input } };
+  // A field read after a value that is not a path binds the value once. The field reads
+  // above it are a path off the variable, so they read as a field path does: missing over
+  // null, a scalar or a missing value, and each element's field over an array.
+  // MEASURED: `{ $let: { vars: { v: "$x" }, in: "$$v.q" } }` answers as `"$x.q"` on each of them.
+  const names = [node.name];
+  let base = node.object;
+  let baseEnv = childEnv(env, node, "object");
+  while (base.type === "MemberAccess" && !isPropertyRow(base) && pathOf(base, env) === null) {
+    refuseUnreadable(base, env);
+    names.unshift(base.name);
+    baseEnv = childEnv(baseEnv, base, "object");
+    base = base.object;
+  }
+  const bound = env.fresh("v");
+  return letOne(bound.as, lowerValue(base, baseEnv), `${bound.ref}.${names.join(".")}`);
+}
+
+/** A field read that the proof shows gives no value is refused. See `unreadable` in type.ts. */
+function refuseUnreadable(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): void {
+  const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
+  if (why === null) return;
+  const read = `${node.optional ? "?." : "."}${node.name}`;
+  throw E.unreadableField(node.name, why, read, holderOf(node.object, env), node.pos);
 }
 
 /**
@@ -595,6 +664,13 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
  */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
+  if (node.index.type === "StringLiteral") {
+    const name = node.index.value;
+    const why = unreadable(typeOf(node.object, objEnv), name, false);
+    if (why !== null) {
+      throw E.unreadableField(name, why, `[${JSON.stringify(name)}]`, holderOf(node.object, env), node.pos);
+    }
+  }
   // `$["a.b"]` — a field whose name is not a bare identifier.
   {
     const loc = locate(node, env);
@@ -602,37 +678,50 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
   }
   const raw = lowerValue(node.object, objEnv);
   const idx = lowerValue(node.index, childEnv(env, node, "index"));
-  const optional = node.optional || chainHasOptional(node.object);
   const known =
     node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf(node.object, objEnv));
-  const wrapped = (neutral: unknown) => (optional ? ifNull(raw, neutral) : raw);
-  if (kindOf(node.index, env) === "string") return { $getField: { field: idx, input: wrapped({}) } };
+  // HR5: a read of a value that may be null or missing reads its EMPTY value, as a path
+  // does. So `o[k]` over a null `o` answers missing, as `o.p` does, and never null.
+  const absent = !isPresent(node.object, objEnv);
+  const orEmpty = (neutral: unknown) => (absent ? ifNull(raw, neutral) : raw);
+  // `$getField` refuses a null name, so a key the proof cannot show is there reads as `""`
+  const named = isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] };
+  const keyKind = kindOf(node.index, env);
+  // A name reads a field. `$getField` answers missing on anything but an object, as
+  // JavaScript's `arr["p"]` is `undefined`.
+  if (keyKind === "string") return { $getField: { field: named, input: orEmpty({}) } };
+  const isString = (o: unknown) => boolTruth({ $eq: [{ $type: o }, "string"] });
   const literal = evaluate(node.index, new Map());
   if (literal.ok && typeof literal.value === "number" && Number.isInteger(literal.value)) {
     const i = literal.value;
     if (i < 0) throw E.negativeIndex(i, node.pos);
-    const charAt = (o: unknown) => ({ $substrCP: [o, i, 1] });
-    const fieldAt = (o: unknown) => ({ $getField: { field: String(i), input: o } });
-    if (known === "array") return { $arrayElemAt: [wrapped([]), i] };
-    if (known === "string") return charAt(wrapped(""));
-    if (known === "object") return fieldAt(wrapped({}));
-    const o = wrapped([]);
+    const charAt = { $substrCP: [raw, i, 1] };
+    const fieldAt = { $getField: { field: String(i), input: orEmpty({}) } };
+    if (known === "array") return { $arrayElemAt: [orEmpty([]), i] };
+    if (known === "object") return fieldAt;
+    // `$substrCP` answers "" for null, so a string that may be missing is tested first.
+    if (known === "string") return absent ? switchOn([{ case: isString(raw), then: charAt }], "$$REMOVE") : charAt;
     return switchOn(
       [
-        { case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, i] } },
-        { case: boolTruth({ $eq: [{ $type: o }, "string"] }), then: charAt(o) },
+        { case: boolTruth({ $isArray: raw }), then: { $arrayElemAt: [raw, i] } },
+        { case: isString(raw), then: charAt },
       ],
-      fieldAt(o),
+      fieldAt,
     );
   }
-  // `$getField` refuses a null name, so a key the proof cannot show is there reads as `""`
-  const key = { $toString: isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] } };
-  if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
-  if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
-  const o = wrapped([]);
-  return switchOn([{ case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, idx] } }], {
-    $getField: { field: key, input: o },
-  });
+  const fieldAt = { $getField: { field: { $toString: named }, input: orEmpty({}) } };
+  if (known === "object") return fieldAt;
+  // `$arrayElemAt` refuses a key that is not a number: MEASURED, "$arrayElemAt's second
+  // argument must be a numeric value, but is string". JavaScript's `arr["p"]` is `undefined`,
+  // so such a key reads no element.
+  const element = { $arrayElemAt: [orEmpty([]), idx] };
+  if (known === "array") {
+    return keyKind === "number"
+      ? element
+      : switchOn([{ case: boolTruth({ $isNumber: idx }), then: element }], "$$REMOVE");
+  }
+  const onArray = keyKind === "number" ? { $isArray: raw } : { $and: [{ $isArray: raw }, { $isNumber: idx }] };
+  return switchOn([{ case: boolTruth(onArray), then: { $arrayElemAt: [raw, idx] } }], fieldAt);
 }
 
 // ── calls ────────────────────────────────────────────────────────────────────
@@ -647,7 +736,6 @@ function receiverOf(recv: Expr, env: Env): Receiver {
   // source node, so the node itself is handed over.
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
-  if (src === "set") return { kind: "value", family: "set", lowered };
   const t = typeOf(recv, env);
   const kinds = kindsOf(t);
   if (kinds === null) return { kind: "opaque", lowered };
@@ -694,9 +782,19 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "StreamRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw E.streamAsValue(node.pos);
+  // A receiver that the proof shows is always null or missing gives the call nothing to read.
+  if (isNothing(typeOf(recvNode, recvEnv))) {
+    const call = node.type === "MethodCall" ? `.${wroteName(node, name)}()` : `.${name}`;
+    throw E.alwaysAbsent(call, holderOf(recvNode, recvEnv), node.pos);
+  }
   const receiver = receiverOf(recvNode, recvEnv);
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name)) {
     throw E.streamAsValue(node.pos);
+  }
+  // `$.items.$match(…)` and `$.a.$size($.b)` are JSMQL code with no MQL: a stage runs
+  // on a stream, and an operator or a global function reads no receiver.
+  if (node.type === "MethodCall" && receiver.kind !== "stream" && takesNoReceiver(name)) {
+    throw E.noReceiver(name, node.pos);
   }
   const exprArgs = args.filter(isExpr);
   // What each argument PROVABLY is. A branch whose slot cannot take it drops out
@@ -728,10 +826,27 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
     // each document's `a` as it is.
     const inExpression = position === "value" || position === "filter";
-    const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const needsEmpty =
+      inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    // An operator that answers null as it answers the empty value needs no wrap:
+    // `{ $sum: "$a" }` is 0 for a missing `a`, as `{ $sum: [] }` is. Its cell may read
+    // the receiver as there, because the answer is the one it gives there.
+    const nullIsEmpty = needsEmpty && readsNullAsEmptyOf(name);
+    const wrap = needsEmpty && !nullIsEmpty;
     const input = wrap ? ifNull(recv, empty) : recv;
     return sel.rule.emit(
-      exprInputs(name, input, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, proven || wrap),
+      exprInputs(
+        name,
+        input,
+        exprArgs,
+        positionalKeysOf(name),
+        env,
+        node,
+        READ,
+        undefined,
+        recvNode,
+        proven || wrap || nullIsEmpty,
+      ),
     );
   }
   if (sel.kind === "dispatch") {
@@ -836,12 +951,9 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
       if (b.ref.kind === "dropped") throw E.droppedBinding(b.ref, node.pos);
       throw E.notCallable(node.pos);
     }
-    if (isGlobalName(callee.name)) {
-      // A constructor called without `new`, where the row requires one.
-      if (newKeywordOf(callee.name) === "required") throw E.unknownFunction(callee.name, [], node.pos);
-      return dispatchBare(node, callee.name, node.args, env);
-    }
-    throw E.unknownFunction(callee.name, env.scope.functionNames(), node.pos);
+    // With or without `new`, the row answers: a row that lists no position refuses both spellings.
+    if (isGlobalName(callee.name)) return dispatchBare(node, callee.name, node.args, env);
+    throw E.unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
   }
   if (callee.type === "Lambda") return applyLambda(callee, node.args, env, node.pos, "IIFE", null);
   throw E.notCallable(node.pos);
@@ -849,10 +961,16 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
 
 function newExpression(node: Extract<Expr, { type: "NewExpression" }>, env: Env): unknown {
   const { callee } = node;
-  if (callee.type !== "Ident" || !isGlobalName(callee.name) || newKeywordOf(callee.name) === "forbidden") {
-    throw E.notCallable(node.pos);
+  if (callee.type !== "Ident") throw E.unknownClass(null, [], node.pos);
+  const { name } = callee;
+  if (env.scope.has(name) && env.lookup(name, callee.pos).ref.kind === "function")
+    throw E.newOnFunction(name, node.pos);
+  if (env.scope.has(name) || !isGlobalName(name)) throw E.unknownClass(name, constructibleNames(), node.pos);
+  // A row that lists no position answers with its own refusal for either spelling.
+  if (newKeywordOf(name) === "forbidden" && (positionsOf(name)?.length ?? 0) > 0) {
+    throw E.newOnFunction(name, node.pos);
   }
-  return dispatchBare(node, callee.name, node.args, env);
+  return dispatchBare(node, name, node.args, env);
 }
 
 /** A global called by name — `Number(x)`, `new Date(…)`, `assert(…)`. */
@@ -902,54 +1020,38 @@ function applyLambda(
 function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): unknown {
   const position = positionIn(env);
   const verdict = consult(node.name, position);
-  if (verdict.kind === "unknown") return unknownOperator(node, node.args, env);
-  const hosts = onlyInsideOf(node.name, position);
-  if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(node.name, hosts, node.pos);
+  // HR3 does not apply to the escape hatch: the MQL is the developer's, and the server
+  // judges it. A position where the row states no lowering, and a count that its
+  // lowering does not take, give HR2's plain form. The compiler checks nothing here.
+  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return plainOperator(node, env);
   // The operand LIST of a list-only operator may be written as one array literal:
   // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone operand that is not an array
   // literal is ONE operand (HR1, HR2): `$add($.x)` is `{ $add: "$x" }`, as the server
-  // reads it. The row's count decides whether one operand is enough — `$divide`
-  // takes exactly two. MEASURED on every list-only row.
-  // The operand shape is the EXPRESSION form's. In an update document the row's updateDoc cell states its own.
+  // reads it. The operand shape is the EXPRESSION form's. In an update document the
+  // row's updateDoc cell states its own.
   const shape = position === "updateDoc" ? undefined : operandShapeOf(node.name);
   const first = node.args[0];
   const lone = node.args.length === 1 && first.type === "ArrayLiteral" ? first : null;
   // HR2: one array literal IS the operand list, as written — `$eq([$.n, 4])` is
-  // `{ $eq: ["$n", 4] }`, `$size([$.a])` is `{ $size: ["$a"] }`. It is COUNTED and
-  // CHECKED by its elements, and emitted as the developer spelled it.
+  // `{ $eq: ["$n", 4] }`, `$size([$.a])` is `{ $size: ["$a"] }`. It is COUNTED by its
+  // elements, and emitted as the developer spelled it.
   let args: readonly CallArg[] = node.args;
-  let operands: readonly Expr[] = node.args.filter(isExpr);
   let count = node.args.length;
   const overrides = new Map<Expr, unknown>();
-  if (lone !== null && shape !== undefined && shape !== "object" && shape !== "verbatim") {
-    if (lone.elements.some((el) => el.type === "SpreadElement")) {
-      // A list with a spread is one array-valued expression: the operand list at runtime.
-      if (shape === "array") return { [node.name]: lowerValue(lone, childEnv(env, node, "args")) };
-    } else {
-      operands = lone.elements.filter(isExpr);
-      count = operands.length;
-      // An EMPTY list is valid only where the row states it: `{ $and: [] }` is
-      // true, `{ $divide: [] }` is refused. Nothing was written, so no count
-      // applies — the fact is the row's `emptyList`.
-      if (count === 0 && shape === "array") {
-        if (ruleArgsOf(verdict)?.emptyList === true) return { [node.name]: [] };
-      }
-      // A list operator renders the elements. A single or flex one renders the array as written.
-      if (shape === "array") args = operands;
-    }
+  if (lone !== null && shape === "array") {
+    // A list with a spread is one array-valued expression: the operand list at run time.
+    if (lone.elements.some((el) => el.type === "SpreadElement")) return plainOperator(node, env);
+    args = lone.elements.filter(isExpr);
+    count = args.length;
   }
   const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr);
   const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
-    // `$size([1, 2])` is two operands, not one array: say so, where the count alone would not.
-    if (sel.kind === "wrongCount" && lone !== null) throw E.operandListCount(node.name, sel.args, sel.got, node.pos);
-    throw E.refusalFor(sel, node.name, "", position, node.pos, []);
-  }
-  const body = bodyRuleOf(node.name);
-  if (body !== undefined) checkBody(node.name, body, exprArgs, positionalKeysOf(node.name), node.pos);
-  checkSlots(node.name, sel.rule.args, operands);
+  if (sel.kind === "spreadRefused") throw E.refusalFor(sel, node.name, "", position, node.pos, []);
+  if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
+  if (sel.kind !== "rule") return plainOperator(node, env);
+  // A body of named keys: a JavaScript spread or computed key has no lowering there.
+  if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
   // An operator that BINDS variables: an arrow in a visible slot is lowered under
   // them, so `$let({ x: 1 }, (x) => x + 1)` reads `x` as `$$x`.
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
@@ -1005,19 +1107,15 @@ function boundArrowOverrides(
   return out;
 }
 
-/** The count rule a `lower` verdict's cell states, or undefined. */
-function ruleArgsOf(verdict: ReturnType<typeof consult>): { emptyList?: true } | undefined {
-  if (verdict.kind !== "lower") return undefined;
-  const cell = verdict.cell as { args?: { emptyList?: true } } | null;
-  return cell !== null && typeof cell === "object" ? cell.args : undefined;
-}
-
-/** HR2: an operator the registry does not know passes through as written. */
-function unknownOperator(node: Extract<Expr, { type: "OperatorCall" }>, all: readonly CallArg[], env: Env): unknown {
-  // A spread has no meaning in the `$op(…)` escape hatch, whatever the operator: the
-  // same refusal the registry's rows make. See docs/DEFERRED.md § B.
-  const spread = all.find((a) => a.type === "SpreadElement");
-  const args = all.filter(isExpr);
+/**
+ * HR2's plain form: `$op()` is `{ $op: {} }`, `$op(x)` is `{ $op: x }`, and
+ * `$op(a, b)` is `{ $op: [a, b] }`. It serves an operator the registry does not
+ * know, and a known one where its row states no lowering for the position or the
+ * count. The compiler checks nothing here (HR3 does not apply to the escape hatch).
+ * A spread has no MQL of its own, whatever the operator. See docs/DEFERRED.md § B.
+ */
+function plainOperator(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): unknown {
+  const spread = node.args.find((a) => a.type === "SpreadElement");
   if (spread !== undefined) {
     throw E.refusalFor(
       { kind: "spreadRefused", name: node.name, sig: "…" },
@@ -1028,6 +1126,7 @@ function unknownOperator(node: Extract<Expr, { type: "OperatorCall" }>, all: rea
       [],
     );
   }
+  const args = node.args.filter(isExpr);
   const inner = childEnv(env, node, "args");
   if (args.length === 0) return { [node.name]: {} };
   if (args.length === 1) return { [node.name]: lowerValue(args[0], inner) };
@@ -1199,7 +1298,6 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
  * `$let` there. See docs/specs/let-bindings.md.
  */
 function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e: Expr, env: Env) => unknown): unknown {
-  const seen = new Set<string>();
   // Each declarator lowers ONCE. One that breaks its group is already lowered, so
   // it rides to the next `$let` rather than through `lowerValue` a second time —
   // a second call would mint a second compiler name for the same value.
@@ -1214,11 +1312,9 @@ function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e
     // that reads none of the vars already in it.
     for (;;) {
       const d = node.decls[j];
-      if (seen.has(d.name)) throw E.redeclared(d.kind, d.name, d.pos);
       const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
       carry = null;
       if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
-      seen.add(d.name);
       const bound = scope.param(d.name, maybeAbsent(typeOf(d.value, scope)), d.pos);
       vars[bound.as as string] = value;
       refs.push(`$$${bound.as as string}`);

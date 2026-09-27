@@ -243,13 +243,10 @@ export type Binder = { readonly as: MongoVar; readonly ref: VarRef; readonly sco
 export class Scope {
   private readonly bound: ReadonlyMap<string, Binding>;
   private readonly taken: ReadonlySet<string>;
-  /** The names THIS block declared — what a second `let` of the same name collides with. */
-  private readonly own: ReadonlySet<string>;
 
-  private constructor(bound: ReadonlyMap<string, Binding>, taken: ReadonlySet<string>, own: ReadonlySet<string>) {
+  private constructor(bound: ReadonlyMap<string, Binding>, taken: ReadonlySet<string>) {
     this.bound = bound;
     this.taken = taken;
-    this.own = own;
   }
 
   /**
@@ -260,17 +257,7 @@ export class Scope {
   static root(introduced: Iterable<string>): Scope {
     const taken = new Set<string>(SYSTEM_VARS);
     for (const js of introduced) taken.add(mongoVarName(js));
-    return new Scope(new Map(), taken, new Set());
-  }
-
-  /** A nested block: every outer name is still visible, and none of them are declared HERE. */
-  block(): Scope {
-    return new Scope(this.bound, this.taken, new Set());
-  }
-
-  /** Did this block itself declare the name? JavaScript refuses a second declaration in one block. */
-  declaredHere(js: string): boolean {
-    return this.own.has(js);
+    return new Scope(new Map(), taken);
   }
 
   /** Is this JavaScript name bound here? */
@@ -297,9 +284,7 @@ export class Scope {
   declare(js: string, binding: Binding): Scope {
     const bound = new Map(this.bound);
     bound.set(js, binding);
-    const own = new Set(this.own);
-    own.add(js);
-    return new Scope(bound, this.taken, own);
+    return new Scope(bound, this.taken);
   }
 
   /**
@@ -312,7 +297,7 @@ export class Scope {
       if (b.ref.kind === "field")
         bound.set(js, { ...b, ref: { kind: "dropped", message: message(js, b.mutable), replaced: true } });
     }
-    return new Scope(bound, this.taken, this.own);
+    return new Scope(bound, this.taken);
   }
 
   /**
@@ -326,9 +311,7 @@ export class Scope {
     bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
-    const own = new Set(this.own);
-    own.add(js);
-    return { as, ref, scope: new Scope(bound, taken, own) };
+    return { as, ref, scope: new Scope(bound, taken) };
   }
 
   /**
@@ -342,7 +325,7 @@ export class Scope {
     for (let n = 2; this.taken.has(as); n++) as = base + String(n);
     const taken = new Set(this.taken);
     taken.add(as);
-    return { as: as as MongoVar, ref: refOf(as as MongoVar), scope: new Scope(this.bound, taken, this.own) };
+    return { as: as as MongoVar, ref: refOf(as as MongoVar), scope: new Scope(this.bound, taken) };
   }
 }
 

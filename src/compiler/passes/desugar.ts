@@ -23,10 +23,19 @@
 //
 // See docs/specs/desugar-pass.md for the form-by-form rules and the full order.
 
-import { type AssignOp, type BinaryOp, type Expr, type Program, ASSIGN_OPS } from "../../registry/ast.ts";
+import {
+  type AssignOp,
+  type BinaryOp,
+  type Expr,
+  type FuncDecl,
+  type Program,
+  type UpdateFilter,
+  type UpdateOp,
+  ASSIGN_OPS,
+} from "../../registry/ast.ts";
 import { CodegenError } from "../../errors.ts";
 import { ParseError } from "../parse/cursor.ts";
-import { parseExpression } from "../parse/parser.ts";
+import { functionInValueOf, parseExpression, writeInValueOf } from "../parse/parser.ts";
 import {
   arrayLiteralOrderOf,
   immutableTwinOf,
@@ -92,26 +101,13 @@ const COMPOUND: ReadonlyMap<string, BinaryOp> = new Map(
 );
 
 /**
- * A write whose target cannot take one. The pass checks this BEFORE the
- * rewrite. Otherwise a tailored error turns into valid-looking MQL:
- *   $ += 1     today → "Cannot use compound assignment … on bare '$'"
- *   $ = $ + 1  today → [{"$replaceWith":{"$add":["$$ROOT",1]}}]
- * A rewrite done first would turn the first line into the second and lose the message.
+ * Is the write target a collection — `$$$.<coll>`, `$$$$.<db>.<coll>` — rather than a field?
+ * The parser refuses an arithmetic write on `$` and `$$` before this pass runs,
+ * because the rewrite would turn `$ += 1` into the valid-looking `$ = $ + 1`.
  */
-/** Is the write target a collection — `$$$.<coll>`, `$$$$.<db>.<coll>` — rather than a field? */
 function writesACollection(target: Expr): boolean {
   const base = chainBase(target) as { type: string };
   return base.type === "DatabaseRef" || base.type === "ClusterRef";
-}
-
-function refuseNonScalarTarget(target: object, op: AssignOp): void {
-  const t = target as { type: string; path?: string };
-  const what = t.type === "StreamRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
-  if (what === null) return;
-  throw new ParseError(
-    `Cannot use '${op}' on ${what} — it is the whole document, not a scalar. Write the field: '$.<field> ${op} …'`,
-    (target as { pos: number }).pos,
-  );
 }
 
 const compoundAssign: Rule = {
@@ -127,7 +123,6 @@ const compoundAssign: Rule = {
     // the stage that ADDS to what the collection holds, where `=` replaces it.
     // The emit phase reads the spelling, so the rewrite must leave it alone.
     if (writesACollection(n.target as Expr)) return node;
-    refuseNonScalarTarget(n.target as object, n.op);
     return {
       type: "AssignExpr",
       target: { ...(n.target as object) },
@@ -157,7 +152,6 @@ const incDec: Rule = {
     const n = node as { type: string; op?: AssignOp; target?: object; pos?: number };
     if (n.type !== "AssignExpr") return node;
     if (n.op !== "++" && n.op !== "--") return node;
-    refuseNonScalarTarget(n.target as object, n.op);
     return {
       type: "AssignExpr",
       target: { ...(n.target as object) },
@@ -227,6 +221,7 @@ const fieldPath: Rule = {
       path?: string;
       pos?: number;
       optional?: boolean;
+      optionalAt?: string;
     };
     while (base.type === "MemberAccess") {
       const name = base.name as string;
@@ -247,6 +242,9 @@ const fieldPath: Rule = {
       if (before !== "") optionalAt = before;
       break;
     }
+    // The walk runs bottom-up, so the base can be a path that an earlier `?.` folded:
+    // the walk folds `$.a?.b` before `.c`. With no `?.` after it, its tested path stays the last one.
+    if (!members.some((m) => m.optional)) optionalAt = base.optionalAt;
     const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
     if (!optional) return folded as object;
     return (
@@ -350,7 +348,7 @@ const mutatorForm: Rule = {
       const counts = Object.keys(form.by).map(Number);
       const range = counts.length === 1 ? `exactly ${counts[0]}` : `${Math.min(...counts)} to ${Math.max(...counts)}`;
       throw new ParseError(
-        `'.${n.name}(${form.sig})' takes ${range} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
+        `'.${n.name}(${form.sig})' at position ${n.pos} takes ${range} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
         n.pos,
       );
     }
@@ -451,7 +449,7 @@ const packSpread: Rule = {
 
 /** `x` → `x.a.b`, one MemberAccess per dotted segment. */
 function pathOn(param: string, path: string, pos: number): object {
-  let out: object = { type: "Ident", name: param, pos };
+  let out: object = { type: "Ident", name: param, pos, minted: true };
   for (const segment of path.split(".")) {
     out = { type: "MemberAccess", object: out, name: segment, optional: false, pos };
   }
@@ -489,7 +487,7 @@ function asArrow(arg: object | undefined, forms: readonly string[], pos: number)
   if (arg === undefined) {
     if (!accepts("omitted")) return undefined;
     const param = "x";
-    return { type: "Lambda", params: [param], body: { type: "Ident", name: param, pos }, pos };
+    return { type: "Lambda", params: [param], body: { type: "Ident", name: param, pos, minted: true }, pos };
   }
 
   const a = arg as { type: string; value?: unknown; entries?: readonly object[]; elements?: readonly object[] };
@@ -573,7 +571,7 @@ const CONSTANT_LITERALS = new Set(["NumberLiteral", "StringLiteral", "BooleanLit
 
 /** `String` → `String(x)`; `Math.abs` → `Math.abs(x)`. Anything that is not a callable global maps to undefined. */
 function bareCall(callee: Node, param: string, pos: number): object | undefined {
-  const arg = { type: "Ident", name: param, pos };
+  const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {
     if (!isGlobalName(callee.name) || !isCallable(callee.name) || newKeywordOf(callee.name) === "required")
       return undefined;
@@ -695,6 +693,25 @@ export const RULES: readonly Rule[] = [
 
 // ── the driver ───────────────────────────────────────────────────────────────
 
+/**
+ * A write stands only where a statement may stand. The parser reads `[$.x++]`
+ * as a pipeline element, because only the position pass knows that the array
+ * in `$.y = [$.x++]` is a value. This check runs once, before any rule rewrites
+ * a write, so the refusal quotes the write as the developer spelled it: the
+ * refusal that `$.y = $.x++` gets.
+ */
+function refuseWritesInValues(program: Program, root: RootWhere): void {
+  mapTreeIn(program, root, edge, (node, where) => {
+    if (where.at === "statement" || where.at === "updateDoc") return node;
+    const t = (node as { type: string }).type;
+    if (t === "UpdateFilter" || t === "AssignExpr" || t === "DeleteStmt") {
+      throw writeInValueOf(node as UpdateOp | UpdateFilter);
+    }
+    if (t === "FuncDecl") throw functionInValueOf(node as FuncDecl);
+    return node;
+  });
+}
+
 /** What one round did, so the caller can tell a fixpoint from a cycle. */
 export type DesugarResult = { program: Program; rounds: number };
 
@@ -720,6 +737,7 @@ export type RootWhere = Where;
  * so a round that produces the same reference is the fixpoint.
  */
 export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): DesugarResult {
+  refuseWritesInValues(program, root);
   let current: Program = program;
   const seen = new Set<string>([fingerprint(program)]);
   for (let round = 1; round <= MAX_ROUNDS; round++) {

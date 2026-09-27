@@ -101,17 +101,21 @@ export const clampNonNegativeIndex = (node: Expr, lowered: unknown): unknown => 
   return lit === null ? { $max: [0, lowered] } : Math.max(0, lit);
 };
 
-/** The length of a string value. A literal counts its code points. A value takes `$strLenCP` over "" for a missing one. */
-export function strLenOf(value: unknown): unknown {
+/**
+ * The length of a string value. A literal counts its code points. A value takes
+ * `$strLenCP` over "" for a missing one, because `$strLenCP` refuses null — unless the
+ * caller knows it is there (`present`), as the body of a null test does.
+ */
+export function strLenOf(value: unknown, present = false): unknown {
   if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
-  return { $strLenCP: isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
+  return { $strLenCP: present || isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
 }
 
 /** A JavaScript slice index on a string. A negative index counts from the end, with a clamp at 0. */
-export function normaliseSliceIndex(node: Expr, lowered: unknown, recv: unknown): unknown {
+export function normaliseSliceIndex(node: Expr, lowered: unknown, recv: unknown, present = false): unknown {
   const lit = literalIndexValue(node);
-  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv), -lit));
-  return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv)] }), lowered);
+  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv, present), -lit));
+  return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv, present)] }), lowered);
 }
 
 /** A negative literal's magnitude — `-3` → 3 — or null. */
@@ -121,16 +125,18 @@ export function negativeLiteralValue(node: Expr): number | null {
 }
 
 /** Everything from `from` on. */
-export const strTail = (s: unknown, from: number): unknown => ({ $substrCP: [s, from, strLenOf(s)] });
+export const strTail = (s: unknown, from: number, present = false): unknown => ({
+  $substrCP: [s, from, strLenOf(s, present)],
+});
 
 /** lodash `capitalize`: first character up, the rest down. */
-export const capitalizeExpr = (s: unknown): unknown => ({
-  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }],
+export const capitalizeExpr = (s: unknown, present = false): unknown => ({
+  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1, present) }],
 });
 
 /** lodash `upperFirst` / `lowerFirst`: it changes the first character and keeps the rest. */
-export const firstCharExpr = (s: unknown, op: "$toUpper" | "$toLower"): unknown => ({
-  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)],
+export const firstCharExpr = (s: unknown, op: "$toUpper" | "$toLower", present = false): unknown => ({
+  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1, present)],
 });
 
 /** lodash's word boundary: a capitalised word, an acronym, a lone capital, a number. */
@@ -231,6 +237,19 @@ export function dateOptions(arg: Expr | undefined, value: (e: Expr) => unknown):
   return out;
 }
 
+// ── sorts ────────────────────────────────────────────────────────────────────
+
+/**
+ * The most keys a sort spec may name where the server sorts documents. MEASURED on
+ * :27018, 32 keys run and 33 fail with "too many compound keys", in each of these slots:
+ *   { $sort: {…} }                                   the stage
+ *   { $setWindowFields: { sortBy: {…}, output } }    the window order
+ *   { $group: { t: { $top: { output, sortBy } } } }  also $topN, $bottom, $bottomN, and the window form
+ * Two slots take more, so they state no limit: `$sortArray.sortBy` and the `$sort`
+ * modifier of an update `$push` both run with 33 keys.
+ */
+export const SORT_KEY_LIMIT = 32;
+
 // ── arrays ───────────────────────────────────────────────────────────────────
 
 /** A literal array as ONE operand. The server reads `{ $size: [1, 2] }` as two operands, and `{ $size: [[1, 2]] }` as one. */
@@ -244,6 +263,23 @@ export const sizeOf = (a: unknown): unknown => (Array.isArray(a) ? a.length : { 
 export const firstOf = (a: unknown): Record<string, unknown> => ({ $first: singleArrayArg(a) });
 export const lastOf = (a: unknown): Record<string, unknown> => ({ $last: singleArrayArg(a) });
 export const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $reverseArray: singleArrayArg(a) });
+
+/**
+ * A JavaScript aggregate in an ACCUMULATOR slot — a `$group` output, a
+ * `$setWindowFields.output` entry. The receiver is the accumulator's operand:
+ * `$.a.sum()` is `{ $sum: "$a" }`. A receiver that renders as an array LITERAL holds
+ * one array on each document, and the slot reads `{ $sum: [ … ] }` as an operand LIST.
+ * MEASURED: a `$group` slot refuses it ("The $sum accumulator is a unary operator"),
+ * and a window slot answers 0. So `perDocument` reduces the array on each document
+ * first, as `.sumBy` does, and the slot accumulates that value:
+ *   [$.n, $.m].sum()     → { $sum: { $sum: ["$n", "$m"] } }          → Σ (n + m)
+ *   [$.n, $.m].first()   → { $first: { $first: [["$n", "$m"]] } }    → n of the first document
+ */
+export const slotAggregate = (
+  op: string,
+  recv: unknown,
+  perDocument: (a: unknown) => unknown,
+): Record<string, unknown> => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
 
 /** The JavaScript truth of a lowered value: not missing, and not null, false, "" or 0. */
 export const jsTruth = (value: unknown): unknown => ({

@@ -7,17 +7,27 @@
 
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
-import type { Arity, Kind, Position, SlotForm, Type } from "../../registry/vocabulary.ts";
+import type { Arity, Family, Kind, Position, SlotForm, Type } from "../../registry/vocabulary.ts";
+import type { Expr } from "../../registry/vocabulary.ts";
+import type { Where } from "../passes/position.ts";
+import { stringify } from "../../stringify.ts";
+import { isPlainObject } from "../../bson.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
+import type { Unreadable } from "./type.ts";
 import {
   callbackParamsOf,
   diagnosticOf,
+  familiesOf,
   isFieldProperty,
+  isKnownName,
+  isStageName,
   siblingOf,
   spreadAlternativeOf,
-  stageBodyRuleOf,
+  streamReceiverNames,
+  valueMethodNames,
+  valueTwinOf,
 } from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
@@ -69,8 +79,14 @@ const NO_CELL: Readonly<Record<Position, (quoted: string, bare: string) => strin
   group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
   window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
   updateDoc: (q, b) =>
-    `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${b}…;")'). 'updateOne' also accepts this form. Or pass the value from your code.`,
+    `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${valueStart(b)};")'). 'updateOne' also accepts this form. Or pass the value from your code.`,
 };
+
+/** A refused name as the start of a value: `$abs…`, `typeof…`, `<value>.trim(…)`, `<a> > <b>`. */
+function valueStart(bare: string): string {
+  if (bare.startsWith(".")) return `<value>${bare}(…)`;
+  return /^[A-Za-z$_]/.test(bare) ? `${bare}…` : `<a> ${bare} <b>`;
+}
 
 /**
  * The error for a final `Selected` answer that is not a rule. `spelled` is
@@ -126,7 +142,7 @@ export function refusalFor(
       const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
       const hint =
         oneRef !== undefined
-          ? ` Write '${oneRef.sigil}${bare}()' — ${oneRef.place}.`
+          ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' — ${oneRef.place}.`
           : sibling !== null
             ? ` ${sibling}`
             : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array")
@@ -138,7 +154,7 @@ export function refusalFor(
                   : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
                     ? ` A stream is not an array. Chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
                     : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString
-                      ? ` A string is not a list. For one element per character, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
+                      ? ` A string is not a list. For one element per character, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.`
                       : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
                         ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.`
                         : sel.got === "bool"
@@ -201,7 +217,7 @@ export const bigIntTooLarge = (digits: string, pos: number): CodegenError =>
 
 export const regexAsValue = (pos: number): CodegenError =>
   new CodegenError(
-    `Regex literals are only valid as arguments to .match(), .test(), .exec(), .matchAll(), and .search(). To pass a regex pattern as a string, use a string literal instead.`,
+    `In JavaScript code, a regex literal is valid only as an argument of .match(), .test(), .exec(), .matchAll() or .search(). In MQL that you write, a regex literal is a BSON regex: '{ name: /^a/ }', '$regexMatch({ input: $.name, regex: /^a/ })'. To pass a pattern as a string, use a string literal.`,
     pos,
   );
 
@@ -246,12 +262,6 @@ export const afterReplace =
 export const unfilledParam = (name: string, method: string, why: string): string =>
   `\`${name}\` has no value inside \`.${method}()\` — ${why}`;
 
-export const statementInValue = (what: string, pos: number): CodegenError =>
-  new CodegenError(
-    `${what} is a statement, not a value. It is only valid at the top level or as a pipeline-array element.`,
-    pos,
-  );
-
 export const negativeIndex = (index: number, pos: number): CodegenError =>
   new CodegenError(
     `Negative bracket index '[${index}]' is not allowed. In JavaScript that reads a property named "${index}" (normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end. This method works on both arrays and strings.`,
@@ -289,6 +299,133 @@ export const unknownFunction = (name: string, known: readonly string[], pos: num
     pos,
   );
 
+/** What a value of each kind is called in a message. */
+const SUBJECT: Readonly<Record<Kind, string>> = {
+  string: "a string",
+  array: "an array",
+  number: "a number",
+  object: "an object",
+  date: "a date",
+  bool: "a boolean",
+  stream: "the stream",
+  objectId: "an ObjectId",
+  binData: "a binary value",
+  minKey: "MinKey",
+  maxKey: "MaxKey",
+};
+
+/** The receiver family whose methods a value of this kind has, or null. */
+const FAMILY_OF: Readonly<Partial<Record<Kind, Family>>> = {
+  string: "string",
+  array: "array",
+  number: "number",
+  object: "object",
+  date: "date",
+  stream: "stream",
+};
+
+/** One method of each family, for a message that has no nearer one to name. */
+const EXAMPLE_METHOD: Readonly<Partial<Record<Family, string>>> = {
+  string: "trim",
+  number: "round",
+  date: "getFullYear",
+  object: "keys",
+};
+
+/** `.x`, or `["x-y"]` for a name that is not an identifier. */
+const spelledField = (name: string): string =>
+  /^[A-Za-z_$][\w$]*$/.test(name) ? `.${name}` : `[${JSON.stringify(name)}]`;
+
+/** The methods a value of this family has. */
+const methodsOf = (family: Family): string[] =>
+  valueMethodNames().filter((n) => familiesOf(n)?.includes(family) === true);
+
+/**
+ * What the reader of `name` most likely means on a value of `family`: the method of
+ * that name, the row's own sentence for this family (`.length` on an array names
+ * `.size()`), or a read of each element's field. Null when none of these applies.
+ */
+function methodFix(name: string, family: Family): string | null {
+  if (methodsOf(family).includes(name)) return `Write '.${name}()' to call the method.`;
+  const sibling = siblingOf(name, family);
+  if (sibling !== null) return sibling;
+  if (family === "array") return `To read the field of each element, write '.map(e => e${spelledField(name)})'.`;
+  return null;
+}
+
+/** The way forward for a read of `name` on a value of `kinds`, which has no fields. */
+function readFix(name: string, kinds: readonly Kind[]): string {
+  const family = kinds.length === 1 ? FAMILY_OF[kinds[0]] : undefined;
+  if (family === undefined) return "Read the field from an object instead.";
+  const near = methodFix(name, family) ?? didYouMean(name, methodsOf(family)).trim();
+  if (near !== "") return near;
+  const example = EXAMPLE_METHOD[family];
+  return example === undefined
+    ? "Read the field from an object instead."
+    : `Call a method instead, for example '.${example}()'.`;
+}
+
+/**
+ * A property read that the proof shows gives no value: `$.tags.uniq().size`,
+ * `$.name.trim().length`, `$.o.pick(["a"]).b`, or a field that the document does not
+ * have after a `$group`. `read` spells the read as the source wrote it (`.size`,
+ * `["length"]`, `$.total`). `holder` names the value before the read, or is null
+ * when the value has no short spelling.
+ */
+export function unreadableField(
+  name: string,
+  why: Unreadable,
+  read: string,
+  holder: string | null,
+  pos: number,
+): CodegenError {
+  if (why.kind === "closed") {
+    const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
+    const list = `${shown.join(", ")}${why.keys.length > 6 ? ", …" : ""}`;
+    const fix = methodFix(name, "object") ?? didYouMean(name, why.keys, (k) => spelledField(k)).trim();
+    const subject = holder ?? "this object";
+    // A query path through an array reads the field off each element.
+    const [owner, holds] =
+      why.elements === true
+        ? [
+            `the elements of ${subject} do not have`,
+            why.keys.length === 0 ? "They hold no fields." : `They hold ${list}.`,
+          ]
+        : [`${subject} does not have`, why.keys.length === 0 ? "It holds no fields." : `It holds ${list}.`];
+    return new CodegenError(`'${read}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
+  }
+  if (why.kinds.length === 0) return alwaysAbsent(read, holder, pos);
+  const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");
+  return new CodegenError(`'${read}' reads a field, and ${subject} has no fields. ${readFix(name, why.kinds)}`, pos);
+}
+
+/**
+ * A read or a call on a value that the proof shows is always null or missing:
+ * `$.a = null; $.b = $.a.c`, or `$unset("a"); $.n = $.a.trim()`. `holder` names the
+ * value, or is null when the value has no short spelling.
+ */
+export function alwaysAbsent(read: string, holder: string | null, pos: number): CodegenError {
+  const subject = holder ?? "this value";
+  const sentence = subject.charAt(0).toUpperCase() + subject.slice(1);
+  return new CodegenError(
+    `${sentence} is always null or missing here, so '${read}' has no value to read. Remove the read, or write a value before the read.`,
+    pos,
+  );
+}
+
+/** `new Number(5)`, or `new f(1)` for a declared function: a function, not a constructor. */
+export const newOnFunction = (name: string, pos: number): CodegenError =>
+  new CodegenError(`'${name}' is not a constructor in JSMQL. Call it without 'new': '${name}(…)'.`, pos);
+
+/** `new Foo(1)`: no row names the class. `name` is null when the callee is not a name at all. */
+export const unknownClass = (name: string | null, known: readonly string[], pos: number): CodegenError =>
+  new CodegenError(
+    name === null
+      ? "'new' takes the name of a class, as in 'new Date(…)'."
+      : `Unknown class '${name}' in 'new ${name}(…)'.${didYouMean(name, known, (s) => `new ${s}(…)`)} MQL has no classes of its own. Write the value as an object literal ('{ … }'), or declare a function that returns one and call it without 'new'.`,
+    pos,
+  );
+
 export const notCallable = (pos: number): CodegenError =>
   new CodegenError(
     `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE → $let) or a declared function name. For named operators use $opName(...); for methods use receiver.method(...).`,
@@ -298,30 +435,6 @@ export const notCallable = (pos: number): CodegenError =>
 export const letParamsMustNameVars = (params: readonly string[], keys: readonly string[], pos: number): CodegenError =>
   new CodegenError(
     `$let's arrow parameters must name its variables: got (${params.join(", ")}) for vars { ${keys.join(", ")} }.`,
-    pos,
-  );
-
-export const redeclared = (kind: string, name: string, pos: number): CodegenError =>
-  new CodegenError(
-    `\`${kind} ${name}\` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.`,
-    pos,
-  );
-
-/**
- * `$size([1, 2])` — one array literal is the operand list of the escape hatch (HR2),
- * so the count reads its elements. The count alone says "got 2" to a developer who
- * wrote one array, so the message says why, and names the spelling of ONE array operand.
- */
-export const operandListCount = (name: string, args: Arity, got: number, pos: number): CodegenError =>
-  new CodegenError(
-    `'${signature(name, args)}' ${countWord(args)}, got ${got}: one array literal is the operand list, as in MQL. To pass the array as one operand, write '${name}([[…]])'.`,
-    pos,
-  );
-
-/** In a query document, a list operator whose operand is not a list: `{ $and: true }`. */
-export const listOperand = (name: string, pos: number): CodegenError =>
-  new CodegenError(
-    `${name} operates on a list of operands — pass two or more (${name}(a, b)) or a single array (${name}([a, b])).`,
     pos,
   );
 
@@ -355,29 +468,20 @@ export const spreadInOperatorBody = (pos: number): CodegenError =>
 export const computedKeyInOperatorBody = (pos: number): CodegenError =>
   new CodegenError("Computed object keys are not allowed here. An operator argument key must be a literal name.", pos);
 
+/**
+ * A sort of more keys than the server takes: the `$sort` stage, a `sortBy` body,
+ * or a stream sort method. `who` is the spelling the developer wrote.
+ */
+export const tooManySortKeys = (who: string, count: number, limit: number, pos: number): CodegenError =>
+  new CodegenError(
+    `'${who}' sorts by at most ${limit} keys, and this sort names ${count}. The server refuses a longer compound sort. Keep the ${limit} keys that decide the order, or put the last keys into one document field ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.`,
+    pos,
+  );
+
 /** A spread handed to a lambda application — an IIFE or a declared function. */
 export const spreadInCall = (label: string, pos: number): CodegenError =>
   new CodegenError(
     `${label}: spread arguments are not supported. Pass each argument explicitly, or use $op($let, ...) to build the bindings by hand.`,
-    pos,
-  );
-
-/** A bracketed stage list where a value belongs. `near` are the stage names, for the suggestion. */
-export const stageListAsValue = (pos: number): CodegenError =>
-  new CodegenError(
-    "A bracketed stage list is a pipeline, not an expression. Pass it to jsmql.pipeline(…), or write the stages as statements ('$match(…); $sort(…);').",
-    pos,
-  );
-
-export const unknownStage = (index: number, name: string, stages: readonly string[], pos: number): CodegenError =>
-  new CodegenError(
-    `Element ${index} of pipeline: '${name}' is not a known aggregation stage.${didYouMean(name, stages, (s) => s)}`,
-    pos,
-  );
-
-export const multiKeyStage = (index: number, keys: number, pos: number): CodegenError =>
-  new CodegenError(
-    `Element ${index} of pipeline must be a single-key stage object — for example, \`{ $match: ... }\`. This object has ${keys} keys.`,
     pos,
   );
 
@@ -474,10 +578,12 @@ export const rootMustBeDocument = (noun: string, pos: number): CodegenError =>
     pos,
   );
 
-/** `delete $` — the root is not a field, and a pipeline that drops the document has no shape. */
-export const cannotDeleteRoot = (pos: number): CodegenError =>
+/** `delete $` and `delete $$` — neither root is a field, and a pipeline that drops it has no shape. */
+export const cannotDeleteRoot = (root: "$" | "$$", pos: number): CodegenError =>
   new CodegenError(
-    "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'.",
+    root === "$"
+      ? "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'."
+      : "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => …);'.",
     pos,
   );
 
@@ -488,22 +594,12 @@ export const notAWriteTarget = (pos: number): CodegenError =>
     pos,
   );
 
-/** A stage body, or one key of it, that must be a bracketed list of stages. */
-export const needsStageList = (slot: { stage: string; key: string } | null, pos: number): CodegenError => {
-  if (slot === null) {
-    return new CodegenError(
-      "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
-      pos,
-    );
-  }
-  const words = stageBodyRuleOf(slot.stage)?.enums?.[slot.key];
-  return new CodegenError(
-    words === undefined
-      ? `'${slot.stage}' ${slot.key} is a sub-pipeline: write it as a bracketed list of stages, '${slot.key}: [$match(…), $sort(…)]'.`
-      : `'${slot.stage}' ${slot.key} is a bracketed list of stages, '${slot.key}: [$set({ … })]', or one of: ${words.join(", ")}.`,
+/** A body that must be a bracketed list of stages: `.aggregate(5)` on another collection. */
+export const needsStageList = (pos: number): CodegenError =>
+  new CodegenError(
+    "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
     pos,
   );
-};
 
 /** A spread inside a stage list: the pipeline is written out, stage by stage. */
 export const spreadInStageList = (pos: number): CodegenError =>
@@ -637,9 +733,30 @@ export const spreadNotADocument = (noun: string, pos: number): CodegenError =>
 
 export const spreadOfString = (pos: number): CodegenError =>
   new CodegenError(
-    "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+    "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
     pos,
   );
+
+/**
+ * A call that reads no receiver, spelled as a method on a value: a stage
+ * (`$.items.$match(…)`), a MongoDB operator (`$.a.$size()`) or a global function
+ * (`$.a.Number()`). No MQL holds the receiver, so the message names the call form.
+ */
+export function noReceiver(name: string, pos: number): CodegenError {
+  if (isStageName(name)) {
+    const twin = valueTwinOf(name);
+    return new CodegenError(
+      `'.${name}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name}(…)') or as a pipeline statement ('${name}(…);').${twin === undefined ? "" : ` For the value form, use '${twin}(…)'.`}`,
+      pos,
+    );
+  }
+  return new CodegenError(
+    name.startsWith("$")
+      ? `'.${name}()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '${name}(…)' with every operand inside the parentheses.`
+      : `'.${name}()' takes no receiver. '${name}' is a global function: write '${name}(…)' with the value inside the parentheses.`,
+    pos,
+  );
+}
 
 /** A statement after the stage that writes the pipeline's output. */
 export const afterTerminalStage = (already: string, pos: number): CodegenError =>
@@ -1093,6 +1210,106 @@ export const outTooManySegments = (pos: number): CodegenError =>
     pos,
   );
 
+// ── run-time values (HR1) ────────────────────────────────────────────────────
+
+/**
+ * A run-time value with each leaf replaced by `…`: the shape to write in the source,
+ * with the values left for the call to pass. `{ a: { $gt: 1 } }` → `{ a: { $gt: … } }`.
+ */
+function holes(value: unknown): string {
+  const hole = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(hole)
+      : isPlainObject(v)
+        ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, hole(x)]))
+        : "…";
+  return stringify(hole(value)).split('"…"').join("…");
+}
+
+/**
+ * A run-time value that reads as MQL, in a slot where it becomes part of the MQL:
+ * a stage slot that the server reads as written, an accumulator, a window function,
+ * a statement. HR1: such a value is a value, never MQL. See `injectedPlacement`.
+ */
+export function runTimeValueAsMql(value: unknown, where: Where, pos: number): CodegenError {
+  const lead = "A run-time value is a value, never MQL.";
+  if (where.at === "value" && where.written !== undefined) {
+    const { stage, path } = where.written;
+    const key = path[path.length - 1];
+    const slot = key === undefined ? "its body" : `'${path.join(".")}'`;
+    if (typeof value === "string") {
+      const inSource =
+        key === undefined || key === null ? `${stage}(${stringify(value)})` : `${key}: ${stringify(value)}`;
+      return new CodegenError(
+        `${lead} '${stage}' reads ${slot} as written, and there the string ${stringify(value)} becomes part of the MQL. Write it in the source: '${inSource}'.`,
+        pos,
+      );
+    }
+    const inSource = key === undefined || key === null ? `${stage}(${holes(value)})` : `${key}: ${holes(value)}`;
+    return new CodegenError(
+      `${lead} '${stage}' reads ${slot} as written, and there this value becomes part of the MQL. Write it in the source, and pass only its values: '${inSource}'.`,
+      pos,
+    );
+  }
+  if (where.at === "group" || where.at === "window") {
+    const kind = where.at === "group" ? "an accumulator" : "a window function";
+    const keys = isPlainObject(value) ? Object.keys(value as Record<string, unknown>) : [];
+    const shape = keys.length === 1 && keys[0].startsWith("$") ? `${keys[0]}(…)` : holes(value);
+    return new CodegenError(
+      `${lead} This slot takes ${kind}, and there the value becomes part of the MQL. Write ${kind} in the source, and pass only its values: '${shape}'.`,
+      pos,
+    );
+  }
+  if (where.at === "filter") return runTimeValueAsQuery(value, pos);
+  if (where.at === "statement" || where.at === "stream") {
+    return new CodegenError(
+      "A run-time value is a value, never a stage. Write the stage in the source, and pass only its values.",
+      pos,
+    );
+  }
+  return new CodegenError(`${lead} Write this part in the source, and pass only its values.`, pos);
+}
+
+/** A run-time value where the query language reads a query: the whole predicate, a `$and` list, a `$not` operand. */
+export const runTimeValueAsQuery = (value: unknown, pos: number): CodegenError =>
+  new CodegenError(
+    typeof value === "string"
+      ? "A run-time value is a value, never a query. Write the query in the source, and pass only its values."
+      : `A run-time document is a value, never a query. Write the query in the source, and pass only its values: '${holes(value)}'.`,
+    pos,
+  );
+
+const LITERAL_NOUNS: Readonly<Partial<Record<Expr["type"], string>>> = {
+  NumberLiteral: "a number",
+  BooleanLiteral: "a boolean",
+  NullLiteral: "null",
+  ArrayLiteral: "an array",
+  ObjectLiteral: "a document",
+  BigIntLiteral: "a bigint",
+  RegexLiteral: "a regular expression",
+  ObjectIdLiteral: "an ObjectId",
+};
+
+/**
+ * `$$$[c]` where `c` cannot name a collection. A value read at run time has no name
+ * yet. A value that the call supplies, or that the source writes, must be a plain
+ * string: the server refuses a name that starts with '$'.
+ */
+export function collectionNameFrom(index: Expr): CodegenError {
+  if (index.type === "Injected") {
+    return typeof index.value === "string"
+      ? new CodegenError(
+          `The run-time value ${stringify(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
+          index.pos,
+        )
+      : new CodegenError("A collection name must be a string, and this run-time value is not a string.", index.pos);
+  }
+  const noun = LITERAL_NOUNS[index.type];
+  if (noun !== undefined)
+    return new CodegenError(`A collection name must be a string, and this value is ${noun}.`, index.pos);
+  return collectionNameMustBeConstant(index.pos);
+}
+
 /** `$$$[""] = $$` / `$$$["$x"] = $$` — a name the server refuses. */
 export const badOutTarget = (name: string, pos: number): CodegenError =>
   new CodegenError(
@@ -1179,12 +1396,18 @@ export const oneDocumentInStream = (pos: number): CodegenError =>
     pos,
   );
 
-/** `$$ = $$$.c.filter(p).length` — a value is not a stream. */
+/**
+ * `$$ = $$$.c.filter(p).size()` — a value is not a stream. A name that no row
+ * knows makes no value at all, so it gets the unknown-method refusal instead,
+ * with the nearest link of a chain.
+ */
 export const valueInStream = (name: string, pos: number): CodegenError =>
-  new CodegenError(
-    `'.${name}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….${name}()'.`,
-    pos,
-  );
+  isKnownName(name)
+    ? new CodegenError(
+        `'.${name}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….${name}()'.`,
+        pos,
+      )
+    : refusalFor({ kind: "unknown", name }, `.${name}`, "'$$$'", "stream", pos, streamReceiverNames());
 
 /** `$.x = …` inside a body over another collection: the outer document is out of reach there. */
 export const outerWriteInForeign = (pos: number): CodegenError =>
@@ -1221,16 +1444,23 @@ export const mutatorNeedsField = (name: string, pos: number): CodegenError =>
     pos,
   );
 
+/**
+ * A query form that cannot take these arguments. For a JavaScript spelling it is the
+ * refusal. For a `$`-named call the filter road catches it and emits the call as
+ * written instead (HR3 does not apply to the escape hatch).
+ */
+export class QueryFormError extends CodegenError {}
+
 /** `$exists(1)` — a query operator's call form tests a FIELD. */
 export const needsFieldPath = (name: string, pos: number): CodegenError =>
-  new CodegenError(
+  new QueryFormError(
     `'${name}(field, …)' tests a field: its first argument is a field path ('$.a'), as in '${name}($.a, …)' or the document form '{ a: ${name}(…) }'.`,
     pos,
   );
 
 /** `$all($.tags, $.other)` — a query operator compares against a constant. */
 export const needsLiteral = (name: string, pos: number): CodegenError =>
-  new CodegenError(
+  new QueryFormError(
     `'${name}' compares against a compile-time constant in a query document, and this argument is read at run time. Give it a literal, or write the test as an expression ('$expr(…)').`,
     pos,
   );
@@ -1239,13 +1469,6 @@ export const needsLiteral = (name: string, pos: number): CodegenError =>
 export const elementNeedsQuery = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `'${name}(field, predicate)' takes a one-parameter arrow over the element whose body is a query test of the element alone ('x => x.q > 1'). A body that reads the outer document, or computes a value, has no query form here.`,
-    pos,
-  );
-
-/** `$box([[0, 0], [1, 1]])` on its own — a fragment of another operator's operand. */
-export const onlyInside = (name: string, hosts: readonly string[], pos: number): CodegenError =>
-  new CodegenError(
-    `'${name}' is a fragment of ${hosts.map((h) => `'${h}'`).join(" / ")} and has no meaning on its own — write it as that operator's operand: '${hosts[0]}(…, ${name}(…))'.`,
     pos,
   );
 
@@ -1258,16 +1481,19 @@ export const needsPrecedingSort = (name: string, pos: number): CodegenError =>
 
 // ── the update-document target ───────────────────────────────────────────────
 
-/** `$set({ a: $.b })` in a document-form update — the server would store the string "$b". */
-export const readInUpdateDocument = (pos: number): CodegenError =>
+/** `$set({ a: $.b })` in a document-form update — the server would store the string "$b". `ref` is the read as the server would see it. */
+export const readInUpdateDocument = (ref: string, pos: number): CodegenError =>
   new CodegenError(
-    "A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'). 'updateOne' also accepts this form.",
+    `A document-form update takes constants: the server reads '${ref}' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.`,
     pos,
   );
 
+/** `from` is `""` for the whole document (`$.a = $`), which no `$rename` can move. */
 export const updateCopyNeedsPipeline = (from: string, to: string, pos: number): CodegenError =>
   new CodegenError(
-    `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
+    from === ""
+      ? `'$.${to} = $' copies the whole document. A document-form update cannot do this. Use the pipeline form ('jsmql.pipeline("$.${to} = $;")'). 'updateOne' also accepts this form.`
+      : `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
     pos,
   );
 
@@ -1292,8 +1518,12 @@ export const updateKeyNotOperator = (key: string | null, pos: number): CodegenEr
     pos,
   );
 
-export const updateNeedsFields = (op: string, pos: number): CodegenError =>
-  new CodegenError(`'${op}' takes a document of fields to write ('${op}({ field: value })').`, pos);
+/** `{ $foo: 1 }` twice in one update: the compiler cannot merge an operand that is not a document of fields. */
+export const updateOperatorTwice = (op: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${op}' stands twice in one update, and one of its operands is not a document of fields, so the two cannot merge. Write '${op}' once.`,
+    pos,
+  );
 
 export const updateTargetNeedsField = (pos: number): CodegenError =>
   new CodegenError(

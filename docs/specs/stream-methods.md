@@ -32,7 +32,7 @@ the receiver.
 | `$$$.<coll>.<chain>` | another collection's stream | the `$lookup` body the join road assembles ([lookup-stage.md](lookup-stage.md)); `$$ = $$$.<coll>.<chain>` then unwinds it into the stream, or unions it in when nothing correlates |
 | `stream.<chain>` — a callback's third parameter | the inner stream of a body over another collection | that body |
 
-A link whose row has no `stream` cell is refused with the nearest name that has one. A value terminal (`.size()`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination, so it is refused ("… gives it no destination"); on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position. Both lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
+A link whose row has no `stream` cell is refused with the nearest name that a `$$` receiver accepts (`streamReceiverNames` in [src/compiler/rows.ts](../../src/compiler/rows.ts)): a stream method, a stage link, the union road's `.push()`, or `.size()`. A value terminal (`.size()`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination, so it is refused ("… gives it no destination"); on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position. Both lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
 
 ## The cell
 
@@ -63,6 +63,8 @@ Where the object spelling is already claimed, it keeps its richer meaning: `.ord
 
 Each row below describes *lowering*. For the callback spellings a slot accepts, the section above is canonical.
 
+A stream sort method emits a `$sort` stage, so `streamSortAsk` in `src/compiler/emit/sort-spec.ts` refuses a spec of more than `SORT_KEY_LIMIT` keys ([src/registry/mql.ts](../../src/registry/mql.ts)) at the sort argument. A sort of an array value lowers to `$sortArray`, which takes more keys, so the value road states no limit. See [aggregation-stages.md § Lowering](aggregation-stages.md#lowering).
+
 | Method | Args | Lowering | Stages emitted |
 |---|---|---|---|
 | `.slice(start, end?)` | 1-2 non-negative integer literals; `end >= start` if both present | `$skip` + `$limit` | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
@@ -83,10 +85,11 @@ Each row below describes *lowering*. For the callback spellings a slot accepts, 
 | `.groupBy(spec \| "<key>")` | A `$group` body object (**must contain `_id`**; every non-`_id` slot lowers in the group position, so `$addToSet`/`$push`/… take their accumulator form — same as the direct `$group(...)` stage) **or** a bare field name, or none (the identity key, as `.countBy`) | **Bare-key form** collapses the stream to the lodash object `{ <keyValue>: [docs] }` (`$group` with `$push: "$$ROOT"` → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }`); **body form** lowers the object to one `$group` stage, every slot in the group position | Bare key: the three-stage collapse (one output doc). Body: one `{ $group: … }` (a stream of group docs — no lodash analogue for the accumulator form). Both clear the let scope (reshape). *This mirrors value-mode `$.arr.groupBy(...)`, which also returns the object* |
 | `.countBy(<key>)` | One field key, or none — the `omitted` slot form: the desugar pass rewrites the missing argument to the identity arrow `x => x`, so the key is the element (`$$ROOT`, or the unwound field after `.flatMap`) | Collapses the stream to the lodash object `{ <keyValue>: <count> }` (mirroring value-mode `$.arr.countBy(...)`) — `$group` with `$sum: 1` → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). Clears the let scope. For MongoDB's count-descending `{ _id, count }` stream, write the `$sortByCount("$<field>")` stage directly |
 | `.keyBy(<key>)` | One field key, or none (the identity key, as `.countBy`) | Collapses the stream to the lodash object `{ <keyValue>: <last doc> }` (mirroring value-mode `$.arr.keyBy(...)`) — `$group` with `$last: "$$ROOT"` (last wins) → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). "Last" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters. Clears the let scope |
-| `.uniqBy(<key>)` | One field key | `$group` keeping `$first` per key into the reserved `__jsmqlTmp` group slot, then `$replaceWith` to restore it. "First" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters | `{ $group: { _id: "$<field>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Clears the let scope |
+| `.uniqBy(<key>)` | One field key | `keepFirstPer(<key>)`: a `$group` that keeps `$first` per key in the reserved `__jsmqlTmp` group slot, then `$replaceWith` to restore it. The identity key `d => d` takes the `.uniq()` pair. "First" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters | `{ $group: { _id: "$<field>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Keeps the let scope: the row states `restoresDocuments` |
+| `.uniq()` / `.sortedUniq()` | Zero args | `keepFirstPer(element().ref)`. On whole documents the group key IS the kept document, so the `$group` holds no second copy of it. After `.flatMap` the key is the element, and `$first` keeps the document. MEASURED: of documents that compare equal, the key keeps the first one, as `$first` does | `{ $group: { _id: "$$ROOT" } }` + `{ $replaceWith: "$_id" }`. After `.flatMap("<f>")`, the `.uniqBy` pair keyed on `"$<f>"`. Keeps the let scope and the element: the row states `restoresDocuments` |
 | `.difference(list)` / `.without(...values)` | One list (or the values) — the row states `elementOnly: { when: "always" }`: a stream link only while the chain's element is an unwound field | The predicate `x => ![...(list ?? [])].includes(x)` built as SOURCE (`listOf` pins the argument as an array that is there; a missing list is empty, as lodash reads it) and handed to `predicate`, so the filter road picks the query form or `$expr` exactly as the `.filter` spelling would | One `$match` — `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` otherwise |
-| `.intersection(list)` | One list — `elementOnly` | The predicate `x => [...(list ?? [])].has(x)` through `predicate`, then `keepFirstPer(element().ref)` — lodash keeps each value once | `$match` + `{ $group: { _id: "$<el>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }` |
-| `.differenceBy(list, iteratee)` / `.intersectionBy(list, iteratee)` | A list and an iteratee (the stream slot takes a property path, a matcher object, a pair — no bare callable) — `elementOnly` | `reshape(iteratee)` is the element's key (the parameter bound as the element); `value([...(list ?? [])].map(iteratee))` the list's keys | `{ $match: { $expr: { $not: { $in: [<key>, <keys>] } } } }`; intersection: `$in` then `keepFirstPer(<key>)` |
+| `.intersection(list)` | One list — `elementOnly` | The predicate `x => [...(list ?? [])].has(x)` through `predicate`, then `keepFirstPer(element().ref)` — lodash keeps each value once | `$match` + `{ $group: { _id: "$<el>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Keeps the let scope and the element: the row states `restoresDocuments` |
+| `.differenceBy(list, iteratee)` / `.intersectionBy(list, iteratee)` | A list and an iteratee (the stream slot takes a property path, a matcher object, a pair — no bare callable) — `elementOnly` | `reshape(iteratee)` is the element's key (the parameter bound as the element); `value([...(list ?? [])].map(iteratee))` the list's keys | `{ $match: { $expr: { $not: { $in: [<key>, <keys>] } } } }`; intersection: `$in` then `keepFirstPer(<key>)`, and the row states `restoresDocuments` |
 | `.compact()` | Zero args — `elementOnly` | JavaScript's falsy values as a `$nin` list (no NaN — JSMQL has none); MEASURED, `null` in `$nin` drops a missing field too | `{ $match: { <el>: { $nin: [null, 0, false, ""] } } }` |
 | `.flat()` | Zero args — `elementOnly` | The element is itself an array: one more unwind, in place; the element's path does not change | `{ $unwind: "$<el>" }` |
 | `.sortBy()` / `.sort()` / `.toSorted()` with no argument | Zero args — `elementOnly: { when: "bare" }`: the keyed call is a stream link on any stream, the bare call only after `.flatMap` | The natural order of the values | `{ $sort: { <el>: 1 } }` |
@@ -111,18 +114,16 @@ on it must first cast it to the field's own type — see the `keyBy`/`groupBy`/`
 pitfall in [LANGUAGE.md](../LANGUAGE.md#lodash-array-methods) for the `ObjectId` case.
 
 **A `.map` body must be a document.** `.map` lowers to `$replaceWith: <body>`, and
-MongoDB requires this to be an object root. The `map` row's `streamBody: "document"` fact gates the
-body in the same way as the `$ = <expr>` guard in
-[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts). A **provably** non-document body — a `Number`/`String`/`Boolean`/
-`Null`/`RegExp`/`Array` literal — is rejected at compile time (parity with `$ = 5`).
-This applies to both the top-level expression path and the correlated-lookup expression
-path (the block paths route through the shared `$ = <expr>` guard). A field ref,
-a member access, or an operator call is **data-dependent** (the field could be a
-sub-document), and it passes. So `.map("userId")` / `.map(d => d.userId)` emit
-`$replaceWith: "$userId"`, and, if `userId` is a scalar at runtime, they error on the server,
-exactly as `$ = $.userId` does. Arithmetic bodies (`d.a + d.b`) share the same
-pre-existing gap as `$ = <expr>` and are not caught (this would need type inference JSMQL
-does not do for `$replaceWith`).
+MongoDB requires an object root there. The stream cell reads the body through the
+`document` service of `stageInputs` in
+[src/compiler/emit/inputs.ts](../../src/compiler/emit/inputs.ts). The service refuses a
+body whose proof can never be an object, for example `d => 5` or `d => d.price * 2`.
+A block body's `return` value and the document that the array reducer appends take
+the same check. The proof is the type tracker's, and the `$ = <expr>` check reads the
+same rule: see [types.md § A refusal reads the whole set](types.md#a-refusal-reads-the-whole-set).
+A body that may be a document passes, and the server judges each document. So
+`.map("userId")` and `.map(d => d.userId)` emit `$replaceWith: "$userId"`. The server
+refuses a document whose `userId` holds a scalar, as it does for `$ = $.userId`.
 
 A chain link may also be a **pipeline stage** (`$$.$match({…}).$limit(5)`). Stage links interleave with these methods in every container. They are not registry entries, and [aggregation-stages.md](aggregation-stages.md#chained-stage-calls) owns them.
 
@@ -155,7 +156,9 @@ compiler keeps them apart:
   carries the path in its binding (`{ kind: "document", path }`), so `i.qty` locates
   `items.qty` on the value road ([lower.ts](../../src/compiler/emit/lower.ts)
   `locate`) and on the query road ([filter.ts](../../src/compiler/emit/filter.ts)
-  `pathOfIn`) alike. The sort readings prefix their keys, and a whole-element
+  `pathOfIn`) alike. The binding also carries the documents' proof at that path, so
+  a read of a field that they do not hold is refused (docs/specs/types.md § A read
+  that gives no value). The sort readings prefix their keys, and a whole-element
   comparator names the field (`streamSortAsk` in
   [sort-spec.ts](../../src/compiler/emit/sort-spec.ts)); `.pick` / `.omit`
   prefix their field lists; `.uniq()` groups on `element().ref`.
@@ -167,10 +170,13 @@ compiler keeps them apart:
 - **A stage that replaces the document** (a `document` effect on the stage's row that replaces the document — see docs/specs/types.md —
   `$replaceWith`, `$group`, an inclusion `$project`, …) makes the document the
   element again, whether it comes from a link (`streamLink`) or a statement
-  (`afterStages`). A link whose row states `restoresDocuments` (`.uniq`, `.uniqBy`,
-  and their `sorted` twins — a `$group` that keeps `$first: "$$ROOT"` and
-  restores it with `$replaceWith`) changes nothing. The raw stage `$$.$unwind("$items")`
-  is MQL (HR2), and it moves the element nowhere.
+  (`afterStages`). A link whose row states `restoresDocuments` changes nothing,
+  for the next link and for the next statement alike (docs/specs/types.md § The
+  document after a stage). Every row whose stream cell keeps the first document
+  per key (`keepFirstPer` in [names.ts](../../src/registry/names.ts), `.uniq()`
+  for example) states it, and a test in `test/stream-methods.test.ts` holds both
+  directions. The raw stage
+  `$$.$unwind("$items")` is MQL (HR2), and it moves the element nowhere.
 
 The element persists across statements on one chain (`$$.flatMap("items");
 $$.filter(i => …);` reads `items.qty`). Each sub-pipeline has its own chain,
@@ -337,7 +343,11 @@ the wording stays consistent across methods. Two general principles:
   "write the literal in source" hint.
 
 The stream road refuses a link whose row has no `stream` cell, with the nearest
-name that has one (`didYouMean`). A row that states an `unsupported(reason)` cell
+name that a `$$` receiver accepts in any position (`didYouMean` over
+`streamReceiverNames`): `$$.pushh(…)` names `.push()`, and `$$.sizee()` names
+`.size()`. In `$$ = $$$.<coll>.<chain>`, a link that no row knows gets the
+unknown-method refusal over the same set: `$$ = $$$.orders.filterr(p)` gives
+"Unknown method '.filterr()' at position 15. Did you mean '.filter()'?". A row that states an `unsupported(reason)` cell
 answers with its reason. For the single-element methods (`.find`, `.findLast`, `.at`)
 the reason names `.filter(p).take(1)` / `.slice(n, n + 1)`, and for `.find` on
 `$$$.<coll>` it names the join form `$ = $$$.<coll>.find(<pred>)`.

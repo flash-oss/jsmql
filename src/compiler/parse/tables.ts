@@ -29,6 +29,8 @@ export type Rule = {
   leftOperandNot: readonly ProductionKey[];
   /** The node this rule builds cannot be the left of `=` or the operand of `delete`. */
   neverAWriteTarget: boolean;
+  /** The compound write that means the same as a statement (`+= 1`), when the rule is a write JavaScript also reads as a value. See the row field. */
+  asStatement: string | null;
 };
 
 /** Spelling or class name to the token type that the lexer emits for it. */
@@ -47,6 +49,7 @@ type Row = {
   noMixWith?: readonly string[];
   leftOperandNot?: readonly string[];
   neverAWriteTarget?: { instead: string };
+  asStatement?: string;
   word?: string;
   where?: readonly string[];
   becomes?: unknown;
@@ -72,6 +75,7 @@ function build(want: (f: Rule["fixity"]) => boolean): Map<TokenName, Rule> {
         noMixWith: (row.noMixWith ?? []) as readonly ProductionKey[],
         leftOperandNot: (row.leftOperandNot ?? []) as readonly ProductionKey[],
         neverAWriteTarget: row.neverAWriteTarget !== undefined,
+        asStatement: row.asStatement ?? null,
       });
       continue;
     }
@@ -89,6 +93,7 @@ function build(want: (f: Rule["fixity"]) => boolean): Map<TokenName, Rule> {
       noMixWith: [...seen.noMixWith, ...((row.noMixWith ?? []) as readonly ProductionKey[])],
       leftOperandNot: [...seen.leftOperandNot, ...((row.leftOperandNot ?? []) as readonly ProductionKey[])],
       neverAWriteTarget: seen.neverAWriteTarget || row.neverAWriteTarget !== undefined,
+      asStatement: seen.asStatement ?? row.asStatement ?? null,
     });
   }
   return out;
@@ -101,6 +106,12 @@ export const PREFIX: ReadonlyMap<TokenName, Rule> = build((f) => f === "prefix" 
 export const INFIX: ReadonlyMap<TokenName, Rule> = build(
   (f) => f === "infix" || f === "postfix" || f === "ternary" || f === "prefixOrPostfix",
 );
+
+/** The statement form of a write that JavaScript also reads as a value: `++` → `+= 1`. The row states it. */
+export function asStatementOf(spelling: string): string | null {
+  const type = lexemeToType(spelling);
+  return type === null ? null : (PREFIX.get(type)?.asStatement ?? null);
+}
 
 /**
  * The literal identifier that a rule requires, from its `word` field. The lexer

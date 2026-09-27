@@ -87,12 +87,7 @@ var FIELD_FAMILY_TYPES = {
   number: ["int", "long", "double", "decimal"],
   object: ["object"],
   date: ["date"],
-  regexp: ["regex"],
-  set: ["array"]
-};
-var accumulated = (input) => {
-  const operand = input.value(input.args[0]);
-  return { [input.name]: Array.isArray(operand) ? { $let: { vars: {}, in: operand } } : operand };
+  regexp: ["regex"]
 };
 var single = (input) => ({
   [input.name]: input.value(input.args[0])
@@ -139,21 +134,23 @@ var clampNonNegativeIndex = (node, lowered) => {
   const lit = literalIndexValue(node);
   return lit === null ? { $max: [0, lowered] } : Math.max(0, lit);
 };
-function strLenOf(value) {
+function strLenOf(value, present2 = false) {
   if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
-  return { $strLenCP: isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
+  return { $strLenCP: present2 || isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
 }
-function normaliseSliceIndex(node, lowered, recv) {
+function normaliseSliceIndex(node, lowered, recv, present2 = false) {
   const lit = literalIndexValue(node);
-  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv), -lit));
-  return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv)] }), lowered);
+  if (lit !== null) return lit >= 0 ? lit : clampNonNegative(foldedSubtract(strLenOf(recv, present2), -lit));
+  return cond({ $lt: [lowered, 0] }, clampNonNegative({ $add: [lowered, strLenOf(recv, present2)] }), lowered);
 }
-var strTail = (s, from) => ({ $substrCP: [s, from, strLenOf(s)] });
-var capitalizeExpr = (s) => ({
-  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }]
+var strTail = (s, from, present2 = false) => ({
+  $substrCP: [s, from, strLenOf(s, present2)]
 });
-var firstCharExpr = (s, op) => ({
-  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)]
+var capitalizeExpr = (s, present2 = false) => ({
+  $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1, present2) }]
+});
+var firstCharExpr = (s, op, present2 = false) => ({
+  $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1, present2)]
 });
 var ASCII_WORDS_RE = "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+";
 var HTML_ESCAPE_PAIRS = [
@@ -215,11 +212,13 @@ function dateOptions(arg, value) {
   }
   return out;
 }
+var SORT_KEY_LIMIT = 32;
 var singleArrayArg = (operand) => Array.isArray(operand) ? [operand] : operand;
 var sizeOf = (a) => Array.isArray(a) ? a.length : { $size: a };
 var firstOf = (a) => ({ $first: singleArrayArg(a) });
 var lastOf = (a) => ({ $last: singleArrayArg(a) });
 var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
+var slotAggregate = (op, recv, perDocument) => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
 var jsTruth = (value) => ({
   $and: [
     { $ne: [{ $ifNull: [value, null] }, null] },
@@ -393,6 +392,7 @@ var dateRow = (spelling) => global_({
   newKeyword: "optional",
   provides: "Date",
   returns: "date",
+  neverNull: true,
   where: ["value"],
   filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
   updateDoc: unsupported(
@@ -431,6 +431,7 @@ var bsonValue = (e) => global_({
   token: "Ident",
   newKeyword: "optional",
   returns: e.returns,
+  neverNull: true,
   where: ["value"],
   filter: because(`${e.isA} is a value, not a test. Compare it: '${e.compare}'.`),
   updateDoc: unsupported(
@@ -458,6 +459,7 @@ var bsonSentinel = (spelling, doc, compare) => global_({
   token: "Ident",
   newKeyword: "optional",
   returns: spelling === "MinKey" ? "minKey" : "maxKey",
+  neverNull: true,
   where: ["value"],
   filter: because(`${spelling}() is a value, not a test. Compare it: '${compare}'.`),
   // The fold builds the value — there is no MQL expression that produces one, so
@@ -481,7 +483,6 @@ var TIME_UNIT = [
   "second",
   "millisecond"
 ];
-var WINDOW_TIME_UNIT = ["week", "day", "hour", "minute", "second", "millisecond"];
 var WEEKDAY = [
   "monday",
   "tuesday",
@@ -525,10 +526,7 @@ var listOf = (list) => {
   };
 };
 var arrowOf = (param, body, pos) => ({ type: "Lambda", params: [param], body, pos });
-var keepFirstPer = (key) => [
-  { $group: { _id: key, [GROUP_SLOT]: { $first: "$$ROOT" } } },
-  { $replaceWith: `$${GROUP_SLOT}` }
-];
+var keepFirstPer = (key) => key === "$$ROOT" ? [{ $group: { _id: "$$ROOT" } }, { $replaceWith: "$_id" }] : [{ $group: { _id: key, [GROUP_SLOT]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_SLOT}` }];
 var collapse = (key, acc) => [
   { $group: { _id: key, [GROUP_SLOT]: acc } },
   {
@@ -568,7 +566,31 @@ var logicalList = ({ name: name2, args, query }) => {
   return { [name2]: list.map(query) };
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
-var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
+var arrayOrEmpty = (recv) => {
+  if (Array.isArray(recv)) return recv;
+  const inner = isIfNullWrapped(recv) ? recv.$ifNull : null;
+  if (inner !== null && inner.length === 2 && inner[1] === null) return { $ifNull: [inner[0], []] };
+  return { $ifNull: [recv, []] };
+};
+var listArgument = (value, type, arg) => {
+  const lowered = value(arg);
+  return type(arg).absent ? arrayOrEmpty(lowered) : lowered;
+};
+var mayBeArray = (t) => t.kinds === "any" || t.kinds.has("array");
+var onlyArray = (t) => t.kinds !== "any" && t.kinds.size === 1 && t.kinds.has("array");
+var arrayOrOne = (ref) => ({ $cond: [{ $isArray: ref }, ref, [ref]] });
+function concatOperand(v, t, bind) {
+  if (!mayBeArray(t)) return [v];
+  if (onlyArray(t)) return t.absent ? { $ifNull: [v, [null]] } : v;
+  if (typeof v === "string" && v.startsWith("$")) return arrayOrOne(v);
+  const item = bind("item");
+  return { $let: { vars: { [item.as]: v }, in: arrayOrOne(item.ref) } };
+}
+function concatSpread(list, element2) {
+  if (element2 !== void 0 && !mayBeArray(element2)) return list;
+  const each = element2 !== void 0 && onlyArray(element2) && !element2.absent ? "$$this" : arrayOrOne("$$this");
+  return { $reduce: { input: list, initialValue: [], in: { $concatArrays: ["$$value", each] } } };
+}
 var lastIndexOfArray = ({ recv, args, value, bind }) => {
   const needle = value(args[0]);
   const arr = bind("arr");
@@ -610,11 +632,6 @@ var orderedBounds = (a, b) => {
   return null;
 };
 var norList = (input) => logicalList(input) ?? { $nor: [] };
-var lodashDifference = ({ recv, args, value, bind }) => {
-  const other = value(args[0]);
-  const item = bind("item");
-  return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, arrayOrEmpty(other)] }] } } };
-};
 function groupedByKey(input, it, bind) {
   const key = bind("key");
   const filtered = { $filter: { input, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
@@ -625,6 +642,15 @@ function groupedByKey(input, it, bind) {
 var fromIsNotJsmql = unsupported(
   "'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
 );
+var setIsNotJsmql = unsupported(
+  "'new Set(\u2026)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'."
+);
+var mapIsNotJsmql = unsupported(
+  "'new Map(\u2026)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('Object.fromEntries(pairs)')."
+);
+var regExpIsNotJsmql = unsupported(
+  "'RegExp(\u2026)' is not part of JSMQL. Write a regular expression literal ('/^ab/i'). For a pattern built at run time, write '$regexMatch({ input: \u2026, regex: \u2026 })'."
+);
 var NO_IS_FINITE = unsupported(
   `Number.isFinite($.x) is not supported: jsmql has no syntax for an Infinity or NaN literal to compare against. Three ways round it: check the BSON type with '$type($.x)' and reject the "double" values you know to be non-finite at the source; substitute a sentinel with '$op($convert, { input: $.x, to: "double", onError: 0 })'; or constrain to a known range ('$.x > -1e300 && $.x < 1e300') where the domain allows it.`
 );
@@ -633,711 +659,392 @@ var NAMES = {
     doc: "Returns the absolute value of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$abs' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$abs' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$abs' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $abs(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$abs' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $abs(\u2026);'"
-    ),
-    updateDoc: unsupported("'$abs' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $add: mongo({
     doc: "Adds numbers to return the sum, or adds numbers and a date to return a new date.",
     category: "arithmetic",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number-or-date", emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$add' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$add' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$add' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $add(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$add' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $add(\u2026);'"
-    ),
-    updateDoc: unsupported("'$add' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $ceil: mongo({
     doc: "Returns the smallest integer greater than or equal to the specified number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$ceil' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$ceil' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$ceil' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $ceil(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$ceil' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ceil(\u2026);'"
-    ),
-    updateDoc: unsupported("'$ceil' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $divide: mongo({
     doc: "Returns the result of dividing the first number by the second.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number", nonZero: [1] },
+      args: { sig: "dividend, divisor", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$divide' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$divide' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$divide' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $divide(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$divide' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $divide(\u2026);'"
-    ),
-    updateDoc: unsupported("'$divide' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $exp: mongo({
     doc: "Raises e to the specified exponent.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$exp' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$exp' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$exp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $exp(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$exp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $exp(\u2026);'"
-    ),
-    updateDoc: unsupported("'$exp' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $floor: mongo({
     doc: "Returns the largest integer less than or equal to the specified number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$floor' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$floor' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$floor' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $floor(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$floor' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $floor(\u2026);'"
-    ),
-    updateDoc: unsupported("'$floor' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $ln: mongo({
     doc: "Calculates the natural log of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$ln' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$ln' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$ln' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $ln(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$ln' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ln(\u2026);'"
-    ),
-    updateDoc: unsupported("'$ln' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $log: mongo({
     doc: "Calculates the log of a number in the specified base.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "number, base", exact: 2, slotType: { 0: "number" }, elementType: "number" },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$log' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$log' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$log' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $log(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$log' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $log(\u2026);'"
-    ),
-    updateDoc: unsupported("'$log' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "number, base", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $log10: mongo({
     doc: "Calculates the log base 10 of a number.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$log10' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$log10' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$log10' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $log10(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$log10' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $log10(\u2026);'"
-    ),
-    updateDoc: unsupported("'$log10' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $mod: mongo({
     doc: "Returns the remainder of the first number divided by the second.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "field, [divisor, remainder]", exact: 2 }, emit: fieldClause },
     expr: {
-      args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number", nonZero: [1] },
+      args: { sig: "dividend, divisor", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$mod' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$mod' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$mod' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $mod(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$mod' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $mod(\u2026);'"
-    ),
-    updateDoc: unsupported("'$mod' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $multiply: mongo({
     doc: "Multiplies numbers to return the product.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number", emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$multiply' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$multiply' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$multiply' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $multiply(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$multiply' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $multiply(\u2026);'"
-    ),
-    updateDoc: unsupported("'$multiply' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $pow: mongo({
     doc: "Raises a number to the specified exponent.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "base, exponent", exact: 2, slotType: { 0: "number" }, elementType: "number" },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$pow' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$pow' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$pow' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $pow(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$pow' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $pow(\u2026);'"
-    ),
-    updateDoc: unsupported("'$pow' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "base, exponent", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $round: mongo({
     doc: "Rounds a number to a whole integer or to a specified decimal place.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "flex",
     filter: viaFallback,
     expr: {
-      args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number", 1: "int" } },
+      args: { sig: "number[, place]", allowed: [1, 2] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$round' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$round' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$round' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $round(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$round' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $round(\u2026);'"
-    ),
-    updateDoc: unsupported("'$round' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $sigmoid: mongo({
     doc: "Returns the sigmoid of a value, defined as 1 / (1 + e^(-x)). The result is between 0 and 1.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$sigmoid' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sigmoid' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$sigmoid' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $sigmoid(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$sigmoid' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sigmoid(\u2026);'"
-    ),
-    updateDoc: unsupported("'$sigmoid' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $sqrt: mongo({
     doc: "Calculates the square root.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$sqrt' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sqrt' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$sqrt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $sqrt(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$sqrt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sqrt(\u2026);'"
-    ),
-    updateDoc: unsupported("'$sqrt' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $subtract: mongo({
     doc: "Returns the result of subtracting the second value from the first.",
     category: "arithmetic",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "minuend, subtrahend", exact: 2, slotType: { 0: "number-or-date" }, elementType: "number-or-date" },
+      args: { sig: "minuend, subtrahend", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$subtract' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$subtract' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$subtract' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $subtract(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$subtract' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $subtract(\u2026);'"
-    ),
-    updateDoc: unsupported("'$subtract' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $trunc: mongo({
     doc: "Truncates a number to a whole integer or to a specified decimal place.",
     category: "arithmetic",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "flex",
     filter: viaFallback,
     expr: {
-      args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number", 1: "int" } },
+      args: { sig: "number[, place]", allowed: [1, 2] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$trunc' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$trunc' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$trunc' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $trunc(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$trunc' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $trunc(\u2026);'"
-    ),
-    updateDoc: unsupported("'$trunc' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $bitAnd: mongo({
     doc: "Returns the result of a bitwise AND operation on an array of int or long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$bitAnd' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$bitAnd' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$bitAnd' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $bitAnd(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$bitAnd' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bitAnd(\u2026);'"
-    ),
-    updateDoc: unsupported("'$bitAnd' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $bitNot: mongo({
     doc: "Returns the result of a bitwise NOT operation on a single int or long value.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } }, emit: single },
-    group: unsupported("'$bitNot' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$bitNot' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$bitNot' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $bitNot(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$bitNot' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bitNot(\u2026);'"
-    ),
-    updateDoc: unsupported("'$bitNot' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $bitOr: mongo({
     doc: "Returns the result of a bitwise OR operation on an array of int or long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$bitOr' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$bitOr' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$bitOr' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $bitOr(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$bitOr' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bitOr(\u2026);'"
-    ),
-    updateDoc: unsupported("'$bitOr' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $bitXor: mongo({
     doc: "Returns the result of a bitwise XOR (exclusive or) operation on an array of int and long values.",
     category: "bitwise",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$bitXor' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$bitXor' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$bitXor' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $bitXor(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$bitXor' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bitXor(\u2026);'"
-    ),
-    updateDoc: unsupported("'$bitXor' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $sin: mongo({
     doc: "Returns the sine of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$sin' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sin' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$sin' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $sin(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$sin' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sin(\u2026);'"
-    ),
-    updateDoc: unsupported("'$sin' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $cos: mongo({
     doc: "Returns the cosine of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$cos' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$cos' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$cos' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $cos(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$cos' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $cos(\u2026);'"
-    ),
-    updateDoc: unsupported("'$cos' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $tan: mongo({
     doc: "Returns the tangent of a value that is measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$tan' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$tan' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$tan' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $tan(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$tan' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $tan(\u2026);'"
-    ),
-    updateDoc: unsupported("'$tan' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $asin: mongo({
     doc: "Returns the inverse sine (arc sine) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$asin' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$asin' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$asin' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $asin(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$asin' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $asin(\u2026);'"
-    ),
-    updateDoc: unsupported("'$asin' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $acos: mongo({
     doc: "Returns the inverse cosine (arc cosine) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$acos' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$acos' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$acos' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $acos(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$acos' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $acos(\u2026);'"
-    ),
-    updateDoc: unsupported("'$acos' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $atan: mongo({
     doc: "Returns the inverse tangent (arc tangent) of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$atan' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$atan' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$atan' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $atan(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$atan' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $atan(\u2026);'"
-    ),
-    updateDoc: unsupported("'$atan' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $atan2: mongo({
     doc: "Returns the inverse tangent of y / x in radians, where y and x are the first and second arguments.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "y, x", exact: 2, slotType: { 0: "number" }, elementType: "number" },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$atan2' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$atan2' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$atan2' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $atan2(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$atan2' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $atan2(\u2026);'"
-    ),
-    updateDoc: unsupported("'$atan2' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "y, x", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $sinh: mongo({
     doc: "Returns the hyperbolic sine of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$sinh' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sinh' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$sinh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $sinh(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$sinh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sinh(\u2026);'"
-    ),
-    updateDoc: unsupported("'$sinh' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $cosh: mongo({
     doc: "Returns the hyperbolic cosine of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$cosh' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$cosh' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$cosh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $cosh(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$cosh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $cosh(\u2026);'"
-    ),
-    updateDoc: unsupported("'$cosh' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $tanh: mongo({
     doc: "Returns the hyperbolic tangent of a value measured in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$tanh' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$tanh' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$tanh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $tanh(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$tanh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $tanh(\u2026);'"
-    ),
-    updateDoc: unsupported("'$tanh' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $asinh: mongo({
     doc: "Returns the inverse hyperbolic sine of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$asinh' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$asinh' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$asinh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $asinh(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$asinh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $asinh(\u2026);'"
-    ),
-    updateDoc: unsupported("'$asinh' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $acosh: mongo({
     doc: "Returns the inverse hyperbolic cosine of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$acosh' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$acosh' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$acosh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $acosh(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$acosh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $acosh(\u2026);'"
-    ),
-    updateDoc: unsupported("'$acosh' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $atanh: mongo({
     doc: "Returns the inverse hyperbolic tangent of a value in radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$atanh' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$atanh' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$atanh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $atanh(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$atanh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $atanh(\u2026);'"
-    ),
-    updateDoc: unsupported("'$atanh' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $degreesToRadians: mongo({
     doc: "Converts a value from degrees to radians.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$degreesToRadians' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$degreesToRadians' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$degreesToRadians' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $degreesToRadians(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$degreesToRadians' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $degreesToRadians(\u2026);'"
-    ),
-    updateDoc: unsupported("'$degreesToRadians' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $radiansToDegrees: mongo({
     doc: "Converts a value from radians to degrees.",
     category: "trigonometry",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
-    group: unsupported("'$radiansToDegrees' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$radiansToDegrees' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$radiansToDegrees' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $radiansToDegrees(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$radiansToDegrees' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $radiansToDegrees(\u2026);'"
-    ),
-    updateDoc: unsupported("'$radiansToDegrees' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $cmp: mongo({
     doc: "Returns 0 if the two values are equivalent, 1 if the first is greater, and -1 if less.",
     category: "comparison",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
-    group: unsupported("'$cmp' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$cmp' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$cmp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $cmp(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$cmp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $cmp(\u2026);'"
-    ),
-    updateDoc: unsupported("'$cmp' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $eq: mongo({
     doc: "Returns true if the values are equivalent.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$eq" },
     shape: "flex",
@@ -1345,21 +1052,13 @@ var NAMES = {
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$eq' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$eq' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$eq' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $eq(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$eq' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $eq(\u2026);'"
-    ),
-    updateDoc: unsupported("'$eq' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $ne: mongo({
     doc: "Returns true if the values are not equivalent.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$ne" },
     shape: "flex",
@@ -1367,21 +1066,13 @@ var NAMES = {
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$ne' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$ne' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$ne' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $ne(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$ne' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ne(\u2026);'"
-    ),
-    updateDoc: unsupported("'$ne' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $gt: mongo({
     doc: "Returns true if the first value is greater than the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$gt" },
     shape: "flex",
@@ -1389,21 +1080,13 @@ var NAMES = {
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$gt' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$gt' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$gt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $gt(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$gt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $gt(\u2026);'"
-    ),
-    updateDoc: unsupported("'$gt' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $gte: mongo({
     doc: "Returns true if the first value is greater than or equal to the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$gte" },
     shape: "flex",
@@ -1411,21 +1094,13 @@ var NAMES = {
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$gte' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$gte' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$gte' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $gte(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$gte' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $gte(\u2026);'"
-    ),
-    updateDoc: unsupported("'$gte' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $lt: mongo({
     doc: "Returns true if the first value is less than the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$lt" },
     shape: "flex",
@@ -1433,21 +1108,13 @@ var NAMES = {
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$lt' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$lt' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$lt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $lt(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$lt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $lt(\u2026);'"
-    ),
-    updateDoc: unsupported("'$lt' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $lte: mongo({
     doc: "Returns true if the first value is less than or equal to the second.",
     category: "comparison",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     liftsTo: { op: "$lte" },
     shape: "flex",
@@ -1455,63 +1122,33 @@ var NAMES = {
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$lte' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$lte' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$lte' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $lte(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$lte' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $lte(\u2026);'"
-    ),
-    updateDoc: unsupported("'$lte' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $and: mongo({
     doc: "Returns true only when all its expressions evaluate to true.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$and' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$and' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$and' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $and(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$and' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $and(\u2026);'"
-    ),
-    updateDoc: unsupported("'$and' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $or: mongo({
     doc: "Returns true when any of its expressions evaluates to true.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "array",
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$or' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$or' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$or' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $or(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$or' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $or(\u2026);'"
-    ),
-    updateDoc: unsupported("'$or' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $not: mongo({
     doc: "Returns the boolean value that is the opposite of its argument expression.",
     category: "boolean",
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "single",
     filter: {
@@ -1529,36 +1166,17 @@ var NAMES = {
         return { [keys[0]]: { $not: clause } };
       }
     },
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$not' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$not' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$not' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $not(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$not' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $not(\u2026);'"
-    ),
-    updateDoc: unsupported("'$not' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $cond: mongo({
     doc: "A ternary operator that evaluates one expression and returns one of two other expressions based on the result.",
     category: "conditional",
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: { required: ["if", "then", "else"], optional: [], closed: true, positional: ["if", "then", "else"] }
-    },
+    keys: ["if", "then", "else"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "if, then, else", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$cond' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$cond' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$cond' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $cond(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$cond' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $cond(\u2026);'"
-    ),
-    updateDoc: unsupported("'$cond' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "if, then, else", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $ifNull: mongo({
     doc: "Returns either the non-null result of the first expression or the result of the second expression.",
@@ -1570,540 +1188,277 @@ var NAMES = {
     expr: {
       args: { sig: "expr, replacement[, \u2026]", atLeast: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$ifNull' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$ifNull' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$ifNull' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $ifNull(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$ifNull' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ifNull(\u2026);'"
-    ),
-    updateDoc: unsupported("'$ifNull' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $switch: mongo({
     doc: "Evaluates a series of case expressions; executes the matching case's expression and breaks out of the control flow.",
     category: "conditional",
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: { required: ["branches"], optional: ["default"], closed: true, positional: ["branches", "default"] }
-    },
+    keys: ["branches", "default"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "branches, default", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$switch' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$switch' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$switch' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $switch(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$switch' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $switch(\u2026);'"
-    ),
-    updateDoc: unsupported("'$switch' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "branches, default", allowed: [1, 2] }, emit: objectBody }
   }),
   $concat: mongo({
     doc: "Concatenates any number of strings.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$concat' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$concat' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$concat' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $concat(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$concat' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $concat(\u2026);'"
-    ),
-    updateDoc: unsupported("'$concat' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $indexOfBytes: mongo({
     doc: "Searches a string for a substring and returns the UTF-8 byte index of the first occurrence, or -1.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
       args: { sig: "string, substring[, start[, end]]", allowed: [2, 3, 4] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$indexOfBytes' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$indexOfBytes' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$indexOfBytes' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $indexOfBytes(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$indexOfBytes' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $indexOfBytes(\u2026);'"
-    ),
-    updateDoc: unsupported("'$indexOfBytes' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $indexOfCP: mongo({
     doc: "Searches a string for a substring and returns the UTF-8 code point index of the first occurrence, or -1.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
       args: { sig: "string, substring[, start[, end]]", allowed: [2, 3, 4] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$indexOfCP' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$indexOfCP' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$indexOfCP' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $indexOfCP(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$indexOfCP' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $indexOfCP(\u2026);'"
-    ),
-    updateDoc: unsupported("'$indexOfCP' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $ltrim: mongo({
     doc: "Removes whitespace or the specified characters from the beginning of a string.",
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
+    keys: ["input", "chars"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$ltrim' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$ltrim' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$ltrim' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $ltrim(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$ltrim' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ltrim(\u2026);'"
-    ),
-    updateDoc: unsupported("'$ltrim' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody }
   }),
   $rtrim: mongo({
     doc: "Removes whitespace or the specified characters from the end of a string.",
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
+    keys: ["input", "chars"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$rtrim' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$rtrim' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$rtrim' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $rtrim(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$rtrim' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $rtrim(\u2026);'"
-    ),
-    updateDoc: unsupported("'$rtrim' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody }
   }),
   $trim: mongo({
     doc: "Removes whitespace or the specified characters from the beginning and end of a string.",
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
+    keys: ["input", "chars"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$trim' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$trim' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$trim' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $trim(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$trim' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $trim(\u2026);'"
-    ),
-    updateDoc: unsupported("'$trim' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody }
   }),
   $regexFind: mongo({
     doc: "Applies a regular expression to a string and returns information on the first matched substring.",
     category: "string",
     returns: "object",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "regex"],
-        optional: ["options"],
-        closed: true,
-        charSets: { options: "imxsu" },
-        positional: ["input", "regex", "options"]
-      }
-    },
+    keys: ["input", "regex", "options"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$regexFind' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$regexFind' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$regexFind' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $regexFind(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$regexFind' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $regexFind(\u2026);'"
-    ),
-    updateDoc: unsupported("'$regexFind' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $regexFindAll: mongo({
     doc: "Applies a regular expression to a string and returns information on all matched substrings.",
     category: "string",
     returns: { arrayOf: "object" },
+    neverNull: "always",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "regex"],
-        optional: ["options"],
-        closed: true,
-        charSets: { options: "imxsu" },
-        positional: ["input", "regex", "options"]
-      }
-    },
+    keys: ["input", "regex", "options"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$regexFindAll' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$regexFindAll' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$regexFindAll' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $regexFindAll(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$regexFindAll' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $regexFindAll(\u2026);'"
-    ),
-    updateDoc: unsupported("'$regexFindAll' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $regexMatch: mongo({
     doc: "Applies a regular expression to a string and returns a boolean indicating whether a match is found.",
     category: "string",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "regex"],
-        optional: ["options"],
-        closed: true,
-        charSets: { options: "imxsu" },
-        positional: ["input", "regex", "options"]
-      }
-    },
+    keys: ["input", "regex", "options"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$regexMatch' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$regexMatch' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$regexMatch' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $regexMatch(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$regexMatch' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $regexMatch(\u2026);'"
-    ),
-    updateDoc: unsupported("'$regexMatch' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $replaceAll: mongo({
     doc: "Replaces all instances of a search string in an input string with a replacement string.",
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "find", "replacement"],
-        optional: [],
-        closed: true,
-        positional: ["input", "find", "replacement"]
-      }
-    },
+    keys: ["input", "find", "replacement"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$replaceAll' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$replaceAll' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$replaceAll' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $replaceAll(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$replaceAll' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $replaceAll(\u2026);'"
-    ),
-    updateDoc: unsupported("'$replaceAll' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $replaceOne: mongo({
     doc: "Replaces the first instance of a matched string in a given input.",
     category: "string",
     returns: "string",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "find", "replacement"],
-        optional: [],
-        closed: true,
-        positional: ["input", "find", "replacement"]
-      }
-    },
+    keys: ["input", "find", "replacement"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$replaceOne' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$replaceOne' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$replaceOne' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $replaceOne(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$replaceOne' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $replaceOne(\u2026);'"
-    ),
-    updateDoc: unsupported("'$replaceOne' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $split: mongo({
     doc: "Splits a string into substrings based on a delimiter and returns an array of substrings.",
     category: "string",
     returns: { arrayOf: "string" },
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: {
-        sig: "string, delimiter",
-        exact: 2,
-        // MEASURED: the server refuses an empty delimiter ("$split requires a non-empty
-        // separator"), the same fact the '.split()' row states.
-        nonEmpty: {
-          1: {
-            noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'."
-          }
-        }
-      },
+      args: { sig: "string, delimiter", exact: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$split' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$split' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$split' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $split(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$split' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $split(\u2026);'"
-    ),
-    updateDoc: unsupported("'$split' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $strLenBytes: mongo({
     doc: "Returns the number of UTF-8 encoded bytes in a string.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$strLenBytes' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$strLenBytes' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$strLenBytes' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $strLenBytes(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$strLenBytes' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $strLenBytes(\u2026);'"
-    ),
-    updateDoc: unsupported("'$strLenBytes' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $strLenCP: mongo({
     doc: "Returns the number of UTF-8 code points in a string.",
     category: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
-    group: unsupported("'$strLenCP' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$strLenCP' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$strLenCP' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $strLenCP(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$strLenCP' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $strLenCP(\u2026);'"
-    ),
-    updateDoc: unsupported("'$strLenCP' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $strcasecmp: mongo({
     doc: "Performs case-insensitive string comparison.",
     category: "string",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
-    group: unsupported("'$strcasecmp' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$strcasecmp' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$strcasecmp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $strcasecmp(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$strcasecmp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $strcasecmp(\u2026);'"
-    ),
-    updateDoc: unsupported("'$strcasecmp' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $substr: mongo({
     doc: "Deprecated. Use $substrBytes or $substrCP.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
       args: { sig: "string, start, length", exact: 3 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$substr' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$substr' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$substr' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $substr(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$substr' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $substr(\u2026);'"
-    ),
-    updateDoc: unsupported("'$substr' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $substrBytes: mongo({
     doc: "Returns the substring of a string starting at the specified UTF-8 byte index.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
       args: { sig: "string, byteIndex, byteCount", exact: 3 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$substrBytes' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$substrBytes' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$substrBytes' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $substrBytes(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$substrBytes' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $substrBytes(\u2026);'"
-    ),
-    updateDoc: unsupported("'$substrBytes' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $substrCP: mongo({
     doc: "Returns the substring of a string starting at the specified UTF-8 code point index.",
     category: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
       args: { sig: "string, cpIndex, cpCount", exact: 3 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$substrCP' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$substrCP' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$substrCP' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $substrCP(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$substrCP' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $substrCP(\u2026);'"
-    ),
-    updateDoc: unsupported("'$substrCP' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $toLower: mongo({
     doc: "Converts a string to lowercase.",
     category: "string",
     returns: "string",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toLower' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toLower' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toLower' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toLower(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toLower' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toLower(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toLower' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toUpper: mongo({
     doc: "Converts a string to uppercase.",
     category: "string",
     returns: "string",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toUpper' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toUpper' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toUpper' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toUpper(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toUpper' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toUpper(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toUpper' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $encStrContains: mongo({
     doc: "Returns true if a substring exists within the encrypted string.",
     category: "encrypted-string",
     returns: "bool",
     where: ["value"],
-    shape: {
-      object: { required: [], optional: ["input", "substring"], closed: true, positional: ["input", "substring"] }
-    },
+    keys: ["input", "substring"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, substring", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$encStrContains' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$encStrContains' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$encStrContains' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $encStrContains(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$encStrContains' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $encStrContains(\u2026);'"
-    ),
-    updateDoc: unsupported("'$encStrContains' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, substring", allowed: [1, 2] }, emit: objectBody }
   }),
   $encStrEndsWith: mongo({
     doc: "Returns true if the encrypted string ends with the specified suffix.",
     category: "encrypted-string",
     returns: "bool",
     where: ["value"],
-    shape: { object: { required: [], optional: ["input", "suffix"], closed: true, positional: ["input", "suffix"] } },
+    keys: ["input", "suffix"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, suffix", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$encStrEndsWith' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$encStrEndsWith' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$encStrEndsWith' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $encStrEndsWith(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$encStrEndsWith' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $encStrEndsWith(\u2026);'"
-    ),
-    updateDoc: unsupported("'$encStrEndsWith' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, suffix", allowed: [1, 2] }, emit: objectBody }
   }),
   $encStrNormalizedEq: mongo({
     doc: "Returns true if the normalized encrypted string equals the specified string.",
     category: "encrypted-string",
     returns: "bool",
     where: ["value"],
-    shape: { object: { required: [], optional: ["input", "string"], closed: true, positional: ["input", "string"] } },
+    keys: ["input", "string"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, string", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$encStrNormalizedEq' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$encStrNormalizedEq' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$encStrNormalizedEq' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $encStrNormalizedEq(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$encStrNormalizedEq' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $encStrNormalizedEq(\u2026);'"
-    ),
-    updateDoc: unsupported("'$encStrNormalizedEq' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, string", allowed: [1, 2] }, emit: objectBody }
   }),
   $encStrStartsWith: mongo({
     doc: "Returns true if the encrypted string starts with the specified prefix.",
     category: "encrypted-string",
     returns: "bool",
     where: ["value"],
-    shape: { object: { required: [], optional: ["input", "prefix"], closed: true, positional: ["input", "prefix"] } },
+    keys: ["input", "prefix"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, prefix", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$encStrStartsWith' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$encStrStartsWith' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$encStrStartsWith' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $encStrStartsWith(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$encStrStartsWith' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $encStrStartsWith(\u2026);'"
-    ),
-    updateDoc: unsupported("'$encStrStartsWith' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, prefix", allowed: [1, 2] }, emit: objectBody }
   }),
   $arrayElemAt: mongo({
     doc: "Returns the element at the specified array index.",
@@ -2112,56 +1467,30 @@ var NAMES = {
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: { args: { sig: "array, index", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
-    group: unsupported("'$arrayElemAt' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$arrayElemAt' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$arrayElemAt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $arrayElemAt(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$arrayElemAt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $arrayElemAt(\u2026);'"
-    ),
-    updateDoc: unsupported("'$arrayElemAt' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "array, index", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $arrayToObject: mongo({
     doc: "Converts an array of key-value pairs to a document.",
     category: "array",
     returns: "object",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$arrayToObject' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$arrayToObject' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$arrayToObject' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $arrayToObject(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$arrayToObject' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $arrayToObject(\u2026);'"
-    ),
-    updateDoc: unsupported("'$arrayToObject' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $concatArrays: mongo({
     doc: "Concatenates arrays to return the concatenated array.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value", "group", "window"],
     spreadAlternative: "use array spread ([...a, ...b]) or .concat()",
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$concatArrays' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $concatArrays(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$concatArrays' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $concatArrays(\u2026);'"
-    ),
-    updateDoc: unsupported("'$concatArrays' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $filter: mongo({
     doc: "Selects a subset of the array, returning only elements that match the filter condition.",
@@ -2170,25 +1499,10 @@ var NAMES = {
     binds: { valueAt: "as", default: "this", visibleIn: ["cond"] },
     returns: "array",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "cond"],
-        optional: ["as", "limit"],
-        closed: true,
-        positional: ["input", "as", "cond", "limit"]
-      }
-    },
+    keys: ["input", "as", "cond", "limit"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, as, cond, limit", allowed: [1, 2, 3, 4] }, emit: objectBody },
-    group: unsupported("'$filter' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$filter' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$filter' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $filter(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$filter' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $filter(\u2026);'"
-    ),
-    updateDoc: unsupported("'$filter' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, as, cond, limit", allowed: [1, 2, 3, 4] }, emit: objectBody }
   }),
   $first: mongo({
     doc: "Returns the result of an expression for the first document in an array.",
@@ -2198,38 +1512,26 @@ var NAMES = {
     shape: "single",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$first' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $first(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$first' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $first(\u2026);'"
-    ),
-    updateDoc: unsupported("'$first' is not valid in an update document \u2014 see its 'where'.")
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $firstN: mongo({
     doc: "Returns a specified number of elements from the beginning of an array.",
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
+    keys: ["input", "n"],
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$firstN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $firstN(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$firstN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $firstN(\u2026);'"
-    ),
-    updateDoc: unsupported("'$firstN' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody }
   }),
   $in: mongo({
     doc: "Returns a boolean indicating whether a specified value is in an array.",
     category: "array",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     liftsTo: { op: "$in" },
     shape: "flex",
@@ -2237,55 +1539,30 @@ var NAMES = {
     expr: {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
-    },
-    group: unsupported("'$in' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$in' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$in' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $in(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$in' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $in(\u2026);'"
-    ),
-    updateDoc: unsupported("'$in' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $indexOfArray: mongo({
     doc: "Searches an array for a value and returns the index of the first occurrence, or -1.",
     category: "array",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
       args: { sig: "array, value[, start[, end]]", allowed: [2, 3, 4] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$indexOfArray' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$indexOfArray' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$indexOfArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $indexOfArray(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$indexOfArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $indexOfArray(\u2026);'"
-    ),
-    updateDoc: unsupported("'$indexOfArray' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $isArray: mongo({
     doc: "Determines if the operand is an array.",
     category: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$isArray' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$isArray' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$isArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $isArray(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$isArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isArray(\u2026);'"
-    ),
-    updateDoc: unsupported("'$isArray' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $last: mongo({
     doc: "Returns the result of an expression for the last document in an array.",
@@ -2295,33 +1572,20 @@ var NAMES = {
     shape: "single",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$last' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $last(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$last' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $last(\u2026);'"
-    ),
-    updateDoc: unsupported("'$last' is not valid in an update document \u2014 see its 'where'.")
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $lastN: mongo({
     doc: "Returns a specified number of elements from the end of an array.",
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
+    keys: ["input", "n"],
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$lastN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $lastN(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$lastN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $lastN(\u2026);'"
-    ),
-    updateDoc: unsupported("'$lastN' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody }
   }),
   $map: mongo({
     doc: "Applies a subexpression to each element of an array and returns the array of resulting values.",
@@ -2329,72 +1593,44 @@ var NAMES = {
     binds: { valueAt: "as", default: "this", visibleIn: ["in"] },
     returns: "array",
     where: ["value"],
-    shape: { object: { required: ["input", "in"], optional: ["as"], closed: true, positional: ["input", "as", "in"] } },
+    keys: ["input", "as", "in"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, as, in", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$map' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$map' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$map' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $map(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$map' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $map(\u2026);'"
-    ),
-    updateDoc: unsupported("'$map' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, as, in", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $maxN: mongo({
     doc: "Returns the n largest values in an array.",
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
+    keys: ["input", "n"],
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$maxN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $maxN(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$maxN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $maxN(\u2026);'"
-    ),
-    updateDoc: unsupported("'$maxN' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody }
   }),
   $minN: mongo({
     doc: "Returns the n smallest values in an array.",
     category: "array",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
+    keys: ["input", "n"],
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$minN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $minN(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$minN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $minN(\u2026);'"
-    ),
-    updateDoc: unsupported("'$minN' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody }
   }),
   $objectToArray: mongo({
     doc: "Converts a document to an array of documents representing key-value pairs.",
     category: "array",
     returns: { arrayOf: "object" },
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "object" } }, emit: single },
-    group: unsupported("'$objectToArray' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$objectToArray' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$objectToArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $objectToArray(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$objectToArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $objectToArray(\u2026);'"
-    ),
-    updateDoc: unsupported("'$objectToArray' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $range: mongo({
     doc: "Outputs an array containing a sequence of integers according to user-defined inputs.",
@@ -2407,16 +1643,7 @@ var NAMES = {
     expr: {
       args: { sig: "start, end[, step]", allowed: [2, 3] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$range' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$range' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$range' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $range(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$range' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $range(\u2026);'"
-    ),
-    updateDoc: unsupported("'$range' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $reduce: mongo({
     doc: "Applies an expression to each element in an array and combines them into a single value.",
@@ -2425,66 +1652,36 @@ var NAMES = {
     binds: { fixed: ["this", "value"], visibleIn: ["in"] },
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "initialValue", "in"],
-        optional: [],
-        closed: true,
-        positional: ["input", "initialValue", "in"]
-      }
-    },
+    keys: ["input", "initialValue", "in"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, initialValue, in", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$reduce' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$reduce' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$reduce' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $reduce(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$reduce' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $reduce(\u2026);'"
-    ),
-    updateDoc: unsupported("'$reduce' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, initialValue, in", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $reverseArray: mongo({
     doc: "Returns an array with the elements in reverse order.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" } }, emit: single },
-    group: unsupported("'$reverseArray' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$reverseArray' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$reverseArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $reverseArray(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$reverseArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $reverseArray(\u2026);'"
-    ),
-    updateDoc: unsupported("'$reverseArray' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $size: mongo({
     doc: "Returns the number of elements in the array.",
     category: "array",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" }, nullRefused: [0] }, emit: single },
-    group: unsupported("'$size' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$size' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$size' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $size(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$size' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $size(\u2026);'"
-    ),
-    updateDoc: unsupported("'$size' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $slice: mongo({
     doc: "Returns a subset of an array.",
     category: "array",
     returns: "array",
+    neverNull: true,
     where: ["value", "updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
     shape: "array",
@@ -2493,888 +1690,416 @@ var NAMES = {
       args: { sig: "array, [position, ]count", allowed: [2, 3] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
-    group: unsupported("'$slice' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$slice' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$slice' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $slice(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$slice' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $slice(\u2026);'"
-    ),
-    updateDoc: {
-      args: { sig: "count", exact: 1, slotType: { 0: "int" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "count", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $sortArray: mongo({
     doc: "Sorts the elements of an array.",
     category: "array",
     returns: "array",
     where: ["value"],
-    shape: { object: { required: ["input", "sortBy"], optional: [], closed: true, positional: ["input", "sortBy"] } },
+    keys: ["input", "sortBy"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, sortBy", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$sortArray' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sortArray' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$sortArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $sortArray(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$sortArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sortArray(\u2026);'"
-    ),
-    updateDoc: unsupported("'$sortArray' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, sortBy", allowed: [1, 2] }, emit: objectBody }
   }),
   $zip: mongo({
     doc: "Merges two or more arrays element-wise into a single array of arrays.",
     category: "array",
     returns: { arrayOf: "array" },
     where: ["value"],
-    shape: {
-      object: {
-        required: ["inputs"],
-        optional: ["useLongestLength", "defaults"],
-        closed: true,
-        positional: ["inputs", "useLongestLength", "defaults"]
-      }
-    },
+    keys: ["inputs", "useLongestLength", "defaults"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "inputs, useLongestLength, defaults", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$zip' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$zip' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$zip' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $zip(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$zip' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $zip(\u2026);'"
-    ),
-    updateDoc: unsupported("'$zip' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "inputs, useLongestLength, defaults", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $allElementsTrue: mongo({
     doc: "Returns true if no element of a set evaluates to false.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
-    group: unsupported("'$allElementsTrue' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$allElementsTrue' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$allElementsTrue' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $allElementsTrue(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$allElementsTrue' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $allElementsTrue(\u2026);'"
-    ),
-    updateDoc: unsupported("'$allElementsTrue' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $anyElementTrue: mongo({
     doc: "Returns true if any elements of a set evaluate to true.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$anyElementTrue' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$anyElementTrue' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$anyElementTrue' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $anyElementTrue(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$anyElementTrue' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $anyElementTrue(\u2026);'"
-    ),
-    updateDoc: unsupported("'$anyElementTrue' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $setDifference: mongo({
     doc: "Returns a set with elements that appear in the first set but not in the second set.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
-    group: unsupported("'$setDifference' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$setDifference' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$setDifference' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $setDifference(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$setDifference' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setDifference(\u2026);'"
-    ),
-    updateDoc: unsupported("'$setDifference' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $setEquals: mongo({
     doc: "Returns true if the input sets have the same distinct elements.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
     expr: {
       args: { sig: "set1, set2[, \u2026]", atLeast: 2 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$setEquals' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$setEquals' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$setEquals' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $setEquals(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$setEquals' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setEquals(\u2026);'"
-    ),
-    updateDoc: unsupported("'$setEquals' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $setIntersection: mongo({
     doc: "Returns a set with elements that appear in all of the input sets.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: unsupported("'$setIntersection' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$setIntersection' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$setIntersection' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $setIntersection(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$setIntersection' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setIntersection(\u2026);'"
-    ),
-    updateDoc: unsupported("'$setIntersection' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $setIsSubset: mongo({
     doc: "Returns true if all elements of the first set appear in the second set.",
     category: "set",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "array",
     filter: viaFallback,
-    expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
-    group: unsupported("'$setIsSubset' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$setIsSubset' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$setIsSubset' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $setIsSubset(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$setIsSubset' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setIsSubset(\u2026);'"
-    ),
-    updateDoc: unsupported("'$setIsSubset' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) }
   }),
   $setUnion: mongo({
     doc: "Returns a set with elements that appear in any of the input sets.",
     category: "set",
     returns: "array",
+    neverNull: true,
     where: ["value", "group", "window"],
     shape: "array",
     filter: viaFallback,
-    expr: {
-      args: { sig: "operands", atLeast: 1, emptyList: true },
-      emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$setUnion' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $setUnion(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$setUnion' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setUnion(\u2026);'"
-    ),
-    updateDoc: unsupported("'$setUnion' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) }) },
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $getField: mongo({
     doc: "Returns the value of a specified field from a document, including fields whose names contain periods or start with $.",
     category: "object",
     returns: "unknown",
     where: ["value"],
-    shape: { object: { required: ["field"], optional: ["input"], closed: true, positional: ["field", "input"] } },
+    keys: ["field", "input"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$getField' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$getField' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$getField' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $getField(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$getField' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $getField(\u2026);'"
-    ),
-    updateDoc: unsupported("'$getField' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody }
   }),
   $mergeObjects: mongo({
     doc: "Combines multiple documents into a single document.",
     category: "object",
     returns: "object",
+    neverNull: "always",
     where: ["value", "group"],
     spreadAlternative: "use object spread ({ ...a, ...b }) or Object.assign(...docs)",
     shape: "flex",
     filter: viaFallback,
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "object" },
+      args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: unsupported("'$mergeObjects' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$mergeObjects' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $mergeObjects(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$mergeObjects' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $mergeObjects(\u2026);'"
-    ),
-    updateDoc: unsupported("'$mergeObjects' is not valid in an update document \u2014 see its 'where'.")
+    group: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $setField: mongo({
     doc: "Adds, updates, or removes a specified field in a document.",
     category: "object",
     returns: "object",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["field", "input", "value"],
-        optional: [],
-        closed: true,
-        positional: ["field", "input", "value"]
-      }
-    },
+    keys: ["field", "input", "value"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "field, input, value", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$setField' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$setField' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$setField' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $setField(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$setField' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setField(\u2026);'"
-    ),
-    updateDoc: unsupported("'$setField' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "field, input, value", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $unsetField: mongo({
     doc: "Removes a specified field from a document. Alias for $setField using $$REMOVE.",
     category: "object",
     returns: "object",
     where: ["value"],
-    shape: { object: { required: ["field", "input"], optional: [], closed: true, positional: ["field", "input"] } },
+    keys: ["field", "input"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$unsetField' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$unsetField' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$unsetField' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $unsetField(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$unsetField' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $unsetField(\u2026);'"
-    ),
-    updateDoc: unsupported("'$unsetField' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody }
   }),
   $dateAdd: mongo({
     doc: "Adds a number of time units to a date object.",
     category: "date",
     returns: "date",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["startDate", "unit", "amount"],
-        optional: ["timezone"],
-        closed: true,
-        enums: { unit: TIME_UNIT },
-        keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
-        positional: ["startDate", "unit", "amount", "timezone"]
-      }
-    },
+    keys: ["startDate", "unit", "amount", "timezone"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody },
-    group: unsupported("'$dateAdd' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dateAdd' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dateAdd' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dateAdd(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dateAdd' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateAdd(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dateAdd' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody }
   }),
   $dateDiff: mongo({
     doc: "Returns the difference between two dates.",
     category: "date",
     returns: "number",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["startDate", "endDate", "unit"],
-        optional: ["startOfWeek", "timezone"],
-        closed: true,
-        enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
-        caseInsensitiveKeys: ["startOfWeek"],
-        keyTypes: { startDate: "date", endDate: "date", timezone: "string" },
-        positional: ["startDate", "endDate", "unit", "startOfWeek", "timezone"]
-      }
-    },
+    keys: ["startDate", "endDate", "unit", "startOfWeek", "timezone"],
+    shape: "object",
     filter: viaFallback,
     expr: {
       args: { sig: "startDate, endDate, unit, startOfWeek, timezone", allowed: [1, 2, 3, 4, 5] },
       emit: objectBody
-    },
-    group: unsupported("'$dateDiff' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dateDiff' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dateDiff' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dateDiff(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dateDiff' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateDiff(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dateDiff' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $dateFromParts: mongo({
     doc: "Constructs a BSON Date object given the date's constituent parts.",
     category: "date",
     returns: "date",
     where: ["value"],
-    shape: {
-      object: {
-        required: [],
-        optional: [
-          "year",
-          "isoWeekYear",
-          "month",
-          "isoWeek",
-          "day",
-          "isoDayOfWeek",
-          "hour",
-          "minute",
-          "second",
-          "millisecond",
-          "timezone"
-        ],
-        closed: true,
-        // MEASURED: `{}` → "requires either 'year' or 'isoWeekYear'"; both →
-        // "does not allow mixing natural dates with ISO dates". The wider rule —
-        // no natural part beside an ISO anchor — has no BodyRule field and stays
-        // the server's to report.
-        exactlyOneOf: [["year", "isoWeekYear"]],
-        keyTypes: {
-          year: "int-or-long",
-          isoWeekYear: "int-or-long",
-          month: "int-or-long",
-          isoWeek: "int-or-long",
-          day: "int-or-long",
-          isoDayOfWeek: "int-or-long",
-          hour: "int-or-long",
-          minute: "int-or-long",
-          second: "int-or-long",
-          millisecond: "int-or-long",
-          timezone: "string"
-        },
-        // Positional stays the natural order — JSMQL's public commitment. Only the
-        // object style reaches the ISO keys.
-        positional: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"]
-      }
-    },
+    keys: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"],
+    shape: "object",
     filter: viaFallback,
     expr: {
       args: { sig: "year, month, day, hour, minute, second, millisecond, timezone", allowed: [1, 2, 3, 4, 5, 6, 7, 8] },
       emit: objectBody
-    },
-    group: unsupported("'$dateFromParts' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dateFromParts' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dateFromParts' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dateFromParts(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dateFromParts' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateFromParts(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dateFromParts' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $dateFromString: mongo({
     doc: "Converts a date/time string to a date object.",
     category: "date",
     returns: "date",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["dateString"],
-        optional: ["format", "timezone", "onError", "onNull"],
-        closed: true,
-        positional: ["dateString", "format", "timezone", "onError", "onNull"]
-      }
-    },
+    keys: ["dateString", "format", "timezone", "onError", "onNull"],
+    shape: "object",
     filter: viaFallback,
     expr: {
       args: { sig: "dateString, format, timezone, onError, onNull", allowed: [1, 2, 3, 4, 5] },
       emit: objectBody
-    },
-    group: unsupported("'$dateFromString' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dateFromString' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dateFromString' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dateFromString(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dateFromString' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateFromString(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dateFromString' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $dateSubtract: mongo({
     doc: "Subtracts a number of time units from a date object.",
     category: "date",
     returns: "date",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["startDate", "unit", "amount"],
-        optional: ["timezone"],
-        closed: true,
-        enums: { unit: TIME_UNIT },
-        keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
-        positional: ["startDate", "unit", "amount", "timezone"]
-      }
-    },
+    keys: ["startDate", "unit", "amount", "timezone"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody },
-    group: unsupported("'$dateSubtract' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dateSubtract' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dateSubtract' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dateSubtract(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dateSubtract' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateSubtract(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dateSubtract' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody }
   }),
   $dateToParts: mongo({
     doc: "Returns a document containing the constituent parts of a date.",
     category: "date",
     returns: "object",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["date"],
-        optional: ["timezone", "iso8601"],
-        closed: true,
-        keyTypes: { date: "date", timezone: "string", iso8601: "bool" },
-        positional: ["date", "timezone", "iso8601"]
-      }
-    },
+    keys: ["date", "timezone", "iso8601"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "date, timezone, iso8601", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$dateToParts' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dateToParts' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dateToParts' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dateToParts(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dateToParts' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateToParts(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dateToParts' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "date, timezone, iso8601", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $dateToString: mongo({
     doc: "Returns the date as a formatted string.",
     category: "date",
     returns: "string",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["date"],
-        optional: ["format", "timezone", "onNull"],
-        closed: true,
-        keyTypes: { date: "date", timezone: "string" },
-        positional: ["date", "format", "timezone", "onNull"]
-      }
-    },
+    keys: ["date", "format", "timezone", "onNull"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "date, format, timezone, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody },
-    group: unsupported("'$dateToString' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dateToString' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dateToString' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dateToString(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dateToString' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateToString(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dateToString' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "date, format, timezone, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody }
   }),
   $dateTrunc: mongo({
     doc: "Truncates a date.",
     category: "date",
     returns: "date",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["date", "unit"],
-        optional: ["binSize", "timezone", "startOfWeek"],
-        closed: true,
-        enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
-        caseInsensitiveKeys: ["startOfWeek"],
-        keyTypes: { date: "date", binSize: "int-or-long", timezone: "string" },
-        positional: ["date", "unit", "binSize", "timezone", "startOfWeek"]
-      }
-    },
+    keys: ["date", "unit", "binSize", "timezone", "startOfWeek"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "date, unit, binSize, timezone, startOfWeek", allowed: [1, 2, 3, 4, 5] }, emit: objectBody },
-    group: unsupported("'$dateTrunc' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dateTrunc' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dateTrunc' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dateTrunc(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dateTrunc' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateTrunc(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dateTrunc' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "date, unit, binSize, timezone, startOfWeek", allowed: [1, 2, 3, 4, 5] }, emit: objectBody }
   }),
   $dayOfMonth: mongo({
     doc: "Returns the day of the month for a date as a number between 1 and 31.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$dayOfMonth' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dayOfMonth' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dayOfMonth' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dayOfMonth(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dayOfMonth' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dayOfMonth(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dayOfMonth' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $dayOfWeek: mongo({
     doc: "Returns the day of the week for a date as a number between 1 (Sunday) and 7 (Saturday).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$dayOfWeek' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dayOfWeek' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dayOfWeek' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dayOfWeek(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dayOfWeek' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dayOfWeek(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dayOfWeek' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $dayOfYear: mongo({
     doc: "Returns the day of the year for a date as a number between 1 and 366.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$dayOfYear' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$dayOfYear' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$dayOfYear' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $dayOfYear(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$dayOfYear' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dayOfYear(\u2026);'"
-    ),
-    updateDoc: unsupported("'$dayOfYear' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $hour: mongo({
     doc: "Returns the hour for a date as a number between 0 and 23.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$hour' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$hour' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$hour' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $hour(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$hour' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $hour(\u2026);'"
-    ),
-    updateDoc: unsupported("'$hour' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $isoDayOfWeek: mongo({
     doc: "Returns the weekday number in ISO 8601 format, ranging from 1 (Monday) to 7 (Sunday).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$isoDayOfWeek' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$isoDayOfWeek' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$isoDayOfWeek' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $isoDayOfWeek(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$isoDayOfWeek' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isoDayOfWeek(\u2026);'"
-    ),
-    updateDoc: unsupported("'$isoDayOfWeek' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $isoWeek: mongo({
     doc: "Returns the week number in ISO 8601 format, ranging from 1 to 53.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$isoWeek' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$isoWeek' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$isoWeek' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $isoWeek(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$isoWeek' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isoWeek(\u2026);'"
-    ),
-    updateDoc: unsupported("'$isoWeek' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $isoWeekYear: mongo({
     doc: "Returns the year number in ISO 8601 format.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$isoWeekYear' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$isoWeekYear' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$isoWeekYear' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $isoWeekYear(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$isoWeekYear' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isoWeekYear(\u2026);'"
-    ),
-    updateDoc: unsupported("'$isoWeekYear' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $millisecond: mongo({
     doc: "Returns the milliseconds of a date as a number between 0 and 999.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$millisecond' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$millisecond' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$millisecond' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $millisecond(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$millisecond' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $millisecond(\u2026);'"
-    ),
-    updateDoc: unsupported("'$millisecond' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $minute: mongo({
     doc: "Returns the minute for a date as a number between 0 and 59.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$minute' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$minute' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$minute' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $minute(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$minute' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $minute(\u2026);'"
-    ),
-    updateDoc: unsupported("'$minute' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $month: mongo({
     doc: "Returns the month for a date as a number between 1 (January) and 12 (December).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$month' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$month' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$month' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $month(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$month' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $month(\u2026);'"
-    ),
-    updateDoc: unsupported("'$month' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $second: mongo({
     doc: "Returns the seconds for a date as a number between 0 and 60 (leap seconds).",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$second' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$second' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$second' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $second(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$second' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $second(\u2026);'"
-    ),
-    updateDoc: unsupported("'$second' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toDate: mongo({
     doc: "Converts a value to a Date.",
     category: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toDate' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toDate' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toDate' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toDate(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toDate' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toDate(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toDate' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $week: mongo({
     doc: "Returns the week number for a date as a number between 0 and 53.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$week' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$week' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$week' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $week(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$week' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $week(\u2026);'"
-    ),
-    updateDoc: unsupported("'$week' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $year: mongo({
     doc: "Returns the year for a date as a number.",
     category: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
-    group: unsupported("'$year' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$year' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$year' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $year(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$year' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $year(\u2026);'"
-    ),
-    updateDoc: unsupported("'$year' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $tsIncrement: mongo({
     doc: "Returns the incrementing ordinal from a timestamp as a long.",
     category: "timestamp",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "timestamp" } }, emit: single },
-    group: unsupported("'$tsIncrement' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$tsIncrement' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$tsIncrement' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $tsIncrement(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$tsIncrement' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $tsIncrement(\u2026);'"
-    ),
-    updateDoc: unsupported("'$tsIncrement' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $tsSecond: mongo({
     doc: "Returns the seconds from a timestamp as a long.",
     category: "timestamp",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "timestamp" } }, emit: single },
-    group: unsupported("'$tsSecond' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$tsSecond' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$tsSecond' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $tsSecond(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$tsSecond' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $tsSecond(\u2026);'"
-    ),
-    updateDoc: unsupported("'$tsSecond' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $convert: mongo({
     doc: "Converts a value to a specified type.",
     category: "type",
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["input", "to"],
-        optional: ["onError", "onNull", "format", "byteOrder"],
-        closed: true,
-        enums: {
-          to: [
-            "double",
-            "string",
-            "object",
-            "array",
-            "binData",
-            "objectId",
-            "bool",
-            "date",
-            "null",
-            "regex",
-            "dbPointer",
-            "javascript",
-            "symbol",
-            "javascriptWithScope",
-            "int",
-            "timestamp",
-            "long",
-            "decimal",
-            "minKey",
-            "maxKey",
-            "undefined"
-          ]
-        },
-        positional: ["input", "to", "onError", "onNull"]
-      }
-    },
+    keys: ["input", "to", "onError", "onNull"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, to, onError, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody },
-    group: unsupported("'$convert' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$convert' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$convert' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $convert(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$convert' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $convert(\u2026);'"
-    ),
-    updateDoc: unsupported("'$convert' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, to, onError, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody }
   }),
   $isNumber: mongo({
     doc: "Returns true if the expression resolves to an integer, decimal, double, or long.",
     category: "type",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$isNumber' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$isNumber' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$isNumber' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $isNumber(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$isNumber' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isNumber(\u2026);'"
-    ),
-    updateDoc: unsupported("'$isNumber' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toArray: mongo({
     doc: "Converts a value to an array.",
@@ -3383,106 +2108,57 @@ var NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toArray' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toArray' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toArray(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toArray(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toArray' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toBool: mongo({
     doc: "Converts a value to a boolean.",
     category: "type",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toBool' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toBool' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toBool' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toBool(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toBool' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toBool(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toBool' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toDecimal: mongo({
     doc: "Converts a value to a Decimal128.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toDecimal' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toDecimal' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toDecimal' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toDecimal(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toDecimal' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toDecimal(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toDecimal' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toDouble: mongo({
     doc: "Converts a value to a double.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toDouble' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toDouble' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toDouble' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toDouble(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toDouble' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toDouble(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toDouble' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toInt: mongo({
     doc: "Converts a value to an integer.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toInt' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toInt' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toInt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toInt(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toInt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toInt(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toInt' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toLong: mongo({
     doc: "Converts a value to a long.",
     category: "type",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toLong' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toLong' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toLong' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toLong(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toLong' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toLong(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toLong' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toObject: mongo({
     doc: "Converts a string to an object.",
@@ -3491,52 +2167,27 @@ var NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toObject' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toObject' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toObject' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toObject(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toObject' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toObject(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toObject' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toObjectId: mongo({
     doc: "Converts a value to an ObjectId.",
     category: "type",
     returns: "objectId",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toObjectId' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toObjectId' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toObjectId' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toObjectId(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toObjectId' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toObjectId(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toObjectId' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toString: mongo({
     doc: "Converts a value to a string.",
     category: "type",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toString' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toString' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toString' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toString(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toString' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toString(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toString' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $toUUID: mongo({
     doc: "Converts a string to a UUID.",
@@ -3545,34 +2196,17 @@ var NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toUUID' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toUUID' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toUUID' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toUUID(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toUUID' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toUUID(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toUUID' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $type: mongo({
     doc: "Returns the BSON data type of the field.",
     category: "type",
     returns: "string",
+    neverNull: "always",
     where: ["value", "filter"],
     shape: "single",
     filter: { args: { sig: "field, type", exact: 2 }, emit: fieldClause },
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$type' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$type' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$type' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $type(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$type' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $type(\u2026);'"
-    ),
-    updateDoc: unsupported("'$type' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $literal: mongo({
     doc: "Returns a value without parsing. Use to keep values that the pipeline would otherwise interpret as expressions (e.g. strings starting with $).",
@@ -3581,16 +2215,7 @@ var NAMES = {
     where: ["value"],
     shape: "verbatim",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) },
-    group: unsupported("'$literal' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$literal' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$literal' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $literal(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$literal' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $literal(\u2026);'"
-    ),
-    updateDoc: unsupported("'$literal' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $let: mongo({
     doc: "Defines variables for use within the scope of a subexpression and returns the result.",
@@ -3599,115 +2224,55 @@ var NAMES = {
     binds: { keysOf: "vars", visibleIn: ["in"] },
     returns: "unknown",
     where: ["value"],
-    shape: { object: { required: ["vars", "in"], optional: [], closed: true, positional: ["vars", "in"] } },
+    keys: ["vars", "in"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "vars, in", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$let' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$let' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$let' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $let(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$let' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $let(\u2026);'"
-    ),
-    updateDoc: unsupported("'$let' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "vars, in", allowed: [1, 2] }, emit: objectBody }
   }),
   $accumulator: mongo({
     doc: "Defines a custom accumulator function. Body fields hold JavaScript source executed by the server.",
     category: "custom-aggregation",
     returns: "unknown",
     where: ["group"],
-    shape: {
-      object: {
-        required: ["init", "accumulate", "accumulateArgs", "merge", "lang"],
-        optional: ["initArgs", "finalize"],
-        closed: true,
-        positional: ["init", "initArgs", "accumulate", "accumulateArgs", "merge", "finalize", "lang"]
-      }
-    },
-    filter: unsupported(
-      "$accumulator is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
-    ),
-    expr: unsupported(
-      "$accumulator is a '$group'-only accumulator \u2014 MongoDB has no expression or window form for it. Use $group({ _id: ..., <key>: $accumulator({ init, accumulate, accumulateArgs, merge, lang }) })."
-    ),
+    keys: ["init", "initArgs", "accumulate", "accumulateArgs", "merge", "finalize", "lang"],
+    shape: "object",
     group: {
       args: {
         sig: "init, initArgs, accumulate, accumulateArgs, merge, finalize, lang",
         allowed: [1, 2, 3, 4, 5, 6, 7]
       },
       emit: objectBody
-    },
-    window: unsupported("'$accumulator' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$accumulator' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $accumulator(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$accumulator' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $accumulator(\u2026);'"
-    ),
-    updateDoc: unsupported("'$accumulator' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $function: mongo({
     doc: "Defines a custom function. The body field is JavaScript source executed by the server.",
     category: "custom-aggregation",
     returns: "unknown",
     where: ["value"],
-    shape: {
-      object: {
-        required: ["body", "args", "lang"],
-        optional: [],
-        closed: true,
-        enums: { lang: ["js"] },
-        positional: ["body", "args", "lang"]
-      }
-    },
+    keys: ["body", "args", "lang"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "body, args, lang", allowed: [1, 2, 3] }, emit: objectBody },
-    group: unsupported("'$function' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$function' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$function' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $function(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$function' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $function(\u2026);'"
-    ),
-    updateDoc: unsupported("'$function' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "body, args, lang", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $binarySize: mongo({
     doc: "Returns the size of a string or binary data value's content in bytes.",
     category: "data-size",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$binarySize' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$binarySize' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$binarySize' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $binarySize(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$binarySize' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $binarySize(\u2026);'"
-    ),
-    updateDoc: unsupported("'$binarySize' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $bsonSize: mongo({
     doc: "Returns the size in bytes of a document when encoded as BSON.",
     category: "data-size",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$bsonSize' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$bsonSize' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$bsonSize' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $bsonSize(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$bsonSize' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bsonSize(\u2026);'"
-    ),
-    updateDoc: unsupported("'$bsonSize' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $meta: mongo({
     doc: 'Accesses per-document metadata related to the aggregation operation. Argument is a keyword string (e.g. "textScore"), not an arbitrary expression.',
@@ -3716,116 +2281,56 @@ var NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$meta' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$meta' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$meta' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $meta(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$meta' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $meta(\u2026);'"
-    ),
-    updateDoc: unsupported("'$meta' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $createObjectId: mongo({
     doc: "Returns a random ObjectId.",
     category: "miscellaneous",
     returns: "objectId",
+    neverNull: "always",
     where: ["value"],
     shape: "none",
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
-    group: unsupported("'$createObjectId' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$createObjectId' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$createObjectId' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $createObjectId(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$createObjectId' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $createObjectId(\u2026);'"
-    ),
-    updateDoc: unsupported("'$createObjectId' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) }
   }),
   $hash: mongo({
     doc: "Generates a binary hash value (BinData) from a UTF-8 string or binary data.",
     category: "miscellaneous",
     returns: "binData",
     where: ["value"],
-    shape: {
-      object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] }
-    },
+    keys: ["input", "algorithm"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$hash' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$hash' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$hash' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $hash(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$hash' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $hash(\u2026);'"
-    ),
-    updateDoc: unsupported("'$hash' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody }
   }),
   $hexHash: mongo({
     doc: "Generates an uppercase hexadecimal hash string from a UTF-8 string or binary data.",
     category: "miscellaneous",
     returns: "string",
     where: ["value"],
-    shape: {
-      object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] }
-    },
+    keys: ["input", "algorithm"],
+    shape: "object",
     filter: viaFallback,
-    expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
-    group: unsupported("'$hexHash' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$hexHash' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$hexHash' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $hexHash(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$hexHash' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $hexHash(\u2026);'"
-    ),
-    updateDoc: unsupported("'$hexHash' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody }
   }),
   $rand: mongo({
     doc: "Returns a random float between 0 and 1.",
     category: "miscellaneous",
     returns: "number",
+    neverNull: "always",
     where: ["value"],
     shape: "none",
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
-    group: unsupported("'$rand' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$rand' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$rand' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $rand(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$rand' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $rand(\u2026);'"
-    ),
-    updateDoc: unsupported("'$rand' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) }
   }),
   $sampleRate: mongo({
     doc: "Randomly selects documents at a given rate. Used inside $match.",
     category: "miscellaneous",
     where: ["filter"],
     shape: "single",
-    // The server requires a constant here, and a query document holds values. The slot states
-    // `constant`, so the compiler refuses an expression before this cell runs.
-    filter: {
-      args: { sig: "rate", exact: 1, constant: [0], slotType: { 0: "number" }, slotRange: { 0: [0, 1] } },
-      emit: ({ name: name2, args, constant }) => ({ [name2]: constant(args[0])?.value })
-    },
-    expr: unsupported(
-      "$sampleRate is a query operator \u2014 it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'."
-    ),
-    group: unsupported("'$sampleRate' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sampleRate' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$sampleRate' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $sampleRate(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$sampleRate' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sampleRate(\u2026);'"
-    ),
-    updateDoc: unsupported("'$sampleRate' is not valid in an update document \u2014 see its 'where'.")
+    // The server requires a constant here, and a query document holds values. A rate read
+    // at run time has no query form in this cell, so the call takes HR2's plain form.
+    filter: { args: { sig: "rate", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $toHashedIndexKey: mongo({
     doc: "Computes the hash of the input expression using MongoDB's hashed-index hash function.",
@@ -3834,16 +2339,7 @@ var NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
-    group: unsupported("'$toHashedIndexKey' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$toHashedIndexKey' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: unsupported(
-      "'$toHashedIndexKey' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $toHashedIndexKey(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$toHashedIndexKey' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toHashedIndexKey(\u2026);'"
-    ),
-    updateDoc: unsupported("'$toHashedIndexKey' is not valid in an update document \u2014 see its 'where'.")
+    expr: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $addToSet: mongo({
     doc: "Returns an array of unique expression values for each group.",
@@ -3853,24 +2349,9 @@ var NAMES = {
     neverNull: true,
     where: ["group", "window", "updateDoc"],
     shape: "single",
-    filter: unsupported(
-      "$addToSet is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
-    ),
-    expr: unsupported(
-      "$addToSet is an accumulator operator \u2014 valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $addToSet(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form."
-    ),
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$addToSet' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $addToSet(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$addToSet' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $addToSet(\u2026);'"
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $avg: mongo({
     doc: "Returns the average for the specified expression.",
@@ -3883,15 +2364,8 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$avg' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $avg(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$avg' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $avg(\u2026);'"
-    ),
-    updateDoc: unsupported("'$avg' is not valid in an update document \u2014 see its 'where'.")
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $count: mongo({
     doc: {
@@ -3901,29 +2375,15 @@ var NAMES = {
     category: "array",
     returns: "number",
     document: "fields",
+    evaluates: [],
     where: ["group", "window", "stream", "statement"],
     shape: "none",
-    // MEASURED: { $count: "" } → the count field must be a non-empty string (the operand rule is in `args`)
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$count' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$count(\u2026);') or as a chain link ('$$.$count(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$count' is a pipeline stage, not an expression \u2014 MongoDB has no '$count' expression operator, so '{ $count: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$count(\u2026);') or as a chain link ('$$.$count(\u2026)'). As an accumulator it counts a group: $group({ _id: ..., n: $count() }) or a window's documents."
-    ),
     group: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
     window: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "fieldName" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "fieldName" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$count' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $max: mongo({
     doc: "Returns the maximum value that results from applying an expression.",
@@ -3937,44 +2397,21 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$max' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $max(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$max' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $max(\u2026);'"
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $median: mongo({
     doc: "Returns an approximation of the median (50th percentile) as a scalar value.",
     category: "arithmetic",
     returns: "number",
     where: ["value", "group", "window"],
-    shape: {
-      object: {
-        required: ["input", "method"],
-        optional: [],
-        closed: true,
-        enums: { method: ["approximate"] },
-        positional: ["input", "method"]
-      }
-    },
+    keys: ["input", "method"],
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
-    window: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$median' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $median(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$median' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $median(\u2026);'"
-    ),
-    updateDoc: unsupported("'$median' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody }
   }),
   $min: mongo({
     doc: "Returns the minimum value that results from applying an expression.",
@@ -3988,44 +2425,21 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$min' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $min(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$min' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $min(\u2026);'"
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $percentile: mongo({
     doc: "Returns an array of scalar values that correspond to specified percentile values.",
     category: "arithmetic",
     returns: "array",
     where: ["value", "group", "window"],
-    shape: {
-      object: {
-        required: ["input", "p", "method"],
-        optional: [],
-        closed: true,
-        enums: { method: ["approximate"] },
-        positional: ["input", "p", "method"]
-      }
-    },
+    keys: ["input", "p", "method"],
+    shape: "object",
     filter: viaFallback,
     expr: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
     group: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
-    window: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported(
-      "'$percentile' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $percentile(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$percentile' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $percentile(\u2026);'"
-    ),
-    updateDoc: unsupported("'$percentile' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $push: mongo({
     doc: "Returns an array of values that result from applying an expression.",
@@ -4035,24 +2449,9 @@ var NAMES = {
     neverNull: true,
     where: ["group", "window", "updateDoc"],
     shape: "single",
-    filter: unsupported(
-      "$push is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
-    ),
-    expr: unsupported(
-      "$push is an accumulator operator \u2014 valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $push(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form."
-    ),
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$push' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $push(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$push' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $push(\u2026);'"
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $stdDevPop: mongo({
     doc: "Calculates the population standard deviation of the input values.",
@@ -4065,15 +2464,8 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$stdDevPop' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $stdDevPop(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$stdDevPop' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $stdDevPop(\u2026);'"
-    ),
-    updateDoc: unsupported("'$stdDevPop' is not valid in an update document \u2014 see its 'where'.")
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $stdDevSamp: mongo({
     doc: "Calculates the sample standard deviation of the input values.",
@@ -4086,22 +2478,15 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$stdDevSamp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $stdDevSamp(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$stdDevSamp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $stdDevSamp(\u2026);'"
-    ),
-    updateDoc: unsupported("'$stdDevSamp' is not valid in an update document \u2014 see its 'where'.")
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $sum: mongo({
     doc: "Returns a sum of numerical values, ignoring non-numeric values.",
     category: "arithmetic",
     returns: "number",
     // MEASURED: `{ $sum: null }` and a `$group` sum over a missing field both answer 0.
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "group", "window"],
     shape: "flex",
     filter: viaFallback,
@@ -4109,117 +2494,48 @@ var NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.length === 1 ? value(args[0]) : args.map(value) })
     },
-    group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$sum' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $sum(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$sum' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sum(\u2026);'"
-    ),
-    updateDoc: unsupported("'$sum' is not valid in an update document \u2014 see its 'where'.")
+    group: { args: { sig: "operand", exact: 1 }, emit: single },
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $bottom: mongo({
     doc: "Returns the bottom element within a group according to the specified sort order.",
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
-    shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
-    filter: unsupported(
-      "$bottom is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
-    ),
-    expr: unsupported(
-      "$bottom is an accumulator operator \u2014 only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $bottom(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form."
-    ),
+    keys: ["output", "sortBy"],
+    shape: "object",
     group: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
-    window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$bottom' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $bottom(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$bottom' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bottom(\u2026);'"
-    ),
-    updateDoc: unsupported("'$bottom' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody }
   }),
   $bottomN: mongo({
     doc: "Returns an aggregation of the bottom n elements within a group, according to the specified sort order.",
     category: "array",
     returns: "array",
     where: ["group", "window"],
-    shape: {
-      object: {
-        required: ["output", "sortBy", "n"],
-        optional: [],
-        closed: true,
-        positional: ["output", "sortBy", "n"]
-      }
-    },
-    filter: unsupported(
-      "$bottomN is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
-    ),
-    expr: unsupported(
-      "$bottomN is an accumulator operator \u2014 only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $bottomN(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form."
-    ),
+    keys: ["output", "sortBy", "n"],
+    shape: "object",
     group: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
-    window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported(
-      "'$bottomN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $bottomN(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$bottomN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bottomN(\u2026);'"
-    ),
-    updateDoc: unsupported("'$bottomN' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $top: mongo({
     doc: "Returns the top element within a group according to the specified sort order.",
     category: "array",
     returns: "unknown",
     where: ["group", "window"],
-    shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
-    filter: unsupported(
-      "$top is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
-    ),
-    expr: unsupported(
-      "$top is an accumulator operator \u2014 only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $top(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form."
-    ),
+    keys: ["output", "sortBy"],
+    shape: "object",
     group: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
-    window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$top' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $top(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$top' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $top(\u2026);'"
-    ),
-    updateDoc: unsupported("'$top' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody }
   }),
   $topN: mongo({
     doc: "Returns an aggregation of the top n fields within a group, according to the specified sort order.",
     category: "array",
     returns: "array",
     where: ["group", "window"],
-    shape: {
-      object: {
-        required: ["output", "sortBy", "n"],
-        optional: [],
-        closed: true,
-        positional: ["output", "sortBy", "n"]
-      }
-    },
-    filter: unsupported(
-      "$topN is an accumulator operator, not a filter predicate \u2014 use it inside '$group' field-value slots or '$setWindowFields' output slots."
-    ),
-    expr: unsupported(
-      "$topN is an accumulator operator \u2014 only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $topN(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form."
-    ),
+    keys: ["output", "sortBy", "n"],
+    shape: "object",
     group: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
-    window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported(
-      "'$topN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $topN(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$topN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $topN(\u2026);'"
-    ),
-    updateDoc: unsupported("'$topN' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $covariancePop: mongo({
     doc: "Returns the population covariance of two numeric expressions.",
@@ -4227,25 +2543,11 @@ var NAMES = {
     returns: "number",
     where: ["window"],
     shape: "array",
-    filter: unsupported(
-      "$covariancePop is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $covariancePop(...) } })."
-    ),
-    expr: unsupported(
-      "$covariancePop is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $covariancePop(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$covariancePop' is not valid in a $group output position \u2014 see its 'where'."),
     window: {
       // MEASURED: one and three operands run and answer null; the server refuses none of 1, 2, 3
       args: { sig: "expression1, expression2", allowed: [1, 2, 3] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    stream: unsupported(
-      "'$covariancePop' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $covariancePop(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$covariancePop' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $covariancePop(\u2026);'"
-    ),
-    updateDoc: unsupported("'$covariancePop' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $covarianceSamp: mongo({
     doc: "Returns the sample covariance of two numeric expressions.",
@@ -4253,25 +2555,11 @@ var NAMES = {
     returns: "number",
     where: ["window"],
     shape: "array",
-    filter: unsupported(
-      "$covarianceSamp is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $covarianceSamp(...) } })."
-    ),
-    expr: unsupported(
-      "$covarianceSamp is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $covarianceSamp(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$covarianceSamp' is not valid in a $group output position \u2014 see its 'where'."),
     window: {
       // MEASURED: one and three operands run and answer null; the server refuses none of 1, 2, 3
       args: { sig: "expression1, expression2", allowed: [1, 2, 3] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
-    },
-    stream: unsupported(
-      "'$covarianceSamp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $covarianceSamp(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$covarianceSamp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $covarianceSamp(\u2026);'"
-    ),
-    updateDoc: unsupported("'$covarianceSamp' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $denseRank: mongo({
     doc: "Returns the document position (rank) within the partition. There are no gaps; ties receive the same rank.",
@@ -4279,51 +2567,16 @@ var NAMES = {
     returns: "number",
     where: ["window"],
     shape: "none",
-    filter: unsupported(
-      "$denseRank is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $denseRank(...) } })."
-    ),
-    expr: unsupported(
-      "$denseRank is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $denseRank(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$denseRank' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
-    stream: unsupported(
-      "'$denseRank' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $denseRank(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$denseRank' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $denseRank(\u2026);'"
-    ),
-    updateDoc: unsupported("'$denseRank' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) }
   }),
   $derivative: mongo({
     doc: "Returns the average rate of change within the specified window.",
     category: "window",
     returns: "number",
     where: ["window"],
-    shape: {
-      object: {
-        required: ["input"],
-        optional: ["unit"],
-        closed: true,
-        enums: { unit: WINDOW_TIME_UNIT },
-        positional: ["input", "unit"]
-      }
-    },
-    filter: unsupported(
-      "$derivative is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $derivative(...) } })."
-    ),
-    expr: unsupported(
-      "$derivative is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $derivative(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$derivative' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$derivative' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $derivative(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$derivative' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $derivative(\u2026);'"
-    ),
-    updateDoc: unsupported("'$derivative' is not valid in an update document \u2014 see its 'where'.")
+    keys: ["input", "unit"],
+    shape: "object",
+    window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody }
   }),
   $documentNumber: mongo({
     doc: "Returns the position of a document in the $setWindowFields partition. Ties produce different adjacent numbers.",
@@ -4331,81 +2584,25 @@ var NAMES = {
     returns: "number",
     where: ["window"],
     shape: "none",
-    filter: unsupported(
-      "$documentNumber is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $documentNumber(...) } })."
-    ),
-    expr: unsupported(
-      "$documentNumber is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $documentNumber(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$documentNumber' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
-    stream: unsupported(
-      "'$documentNumber' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $documentNumber(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$documentNumber' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $documentNumber(\u2026);'"
-    ),
-    updateDoc: unsupported("'$documentNumber' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) }
   }),
   $expMovingAvg: mongo({
     doc: "Returns the exponential moving average for the numeric expression.",
     category: "window",
     returns: "number",
     where: ["window"],
-    shape: {
-      object: {
-        required: ["input"],
-        optional: ["N", "alpha"],
-        closed: true,
-        exactlyOneOf: [["N", "alpha"]],
-        positional: ["input", "N", "alpha"]
-      }
-    },
-    filter: unsupported(
-      "$expMovingAvg is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $expMovingAvg(...) } })."
-    ),
-    expr: unsupported(
-      "$expMovingAvg is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $expMovingAvg(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$expMovingAvg' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "input, N, alpha", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported(
-      "'$expMovingAvg' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $expMovingAvg(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$expMovingAvg' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $expMovingAvg(\u2026);'"
-    ),
-    updateDoc: unsupported("'$expMovingAvg' is not valid in an update document \u2014 see its 'where'.")
+    keys: ["input", "N", "alpha"],
+    shape: "object",
+    window: { args: { sig: "input, N, alpha", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $integral: mongo({
     doc: "Returns the approximation of the area under a curve.",
     category: "window",
     returns: "number",
     where: ["window"],
-    shape: {
-      object: {
-        required: ["input"],
-        optional: ["unit"],
-        closed: true,
-        enums: { unit: WINDOW_TIME_UNIT },
-        positional: ["input", "unit"]
-      }
-    },
-    filter: unsupported(
-      "$integral is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $integral(...) } })."
-    ),
-    expr: unsupported(
-      "$integral is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $integral(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$integral' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported(
-      "'$integral' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $integral(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$integral' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $integral(\u2026);'"
-    ),
-    updateDoc: unsupported("'$integral' is not valid in an update document \u2014 see its 'where'.")
+    keys: ["input", "unit"],
+    shape: "object",
+    window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody }
   }),
   $linearFill: mongo({
     doc: "Fills null and missing fields in a window using linear interpolation based on surrounding field values.",
@@ -4413,21 +2610,7 @@ var NAMES = {
     returns: "number",
     where: ["window"],
     shape: "single",
-    filter: unsupported(
-      "$linearFill is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $linearFill(...) } })."
-    ),
-    expr: unsupported(
-      "$linearFill is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $linearFill(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$linearFill' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$linearFill' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $linearFill(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$linearFill' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $linearFill(\u2026);'"
-    ),
-    updateDoc: unsupported("'$linearFill' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $locf: mongo({
     doc: "Last observation carried forward \u2014 sets null/missing fields in a window to the last non-null value.",
@@ -4435,21 +2618,7 @@ var NAMES = {
     returns: "unknown",
     where: ["window"],
     shape: "single",
-    filter: unsupported(
-      "$locf is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $locf(...) } })."
-    ),
-    expr: unsupported(
-      "$locf is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $locf(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$locf' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported(
-      "'$locf' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $locf(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$locf' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $locf(\u2026);'"
-    ),
-    updateDoc: unsupported("'$locf' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "operand", exact: 1 }, emit: single }
   }),
   $rank: mongo({
     doc: "Returns the document position (rank) within the $setWindowFields partition.",
@@ -4457,79 +2626,30 @@ var NAMES = {
     returns: "number",
     where: ["window"],
     shape: "none",
-    filter: unsupported(
-      "$rank is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $rank(...) } })."
-    ),
-    expr: unsupported(
-      "$rank is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $rank(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$rank' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) },
-    stream: unsupported(
-      "'$rank' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $rank(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$rank' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $rank(\u2026);'"
-    ),
-    updateDoc: unsupported("'$rank' is not valid in an update document \u2014 see its 'where'.")
+    window: { args: { sig: "", none: true }, emit: ({ name: name2 }) => ({ [name2]: {} }) }
   }),
   $shift: mongo({
     doc: "Returns the value from an expression applied to a document in a specified position relative to the current document.",
     category: "window",
     returns: "unknown",
     where: ["window"],
-    shape: {
-      object: {
-        required: ["output", "by"],
-        optional: ["default"],
-        closed: true,
-        positional: ["output", "by", "default"]
-      }
-    },
-    filter: unsupported(
-      "$shift is a window operator, not a filter predicate \u2014 use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $shift(...) } })."
-    ),
-    expr: unsupported(
-      "$shift is a window operator \u2014 only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $shift(...) } }) to compute it per-document over a window."
-    ),
-    group: unsupported("'$shift' is not valid in a $group output position \u2014 see its 'where'."),
-    window: { args: { sig: "output, by, default", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported(
-      "'$shift' is an expression operator, not a stage. A chain link is a stage ('$$.$match(\u2026)') or a method ('.filter(\u2026)'); to use its value, assign it to a field: '$.<field> = $shift(\u2026);'"
-    ),
-    statement: unsupported(
-      "'$shift' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $shift(\u2026);'"
-    ),
-    updateDoc: unsupported("'$shift' is not valid in an update document \u2014 see its 'where'.")
+    keys: ["output", "by", "default"],
+    shape: "object",
+    window: { args: { sig: "output, by, default", allowed: [1, 2, 3] }, emit: objectBody }
   }),
   $addFields: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
-    bodyExample: "$addFields({ total: $.price })",
+    valueTwin: "$mergeObjects",
     where: ["stream", "statement"],
     preservesCount: true,
     only: ["update"],
     // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
     document: "keeps",
-    body: { required: [], optional: [], closed: false },
+    evaluates: ["*"],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$addFields' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$addFields(\u2026);') or as a chain link ('$$.$addFields(\u2026)'). For the value-position equivalent, use '$mergeObjects(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$addFields' is a pipeline stage, not an expression \u2014 MongoDB has no '$addFields' expression operator, so '{ $addFields: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$addFields(\u2026);') or as a chain link ('$$.$addFields(\u2026)'). For the value-position equivalent, use '$mergeObjects(\u2026)'."
-    ),
-    group: unsupported("'$addFields' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$addFields' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$addFields' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $bucket: mongo({
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
@@ -4537,33 +2657,11 @@ var NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
-    body: {
-      required: ["groupBy", "boundaries"],
-      optional: ["default", "output"],
-      closed: true,
-      keyTypes: { boundaries: "array", output: "object" },
-      constantKeys: ["boundaries", "default"],
-      sortedList: { boundaries: 2 }
-    },
+    evaluates: ["groupBy", "default"],
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$bucket' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$bucket(\u2026);') or as a chain link ('$$.$bucket(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$bucket' is a pipeline stage, not an expression \u2014 MongoDB has no '$bucket' expression operator, so '{ $bucket: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$bucket(\u2026);') or as a chain link ('$$.$bucket(\u2026)')."
-    ),
-    group: unsupported("'$bucket' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$bucket' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$bucket' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $bucketAuto: mongo({
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
@@ -4571,36 +2669,11 @@ var NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
-    body: {
-      required: ["groupBy", "buckets"],
-      optional: ["output", "granularity"],
-      closed: true,
-      keyTypes: { buckets: "int", granularity: "string", output: "object" },
-      constantKeys: ["buckets", "granularity"],
-      minimums: { buckets: 1 },
-      enums: {
-        granularity: ["R5", "R10", "R20", "R40", "R80", "1-2-5", "E6", "E12", "E24", "E48", "E96", "E192", "POWERSOF2"]
-      }
-    },
+    evaluates: ["groupBy"],
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$bucketAuto' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$bucketAuto(\u2026);') or as a chain link ('$$.$bucketAuto(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$bucketAuto' is a pipeline stage, not an expression \u2014 MongoDB has no '$bucketAuto' expression operator, so '{ $bucketAuto: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$bucketAuto(\u2026);') or as a chain link ('$$.$bucketAuto(\u2026)')."
-    ),
-    group: unsupported("'$bucketAuto' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$bucketAuto' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$bucketAuto' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $changeStream: mongo({
     doc: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
@@ -4608,42 +2681,11 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $changeStream: { zzz: 1 } } → BSON field '$changeStream.zzz' is an unknown field
     document: "unknown",
-    body: {
-      required: [],
-      optional: [
-        "allChangesForCluster",
-        "fullDocument",
-        "fullDocumentBeforeChange",
-        "resumeAfter",
-        "showExpandedEvents",
-        "startAfter",
-        "startAtOperationTime"
-      ],
-      closed: true,
-      enums: {
-        fullDocument: ["default", "updateLookup", "whenAvailable", "required"],
-        fullDocumentBeforeChange: ["off", "whenAvailable", "required"]
-      },
-      keyTypes: {
-        allChangesForCluster: "bool",
-        showExpandedEvents: "bool",
-        startAfter: "object",
-        resumeAfter: "object"
-      }
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$changeStream' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$changeStream(\u2026);') or as a chain link ('$$.$changeStream(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$changeStream' is a pipeline stage, not an expression \u2014 MongoDB has no '$changeStream' expression operator, so '{ $changeStream: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$changeStream(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$changeStream' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$changeStream' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$changeStream' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $changeStreamSplitLargeEvent: mongo({
     doc: "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
@@ -4651,22 +2693,11 @@ var NAMES = {
     only: ["stageLast"],
     // MEASURED: { $changeStreamSplitLargeEvent: { zzz: 1 } } → $changeStreamSplitLargeEvent spec should be an empty object
     document: "unknown",
-    body: { required: [], optional: [], closed: true },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    filter: unsupported(
-      "'$changeStreamSplitLargeEvent' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$changeStreamSplitLargeEvent(\u2026);') or as a chain link ('$$.$changeStreamSplitLargeEvent(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$changeStreamSplitLargeEvent' is a pipeline stage, not an expression \u2014 MongoDB has no '$changeStreamSplitLargeEvent' expression operator, so '{ $changeStreamSplitLargeEvent: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$changeStreamSplitLargeEvent(\u2026);') or as a chain link ('$$.$changeStreamSplitLargeEvent(\u2026)')."
-    ),
-    group: unsupported("'$changeStreamSplitLargeEvent' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported(
-      "'$changeStreamSplitLargeEvent' is not valid in a $setWindowFields output position \u2014 see its 'where'."
-    ),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$changeStreamSplitLargeEvent' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $collStats: mongo({
     doc: "Returns statistics regarding a collection or view.",
@@ -4674,32 +2705,11 @@ var NAMES = {
     diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
     document: "unknown",
-    body: {
-      required: [],
-      optional: ["latencyStats", "storageStats", "count", "queryExecStats"],
-      closed: true,
-      keyTypes: { latencyStats: "object", storageStats: "object", count: "object", queryExecStats: "object" },
-      constantKeys: ["latencyStats", "storageStats", "count", "queryExecStats"]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported(
-      "'$collStats' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$collStats(\u2026);') or as a chain link ('$$.$collStats(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$collStats' is a pipeline stage, not an expression \u2014 MongoDB has no '$collStats' expression operator, so '{ $collStats: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$collStats(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$collStats' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$collStats' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$collStats' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $currentOp: mongo({
     doc: "Returns information on active and/or dormant operations for the MongoDB deployment.",
@@ -4707,56 +2717,11 @@ var NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
-    body: {
-      required: [],
-      optional: [
-        "allUsers",
-        "idleConnections",
-        "idleCursors",
-        "idleSessions",
-        "localOps",
-        "truncateOps",
-        "targetAllNodes"
-      ],
-      closed: true,
-      keyTypes: {
-        allUsers: "bool",
-        idleConnections: "bool",
-        idleCursors: "bool",
-        idleSessions: "bool",
-        localOps: "bool",
-        truncateOps: "bool",
-        targetAllNodes: "bool"
-      },
-      constantKeys: [
-        "allUsers",
-        "idleConnections",
-        "idleCursors",
-        "idleSessions",
-        "localOps",
-        "truncateOps",
-        "targetAllNodes"
-      ]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$currentOp' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$currentOp(\u2026);') or as a chain link ('$$.$currentOp(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$currentOp' is a pipeline stage, not an expression \u2014 MongoDB has no '$currentOp' expression operator, so '{ $currentOp: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$currentOp(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$currentOp' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$currentOp' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$currentOp' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $densify: mongo({
     doc: "Creates new documents in a sequence of documents where certain values in a field are missing.",
@@ -4764,26 +2729,11 @@ var NAMES = {
     // MEASURED: { $densify: { field: "t", range: {…}, zzz: 1 } } → BSON field '$densify.zzz' is an unknown field
     // MEASURED: range.bounds: "everything" → Bounds string must either be 'full' or 'partition' (a nested key; not stated here)
     document: "keeps",
-    body: {
-      required: ["field", "range"],
-      optional: ["partitionByFields"],
-      closed: true,
-      keyTypes: { field: "string", range: "object", partitionByFields: "array" },
-      constantKeys: ["field", "partitionByFields"]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$densify' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$densify(\u2026);') or as a chain link ('$$.$densify(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$densify' is a pipeline stage, not an expression \u2014 MongoDB has no '$densify' expression operator, so '{ $densify: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$densify(\u2026);') or as a chain link ('$$.$densify(\u2026)')."
-    ),
-    group: unsupported("'$densify' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$densify' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$densify' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $documents: mongo({
     doc: "Returns literal documents from input values.",
@@ -4791,7 +2741,7 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $documents: { a: 1 } } → '$documents' can only be run with database or cluster-level aggregation
     document: "unknown",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [""],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     // MEASURED: the server takes `$documents` inside a `$unionWith` that names NO
@@ -4801,14 +2751,9 @@ var NAMES = {
     placement: {
       container: "Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];')."
     },
-    filter: unsupported(
-      "'$documents' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$documents(\u2026);') or as a chain link ('$$.$documents(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$documents' is a pipeline stage, not an expression \u2014 MongoDB has no '$documents' expression operator, so '{ $documents: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$documents(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$documents' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$documents' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
+    // The `$$ = [ … ]` and `$$$.<coll>.push(…)` sugars are JSMQL code, and they read this
+    // rule (`documentsStages` in statement.ts): a written element that is not a document
+    // has no MQL in them. A `$documents(…)` call is the developer's own, and is not checked.
     stream: {
       args: { sig: "body", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "object" } },
       emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
@@ -4816,15 +2761,14 @@ var NAMES = {
     statement: {
       args: { sig: "body", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "object" } },
       emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$documents' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $facet: mongo({
     doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
     statementBody: "pipeline",
     where: ["stream", "statement"],
     document: "fields",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [],
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
     // MEASURED: `$documents` reaches through a `$unionWith` that a `$lookup` or another
@@ -4833,23 +2777,8 @@ var NAMES = {
     // A `$unionWith` that NAMES a collection is fine in a branch, so the ban is the
     // literal-documents form alone.
     bansNested: ["$documents"],
-    filter: unsupported(
-      "'$facet' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$facet(\u2026);') or as a chain link ('$$.$facet(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$facet' is a pipeline stage, not an expression \u2014 MongoDB has no '$facet' expression operator, so '{ $facet: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$facet(\u2026);') or as a chain link ('$$.$facet(\u2026)')."
-    ),
-    group: unsupported("'$facet' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$facet' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$facet' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $fill: mongo({
     doc: "Populates null and missing field values within documents.",
@@ -4858,43 +2787,11 @@ var NAMES = {
     // MEASURED: partitionBy AND partitionByFields → Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'
     // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
     document: "keeps",
-    body: {
-      // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
-      // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
-      nested: {
-        output: {
-          required: [],
-          optional: [],
-          closed: false,
-          eachValue: {
-            required: [],
-            optional: ["value", "method"],
-            closed: true,
-            exactlyOneOf: [["value", "method"]],
-            enums: { method: ["locf", "linear"] }
-          }
-        }
-      },
-      requiresWhen: [{ path: ["output", "*", "method"], equals: ["linear"], requires: "sortBy" }],
-      required: ["output"],
-      optional: ["partitionBy", "partitionByFields", "sortBy"],
-      closed: true,
-      keyTypes: { output: "object", sortBy: "object", partitionByFields: "array" },
-      notTogether: [[["partitionBy"], ["partitionByFields"]]]
-    },
+    evaluates: ["partitionBy", "output.*.value"],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$fill' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$fill(\u2026);') or as a chain link ('$$.$fill(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$fill' is a pipeline stage, not an expression \u2014 MongoDB has no '$fill' expression operator, so '{ $fill: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$fill(\u2026);') or as a chain link ('$$.$fill(\u2026)')."
-    ),
-    group: unsupported("'$fill' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$fill' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$fill' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $geoNear: mongo({
     doc: "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
@@ -4902,101 +2799,31 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } } → Unknown argument to $geoNear: zzz
     document: "keeps",
-    body: {
-      required: ["near"],
-      optional: [
-        "distanceField",
-        "distanceMultiplier",
-        "includeLocs",
-        "key",
-        "maxDistance",
-        "minDistance",
-        "query",
-        "spherical"
-      ],
-      closed: true,
-      keyTypes: {
-        distanceField: "string",
-        distanceMultiplier: "number",
-        includeLocs: "string",
-        key: "string",
-        maxDistance: "number",
-        minDistance: "number",
-        query: "object",
-        spherical: "bool"
-      }
-    },
+    evaluates: ["near"],
     bodyPositions: { "": "value", query: "filter" },
     forbiddenIn: ["$facet"],
-    filter: unsupported(
-      "'$geoNear' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$geoNear(\u2026);') or as a chain link ('$$.$geoNear(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$geoNear' is a pipeline stage, not an expression \u2014 MongoDB has no '$geoNear' expression operator, so '{ $geoNear: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$geoNear(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$geoNear' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$geoNear' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$geoNear' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $graphLookup: mongo({
     doc: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
     where: ["stream", "statement"],
     document: "keeps",
-    body: {
-      required: ["from", "startWith", "connectFromField", "connectToField", "as"],
-      optional: ["maxDepth", "depthField", "restrictSearchWithMatch"],
-      closed: true,
-      constantKeys: ["from", "connectFromField", "connectToField", "as", "depthField", "maxDepth"],
-      keyTypes: { maxDepth: "int-or-long", restrictSearchWithMatch: "object" },
-      minimums: { maxDepth: 0 }
-    },
+    evaluates: ["startWith"],
     bodyPositions: { "": "value", restrictSearchWithMatch: "filter" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$graphLookup' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$graphLookup(\u2026);') or as a chain link ('$$.$graphLookup(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$graphLookup' is a pipeline stage, not an expression \u2014 MongoDB has no '$graphLookup' expression operator, so '{ $graphLookup: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$graphLookup(\u2026);') or as a chain link ('$$.$graphLookup(\u2026)')."
-    ),
-    group: unsupported("'$graphLookup' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$graphLookup' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$graphLookup' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $group: mongo({
     doc: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
-    bodyExample: "$group({ _id: $.category })",
     where: ["stream", "statement"],
     document: "fields",
-    body: { required: ["_id"], optional: [], closed: false },
+    evaluates: ["_id"],
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$group' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$group(\u2026);') or as a chain link ('$$.$group(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$group' is a pipeline stage, not an expression \u2014 MongoDB has no '$group' expression operator, so '{ $group: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$group(\u2026);') or as a chain link ('$$.$group(\u2026)')."
-    ),
-    group: unsupported("'$group' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$group' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$group' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $indexStats: mongo({
     doc: "Returns statistics regarding the use of each index for the collection.",
@@ -5004,64 +2831,23 @@ var NAMES = {
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     document: "unknown",
-    body: { required: [], optional: [], closed: true },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported(
-      "'$indexStats' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$indexStats(\u2026);') or as a chain link ('$$.$indexStats(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$indexStats' is a pipeline stage, not an expression \u2014 MongoDB has no '$indexStats' expression operator, so '{ $indexStats: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$indexStats(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$indexStats' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$indexStats' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$indexStats' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $limit: mongo({
     doc: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
+    valueTwin: "$slice",
     where: ["stream", "statement"],
     // MEASURED: { $limit: 0 } → the limit must be positive (the operand rule is in `args`)
     document: "keeps",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$limit' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$limit(\u2026);') or as a chain link ('$$.$limit(\u2026)'). For the value-position equivalent, use '$slice(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$limit' is a pipeline stage, not an expression \u2014 MongoDB has no '$limit' expression operator, so '{ $limit: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(\u2026);') or as a chain link ('$$.$limit(\u2026)'). For the value-position equivalent, use '$slice(\u2026)'."
-    ),
-    group: unsupported("'$limit' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$limit' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: "int-or-long" },
-        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] }
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: "int-or-long" },
-        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] }
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$limit' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listLocalSessions: mongo({
     doc: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
@@ -5069,32 +2855,11 @@ var NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
-    body: {
-      required: [],
-      optional: ["users", "allUsers"],
-      closed: true,
-      keyTypes: { users: "array", allUsers: "bool" },
-      constantKeys: ["users", "allUsers"]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported(
-      "'$listLocalSessions' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$listLocalSessions(\u2026);') or as a chain link ('$$.$listLocalSessions(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$listLocalSessions' is a pipeline stage, not an expression \u2014 MongoDB has no '$listLocalSessions' expression operator, so '{ $listLocalSessions: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$listLocalSessions(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$listLocalSessions' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$listLocalSessions' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$listLocalSessions' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listSampledQueries: mongo({
     doc: "Lists sampled queries for all collections or a specific collection.",
@@ -5103,20 +2868,11 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: not supported on a standalone mongod; the key set is the manual's
     document: "unknown",
-    body: { required: [], optional: ["namespace"], closed: true, keyTypes: { namespace: "string" } },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$listSampledQueries' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$listSampledQueries(\u2026);') or as a chain link ('$$.$listSampledQueries(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$listSampledQueries' is a pipeline stage, not an expression \u2014 MongoDB has no '$listSampledQueries' expression operator, so '{ $listSampledQueries: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSampledQueries(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$listSampledQueries' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$listSampledQueries' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$listSampledQueries' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listSearchIndexes: mongo({
     doc: "Returns information about existing Atlas Search indexes on a specified collection.",
@@ -5125,20 +2881,11 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
-    body: { required: [], optional: ["id", "name"], closed: true, keyTypes: { id: "string", name: "string" } },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$listSearchIndexes' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$listSearchIndexes(\u2026);') or as a chain link ('$$.$listSearchIndexes(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$listSearchIndexes' is a pipeline stage, not an expression \u2014 MongoDB has no '$listSearchIndexes' expression operator, so '{ $listSearchIndexes: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSearchIndexes(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$listSearchIndexes' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$listSearchIndexes' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$listSearchIndexes' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $listSessions: mongo({
     doc: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
@@ -5146,32 +2893,11 @@ var NAMES = {
     diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     document: "unknown",
-    body: {
-      required: [],
-      optional: ["users", "allUsers"],
-      closed: true,
-      keyTypes: { users: "array", allUsers: "bool" },
-      constantKeys: ["users", "allUsers"]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$listSessions' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$listSessions(\u2026);') or as a chain link ('$$.$listSessions(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$listSessions' is a pipeline stage, not an expression \u2014 MongoDB has no '$listSessions' expression operator, so '{ $listSessions: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSessions(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$listSessions' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$listSessions' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$listSessions' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $lookup: mongo({
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
@@ -5180,55 +2906,25 @@ var NAMES = {
     where: ["stream", "statement"],
     preservesCount: true,
     document: "keeps",
-    body: {
-      required: ["as"],
-      optional: ["from", "localField", "foreignField", "let", "pipeline"],
-      closed: true,
-      constantKeys: ["from", "localField", "foreignField", "as"],
-      together: [["localField", "foreignField"]],
-      atLeastOneOf: [["localField", "pipeline"]],
-      keyTypes: { let: "object", pipeline: "array" }
-    },
+    evaluates: ["let"],
+    takesLet: true,
     bodyPositions: { "": "value", pipeline: "statement" },
     binds: { keysOf: "let", visibleIn: ["pipeline"] },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$lookup' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$lookup(\u2026);') or as a chain link ('$$.$lookup(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$lookup' is a pipeline stage, not an expression \u2014 MongoDB has no '$lookup' expression operator, so '{ $lookup: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$lookup(\u2026);') or as a chain link ('$$.$lookup(\u2026)')."
-    ),
-    group: unsupported("'$lookup' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$lookup' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$lookup' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $match: mongo({
     doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
+    valueTwin: "$filter",
     where: ["stream", "statement"],
     // MEASURED: { $match: [1] } → the match filter must be an expression in an object
     document: "narrows",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [],
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$match' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$match(\u2026);') or as a chain link ('$$.$match(\u2026)'). For the value-position equivalent, use '$filter(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$match' is a pipeline stage, not an expression \u2014 MongoDB has no '$match' expression operator, so '{ $match: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$match(\u2026);') or as a chain link ('$$.$match(\u2026)'). For the value-position equivalent, use '$filter(\u2026)'."
-    ),
-    group: unsupported("'$match' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$match' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$match' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $merge: mongo({
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
@@ -5241,38 +2937,12 @@ var NAMES = {
     // MEASURED: whenMatched: "zzz" → Enumeration value 'zzz' for field 'whenMatched' is not a valid value (an array is an update pipeline and passes)
     // MEASURED: whenNotMatched: "zzz" → Enumeration value 'zzz' for field '$merge.whenNotMatched' is not a valid value
     document: "keeps",
-    body: {
-      required: ["into"],
-      optional: ["on", "let", "whenMatched", "whenNotMatched"],
-      closed: true,
-      keyTypes: { let: "object" },
-      // MEASURED: whenMatched: "pipeline" → Enumeration value 'pipeline' for field
-      // 'whenMatched' is not a valid value. The pipeline form is the ARRAY, not a word.
-      enums: {
-        whenMatched: ["replace", "keepExisting", "merge", "fail"],
-        whenNotMatched: ["insert", "discard", "fail"]
-      },
-      literalKeys: ["whenMatched", "whenNotMatched"]
-    },
+    evaluates: ["let"],
+    takesLet: true,
     bodyPositions: { "": "value", whenMatched: { list: "statement", otherwise: "value" } },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    filter: unsupported(
-      "'$merge' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$merge(\u2026);') or as a chain link ('$$.$merge(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$merge' is a pipeline stage, not an expression \u2014 MongoDB has no '$merge' expression operator, so '{ $merge: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$merge(\u2026);') or as a chain link ('$$.$merge(\u2026)')."
-    ),
-    group: unsupported("'$merge' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$merge' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$merge' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $out: mongo({
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
@@ -5280,32 +2950,11 @@ var NAMES = {
     only: ["stageLast"],
     // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → BSON field '$out.zzz' is an unknown field; { $out: 1 } → $out only supports a string or object argument
     document: "keeps",
-    body: {
-      required: ["coll"],
-      optional: ["db", "timeseries"],
-      closed: true,
-      keyTypes: { db: "string", coll: "string", timeseries: "object" },
-      constantKeys: ["db", "coll"]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    filter: unsupported(
-      "'$out' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$out(\u2026);') or as a chain link ('$$.$out(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$out' is a pipeline stage, not an expression \u2014 MongoDB has no '$out' expression operator, so '{ $out: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$out(\u2026);') or as a chain link ('$$.$out(\u2026)')."
-    ),
-    group: unsupported("'$out' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$out' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$out' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $planCacheStats: mongo({
     doc: "Returns plan cache information for a collection.",
@@ -5313,60 +2962,23 @@ var NAMES = {
     diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     document: "unknown",
-    body: {
-      required: [],
-      optional: ["allHosts"],
-      closed: true,
-      keyTypes: { allHosts: "bool" },
-      constantKeys: ["allHosts"]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported(
-      "'$planCacheStats' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$planCacheStats(\u2026);') or as a chain link ('$$.$planCacheStats(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$planCacheStats' is a pipeline stage, not an expression \u2014 MongoDB has no '$planCacheStats' expression operator, so '{ $planCacheStats: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$planCacheStats(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$planCacheStats' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$planCacheStats' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$planCacheStats' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $project: mongo({
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
-    bodyExample: "$project({ name: 1 })",
+    valueTwin: "$getField",
     document: "projection",
+    evaluates: ["*"],
     where: ["stream", "statement"],
     only: ["update"],
-    // MEASURED: { $project: {} } → projection specification must have at least one field
-    body: { required: [], optional: [], closed: false, onePolarity: true, nonEmpty: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$project' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$project(\u2026);') or as a chain link ('$$.$project(\u2026)'). For the value-position equivalent, use '$getField(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$project' is a pipeline stage, not an expression \u2014 MongoDB has no '$project' expression operator, so '{ $project: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$project(\u2026);') or as a chain link ('$$.$project(\u2026)'). For the value-position equivalent, use '$getField(\u2026)'."
-    ),
-    group: unsupported("'$project' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$project' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$project' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $rankFusion: mongo({
     doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
@@ -5375,140 +2987,56 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
-    body: {
-      required: ["input"],
-      optional: ["combination", "scoreDetails"],
-      closed: true,
-      keyTypes: { input: "object", combination: "object", scoreDetails: "bool" }
-    },
+    evaluates: [],
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$rankFusion' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$rankFusion(\u2026);') or as a chain link ('$$.$rankFusion(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$rankFusion' is a pipeline stage, not an expression \u2014 MongoDB has no '$rankFusion' expression operator, so '{ $rankFusion: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$rankFusion(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$rankFusion' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$rankFusion' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$rankFusion' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $redact: mongo({
     doc: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
+    valueTwin: "$filter",
     where: ["stream", "statement"],
     // MEASURED: { $redact: "$KEEP" } → accepted
     // The developer's own expression decides what it prunes; the fields it does not name survive.
     document: "keeps",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [""],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$redact' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$redact(\u2026);') or as a chain link ('$$.$redact(\u2026)'). For the value-position equivalent, use '$filter(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$redact' is a pipeline stage, not an expression \u2014 MongoDB has no '$redact' expression operator, so '{ $redact: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$redact(\u2026);') or as a chain link ('$$.$redact(\u2026)'). For the value-position equivalent, use '$filter(\u2026)'."
-    ),
-    group: unsupported("'$redact' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$redact' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$redact' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $replaceRoot: mongo({
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream", "statement"],
     document: "value",
+    evaluates: ["newRoot"],
     only: ["update"],
-    body: {
-      required: ["newRoot"],
-      optional: [],
-      closed: true,
-      // Measured: the server refuses `{ newRoot: 5 }` ("'replacement document' must
-      // evaluate to an object"). It accepts a path, because only the run can tell
-      // what the path holds, and it refuses an unknown key by name.
-      keyTypes: { newRoot: "object" }
-    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$replaceRoot' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$replaceRoot(\u2026);') or as a chain link ('$$.$replaceRoot(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$replaceRoot' is a pipeline stage, not an expression \u2014 MongoDB has no '$replaceRoot' expression operator, so '{ $replaceRoot: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$replaceRoot(\u2026);') or as a chain link ('$$.$replaceRoot(\u2026)')."
-    ),
-    group: unsupported("'$replaceRoot' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$replaceRoot' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$replaceRoot' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $replaceWith: mongo({
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream", "statement"],
     document: "value",
+    evaluates: [""],
     only: ["update"],
-    // MEASURED: { $replaceWith: 1 } → 'replacement document' must evaluate to an object
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$replaceWith' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$replaceWith(\u2026);') or as a chain link ('$$.$replaceWith(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$replaceWith' is a pipeline stage, not an expression \u2014 MongoDB has no '$replaceWith' expression operator, so '{ $replaceWith: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$replaceWith(\u2026);') or as a chain link ('$$.$replaceWith(\u2026)')."
-    ),
-    group: unsupported("'$replaceWith' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$replaceWith' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$replaceWith' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $sample: mongo({
     doc: "Randomly selects the specified number of documents from its input.",
-    bodyExample: "$sample({ size: 10 })",
     where: ["stream", "statement"],
     document: "keeps",
-    body: {
-      required: ["size"],
-      optional: [],
-      closed: true,
-      keyTypes: { size: "number" },
-      constantKeys: ["size"],
-      minimums: { size: 1 }
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$sample' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$sample(\u2026);') or as a chain link ('$$.$sample(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$sample' is a pipeline stage, not an expression \u2014 MongoDB has no '$sample' expression operator, so '{ $sample: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$sample(\u2026);') or as a chain link ('$$.$sample(\u2026)')."
-    ),
-    group: unsupported("'$sample' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sample' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$sample' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $scoreFusion: mongo({
     doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
@@ -5517,25 +3045,11 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "unknown",
-    body: {
-      required: ["input"],
-      optional: ["combination", "scoreDetails"],
-      closed: true,
-      keyTypes: { input: "object", combination: "object", scoreDetails: "bool" }
-    },
+    evaluates: ["combination.expression"],
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$scoreFusion' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$scoreFusion(\u2026);') or as a chain link ('$$.$scoreFusion(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$scoreFusion' is a pipeline stage, not an expression \u2014 MongoDB has no '$scoreFusion' expression operator, so '{ $scoreFusion: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$scoreFusion(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$scoreFusion' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$scoreFusion' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$scoreFusion' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $search: mongo({
     doc: "Performs a full-text search of the field or fields in an Atlas collection.",
@@ -5543,20 +3057,11 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the operators inside a $search body are its own language and pass through
     document: "keeps",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported(
-      "'$search' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$search(\u2026);') or as a chain link ('$$.$search(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$search' is a pipeline stage, not an expression \u2014 MongoDB has no '$search' expression operator, so '{ $search: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$search(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$search' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$search' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$search' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $searchMeta: mongo({
     doc: "Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.",
@@ -5564,52 +3069,26 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the operators inside a $searchMeta body are its own language and pass through
     document: "unknown",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported(
-      "'$searchMeta' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$searchMeta(\u2026);') or as a chain link ('$$.$searchMeta(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$searchMeta' is a pipeline stage, not an expression \u2014 MongoDB has no '$searchMeta' expression operator, so '{ $searchMeta: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$searchMeta(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$searchMeta' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$searchMeta' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$searchMeta' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $set: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
-    bodyExample: "$set({ total: $.price })",
+    valueTwin: "$mergeObjects",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     only: ["update"],
     // MEASURED: { $set: {} } → accepted, the stage is a no-op
     document: "keeps",
-    body: { required: [], optional: [], closed: false },
+    evaluates: ["*"],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$set' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$set(\u2026);') or as a chain link ('$$.$set(\u2026)'). For the value-position equivalent, use '$mergeObjects(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$set' is a pipeline stage, not an expression \u2014 MongoDB has no '$set' expression operator, so '{ $set: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$set(\u2026);') or as a chain link ('$$.$set(\u2026)'). For the value-position equivalent, use '$mergeObjects(\u2026)'."
-    ),
-    group: unsupported("'$set' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$set' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $setWindowFields: mongo({
     doc: "Groups documents into windows and applies one or more operators to the documents in each window.",
@@ -5618,52 +3097,11 @@ var NAMES = {
     // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
     document: "keeps",
-    body: {
-      // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
-      nested: {
-        output: {
-          required: [],
-          optional: [],
-          closed: false,
-          eachValue: {
-            required: [],
-            optional: [],
-            closed: false,
-            nested: {
-              window: {
-                required: [],
-                optional: ["documents", "range", "unit"],
-                closed: false,
-                exactlyOneOf: [["documents", "range"]]
-              }
-            }
-          }
-        }
-      },
-      required: ["output"],
-      optional: ["partitionBy", "sortBy"],
-      closed: true,
-      keyTypes: { output: "object", sortBy: "object" }
-    },
+    evaluates: ["partitionBy"],
     bodyPositions: { "": "value", "output.*": "window" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$setWindowFields' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$setWindowFields(\u2026);') or as a chain link ('$$.$setWindowFields(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$setWindowFields' is a pipeline stage, not an expression \u2014 MongoDB has no '$setWindowFields' expression operator, so '{ $setWindowFields: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$setWindowFields(\u2026);') or as a chain link ('$$.$setWindowFields(\u2026)')."
-    ),
-    group: unsupported("'$setWindowFields' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$setWindowFields' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$setWindowFields' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $shardedDataDistribution: mongo({
     doc: "Provides data and size distribution information on sharded collections.",
@@ -5672,94 +3110,36 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: sharded clusters only; the manual takes an empty document
     document: "unknown",
-    body: { required: [], optional: [], closed: true },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$shardedDataDistribution' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$shardedDataDistribution(\u2026);') or as a chain link ('$$.$shardedDataDistribution(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$shardedDataDistribution' is a pipeline stage, not an expression \u2014 MongoDB has no '$shardedDataDistribution' expression operator, so '{ $shardedDataDistribution: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$shardedDataDistribution(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$shardedDataDistribution' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported(
-      "'$shardedDataDistribution' is not valid in a $setWindowFields output position \u2014 see its 'where'."
-    ),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$shardedDataDistribution' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $skip: mongo({
     doc: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
+    valueTwin: "$slice",
     where: ["stream", "statement"],
     // MEASURED: { $skip: -1 } → Expected a non-negative number; { $skip: 1.5 } → Expected an integer (the operand rule is in `args`)
     document: "keeps",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$skip' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$skip(\u2026);') or as a chain link ('$$.$skip(\u2026)'). For the value-position equivalent, use '$slice(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$skip' is a pipeline stage, not an expression \u2014 MongoDB has no '$skip' expression operator, so '{ $skip: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$skip(\u2026);') or as a chain link ('$$.$skip(\u2026)'). For the value-position equivalent, use '$slice(\u2026)'."
-    ),
-    group: unsupported("'$skip' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$skip' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: "int-or-long" },
-        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] }
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: "int-or-long" },
-        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] }
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$skip' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $sort: mongo({
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
-    bodyExample: "$sort({ createdAt: -1 })",
+    valueTwin: "$sortArray",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },
     document: "keeps",
-    body: {
-      required: [],
-      optional: [],
-      // The keys are the developer's own field names, so this row closes nothing.
-      // The server fixes every VALUE.
-      closed: false,
-      everyValueIn: [1, -1]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$sort' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$sort(\u2026);') or as a chain link ('$$.$sort(\u2026)'). For the value-position equivalent, use '$sortArray(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$sort' is a pipeline stage, not an expression \u2014 MongoDB has no '$sort' expression operator, so '{ $sort: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$sort(\u2026);') or as a chain link ('$$.$sort(\u2026)'). For the value-position equivalent, use '$sortArray(\u2026)'."
-    ),
-    group: unsupported("'$sort' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sort' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
     updateDoc: { args: { sig: "spec", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $sortByCount: mongo({
@@ -5767,131 +3147,50 @@ var NAMES = {
     // The output fields — `_id` and the buckets' `output` keys, or `_id` and `count` — are not
     // the body's keys, so no layout states them yet: the document is unknown after it. [DEF-038]
     document: "unknown",
+    evaluates: [""],
     where: ["stream", "statement"],
-    // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
-    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$sortByCount' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$sortByCount(\u2026);') or as a chain link ('$$.$sortByCount(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$sortByCount' is a pipeline stage, not an expression \u2014 MongoDB has no '$sortByCount' expression operator, so '{ $sortByCount: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$sortByCount(\u2026);') or as a chain link ('$$.$sortByCount(\u2026)')."
-    ),
-    group: unsupported("'$sortByCount' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$sortByCount' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$sortByCount' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $unionWith: mongo({
     // The stream is another collection's documents after it (or a mix): no field of this one is reliable.
     document: "unknown",
+    evaluates: [],
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
+    valueTwin: "$concatArrays",
     pipelineOver: "foreign",
     statementBody: "pipeline",
     where: ["stream", "statement"],
-    body: {
-      required: [],
-      optional: ["coll", "pipeline"],
-      closed: true,
-      // MEASURED: { $unionWith: {} } → stage without explicit collection must have a pipeline with $documents as first stage
-      atLeastOneOf: [["coll", "pipeline"]],
-      constantKeys: ["coll"],
-      keyTypes: { pipeline: "array" }
-    },
     bodyPositions: { "": "value", pipeline: "statement" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$unionWith' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$unionWith(\u2026);') or as a chain link ('$$.$unionWith(\u2026)'). For the value-position equivalent, use '$concatArrays(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$unionWith' is a pipeline stage, not an expression \u2014 MongoDB has no '$unionWith' expression operator, so '{ $unionWith: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$unionWith(\u2026);') or as a chain link ('$$.$unionWith(\u2026)'). For the value-position equivalent, use '$concatArrays(\u2026)'."
-    ),
-    group: unsupported("'$unionWith' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$unionWith' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "object"] } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "object"] } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$unionWith' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $unset: mongo({
     doc: "Removes or excludes fields from documents.",
+    valueTwin: "$unsetField",
     where: ["stream", "statement", "updateDoc"],
     only: ["update"],
     // MEASURED: { $unset: 1 } → $unset specification must be a string or an array; { $unset: [] } → … with at least one field
     document: "keeps",
-    body: { required: [], optional: [], closed: false },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$unset' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$unset(\u2026);') or as a chain link ('$$.$unset(\u2026)'). For the value-position equivalent, use '$unsetField(\u2026)'."
-    ),
-    expr: unsupported(
-      "'$unset' is a pipeline stage, not an expression \u2014 MongoDB has no '$unset' expression operator, so '{ $unset: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$unset(\u2026);') or as a chain link ('$$.$unset(\u2026)'). For the value-position equivalent, use '$unsetField(\u2026)'."
-    ),
-    group: unsupported("'$unset' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$unset' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: ["string", "array"] },
-        nonEmpty: { 0: { noun: "field name", instead: `Name the fields to remove: '$unset(["a", "b"])'.` } }
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: {
-        sig: "body",
-        exact: 1,
-        constant: [0],
-        slotType: { 0: ["string", "array"] },
-        nonEmpty: { 0: { noun: "field name", instead: `Name the fields to remove: '$unset(["a", "b"])'.` } }
-      },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $unwind: mongo({
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
     where: ["stream", "statement"],
     document: "element",
-    body: {
-      required: ["path"],
-      optional: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
-      closed: true,
-      keyTypes: { path: "fieldPath", includeArrayIndex: "fieldName", preserveNullAndEmptyArrays: "bool" },
-      constantKeys: ["includeArrayIndex", "preserveNullAndEmptyArrays"]
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported(
-      "'$unwind' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$unwind(\u2026);') or as a chain link ('$$.$unwind(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$unwind' is a pipeline stage, not an expression \u2014 MongoDB has no '$unwind' expression operator, so '{ $unwind: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$unwind(\u2026);') or as a chain link ('$$.$unwind(\u2026)')."
-    ),
-    group: unsupported("'$unwind' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$unwind' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
-    stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: ["fieldPath", "object"] } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: ["fieldPath", "object"] } },
-      emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
-    },
-    updateDoc: unsupported("'$unwind' is not valid in an update document \u2014 see its 'where'.")
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   $vectorSearch: mongo({
     doc: "Performs an ANN or ENN search on a vector in the specified field.",
@@ -5899,32 +3198,11 @@ var NAMES = {
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     document: "keeps",
-    body: {
-      required: ["index", "path", "queryVector", "limit"],
-      optional: ["numCandidates", "exact", "filter"],
-      closed: true,
-      keyTypes: {
-        index: "string",
-        path: "string",
-        limit: "int",
-        numCandidates: "int",
-        exact: "bool",
-        filter: "object"
-      }
-    },
+    evaluates: [],
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported(
-      "'$vectorSearch' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$vectorSearch(\u2026);') or as a chain link ('$$.$vectorSearch(\u2026)')."
-    ),
-    expr: unsupported(
-      "'$vectorSearch' is a pipeline stage, not an expression \u2014 MongoDB has no '$vectorSearch' expression operator, so '{ $vectorSearch: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$vectorSearch(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
-    ),
-    group: unsupported("'$vectorSearch' is not valid in a $group output position \u2014 see its 'where'."),
-    window: unsupported("'$vectorSearch' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] },
-    updateDoc: unsupported("'$vectorSearch' is not valid in an update document \u2014 see its 'where'.")
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }] }
   }),
   trim: name({
     doc: "'.trim()' \u2014 see docs/LANGUAGE.md.",
@@ -5947,6 +3225,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $ltrim: { input: recv } }) },
@@ -5964,6 +3243,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $ltrim: { input: recv } }) },
@@ -5981,6 +3261,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $rtrim: { input: recv } }) },
@@ -5996,6 +3277,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $rtrim: { input: recv } }) },
@@ -6055,13 +3337,14 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "start[, count]", allowed: [1, 2] },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => {
-        const start = normaliseSliceIndex(args[0], value(args[0]), r);
-        const count = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+        const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
+        const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
         return { $substrCP: [r, start, count] };
       })
     },
@@ -6077,6 +3360,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6085,7 +3369,7 @@ var NAMES = {
         if (args.length === 0) return recv;
         return nullOr(recv, present2, bind, (r) => {
           const start = clampNonNegativeIndex(args[0], value(args[0]));
-          const end = args.length === 1 ? strLenOf(r) : clampNonNegativeIndex(args[1], value(args[1]));
+          const end = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
           return { $substrCP: [r, start, clampNonNegative(foldedSubtract(end, start))] };
         });
       }
@@ -6104,6 +3388,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6143,7 +3428,7 @@ var NAMES = {
         nonEmpty: {
           0: {
             noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length()).map(i => $.<field>.charAt(i))'."
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))'."
           }
         }
       },
@@ -6161,6 +3446,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
@@ -6191,6 +3477,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
@@ -6238,6 +3525,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6258,6 +3546,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6297,11 +3586,11 @@ var NAMES = {
     // argument to `.match` and its siblings, never an element of a written list.
     filter: {
       args: { sig: "regexp", exact: 1 },
-      emit: ({ recv, args, pathOf: pathOf3 }) => {
+      emit: ({ recv, args, pathOf: pathOf3, literal: literal2 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
-        return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) });
+        return queryOwnValue(path, { $regex: literal2(re) });
       }
     },
     expr: {
@@ -6320,6 +3609,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6340,6 +3630,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6363,6 +3654,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6383,6 +3675,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6401,6 +3694,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6421,6 +3715,7 @@ var NAMES = {
     call: true,
     on: ["array", "string"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6464,6 +3759,7 @@ var NAMES = {
     on: "string",
     sibling: { array: "For membership in an array, write '.has(x)'." },
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // A regex with no anchor — indexable where the planner can use one, and unlike
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
@@ -6502,6 +3798,7 @@ var NAMES = {
     on: "array",
     sibling: { string: "For a substring test, write '.includes(x)'." },
     returns: "bool",
+    neverNull: "always",
     where: ["value", "filter"],
     // An INDEX reads a query document, so the query form is the indexable one:
     // `$.tags.has("x")` → { tags: "x" }, MongoDB's "equals, or is an array containing" —
@@ -6522,7 +3819,7 @@ var NAMES = {
         if (target === null) return null;
         const values = [];
         for (const el of recv.elements) {
-          const c = el.type === "SpreadElement" || el.type === "LetDecl" || el.type === "FuncDecl" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "UpdateFilter" ? null : constant(el);
+          const c = el.type === "SpreadElement" || el.type === "FuncDecl" || el.type === "AssignExpr" || el.type === "DeleteStmt" || el.type === "UpdateFilter" ? null : constant(el);
           if (c === null) return null;
           values.push(c.value);
         }
@@ -6618,7 +3915,7 @@ var NAMES = {
     on: ["array", "stream"],
     sibling: { string: "To join strings, write '+' between them: 'a + b'." },
     returns: { array: "array", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -6627,23 +3924,25 @@ var NAMES = {
           "'.concat()' on '$$' is a chain of stages, not a value: write it as a statement ('$$.concat(\u2026);')."
         ),
         // JavaScript's `Array.prototype.concat` SPLICES an array argument and APPENDS any
-        // other one; `$concatArrays` takes arrays only. An argument PROVEN to be something
-        // else becomes the one-element array it stands for — JavaScript's own answer, and
-        // the only operand the operator accepts. MEASURED: the server folds a run of
-        // ADJACENT constant operands during the optimisation and raises there on a wrong
-        // type. So an operand without the wrap stops the pipeline before the branch runs.
-        // An argument that proves nothing stays as written, and the server decides it.
+        // other one; `$concatArrays` takes arrays only. Each argument takes the shape its
+        // proof allows (`concatOperand`), and each element of a spread argument follows
+        // the same rule (`concatSpread`). MEASURED: the server folds a run of ADJACENT
+        // constant operands during the optimisation and raises there on a wrong type. So
+        // a constant without the `[x]` wrap stops the pipeline before any branch runs.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value, kind }) => ({
-            $concatArrays: [
-              recv,
-              ...args.map((a) => {
-                const k = kind(a);
-                return k === "array" || k === "unknown" ? value(a) : [value(a)];
-              })
-            ]
-          })
+          emit: ({ recv, args, value, type, bind }) => {
+            const first = args[0];
+            const list = args.length === 1 && first.type === "ArrayLiteral" && first.packed === true ? first.elements : args;
+            return {
+              $concatArrays: [
+                recv,
+                ...list.map(
+                  (a) => a.type === "SpreadElement" ? concatSpread(value({ type: "ArrayLiteral", elements: [a], pos: a.pos }), type(a.argument).element) : concatOperand(value(a), type(a), bind)
+                )
+              ]
+            };
+          }
         }
       }
     },
@@ -7139,6 +4438,7 @@ var NAMES = {
     params: ["value", "index"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7199,6 +4499,7 @@ var NAMES = {
     params: ["value", "index"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7229,6 +4530,7 @@ var NAMES = {
     call: true,
     on: ["array", "string"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7261,6 +4563,7 @@ var NAMES = {
     params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // `$.items.some(i => i.q > 2)` → { items: { $elemMatch: { q: { $gt: 2 } } } } — when the
     // whole body has a native form against the element as root. Otherwise the expression form.
@@ -7301,6 +4604,7 @@ var NAMES = {
     params: ["value", "index", "receiver"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7382,6 +4686,7 @@ var NAMES = {
     elements: "scalar",
     returns: "string",
     neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7403,6 +4708,7 @@ var NAMES = {
     on: "any",
     elements: "scalar",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7755,6 +5061,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $year: recv }) },
@@ -7772,6 +5079,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7793,6 +5101,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dayOfMonth: recv }) },
@@ -7808,6 +5117,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7827,6 +5137,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $hour: recv }) },
@@ -7844,6 +5155,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $minute: recv }) },
@@ -7861,6 +5173,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $second: recv }) },
@@ -7878,6 +5191,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $millisecond: recv }) },
@@ -7895,6 +5209,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $year: recv }) },
@@ -7912,6 +5227,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7933,6 +5249,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dayOfMonth: recv }) },
@@ -7950,6 +5267,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7971,6 +5289,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $hour: recv }) },
@@ -7988,6 +5307,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $minute: recv }) },
@@ -8005,6 +5325,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $second: recv }) },
@@ -8022,6 +5343,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $millisecond: recv }) },
@@ -8039,6 +5361,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toLong: recv }) },
@@ -8054,6 +5377,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dateToString: { date: recv } }) },
@@ -8071,6 +5395,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8104,6 +5429,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8142,6 +5468,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8177,6 +5504,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8212,6 +5540,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8245,6 +5574,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8278,6 +5608,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8311,6 +5642,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8346,6 +5678,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8381,6 +5714,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8416,6 +5750,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8450,6 +5785,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8491,6 +5827,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8534,6 +5871,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "bool",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8575,6 +5913,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8655,6 +5994,7 @@ var NAMES = {
     call: true,
     on: "date",
     returns: "date",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8697,6 +6037,8 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "number",
+    neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: recv }) },
@@ -8704,14 +6046,15 @@ var NAMES = {
     statement: unsupported(
       "'.sum()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sum();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: singleArrayArg(recv) }) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$sum", recv, (a) => ({ $sum: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$sum", recv, (a) => ({ $sum: a })) }
   }),
   mean: name({
     doc: "'.mean()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
     returns: "number",
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: recv }) },
@@ -8719,14 +6062,15 @@ var NAMES = {
     statement: unsupported(
       "'.mean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.mean();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: singleArrayArg(recv) }) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$avg", recv, (a) => ({ $avg: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$avg", recv, (a) => ({ $avg: a })) }
   }),
   max: name({
     doc: "'.max()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
@@ -8743,14 +6087,15 @@ var NAMES = {
     statement: unsupported(
       "'.max()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.max();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: singleArrayArg(recv) }) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$max", recv, (a) => ({ $max: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$max", recv, (a) => ({ $max: a })) }
   }),
   min: name({
     doc: "'.min()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
@@ -8767,8 +6112,8 @@ var NAMES = {
     statement: unsupported(
       "'.min()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.min();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: singleArrayArg(recv) }) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: singleArrayArg(recv) }) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$min", recv, (a) => ({ $min: a })) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$min", recv, (a) => ({ $min: a })) }
   }),
   sumBy: name({
     doc: "'.sumBy()' \u2014 see docs/LANGUAGE.md.",
@@ -8777,6 +6122,8 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    neverNull: true,
+    readsNullAsEmpty: true,
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
@@ -8807,6 +6154,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
+    readsNullAsEmpty: true,
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
@@ -8916,10 +6264,7 @@ var NAMES = {
     stream: {
       args: { sig: "", none: true },
       // One document per distinct ELEMENT: the whole document, or the unwound field after `.flatMap`.
-      emit: ({ element: element2 }) => [
-        { $group: { _id: element2().ref, [GROUP_SLOT]: { $first: "$$ROOT" } } },
-        { $replaceWith: `$${GROUP_SLOT}` }
-      ]
+      emit: ({ element: element2 }) => keepFirstPer(element2().ref)
     },
     statement: unsupported(
       "'.uniq()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.uniq();'"
@@ -8949,10 +6294,7 @@ var NAMES = {
     stream: {
       args: { sig: "iteratee", exact: 1 },
       // "First" follows the stream's current order; sort first when it matters.
-      emit: ({ args, reshape }) => [
-        { $group: { _id: reshape(args[0]), [GROUP_SLOT]: { $first: "$$ROOT" } } },
-        { $replaceWith: `$${GROUP_SLOT}` }
-      ]
+      emit: ({ args, reshape }) => keepFirstPer(reshape(args[0]))
     },
     statement: unsupported(
       "'.uniqBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.uniqBy();'"
@@ -8970,13 +6312,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
-    stream: {
-      args: { sig: "", none: true },
-      emit: ({ element: element2 }) => [
-        { $group: { _id: element2().ref, [GROUP_SLOT]: { $first: "$$ROOT" } } },
-        { $replaceWith: `$${GROUP_SLOT}` }
-      ]
-    },
+    stream: { args: { sig: "", none: true }, emit: ({ element: element2 }) => keepFirstPer(element2().ref) },
     statement: unsupported(
       "'.sortedUniq()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniq();'"
     ),
@@ -9004,13 +6340,7 @@ var NAMES = {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ recv, args, iteratee, bind }) => uniqByReduce(recv, iteratee(args[0]), bind)
     },
-    stream: {
-      args: { sig: "iteratee", exact: 1 },
-      emit: ({ args, reshape }) => [
-        { $group: { _id: reshape(args[0]), [GROUP_SLOT]: { $first: "$$ROOT" } } },
-        { $replaceWith: `$${GROUP_SLOT}` }
-      ]
-    },
+    stream: { args: { sig: "iteratee", exact: 1 }, emit: ({ args, reshape }) => keepFirstPer(reshape(args[0])) },
     statement: unsupported(
       "'.sortedUniqBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniqBy();'"
     ),
@@ -9024,7 +6354,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -9060,13 +6390,13 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => {
-        const other = value(args[0]);
+      emit: ({ recv, args, value, type }) => {
+        const other = listArgument(value, type, args[0]);
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
       }
     },
@@ -9088,7 +6418,7 @@ var NAMES = {
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -9097,13 +6427,13 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(arrayOrEmpty(value(args[0])), it) },
+            vars: { [keys.as]: iterateeKeys(listArgument(value, type, args[0]), it) },
             in: { $filter: { input: recv, as: it.as, cond: { $not: [inOther] } } }
           }
         };
@@ -9127,6 +6457,7 @@ var NAMES = {
     )
   }),
   intersectionBy: name({
+    restoresDocuments: true,
     doc: "'.intersectionBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -9137,7 +6468,7 @@ var NAMES = {
       stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "same", stream: "stream" },
-    neverNull: true,
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -9146,13 +6477,13 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
         const inOther = { $in: [it.in, keys.ref] };
         return {
           $let: {
-            vars: { [keys.as]: iterateeKeys(arrayOrEmpty(value(args[0])), it) },
+            vars: { [keys.as]: iterateeKeys(listArgument(value, type, args[0]), it) },
             in: { $filter: { input: recv, as: it.as, cond: inOther } }
           }
         };
@@ -9182,12 +6513,12 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => uniqByReduce({ $concatArrays: [recv, value(args[0])] }, iteratee(args[1]), bind)
+      emit: ({ recv, args, value, iteratee, bind, type }) => uniqByReduce({ $concatArrays: [recv, listArgument(value, type, args[0])] }, iteratee(args[1]), bind)
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
     statement: unsupported(
@@ -9203,14 +6534,14 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
-      emit: ({ recv, args, value, iteratee, bind }) => {
+      emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
-        const other = arrayOrEmpty(value(args[0]));
+        const other = listArgument(value, type, args[0]);
         const a = bind("a");
         const b = bind("b");
         const aKeys = bind("aKeys");
@@ -9496,8 +6827,8 @@ var NAMES = {
     statement: unsupported(
       "'.head()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.head();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) }
   }),
   first: name({
     doc: "'.first()' \u2014 see docs/LANGUAGE.md.",
@@ -9511,8 +6842,8 @@ var NAMES = {
     statement: unsupported(
       "'.first()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.first();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$first", recv, firstOf) }
   }),
   last: name({
     doc: "'.last()' \u2014 see docs/LANGUAGE.md.",
@@ -9526,8 +6857,8 @@ var NAMES = {
     statement: unsupported(
       "'.last()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.last();'"
     ),
-    group: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) },
-    window: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) }
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$last", recv, lastOf) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => slotAggregate("$last", recv, lastOf) }
   }),
   nth: name({
     doc: "'.nth()' \u2014 see docs/LANGUAGE.md.",
@@ -9557,6 +6888,7 @@ var NAMES = {
       object: "For the number of fields, write '.keys().size()'."
     },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     // Per family, because one answer for both states a legality the stream form
     // does not have: `$.tags.size() < 5` scans, `$$.size() > 1` does not compile
@@ -9571,8 +6903,8 @@ var NAMES = {
     },
     expr: {
       perFamily: {
-        // `_.size(undefined)` is 0, and `Set.size` of nothing is 0: a receiver that may be
-        // missing is read as the empty array. An array LITERAL is the value, not an operand list.
+        // `_.size(undefined)` is 0: a receiver that may be missing is read as the empty
+        // array. An array LITERAL is the value, not an operand list.
         array: {
           args: { sig: "", none: true },
           emit: ({ recv, present: present2 }) => sizeOf(present2 || Array.isArray(recv) ? recv : arrayOrEmpty(recv))
@@ -9844,6 +7176,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "object",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10166,12 +7499,13 @@ var NAMES = {
       }
     },
     returns: { recordOf: { callback: 0 } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "value");
         return {
           $arrayToObject: {
             $map: { input: pairsOfObject(recv, present2), as: it.as, in: { k: `${it.ref}.k`, v: it.body } }
@@ -10199,12 +7533,13 @@ var NAMES = {
       }
     },
     returns: { recordOf: { elementOf: "same" } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "value");
         return {
           $arrayToObject: {
             $map: {
@@ -10235,7 +7570,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present: present2 }) => {
+      emit: ({ recv, args, bind, value, present: present2, type }) => {
         const keys = spelledKeys(args[0]);
         if (keys === null) {
           const kv = bind("kv");
@@ -10244,7 +7579,7 @@ var NAMES = {
               $filter: {
                 input: pairsOfObject(recv, present2),
                 as: kv.as,
-                cond: { $in: [`${kv.ref}.k`, arrayOrEmpty(value(args[0]))] }
+                cond: { $in: [`${kv.ref}.k`, listArgument(value, type, args[0])] }
               }
             }
           };
@@ -10289,9 +7624,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
-      emit: ({ recv, args, bind, value, present: present2 }) => {
+      emit: ({ recv, args, bind, value, present: present2, type }) => {
         const spelled3 = spelledKeys(args[0]);
-        const keys = spelled3 ?? arrayOrEmpty(value(args[0]));
+        const keys = spelled3 ?? listArgument(value, type, args[0]);
         const kv = bind("kv");
         return {
           $arrayToObject: {
@@ -10331,12 +7666,13 @@ var NAMES = {
       }
     },
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "truth");
         return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: it.body } } };
       }
     },
@@ -10358,12 +7694,13 @@ var NAMES = {
       }
     },
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
-        const it = objIteratee(args[0]);
+        const it = objIteratee(args[0], "truth");
         return {
           $arrayToObject: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: { $not: [it.body] } } }
         };
@@ -10381,6 +7718,7 @@ var NAMES = {
     call: true,
     on: "object",
     returns: "object",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10450,9 +7788,10 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => capitalizeExpr(recv) },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => capitalizeExpr(recv, present2) },
     stream: unsupported("'.capitalize()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.capitalize()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.capitalize();'"
@@ -10467,9 +7806,10 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstCharExpr(recv, "$toUpper") },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => firstCharExpr(recv, "$toUpper", present2) },
     stream: unsupported("'.upperFirst()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.upperFirst()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.upperFirst();'"
@@ -10484,9 +7824,10 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstCharExpr(recv, "$toLower") },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => firstCharExpr(recv, "$toLower", present2) },
     stream: unsupported("'.lowerFirst()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lowerFirst()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lowerFirst();'"
@@ -10517,6 +7858,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10537,6 +7879,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10557,6 +7900,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10577,6 +7921,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10605,6 +7950,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => escapeHtmlExpr(recv) },
@@ -10620,6 +7966,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10637,7 +7984,7 @@ var NAMES = {
           }
         }
       },
-      emit: ({ recv, args, bind }) => {
+      emit: ({ recv, args, bind, present: present2 }) => {
         let length = 30;
         let omission = "...";
         if (args[0]?.type === "ObjectLiteral") {
@@ -10651,7 +7998,7 @@ var NAMES = {
         const s = bind("str");
         return {
           $let: {
-            vars: { [s.as]: coerceStringBinding(recv) },
+            vars: { [s.as]: present2 ? recv : coerceStringBinding(recv) },
             in: {
               $cond: [
                 { $gt: [{ $strLenCP: s.ref }, length] },
@@ -10677,6 +8024,7 @@ var NAMES = {
     call: true,
     on: ["number", "date"],
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10697,6 +8045,7 @@ var NAMES = {
     // a number and a date test a range the same way, so one cell serves both families
     on: ["number", "date"],
     returns: "bool",
+    neverNull: true,
     where: ["value", "filter"],
     // A field against two constant bounds is a range on one field — the clause an
     // index answers, and the document a MongoDB developer writes by hand.
@@ -10733,6 +8082,7 @@ var NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10757,6 +8107,7 @@ var NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10781,6 +8132,7 @@ var NAMES = {
     call: true,
     on: ["number", "Math"],
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10801,11 +8153,12 @@ var NAMES = {
     window: unsupported("'.floor()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   intersection: name({
+    restoresDocuments: true,
     doc: "'.intersection()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set", "stream"],
-    returns: { array: "same", set: "array", stream: "stream" },
-    neverNull: true,
+    on: ["array", "stream"],
+    returns: { array: "same", stream: "stream" },
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -10814,7 +8167,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setIntersection: [recv, value(args[0])] })
+      emit: ({ recv, args, value, type }) => ({ $setIntersection: [recv, listArgument(value, type, args[0])] })
     },
     stream: {
       args: { sig: "other", exact: 1 },
@@ -10839,14 +8192,14 @@ var NAMES = {
   union: name({
     doc: "'.union()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value }) => ({ $setUnion: [recv, value(args[0])] })
+      emit: ({ recv, args, value, type }) => ({ $setUnion: [recv, listArgument(value, type, args[0])] })
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
     statement: unsupported(
@@ -10858,9 +8211,9 @@ var NAMES = {
   difference: name({
     doc: "'.difference()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set", "stream"],
-    returns: { array: "same", set: "array", stream: "stream" },
-    neverNull: true,
+    on: ["array", "stream"],
+    returns: { array: "same", stream: "stream" },
+    neverNull: "always",
     where: ["value", "stream"],
     elementOnly: {
       when: "always",
@@ -10869,19 +8222,14 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        array: { args: { sig: "other", exact: 1 }, emit: lodashDifference },
-        // A Set holds each value once, and so must its difference. MEASURED:
-        // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a JavaScript Set gives.
-        set: {
+        // The set difference: each value once, as a JavaScript Set holds it. MEASURED:
+        // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
+        array: {
           args: { sig: "other", exact: 1 },
-          emit: ({ recv, args, value }) => ({ $setDifference: [recv, value(args[0])] })
+          emit: ({ recv, args, value, type }) => ({ $setDifference: [recv, listArgument(value, type, args[0])] })
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
-      },
-      // Both families test `$type: "array"`, so no run-time test tells them apart. This
-      // row needs none: the source proves `new Set(…)`, so an unproven receiver is
-      // an array and takes lodash's reading.
-      uncertain: lodashDifference
+      }
     },
     stream: {
       args: { sig: "other", exact: 1 },
@@ -10903,13 +8251,14 @@ var NAMES = {
   isSubsetOf: name({
     doc: "'.isSubsetOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, arrayOrEmpty(value(args[0]))] }))
+      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, listArgument(value, type, args[0])] }))
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10923,13 +8272,14 @@ var NAMES = {
   isSupersetOf: name({
     doc: "'.isSupersetOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [arrayOrEmpty(value(args[0])), r] }))
+      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [listArgument(value, type, args[0]), r] }))
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -10945,6 +8295,7 @@ var NAMES = {
     call: true,
     on: "any",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10986,28 +8337,7 @@ var NAMES = {
   $inc: mongo({
     doc: "Increments a field by a number. JSMQL also writes it as JavaScript: '$.views++', '++$.views', '$.views += 2'.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   // ── names that are valid ONLY inside another operator's body. A test proves each
   // one both ways: the container accepts it, and on its own it is "Unrecognized expression".
@@ -11015,463 +8345,106 @@ var NAMES = {
     doc: "A rectangle, by its bottom-left and top-right corners.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$box' is only valid inside $geoWithin, and only in a filter \u2014 never as an aggregation expression."
-    ),
-    group: unsupported("'$box' is only valid inside $geoWithin, and only in a filter \u2014 never in a $group slot."),
-    window: unsupported(
-      "'$box' is only valid inside $geoWithin, and only in a filter \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported("'$box' is only valid inside $geoWithin, and only in a filter \u2014 never as a pipeline stage."),
-    statement: unsupported("'$box' is only valid inside $geoWithin, and only in a filter \u2014 never as a statement."),
-    updateDoc: unsupported(
-      "'$box' is only valid inside $geoWithin, and only in a filter \u2014 never in an update document."
-    )
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $center: mongo({
     doc: "A circle on a flat plane, by centre and radius.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$center' is only valid inside $geoWithin, and only in a filter \u2014 never as an aggregation expression."
-    ),
-    group: unsupported("'$center' is only valid inside $geoWithin, and only in a filter \u2014 never in a $group slot."),
-    window: unsupported(
-      "'$center' is only valid inside $geoWithin, and only in a filter \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported("'$center' is only valid inside $geoWithin, and only in a filter \u2014 never as a pipeline stage."),
-    statement: unsupported("'$center' is only valid inside $geoWithin, and only in a filter \u2014 never as a statement."),
-    updateDoc: unsupported(
-      "'$center' is only valid inside $geoWithin, and only in a filter \u2014 never in an update document."
-    )
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $centerSphere: mongo({
     doc: "A circle on a sphere, by centre and radius in radians.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$centerSphere' is only valid inside $geoWithin, and only in a filter \u2014 never as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$centerSphere' is only valid inside $geoWithin, and only in a filter \u2014 never in a $group slot."
-    ),
-    window: unsupported(
-      "'$centerSphere' is only valid inside $geoWithin, and only in a filter \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$centerSphere' is only valid inside $geoWithin, and only in a filter \u2014 never as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$centerSphere' is only valid inside $geoWithin, and only in a filter \u2014 never as a statement."
-    ),
-    updateDoc: unsupported(
-      "'$centerSphere' is only valid inside $geoWithin, and only in a filter \u2014 never in an update document."
-    )
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $polygon: mongo({
     doc: "A polygon, by its list of points.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$polygon' is only valid inside $geoWithin, and only in a filter \u2014 never as an aggregation expression."
-    ),
-    group: unsupported("'$polygon' is only valid inside $geoWithin, and only in a filter \u2014 never in a $group slot."),
-    window: unsupported(
-      "'$polygon' is only valid inside $geoWithin, and only in a filter \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$polygon' is only valid inside $geoWithin, and only in a filter \u2014 never as a pipeline stage."
-    ),
-    statement: unsupported("'$polygon' is only valid inside $geoWithin, and only in a filter \u2014 never as a statement."),
-    updateDoc: unsupported(
-      "'$polygon' is only valid inside $geoWithin, and only in a filter \u2014 never in an update document."
-    )
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $geometry: mongo({
     doc: "A GeoJSON shape.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin", "$geoIntersects", "$near", "$nearSphere"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter \u2014 never as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter \u2014 never in a $group slot."
-    ),
-    window: unsupported(
-      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter \u2014 never as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter \u2014 never as a statement."
-    ),
-    updateDoc: unsupported(
-      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter \u2014 never in an update document."
-    )
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $maxDistance: mongo({
     doc: "The furthest a match may be, in metres or radians.",
     where: ["filter"],
     onlyInside: { filter: ["$near", "$nearSphere", "$geoWithin"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter \u2014 never as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter \u2014 never in a $group slot."
-    ),
-    window: unsupported(
-      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter \u2014 never as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter \u2014 never as a statement."
-    ),
-    updateDoc: unsupported(
-      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter \u2014 never in an update document."
-    )
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $minDistance: mongo({
     doc: "The nearest a match may be, in metres or radians.",
     where: ["filter"],
     onlyInside: { filter: ["$near", "$nearSphere"] },
-    filter: {
-      args: { sig: "shape", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter \u2014 never as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter \u2014 never in a $group slot."
-    ),
-    window: unsupported(
-      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter \u2014 never as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter \u2014 never as a statement."
-    ),
-    updateDoc: unsupported(
-      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter \u2014 never in an update document."
-    )
+    filter: { args: { sig: "shape", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $each: mongo({
     doc: "Adds several values at once instead of one.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push", "$addToSet"] },
-    filter: unsupported(
-      "'$each' is only valid inside $push / $addToSet, and only in an update document \u2014 never in a filter."
-    ),
-    expr: unsupported(
-      "'$each' is only valid inside $push / $addToSet, and only in an update document \u2014 never as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$each' is only valid inside $push / $addToSet, and only in an update document \u2014 never in a $group slot."
-    ),
-    window: unsupported(
-      "'$each' is only valid inside $push / $addToSet, and only in an update document \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$each' is only valid inside $push / $addToSet, and only in an update document \u2014 never as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$each' is only valid inside $push / $addToSet, and only in an update document \u2014 never as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "values", exact: 1, slotType: { 0: "array" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "values", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $position: mongo({
     doc: "The index to insert at, rather than appending.",
     where: ["updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
-    filter: unsupported("'$position' is only valid inside $push, and only in an update document \u2014 never in a filter."),
-    expr: unsupported(
-      "'$position' is only valid inside $push, and only in an update document \u2014 never as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$position' is only valid inside $push, and only in an update document \u2014 never in a $group slot."
-    ),
-    window: unsupported(
-      "'$position' is only valid inside $push, and only in an update document \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$position' is only valid inside $push, and only in an update document \u2014 never as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$position' is only valid inside $push, and only in an update document \u2014 never as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "index", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $case: mongo({
     doc: "One branch of a '$switch': its test and its result.",
     returns: "unknown",
     where: ["value"],
     onlyInside: { value: ["$switch"] },
-    filter: unsupported(
-      "'$case' is a branch of '$switch' and has no meaning on its own \u2014 write '$switch({ branches: [{ case: <test>, then: <value> }], default: <value> })'."
-    ),
     expr: {
       args: { sig: "condition, result", exact: 2 },
       emit: ({ args, value }) => ({ case: value(args[0]), then: value(args[1]) })
-    },
-    group: unsupported(
-      "'$case' is only valid inside $switch, and only in an aggregation expression \u2014 never in a $group slot."
-    ),
-    window: unsupported(
-      "'$case' is only valid inside $switch, and only in an aggregation expression \u2014 never in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$case' is only valid inside $switch, and only in an aggregation expression \u2014 never as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$case' is only valid inside $switch, and only in an aggregation expression \u2014 never as a statement."
-    ),
-    updateDoc: unsupported(
-      "'$case' is only valid inside $switch, and only in an aggregation expression \u2014 never in an update document."
-    )
+    }
   }),
   // ── the update DOCUMENT operators — valid only in updateOne's second argument.
   $currentDate: mongo({
     doc: "Sets a field to the current date.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $mul: mongo({
     doc: "Multiplies a field by a number. JSMQL also writes it as JavaScript: '$.price *= 1.1', '$.price /= 2'.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $rename: mongo({
     doc: "Renames a field. JSMQL also writes it as JavaScript: '$.b = $.a; delete $.a;'.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $setOnInsert: mongo({
     doc: "Sets a field only when an upsert inserts a new document.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $pop: mongo({
     doc: "Removes the first or last element of an array. JSMQL also writes it as JavaScript: '$.tags.pop()'.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $pull: mongo({
     doc: "Removes every array element matching a condition.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $pullAll: mongo({
     doc: "Removes every listed value from an array.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   $bit: mongo({
     doc: "Applies a bitwise and / or / xor to an integer field.",
     where: ["updateDoc"],
-    filter: unsupported(
-      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter."
-    ),
-    expr: unsupported(
-      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression."
-    ),
-    group: unsupported(
-      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot."
-    ),
-    window: unsupported(
-      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot."
-    ),
-    stream: unsupported(
-      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage."
-    ),
-    statement: unsupported(
-      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement."
-    ),
-    updateDoc: {
-      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
-      emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) })
-    }
+    updateDoc: { args: { sig: "fields", exact: 1 }, emit: ({ name: name2, args, value }) => ({ [name2]: value(args[0]) }) }
   }),
   // ── the query language: operators with a filter form and no expression form.
   // The seven geometry sub-constructs ($box, $center, $centerSphere, $polygon,
@@ -11481,88 +8454,37 @@ var NAMES = {
     doc: "Matches arrays that contain all elements specified in the query.",
     category: "array",
     where: ["filter"],
-    filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
-    expr: unsupported(
-      "'$all' is a query operator with no aggregation-expression form. '$all' is a field-level query operator: write it under a field, e.g. '{ <field>: $all(\u2026) }'."
-    ),
-    group: unsupported("'$all' is a query operator, not an accumulator."),
-    window: unsupported("'$all' is a query operator, not a window function."),
-    stream: unsupported("'$all' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$all' is a query operator, not a statement."),
-    updateDoc: unsupported("'$all' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "field, values", exact: 2 }, emit: queryOnlyClause }
   }),
   $bitsAllClear: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 0.",
     category: "bitwise",
     where: ["filter"],
-    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
-    expr: unsupported(
-      "'$bitsAllClear' is a query operator with no aggregation-expression form. '$bitsAllClear' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAllClear(\u2026) }'."
-    ),
-    group: unsupported("'$bitsAllClear' is a query operator, not an accumulator."),
-    window: unsupported("'$bitsAllClear' is a query operator, not a window function."),
-    stream: unsupported("'$bitsAllClear' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$bitsAllClear' is a query operator, not a statement."),
-    updateDoc: unsupported("'$bitsAllClear' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "field, mask", exact: 2 }, emit: queryOnlyClause }
   }),
   $bitsAllSet: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 1.",
     category: "bitwise",
     where: ["filter"],
-    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
-    expr: unsupported(
-      "'$bitsAllSet' is a query operator with no aggregation-expression form. '$bitsAllSet' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAllSet(\u2026) }'."
-    ),
-    group: unsupported("'$bitsAllSet' is a query operator, not an accumulator."),
-    window: unsupported("'$bitsAllSet' is a query operator, not a window function."),
-    stream: unsupported("'$bitsAllSet' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$bitsAllSet' is a query operator, not a statement."),
-    updateDoc: unsupported("'$bitsAllSet' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "field, mask", exact: 2 }, emit: queryOnlyClause }
   }),
   $bitsAnyClear: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 0.",
     category: "bitwise",
     where: ["filter"],
-    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
-    expr: unsupported(
-      "'$bitsAnyClear' is a query operator with no aggregation-expression form. '$bitsAnyClear' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAnyClear(\u2026) }'."
-    ),
-    group: unsupported("'$bitsAnyClear' is a query operator, not an accumulator."),
-    window: unsupported("'$bitsAnyClear' is a query operator, not a window function."),
-    stream: unsupported("'$bitsAnyClear' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$bitsAnyClear' is a query operator, not a statement."),
-    updateDoc: unsupported("'$bitsAnyClear' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "field, mask", exact: 2 }, emit: queryOnlyClause }
   }),
   $bitsAnySet: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 1.",
     category: "bitwise",
     where: ["filter"],
-    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
-    expr: unsupported(
-      "'$bitsAnySet' is a query operator with no aggregation-expression form. '$bitsAnySet' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAnySet(\u2026) }'."
-    ),
-    group: unsupported("'$bitsAnySet' is a query operator, not an accumulator."),
-    window: unsupported("'$bitsAnySet' is a query operator, not a window function."),
-    stream: unsupported("'$bitsAnySet' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$bitsAnySet' is a query operator, not a statement."),
-    updateDoc: unsupported("'$bitsAnySet' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "field, mask", exact: 2 }, emit: queryOnlyClause }
   }),
   $comment: mongo({
     doc: "Adds a comment to a query predicate.",
     category: "miscellaneous",
     where: ["filter"],
-    filter: {
-      args: { sig: "text", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$comment' is a query operator with no aggregation-expression form. '$comment' is a top-level query operator: write it as the whole filter, e.g. '{ $comment: \u2026 }'."
-    ),
-    group: unsupported("'$comment' is a query operator, not an accumulator."),
-    window: unsupported("'$comment' is a query operator, not a window function."),
-    stream: unsupported("'$comment' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$comment' is a query operator, not a statement."),
-    updateDoc: unsupported("'$comment' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "text", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $elemMatch: mongo({
     doc: "The $elemMatch operator matches documents that contain an array field with at least one element that matches all the specified query criteria.",
@@ -11574,49 +8496,25 @@ var NAMES = {
       emit: ({ args, fieldPath: fieldPath3, query, element: element2 }) => ({
         [fieldPath3(args[0])]: { $elemMatch: args[1].type === "Lambda" ? element2(args[1]) : query(args[1]) }
       })
-    },
-    expr: unsupported(
-      "'$elemMatch' is a query operator with no aggregation-expression form. '$elemMatch' is a field-level query operator: write it under a field, e.g. '{ <field>: $elemMatch(\u2026) }'."
-    ),
-    group: unsupported("'$elemMatch' is a query operator, not an accumulator."),
-    window: unsupported("'$elemMatch' is a query operator, not a window function."),
-    stream: unsupported("'$elemMatch' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$elemMatch' is a query operator, not a statement."),
-    updateDoc: unsupported("'$elemMatch' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $exists: mongo({
     doc: "Matches documents that have the specified field.",
     category: "type",
     where: ["filter"],
     filter: {
-      args: { sig: "field[, exists]", allowed: [1, 2], constant: [1], slotType: { 1: "bool" } },
+      args: { sig: "field[, exists]", allowed: [1, 2] },
       emit: ({ args, fieldPath: fieldPath3, literal: literal2 }) => ({
         [fieldPath3(args[0])]: { $exists: args[1] === void 0 ? true : literal2(args[1]) }
       })
-    },
-    expr: unsupported(
-      "'$exists' is a query operator with no aggregation-expression form. '$exists' is a field-level query operator: write it under a field, e.g. '{ <field>: $exists(\u2026) }'."
-    ),
-    group: unsupported("'$exists' is a query operator, not an accumulator."),
-    window: unsupported("'$exists' is a query operator, not a window function."),
-    stream: unsupported("'$exists' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$exists' is a query operator, not a statement."),
-    updateDoc: unsupported("'$exists' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $expr: mongo({
     doc: "Allows use of aggregation expressions within the query language.",
     category: "miscellaneous",
     where: ["filter"],
     operandPosition: "value",
-    filter: { args: { sig: "expression", exact: 1 }, emit: ({ args, value }) => ({ $expr: value(args[0]) }) },
-    expr: unsupported(
-      "'$expr' is a query operator with no aggregation-expression form. '$expr' is a top-level query operator: write it as the whole filter, e.g. '{ $expr: \u2026 }'."
-    ),
-    group: unsupported("'$expr' is a query operator, not an accumulator."),
-    window: unsupported("'$expr' is a query operator, not a window function."),
-    stream: unsupported("'$expr' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$expr' is a query operator, not a statement."),
-    updateDoc: unsupported("'$expr' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "expression", exact: 1 }, emit: ({ args, value }) => ({ $expr: value(args[0]) }) }
   }),
   $geoIntersects: mongo({
     doc: "Selects geometries that intersect with a GeoJSON geometry. The 2dsphere index supports $geoIntersects.",
@@ -11625,15 +8523,7 @@ var NAMES = {
     filter: {
       args: { sig: "field, geometry", exact: 2 },
       emit: ({ name: name2, args, fieldPath: fieldPath3, query }) => ({ [fieldPath3(args[0])]: { [name2]: query(args[1]) } })
-    },
-    expr: unsupported(
-      "'$geoIntersects' is a query operator with no aggregation-expression form. '$geoIntersects' is a field-level query operator: write it under a field, e.g. '{ <field>: $geoIntersects(\u2026) }'."
-    ),
-    group: unsupported("'$geoIntersects' is a query operator, not an accumulator."),
-    window: unsupported("'$geoIntersects' is a query operator, not a window function."),
-    stream: unsupported("'$geoIntersects' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$geoIntersects' is a query operator, not a statement."),
-    updateDoc: unsupported("'$geoIntersects' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $geoWithin: mongo({
     doc: "Selects geometries within a bounding GeoJSON geometry. The 2dsphere and 2d indexes support $geoWithin.",
@@ -11642,32 +8532,13 @@ var NAMES = {
     filter: {
       args: { sig: "field, geometry", exact: 2 },
       emit: ({ name: name2, args, fieldPath: fieldPath3, query }) => ({ [fieldPath3(args[0])]: { [name2]: query(args[1]) } })
-    },
-    expr: unsupported(
-      "'$geoWithin' is a query operator with no aggregation-expression form. '$geoWithin' is a field-level query operator: write it under a field, e.g. '{ <field>: $geoWithin(\u2026) }'."
-    ),
-    group: unsupported("'$geoWithin' is a query operator, not an accumulator."),
-    window: unsupported("'$geoWithin' is a query operator, not a window function."),
-    stream: unsupported("'$geoWithin' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$geoWithin' is a query operator, not a statement."),
-    updateDoc: unsupported("'$geoWithin' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $jsonSchema: mongo({
     doc: "Validate documents against the given JSON Schema.",
     category: "miscellaneous",
     where: ["filter"],
-    filter: {
-      args: { sig: "schema", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
-    expr: unsupported(
-      "'$jsonSchema' is a query operator with no aggregation-expression form. '$jsonSchema' is a top-level query operator: write it as the whole filter, e.g. '{ $jsonSchema: \u2026 }'."
-    ),
-    group: unsupported("'$jsonSchema' is a query operator, not an accumulator."),
-    window: unsupported("'$jsonSchema' is a query operator, not a window function."),
-    stream: unsupported("'$jsonSchema' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$jsonSchema' is a query operator, not a statement."),
-    updateDoc: unsupported("'$jsonSchema' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "schema", exact: 1 }, emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) }) }
   }),
   $near: mongo({
     doc: "Returns geospatial objects in proximity to a point. Requires a geospatial index. The 2dsphere and 2d indexes support $near.",
@@ -11676,15 +8547,7 @@ var NAMES = {
     filter: {
       args: { sig: "field, geometry", exact: 2 },
       emit: ({ name: name2, args, fieldPath: fieldPath3, query }) => ({ [fieldPath3(args[0])]: { [name2]: query(args[1]) } })
-    },
-    expr: unsupported(
-      "'$near' is a query operator with no aggregation-expression form. '$near' is a field-level query operator: write it under a field, e.g. '{ <field>: $near(\u2026) }'."
-    ),
-    group: unsupported("'$near' is a query operator, not an accumulator."),
-    window: unsupported("'$near' is a query operator, not a window function."),
-    stream: unsupported("'$near' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$near' is a query operator, not a statement."),
-    updateDoc: unsupported("'$near' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $nearSphere: mongo({
     doc: "Returns geospatial objects in proximity to a point on a sphere. Requires a geospatial index. The 2dsphere and 2d indexes support $nearSphere.",
@@ -11693,30 +8556,14 @@ var NAMES = {
     filter: {
       args: { sig: "field, geometry", exact: 2 },
       emit: ({ name: name2, args, fieldPath: fieldPath3, query }) => ({ [fieldPath3(args[0])]: { [name2]: query(args[1]) } })
-    },
-    expr: unsupported(
-      "'$nearSphere' is a query operator with no aggregation-expression form. '$nearSphere' is a field-level query operator: write it under a field, e.g. '{ <field>: $nearSphere(\u2026) }'."
-    ),
-    group: unsupported("'$nearSphere' is a query operator, not an accumulator."),
-    window: unsupported("'$nearSphere' is a query operator, not a window function."),
-    stream: unsupported("'$nearSphere' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$nearSphere' is a query operator, not a statement."),
-    updateDoc: unsupported("'$nearSphere' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $nin: mongo({
     doc: "Matches none of the values specified in an array.",
     category: "comparison",
     where: ["filter"],
     liftsTo: { op: "$in", negated: true },
-    filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
-    expr: unsupported(
-      "'$nin' is a query operator with no aggregation-expression form. '$nin' is a field-level query operator: write it under a field, e.g. '{ <field>: $nin(\u2026) }'."
-    ),
-    group: unsupported("'$nin' is a query operator, not an accumulator."),
-    window: unsupported("'$nin' is a query operator, not a window function."),
-    stream: unsupported("'$nin' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$nin' is a query operator, not a statement."),
-    updateDoc: unsupported("'$nin' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "field, values", exact: 2 }, emit: queryOnlyClause }
   }),
   $nor: mongo({
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
@@ -11725,27 +8572,7 @@ var NAMES = {
     // MEASURED: the server refuses `find({ $nor: [] })` ("$nor argument must be a
     // non-empty array"), and `$nor` has no expression form to fall back to. So this
     // row refuses the empty list and emits nothing.
-    filter: {
-      args: {
-        sig: "predicates",
-        atLeast: 1,
-        nonEmpty: {
-          0: {
-            noun: "predicate",
-            instead: "'none of nothing' is every document, which an empty filter ('{}') already says."
-          }
-        }
-      },
-      emit: norList
-    },
-    expr: unsupported(
-      "'$nor' is a query operator with no aggregation-expression form. '$nor' is a top-level query operator: write it as the whole filter, e.g. '{ $nor: \u2026 }'."
-    ),
-    group: unsupported("'$nor' is a query operator, not an accumulator."),
-    window: unsupported("'$nor' is a query operator, not a window function."),
-    stream: unsupported("'$nor' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$nor' is a query operator, not a statement."),
-    updateDoc: unsupported("'$nor' is not valid in an update document \u2014 see its 'where'.")
+    filter: { args: { sig: "predicates", atLeast: 1 }, emit: norList }
   }),
   $regex: mongo({
     doc: "Selects documents where values match a specified regular expression.",
@@ -11760,15 +8587,7 @@ var NAMES = {
         if (args[2] !== void 0) clause.$options = literal2(args[2]);
         return { [path]: clause };
       }
-    },
-    expr: unsupported(
-      "'$regex' is a query operator with no aggregation-expression form. '$regex' is a field-level query operator: write it under a field, e.g. '{ <field>: $regex(\u2026) }'."
-    ),
-    group: unsupported("'$regex' is a query operator, not an accumulator."),
-    window: unsupported("'$regex' is a query operator, not a window function."),
-    stream: unsupported("'$regex' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$regex' is a query operator, not a statement."),
-    updateDoc: unsupported("'$regex' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $text: mongo({
     doc: "Performs text search.",
@@ -11787,20 +8606,12 @@ var NAMES = {
       container: "A branch has no text score to read. Run the '$text' match as the pipeline's first stage, ahead of the branch."
     },
     filter: {
-      args: { sig: "search", exact: 1, constant: [0] },
+      args: { sig: "search", exact: 1 },
       emit: ({ args, literal: literal2 }) => {
         const v = literal2(args[0]);
         return { $text: typeof v === "string" ? { $search: v } : v };
       }
-    },
-    expr: unsupported(
-      "'$text' is a query operator with no aggregation-expression form. '$text' is a top-level query operator: write it as the whole filter, e.g. '{ $text: \u2026 }'."
-    ),
-    group: unsupported("'$text' is a query operator, not an accumulator."),
-    window: unsupported("'$text' is a query operator, not a window function."),
-    stream: unsupported("'$text' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$text' is a query operator, not a statement."),
-    updateDoc: unsupported("'$text' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   $where: mongo({
     doc: "Matches documents that satisfy a JavaScript expression.",
@@ -11812,18 +8623,7 @@ var NAMES = {
     forbiddenIn: ["$match"],
     placement: {
       container: `Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.has("a")' \u2014 and it runs as a query, in a '$match' or a 'find' filter alike.`
-    },
-    filter: unsupported(
-      `'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.has("a")' \u2014 and it runs as a query.`
-    ),
-    expr: unsupported(
-      "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: \u2026 }'."
-    ),
-    group: unsupported("'$where' is a query operator, not an accumulator."),
-    window: unsupported("'$where' is a query operator, not a window function."),
-    stream: unsupported("'$where' is a query operator, not a pipeline stage. Put it in a '$match' body."),
-    statement: unsupported("'$where' is a query operator, not a statement."),
-    updateDoc: unsupported("'$where' is not valid in an update document \u2014 see its 'where'.")
+    }
   }),
   // ── source stages, chain links and the guard, reached by name ──
   collStats: name({
@@ -12086,7 +8886,8 @@ var NAMES = {
     mutatesArgumentAt: 0,
     returns: { object: { merge: ["same", { args: 0 }] }, Object: { merge: [{ args: 0 }] } },
     // MEASURED: `$.o.assign({ z: 1 })` answers `{ a: 1, b: 2, z: 1 }` for `o: { a: 1, b: 2 }` and `{ z: 1 }` for a missing or null `o`; `Object.assign({}, $.o)` answers `{}` there — an object every time
-    neverNull: true,
+    neverNull: "always",
+    readsNullAsEmpty: true,
     // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
     // before the compiler reads any statement cell — so the row states only the value.
     where: ["value"],
@@ -12132,7 +8933,8 @@ var NAMES = {
         array: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
         Object: {
           args: { sig: "entries", exact: 1 },
-          emit: ({ args, value, bind }) => pairsToObject(singleArrayArg(value(args[0])), bind("p"))
+          // `$map.input` is an expression slot, where a literal array is the list itself.
+          emit: ({ args, value, bind }) => pairsToObject(value(args[0]), bind("p"))
         }
       }
     },
@@ -12150,6 +8952,7 @@ var NAMES = {
     call: true,
     on: "Number",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12172,6 +8975,7 @@ var NAMES = {
     call: true,
     on: "Number",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12210,6 +9014,7 @@ var NAMES = {
     call: true,
     on: "Array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
@@ -12223,67 +9028,56 @@ var NAMES = {
     )
   }),
   symmetricDifference: name({
-    doc: "'Set.symmetricDifference()' \u2014 recognised, and refused: MongoDB has no equivalent.",
+    doc: "'.symmetricDifference()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "array",
-    neverNull: true,
+    neverNull: "always",
     where: ["value"],
-    filter: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, bind }) => {
+      emit: ({ recv, args, value, bind, type }) => {
         const a = bind("a");
         const b = bind("b");
         return {
           $let: {
-            vars: { [a.as]: recv, [b.as]: value(args[0]) },
+            vars: { [a.as]: recv, [b.as]: listArgument(value, type, args[0]) },
             in: { $setDifference: [{ $setUnion: [a.ref, b.ref] }, { $setIntersection: [a.ref, b.ref] }] }
           }
         };
       }
     },
-    stream: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    stream: because("compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'."),
     statement: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
+      "'.symmetricDifference()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.symmetricDifference();'"
     ),
-    group: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    group: unsupported("'.symmetricDifference()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
+      "'.symmetricDifference()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
   isDisjointFrom: name({
-    doc: "'Set.isDisjointFrom()' \u2014 recognised, and refused: MongoDB has no equivalent.",
+    doc: "'.isDisjointFrom()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
+    on: "array",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
-    filter: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
-        $eq: [sizeOf({ $setIntersection: [r, arrayOrEmpty(value(args[0]))] }), 0]
+      emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({
+        $eq: [sizeOf({ $setIntersection: [r, listArgument(value, type, args[0])] }), 0]
       }))
     },
-    stream: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    stream: unsupported("'.isDisjointFrom()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
+      "'.isDisjointFrom()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isDisjointFrom();'"
     ),
-    group: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
-    ),
+    group: unsupported("'.isDisjointFrom()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
+      "'.isDisjointFrom()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
   Object: root({
@@ -12303,6 +9097,7 @@ var NAMES = {
     token: "Ident",
     newKeyword: "forbidden",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toString: value(args[0]) }) },
@@ -12318,6 +9113,7 @@ var NAMES = {
     token: "Ident",
     newKeyword: "forbidden",
     returns: "bool",
+    neverNull: "always",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, truth }) => truth(args[0]) },
@@ -12386,6 +9182,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $abs: value(args[0]) }) },
@@ -12401,6 +9198,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sqrt: value(args[0]) }) },
@@ -12418,6 +9216,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $exp: value(args[0]) }) },
@@ -12433,6 +9232,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ln: value(args[0]) }) },
@@ -12448,6 +9248,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log: [value(args[0]), 2] }) },
@@ -12465,6 +9266,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log10: value(args[0]) }) },
@@ -12482,6 +9284,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $trunc: value(args[0]) }) },
@@ -12499,6 +9302,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cmp: [value(args[0]), 0] }) },
@@ -12516,6 +9320,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => cbrt(value(args[0])) },
@@ -12533,6 +9338,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sin: value(args[0]) }) },
@@ -12548,6 +9354,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cos: value(args[0]) }) },
@@ -12563,6 +9370,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tan: value(args[0]) }) },
@@ -12578,6 +9386,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asin: value(args[0]) }) },
@@ -12595,6 +9404,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acos: value(args[0]) }) },
@@ -12612,6 +9422,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atan: value(args[0]) }) },
@@ -12629,6 +9440,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sinh: value(args[0]) }) },
@@ -12646,6 +9458,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cosh: value(args[0]) }) },
@@ -12663,6 +9476,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tanh: value(args[0]) }) },
@@ -12680,6 +9494,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asinh: value(args[0]) }) },
@@ -12697,6 +9512,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acosh: value(args[0]) }) },
@@ -12714,6 +9530,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atanh: value(args[0]) }) },
@@ -12731,6 +9548,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12749,6 +9567,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12769,6 +9588,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12789,6 +9609,7 @@ var NAMES = {
     call: true,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
@@ -12806,6 +9627,7 @@ var NAMES = {
     call: false,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => 3.141592653589793 },
@@ -12819,6 +9641,7 @@ var NAMES = {
     call: false,
     on: "Math",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => 2.718281828459045 },
@@ -13023,35 +9846,13 @@ var NAMES = {
     compare: "$.count === NumberInt(3)",
     refuseConstant: "'NumberInt(<constant>)' \u2014 this constant is not a whole number in the 32-bit range (-2147483648 \u2026 2147483647). Write 'Long(\u2026)' for a bigger integer, or 'Double(\u2026)' to keep a fraction."
   }),
-  Set: global_({
-    doc: "A set of values, for the set operations. Folds to a plain array \u2014 MongoDB has no set type.",
-    token: "Ident",
-    newKeyword: "required",
-    // A value built by this constructor is a receiver of the `set` family: the
-    // set operations (`.union`, `.difference`) are names on it.
-    family: "set",
-    returns: "array",
-    where: ["value"],
-    filter: because("a set is a value, not a test. Use '.union(...)' / '.difference(...)' on it."),
-    expr: {
-      byArgs: {
-        // A constant array never reaches this row — the fold makes `new Set([1, 2])` the array first.
-        constant: unsupported("'new Set(<constant>)' \u2014 the constant is not an array. Write 'new Set([1, 2, 3])'."),
-        dynamic: { args: { sig: "values", exact: 1 }, emit: ({ args, value }) => value(args[0]) },
-        otherwise: unsupported("'new Set(\u2026)' takes exactly one array of values.")
-      }
-    },
-    stream: unsupported("'Set' produces a value, not a stream of documents."),
-    statement: unsupported("'Set' produces a value. Use it inside a reshape or a '$set'."),
-    group: unsupported("'Set' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Set' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
-  }),
   Number: global_({
     doc: "Converts a value to a number.",
     token: "Ident",
     newKeyword: "forbidden",
     provides: "Number",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
     expr: {
@@ -13083,6 +9884,53 @@ var NAMES = {
     group: unsupported("'Array' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
+  Set: global_({
+    doc: "The JavaScript Set class. MongoDB has no set type; see its refusal.",
+    token: "Ident",
+    newKeyword: "required",
+    returns: "unknown",
+    where: [],
+    filter: setIsNotJsmql,
+    expr: setIsNotJsmql,
+    stream: setIsNotJsmql,
+    statement: setIsNotJsmql,
+    // The general sentence names the pipeline form, which refuses `Set` too. A constant
+    // array folds in an update document: `$.x = [1, 2, 2].uniq()` is `{ $set: { x: [1, 2] } }`.
+    updateDoc: setIsNotJsmql,
+    // Where an accumulator goes, MongoDB's own operator gathers the unique values of a group.
+    group: unsupported(
+      "'new Set(\u2026)' is not an accumulator. Inside '$group', '$addToSet(<value>)' gathers the unique values."
+    ),
+    window: unsupported(
+      "'new Set(\u2026)' is not a window function. Inside '$setWindowFields', '$addToSet(<value>)' gathers the unique values."
+    )
+  }),
+  Map: global_({
+    doc: "The JavaScript Map class. MongoDB has no map type; see its refusal.",
+    token: "Ident",
+    newKeyword: "required",
+    returns: "object",
+    where: [],
+    filter: mapIsNotJsmql,
+    expr: mapIsNotJsmql,
+    stream: unsupported("'Map' produces a value, not a stream of documents."),
+    statement: unsupported("'Map' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'Map' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Map' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  RegExp: global_({
+    doc: "The JavaScript RegExp class. A regular expression literal is the JSMQL spelling; see its refusal.",
+    token: "Ident",
+    newKeyword: "optional",
+    returns: "unknown",
+    where: [],
+    filter: regExpIsNotJsmql,
+    expr: regExpIsNotJsmql,
+    stream: unsupported("'RegExp' produces a value, not a stream of documents."),
+    statement: unsupported("'RegExp' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'RegExp' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'RegExp' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
   length: name({
     doc: "'.length()' \u2014 the number of characters of a string. See docs/LANGUAGE.md.",
     call: true,
@@ -13092,6 +9940,7 @@ var NAMES = {
       stream: "For the document count, write '$$.size()'."
     },
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     // `$strLenCP` aborts on null; a receiver that may be missing answers null, as a
@@ -13112,6 +9961,7 @@ var NAMES = {
     call: true,
     on: "Date",
     returns: "unknown",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     updateDoc: unsupported(
@@ -13130,6 +9980,7 @@ var NAMES = {
     call: true,
     on: "Date",
     returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     // The month counts from 0, as JavaScript's does; the cell adds one for `$dateFromParts`.
@@ -13347,7 +10198,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitOr` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitOr: args.map(value) }) },
@@ -13364,7 +10216,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitXor` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitXor: args.map(value) }) },
@@ -13381,7 +10234,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$bitAnd` over each pair of operand kinds gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitAnd: args.map(value) }) },
@@ -13560,7 +10414,10 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // This row states the `$add` road. A string operand makes it `$concat`, which
+    // src/compiler/emit/prove.ts proves a string. MEASURED: `$add` over each pair of
+    // operand kinds gives a number, a date, null or an error.
+    returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: inCode("src/compiler/emit/lower.ts"),
@@ -13576,7 +10433,9 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$subtract` over each pair of operand kinds gives a number, a date, null or
+    // an error. A date minus a date is a long, and a date minus a number is a date.
+    returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13596,7 +10455,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     flattensChain: true,
-    returns: "unknown",
+    // MEASURED: `$multiply` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $multiply: args.map(value) }) },
@@ -13612,7 +10472,8 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$divide` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13631,7 +10492,8 @@ var PRODUCTIONS = {
     associativity: "left",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$mod` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: {
@@ -13651,7 +10513,8 @@ var PRODUCTIONS = {
     fixity: "infix",
     leftOperandNot: ["logicalNot", "bitwiseNot", "typeCheck", "negation"],
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$pow` over each pair of operand kinds gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -13686,7 +10549,8 @@ var PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `{ $multiply: [x, -1] }` over each operand kind gives a number, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $multiply: [value(args[0]), -1] }) },
@@ -13702,7 +10566,8 @@ var PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    returns: "unknown",
+    // MEASURED: `$bitNot` over each operand kind gives an int, a long, null or an error.
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $bitNot: value(args[0]) }) },
@@ -13855,7 +10720,7 @@ var PRODUCTIONS = {
     statement: unsupported("'Class.method()' is not a statement \u2014 see its 'where'.")
   }),
   constructorCall: production({
-    doc: "`new Date(\u2026)`, `new Set(\u2026)`, `new ObjectId(\u2026)`. What each constructor means is in names.ts.",
+    doc: "`new Date(\u2026)`, `new ObjectId(\u2026)`, `new Decimal128(\u2026)`. What each constructor means is in names.ts.",
     tokens: ["new", "(", ")", ",", "identifier"],
     spelling: "new X()",
     // One node for every `new X(…)`. names.ts says which constructor it is.
@@ -14227,7 +11092,7 @@ var PRODUCTIONS = {
     statement: unsupported("'{ return \u2026 }' is not a statement \u2014 see its 'where'.")
   }),
   constantBinding: production({
-    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration.",
+    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration. A statement, never an array element: JavaScript refuses `[const x = \u2026]`. One scope declares a name once, its function's parameters included.",
     tokens: ["const", "=", "identifier", ","],
     spelling: "const x = \u2026",
     becomes: "LetDecl",
@@ -14240,7 +11105,7 @@ var PRODUCTIONS = {
     stream: unsupported("'const x = \u2026' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   mutableBinding: production({
-    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration.",
+    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration. A statement, never an array element: JavaScript refuses `[let x = \u2026]`. One scope declares a name once, its function's parameters included.",
     tokens: ["let", "=", "identifier", ","],
     spelling: "let x = \u2026",
     becomes: "LetDecl",
@@ -14280,7 +11145,7 @@ var PRODUCTIONS = {
     stream: unsupported("'delete $.field' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   fieldAssignment: production({
-    doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node.",
+    doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node. A `,` joins two writes; it cannot end the run, because JavaScript refuses `$.a = 1,`.",
     tokens: ["=", "+=", "-=", "*=", "/=", ",", "(", ")"],
     spelling: "$.field = \u2026",
     becomes: ["AssignExpr", "UpdateFilter"],
@@ -14293,11 +11158,13 @@ var PRODUCTIONS = {
     stream: unsupported("'$.field = \u2026' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   increment: production({
-    doc: "Adds one to a field. `++$.a` and `$.a++` are the same.",
+    doc: "Adds one to a field. As a statement, `++$.a` and `$.a++` are the same write. Inside a value, the parser refuses both.",
     tokens: ["++"],
     spelling: "++",
     becomes: ["AssignExpr", "UpdateFilter"],
+    precedence: 14,
     fixity: "prefixOrPostfix",
+    asStatement: "+= 1",
     on: "any",
     returns: "unknown",
     where: ["statement"],
@@ -14307,11 +11174,13 @@ var PRODUCTIONS = {
     stream: unsupported("'++' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   decrement: production({
-    doc: "Subtracts one from a field. `--$.a` and `$.a--` are the same.",
+    doc: "Subtracts one from a field. As a statement, `--$.a` and `$.a--` are the same write. Inside a value, the parser refuses both.",
     tokens: ["--"],
     spelling: "--",
     becomes: ["AssignExpr", "UpdateFilter"],
+    precedence: 14,
     fixity: "prefixOrPostfix",
+    asStatement: "-= 1",
     on: "any",
     returns: "unknown",
     where: ["statement"],
@@ -14442,7 +11311,10 @@ function bodySlotAt(stage, path) {
   const layout = bodyLayoutOf(stage);
   if (layout === void 0) return void 0;
   const keys = Object.keys(layout).map((key) => ({ key, seg: segmentsOf(key) }));
-  const deeper = keys.some(({ seg }) => seg.length > path.length && covers(seg.slice(0, path.length), path));
+  const evaluatedPaths = evaluatesOf(stage).map(segmentsOf);
+  const below = (seg) => seg.length > path.length && covers(seg.slice(0, path.length), path);
+  const deeper = keys.some(({ seg }) => below(seg)) || evaluatedPaths.some(below);
+  const evaluated = evaluatedPaths.some((seg) => covers(seg, path));
   let best;
   for (const cand of keys) {
     if (!covers(cand.seg, path)) continue;
@@ -14451,7 +11323,10 @@ function bodySlotAt(stage, path) {
   }
   if (best === void 0) return void 0;
   const stated = layout[best.key];
-  return typeof stated === "string" ? { at: stated, otherwise: stated, deeper } : { at: stated.list, otherwise: stated.otherwise, deeper };
+  return typeof stated === "string" ? { at: stated, otherwise: stated, deeper, evaluated } : { at: stated.list, otherwise: stated.otherwise, deeper, evaluated };
+}
+function evaluatesOf(stage) {
+  return row(stage)?.evaluates ?? [];
 }
 function blockBodyOf(name2) {
   return row(name2)?.blockBody ?? "javascript";
@@ -14573,12 +11448,10 @@ function bindsOf(name2) {
   return emitRow(name2)?.binds;
 }
 function positionalKeysOf(name2) {
-  const shape = emitRow(name2)?.shape;
-  return typeof shape === "object" && shape !== null ? shape.object.positional ?? [] : [];
+  return emitRow(name2)?.keys ?? [];
 }
-function bodyRuleOf(name2) {
-  const shape = emitRow(name2)?.shape;
-  return typeof shape === "object" && shape !== null ? shape.object : void 0;
+function takesLetOf(stage) {
+  return row(stage)?.takesLet === true;
 }
 function operandPositionOf(name2) {
   return row(name2)?.operandPosition;
@@ -14586,22 +11459,18 @@ function operandPositionOf(name2) {
 function liftsToOf(name2) {
   return row(name2)?.liftsTo;
 }
-function stageBodyRuleOf(name2) {
-  return row(name2)?.body;
+function takesNoReceiver(name2) {
+  const kind = row(name2)?.kind;
+  return name2.startsWith("$") || kind === "mongo" || kind === "global";
 }
-function bodyExampleOf(name2) {
-  return row(name2)?.bodyExample;
+function valueTwinOf(name2) {
+  return row(name2)?.valueTwin;
 }
 function operandShapeOf(name2) {
-  const shape = emitRow(name2)?.shape;
-  if (shape === void 0) return void 0;
-  return typeof shape === "string" ? shape : "object";
+  return emitRow(name2)?.shape;
 }
 function spreadAlternativeOf(name2) {
   return emitRow(name2)?.spreadAlternative;
-}
-function constructedFamilyOf(name2) {
-  return emitRow(name2)?.family;
 }
 function productionForNode(nodeType) {
   for (const [key, p] of Object.entries(PRODUCTIONS)) {
@@ -14636,13 +11505,20 @@ function hasStreamValueCell(name2) {
   return typeof cell === "object" && cell !== null && typeof cell.emit === "function";
 }
 function neverNullOf(name2) {
-  return row(name2)?.neverNull === true;
+  const stated = row(name2)?.neverNull;
+  return stated === true || stated === "always";
+}
+function neverNullAlwaysOf(name2) {
+  return row(name2)?.neverNull === "always";
+}
+function readsNullAsEmptyOf(name2) {
+  return row(name2)?.readsNullAsEmpty === true;
 }
 function emptyValueOf(name2, family) {
   const own = families(row(name2)?.on);
   const fams = family !== null ? [family] : own === void 0 || own === "any" ? [] : own.filter((f) => FIELD_FAMILIES.includes(f));
   if (fams.length === 0) return null;
-  if (fams.every((f) => f === "array" || f === "set")) return [];
+  if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
   return null;
 }
@@ -14726,8 +11602,30 @@ function packsSpreadOf(name2) {
 function mutatorFormOf(name2) {
   return row(name2)?.mutatorForm;
 }
-function onlyInsideOf(name2, position) {
-  return row(name2)?.onlyInside?.[position];
+var VALUE_FAMILIES = /* @__PURE__ */ new Set(["array", "string", "number", "object", "date", "regexp", "set"]);
+function methodRows() {
+  return Object.keys(ROWS).filter((n2) => {
+    if (n2.startsWith("$") || !isCallable(n2) || isGlobalName(n2)) return false;
+    const on = families(row(n2)?.on);
+    return on === "any" || on !== void 0 && on.some((f) => VALUE_FAMILIES.has(f));
+  });
+}
+function streamReceiverNames() {
+  return Object.keys(ROWS).filter((n2) => lists(n2, "stream") || familiesOf(n2)?.includes("stream") === true);
+}
+function bareCallableNames() {
+  return Object.keys(ROWS).filter(
+    (n2) => !n2.startsWith("$") && isGlobalName(n2) && isCallable(n2) && (positionsOf(n2)?.length ?? 0) > 0
+  );
+}
+function constructibleNames() {
+  return bareCallableNames().filter((n2) => {
+    const k = newKeywordOf(n2);
+    return k === "required" || k === "optional";
+  });
+}
+function valueMethodNames() {
+  return methodRows().filter((n2) => lists(n2, "value") || row(n2).expr !== void 0);
 }
 
 // src/registry/tokens.ts
@@ -15181,7 +12079,9 @@ function lex(src) {
 // src/compiler/parse/cursor.ts
 var ParseError = class extends Error {
   constructor(message, pos) {
-    super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
+    super(
+      /\bat position \d+/.test(message) ? message : message.endsWith(".") ? `${message.slice(0, -1)} at position ${pos}.` : `${message} at position ${pos}`
+    );
     this.name = "ParseError";
     this.pos = pos;
   }
@@ -15251,6 +12151,10 @@ var Cursor = class {
       throw new ParseError(`Expected ${spell(type)} but got ${found(this.peek())}`, this.peek().pos);
     }
     return this.next();
+  }
+  /** The offset just after the last token that the cursor consumed. A message quotes the source span up to it. */
+  lastEnd() {
+    return this.at === 0 ? 0 : this.toks[this.at - 1].end;
   }
   /** Rewinds the cursor. Only one place needs this: to tell an arrow from a group. */
   mark() {
@@ -18568,6 +15472,9 @@ var MAXSIZE = 1024 * 1024 * 17;
 var buffer = ByteUtils.allocate(MAXSIZE);
 
 // src/bson.ts
+function regexValue(pattern, options) {
+  return options.includes("s") ? new BSONRegExp(pattern, options) : new RegExp(pattern, options);
+}
 function isBsonType(v, cls, tag) {
   return v instanceof cls || bsonTagOf(v) === tag;
 }
@@ -18845,7 +15752,8 @@ function build(want) {
         fixity: row2.fixity,
         noMixWith: row2.noMixWith ?? [],
         leftOperandNot: row2.leftOperandNot ?? [],
-        neverAWriteTarget: row2.neverAWriteTarget !== void 0
+        neverAWriteTarget: row2.neverAWriteTarget !== void 0,
+        asStatement: row2.asStatement ?? null
       });
       continue;
     }
@@ -18859,7 +15767,8 @@ function build(want) {
       rules: [...seen.rules, name2],
       noMixWith: [...seen.noMixWith, ...row2.noMixWith ?? []],
       leftOperandNot: [...seen.leftOperandNot, ...row2.leftOperandNot ?? []],
-      neverAWriteTarget: seen.neverAWriteTarget || row2.neverAWriteTarget !== void 0
+      neverAWriteTarget: seen.neverAWriteTarget || row2.neverAWriteTarget !== void 0,
+      asStatement: seen.asStatement ?? row2.asStatement ?? null
     });
   }
   return out;
@@ -18868,6 +15777,10 @@ var PREFIX = build((f) => f === "prefix" || f === "prefixOrPostfix");
 var INFIX = build(
   (f) => f === "infix" || f === "postfix" || f === "ternary" || f === "prefixOrPostfix"
 );
+function asStatementOf(spelling) {
+  const type = lexemeToType(spelling);
+  return type === null ? null : PREFIX.get(type)?.asStatement ?? null;
+}
 var WORDS = new Map(
   rows.filter(([, r]) => r.word !== void 0).map(([n2, r]) => [r.word, n2])
 );
@@ -18913,19 +15826,19 @@ function assertPlausibleObjectId(hex, pos) {
   if (typo !== null) throw new ParseError(typo, pos);
 }
 function parse2(source) {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const program = p.program();
   p.finish();
   return program;
 }
 function parseEntry(source) {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const entry = p.entry();
   p.finish();
   return entry;
 }
 function parseExpression(source) {
-  const p = new Parser(lex(source));
+  const p = new Parser(lex(source), source);
   const e = p.expression();
   p.expectEnd();
   p.finish();
@@ -18956,16 +15869,17 @@ function statementSpelling(stmt) {
 }
 function notPartOfACallback(stmt, retPos) {
   const wrote = statementSpelling(stmt);
+  const pos = stmt.pos;
   if (stmt.type === "FuncDecl") {
-    return `\`${wrote}\` declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(\u2026)' inside the callback.`;
+    return `\`${wrote}\` at position ${pos} declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write \`${wrote};\` as its own statement before this one. Then call '${stmt.name}(\u2026)' inside the callback.`;
   }
   const stages = `'.aggregate((o) => { ${wrote}; \u2026 })'`;
   const link = stmt.type === "OperatorCall" ? `'$$.$${stmt.name.replace(/^\$/, "")}(\u2026)'` : null;
   const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
   if (retPos !== null) {
-    return `\`${wrote}\` at position ${stmt.pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
+    return `\`${wrote}\` at position ${pos} is a pipeline stage. The 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}. It takes a block of stages and no 'return'. Or delete the stage and fold its work into the 'return'.${chain}`;
   }
-  return `\`${wrote}\` is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
+  return `\`${wrote}\` at position ${pos} is a pipeline stage, not part of a callback. A callback's block holds declarations and a 'return'. Move the stages to ${stages}. It is the one method whose block is a list of stages.${chain}`;
 }
 function targetSpelling(target) {
   if (target.type === "FieldRef") return target.path === "" ? "$" : `$.${target.path}`;
@@ -18980,8 +15894,90 @@ function notAPlainPattern(pos, wrote) {
     pos
   );
 }
+function parameterDefault(name2) {
+  return new ParseError(
+    `A callback parameter is a plain name, and a default value ('${name2.text} = \u2026') is not one, at position ${name2.pos}. Name the parameter, and write the default where the body reads it: '${name2.text} => ${name2.text} ?? <default>'.`,
+    name2.pos
+  );
+}
+function refuseDuplicateParams(binders) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const b of binders) {
+    if (seen.has(b.name)) {
+      throw new ParseError(
+        `The parameter name '${b.name}' appears twice in one parameter list, at position ${b.pos}. JavaScript refuses a duplicate parameter name here. Give each parameter its own name, for example '(x, i) => \u2026'.`,
+        b.pos
+      );
+    }
+    seen.add(b.name);
+  }
+}
+function declare(scope, stmt) {
+  if (stmt.type !== "LetDecl" && stmt.type !== "FuncDecl") return;
+  const wrote = `${stmt.type === "FuncDecl" && stmt.form === "function" ? "function" : stmt.kind} ${stmt.name}`;
+  const earlier = scope.get(stmt.name);
+  if (earlier === "parameter") {
+    throw new ParseError(
+      `\`${wrote}\` re-declares the parameter \`${stmt.name}\` at position ${stmt.pos}, which JavaScript refuses. Pick a different name.`,
+      stmt.pos
+    );
+  }
+  if (earlier === "declaration") {
+    throw new ParseError(
+      `\`${wrote}\` at position ${stmt.pos} is already declared earlier in this block, which JavaScript refuses. Pick a different name.`,
+      stmt.pos
+    );
+  }
+  scope.set(stmt.name, "declaration");
+}
+function declarationAsElement(kw, name2) {
+  const wrote = `${kw.text} ${name2.type === "Ident" ? name2.text : "x"} = \u2026`;
+  return new ParseError(
+    `\`${wrote}\` is a declaration, and JavaScript refuses a declaration as an array element, at position ${kw.pos}. Write the pipeline as statements, with a ';' after each one: \`${wrote}; $match(\u2026);\`. A sub-pipeline takes its statements in an '.aggregate' block: \`$.<field> = $$$.<coll>.aggregate(() => { ${wrote}; $match(\u2026); })\` for a '$lookup', \`$$.push(...$$$.<coll>.aggregate(() => { \u2026 }))\` for a '$unionWith', and \`$ = { k: $$.aggregate(() => { \u2026 }) }\` for a '$facet' branch.`,
+    kw.pos
+  );
+}
+function trailingComma(comma, next) {
+  return new ParseError(
+    `A ',' with no write after it, before ${found(next)} at position ${comma.pos}. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( \u2026 )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').`,
+    comma.pos
+  );
+}
+function writeInValue(wrote, statement, place2, side, pos) {
+  const read = place2 === null ? "" : `, and read '${place2}' there`;
+  return new ParseError(
+    `'${wrote}' is a write inside a value at position ${pos}. A write stands only as a statement. Write '${statement};' as its own statement ${side} the statement that uses the value${read}.`,
+    pos
+  );
+}
+function writeInValueOf(node) {
+  const op = node.type === "UpdateFilter" ? node.ops[0] : node;
+  const place2 = targetSpelling(op.target);
+  if (op.type === "DeleteStmt") return writeInValue(`delete ${place2}`, `delete ${place2}`, null, "before", op.pos);
+  const update = asStatementOf(op.op);
+  if (update === null) return writeInValue(`${place2} ${op.op} \u2026`, `${place2} ${op.op} \u2026`, place2, "before", op.pos);
+  const prefix = op.pos < op.target.pos;
+  const wrote = prefix ? `${op.op}${place2}` : `${place2}${op.op}`;
+  return writeInValue(wrote, `${place2} ${update}`, place2, prefix ? "before" : "after", op.pos);
+}
+function functionInValueOf(node) {
+  return new ParseError(
+    `'function ${node.name}(\u2026)' is a function inside a value at position ${node.pos}. MQL has no function values. Write the function as its own statement at the top level of the pipeline, and call '${node.name}(\u2026)' where the value goes.`,
+    node.pos
+  );
+}
+function refuseWholeTarget(target, op, pos) {
+  if (op === "=" || op === "delete") return;
+  const what = target.type === "StreamRef" ? "'$$' is the root stream" : target.type === "FieldRef" && target.path === "" ? "'$' is the whole document" : null;
+  if (what === null) return;
+  const field = asStatementOf(op) === null ? `$.<field> ${op} \u2026` : `$.<field>${op}`;
+  throw new ParseError(
+    `Cannot use '${op}' on '${target.type === "StreamRef" ? "$$" : "$"}' at position ${pos}. ${what}, not a field. Write to a field: '${field}'.`,
+    pos
+  );
+}
 var Parser = class _Parser {
-  constructor(toks) {
+  constructor(toks, src) {
     /**
      * Every lambda whose `{ … }` body had no `return`, and so the parser read it as
      * pipeline STAGES, minus the ones a stages-taking callee has claimed. Whatever
@@ -18993,6 +15989,7 @@ var Parser = class _Parser {
     this.unclaimedStages = /* @__PURE__ */ new Map();
     this.depth = 0;
     this.c = new Cursor(toks);
+    this.src = src;
   }
   expectEnd() {
     if (!this.c.is("EOF")) {
@@ -19047,8 +16044,10 @@ var Parser = class _Parser {
     }
     const toolbox = slots.find(isToolbox) ?? [];
     const params = slots.find((sl) => sl !== toolbox && isParams(sl)) ?? [];
+    const binders = slots.flat();
+    refuseDuplicateParams(binders);
     if (!isFunction) this.c.expect("Arrow");
-    const program = this.c.is("LBrace") ? this.entryBlock() : this.program();
+    const program = this.c.is("LBrace") ? this.entryBlock(binders) : this.program();
     return { params, toolbox, program };
   }
   /** `{ a, b: alias, $, $$, $name }` — one slot of the entry parameter list. */
@@ -19069,7 +16068,7 @@ var Parser = class _Parser {
         const name2 = this.c.eat("Colon") ? this.identLike().text : key.text;
         if (this.c.is("Eq")) {
           throw new ParseError(
-            `jsmql does not support a default value in the params destructure ('${key.text} = \u2026'). Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
+            `jsmql does not support a default value in the params destructure ('${key.text} = \u2026') at position ${this.c.peek().pos}. Apply the default where you call the query. Use JS's \`??\` at the call site: q({ ${key.text}: input ?? <default> }). Or write the value into the template-tag form.`,
             this.c.peek().pos
           );
         }
@@ -19115,9 +16114,9 @@ var Parser = class _Parser {
     return { ...dollar, text: "$" + name2.text, end: name2.end };
   }
   /** `{ … }` as an entry body: statements, with an optional trailing `return`. */
-  entryBlock() {
+  entryBlock(params) {
     this.c.expect("LBrace");
-    const { stmts, ret, retPos, sawSemi } = this.block("RBrace");
+    const { stmts, ret, retPos, sawSemi } = this.block("RBrace", params);
     if (ret !== null) {
       if (stmts.length > 0) {
         throw new ParseError(
@@ -19161,8 +16160,9 @@ var Parser = class _Parser {
    * A `return` may appear only where a `}` closes the block. At the top level it
    * reaches `statement()`, and the parser refuses it as an unexpected token.
    */
-  block(terminator) {
+  block(terminator, params = []) {
     const stmts = [];
+    const scope = new Map(params.map((p) => [p.name, "parameter"]));
     let sawSemi = false;
     let endPos = this.c.peek().pos;
     for (; ; ) {
@@ -19185,6 +16185,7 @@ var Parser = class _Parser {
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
+      for (const stmt of run) declare(scope, stmt);
       stmts.push(...run);
       const blockBodied = st.type === "FuncDecl" && st.form === "function";
       if (this.c.is("Semi")) sawSemi = true;
@@ -19242,7 +16243,7 @@ var Parser = class _Parser {
     this.refuseGenerator();
     const name2 = this.c.expect("Ident");
     const params = this.paramList();
-    const lambda = this.lambdaOf(params, kw.pos);
+    const lambda = this.lambdaOf(params, kw.pos, false);
     return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
   /** `(a, [b, c], { d },)`: a parenthesised parameter list. Names and patterns match the arrow's, and a trailing comma is allowed. */
@@ -19270,7 +16271,7 @@ var Parser = class _Parser {
     this.refuseGenerator();
     if (this.c.is("Ident")) this.c.next();
     const params = this.paramList();
-    return this.lambdaOf(params, kw.pos);
+    return this.lambdaOf(params, kw.pos, false);
   }
   /**
    * `let x = …, y = …` / `const x = …, y = …`: JavaScript's declaration list,
@@ -19286,11 +16287,6 @@ var Parser = class _Parser {
     const out = [this.declarator(kind, kw.pos, kw.pos)];
     while (this.c.eat("Comma")) out.push(this.declarator(kind, null, kw.pos));
     return out;
-  }
-  /** `let x = …` / `const x = …`, one declarator: a bracketed pipeline's element, where `,` separates elements. */
-  binding() {
-    const kw = this.c.next();
-    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
   }
   /**
    * One declarator, after the keyword. `kwPos` places the FIRST declarator at the
@@ -19381,47 +16377,83 @@ var Parser = class _Parser {
     if (this.c.is("LParen") && this.parenWriteAhead()) {
       this.c.next();
       const ops = [];
-      do {
+      for (; ; ) {
         ops.push(...this.writeGroup());
-      } while (this.c.eat("Comma") && !this.c.is("RParen"));
+        if (!this.c.is("Comma")) break;
+        const comma = this.c.next();
+        if (this.c.is("RParen")) throw trailingComma(comma, this.c.peek());
+      }
       this.c.expect("RParen");
       return ops;
     }
     if (this.c.is("Delete")) {
       const kw = this.c.next();
+      const targetStart = this.c.peek().pos;
       const target2 = this.pratt(1);
-      this.requirePlace(target2, kw.pos, "delete");
+      this.requirePlace(target2, kw.pos, "delete", this.src.slice(targetStart, this.c.lastEnd()));
       return [{ type: "DeleteStmt", target: target2.expr, pos: kw.pos }];
     }
-    const prefix = this.c.is("PlusPlus") || this.c.is("MinusMinus") ? this.c.next() : null;
-    const target = this.pratt(1);
+    const lead = PREFIX.get(this.c.type);
+    const prefix = lead !== void 0 && lead.asStatement !== null ? this.c.next() : null;
+    const start = prefix?.pos ?? this.c.peek().pos;
+    const placeStart = this.c.peek().pos;
+    const target = prefix !== null && lead !== void 0 ? this.pratt(lead.prec) : this.pratt(1, true);
+    const placeEnd = this.c.lastEnd();
     const op = prefix ?? this.c.next();
     if (!ASSIGN_TRIGGERS.has(op.type)) {
       throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
     }
     const spelling = op.text;
-    this.requireWriteTarget(target, op.pos, spelling);
+    this.requireWriteTarget(target, op.pos, spelling, this.src.slice(placeStart, placeEnd));
+    const update = PREFIX.get(op.type)?.asStatement ?? null;
+    if (update !== null) {
+      if (INFIX.has(this.c.type) || ASSIGN_TRIGGERS.has(this.c.type)) {
+        const place2 = this.src.slice(placeStart, placeEnd);
+        const wrote = this.src.slice(start, prefix !== null ? placeEnd : op.end);
+        throw writeInValue(wrote, `${place2} ${update}`, place2, prefix !== null ? "before" : "after", op.pos);
+      }
+      return [{ type: "AssignExpr", target: target.expr, op: spelling, value: target.expr, pos: op.pos }];
+    }
     if (spelling === "=") {
       const targets = [target.expr];
-      let value2 = this.pratt(1);
+      let valueStart2 = this.c.peek().pos;
+      let value = this.pratt(1);
       while (this.c.is("Eq")) {
+        const wrote = this.src.slice(valueStart2, this.c.lastEnd());
         const eq = this.c.next();
-        this.requireWriteTarget(value2, eq.pos, "=");
-        targets.push(value2.expr);
-        value2 = this.pratt(1);
+        this.requireWriteTarget(value, eq.pos, "=", wrote);
+        targets.push(value.expr);
+        valueStart2 = this.c.peek().pos;
+        value = this.pratt(1);
       }
-      return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=", value: value2.expr, pos: op.pos }));
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(value, valueStart2);
+      return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=", value: value.expr, pos: op.pos }));
     }
-    const value = spelling === "++" || spelling === "--" ? target.expr : this.expression();
-    return [{ type: "AssignExpr", target: target.expr, op: spelling, value, pos: op.pos }];
+    return [{ type: "AssignExpr", target: target.expr, op: spelling, value: this.expression(), pos: op.pos }];
+  }
+  /**
+   * `1 + ($.a = 5)`: an assignment where JavaScript reads a value. The cursor
+   * stands at the operator. This method reads the right side too, so the message
+   * quotes the whole write.
+   */
+  refuseAssignInValue(target, start) {
+    const place2 = this.src.slice(start, this.c.lastEnd());
+    const op = this.c.next();
+    this.requireWriteTarget(target, op.pos, op.text, place2);
+    this.expression();
+    const wrote = this.src.slice(start, this.c.lastEnd());
+    throw writeInValue(wrote, wrote, place2, "before", op.pos);
   }
   /** The `;` form: a `,` continues the run until the `;` or the end of input. */
   writes() {
     const pos = this.c.peek().pos;
     const ops = [];
-    do {
+    for (; ; ) {
       ops.push(...this.writeGroup());
-    } while (this.c.eat("Comma") && !this.c.is("EOF") && !this.c.is("Semi") && !this.c.is("RBrace"));
+      if (!this.c.is("Comma")) break;
+      const comma = this.c.next();
+      if (this.c.is("EOF") || this.c.is("Semi") || this.c.is("RBrace")) throw trailingComma(comma, this.c.peek());
+    }
     return { type: "UpdateFilter", ops, pos };
   }
   /**
@@ -19452,9 +16484,10 @@ var Parser = class _Parser {
   /**
    * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
    * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not places.
-   * JavaScript refuses them, and so does JSMQL.
+   * JavaScript refuses them, and so does JSMQL. `wrote` is the target as the
+   * source spells it, so the message quotes the developer's own text.
    */
-  requirePlace(target, pos, op) {
+  requirePlace(target, pos, op, wrote) {
     const t = target.expr.type;
     const isPlace = t === "FieldRef" || t === "Ident" || t === "MemberAccess" || t === "IndexAccess" || t === "StreamRef" || t === "DatabaseRef" || t === "ClusterRef";
     if (isPlace) return;
@@ -19465,9 +16498,8 @@ var Parser = class _Parser {
         pos
       );
     }
-    const what = target.rule === null ? `a ${t}` : `a '${spelled(target.rule)}' expression`;
     throw new ParseError(
-      `Cannot apply '${op}' to ${what}. You can write only to a field, a binding, '$', '$$' or a collection.`,
+      `Cannot apply '${op}' to '${wrote}' at position ${pos}. You can write only to a field, a binding, '$', '$$' or a collection.`,
       pos
     );
   }
@@ -19478,8 +16510,9 @@ var Parser = class _Parser {
    * This method reads the row rather than testing `.optional`. So the next rule
    * that says so needs no branch here.
    */
-  requireWriteTarget(target, pos, op) {
-    this.requirePlace(target, pos, op);
+  requireWriteTarget(target, pos, op, wrote) {
+    this.requirePlace(target, pos, op, wrote);
+    refuseWholeTarget(target.expr, op, pos);
     if (target.rule === null) return;
     const refusal = NEVER_A_WRITE_TARGET.get(target.rule);
     if (refusal === void 0) return;
@@ -19499,16 +16532,32 @@ var Parser = class _Parser {
       );
     }
     try {
-      return this.pratt(1).expr;
+      const start = this.c.peek().pos;
+      const out = this.pratt(1);
+      if (ASSIGN_TRIGGERS.has(this.c.type)) this.refuseAssignInValue(out, start);
+      return out.expr;
     } finally {
       this.depth--;
     }
   }
-  pratt(minPrec) {
+  /**
+   * One Pratt level. `endsAtWrite` is true only where a statement reads the
+   * target of a write. There a postfix write (`$.a++`) ends the target, and the
+   * caller reads the operator. Everywhere else, the write stands inside a value.
+   */
+  pratt(minPrec, endsAtWrite = false) {
+    const start = this.c.peek().pos;
     let left = this.unary();
     for (; ; ) {
       const rule = INFIX.get(this.c.type);
       if (rule === void 0 || rule.prec === 0 || rule.prec < minPrec) return left;
+      if (rule.asStatement !== null) {
+        if (endsAtWrite) return left;
+        const place2 = this.src.slice(start, this.c.lastEnd());
+        const op2 = this.c.next();
+        this.requireWriteTarget(left, op2.pos, op2.text, place2);
+        throw writeInValue(this.src.slice(start, op2.end), `${place2} ${rule.asStatement}`, place2, "after", op2.pos);
+      }
       if (mixingRefused(rule, left.rule, "left")) {
         throw new ParseError(
           `You cannot combine '${this.c.peek().text}' with '${spelled(left.rule)}' without parentheses. JavaScript rejects it.`,
@@ -19558,7 +16607,19 @@ var Parser = class _Parser {
     const rule = PREFIX.get(this.c.type);
     if (rule !== void 0 && rule.prec > 0) {
       const op = this.c.next();
+      const placeStart = this.c.peek().pos;
       const argument = this.pratt(rule.prec);
+      if (rule.asStatement !== null) {
+        const place2 = this.src.slice(placeStart, this.c.lastEnd());
+        this.requireWriteTarget(argument, op.pos, op.text, place2);
+        throw writeInValue(
+          this.src.slice(op.pos, this.c.lastEnd()),
+          `${place2} ${rule.asStatement}`,
+          place2,
+          "before",
+          op.pos
+        );
+      }
       if (mixingRefused(rule, argument.rule, "right")) {
         throw new ParseError(
           `You cannot combine '${op.text}' with '${spelled(argument.rule)}' without parentheses. JavaScript rejects it.`,
@@ -19570,6 +16631,14 @@ var Parser = class _Parser {
         expr: { type: "UnaryExpr", op: op.text, argument: argument.expr, pos: op.pos },
         rule: rule.rules[0]
       };
+    }
+    if (this.c.is("Delete")) {
+      const kw = this.c.next();
+      const placeStart = this.c.peek().pos;
+      const target = this.pratt(MAX_PRECEDENCE);
+      const place2 = this.src.slice(placeStart, this.c.lastEnd());
+      this.requirePlace(target, kw.pos, "delete", place2);
+      throw writeInValue(`delete ${place2}`, `delete ${place2}`, null, "before", kw.pos);
     }
     return this.postfix(this.atom());
   }
@@ -19779,7 +16848,7 @@ var Parser = class _Parser {
     const t = this.c.next();
     if (this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaBody([t.text], arrow.pos);
+      return this.lambdaBody([t.text], arrow.pos, [{ name: t.text, pos: t.pos }]);
     }
     return { type: "Ident", name: t.text, pos: t.pos };
   }
@@ -19802,7 +16871,7 @@ var Parser = class _Parser {
     }
     if (looksLikeParams && this.c.eat("RParen") && this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaOf(params, arrow.pos);
+      return this.lambdaOf(params, arrow.pos, true);
     }
     this.c.reset(save);
     this.c.expect("LParen");
@@ -19823,7 +16892,14 @@ var Parser = class _Parser {
    * `([...a, b])` is a legal expression.
    */
   param() {
-    if (this.c.is("Ident")) return { kind: "name", name: this.c.next().text };
+    if (this.c.is("Ident")) {
+      const t = this.c.next();
+      if (this.c.is("Eq")) {
+        if (!this.skipPatternPart()) return null;
+        return { kind: "refused", error: parameterDefault(t) };
+      }
+      return { kind: "name", name: t.text, pos: t.pos };
+    }
     if (this.c.is("LBracket")) {
       const open = this.c.next();
       const parts = [];
@@ -19905,7 +16981,9 @@ var Parser = class _Parser {
     for (; ; ) {
       const t = this.c.peek();
       if (t.type === "EOF") return false;
-      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace")) return true;
+      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace" || t.type === "RParen")) {
+        return true;
+      }
       if (t.type === "LParen" || t.type === "LBracket" || t.type === "LBrace") depth++;
       if (t.type === "RParen" || t.type === "RBracket" || t.type === "RBrace") depth--;
       this.c.next();
@@ -19919,17 +16997,24 @@ var Parser = class _Parser {
    * its shape for every reader (a sort key sees the minus, a filter sees the
    * comparison).
    */
-  lambdaOf(params, pos) {
+  lambdaOf(params, pos, arrow) {
     for (const p of params) if (p !== null && p.kind === "refused") throw p.error;
     const named = params;
+    const binders = [];
+    for (const p of named) {
+      if (p.kind === "name") binders.push({ name: p.name, pos: p.pos });
+      else for (const part of p.parts) if (part !== null) binders.push(part);
+    }
+    if (arrow || named.some((p) => p.kind !== "name")) refuseDuplicateParams(binders);
     if (named.every((p) => p.kind === "name")) {
       return this.lambdaBody(
         named.map((p) => p.name),
-        pos
+        pos,
+        binders
       );
     }
     const plain = named.map((p) => p.kind === "name" ? p.name : "");
-    const parsed = this.lambdaBody(plain, pos);
+    const parsed = this.lambdaBody(plain, pos, binders);
     const taken = [parsed, ...plain.filter((n2) => n2 !== "").map((n2) => ({ type: "Ident", name: n2 }))];
     const names = [...plain];
     const parts = /* @__PURE__ */ new Map();
@@ -19967,12 +17052,12 @@ var Parser = class _Parser {
    * `blockBody: "stages"`. The callee claims it in `args()`, and `finish()`
    * refuses a stages body that nobody claimed.
    */
-  lambdaBody(params, pos) {
+  lambdaBody(params, pos, binders) {
     if (!this.c.is("LBrace")) {
       return { type: "Lambda", params, body: this.expression(), pos };
     }
     const open = this.c.next();
-    const { stmts, ret, retPos, endPos } = this.block("RBrace");
+    const { stmts, ret, retPos, endPos } = this.block("RBrace", binders);
     if (ret !== null) {
       const decls = stmts.filter((st) => st.type === "LetDecl");
       if (decls.length !== stmts.length) {
@@ -20039,11 +17124,12 @@ var Parser = class _Parser {
     return { type: "ObjectLiteral", entries, pos: open.pos };
   }
   /**
-   * One element of an array literal. A declaration or a write makes the literal a
-   * bracketed pipeline. Anything else is a value.
+   * One element of an array literal. A write or a `function` makes the literal a
+   * bracketed pipeline. Anything else is a value. A `let` or a `const` is not an
+   * element at all: JavaScript refuses it there.
    */
   arrayElement() {
-    if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    if (this.c.is("Let") || this.c.is("Const")) throw declarationAsElement(this.c.peek(), this.c.peek(1));
     if (this.functionAhead()) return this.functionDecl();
     if (this.writeAhead()) return this.writeRun();
     return this.expression();
@@ -20465,7 +17551,7 @@ function foldNamespaceCall(namespace, name2, args) {
       case "values":
         return plain(o) ? ok2(Object.values(o)) : NO2;
       case "entries":
-        return plain(o) ? ok2(Object.entries(o).map(([k, v]) => ({ k, v }))) : NO2;
+        return plain(o) ? ok2(Object.entries(o)) : NO2;
       case "assign":
         return values.every(plain) ? ok2(Object.assign({}, ...values)) : NO2;
       case "fromEntries": {
@@ -20492,11 +17578,6 @@ function foldConstructor(name2, args) {
   switch (canonicalBsonName(name2)) {
     case "Date":
       return foldNewDate(values);
-    case "Set": {
-      const [a] = values;
-      if (args.length === 0) return ok2([]);
-      return Array.isArray(a) ? ok2(a) : NO2;
-    }
     default:
       return bsonValue2(name2, args.length, values);
   }
@@ -20754,9 +17835,7 @@ function objectMethod(o, name2, args) {
       if (fn === void 0) return NO2;
       const out = {};
       for (const [k, v] of Object.entries(o)) {
-        const verdict = fn(v, k, o);
-        if (typeof verdict !== "boolean") return NO2;
-        if (verdict === (name2 === "pickBy")) setKey(out, k, v);
+        if (truthy(fn(v, k, o)) === (name2 === "pickBy")) setKey(out, k, v);
       }
       return ok2(out);
     }
@@ -20765,6 +17844,15 @@ function objectMethod(o, name2, args) {
   }
 }
 var deepIncludes = (haystack, needle) => haystack.some((h) => sameValue(h, needle));
+function firstPerKey(items, keyOf) {
+  const seen = [];
+  return items.filter((v, i) => {
+    const k = keyOf(v, i, items);
+    if (deepIncludes(seen, k)) return false;
+    seen.push(k);
+    return true;
+  });
+}
 function keyedBy(xs, fn) {
   const keys = xs.map((v, i) => fn(v, i, xs));
   return keys;
@@ -20889,7 +17977,6 @@ function arrayMethod(xs, name2, args) {
     case "toReversed":
       return ok2([...xs].reverse());
     case "concat":
-      if (!args.every((x) => Array.isArray(valueOf(x)))) return NO2;
       return ok2(xs.concat(...args.map(valueOf)));
     // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
     // identity would answer false for `[[1]].includes([1])`, where the server
@@ -20951,30 +18038,18 @@ function arrayMethod(xs, name2, args) {
     }
     // ── the set family, compared the way MongoDB compares ───────────────────
     case "uniq":
-    case "sortedUniq": {
-      const out = [];
-      for (const v of xs) if (!deepIncludes(out, v)) out.push(v);
-      return ok2(out);
-    }
+    case "sortedUniq":
+      return ok2(firstPerKey(xs, (v) => v));
     case "uniqBy":
-    case "sortedUniqBy": {
-      if (fn === void 0) return NO2;
-      const seen = [];
-      const out = [];
-      xs.forEach((v, i) => {
-        const k = fn(v, i, xs);
-        if (deepIncludes(seen, k)) return;
-        seen.push(k);
-        out.push(v);
-      });
-      return ok2(out);
-    }
+    case "sortedUniqBy":
+      return fn === void 0 ? NO2 : ok2(firstPerKey(xs, fn));
     case "without":
       return ok2(xs.filter((v) => !deepIncludes(args.map(valueOf), v)));
     case "xor": {
       if (!Array.isArray(a)) return NO2;
       const other = a;
-      return ok2([...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))]);
+      const kept = [...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))];
+      return ok2(firstPerKey(kept, (v) => v));
     }
     case "differenceBy":
     case "intersectionBy":
@@ -20991,16 +18066,8 @@ function arrayMethod(xs, name2, args) {
       if (name2 === "intersectionBy") return ok2(mine);
       const myKeys = xs.map(keyOf);
       const extra = other.filter((v, i) => !deepIncludes(myKeys, keyOf(v, i, other)));
-      if (name2 === "xorBy") return ok2([...notMine, ...extra]);
-      const seen = [];
-      const union = [];
-      [...xs, ...other].forEach((v, i, all2) => {
-        const k = keyOf(v, i, all2);
-        if (deepIncludes(seen, k)) return;
-        seen.push(k);
-        union.push(v);
-      });
-      return ok2(union);
+      if (name2 === "xorBy") return ok2(firstPerKey([...notMine, ...extra], keyOf));
+      return ok2(firstPerKey([...xs, ...other], keyOf));
     }
     // ── slicing by count ────────────────────────────────────────────────────
     case "take":
@@ -21438,13 +18505,20 @@ function methodCall(node, env, depth) {
   }
   const family = onNamespace ? receiverNode.name : familyOfValue(receiverValue);
   if (!isCallable(name2)) return NOT_CONSTANT2;
-  if (!acceptsArgumentCount(name2, argNodes.length, family)) return NOT_CONSTANT2;
+  const packed = argNodes.length === 1 && argNodes[0].packed === true;
   const args = [];
-  for (const argNode of argNodes) {
-    const arg = asArg(argNode, env, depth);
-    if (arg === null) return NOT_CONSTANT2;
-    args.push(arg);
+  if (packed) {
+    const list = at(argNodes[0], env, depth + 1);
+    if (!list.ok || !Array.isArray(list.value)) return NOT_CONSTANT2;
+    for (const value of list.value) args.push({ value });
+  } else {
+    for (const argNode of argNodes) {
+      const arg = asArg(argNode, env, depth);
+      if (arg === null) return NOT_CONSTANT2;
+      args.push(arg);
+    }
   }
+  if (!acceptsArgumentCount(name2, args.length, family)) return NOT_CONSTANT2;
   let result;
   try {
     result = onNamespace ? foldNamespaceCall(receiverNode.name, name2, args) : foldInstanceCall(receiverValue, name2, args);
@@ -21510,7 +18584,7 @@ function at(node, env, depth) {
           out.push(...spread.value);
           continue;
         }
-        if (element2.type === "LetDecl" || element2.type === "FuncDecl") return NOT_CONSTANT2;
+        if (element2.type === "FuncDecl") return NOT_CONSTANT2;
         if (element2.type === "AssignExpr" || element2.type === "DeleteStmt") return NOT_CONSTANT2;
         if (element2.type === "UpdateFilter") return NOT_CONSTANT2;
         const value = at(element2, env, depth + 1);
@@ -21629,7 +18703,8 @@ var stageMayStand = (here) => here.at === "statement" || here.at === "stream";
 function reached(stage, path, slot, child) {
   const type = typeof child === "object" && child !== null ? child.type : void 0;
   if (slot.deeper && type === "ObjectLiteral") return { at: "stageBody", stage, path };
-  return { at: type === "ArrayLiteral" ? slot.at : slot.otherwise };
+  const at3 = type === "ArrayLiteral" ? slot.at : slot.otherwise;
+  return at3 === "value" && !slot.evaluated ? { at: at3, written: { stage, path } } : { at: at3 };
 }
 function edge(node, key, here) {
   const n2 = node;
@@ -21678,6 +18753,11 @@ function edge(node, key, here) {
     }
   }
   if (here.at === "updateDoc") return here;
+  if (here.at === "value" && here.written !== void 0) {
+    if (n2.type !== "KeyValueEntry" || key !== "value") return here;
+    const { stage, path } = here.written;
+    return { at: "value", written: { stage, path: [...path, staticKey(n2)] } };
+  }
   return VALUE;
 }
 
@@ -21766,19 +18846,6 @@ function mapTreeIn(root2, seed, edge2, fn) {
 
 // src/compiler/passes/fold.ts
 var isNode3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
-function* nodesIn(value) {
-  if (Array.isArray(value)) {
-    for (const v of value) yield* nodesIn(v);
-  } else if (isNode3(value)) {
-    yield value;
-  } else if (typeof value === "object" && value !== null) {
-    for (const v of Object.values(value)) yield* nodesIn(v);
-  }
-}
-function* everyNode(root2) {
-  yield root2;
-  for (const child of nodesIn(Object.values(root2))) yield* everyNode(child);
-}
 function rootName(node) {
   let cursor = node;
   while (isNode3(cursor) && (cursor.type === "MemberAccess" || cursor.type === "IndexAccess")) {
@@ -21917,24 +18984,7 @@ var EVALUABLE_TYPES = [
   "NewExpression"
 ];
 var EVALUABLE = new Set(EVALUABLE_TYPES);
-function refuseParameterRedeclaration(program) {
-  for (const node of everyNode(program)) {
-    const lambda = node;
-    const body = lambda.stages;
-    if (lambda.type !== "Lambda" || body?.type !== "Pipeline") continue;
-    const params = new Set(lambda.params);
-    for (const stmt of body.stmts) {
-      if ((stmt.type === "LetDecl" || stmt.type === "FuncDecl") && params.has(stmt.name)) {
-        throw new ParseError(
-          `\`${stmt.type === "LetDecl" ? String(stmt.kind) : "function"} ${String(stmt.name)}\` re-declares the parameter \`${String(stmt.name)}\` of this callback, which JavaScript refuses. Pick a different name.`,
-          stmt.pos
-        );
-      }
-    }
-  }
-}
 function fold(program) {
-  refuseParameterRedeclaration(program);
   const foldNested = (node) => {
     const n2 = node;
     if (n2.type !== "Pipeline") return node;
@@ -22061,15 +19111,6 @@ function writesACollection(target) {
   const base = chainBase(target);
   return base.type === "DatabaseRef" || base.type === "ClusterRef";
 }
-function refuseNonScalarTarget(target, op) {
-  const t = target;
-  const what = t.type === "StreamRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
-  if (what === null) return;
-  throw new ParseError(
-    `Cannot use '${op}' on ${what} \u2014 it is the whole document, not a scalar. Write the field: '$.<field> ${op} \u2026'`,
-    target.pos
-  );
-}
 var compoundAssign = {
   name: "fieldAssignment",
   apply: (node, where) => {
@@ -22079,7 +19120,6 @@ var compoundAssign = {
     const binop = COMPOUND.get(n2.op);
     if (binop === void 0) return node;
     if (writesACollection(n2.target)) return node;
-    refuseNonScalarTarget(n2.target, n2.op);
     return {
       type: "AssignExpr",
       target: { ...n2.target },
@@ -22099,7 +19139,6 @@ var incDec = {
     const n2 = node;
     if (n2.type !== "AssignExpr") return node;
     if (n2.op !== "++" && n2.op !== "--") return node;
-    refuseNonScalarTarget(n2.target, n2.op);
     return {
       type: "AssignExpr",
       target: { ...n2.target },
@@ -22150,6 +19189,7 @@ var fieldPath = {
       if (before !== "") optionalAt = before;
       break;
     }
+    if (!members.some((m) => m.optional)) optionalAt = base.optionalAt;
     const folded = { type: "FieldRef", path: [...head, ...members.map((m) => m.name)].join("."), pos: base.pos };
     if (!optional) return folded;
     return optionalAt === void 0 ? { ...folded, optional: true } : { ...folded, optional: true, optionalAt };
@@ -22216,7 +19256,7 @@ var mutatorForm = {
       const counts = Object.keys(form.by).map(Number);
       const range = counts.length === 1 ? `exactly ${counts[0]}` : `${Math.min(...counts)} to ${Math.max(...counts)}`;
       throw new ParseError(
-        `'.${n2.name}(${form.sig})' takes ${range} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
+        `'.${n2.name}(${form.sig})' at position ${n2.pos} takes ${range} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
         n2.pos
       );
     }
@@ -22269,7 +19309,7 @@ var packSpread = {
   }
 };
 function pathOn(param, path, pos) {
-  let out = { type: "Ident", name: param, pos };
+  let out = { type: "Ident", name: param, pos, minted: true };
   for (const segment of path.split(".")) {
     out = { type: "MemberAccess", object: out, name: segment, optional: false, pos };
   }
@@ -22292,7 +19332,7 @@ function asArrow(arg, forms, pos) {
   if (arg === void 0) {
     if (!accepts("omitted")) return void 0;
     const param2 = "x";
-    return { type: "Lambda", params: [param2], body: { type: "Ident", name: param2, pos }, pos };
+    return { type: "Lambda", params: [param2], body: { type: "Ident", name: param2, pos, minted: true }, pos };
   }
   const a = arg;
   const param = freshParam("x", arg);
@@ -22353,7 +19393,7 @@ function matchTests(param, prefix, entries, pos) {
 }
 var CONSTANT_LITERALS = /* @__PURE__ */ new Set(["NumberLiteral", "StringLiteral", "BooleanLiteral", "NullLiteral", "BigIntLiteral"]);
 function bareCall(callee, param, pos) {
-  const arg = { type: "Ident", name: param, pos };
+  const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {
     if (!isGlobalName(callee.name) || !isCallable(callee.name) || newKeywordOf(callee.name) === "required")
       return void 0;
@@ -22437,7 +19477,19 @@ var RULES = [
   groupBodyLink,
   iterateeShorthand
 ];
+function refuseWritesInValues(program, root2) {
+  mapTreeIn(program, root2, edge, (node, where) => {
+    if (where.at === "statement" || where.at === "updateDoc") return node;
+    const t = node.type;
+    if (t === "UpdateFilter" || t === "AssignExpr" || t === "DeleteStmt") {
+      throw writeInValueOf(node);
+    }
+    if (t === "FuncDecl") throw functionInValueOf(node);
+    return node;
+  });
+}
 function desugarVerbose(program, root2 = STATEMENT) {
+  refuseWritesInValues(program, root2);
   let current = program;
   const seen = /* @__PURE__ */ new Set([fingerprint(program)]);
   for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -22470,6 +19522,7 @@ function statementShaped(node) {
   if (name2 === "assign" && writesItsTarget(node)) return true;
   if (lists(name2, "value")) return false;
   if (node.type === "MethodCall" && isMutator(name2) && !couldWriteItsReceiver(node)) return false;
+  if (node.type === "MethodCall" && !isMutator(name2)) return false;
   return lists(name2, "statement") || lists(name2, "stream");
 }
 function isBareAssignWrite(program) {
@@ -22489,11 +19542,14 @@ function shapeOf(program) {
     if (last !== void 0 && prelude && !statementShaped(last)) return "filter";
   }
   if (statementShaped(root2)) return "pipeline";
-  if (root2.type === "ArrayLiteral") {
-    const first = root2.elements?.[0];
-    return first !== void 0 && statementShaped(first) ? "pipeline" : "filter";
-  }
+  if (root2.type === "ArrayLiteral") return "pipeline";
   return "filter";
+}
+function isStageList(program) {
+  const root2 = program;
+  if (root2.type !== "ArrayLiteral") return false;
+  const first = root2.elements?.[0];
+  return first !== void 0 && statementShaped(first);
 }
 
 // src/namespace.ts
@@ -22578,10 +19634,9 @@ var Capture = class {
   }
 };
 var Scope = class _Scope {
-  constructor(bound, taken, own) {
+  constructor(bound, taken) {
     this.bound = bound;
     this.taken = taken;
-    this.own = own;
   }
   /**
    * The root scope. `introduced` is every name the program binds anywhere — the
@@ -22591,15 +19646,7 @@ var Scope = class _Scope {
   static root(introduced) {
     const taken = new Set(SYSTEM_VARS);
     for (const js of introduced) taken.add(mongoVarName(js));
-    return new _Scope(/* @__PURE__ */ new Map(), taken, /* @__PURE__ */ new Set());
-  }
-  /** A nested block: every outer name is still visible, and none of them are declared HERE. */
-  block() {
-    return new _Scope(this.bound, this.taken, /* @__PURE__ */ new Set());
-  }
-  /** Did this block itself declare the name? JavaScript refuses a second declaration in one block. */
-  declaredHere(js) {
-    return this.own.has(js);
+    return new _Scope(/* @__PURE__ */ new Map(), taken);
   }
   /** Is this JavaScript name bound here? */
   has(js) {
@@ -22622,9 +19669,7 @@ var Scope = class _Scope {
   declare(js, binding) {
     const bound = new Map(this.bound);
     bound.set(js, binding);
-    const own = new Set(this.own);
-    own.add(js);
-    return new _Scope(bound, this.taken, own);
+    return new _Scope(bound, this.taken);
   }
   /**
    * Every binding carried in a document FIELD, turned into a name whose read says
@@ -22636,7 +19681,7 @@ var Scope = class _Scope {
       if (b.ref.kind === "field")
         bound.set(js, { ...b, ref: { kind: "dropped", message: message(js, b.mutable), replaced: true } });
     }
-    return new _Scope(bound, this.taken, this.own);
+    return new _Scope(bound, this.taken);
   }
   /**
    * The developer's own variable binder — a lambda parameter, a `$let` var.
@@ -22649,9 +19694,7 @@ var Scope = class _Scope {
     bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
-    const own = new Set(this.own);
-    own.add(js);
-    return { as, ref, scope: new _Scope(bound, taken, own) };
+    return { as, ref, scope: new _Scope(bound, taken) };
   }
   /**
    * A compiler mint — `bind("arr")` is `jsmqlArr`, or `jsmqlArr2`, `jsmqlArr3`
@@ -22664,7 +19707,7 @@ var Scope = class _Scope {
     for (let n2 = 2; this.taken.has(as); n2++) as = base + String(n2);
     const taken = new Set(this.taken);
     taken.add(as);
-    return { as, ref: refOf(as), scope: new _Scope(this.bound, taken, this.own) };
+    return { as, ref: refOf(as), scope: new _Scope(this.bound, taken) };
   }
 };
 var scratchSlot = (n2) => fieldSlot(tmpSlot(n2));
@@ -22726,6 +19769,26 @@ function propOf(t, name2) {
   const asArray = t.kinds.has("array") ? arrayOf(propOf(elementOf(t), name2)) : NOTHING;
   const own = isNothing(asArray) ? asObject2 : isNothing(asObject2) ? asArray : join(asObject2, asArray);
   return t.absent ? maybeAbsent(own) : own;
+}
+function unreadable(t, name2, throughArrays) {
+  if (t.kinds === "any" || t.kinds.has("stream")) return null;
+  if (throughArrays && t.kinds.has("array")) {
+    if (t.kinds.size > 1) return null;
+    const inner = unreadable(t.element ?? ANY, name2, true);
+    if (inner === null) return null;
+    return inner.kind === "closed" ? { ...inner, elements: true } : { kind: "noFields", kinds: ["array"] };
+  }
+  if (!t.kinds.has("object")) return { kind: "noFields", kinds: [...t.kinds] };
+  if (t.kinds.size > 1 || t.open || t.props?.has(name2) === true) return null;
+  return { kind: "closed", keys: [...t.props?.keys() ?? []] };
+}
+function unreadableAt(t, path, throughArrays) {
+  const segments = path.split(".");
+  for (let i = 0; i < segments.length; i++) {
+    const why = unreadable(at2(t, segments.slice(0, i).join(".")), segments[i], throughArrays);
+    if (why !== null) return { index: i, why };
+  }
+  return null;
 }
 function ownProp(t, name2) {
   const known = t.props?.get(name2);
@@ -22955,6 +20018,145 @@ function didYouMean(name2, candidates, format = (s) => `.${s}()`) {
   return suggestion ? ` Did you mean '${format(suggestion)}'?` : "";
 }
 
+// src/stringify.ts
+var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
+var kindOf2 = (v) => Object.prototype.toString.call(v);
+var isDate3 = (v) => kindOf2(v) === "[object Date]";
+var isRegExp3 = (v) => kindOf2(v) === "[object RegExp]";
+var isBytes2 = (v) => kindOf2(v) === "[object Uint8Array]";
+function keySource(key) {
+  if (key === "__proto__") return `[${JSON.stringify(key)}]`;
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
+}
+var str = (s) => JSON.stringify(s);
+var num = (n2) => Object.is(n2, -0) ? "-0" : String(n2);
+function bsonSource(tag, v, render) {
+  const o = v;
+  const own = (name2) => {
+    const f = o[name2];
+    const everyObject = Object.prototype[name2];
+    return typeof f === "function" && f !== everyObject ? f : null;
+  };
+  const text = () => {
+    const f = own("toString");
+    return f === null ? null : String(f.call(v));
+  };
+  switch (tag) {
+    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
+    case "ObjectID":
+    case "ObjectId": {
+      const hex = own("toHexString");
+      return hex === null ? null : `new ObjectId(${str(String(hex.call(v)))})`;
+    }
+    case "Decimal128": {
+      const s = text();
+      return s === null ? null : `new Decimal128(${str(s)})`;
+    }
+    // `Long.fromString` rather than `new Long(low, high)`: the string is the value a
+    // reader can check, and the two-word constructor is not.
+    case "Long": {
+      const s = text();
+      return s === null ? null : `Long.fromString(${str(s)})`;
+    }
+    case "Int32":
+      return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
+    // A whole-number Double must keep its type: `42` would come back as an int.
+    case "Double":
+      return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
+    case "Binary": {
+      const bytes = own("toString");
+      if (bytes === null) return null;
+      const sub = Number(o.sub_type ?? 0);
+      const uuid = own("toUUID");
+      if (sub === 4 && uuid !== null) return `new UUID(${str(String(uuid.call(v)))})`;
+      return `Binary.createFromBase64(${str(String(bytes.call(v, "base64")))}, ${sub})`;
+    }
+    case "Timestamp": {
+      const t = Number(o.t ?? o.high ?? 0);
+      const i = Number(o.i ?? o.low ?? 0);
+      return Number.isFinite(t) && Number.isFinite(i) ? `new Timestamp({ t: ${t}, i: ${i} })` : null;
+    }
+    case "MinKey":
+      return "new MinKey()";
+    case "MaxKey":
+      return "new MaxKey()";
+    case "Code":
+      if (typeof o.code !== "string") return null;
+      return o.scope === void 0 || o.scope === null ? `new Code(${str(o.code)})` : `new Code(${str(o.code)}, ${render(o.scope)})`;
+    case "DBRef":
+      if (typeof o.collection !== "string") return null;
+      return o.db === void 0 || o.db === null || o.db === "" ? `new DBRef(${str(o.collection)}, ${render(o.oid)})` : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
+    case "BSONSymbol": {
+      const s = text();
+      return s === null ? null : `new BSONSymbol(${str(s)})`;
+    }
+    case "BSONRegExp":
+      return typeof o.pattern === "string" ? `new BSONRegExp(${str(o.pattern)}, ${str(String(o.options ?? ""))})` : null;
+    default:
+      return null;
+  }
+}
+function stringify2(value, options) {
+  const indent = options?.indent ?? 2;
+  const width = options?.width ?? 80;
+  const pad2 = typeof indent === "string" ? indent : " ".repeat(indent);
+  const seen = /* @__PURE__ */ new Set();
+  const leaf2 = (v) => {
+    if (v === null) return "null";
+    if (isDate3(v)) {
+      if (Number.isNaN(v.getTime()))
+        throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
+      return `new Date(${str(v.toISOString())})`;
+    }
+    if (isRegExp3(v)) return String(v);
+    if (isBytes2(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
+    const tag = tagOf(v);
+    if (tag !== void 0) {
+      const spelled3 = bsonSource(tag, v, (x) => render(x, 0));
+      if (spelled3 !== null) return spelled3;
+    }
+    const t = typeof v;
+    if (t === "string") return str(v);
+    if (t === "boolean") return String(v);
+    if (t === "bigint") return `${String(v)}n`;
+    if (t === "number") return num(v);
+    if (t === "undefined") {
+      throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
+    }
+    return null;
+  };
+  const render = (v, depth) => {
+    const simple = leaf2(v);
+    if (simple !== null) return simple;
+    if (seen.has(v)) throw new TypeError("jsmql.stringify(): the document contains a circular reference.");
+    seen.add(v);
+    try {
+      if (Array.isArray(v)) {
+        if (v.length === 0) return "[]";
+        const parts2 = v.map((x) => render(x, depth + 1));
+        const flat2 = `[${parts2.join(", ")}]`;
+        if (pad2 === "" || fits(flat2, depth)) return flat2;
+        return `[
+${parts2.map((p) => at3(depth + 1) + p).join(",\n")}
+${at3(depth)}]`;
+      }
+      const entries = Object.entries(v);
+      if (entries.length === 0) return "{}";
+      const parts = entries.map(([k, x]) => `${keySource(k)}: ${render(x, depth + 1)}`);
+      const flat = `{ ${parts.join(", ")} }`;
+      if (pad2 === "" || fits(flat, depth)) return flat;
+      return `{
+${parts.map((p) => at3(depth + 1) + p).join(",\n")}
+${at3(depth)}}`;
+    } finally {
+      seen.delete(v);
+    }
+  };
+  const at3 = (d) => pad2.repeat(d);
+  const fits = (text, depth) => !text.includes("\n") && at3(depth).length + text.length <= width;
+  return render(value, 0);
+}
+
 // src/compiler/emit/consult.ts
 var ROWS2 = Object.assign(/* @__PURE__ */ Object.create(null), NAMES, PRODUCTIONS);
 var CELL_OF = {
@@ -23046,8 +20248,12 @@ var NO_CELL = {
   statement: (q, b) => `${q} computes a value, and a statement writes one. Assign it to a field: '$.<field> = ${b};'`,
   group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
   window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
-  updateDoc: (q, b) => `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${b}\u2026;")'). 'updateOne' also accepts this form. Or pass the value from your code.`
+  updateDoc: (q, b) => `${q} is computed on the server. A document-form update takes constants only. Use the pipeline form ('jsmql.pipeline("$.<field> = ${valueStart(b)};")'). 'updateOne' also accepts this form. Or pass the value from your code.`
 };
+function valueStart(bare) {
+  if (bare.startsWith(".")) return `<value>${bare}(\u2026)`;
+  return /^[A-Za-z$_]/.test(bare) ? `${bare}\u2026` : `<a> ${bare} <b>`;
+}
 function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`) {
   const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
@@ -23071,7 +20277,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
       const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -23113,7 +20319,7 @@ var bigIntTooLarge = (digits2, pos) => new CodegenError(
   pos
 );
 var regexAsValue = (pos) => new CodegenError(
-  `Regex literals are only valid as arguments to .match(), .test(), .exec(), .matchAll(), and .search(). To pass a regex pattern as a string, use a string literal instead.`,
+  `In JavaScript code, a regex literal is valid only as an argument of .match(), .test(), .exec(), .matchAll() or .search(). In MQL that you write, a regex literal is a BSON regex: '{ name: /^a/ }', '$regexMatch({ input: $.name, regex: /^a/ })'. To pass a pattern as a string, use a string literal.`,
   pos
 );
 var lambdaAsValue = (pos) => new CodegenError(
@@ -23131,10 +20337,6 @@ var functionAsValue = (name2, pos) => new CodegenError(
 var droppedBinding = (ref, pos) => new CodegenError(ref.message, pos);
 var afterReplace = (by) => (name2, mutable) => mutable ? `\`${name2}\` is a \`let\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Assign it again after the stage (\`${name2} = \u2026\`), or carry the value as a field of the new document.` : `\`${name2}\` is a \`const\` binding. It cannot be read after \`${by}\`, because that stage replaced the document that carried it. Carry the value as a field of the new document, or declare it with \`let\` and assign it again after the stage.`;
 var unfilledParam = (name2, method, why) => `\`${name2}\` has no value inside \`.${method}()\` \u2014 ${why}`;
-var statementInValue = (what, pos) => new CodegenError(
-  `${what} is a statement, not a value. It is only valid at the top level or as a pipeline-array element.`,
-  pos
-);
 var negativeIndex = (index, pos) => new CodegenError(
   `Negative bracket index '[${index}]' is not allowed. In JavaScript that reads a property named "${index}" (normally 'undefined'), not the element ${-index} from the end. Use '.at(${index})' to index from the end. This method works on both arrays and strings.`,
   pos
@@ -23159,24 +20361,85 @@ var unknownFunction = (name2, known, pos) => new CodegenError(
   `Unknown function '${name2}(...)'.${didYouMean(name2, known, (s) => `${s}(...)`)} Declare it first with \`const ${name2} = (\u2026) => \u2026;\` at the top level of a pipeline; for a MongoDB operator write \`$${name2}(...)\`; for a method, \`receiver.${name2}(...)\`.`,
   pos
 );
+var SUBJECT = {
+  string: "a string",
+  array: "an array",
+  number: "a number",
+  object: "an object",
+  date: "a date",
+  bool: "a boolean",
+  stream: "the stream",
+  objectId: "an ObjectId",
+  binData: "a binary value",
+  minKey: "MinKey",
+  maxKey: "MaxKey"
+};
+var FAMILY_OF = {
+  string: "string",
+  array: "array",
+  number: "number",
+  object: "object",
+  date: "date",
+  stream: "stream"
+};
+var EXAMPLE_METHOD = {
+  string: "trim",
+  number: "round",
+  date: "getFullYear",
+  object: "keys"
+};
+var spelledField = (name2) => /^[A-Za-z_$][\w$]*$/.test(name2) ? `.${name2}` : `[${JSON.stringify(name2)}]`;
+var methodsOf = (family) => valueMethodNames().filter((n2) => familiesOf(n2)?.includes(family) === true);
+function methodFix(name2, family) {
+  if (methodsOf(family).includes(name2)) return `Write '.${name2}()' to call the method.`;
+  const sibling = siblingOf(name2, family);
+  if (sibling !== null) return sibling;
+  if (family === "array") return `To read the field of each element, write '.map(e => e${spelledField(name2)})'.`;
+  return null;
+}
+function readFix(name2, kinds) {
+  const family = kinds.length === 1 ? FAMILY_OF[kinds[0]] : void 0;
+  if (family === void 0) return "Read the field from an object instead.";
+  const near = methodFix(name2, family) ?? didYouMean(name2, methodsOf(family)).trim();
+  if (near !== "") return near;
+  const example = EXAMPLE_METHOD[family];
+  return example === void 0 ? "Read the field from an object instead." : `Call a method instead, for example '.${example}()'.`;
+}
+function unreadableField(name2, why, read, holder, pos) {
+  if (why.kind === "closed") {
+    const shown = why.keys.slice(0, 6).map((k) => `'${k}'`);
+    const list = `${shown.join(", ")}${why.keys.length > 6 ? ", \u2026" : ""}`;
+    const fix = methodFix(name2, "object") ?? didYouMean(name2, why.keys, (k) => spelledField(k)).trim();
+    const subject2 = holder ?? "this object";
+    const [owner, holds] = why.elements === true ? [
+      `the elements of ${subject2} do not have`,
+      why.keys.length === 0 ? "They hold no fields." : `They hold ${list}.`
+    ] : [`${subject2} does not have`, why.keys.length === 0 ? "It holds no fields." : `It holds ${list}.`];
+    return new CodegenError(`'${read}' reads a field that ${owner}. ${holds}${fix === "" ? "" : ` ${fix}`}`, pos);
+  }
+  if (why.kinds.length === 0) return alwaysAbsent(read, holder, pos);
+  const subject = why.kinds.map((k) => SUBJECT[k]).join(" or ");
+  return new CodegenError(`'${read}' reads a field, and ${subject} has no fields. ${readFix(name2, why.kinds)}`, pos);
+}
+function alwaysAbsent(read, holder, pos) {
+  const subject = holder ?? "this value";
+  const sentence = subject.charAt(0).toUpperCase() + subject.slice(1);
+  return new CodegenError(
+    `${sentence} is always null or missing here, so '${read}' has no value to read. Remove the read, or write a value before the read.`,
+    pos
+  );
+}
+var newOnFunction = (name2, pos) => new CodegenError(`'${name2}' is not a constructor in JSMQL. Call it without 'new': '${name2}(\u2026)'.`, pos);
+var unknownClass = (name2, known, pos) => new CodegenError(
+  name2 === null ? "'new' takes the name of a class, as in 'new Date(\u2026)'." : `Unknown class '${name2}' in 'new ${name2}(\u2026)'.${didYouMean(name2, known, (s) => `new ${s}(\u2026)`)} MQL has no classes of its own. Write the value as an object literal ('{ \u2026 }'), or declare a function that returns one and call it without 'new'.`,
+  pos
+);
 var notCallable = (pos) => new CodegenError(
   `Direct call '(...)(args)' is only supported when the callee is an arrow function (IIFE \u2192 $let) or a declared function name. For named operators use $opName(...); for methods use receiver.method(...).`,
   pos
 );
 var letParamsMustNameVars = (params, keys, pos) => new CodegenError(
   `$let's arrow parameters must name its variables: got (${params.join(", ")}) for vars { ${keys.join(", ")} }.`,
-  pos
-);
-var redeclared = (kind, name2, pos) => new CodegenError(
-  `\`${kind} ${name2}\` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.`,
-  pos
-);
-var operandListCount = (name2, args, got, pos) => new CodegenError(
-  `'${signature(name2, args)}' ${countWord(args)}, got ${got}: one array literal is the operand list, as in MQL. To pass the array as one operand, write '${name2}([[\u2026]])'.`,
-  pos
-);
-var listOperand = (name2, pos) => new CodegenError(
-  `${name2} operates on a list of operands \u2014 pass two or more (${name2}(a, b)) or a single array (${name2}([a, b])).`,
   pos
 );
 var rootIsArray = (pos) => new CodegenError(
@@ -23193,20 +20456,12 @@ var needsPipeline = (name2, pos) => new CodegenError(
 );
 var spreadInOperatorBody = (pos) => new CodegenError("MQL has no spread in an object. Write Object.assign(a, b) instead.", pos);
 var computedKeyInOperatorBody = (pos) => new CodegenError("Computed object keys are not allowed here. An operator argument key must be a literal name.", pos);
+var tooManySortKeys = (who, count, limit, pos) => new CodegenError(
+  `'${who}' sorts by at most ${limit} keys, and this sort names ${count}. The server refuses a longer compound sort. Keep the ${limit} keys that decide the order, or put the last keys into one document field ('$.tie = { c: $.c, d: $.d }') and sort by 'tie'.`,
+  pos
+);
 var spreadInCall = (label, pos) => new CodegenError(
   `${label}: spread arguments are not supported. Pass each argument explicitly, or use $op($let, ...) to build the bindings by hand.`,
-  pos
-);
-var stageListAsValue = (pos) => new CodegenError(
-  "A bracketed stage list is a pipeline, not an expression. Pass it to jsmql.pipeline(\u2026), or write the stages as statements ('$match(\u2026); $sort(\u2026);').",
-  pos
-);
-var unknownStage = (index, name2, stages, pos) => new CodegenError(
-  `Element ${index} of pipeline: '${name2}' is not a known aggregation stage.${didYouMean(name2, stages, (s) => s)}`,
-  pos
-);
-var multiKeyStage = (index, keys, pos) => new CodegenError(
-  `Element ${index} of pipeline must be a single-key stage object \u2014 for example, \`{ $match: ... }\`. This object has ${keys} keys.`,
   pos
 );
 var expressionInQueryValue = (pos) => new CodegenError(
@@ -23253,27 +20508,18 @@ var rootMustBeDocument = (noun, pos) => new CodegenError(
   `'$ = \u2026' replaces the document, so the value has to BE a document \u2014 ${noun} is not one. Put it under a field ('$ = { value: \u2026 };'), or write to a field instead ('$.value = \u2026;').`,
   pos
 );
-var cannotDeleteRoot = (pos) => new CodegenError(
-  "'delete $' would delete the document itself. To replace it, write '$ = { \u2026 };'; to drop every field but one, write '$ = { keep: $.keep };'.",
+var cannotDeleteRoot = (root2, pos) => new CodegenError(
+  root2 === "$" ? "'delete $' would delete the document itself. To replace it, write '$ = { \u2026 };'; to drop every field but one, write '$ = { keep: $.keep };'." : "'delete $$' would delete the root stream itself. To keep no documents, write '$$ = [];'; to keep some, write '$$.filter(d => \u2026);'.",
   pos
 );
 var notAWriteTarget = (pos) => new CodegenError(
   "A write names a field: '$.total = \u2026', '$.a.b = \u2026', or the document itself, '$ = { \u2026 }'. A computed destination ('$[expr] = \u2026') has no field name at compile time. Use '$setField({ field: <expr>, input: $, value: \u2026 })' when the name is a value.",
   pos
 );
-var needsStageList = (slot, pos) => {
-  if (slot === null) {
-    return new CodegenError(
-      "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(\u2026), $sort(\u2026)]'.",
-      pos
-    );
-  }
-  const words = stageBodyRuleOf(slot.stage)?.enums?.[slot.key];
-  return new CodegenError(
-    words === void 0 ? `'${slot.stage}' ${slot.key} is a sub-pipeline: write it as a bracketed list of stages, '${slot.key}: [$match(\u2026), $sort(\u2026)]'.` : `'${slot.stage}' ${slot.key} is a bracketed list of stages, '${slot.key}: [$set({ \u2026 })]', or one of: ${words.join(", ")}.`,
-    pos
-  );
-};
+var needsStageList = (pos) => new CodegenError(
+  "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(\u2026), $sort(\u2026)]'.",
+  pos
+);
 var spreadInStageList = (pos) => new CodegenError(
   "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
   pos
@@ -23345,9 +20591,22 @@ var spreadNotADocument = (noun, pos) => new CodegenError(
   pos
 );
 var spreadOfString = (pos) => new CodegenError(
-  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length()).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
   pos
 );
+function noReceiver(name2, pos) {
+  if (isStageName(name2)) {
+    const twin = valueTwinOf(name2);
+    return new CodegenError(
+      `'.${name2}()' is a pipeline stage, and a stage runs on a stream, not on a value. Write it as a chain link ('$$.${name2}(\u2026)') or as a pipeline statement ('${name2}(\u2026);').${twin === void 0 ? "" : ` For the value form, use '${twin}(\u2026)'.`}`,
+      pos
+    );
+  }
+  return new CodegenError(
+    name2.startsWith("$") ? `'.${name2}()' takes no receiver. A '$' name is a MongoDB operator or stage, and each one is a call: write '${name2}(\u2026)' with every operand inside the parentheses.` : `'.${name2}()' takes no receiver. '${name2}' is a global function: write '${name2}(\u2026)' with the value inside the parentheses.`,
+    pos
+  );
+}
 var afterTerminalStage = (already, pos) => new CodegenError(
   `Nothing can follow '${already}': it writes the pipeline's output and the server requires it last. Move this statement above it.`,
   pos
@@ -23589,6 +20848,73 @@ var outTooManySegments = (pos) => new CodegenError(
   "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
   pos
 );
+function holes(value) {
+  const hole = (v) => Array.isArray(v) ? v.map(hole) : isPlainObject(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hole(x)])) : "\u2026";
+  return stringify2(hole(value)).split('"\u2026"').join("\u2026");
+}
+function runTimeValueAsMql(value, where, pos) {
+  const lead = "A run-time value is a value, never MQL.";
+  if (where.at === "value" && where.written !== void 0) {
+    const { stage, path } = where.written;
+    const key = path[path.length - 1];
+    const slot = key === void 0 ? "its body" : `'${path.join(".")}'`;
+    if (typeof value === "string") {
+      const inSource2 = key === void 0 || key === null ? `${stage}(${stringify2(value)})` : `${key}: ${stringify2(value)}`;
+      return new CodegenError(
+        `${lead} '${stage}' reads ${slot} as written, and there the string ${stringify2(value)} becomes part of the MQL. Write it in the source: '${inSource2}'.`,
+        pos
+      );
+    }
+    const inSource = key === void 0 || key === null ? `${stage}(${holes(value)})` : `${key}: ${holes(value)}`;
+    return new CodegenError(
+      `${lead} '${stage}' reads ${slot} as written, and there this value becomes part of the MQL. Write it in the source, and pass only its values: '${inSource}'.`,
+      pos
+    );
+  }
+  if (where.at === "group" || where.at === "window") {
+    const kind = where.at === "group" ? "an accumulator" : "a window function";
+    const keys = isPlainObject(value) ? Object.keys(value) : [];
+    const shape = keys.length === 1 && keys[0].startsWith("$") ? `${keys[0]}(\u2026)` : holes(value);
+    return new CodegenError(
+      `${lead} This slot takes ${kind}, and there the value becomes part of the MQL. Write ${kind} in the source, and pass only its values: '${shape}'.`,
+      pos
+    );
+  }
+  if (where.at === "filter") return runTimeValueAsQuery(value, pos);
+  if (where.at === "statement" || where.at === "stream") {
+    return new CodegenError(
+      "A run-time value is a value, never a stage. Write the stage in the source, and pass only its values.",
+      pos
+    );
+  }
+  return new CodegenError(`${lead} Write this part in the source, and pass only its values.`, pos);
+}
+var runTimeValueAsQuery = (value, pos) => new CodegenError(
+  typeof value === "string" ? "A run-time value is a value, never a query. Write the query in the source, and pass only its values." : `A run-time document is a value, never a query. Write the query in the source, and pass only its values: '${holes(value)}'.`,
+  pos
+);
+var LITERAL_NOUNS = {
+  NumberLiteral: "a number",
+  BooleanLiteral: "a boolean",
+  NullLiteral: "null",
+  ArrayLiteral: "an array",
+  ObjectLiteral: "a document",
+  BigIntLiteral: "a bigint",
+  RegexLiteral: "a regular expression",
+  ObjectIdLiteral: "an ObjectId"
+};
+function collectionNameFrom(index) {
+  if (index.type === "Injected") {
+    return typeof index.value === "string" ? new CodegenError(
+      `The run-time value ${stringify2(index.value)} cannot name a collection: the server refuses a name that starts with '$'.`,
+      index.pos
+    ) : new CodegenError("A collection name must be a string, and this run-time value is not a string.", index.pos);
+  }
+  const noun = LITERAL_NOUNS[index.type];
+  if (noun !== void 0)
+    return new CodegenError(`A collection name must be a string, and this value is ${noun}.`, index.pos);
+  return collectionNameMustBeConstant(index.pos);
+}
 var badOutTarget = (name2, pos) => new CodegenError(
   `'${name2}' cannot name a collection to write: the server refuses an empty name and one that starts with '$'.`,
   pos
@@ -23629,10 +20955,10 @@ var oneDocumentInStream = (pos) => new CodegenError(
   "'.find(\u2026)' gives ONE document, and the stream is many. Write '$$ = $$$.<coll>.filter(pred).take(1)' for a stream of the first match, or '$ = $$$.<coll>.find(pred)' to make each document the one it finds.",
   pos
 );
-var valueInStream = (name2, pos) => new CodegenError(
+var valueInStream = (name2, pos) => isKnownName(name2) ? new CodegenError(
   `'.${name2}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.\u2026.${name2}()'.`,
   pos
-);
+) : refusalFor({ kind: "unknown", name: name2 }, `.${name2}`, "'$$$'", "stream", pos, streamReceiverNames());
 var outerWriteInForeign = (pos) => new CodegenError(
   "The outer document cannot be written from inside a body over another collection \u2014 only read. Write the body's own document through its callback parameter ('o.x = \u2026', 'delete o.x', 'o = { \u2026 }'), or as a stage ('$set({ x: \u2026 })'). Write the outer field after the join.",
   pos
@@ -23653,11 +20979,13 @@ var mutatorNeedsField = (name2, pos) => new CodegenError(
   `'.${name2}()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.${name2}(\u2026);'. For a value, use its immutable form.`,
   pos
 );
-var needsFieldPath = (name2, pos) => new CodegenError(
+var QueryFormError = class extends CodegenError {
+};
+var needsFieldPath = (name2, pos) => new QueryFormError(
   `'${name2}(field, \u2026)' tests a field: its first argument is a field path ('$.a'), as in '${name2}($.a, \u2026)' or the document form '{ a: ${name2}(\u2026) }'.`,
   pos
 );
-var needsLiteral = (name2, pos) => new CodegenError(
+var needsLiteral = (name2, pos) => new QueryFormError(
   `'${name2}' compares against a compile-time constant in a query document, and this argument is read at run time. Give it a literal, or write the test as an expression ('$expr(\u2026)').`,
   pos
 );
@@ -23665,20 +20993,16 @@ var elementNeedsQuery = (name2, pos) => new CodegenError(
   `'${name2}(field, predicate)' takes a one-parameter arrow over the element whose body is a query test of the element alone ('x => x.q > 1'). A body that reads the outer document, or computes a value, has no query form here.`,
   pos
 );
-var onlyInside = (name2, hosts, pos) => new CodegenError(
-  `'${name2}' is a fragment of ${hosts.map((h) => `'${h}'`).join(" / ")} and has no meaning on its own \u2014 write it as that operator's operand: '${hosts[0]}(\u2026, ${name2}(\u2026))'.`,
-  pos
-);
 var needsPrecedingSort = (name2, pos) => new CodegenError(
   `'.${name2}(predicate)' keeps the ${name2 === "takeWhile" ? "LEADING" : "TRAILING"} run of the stream, and a MongoDB stream has no order until you give it one. Sort first, then '.${name2}(\u2026)': '$$.toSorted({ t: 1 }).${name2}(o => o.ok)' \u2014 any sort spelling works ('.sort', '.toSorted', '.sortBy', '.orderBy', '.$sort({ \u2026 })').`,
   pos
 );
-var readInUpdateDocument = (pos) => new CodegenError(
-  `A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.`,
+var readInUpdateDocument = (ref, pos) => new CodegenError(
+  `A document-form update takes constants: the server reads '${ref}' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline("$.a = $.b + 1;")'). 'updateOne' also accepts this form.`,
   pos
 );
 var updateCopyNeedsPipeline = (from, to, pos) => new CodegenError(
-  `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
+  from === "" ? `'$.${to} = $' copies the whole document. A document-form update cannot do this. Use the pipeline form ('jsmql.pipeline("$.${to} = $;")'). 'updateOne' also accepts this form.` : `'$.${to} = $.${from}' copies a field. A document-form update cannot do this. To MOVE the field, delete the source as well: '$.${to} = $.${from}; delete $.${from};' (this is a $rename). To copy it, use the pipeline form.`,
   pos
 );
 var updateConflict = (path, held, op, pos) => new CodegenError(
@@ -23694,7 +21018,10 @@ var updateKeyNotOperator = (key, pos) => new CodegenError(
   `An update document's keys are update operators ('$set', '$inc', \u2026)${key === null ? "" : `, and '${key}' is not one`}. To set a field, write '$.${key ?? "field"} = \u2026' or '{ $set: { ${key ?? "field"}: \u2026 } }'.`,
   pos
 );
-var updateNeedsFields = (op, pos) => new CodegenError(`'${op}' takes a document of fields to write ('${op}({ field: value })').`, pos);
+var updateOperatorTwice = (op, pos) => new CodegenError(
+  `'${op}' stands twice in one update, and one of its operands is not a document of fields, so the two cannot merge. Write '${op}' once.`,
+  pos
+);
 var updateTargetNeedsField = (pos) => new CodegenError(
   "A document-form update writes a field of the document: '$.a = \u2026', '$.a.b += 1', 'delete $.a'.",
   pos
@@ -23718,7 +21045,11 @@ var arrayReduceShape = (pos) => new CodegenError(
 
 // src/compiler/emit/env.ts
 var isForeign = (b) => pipelineOverOf(b.stage) === "foreign";
-var injectedNeedsLiteral = (site) => site.where.at === "value" && site.root !== "updateDoc" && site.envelope === "none";
+function injectedPlacement(site) {
+  if (site.envelope === "$literal" || site.root === "updateDoc" || site.where.at === "filter") return "asWritten";
+  if (site.where.at === "value" && site.where.written === void 0) return "literal";
+  return "refused";
+}
 var Chain = class {
   constructor(isPipeline = true) {
     /** The stages emitted so far. */
@@ -23731,7 +21062,8 @@ var Chain = class {
     /**
      * A stage that must be LAST — `$out`, `$merge`. The compiler files it here
      * rather than emitting it, so nothing can land after it, and the cleanup
-     * always precedes it.
+     * always precedes it. `spelled` is how the source wrote it — `$out`, or the
+     * sugar `$$$.<coll> = …` — so a message names what the developer wrote.
      */
     this.terminal = null;
     /**
@@ -23848,7 +21180,7 @@ var Chain = class {
     this.flush();
     const out = [...this.emitted];
     if (this.dirty) out.push({ $unset: JSMQL_NS });
-    if (this.terminal !== null) out.push(this.terminal);
+    if (this.terminal !== null) out.push(this.terminal.stage);
     return out;
   }
 };
@@ -23913,8 +21245,8 @@ var Env = class _Env {
       if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
       return loc.ref;
     }
-    if (this.site.root === "updateDoc") throw readInUpdateDocument(pos);
     const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
+    if (this.site.root === "updateDoc") throw readInUpdateDocument(value, pos);
     if (loc.level === this.level) return value;
     const boundary = this.foreign()[loc.level];
     if (boundary.capture === null || boundary.capture === void 0) throw noCorrelationSlot(boundary.stage, pos);
@@ -23937,10 +21269,6 @@ var Env = class _Env {
   dropFields(by, message) {
     return new _Env(this.scope.dropFields(by, message), this.site, this.chain, this.documents).withDocument(DOCUMENT);
   }
-  /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
-  block() {
-    return new _Env(this.scope.block(), this.site, this.chain, this.documents);
-  }
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js, type, pos) {
     return this.bound(this.scope.param(js, type, pos, this.level));
@@ -23952,6 +21280,14 @@ var Env = class _Env {
   /** Move to where phase 4 says a child stands. */
   at(where) {
     return new _Env(this.scope, { ...this.site, where }, this.chain, this.documents);
+  }
+  /**
+   * The same bindings and proofs, back where `parent` stands. A statement lowers
+   * its values under a child's Env, and the next statement stands where this one
+   * stood.
+   */
+  backAt(parent) {
+    return new _Env(this.scope, parent.site, this.chain, this.documents);
   }
   /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
   inside(name2) {
@@ -23972,7 +21308,12 @@ var Env = class _Env {
     };
     return new _Env(this.scope, site, this.chain, this.documents);
   }
-  /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. A body over another collection starts a document level of its own. */
+  /**
+   * Into a sub-pipeline: a new chain, the boundary recorded, statement position. A
+   * body over another collection starts a document level of its own. A pipeline
+   * body over the SAME documents (a `$facet` branch) gets each scratch field that
+   * the outer chain left on them. So the cleanup of the body owes those fields too.
+   */
   enter(boundary, chain) {
     const site = {
       ...this.site,
@@ -23980,6 +21321,7 @@ var Env = class _Env {
       boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }]
     };
     const documents = isForeign(boundary) ? [...this.documents, DOCUMENT] : this.documents;
+    if (!isForeign(boundary) && statementBodyOf(boundary.stage) === "pipeline") chain.dirty ||= this.chain.dirty;
     return new _Env(this.scope, site, chain, documents);
   }
   /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
@@ -24123,13 +21465,7 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
     return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
   }
   const lowering = listed.filter((f) => !isRefusal(branches[f]));
-  const tests = /* @__PURE__ */ new Set();
-  const fieldFamilies = (lowering.length > 0 ? lowering : listed).filter((family) => {
-    const test = TYPES[family].join(",");
-    if (tests.has(test)) return false;
-    tests.add(test);
-    return true;
-  });
+  const fieldFamilies = lowering.length > 0 ? lowering : listed;
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
   const fitting = fieldFamilies.filter((f) => {
     const b = branches[f];
@@ -24158,7 +21494,7 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
     if (bad !== null && bad.kind !== "rule") return bad;
     out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
   }
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f || TYPES[b.family].join(",") === TYPES[f].join(",")));
+  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
   return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
 }
 function select(verdict, receiver, shaped, count, kinds = []) {
@@ -24190,145 +21526,6 @@ function select(verdict, receiver, shaped, count, kinds = []) {
       return settle(name2, cell, shaped, count);
     }
   }
-}
-
-// src/stringify.ts
-var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
-var kindOf2 = (v) => Object.prototype.toString.call(v);
-var isDate3 = (v) => kindOf2(v) === "[object Date]";
-var isRegExp3 = (v) => kindOf2(v) === "[object RegExp]";
-var isBytes2 = (v) => kindOf2(v) === "[object Uint8Array]";
-function keySource(key) {
-  if (key === "__proto__") return `[${JSON.stringify(key)}]`;
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
-}
-var str = (s) => JSON.stringify(s);
-var num = (n2) => Object.is(n2, -0) ? "-0" : String(n2);
-function bsonSource(tag, v, render) {
-  const o = v;
-  const own = (name2) => {
-    const f = o[name2];
-    const everyObject = Object.prototype[name2];
-    return typeof f === "function" && f !== everyObject ? f : null;
-  };
-  const text = () => {
-    const f = own("toString");
-    return f === null ? null : String(f.call(v));
-  };
-  switch (tag) {
-    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
-    case "ObjectID":
-    case "ObjectId": {
-      const hex = own("toHexString");
-      return hex === null ? null : `new ObjectId(${str(String(hex.call(v)))})`;
-    }
-    case "Decimal128": {
-      const s = text();
-      return s === null ? null : `new Decimal128(${str(s)})`;
-    }
-    // `Long.fromString` rather than `new Long(low, high)`: the string is the value a
-    // reader can check, and the two-word constructor is not.
-    case "Long": {
-      const s = text();
-      return s === null ? null : `Long.fromString(${str(s)})`;
-    }
-    case "Int32":
-      return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
-    // A whole-number Double must keep its type: `42` would come back as an int.
-    case "Double":
-      return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
-    case "Binary": {
-      const bytes = own("toString");
-      if (bytes === null) return null;
-      const sub = Number(o.sub_type ?? 0);
-      const uuid = own("toUUID");
-      if (sub === 4 && uuid !== null) return `new UUID(${str(String(uuid.call(v)))})`;
-      return `Binary.createFromBase64(${str(String(bytes.call(v, "base64")))}, ${sub})`;
-    }
-    case "Timestamp": {
-      const t = Number(o.t ?? o.high ?? 0);
-      const i = Number(o.i ?? o.low ?? 0);
-      return Number.isFinite(t) && Number.isFinite(i) ? `new Timestamp({ t: ${t}, i: ${i} })` : null;
-    }
-    case "MinKey":
-      return "new MinKey()";
-    case "MaxKey":
-      return "new MaxKey()";
-    case "Code":
-      if (typeof o.code !== "string") return null;
-      return o.scope === void 0 || o.scope === null ? `new Code(${str(o.code)})` : `new Code(${str(o.code)}, ${render(o.scope)})`;
-    case "DBRef":
-      if (typeof o.collection !== "string") return null;
-      return o.db === void 0 || o.db === null || o.db === "" ? `new DBRef(${str(o.collection)}, ${render(o.oid)})` : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
-    case "BSONSymbol": {
-      const s = text();
-      return s === null ? null : `new BSONSymbol(${str(s)})`;
-    }
-    case "BSONRegExp":
-      return typeof o.pattern === "string" ? `new BSONRegExp(${str(o.pattern)}, ${str(String(o.options ?? ""))})` : null;
-    default:
-      return null;
-  }
-}
-function stringify2(value, options) {
-  const indent = options?.indent ?? 2;
-  const width = options?.width ?? 80;
-  const pad2 = typeof indent === "string" ? indent : " ".repeat(indent);
-  const seen = /* @__PURE__ */ new Set();
-  const leaf2 = (v) => {
-    if (v === null) return "null";
-    if (isDate3(v)) {
-      if (Number.isNaN(v.getTime()))
-        throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
-      return `new Date(${str(v.toISOString())})`;
-    }
-    if (isRegExp3(v)) return String(v);
-    if (isBytes2(v)) return `new Uint8Array([${Array.from(v).join(", ")}])`;
-    const tag = tagOf(v);
-    if (tag !== void 0) {
-      const spelled3 = bsonSource(tag, v, (x) => render(x, 0));
-      if (spelled3 !== null) return spelled3;
-    }
-    const t = typeof v;
-    if (t === "string") return str(v);
-    if (t === "boolean") return String(v);
-    if (t === "bigint") return `${String(v)}n`;
-    if (t === "number") return num(v);
-    if (t === "undefined") {
-      throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
-    }
-    return null;
-  };
-  const render = (v, depth) => {
-    const simple = leaf2(v);
-    if (simple !== null) return simple;
-    if (seen.has(v)) throw new TypeError("jsmql.stringify(): the document contains a circular reference.");
-    seen.add(v);
-    try {
-      if (Array.isArray(v)) {
-        if (v.length === 0) return "[]";
-        const parts2 = v.map((x) => render(x, depth + 1));
-        const flat2 = `[${parts2.join(", ")}]`;
-        if (pad2 === "" || fits(flat2, depth)) return flat2;
-        return `[
-${parts2.map((p) => at3(depth + 1) + p).join(",\n")}
-${at3(depth)}]`;
-      }
-      const entries = Object.entries(v);
-      if (entries.length === 0) return "{}";
-      const parts = entries.map(([k, x]) => `${keySource(k)}: ${render(x, depth + 1)}`);
-      const flat = `{ ${parts.join(", ")} }`;
-      if (pad2 === "" || fits(flat, depth)) return flat;
-      return `{
-${parts.map((p) => at3(depth + 1) + p).join(",\n")}
-${at3(depth)}}`;
-    } finally {
-      seen.delete(v);
-    }
-  };
-  const at3 = (d) => pad2.repeat(d);
-  const fits = (text, depth) => !text.includes("\n") && at3(depth).length + text.length <= width;
-  return render(value, 0);
 }
 
 // src/compiler/emit/check.ts
@@ -24405,11 +21602,10 @@ var EXPECTS = {
   date: "expects a date",
   timestamp: "expects a timestamp"
 };
-var hint = (name2, expected) => {
+var hint = (expected) => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
-  const example = expected === "object" ? bodyExampleOf(name2) : void 0;
-  return example === void 0 ? "" : ` Write the body as a document. For example: '${example}'.`;
+  return "";
 };
 function checkSlotKinds(name2, args, operands, kinds) {
   for (const [i, t] of Object.entries(args.slotType ?? {})) {
@@ -24461,46 +21657,33 @@ function checkType(name2, slot, e, expected) {
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
   throw new CodegenError(
-    `'${name2}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(name2, expected)}`,
+    `'${name2}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(expected)}`,
     e.pos
   );
 }
-function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false, alsoStages = false) {
+function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
   if (e.type !== "StringLiteral" || e.value.startsWith("$") && !isConstantSlot) return;
   const v = caseInsensitive ? e.value.toLowerCase() : e.value;
   if (allowed.includes(v)) return;
   const near = didYouMean(v, allowed, (s) => s);
-  throw new CodegenError(
-    alsoStages ? `'${name2}' ${key} is one of: ${allowed.join(", ")}. It can also take a bracketed list of stages: '${key}: [$set({ \u2026 })]'. It got '${e.value}'.${near}` : `'${name2}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`,
-    e.pos
-  );
+  throw new CodegenError(`'${name2}' ${key} must be one of: ${allowed.join(", ")}. It got '${e.value}'.${near}`, e.pos);
 }
-function checkCharSet(name2, key, e, set) {
-  if (e.type !== "StringLiteral" || e.value.startsWith("$")) return;
-  for (const ch of e.value) {
-    if (!set.includes(ch)) {
-      throw new CodegenError(
-        `'${name2}' ${key} has an invalid flag '${ch}'. MongoDB allows only ${[...set].join(", ")}. It does not support a JavaScript 'g' or 'y' flag.`,
-        e.pos
-      );
-    }
+function checkBodyKeys(body) {
+  if (body.type !== "ObjectLiteral") return;
+  for (const e of body.entries) {
+    if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
+    if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
   }
 }
 function checkBody(name2, rule, args, keys, pos) {
   if (args.length === 1 && args[0].type === "Injected") return;
   let present2;
-  let hasSpread = false;
   let valueOf2;
   const body = args.length === 1 && args[0].type === "ObjectLiteral" ? args[0] : null;
   if (body !== null) {
-    const entries = body.entries;
-    for (const e of entries) {
-      if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
-      if (e.key.kind === "computed") throw computedKeyInOperatorBody(e.pos);
-    }
-    hasSpread = false;
+    checkBodyKeys(body);
     const byKey = /* @__PURE__ */ new Map();
-    for (const e of entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
+    for (const e of body.entries) if (e.type === "KeyValueEntry") byKey.set(staticKey(e) ?? "", e.value);
     present2 = [...byKey.keys()];
     valueOf2 = (k) => byKey.get(k);
   } else {
@@ -24511,7 +21694,7 @@ function checkBody(name2, rule, args, keys, pos) {
     };
   }
   const closed = [...rule.required, ...rule.optional];
-  if (body !== null && !hasSpread && rule.closed) {
+  if (body !== null && rule.closed) {
     for (const k of present2) {
       if (!closed.includes(k)) {
         throw new CodegenError(
@@ -24521,173 +21704,31 @@ function checkBody(name2, rule, args, keys, pos) {
       }
     }
   }
-  if (!hasSpread) {
-    for (const k of rule.required) {
-      if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
-    }
-    for (const group of rule.exactlyOneOf ?? []) {
-      const found2 = group.filter((k) => present2.includes(k));
-      if (found2.length !== 1) {
-        throw new CodegenError(
-          `'${name2}' requires exactly one of ${group.map((k) => `'${k}'`).join(", ")}${found2.length === 0 ? ", but none is present" : `, but got ${found2.map((k) => `'${k}'`).join(" and ")}`}.`,
-          pos
-        );
-      }
-    }
-    for (const group of rule.atLeastOneOf ?? []) {
-      if (!group.some((k) => present2.includes(k))) {
-        throw new CodegenError(
-          `'${name2}' needs at least one of ${group.map((k) => `'${k}'`).join(", ")}, and none is present.`,
-          pos
-        );
-      }
-    }
-    for (const [a, b] of rule.notTogether ?? []) {
-      const inA = present2.filter((k) => a.includes(k));
-      const inB = present2.filter((k) => b.includes(k));
-      if (inA.length > 0 && inB.length > 0) {
-        throw new CodegenError(
-          `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
-          pos
-        );
-      }
-    }
-    for (const group of rule.together ?? []) {
-      const found2 = group.filter((k) => present2.includes(k));
-      if (found2.length !== 0 && found2.length !== group.length) {
-        const missing = group.filter((k) => !present2.includes(k));
-        throw new CodegenError(
-          `'${name2}' takes ${group.map((k) => `'${k}'`).join(" and ")} together or neither: ${missing.map((k) => `'${k}'`).join(" and ")} ${missing.length === 1 ? "is" : "are"} missing.`,
-          pos
-        );
-      }
-    }
+  for (const k of rule.required) {
+    if (!present2.includes(k)) throw new CodegenError(`'${name2}' requires the '${k}' field, but it is missing.`, pos);
   }
-  const allowed = rule.everyValueIn ?? [];
-  for (const k of rule.everyValueIn === void 0 ? [] : present2) {
-    const v = valueOf2(k);
-    if (v === void 0) continue;
-    const lit = literal(v);
-    if (lit === null || lit.kind === "object") continue;
-    const held = lit.kind === "number" ? numberOf(v) : lit.kind === "string" && v.type === "StringLiteral" ? v.value : null;
-    if (held === null || !allowed.includes(held)) {
+  for (const [a, b] of rule.notTogether ?? []) {
+    const inA = present2.filter((k) => a.includes(k));
+    const inB = present2.filter((k) => b.includes(k));
+    if (inA.length > 0 && inB.length > 0) {
       throw new CodegenError(
-        `'${name2}' takes ${allowed.map((one) => stringify2(one)).join(" or ")} for every key, and '${k}' has ${held === null ? NOUN[lit.kind] : stringify2(held)}.`,
-        v.pos
+        `'${name2}' takes '${inA[0]}' or '${inB[0]}', not both. These belong to two families that never mix: ${a.join("/")} against ${b.join("/")}.`,
+        pos
       );
     }
   }
-  if (rule.onePolarity === true && body !== null) {
-    let seen = null;
-    for (const k of present2) {
-      if (k === "_id") continue;
-      const v = valueOf2(k);
-      if (v === void 0) continue;
-      const on = v.type === "NumberLiteral" && (v.value === 1 || v.value === 0) ? v.value === 1 : v.type === "BooleanLiteral" ? v.value : null;
-      if (on === null) continue;
-      if (seen !== null && seen.on !== on) {
-        throw new CodegenError(
-          `'${name2}' is either an inclusion or an exclusion, not both. '${seen.key}' ${seen.on ? "includes" : "excludes"} and '${k}' ${on ? "includes" : "excludes"} ('_id' alone may be excluded from an inclusion). The server refuses the mix.`,
-          v.pos
-        );
-      }
-      seen ??= { key: k, on };
-    }
-  }
   const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
-  for (const [k, allowed2] of Object.entries(rule.enums ?? {})) {
+  for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
     const v = valueOf2(k);
-    if (v !== void 0) {
-      const readAsWritten = (rule.constantKeys ?? []).includes(k) || (rule.literalKeys ?? []).includes(k);
-      const slot = bodySlotAt(name2, [k]);
-      const alsoStages = slot !== void 0 && slot.at !== slot.otherwise;
-      checkEnum(name2, k, v, allowed2, caseInsensitive.has(k), readAsWritten, alsoStages);
-    }
-  }
-  for (const [k, set] of Object.entries(rule.charSets ?? {})) {
-    const v = valueOf2(k);
-    if (v !== void 0) checkCharSet(name2, k, v, set);
+    if (v !== void 0) checkEnum(name2, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
   }
   for (const [k, t] of Object.entries(rule.keyTypes ?? {})) {
     const v = valueOf2(k);
     if (v !== void 0) checkType(name2, k, v, t);
   }
-  if (body !== null) {
-    for (const [k, inner] of Object.entries(rule.nested ?? {})) {
-      const v = valueOf2(k);
-      if (v !== void 0 && v.type === "ObjectLiteral") checkBody(`${name2}.${k}`, inner, [v], [], v.pos);
-    }
-    if (rule.eachValue !== void 0) {
-      for (const k of present2) {
-        const v = valueOf2(k);
-        if (v !== void 0 && v.type === "ObjectLiteral") checkBody(`${name2}.${k}`, rule.eachValue, [v], [], v.pos);
-      }
-    }
-    for (const req of rule.requiresWhen ?? []) {
-      if (valueOf2(req.requires) !== void 0) continue;
-      const hit = walkBody(body, req.path).find((v) => v.type === "StringLiteral" && req.equals.includes(v.value));
-      if (hit !== void 0) {
-        throw new CodegenError(
-          `'${name2}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => stringify2(e)).join(" or ")}. The server refuses it without one.`,
-          hit.pos
-        );
-      }
-    }
-  }
-  if (rule.nonEmpty === true && body !== null && present2.length === 0) {
-    throw new CodegenError(
-      `'${name2}' takes at least one field. An empty body names none, and the server refuses it.`,
-      pos
-    );
-  }
-  for (const [k, min] of Object.entries(rule.minimums ?? {})) {
-    const v = valueOf2(k);
-    if (v === void 0) continue;
-    const held = numberOf(v);
-    if (held !== null && held < min) {
-      throw new CodegenError(
-        `'${name2}' ${k} must be ${min === 0 ? "zero or more" : `at least ${min}`}. It got ${held}. The server refuses it.`,
-        v.pos
-      );
-    }
-  }
-  for (const [k, min] of Object.entries(rule.sortedList ?? {})) {
-    const v = valueOf2(k);
-    if (v === void 0 || v.type !== "ArrayLiteral") continue;
-    const held = [];
-    for (const el of v.elements) {
-      if (el.type === "SpreadElement") {
-        held.length = 0;
-        break;
-      }
-      const r = evaluate(el, /* @__PURE__ */ new Map());
-      if (!r.ok) {
-        held.length = 0;
-        break;
-      }
-      held.push(r.value);
-    }
-    if (held.length === 0 && v.elements.length > 0) continue;
-    if (held.length < min) {
-      throw new CodegenError(
-        `'${name2}' ${k} needs at least ${min} values. It got ${held.length}. The server refuses it.`,
-        v.pos
-      );
-    }
-    for (let i = 1; i < held.length; i++) {
-      const a = held[i - 1], b = held[i];
-      const ordered = typeof a === typeof b && (typeof a === "number" || typeof a === "string" || isDate(a)) ? a < b : true;
-      if (!ordered) {
-        throw new CodegenError(
-          `'${name2}' ${k} must be sorted ascending. ${stringify2(a)} is not less than ${stringify2(b)}. The server refuses it.`,
-          v.elements[i].pos
-        );
-      }
-    }
-  }
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf2(k);
-    if (v !== void 0 && !evaluate(v, /* @__PURE__ */ new Map()).ok) {
+    if (v !== void 0 && v.type !== "Injected" && !evaluate(v, /* @__PURE__ */ new Map()).ok) {
       throw new CodegenError(
         `'${name2}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         v.pos
@@ -24695,30 +21736,8 @@ function checkBody(name2, rule, args, keys, pos) {
     }
   }
 }
-function walkBody(node, path) {
-  if (path.length === 0) return [node];
-  if (node.type !== "ObjectLiteral") return [];
-  const [head, ...rest] = path;
-  const out = [];
-  for (const e of node.entries) {
-    if (e.type !== "KeyValueEntry") continue;
-    const key = staticKey(e);
-    if (key === null || head !== "*" && key !== head) continue;
-    out.push(...walkBody(e.value, rest));
-  }
-  return out;
-}
 var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
 function checkSlots(name2, args, operands, hasObjectForm = true) {
-  for (const i of args.nullRefused ?? []) {
-    const e = operands[i];
-    if (e !== void 0 && e.type === "NullLiteral") {
-      throw new CodegenError(
-        `'${name2}' does not accept null. The server refuses it instead of answering null. Guard the operand: '$ifNull(<value>, <fallback>)'.`,
-        e.pos
-      );
-    }
-  }
   for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
     const e = operands[Number(i)];
     if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
@@ -24738,7 +21757,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true) {
   }
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
-    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], rule.positional ?? [], e.pos);
+    if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], [], e.pos);
   }
   for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
     const e = operands[Number(i)];
@@ -24769,9 +21788,6 @@ function checkSlots(name2, args, operands, hasObjectForm = true) {
       e.pos
     );
   }
-  if (args.elementType !== void 0) {
-    for (const e of operands) checkType(name2, "", e, args.elementType);
-  }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
     if (e === void 0 || e.type !== "ArrayLiteral") continue;
@@ -24799,7 +21815,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true) {
   }
   for (const i of args.constant ?? []) {
     const e = operands[i];
-    if (e !== void 0 && e.type !== "ObjectLiteral" && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
+    if (e !== void 0 && e.type !== "ObjectLiteral" && e.type !== "Injected" && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
       throw new CodegenError(
         `'${name2}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         e.pos
@@ -24893,17 +21909,17 @@ function statedPresence(node, env) {
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
       const wrapped = !spineHasOptional(node) && emptyValueOf(name2, family) !== null;
       const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
-      return receiver && node.args.every((a) => argPresent(a, env));
+      return receiver && argsThere(name2, node.args, env);
     }
     case "OperatorCall":
-      return neverNullOf(node.name) && node.args.every((a) => argPresent(a, env));
+      return neverNullOf(node.name) && (neverNullAlwaysOf(node.name) || node.args.every((a) => !(a.type === "ObjectLiteral" && namedRow(a) === null) && argPresent(a, env)));
     case "CallExpression":
       if (node.callee.type === "Ident" && !env.scope.has(node.callee.name)) {
-        return neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env));
+        return neverNullOf(node.callee.name) && argsThere(node.callee.name, node.args, env);
       }
       return null;
     case "NewExpression":
-      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? neverNullOf(node.callee.name) && node.args.every((a) => argPresent(a, env)) : false;
+      return node.callee.type === "Ident" && !env.scope.has(node.callee.name) ? neverNullOf(node.callee.name) && argsThere(node.callee.name, node.args, env) : false;
     case "UnaryExpr": {
       const key = productionForOperator("UnaryExpr", node.op);
       return key !== void 0 && neverNullOf(key) && isPresent(node.argument, env);
@@ -24947,6 +21963,9 @@ function chainHasOptional(e) {
   }
   return cursor.type === "FieldRef" && cursor.optional === true;
 }
+function argsThere(name2, args, env) {
+  return neverNullAlwaysOf(name2) || args.every((a) => argPresent(a, env));
+}
 function argPresent(a, env) {
   if (a.type === "SpreadElement") return isPresent(a.argument, env);
   if (a.type === "Lambda") return true;
@@ -24967,8 +21986,6 @@ function familyOfKind(k) {
 function sourceFamily(node) {
   if (node.type === "Ident" && NAMESPACES2.has(node.name)) return node.name;
   if (node.type === "RegexLiteral") return "regexp";
-  if (node.type === "NewExpression" && node.callee.type === "Ident")
-    return constructedFamilyOf(node.callee.name) ?? null;
   return null;
 }
 var kindOf3 = (node, env) => single2(typeOf(node, env));
@@ -25007,7 +22024,7 @@ function callbackAnswer(name2, receiver, args, n2, arg, env) {
   const cb = args[n2];
   if (cb === void 0 || cb.type !== "Lambda" || cb.body === void 0) return ANY;
   const kinds = callbackParamsOf(name2, "value") ?? [];
-  let bodyEnv = env.block();
+  let bodyEnv = env;
   cb.params.forEach((p, i) => {
     const kind = kinds[i];
     const t = kind === "value" ? flattenOnce(receiver) : kind === "index" ? of("number") : kind === "key" ? of("string") : kind === "receiver" ? receiver : kind === "accumulator" ? arg(n2 + 1) : ANY;
@@ -25155,7 +22172,7 @@ function kindsOf2(node, env) {
         const l = kindOf3(node.left, env);
         const r = kindOf3(node.right, env);
         if (l === "string" || r === "string") return of("string");
-        return l === "number" && r === "number" ? of("number") : ANY;
+        if (l === "number" && r === "number") return of("number");
       }
       if (node.op === "??") {
         const r = kindsOf2(node.right, env);
@@ -25226,7 +22243,8 @@ function typeOfEmitted(value, doc) {
       names: null
     };
     const result = evaluate2(returnsOf(op), site);
-    const isPresent3 = neverNullOf(op) && args.every((a) => !typeOfEmitted(a, doc).absent);
+    const body = (a) => isPlainObject(a) && operatorKeyOf(a) === null;
+    const isPresent3 = neverNullAlwaysOf(op) || neverNullOf(op) && args.every((a) => !body(a) && !typeOfEmitted(a, doc).absent);
     return isPresent3 ? present(result) : maybeAbsent(result);
   }
   if (isPlainObject(value)) {
@@ -25251,7 +22269,7 @@ function documentAfter(stage, doc) {
       for (const [k, v] of Object.entries(body)) {
         props.set(
           k,
-          Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(documentsOf(v, DOCUMENT)) : accumulated2(v, doc)
+          Array.isArray(v) && v.every((s) => isPlainObject(s)) ? arrayOf(documentsOf(v, DOCUMENT)) : accumulated(v, doc)
         );
       }
       return objectOf(props, false);
@@ -25280,7 +22298,7 @@ function documentAfter(stage, doc) {
     }
     case "element": {
       const spec = typeof body === "string" ? { path: body } : body;
-      const path = spec.path?.startsWith("$") ? spec.path.slice(1) : null;
+      const path = typeof spec.path === "string" && spec.path.startsWith("$") ? spec.path.slice(1) : null;
       if (path === null) return doc;
       const element2 = elementOf(at2(doc, path));
       return written(doc, path, spec.preserveNullAndEmptyArrays === true ? maybeAbsent(element2) : present(element2));
@@ -25305,14 +22323,14 @@ function keptDocument(name2, body, doc) {
     return written(doc, body.as, arrayOf(documentsOf(pipeline, DOCUMENT)));
   }
   if (isPlainObject(body.output)) {
-    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, accumulated2(v, doc)), doc);
+    return Object.entries(body.output).reduce((d, [k, v]) => written(d, k, accumulated(v, doc)), doc);
   }
   return doc;
 }
 function documentsOf(pipeline, doc) {
   return pipeline.reduce((d, s) => isPlainObject(s) ? documentAfter(s, d) : DOCUMENT, doc);
 }
-function accumulated2(v, doc) {
+function accumulated(v, doc) {
   const t = typeOfEmitted(v, doc);
   const op = operatorKeyOf(v);
   return op !== null && neverNullOf(op) ? present(t) : t;
@@ -25430,7 +22448,7 @@ function foreignChain(node) {
   if (chainBase(cur).type === "ClusterRef") throw crossDatabaseRead(node.pos);
   if (cur.type === "MemberAccess" && cur.object.type === "DatabaseRef") return { from: cur.name, links, pos: node.pos };
   if (cur.type === "IndexAccess" && cur.object.type === "DatabaseRef") {
-    if (cur.index.type !== "StringLiteral") throw collectionNameMustBeConstant(cur.index.pos);
+    if (cur.index.type !== "StringLiteral") throw collectionNameFrom(cur.index);
     if (cur.index.value === "") throw emptyCollectionName(cur.index.pos);
     return { from: cur.index.value, links, pos: node.pos };
   }
@@ -25454,7 +22472,7 @@ function lookupOf(node, env, S, over = "$lookup") {
   }
   const { from, links, pos } = foreignChain(head);
   const capture = over === "$lookup" ? new Capture(env.level) : null;
-  const body = env.enter({ stage: over, path: ["pipeline"], capture }, new Chain());
+  let body = env.enter({ stage: over, path: ["pipeline"], capture }, new Chain());
   let one = false;
   let yields = "array";
   let peeledTo = links.length > 0 ? links[0].object : node;
@@ -25478,8 +22496,10 @@ function lookupOf(node, env, S, over = "$lookup") {
     if (streamBodyOf(link.name) === "document" && !documentBody(link, body)) break;
     const stages2 = S.link(link, body, first);
     if (stages2 === null) break;
+    const start = body.chain.emitted.length;
     body.chain.flush();
     body.chain.emitted.push(...stages2);
+    body = body.document(documentsOf(body.chain.emitted.slice(start), body.documents[body.level]));
     peeledTo = link;
     const c = collapsesOf(link.name);
     const collapsed = c === true || c === "unlessRawBody" && link.args[0]?.type !== "ObjectLiteral";
@@ -25809,8 +22829,10 @@ function orderBySpec(keys, orders, method) {
   });
   return { kind: "keys", spec };
 }
-function streamSortAsk(ask, method, element2 = "") {
+function streamSortAsk(ask, method, element2, pos) {
   if (ask.kind === "keys") {
+    const count = Object.keys(ask.spec).length;
+    if (count > SORT_KEY_LIMIT) throw tooManySortKeys(`.${method}()`, count, SORT_KEY_LIMIT, pos);
     if (element2 === "") return ask;
     return { kind: "keys", spec: Object.fromEntries(Object.entries(ask.spec).map(([k, d]) => [`${element2}.${k}`, d])) };
   }
@@ -25832,6 +22854,7 @@ var TRUE = mint(true);
 var FALSE = mint(false);
 var constantOf = (t) => t === TRUE ? true : t === FALSE ? false : null;
 var boolTruth = (doc) => mint(doc);
+var mongoTruthy = (value) => mint(value);
 function truthOf(value, type) {
   if (isNothing(type)) return FALSE;
   const kinds = type.kinds;
@@ -25907,30 +22930,31 @@ var readsRef = (mql, ref) => {
 };
 
 // src/compiler/emit/filter.ts
-function lowerFilter(node, env) {
-  const q = translate(node, env, false);
+function lowerFilter(node, env, jsRead = false) {
+  const q = translate(node, env, false, jsRead);
   if (q === null) internalError("a full filter translation answered null");
   return q;
 }
-var lowerNativeFilter = (node, env) => translate(node, env, true);
+var lowerNativeFilter = (node, env) => translate(node, env, true, true);
 var isExpr = (a) => a.type !== "SpreadElement" && a.type !== "LetDecl" && a.type !== "FuncDecl" && a.type !== "AssignExpr" && a.type !== "DeleteStmt" && a.type !== "UpdateFilter";
-function translate(node, env, nativeOnly) {
+function translate(node, env, nativeOnly, jsRead) {
+  if (node.type === "Injected" && isMqlShaped(node.value)) throw runTimeValueAsQuery(node.value, node.pos);
   if (node.type === "BinaryExpr" && node.op === "&&") {
     const all2 = extractHasChain(node, env);
     if (all2 !== null) return hasChain(all2.path, all2.values);
-    const left = translate(node.left, childEnv(env, node, "left"), nativeOnly);
-    const right = translate(node.right, childEnv(env, node, "right"), nativeOnly);
+    const left = translate(node.left, childEnv(env, node, "left"), nativeOnly, true);
+    const right = translate(node.right, childEnv(env, node, "right"), nativeOnly, true);
     if (left === null || right === null) return null;
     return mergeAnd(left, right);
   }
   if (node.type === "UnaryExpr" && node.op === "!") {
-    const inner = translate(node.argument, childEnv(env, node, "argument"), true);
+    const inner = translate(node.argument, childEnv(env, node, "argument"), true, true);
     if (inner !== null && Object.keys(inner).length > 0 && !isAlwaysTrue(inner) && !isAlwaysFalse(inner)) {
       return { $nor: [inner] };
     }
   }
   if (node.type === "BinaryExpr" && node.op === "||") {
-    const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly));
+    const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly, true));
     if (branches.some((b) => b === null)) return null;
     if (branches.some(isAlwaysTrue)) return {};
     const docs = branches.filter((d) => !isAlwaysFalse(d));
@@ -25944,7 +22968,9 @@ function translate(node, env, nativeOnly) {
   const native = leaf(node, env) ?? bareTruth(node, env);
   if (native !== null) return native;
   if (nativeOnly) return null;
-  return matchExpr(lowerTruth(node, env.at({ at: "value" })));
+  const valueEnv = env.at({ at: "value" });
+  if (node.type === "OperatorCall" && !jsRead) return matchExpr(mongoTruthy(lowerValue(node, valueEnv)));
+  return matchExpr(lowerTruth(node, valueEnv));
 }
 function bareTruth(node, env) {
   const path = pathOfIn(node, env);
@@ -26035,14 +23061,24 @@ function readsAtRunTime(e) {
       return false;
   }
 }
+var NOT_INJECTED = /* @__PURE__ */ Symbol("not injected");
+function injectedInQuery(key, value) {
+  if (value.type !== "Injected" || !isMqlShaped(value.value)) return NOT_INJECTED;
+  if (!key.startsWith("$")) return queryOwnValue(key, { $eq: value.value })[key];
+  if (liftsToOf(key) !== void 0) return value.value;
+  if (operandPositionOf(key) === "value") return NOT_INJECTED;
+  throw runTimeValueAsQuery(value.value, value.pos);
+}
 function rawDocument(node, env) {
   const out = {};
   for (const e of node.entries) {
     if (e.type === "SpreadElement") throw spreadInOperatorBody(e.pos);
     const key = staticKey(e);
     if (key === null) throw computedKeyInOperatorBody(e.pos);
-    if (key.startsWith("$") && operandShapeOf(key) === "array" && e.value.type !== "ArrayLiteral") {
-      throw listOperand(key, e.value.pos);
+    const placed = injectedInQuery(key, e.value);
+    if (placed !== NOT_INJECTED) {
+      setKey(out, key, placed);
+      continue;
     }
     if (NEAR.has(key) && env.site.root !== "filter") throw nearInMatch(key, e.pos);
     if (LOGICAL.has(key) && e.value.type === "ArrayLiteral") {
@@ -26052,20 +23088,23 @@ function rawDocument(node, env) {
       });
       continue;
     }
-    out[key] = operandPositionOf(key) === "value" ? lowerValue(e.value, env) : rawValue(e.value, env);
+    out[key] = operandPositionOf(key) === "value" ? lowerValue(e.value, env) : rawValue(e.value, key.startsWith("$") ? env.inside(key) : env);
   }
   return out;
 }
 function rawValue(e, env) {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
+    const placed = injectedInQuery(e.name, e.args[0]);
+    if (placed !== NOT_INJECTED) return { [e.name]: placed };
     return { [e.name]: rawValue(e.args[0], env) };
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
+  if (e.type === "RegexLiteral") return e.injected ?? regexValue(e.pattern, mongoRegexOptions(e.flags));
   if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !evaluate(e, /* @__PURE__ */ new Map()).ok) {
     throw expressionInQueryValue(e.pos);
   }
   const value = lowerValue(e, env);
-  if (isObj4(value) && !Array.isArray(value)) {
+  if (e.type !== "OperatorCall" && isObj4(value) && !Array.isArray(value)) {
     for (const key of Object.keys(value)) {
       if (key.startsWith("$") && !listedIn(key, "filter")) throw aggregationOperatorInQuery(key, e.pos);
     }
@@ -26076,23 +23115,26 @@ function leaf(node, env) {
   let name2;
   let recv = null;
   let args;
+  const escape = node.type === "OperatorCall";
   if (node.type === "BinaryExpr") {
     name2 = productionForOperator("BinaryExpr", node.op);
     args = [node.left, node.right];
   } else if (node.type === "MethodCall") {
+    if (takesNoReceiver(node.name) && node.object.type !== "StreamRef" && !onOwnStream(node.object, env)) {
+      throw noReceiver(node.name, node.pos);
+    }
     name2 = node.name;
     recv = node.object;
     args = node.args.filter(isExpr);
   } else if (node.type === "OperatorCall") {
     name2 = node.name;
     args = node.args.filter(isExpr);
-    const hosts = onlyInsideOf(name2, "filter");
-    if (hosts !== void 0 && !hosts.includes(env.site.inside ?? "")) throw onlyInside(name2, hosts, node.pos);
     if (NEAR.has(name2) && env.site.root !== "filter") throw nearInMatch(name2, node.pos);
   } else return null;
   if (name2 === void 0) return null;
   const verdict = consult(name2, "filter");
-  if (verdict.kind === "refused")
+  if (verdict.kind === "refused") {
+    if (node.type === "OperatorCall") return plainQuery(node, env);
     throw refusalFor(
       { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject },
       spelled2(node, name2),
@@ -26101,21 +23143,47 @@ function leaf(node, env) {
       node.pos,
       []
     );
-  if (!listedIn(name2, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
+  }
+  if (!escape && !listedIn(name2, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
     throw queryOnlyInsideElement(name2, node.pos);
   }
-  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return null;
+  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") {
+    return node.type === "OperatorCall" ? plainQuery(node, env) : null;
+  }
   const receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
   const sel = select(verdict, receiver, shapeOf2(args), args.length);
-  if (sel.kind === "wrongCount" || sel.kind === "rejectedCount" || sel.kind === "spreadRefused") {
+  if (sel.kind === "spreadRefused") throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
+  if (sel.kind === "wrongCount" || sel.kind === "rejectedCount") {
+    if (node.type === "OperatorCall") return plainQuery(node, env);
     throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
   }
-  if (sel.kind !== "rule") return null;
-  checkSlots(name2, sel.rule.args, args);
-  const out = sel.rule.emit(
-    filterInputs(name2, recv, args, positionalKeysOf(name2), env, node, { lowerValue, lowerFilter, lowerNativeFilter })
-  );
+  if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
+  if (!escape) checkSlots(name2, sel.rule.args, args);
+  const inputs = filterInputs(name2, recv, args, positionalKeysOf(name2), env, node, {
+    lowerValue,
+    lowerFilter,
+    lowerNativeFilter
+  });
+  let out;
+  try {
+    out = sel.rule.emit(inputs);
+  } catch (e) {
+    if (node.type === "OperatorCall" && e instanceof QueryFormError) return plainQuery(node, env);
+    throw e;
+  }
   return out ?? null;
+}
+function plainQuery(node, env) {
+  if (!isKnownName(node.name) || listedIn(node.name, "value")) return null;
+  const spread = node.args.find((a) => a.type === "SpreadElement");
+  if (spread !== void 0) {
+    throw refusalFor({ kind: "spreadRefused", name: node.name, sig: "\u2026" }, node.name, "", "filter", spread.pos, []);
+  }
+  const args = node.args.filter(isExpr);
+  const inside = env.inside(node.name);
+  if (args.length === 0) return { [node.name]: {} };
+  if (args.length === 1) return { [node.name]: rawValue(args[0], inside) };
+  return { [node.name]: args.map((a) => rawValue(a, inside)) };
 }
 var spelled2 = (node, name2) => node.type === "MethodCall" ? `.${name2}` : node.type === "BinaryExpr" ? `'${node.op}'` : name2;
 function chainOf(node, op) {
@@ -26150,7 +23218,11 @@ function extractHasChain(node, env) {
 function pathOfIn(e, env) {
   const elements = env.site.boundaries.filter((b) => b.stage === "$elemMatch");
   const innermost = elements.length === 0 ? null : elements[elements.length - 1];
-  if (e.type === "FieldRef") return e.path === "" || innermost !== null || env.level > 0 ? null : e.path;
+  if (e.type === "FieldRef") {
+    if (e.path === "" || innermost !== null || env.level > 0) return null;
+    readablePath(e, env, true);
+    return e.path;
+  }
   if (e.type === "Ident" && env.scope.has(e.name)) {
     const b = env.lookup(e.name, e.pos);
     if (b.ref.kind !== "document" || b.level !== env.level) return null;
@@ -26163,6 +23235,10 @@ function pathOfIn(e, env) {
       const b = env.lookup(e.object.name, e.object.pos);
       if (b.ref.kind === "document" && b.level === env.level) {
         if (innermost !== null && innermost.element !== e.object.name) return null;
+        const why = unreadable(typeOf(e.object, env), e.name, true);
+        if (why !== null) {
+          throw unreadableField(e.name, why, `${e.optional ? "?." : "."}${e.name}`, holderOf(e.object, env), e.pos);
+        }
         return b.ref.path === "" ? e.name : `${b.ref.path}.${e.name}`;
       }
     }
@@ -26286,14 +23362,23 @@ var isAlwaysTrue = (d) => Object.keys(d).length === 1 && d.$expr === true;
 var isAlwaysFalse = (d) => Object.keys(d).length === 1 && d.$expr === false;
 
 // src/compiler/emit/inputs.ts
+function readableSort(ask, t, holder, pos) {
+  if (ask.kind !== "keys") return ask;
+  for (const key of Object.keys(ask.spec)) {
+    const bad = unreadableAt(t, key, true);
+    if (bad === null) continue;
+    const segments = key.split(".");
+    const prefix = segments.slice(0, bad.index).join(".");
+    throw unreadableField(segments[bad.index], bad.why, key, prefix === "" ? holder : `'${prefix}'`, pos);
+  }
+  return ask;
+}
 var childEnv = (env, node, key) => {
   const at3 = env.at(edge(node, key, env.site.where));
   const n2 = node;
   if (n2.type === "OperatorCall" && key === "args") return at3.inside(n2.name ?? null);
-  if (n2.type === "MethodCall" || n2.type === "CallExpression" || n2.type === "NewExpression" || n2.type === "Lambda") {
-    return at3.inside(null);
-  }
-  return at3;
+  if (n2.type === "ObjectLiteral" || n2.type === "KeyValueEntry" || n2.type === "ArrayLiteral") return at3;
+  return at3.inside(null);
 };
 function callback(cb, env, read) {
   if (cb.type !== "Lambda" || cb.body === void 0) {
@@ -26428,6 +23513,7 @@ function elementsCallback(cb, count, env, read, name2) {
 function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map(), recvNode, present2 = false) {
   const argEnv = childEnv(env, node, "args");
   const value = (e) => overrides.has(e) ? overrides.get(e) : read.value(e, argEnv);
+  const elementOfRecv = () => recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
   return {
     name: name2,
     recv,
@@ -26436,6 +23522,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     value,
     present: present2,
     kind: (e) => kindOf3(e, argEnv),
+    type: (e) => typeOf(e, argEnv),
     optionalArg: (e) => chainHasOptional(e),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
@@ -26443,9 +23530,9 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2, present2),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name2),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
-    sortSpec: (e, objects) => sortSpecOf(e, name2, objects),
-    orderBy: (keys2, orders) => orderBySpec(keys2, orders, name2),
-    objIteratee: (cb) => {
+    sortSpec: (e, objects) => readableSort(sortSpecOf(e, name2, objects), elementOfRecv(), "the element", e.pos),
+    orderBy: (keys2, orders) => readableSort(orderBySpec(keys2, orders, name2), elementOfRecv(), "the element", keys2.pos),
+    objIteratee: (cb, mode) => {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name2, cb.pos);
       }
@@ -26463,7 +23550,9 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
       return {
         as: kv.as,
         ref: kv.ref,
-        body: { $let: { vars, in: read.value(cb.body, childEnv(bodyEnv, cb, "body")) } }
+        body: {
+          $let: { vars, in: (mode === "value" ? read.value : read.truth)(cb.body, childEnv(bodyEnv, cb, "body")) }
+        }
       };
     },
     bind: (hint2) => {
@@ -26525,7 +23614,7 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
       return path;
     },
     literal: (e) => {
-      if (e.type === "RegexLiteral") return new RegExp(e.pattern, mongoRegexOptions(e.flags));
+      if (e.type === "RegexLiteral") return regexValue(e.pattern, mongoRegexOptions(e.flags));
       const c = literalIn(e);
       if (c === null) throw needsLiteral(name2, e.pos);
       return c.value;
@@ -26545,13 +23634,19 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
 function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = name2) {
   const argEnv = childEnv(env, node, "args");
   const before = [...env.chain.emitted, ...soFar];
+  const readableKeys = (ask, pos) => readableSort(
+    ask,
+    env.typeAt(env.chain.element),
+    env.chain.element === "" ? "the document" : `'$.${env.chain.element}'`,
+    pos
+  );
   const bound = (cb) => {
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;
-    let e = argEnv.block();
+    let e = argEnv;
     if (cb.params.length >= 1) {
       e = e.bind(cb.params[0], {
         ref: { kind: "document", path: env.chain.element },
-        type: ANY,
+        type: env.typeAt(env.chain.element),
         mutable: false,
         pos: cb.pos
       });
@@ -26648,8 +23743,8 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written2 = 
       if (stages === void 0) throw valueWhereBlockExpected(written2, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name2, objects), name2, env.chain.element),
-    orderBy: (keys2, orders) => streamSortAsk(orderBySpec(keys2, orders, name2), name2, env.chain.element),
+    sortSpec: (e, objects = true) => streamSortAsk(readableKeys(sortSpecOf(e, name2, objects), e.pos), name2, env.chain.element, e.pos),
+    orderBy: (keys2, orders) => streamSortAsk(readableKeys(orderBySpec(keys2, orders, name2), keys2.pos), name2, env.chain.element, keys2.pos),
     slot: () => env.chain.slot().path,
     bind: (hint2) => {
       const b = env.fresh(hint2);
@@ -26671,7 +23766,6 @@ var READ = { value: lowerValue, truth: lowerTruth };
 var positionIn = (env) => positionOf(env.site.where) ?? "value";
 var NOT_EXPR = /* @__PURE__ */ new Set([
   "SpreadElement",
-  "LetDecl",
   "FuncDecl",
   "AssignExpr",
   "DeleteStmt",
@@ -26722,6 +23816,7 @@ function lowerValue(node, env) {
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     return cond2(gone, null, lowerValue(withoutOptional(node), proved));
   }
+  if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
   switch (node.type) {
     case "NumberLiteral":
     case "StringLiteral":
@@ -26738,6 +23833,7 @@ function lowerValue(node, env) {
       throw undefinedAsValue(node.pos);
     case "RegexLiteral":
       if (node.injected !== void 0) return node.injected;
+      if (env.site.inside !== null) return regexValue(node.pattern, mongoRegexOptions(node.flags));
       throw regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);
@@ -26748,8 +23844,9 @@ function lowerValue(node, env) {
     case "ObjectLiteral":
       return objectLiteral(node, node.entries, env);
     case "Injected":
-      return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
+      return injectedValue(node, env);
     case "FieldRef": {
+      readablePath(node, env);
       const path = reachable(env.render(locate(node, env), node.pos));
       return node.optional === true ? { $ifNull: [path, null] } : path;
     }
@@ -26832,12 +23929,31 @@ function stoppedChain(node) {
   let cursor = node;
   let called = false;
   while (cursor.type === "MemberAccess" || cursor.type === "IndexAccess" || cursor.type === "MethodCall") {
-    if (cursor.type !== "MemberAccess" || isPropertyRow(cursor)) called = true;
+    if (!isRead(cursor)) called = true;
     if (cursor.optional) return called ? cursor.object : null;
     cursor = cursor.object;
   }
   if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
   return cursor.optionalAt === void 0 ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
+}
+function isRead(e) {
+  return e.type === "IndexAccess" || e.type === "MemberAccess" && !isPropertyRow(e);
+}
+function readsHaveOptional(e) {
+  let cursor = e;
+  while (isRead(cursor)) {
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true;
+}
+function withoutReadOptional(e) {
+  if (isRead(e)) return { ...e, optional: false, object: withoutReadOptional(e.object) };
+  if (e.type === "FieldRef" && e.optional === true) {
+    const { optional: _dropped, optionalAt: _at, ...rest } = e;
+    return rest;
+  }
+  return e;
 }
 function withoutOptional(e) {
   if (e.type === "MemberAccess" || e.type === "IndexAccess" || e.type === "MethodCall") {
@@ -26849,38 +23965,11 @@ function withoutOptional(e) {
   }
   return e;
 }
-var STAGE_NAMES = everyName().filter(isStageName);
-function refuseStageList(node, elements) {
-  const first = elements[0];
-  if (first === void 0) return;
-  const stageLike = (el) => {
-    if (el.type === "OperatorCall") return { name: el.name, keys: 1 };
-    if (el.type === "ObjectLiteral") {
-      const keys = el.entries.map(staticKey);
-      if (keys.length > 0 && keys[0] !== null && keys[0].startsWith("$")) return { name: keys[0], keys: keys.length };
-    }
-    return null;
-  };
-  const head = stageLike(first);
-  if (head === null) return;
-  const near = consult(head.name, "value").kind === "unknown" && didYouMean(head.name, STAGE_NAMES) !== "";
-  if (!isStageName(head.name) && !near) return;
-  elements.forEach((el, i) => {
-    const s = stageLike(el);
-    if (s === null) return;
-    if (s.keys !== 1) throw multiKeyStage(i, s.keys, el.pos);
-    if (!isStageName(s.name)) throw unknownStage(i, s.name, STAGE_NAMES, el.pos);
-  });
-  throw stageListAsValue(node.pos);
-}
 function arrayLiteral(node, elements, env) {
-  refuseStageList(node, elements);
   const inner = childEnv(env, node, "elements");
   for (const el of elements) {
-    if (el.type === "AssignExpr" || el.type === "UpdateFilter") throw statementInValue("Assignment", el.pos);
-    if (el.type === "DeleteStmt") throw statementInValue("delete", el.pos);
-    if (el.type === "LetDecl") throw statementInValue("`let`", el.pos);
-    if (el.type === "FuncDecl") throw statementInValue("A function declaration", el.pos);
+    if (el.type === "AssignExpr" || el.type === "UpdateFilter" || el.type === "DeleteStmt" || el.type === "FuncDecl")
+      internalError(`a '${el.type}' reached a value array`, el.pos);
   }
   if (!elements.some((el) => el.type === "SpreadElement"))
     return elements.filter(isExpr2).map((el) => lowerValue(el, inner));
@@ -26904,6 +23993,17 @@ function arrayLiteral(node, elements, env) {
   flush();
   return operands.length === 1 ? operands[0] : { $concatArrays: operands };
 }
+function injectedValue(node, env) {
+  if (!isMqlShaped(node.value)) return node.value;
+  switch (injectedPlacement(env.site)) {
+    case "literal":
+      return { $literal: node.value };
+    case "asWritten":
+      return node.value;
+    case "refused":
+      throw runTimeValueAsMql(node.value, env.site.where, node.pos);
+  }
+}
 function objectLiteral(node, entries, env) {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list) => {
@@ -26911,7 +24011,7 @@ function objectLiteral(node, entries, env) {
       const pairs = list.map((e) => {
         if (e.type !== "KeyValueEntry") internalError("a spread reached the computed-key path");
         const k = e.key.kind === "static" ? e.key.name : lowerValue(e.key.expr, inner);
-        return { k, v: lowerValue(e.value, inner) };
+        return { k, v: lowerValue(e.value, childEnv(inner, e, "value")) };
       });
       return { $arrayToObject: [pairs] };
     }
@@ -26924,15 +24024,8 @@ function objectLiteral(node, entries, env) {
         if (doc !== null && typeof doc === "object") Object.assign(out, doc);
         continue;
       }
-      const keyShape = e.key.name.startsWith("$") ? operandShapeOf(e.key.name) : void 0;
-      if (keyShape === "array" && e.value.type !== "ArrayLiteral" || keyShape === "single" && e.value.type === "ArrayLiteral") {
-        const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
-        const own = doc !== null && typeof doc === "object" ? doc[e.key.name] : void 0;
-        if (own === void 0) internalError(`'${e.key.name}' with one operand lowered to no '${e.key.name}' key`);
-        setKey(out, e.key.name, own);
-        continue;
-      }
-      setKey(out, e.key.name, lowerValue(e.value, inner));
+      const at3 = childEnv(inner, e, "value");
+      setKey(out, e.key.name, lowerValue(e.value, e.key.name.startsWith("$") ? at3.inside(e.key.name) : at3));
     }
     return out;
   };
@@ -27027,54 +24120,113 @@ function reachable(path) {
 function isPropertyRow(node) {
   return sourceFamily(node.object) !== null || !isCallable(node.name);
 }
+function readablePath(node, env, throughArrays = false) {
+  if (node.path === "") return;
+  const bad = unreadableAt(env.typeAt("", 0), node.path, throughArrays);
+  if (bad === null) return;
+  const holder = bad.index === 0 ? "the document" : `'${spelledPath(node, bad.index)}'`;
+  throw unreadableField(node.path.split(".")[bad.index], bad.why, spelledPath(node, bad.index + 1), holder, node.pos);
+}
+function spelledPath(node, count) {
+  const segments = node.path.split(".").slice(0, count);
+  const tested = node.optional !== true ? count : node.optionalAt === void 0 ? 0 : node.optionalAt.split(".").length;
+  if (tested >= segments.length) return `$.${segments.join(".")}`;
+  const tail = segments.slice(tested).join(".");
+  return tested === 0 ? `$?.${tail}` : `$.${segments.slice(0, tested).join(".")}?.${tail}`;
+}
+function spelledRead(e) {
+  if (e.type === "FieldRef") return e.path === "" ? "$" : spelledPath(e, e.path.split(".").length);
+  if (e.type === "Ident") return e.minted === true ? null : e.name;
+  if (e.type !== "MemberAccess" && e.type !== "IndexAccess") return null;
+  const object = spelledRead(e.object);
+  if (object === null) return null;
+  if (e.type === "MemberAccess") return `${object}${e.optional ? "?." : "."}${e.name}`;
+  if (e.index.type !== "NumberLiteral" && e.index.type !== "StringLiteral") return null;
+  return `${object}${e.optional ? "?." : ""}[${JSON.stringify(e.index.value)}]`;
+}
+function holderOf(e, env) {
+  if (e.type === "FieldRef" && e.path === "") return "the document";
+  if (e.type === "Ident" && e.minted === true && env.scope.has(e.name)) {
+    const ref = env.lookup(e.name, e.pos).ref;
+    if (ref.kind !== "document") return "the element";
+    return ref.path === "" ? "the document" : `'$.${ref.path}'`;
+  }
+  const spelled3 = spelledRead(e);
+  return spelled3 === null ? null : `'${spelled3}'`;
+}
 function memberAccess(node, env) {
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
     throw unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
+  refuseUnreadable(node, env);
   const path = pathOf(node, env);
   if (path !== null) return path;
-  const raw = lowerValue(node.object, childEnv(env, node, "object"));
-  const input = node.optional || chainHasOptional(node.object) ? ifNull(raw, {}) : raw;
-  return { $getField: { field: node.name, input } };
+  const names = [node.name];
+  let base = node.object;
+  let baseEnv = childEnv(env, node, "object");
+  while (base.type === "MemberAccess" && !isPropertyRow(base) && pathOf(base, env) === null) {
+    refuseUnreadable(base, env);
+    names.unshift(base.name);
+    baseEnv = childEnv(baseEnv, base, "object");
+    base = base.object;
+  }
+  const bound = env.fresh("v");
+  return letOne(bound.as, lowerValue(base, baseEnv), `${bound.ref}.${names.join(".")}`);
+}
+function refuseUnreadable(node, env) {
+  const why = unreadable(typeOf(node.object, childEnv(env, node, "object")), node.name, false);
+  if (why === null) return;
+  const read = `${node.optional ? "?." : "."}${node.name}`;
+  throw unreadableField(node.name, why, read, holderOf(node.object, env), node.pos);
 }
 function indexAccess(node, env) {
   const objEnv = childEnv(env, node, "object");
+  if (node.index.type === "StringLiteral") {
+    const name2 = node.index.value;
+    const why = unreadable(typeOf(node.object, objEnv), name2, false);
+    if (why !== null) {
+      throw unreadableField(name2, why, `[${JSON.stringify(name2)}]`, holderOf(node.object, env), node.pos);
+    }
+  }
   {
     const loc = locate(node, env);
     if (loc !== null) return env.render(loc, node.pos);
   }
   const raw = lowerValue(node.object, objEnv);
   const idx = lowerValue(node.index, childEnv(env, node, "index"));
-  const optional = node.optional || chainHasOptional(node.object);
   const known = node.object.type === "FieldRef" && node.object.path === "" ? "object" : familyOfKind(kindOf3(node.object, objEnv));
-  const wrapped = (neutral) => optional ? ifNull(raw, neutral) : raw;
-  if (kindOf3(node.index, env) === "string") return { $getField: { field: idx, input: wrapped({}) } };
+  const absent = !isPresent(node.object, objEnv);
+  const orEmpty = (neutral) => absent ? ifNull(raw, neutral) : raw;
+  const named = isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] };
+  const keyKind = kindOf3(node.index, env);
+  if (keyKind === "string") return { $getField: { field: named, input: orEmpty({}) } };
+  const isString = (o) => boolTruth({ $eq: [{ $type: o }, "string"] });
   const literal2 = evaluate(node.index, /* @__PURE__ */ new Map());
   if (literal2.ok && typeof literal2.value === "number" && Number.isInteger(literal2.value)) {
     const i = literal2.value;
     if (i < 0) throw negativeIndex(i, node.pos);
-    const charAt = (o3) => ({ $substrCP: [o3, i, 1] });
-    const fieldAt = (o3) => ({ $getField: { field: String(i), input: o3 } });
-    if (known === "array") return { $arrayElemAt: [wrapped([]), i] };
-    if (known === "string") return charAt(wrapped(""));
-    if (known === "object") return fieldAt(wrapped({}));
-    const o2 = wrapped([]);
+    const charAt = { $substrCP: [raw, i, 1] };
+    const fieldAt2 = { $getField: { field: String(i), input: orEmpty({}) } };
+    if (known === "array") return { $arrayElemAt: [orEmpty([]), i] };
+    if (known === "object") return fieldAt2;
+    if (known === "string") return absent ? switchOn([{ case: isString(raw), then: charAt }], "$$REMOVE") : charAt;
     return switchOn(
       [
-        { case: boolTruth({ $isArray: o2 }), then: { $arrayElemAt: [o2, i] } },
-        { case: boolTruth({ $eq: [{ $type: o2 }, "string"] }), then: charAt(o2) }
+        { case: boolTruth({ $isArray: raw }), then: { $arrayElemAt: [raw, i] } },
+        { case: isString(raw), then: charAt }
       ],
-      fieldAt(o2)
+      fieldAt2
     );
   }
-  const key = { $toString: isPresent(node.index, env) ? idx : { $ifNull: [idx, ""] } };
-  if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
-  if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
-  const o = wrapped([]);
-  return switchOn([{ case: boolTruth({ $isArray: o }), then: { $arrayElemAt: [o, idx] } }], {
-    $getField: { field: key, input: o }
-  });
+  const fieldAt = { $getField: { field: { $toString: named }, input: orEmpty({}) } };
+  if (known === "object") return fieldAt;
+  const element2 = { $arrayElemAt: [orEmpty([]), idx] };
+  if (known === "array") {
+    return keyKind === "number" ? element2 : switchOn([{ case: boolTruth({ $isNumber: idx }), then: element2 }], "$$REMOVE");
+  }
+  const onArray = keyKind === "number" ? { $isArray: raw } : { $and: [{ $isArray: raw }, { $isNumber: idx }] };
+  return switchOn([{ case: boolTruth(onArray), then: { $arrayElemAt: [raw, idx] } }], fieldAt);
 }
 function receiverOf(recv, env) {
   const src = sourceFamily(recv);
@@ -27083,7 +24235,6 @@ function receiverOf(recv, env) {
   if (recv.type === "StreamRef" || onOwnStream(recv, env)) return { kind: "stream" };
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
-  if (src === "set") return { kind: "value", family: "set", lowered };
   const t = typeOf(recv, env);
   const kinds = kindsOf(t);
   if (kinds === null) return { kind: "opaque", lowered };
@@ -27108,9 +24259,16 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const chainOnStream = recvNode.type === "MethodCall" && chainBase(recvNode).type === "StreamRef";
   const inAValue = position !== "stream" && position !== "statement";
   if (chainOnStream && inAValue) throw streamAsValue(node.pos);
+  if (isNothing(typeOf(recvNode, recvEnv))) {
+    const call = node.type === "MethodCall" ? `.${wroteName(node, name2)}()` : `.${name2}`;
+    throw alwaysAbsent(call, holderOf(recvNode, recvEnv), node.pos);
+  }
   const receiver = receiverOf(recvNode, recvEnv);
   if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue && !hasStreamValueCell(name2)) {
     throw streamAsValue(node.pos);
+  }
+  if (node.type === "MethodCall" && receiver.kind !== "stream" && takesNoReceiver(name2)) {
+    throw noReceiver(name2, node.pos);
   }
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
@@ -27130,10 +24288,23 @@ function dispatchOn(node, name2, recvNode, args, env) {
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
     const empty = emptyValueOf(name2, family);
     const inExpression = position === "value" || position === "filter";
-    const wrap = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const needsEmpty = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
+    const nullIsEmpty = needsEmpty && readsNullAsEmptyOf(name2);
+    const wrap = needsEmpty && !nullIsEmpty;
     const input = wrap ? ifNull(recv, empty) : recv;
     return sel.rule.emit(
-      exprInputs(name2, input, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, proven || wrap)
+      exprInputs(
+        name2,
+        input,
+        exprArgs,
+        positionalKeysOf(name2),
+        env,
+        node,
+        READ,
+        void 0,
+        recvNode,
+        proven || wrap || nullIsEmpty
+      )
     );
   }
   if (sel.kind === "dispatch") {
@@ -27205,21 +24376,23 @@ function callExpression(node, env) {
       if (b.ref.kind === "dropped") throw droppedBinding(b.ref, node.pos);
       throw notCallable(node.pos);
     }
-    if (isGlobalName(callee.name)) {
-      if (newKeywordOf(callee.name) === "required") throw unknownFunction(callee.name, [], node.pos);
-      return dispatchBare(node, callee.name, node.args, env);
-    }
-    throw unknownFunction(callee.name, env.scope.functionNames(), node.pos);
+    if (isGlobalName(callee.name)) return dispatchBare(node, callee.name, node.args, env);
+    throw unknownFunction(callee.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
   }
   if (callee.type === "Lambda") return applyLambda2(callee, node.args, env, node.pos, "IIFE", null);
   throw notCallable(node.pos);
 }
 function newExpression(node, env) {
   const { callee } = node;
-  if (callee.type !== "Ident" || !isGlobalName(callee.name) || newKeywordOf(callee.name) === "forbidden") {
-    throw notCallable(node.pos);
+  if (callee.type !== "Ident") throw unknownClass(null, [], node.pos);
+  const { name: name2 } = callee;
+  if (env.scope.has(name2) && env.lookup(name2, callee.pos).ref.kind === "function")
+    throw newOnFunction(name2, node.pos);
+  if (env.scope.has(name2) || !isGlobalName(name2)) throw unknownClass(name2, constructibleNames(), node.pos);
+  if (newKeywordOf(name2) === "forbidden" && (positionsOf(name2)?.length ?? 0) > 0) {
+    throw newOnFunction(name2, node.pos);
   }
-  return dispatchBare(node, callee.name, node.args, env);
+  return dispatchBare(node, name2, node.args, env);
 }
 function dispatchBare(node, name2, args, env) {
   const position = positionIn(env);
@@ -27254,39 +24427,25 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
 function operatorCall(node, env) {
   const position = positionIn(env);
   const verdict = consult(node.name, position);
-  if (verdict.kind === "unknown") return unknownOperator(node, node.args, env);
-  const hosts = onlyInsideOf(node.name, position);
-  if (hosts !== void 0 && !hosts.includes(env.site.inside ?? "")) throw onlyInside(node.name, hosts, node.pos);
+  if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return plainOperator(node, env);
   const shape = position === "updateDoc" ? void 0 : operandShapeOf(node.name);
   const first = node.args[0];
   const lone = node.args.length === 1 && first.type === "ArrayLiteral" ? first : null;
   let args = node.args;
-  let operands = node.args.filter(isExpr2);
   let count = node.args.length;
   const overrides = /* @__PURE__ */ new Map();
-  if (lone !== null && shape !== void 0 && shape !== "object" && shape !== "verbatim") {
-    if (lone.elements.some((el) => el.type === "SpreadElement")) {
-      if (shape === "array") return { [node.name]: lowerValue(lone, childEnv(env, node, "args")) };
-    } else {
-      operands = lone.elements.filter(isExpr2);
-      count = operands.length;
-      if (count === 0 && shape === "array") {
-        if (ruleArgsOf(verdict)?.emptyList === true) return { [node.name]: [] };
-      }
-      if (shape === "array") args = operands;
-    }
+  if (lone !== null && shape === "array") {
+    if (lone.elements.some((el) => el.type === "SpreadElement")) return plainOperator(node, env);
+    args = lone.elements.filter(isExpr2);
+    count = args.length;
   }
   const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr2);
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), count);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
-    if (sel.kind === "wrongCount" && lone !== null) throw operandListCount(node.name, sel.args, sel.got, node.pos);
-    throw refusalFor(sel, node.name, "", position, node.pos, []);
-  }
-  const body = bodyRuleOf(node.name);
-  if (body !== void 0) checkBody(node.name, body, exprArgs, positionalKeysOf(node.name), node.pos);
-  checkSlots(node.name, sel.rule.args, operands);
+  if (sel.kind === "spreadRefused") throw refusalFor(sel, node.name, "", position, node.pos, []);
+  if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
+  if (sel.kind !== "rule") return plainOperator(node, env);
+  if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
   const inputs = exprInputs(node.name, null, exprArgs, positionalKeysOf(node.name), env, node, READ, overrides);
   const out = sel.rule.emit(inputs);
@@ -27324,14 +24483,8 @@ function boundArrowOverrides(node, args, env) {
   }
   return out;
 }
-function ruleArgsOf(verdict) {
-  if (verdict.kind !== "lower") return void 0;
-  const cell = verdict.cell;
-  return cell !== null && typeof cell === "object" ? cell.args : void 0;
-}
-function unknownOperator(node, all2, env) {
-  const spread = all2.find((a) => a.type === "SpreadElement");
-  const args = all2.filter(isExpr2);
+function plainOperator(node, env) {
+  const spread = node.args.find((a) => a.type === "SpreadElement");
   if (spread !== void 0) {
     throw refusalFor(
       { kind: "spreadRefused", name: node.name, sig: "\u2026" },
@@ -27342,6 +24495,7 @@ function unknownOperator(node, all2, env) {
       []
     );
   }
+  const args = node.args.filter(isExpr2);
   const inner = childEnv(env, node, "args");
   if (args.length === 0) return { [node.name]: {} };
   if (args.length === 1) return { [node.name]: lowerValue(args[0], inner) };
@@ -27463,7 +24617,6 @@ function membership2(node, env) {
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 function exprBlock(node, env, ret) {
-  const seen = /* @__PURE__ */ new Set();
   const step = (i, e, carried) => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
     const vars = {};
@@ -27473,11 +24626,9 @@ function exprBlock(node, env, ret) {
     let carry = carried;
     for (; ; ) {
       const d = node.decls[j];
-      if (seen.has(d.name)) throw redeclared(d.kind, d.name, d.pos);
       const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
       carry = null;
       if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
-      seen.add(d.name);
       const bound = scope.param(d.name, maybeAbsent(typeOf(d.value, scope)), d.pos);
       vars[bound.as] = value;
       refs.push(`$$${bound.as}`);
@@ -27813,13 +24964,19 @@ function stageBody(node, env) {
     if (key === null) return lowerValue(node, env);
     const slot = childEnv(entries, entry, "value");
     const at3 = slot.site.where.at;
-    out[key] = at3 === "statement" || at3 === "stream" ? pipelineBody(
-      entry.value,
-      slot,
-      env.site.where.at === "stageBody" ? env.site.where.stage : "",
-      [...env.site.where.at === "stageBody" ? env.site.where.path : [], key],
-      captures
-    ) : readIn(entry.value, slot);
+    setKey(
+      out,
+      key,
+      // A slot that holds a pipeline takes a bracketed list of stages. Any other value
+      // is the developer's own MQL, and it lowers as a value: `pipeline: $.p` → "$p".
+      (at3 === "statement" || at3 === "stream") && entry.value.type === "ArrayLiteral" ? pipelineBody(
+        entry.value,
+        slot,
+        env.site.where.at === "stageBody" ? env.site.where.stage : "",
+        [...env.site.where.at === "stageBody" ? env.site.where.path : [], key],
+        captures
+      ) : at3 === "statement" || at3 === "stream" ? lowerValue(entry.value, slot) : readIn(entry.value, slot)
+    );
   }
   const captured = captures.filter((c) => c.any);
   if (captured.length > 0) {
@@ -27828,13 +24985,13 @@ function stageBody(node, env) {
   }
   return out;
 }
-function subPipeline(node, env, slot = null) {
-  if (node.type !== "ArrayLiteral") throw needsStageList(slot, node.pos);
+function subPipeline(node, env) {
+  if (node.type !== "ArrayLiteral") throw needsStageList(node.pos);
   const out = [];
-  let scope = childEnv(env, node, "elements").block();
+  let scope = childEnv(env, node, "elements");
   for (const el of node.elements) {
     if (el.type === "SpreadElement") throw spreadInStageList(el.pos);
-    if (env.chain.terminal !== null) throw afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
+    if (env.chain.terminal !== null) throw afterTerminalStage(env.chain.terminal.spelled, el.pos);
     const step = statementStages(el, scope, out.length === 0);
     out.push(...env.chain.ahead(), ...step.stages);
     scope = step.env;
@@ -27845,19 +25002,15 @@ function pipelineBody(node, env, stage, path, captures = []) {
   const capture = pipelineOverOf(stage) === "foreign" ? hasLet(stage) ? new Capture(env.level) : null : void 0;
   if (capture) captures.push(capture);
   const body = env.enter({ stage, path, capture }, new Chain());
-  const key = path[path.length - 1];
-  body.chain.emitted.push(...subPipeline(node, body, stage !== "" && typeof key === "string" ? { stage, key } : null));
+  body.chain.emitted.push(...subPipeline(node, body));
   return body.chain.close();
 }
-function hasLet(stage) {
-  const rule = stageBodyRuleOf(stage);
-  return rule !== void 0 && [...rule.required ?? [], ...rule.optional ?? []].includes("let");
-}
+var hasLet = (stage) => takesLetOf(stage);
 var READ2 = {
   value: readIn,
   truth: lowerTruth,
-  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. */
-  predicate: (body, env) => lowerFilter(body, env.at(FILTER)),
+  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. A lambda body is a JavaScript spelling. */
+  predicate: (body, env) => lowerFilter(body, env.at(FILTER), true),
   reshape: lowerValue,
   /** The statements of a stage block, each as its stages, under the parameter's env. */
   block: (stages, env) => {
@@ -27881,7 +25034,7 @@ function lowerProgram(program, env) {
   for (let i = 0; i < stmts.length; i++) {
     const stmt = stmts[i];
     if (env.chain.terminal !== null) {
-      throw afterTerminalStage(Object.keys(env.chain.terminal)[0], stmt.pos);
+      throw afterTerminalStage(env.chain.terminal.spelled, stmt.pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
     const run = declRun(stmts, i);
@@ -27894,12 +25047,12 @@ function lowerProgram(program, env) {
   }
   return env.chain.close();
 }
+var landed = (stages, env) => ({ stages, env: afterStages(stages, env) });
 function statementStages(stmt, env, first) {
   if (stmt.type === "UpdateFilter") return writeStages(stmt, env, first);
   if (stmt.type === "LetDecl") return letStages(stmt, env);
   if (stmt.type === "FuncDecl") {
     const decl = stmt;
-    if (env.scope.declaredHere(decl.name)) throw redeclared("function", decl.name, decl.pos);
     const lambda = decl.lambda;
     return {
       stages: [],
@@ -27911,8 +25064,7 @@ function statementStages(stmt, env, first) {
       })
     };
   }
-  const stages = stageStatement(stmt, env, first);
-  return { stages, env: afterStages(stages, env) };
+  return stageStatement(stmt, env, first);
 }
 function declRun(stmts, i) {
   const head = stmts[i];
@@ -27969,7 +25121,6 @@ function declStages(run, env) {
   return { stages: out, env: scope, consumed };
 }
 function letStages(decl, env) {
-  if (env.scope.declaredHere(decl.name)) throw redeclared(decl.kind, decl.name, decl.pos);
   const innermost = env.site.boundaries[env.site.boundaries.length - 1];
   const ownDocuments = innermost !== void 0 && pipelineOverOf(innermost.stage) === "foreign";
   if (!ownDocuments && env.scope.has(decl.name) && env.lookup(decl.name, decl.pos).ref.kind === "field")
@@ -28050,7 +25201,7 @@ function namesWithin(stage, body, path = [], out = /* @__PURE__ */ new Map()) {
   }
   return out;
 }
-function place(name2, stage, env, first, pos) {
+function place(name2, stage, env, first, pos, spelled3 = name2) {
   const only = onlyOf(name2);
   const hoisted = env.chain.hoisted[0];
   const noPlacement = (held) => {
@@ -28081,9 +25232,9 @@ function place(name2, stage, env, first, pos) {
   }
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
-    if (already !== null) throw twoTerminalStages(name2, Object.keys(already)[0], pos);
+    if (already !== null) throw twoTerminalStages(spelled3, already.spelled, pos);
     if (readsScratch(stage)) throw terminalReadsScratch(name2, pos);
-    env.chain.terminal = stage;
+    env.chain.terminal = { stage, spelled: spelled3 };
     return [];
   }
   return [stage];
@@ -28122,7 +25273,7 @@ function targetPath(op, env) {
   throw notAWriteTarget(op.pos);
 }
 function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lead, how) {
-  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written2);
+  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return landed(documentsStages(value, env, written2), env);
   const chainOn = chainBase(value);
   const streamRoad = chainOn.type === "StreamRef" || readsAnotherCollection(value) || onOwnStream(chainOn, env);
   const t = typeOf(value, env);
@@ -28132,7 +25283,7 @@ function becomeStream(value, env, valueEnv, first, written2 = "$$ = \u2026", lea
   if (cannotBe(element2, "object")) throw streamElementsNotDocuments(pluralNounOfKinds(element2), written2, value.pos);
   const slot = env.chain.slot();
   const arr = lowerValue(value, valueEnv);
-  return [{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }];
+  return landed([{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }], env);
 }
 function outTarget(t) {
   const base = chainBase(t);
@@ -28141,7 +25292,7 @@ function outTarget(t) {
   let cur = t;
   while (cur.type === "MemberAccess" || cur.type === "IndexAccess") {
     if (cur.type === "IndexAccess") {
-      if (cur.index.type !== "StringLiteral") throw collectionNameMustBeConstant(cur.index.pos);
+      if (cur.index.type !== "StringLiteral") throw collectionNameFrom(cur.index);
       segments.unshift(cur.index.value);
     } else segments.unshift(cur.name);
     cur = cur.object;
@@ -28153,14 +25304,20 @@ function outTarget(t) {
   for (const s of segments) if (s === "" || s.startsWith("$")) throw badOutTarget(s, t.pos);
   return need === 1 ? segments[0] : { db: segments[0], coll: segments[1] };
 }
+function targetSpelling2(target) {
+  const seg = (s) => /^[A-Za-z_$][\w$]*$/.test(s) ? `.${s}` : `[${JSON.stringify(s)}]`;
+  return typeof target === "string" ? `$$$${seg(target)}` : `$$$$${seg(target.db)}${seg(target.coll)}`;
+}
 function outStages(op, target, env, first) {
   if (op.op !== "=" && op.op !== "+=") throw writeToCollectionOp(op.op, op.pos);
   const name2 = op.op === "=" ? "$out" : "$merge";
   const rhs = op.value;
   const base = chainBase(rhs);
   if (base.type !== "StreamRef") throw outNeedsStream(rhs.pos);
-  const stages = rhs.type === "StreamRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
-  return [...stages, ...place(name2, { [name2]: target }, env, first && stages.length === 0, op.pos)];
+  const chain = rhs.type === "StreamRef" ? { stages: [], env } : streamStages(rhs, childEnv(env, op, "value"), first);
+  const spelled3 = `${targetSpelling2(target)} ${op.op} \u2026`;
+  const write = place(name2, { [name2]: target }, env, first && chain.stages.length === 0, op.pos, spelled3);
+  return { stages: [...chain.stages, ...write], env: chain.env.backAt(env) };
 }
 function mergeStages(node, env, first) {
   const target = outTarget(node.object);
@@ -28172,10 +25329,10 @@ function mergeStages(node, env, first) {
   const source = spread ? arg.argument : arg;
   const inner = childEnv(env, node, "args");
   const spelling = `$$$.<coll>.${node.name}(${spread ? "...<array>" : "<array>"})`;
-  const stages = (
+  const documents = (
     // `.push(<document>)` — the one spelling that does NOT read a list: the value is
     // the document, exactly as `$ = <document>;` reads it.
-    node.name === "push" && !spread ? oneDocumentStages(source, inner) : becomeStream(
+    node.name === "push" && !spread ? landed(oneDocumentStages(source, inner), inner) : becomeStream(
       source,
       inner,
       inner.at({ at: "value" }),
@@ -28185,7 +25342,9 @@ function mergeStages(node, env, first) {
       "Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or ONE document ('$$$.<coll>.push({ \u2026 });')."
     )
   );
-  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos)];
+  const spelled3 = `${targetSpelling2(target)}.${node.name}(\u2026)`;
+  const write = place("$merge", { $merge: target }, env, false, node.pos, spelled3);
+  return { stages: [...documents.stages, ...write], env: documents.env.backAt(env) };
 }
 function oneDocumentStages(value, env) {
   const t = typeOf(value, env);
@@ -28209,7 +25368,7 @@ function facetStages(doc, env, first) {
     if (named.has(key)) throw facetDuplicate(key, e.pos);
     named.add(key);
     const body = childEnv(entries, e, "value").enter({ stage: "$facet", path: [key] }, new Chain());
-    if (e.value.type !== "StreamRef") body.chain.emitted.push(...streamStages(e.value, body, true));
+    if (e.value.type !== "StreamRef") body.chain.emitted.push(...streamStages(e.value, body, true).stages);
     setKey(branches, key, body.chain.close());
   }
   return place("$facet", { $facet: branches }, env, first, doc.pos);
@@ -28237,27 +25396,26 @@ var replacesWhole = (v) => isPlainObject(v) && Object.keys(v).every((k) => !k.st
 var touches = (x, y) => x === y || x === "" || y === "" || x.startsWith(`${y}.`) || y.startsWith(`${x}.`);
 function writeStages(uf, env, first) {
   let inner = childEnv(env, uf, "ops");
-  let revived = env;
-  let proofs = [];
   const prove = (path, type) => {
-    proofs.push({ path, type });
     inner = type === null ? inner.removed(path) : inner.written(path, type);
   };
   const out = [];
   let sets = null;
   let unsets = null;
   const flush = () => {
-    if (sets !== null) out.push({ $set: sets.fields });
-    if (unsets !== null) out.push({ $unset: unsets.length === 1 ? unsets[0] : unsets });
+    const group = [];
+    if (sets !== null) group.push({ $set: sets.fields });
+    if (unsets !== null) group.push({ $unset: unsets.length === 1 ? unsets[0] : unsets });
+    env.chain.advance(group);
+    out.push(...group);
     sets = null;
     unsets = null;
   };
   const emit = (made = []) => {
-    out.push(...env.chain.ahead(), ...made);
-    if (made.some((st) => replacesDocument(Object.keys(st)[0], st))) {
-      proofs = [];
-      inner = inner.document(made.reduce((d, st) => documentAfter(st, d), inner.documents[inner.level]));
-    }
+    const hoisted = env.chain.ahead();
+    const step = "env" in made ? made : landed([...made], inner);
+    out.push(...hoisted, ...step.stages);
+    inner = step.env;
   };
   for (const op of uf.ops) {
     const out_ = outTarget(op.target);
@@ -28274,7 +25432,7 @@ function writeStages(uf, env, first) {
       continue;
     }
     if (path === STREAM_TARGET) {
-      if (op.type === "DeleteStmt") throw cannotDeleteRoot(op.pos);
+      if (op.type === "DeleteStmt") throw cannotDeleteRoot("$$", op.pos);
       flush();
       if (op.value.type === "ArrayLiteral" && !holdsSpread(op.value)) {
         emit(documentsStages(op.value, inner));
@@ -28284,7 +25442,7 @@ function writeStages(uf, env, first) {
       continue;
     }
     if (op.type === "DeleteStmt") {
-      if (path === "") throw cannotDeleteRoot(op.pos);
+      if (path === "") throw cannotDeleteRoot("$", op.pos);
       if (sets !== null) flush();
       (unsets ??= []).push(path);
       prove(path, null);
@@ -28352,23 +25510,19 @@ function writeStages(uf, env, first) {
           pos: op.target.pos
         };
         inner = inner.bind(op.target.name, binding);
-        revived = revived.bind(op.target.name, binding);
         env.chain.dirty = true;
         continue;
       }
       if (was.ref.kind === "field") {
         const binding = { ref: was.ref, type: written2, mutable: was.mutable, pos: was.pos };
         inner = inner.bind(op.target.name, binding);
-        revived = revived.bind(op.target.name, binding);
         continue;
       }
     }
     prove(path, written2);
   }
   flush();
-  let after = afterStages(out, revived);
-  for (const p of proofs) after = p.type === null ? after.removed(p.path) : after.written(p.path, p.type);
-  return { stages: out, env: after };
+  return { stages: out, env: inner.backAt(env) };
 }
 function refuseUnbuiltSugar(value) {
   const base = chainBase(value);
@@ -28396,9 +25550,9 @@ function elementWiseOnDocument(value) {
 function documentStages(links, env, first) {
   const element2 = env.chain.element;
   env.chain.element = "";
-  const stages = linkStages(links, env, first);
-  if (!stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element2;
-  return stages;
+  const step = linkStages(links, env, first);
+  if (!step.stages.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.element = element2;
+  return step;
 }
 function streamStages(chain, env, first) {
   const links = [];
@@ -28407,26 +25561,30 @@ function streamStages(chain, env, first) {
     links.unshift(cur);
     cur = cur.object;
   }
-  if (readsAnotherCollection(cur)) return joinStream(chain, env, first, JOIN);
+  if (readsAnotherCollection(cur)) return landed(joinStream(chain, env, first, JOIN), env);
   if (cur.type === "StreamRef" && env.level > 0) throw rootStreamInForeign(chain.pos);
   if (cur.type !== "StreamRef" && !onOwnStream(cur, env)) throw notAStreamChain(chain.pos);
   return linkStages(links, env, first);
 }
 function linkStages(links, env, first) {
   const out = [];
+  let here = env;
   for (const link of links) {
     if (link.optional) throw optionalOnStream(link.pos);
-    const stages = streamLink(link, env, first && out.length === 0, void 0, out);
+    const stages = streamLink(link, here, first && out.length === 0, void 0, out);
     if (stages === null) {
-      throw notAStreamLink(
-        link.name,
-        everyName().filter((n2) => listedIn(n2, "stream")),
-        link.pos
-      );
+      throw notAStreamLink(link.name, streamReceiverNames(), link.pos);
     }
-    out.push(...env.chain.ahead(), ...stages);
+    const made = [...env.chain.ahead(), ...stages];
+    out.push(...made);
+    here = afterLink(link, made, here);
   }
-  return out;
+  return { stages: out, env: here };
+}
+function afterLink(link, made, env) {
+  if (!restoresDocumentsOf(namedRow(link) ?? link.name)) return afterStages(made, env);
+  env.chain.advance(made);
+  return env;
 }
 function refStatement(node, ref, env, first) {
   const name2 = namedRow(node) ?? node.name;
@@ -28436,26 +25594,33 @@ function refStatement(node, ref, env, first) {
   if (ref === "DatabaseRef") throw noStageOnDatabase(node.name, node.pos);
   const receiver = ref === "StreamRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
   const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
-    const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-    throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
-  }
+  const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
+  if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
   const args = node.args;
-  checkSlots(node.name, sel.rule.args, args, false);
-  const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
+  const escape = node.name.startsWith("$");
+  let stages;
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
+    if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
+    stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
+  } else {
+    if (sel.kind !== "rule") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
+    checkSlots(node.name, sel.rule.args, args, false);
+    stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
+  }
   const out = [];
   for (const stage of stages)
     out.push(...place(Object.keys(stage)[0], stage, env, first && out.length === 0, node.pos));
   return out;
 }
 function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar = []) {
-  if (env.chain.terminal !== null) throw afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
+  if (env.chain.terminal !== null) throw afterTerminalStage(env.chain.terminal.spelled, link.pos);
   const name2 = row2;
   if (diagnosticOf(name2) !== void 0) throw diagnosticIsNotALink(name2, link.pos);
   if (unionsOf(name2)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name2, "stream", "stream");
-  if (verdict.kind === "unknown" || verdict.kind === "noCell") return null;
+  const escape = link.name.startsWith("$");
+  if ((verdict.kind === "unknown" || verdict.kind === "noCell") && !escape) return null;
   const only = elementOnlyOf(name2);
   if (only !== null && env.chain.element === "" && (only.when === "always" || link.args.length === 0)) {
     throw refusalFor(
@@ -28468,15 +25633,20 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
     );
   }
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
-    throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-  }
+  if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
   const args = link.args;
-  checkSlots(link.name, sel.rule.args, args, stageBodyRuleOf(name2) !== void 0);
-  const stages = sel.rule.emit(
-    stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
-  );
+  let stages;
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
+    stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)) : [plainStage(name2, link, args, env)];
+  } else {
+    if (sel.kind !== "rule") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    checkSlots(link.name, sel.rule.args, args, false);
+    stages = sel.rule.emit(
+      stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
+    );
+  }
   const out = [];
   for (const stage of stages) out.push(...place(name2, stage, env, first && out.length === 0, link.pos));
   if (!restoresDocumentsOf(name2) && out.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.placed(true);
@@ -28484,6 +25654,7 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
 }
 function peels(link, env) {
   const name2 = namedRow(link) ?? link.name;
+  if (link.name.startsWith("$")) return true;
   const verdict = consult(name2, "stream", "stream");
   if (verdict.kind === "unknown" || verdict.kind === "noCell" || verdict.kind === "refused") return false;
   const only = env === void 0 ? null : elementOnlyOf(name2);
@@ -28491,6 +25662,22 @@ function peels(link, env) {
 }
 var JOIN = { link: streamLink, peels };
 provideJoin((node, env) => joinValue(node, env, JOIN));
+function unknownCall(sel, node, env) {
+  if (node.type === "CallExpression" && node.callee.type === "Ident") {
+    return unknownFunction(sel.name, [...env.scope.functionNames(), ...bareCallableNames()], node.pos);
+  }
+  if (node.type === "MethodCall") {
+    const recv = node.object;
+    if (recv.type === "Ident" && !env.scope.has(recv.name) && namespaceNames().has(recv.name)) {
+      const ns = recv.name;
+      const members = everyName().filter((n2) => familiesOf(n2)?.includes(ns) === true);
+      return refusalFor(sel, `${ns}.${sel.name}`, `'${ns}'`, "statement", node.pos, members, (c) => `${ns}.${c}`);
+    }
+    return refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, JS_NAMES2);
+  }
+  return refusalFor(sel, sel.name, "", "statement", node.pos, []);
+}
+var JS_NAMES2 = everyName().filter((n2) => !n2.startsWith("$"));
 function stageStatement(node, env, first) {
   const base = chainBase(node);
   if (node.type === "MethodCall") {
@@ -28499,11 +25686,12 @@ function stageStatement(node, env, first) {
     if (onRef) {
       if (node.optional) throw optionalOnStream(node.pos);
       const row2 = namedRow(node) ?? node.name;
-      if (node.object.type === "StreamRef" && isStreamReduce(node)) return arrayReduceStages(node, env, first);
+      if (node.object.type === "StreamRef" && isStreamReduce(node))
+        return landed(arrayReduceStages(node, env, first), env);
       if (isContextRef(node.object) && unionsOf(row2)) {
         if (base.type !== "StreamRef") throw rootStreamInForeign(node.pos);
         if (env.level > 0) throw rootStreamInForeign(node.pos);
-        return unionStages(node.args, env, node, JOIN);
+        return landed(unionStages(node.args, env, node, JOIN), env);
       }
       const says = isContextRef(node.object) ? consult(row2, "statement") : null;
       const ownedByAPass = says !== null && says.kind === "inCode" && peels(node);
@@ -28521,20 +25709,24 @@ function stageStatement(node, env, first) {
         }
         throw noDestination(node.pos);
       }
-      return refStatement(node, base.type, env, first);
+      return landed(refStatement(node, base.type, env, first), env);
     }
   }
   const name2 = namedRow(node);
   if (node.type === "StreamRef") throw bareContextRef("$$", node.pos);
   if (node.type === "DatabaseRef") throw bareContextRef("$$$", node.pos);
   if (node.type === "ClusterRef") throw bareContextRef("$$$$", node.pos);
+  if (name2 === null && node.type === "ObjectLiteral" && node.entries.length > 1) {
+    const head = staticKey(node.entries[0]);
+    if (head !== null && head.startsWith("$")) throw multiKeyStageDocument(head, node.entries.length, node.pos);
+  }
   if (name2 === null) throw notAStatement(node.pos);
+  const escape = name2.startsWith("$");
   let bodyEnv = null;
   let args;
   if (node.type === "ObjectLiteral") {
-    if (!isStageName(name2)) throw notAStage(name2, everyName().filter(isStageName), node.pos);
+    if (!escape && !isStageName(name2)) throw notAStage(name2, everyName().filter(isStageName), node.pos);
     const entries = childEnv(env, node, "entries");
-    if (node.entries.length !== 1) throw multiKeyStageDocument(name2, node.entries.length, node.pos);
     const entry = node.entries[0];
     if (entry.type !== "KeyValueEntry" || staticKey(entry) === null) throw notAStatement(node.pos);
     bodyEnv = childEnv(entries, entry, "value");
@@ -28546,27 +25738,40 @@ function stageStatement(node, env, first) {
     throw notAStatement(node.pos);
   }
   if (node.type === "MethodCall" && isMutator(name2)) throw mutatorNeedsField(name2, node.pos);
+  if (node.type === "MethodCall" && takesNoReceiver(name2)) throw noReceiver(name2, node.pos);
   const verdict = consult(name2, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
-  if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
-    throw refusalFor(
-      sel,
-      name2,
-      "",
-      "statement",
-      node.pos,
-      name2.startsWith("$") ? everyName().filter((n2) => n2.startsWith("$") && listedIn(n2, "statement")) : [],
-      (s) => s
+  if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
+  if (escape) {
+    if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
+    if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
+    const stages2 = bodyEnv !== null ? [{ [name2]: readIn(args[0], bodyEnv) }] : sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
+    return landed(
+      stages2.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos)),
+      env
     );
   }
-  const bodyRule = stageBodyRuleOf(name2);
-  checkSlots(name2, sel.rule.args, args, bodyRule !== void 0);
-  if (bodyRule !== void 0 && args.length === 1 && args[0].type === "ObjectLiteral") {
-    checkBody(name2, bodyRule, args, positionalKeysOf(name2), node.pos);
+  if (sel.kind !== "rule") {
+    if (sel.kind === "unknown") throw unknownCall(sel, node, env);
+    throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s);
   }
-  const stages = bodyEnv === null ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [{ [name2]: readIn(args[0], bodyEnv) }];
-  return stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos));
+  checkSlots(name2, sel.rule.args, args, false);
+  const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
+  return landed(
+    stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos)),
+    env
+  );
+}
+function plainStage(name2, node, args, env) {
+  const all2 = "args" in node ? node.args : [];
+  const spread = all2.find((a) => a.type === "SpreadElement");
+  if (spread !== void 0) {
+    throw refusalFor({ kind: "spreadRefused", name: name2, sig: "\u2026" }, name2, "", "statement", spread.pos, []);
+  }
+  const inner = childEnv(env, node, "args");
+  if (args.length === 0) return { [name2]: {} };
+  if (args.length === 1) return { [name2]: readIn(args[0], inner) };
+  return { [name2]: args.map((a) => readIn(a, inner)) };
 }
 function arrayReduceStages(call, env, first) {
   const parts = arrayReduceParts(call);
@@ -28584,12 +25789,15 @@ function arrayReduceStages(call, env, first) {
 }
 
 // src/compiler/emit/update.ts
+var isFields = (v) => isPlainObject(v);
 function lowerUpdate(program, env) {
   const stmts = program.type === "Pipeline" ? program.stmts : [program];
   const scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
   const out = {};
+  const asWritten2 = /* @__PURE__ */ new Map();
   const claimed = /* @__PURE__ */ new Map();
   const put = (op, path, value, pos) => {
+    if (asWritten2.has(op)) throw updateOperatorTwice(op, pos);
     const held = claimed.get(path);
     if (held !== void 0) throw updateConflict(path, held, op, pos);
     claimed.set(path, op);
@@ -28699,12 +25907,18 @@ function lowerUpdate(program, env) {
     }
     throw notAnUpdate(node.pos);
   }
-  if (Object.keys(out).length === 0) throw notAnUpdate(program.pos);
-  return out;
-  function merge2(doc, pos) {
-    if (doc === null || typeof doc !== "object" || Array.isArray(doc)) throw notAnUpdate(pos);
-    for (const [op, fields] of Object.entries(doc)) {
-      if (fields === null || typeof fields !== "object" || Array.isArray(fields)) throw updateNeedsFields(op, pos);
+  const doc = { ...out };
+  for (const [op, operand] of asWritten2) setKey(doc, op, operand);
+  if (Object.keys(doc).length === 0) throw notAnUpdate(program.pos);
+  return doc;
+  function merge2(doc2, pos) {
+    if (doc2 === null || typeof doc2 !== "object" || Array.isArray(doc2)) throw notAnUpdate(pos);
+    for (const [op, fields] of Object.entries(doc2)) {
+      if (!isFields(fields)) {
+        if (asWritten2.has(op) || op in out) throw updateOperatorTwice(op, pos);
+        asWritten2.set(op, fields);
+        continue;
+      }
       for (const [path, value] of Object.entries(fields)) put(op, path, value, pos);
     }
   }
@@ -28889,7 +26103,7 @@ function received(program) {
     };
   }
   if (program.type === "ArrayLiteral") {
-    return { what: "a Pipeline array (`[{ $stage: \u2026 }, \u2026]`)", hint: "jsmql.pipeline()" };
+    return { what: "a bracketed list, which is a Pipeline (`[{ $stage: \u2026 }, \u2026]`)", hint: "jsmql.pipeline()" };
   }
   const stage = shapeOf(program) === "pipeline" ? namedRow(program) : null;
   if (stage !== null) {
@@ -28958,19 +26172,18 @@ function lowerMode(mode, api, parsed, values) {
   switch (resolved) {
     case "expr":
     case "filter": {
-      if (shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected))) {
-        throw wrongShape(api, resolved, injected);
-      }
+      const pipelineShaped = resolved === "expr" && injected.type === "ArrayLiteral" ? isStageList(injected) : shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected));
+      if (pipelineShaped) throw wrongShape(api, resolved, injected);
       const program = expressionOf(desugar(fold(injected), resolved === "expr" ? VALUE : FILTER));
       return resolved === "expr" ? lowerValue(program, Env.root(program, "value")) : lowerFilter(program, Env.root(program, "filter"));
     }
     case "pipeline": {
-      if (shapeOf(injected) !== "pipeline" && injected.type !== "ArrayLiteral") {
+      if (shapeOf(injected) !== "pipeline") {
         throw defectAsFilter(injected) ?? wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);
       const stages = lowerProgram(program, Env.root(program, "statement"));
-      if (stages.length === 0) throw noStages(program.pos);
+      if (stages.length === 0 && injected.type !== "ArrayLiteral") throw noStages(program.pos);
       return stages;
     }
     case "update": {
@@ -29009,7 +26222,8 @@ function makeCompile(mode, api) {
     }
     if (!isEntryForm(src)) {
       throw new FunctionInputError(
-        `${api}() takes the entry form '(params, { $, \u2026 }) => \u2026'. This is an arrow whose first destructure names the parameters.`
+        `The source at position 0 is not the entry form '(params, { $, \u2026 }) => \u2026' that ${api}() takes: an arrow whose first destructure names the parameters.`,
+        0
       );
     }
     const parsed = parseInput(src);

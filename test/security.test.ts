@@ -80,7 +80,7 @@ describe("recursion depth limits", () => {
   });
   it("typical-depth expressions still compile", () => {
     const src = "(".repeat(40) + "$.a > 1" + ")".repeat(40);
-    expect(() => jsmql(src)).not.toThrow();
+    expect(jsmql(src)).toEqual({ a: { $gt: 1 } });
   });
 });
 
@@ -149,5 +149,229 @@ describe("a developer-authored field name survives to the output", () => {
     expect(jsmql.pipeline("$.r = [{ k: 'constructor' }].countBy(x => x.k);")).toEqual([
       { $set: { r: { $mergeObjects: [{ constructor: 1 }] } } },
     ]);
+  });
+});
+
+// A run-time value that reads as MQL — a string that starts with `$`, a document with a
+// `$` key — is a value in both forms. It takes `$literal` where the server evaluates the
+// slot, the query compares it as written, and every slot where it becomes part of the
+// MQL refuses it. See docs/LANG_RULES.md (HR1).
+describe("a run-time value that reads as MQL is a value, in both forms", () => {
+  /** The template tag and a `jsmql.compile` parameter give ONE answer for the same value. */
+  const both = (tag: (v: unknown) => unknown, compiled: (p: { v: unknown }) => unknown, v: unknown): unknown => {
+    const run = (f: () => unknown): { ok: unknown } | { error: string } => {
+      try {
+        return { ok: f() };
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
+    };
+    const a = run(() => tag(v));
+    expect(run(() => compiled({ v }))).toEqual(a);
+    if ("error" in a) throw new Error(a.error);
+    return a.ok;
+  };
+
+  it("takes $literal in a slot that the server evaluates", () => {
+    expect(
+      both(
+        (v) => jsmql`$set({ x: ${v} });`,
+        jsmql.compile(({ v }) => {
+          $set({ x: v });
+        }),
+        "$password",
+      ),
+    ).toEqual([{ $set: { x: { $literal: "$password" } } }]);
+    expect(
+      both(
+        (v) => jsmql`$group({ _id: ${v} });`,
+        jsmql.compile(({ v }) => {
+          $group({ _id: v });
+        }),
+        "$k",
+      ),
+    ).toEqual([{ $group: { _id: { $literal: "$k" } } }]);
+    expect(
+      both(
+        (v) => jsmql`$replaceWith(${v});`,
+        jsmql.compile(({ v }) => {
+          $replaceWith(v);
+        }),
+        { a: "$b" },
+      ),
+    ).toEqual([{ $replaceWith: { $literal: { a: "$b" } } }]);
+    expect(
+      both(
+        (v) => jsmql`$lookup({ from: "o", let: { w: ${v} }, pipeline: [], as: "j" });`,
+        jsmql.compile(({ v }) => {
+          $lookup({ from: "o", let: { w: v }, pipeline: [], as: "j" });
+        }),
+        "$x",
+      ),
+    ).toEqual([{ $lookup: { from: "o", let: { w: { $literal: "$x" } }, pipeline: [], as: "j" } }]);
+  });
+
+  it("is the compared value in a query, and the stored value in an update document", () => {
+    expect(
+      both(
+        (v) => jsmql`$match({ a: ${v} });`,
+        jsmql.compile(({ v }) => {
+          $match({ a: v });
+        }),
+        { $gt: 1 },
+      ),
+    ).toEqual([{ $match: { a: { $eq: { $gt: 1 } } } }]);
+    expect(
+      both(
+        (v) => jsmql`({ a: { $in: ${v} } })`,
+        jsmql.compile(({ v }) => ({ a: { $in: v } })),
+        ["$x"],
+      ),
+    ).toEqual({ a: { $in: ["$x"] } });
+    expect(
+      both(
+        (v) => jsmql`$.a === ${v}`,
+        jsmql.compile(({ v }, { $ }) => $.a === v),
+        { $gt: 1 },
+      ),
+    ).toEqual({ a: { $eq: { $gt: 1 } } });
+    expect(
+      both(
+        (v) => jsmql.update`$.x = ${v}`,
+        jsmql.update.compile(({ v }, { $ }) => {
+          $.x = v;
+        }),
+        "$b",
+      ),
+    ).toEqual({ $set: { x: "$b" } });
+  });
+
+  it("is refused where the server reads the slot as written, and the message names the source spelling", () => {
+    expect(() =>
+      both(
+        (v) => jsmql`$unwind(${v});`,
+        jsmql.compile(({ v }) => {
+          $unwind(v);
+        }),
+        "$items",
+      ),
+    ).toThrow(
+      `A run-time value is a value, never MQL. '$unwind' reads its body as written, and there the string "$items" becomes part of the MQL. Write it in the source: '$unwind("$items")'.`,
+    );
+    expect(() =>
+      both(
+        (v) => jsmql`$unwind({ path: ${v} });`,
+        jsmql.compile(({ v }) => {
+          $unwind({ path: v });
+        }),
+        "$items",
+      ),
+    ).toThrow(
+      `'$unwind' reads 'path' as written, and there the string "$items" becomes part of the MQL. Write it in the source: 'path: "$items"'.`,
+    );
+    expect(() =>
+      both(
+        (v) => jsmql`$lookup({ from: ${v}, localField: "a", foreignField: "b", as: "j" });`,
+        jsmql.compile(({ v }) => {
+          $lookup({ from: v, localField: "a", foreignField: "b", as: "j" });
+        }),
+        "$c",
+      ),
+    ).toThrow(`'$lookup' reads 'from' as written`);
+    expect(() =>
+      both(
+        (v) => jsmql`$set(${v});`,
+        jsmql.compile(({ v }) => {
+          $set(v);
+        }),
+        { a: "$b" },
+      ),
+    ).toThrow(`Write it in the source, and pass only its values: '$set({ a: … })'.`);
+    expect(() =>
+      both(
+        (v) => jsmql`$sort(${v});`,
+        jsmql.compile(({ v }) => {
+          $sort(v);
+        }),
+        { s: { $meta: "textScore" } },
+      ),
+    ).toThrow(`'$sort({ s: { $meta: … } })'`);
+  });
+
+  it("never becomes an accumulator or a window function", () => {
+    expect(() =>
+      both(
+        (v) => jsmql`$group({ _id: null, t: ${v} });`,
+        jsmql.compile(({ v }) => {
+          $group({ _id: null, t: v });
+        }),
+        { $sum: "$secret" },
+      ),
+    ).toThrow(
+      "A run-time value is a value, never MQL. This slot takes an accumulator, and there the value becomes part of the MQL. Write an accumulator in the source, and pass only its values: '$sum(…)'.",
+    );
+    expect(() =>
+      both(
+        (v) => jsmql`$setWindowFields({ sortBy: { a: 1 }, output: { r: ${v} } });`,
+        jsmql.compile(({ v }) => {
+          $setWindowFields({ sortBy: { a: 1 }, output: { r: v } });
+        }),
+        { $rank: {} },
+      ),
+    ).toThrow("This slot takes a window function");
+  });
+
+  it("never becomes a query", () => {
+    const query =
+      "A run-time document is a value, never a query. Write the query in the source, and pass only its values:";
+    expect(() =>
+      both(
+        (v) => jsmql`$match(${v});`,
+        jsmql.compile(({ v }) => {
+          $match(v);
+        }),
+        { a: { $gt: 1 } },
+      ),
+    ).toThrow(`${query} '{ a: { $gt: … } }'.`);
+    expect(() =>
+      both(
+        (v) => jsmql`${v}`,
+        jsmql.compile(({ v }) => v),
+        { a: { $gt: 1 } },
+      ),
+    ).toThrow(query);
+    expect(() =>
+      both(
+        (v) => jsmql`({ $and: ${v} })`,
+        jsmql.compile(({ v }) => ({ $and: v })),
+        [{ $where: "sleep(100)" }],
+      ),
+    ).toThrow(`${query} '[{ $where: … }]'.`);
+    expect(() =>
+      both(
+        (v) => jsmql`({ a: { $not: ${v} } })`,
+        jsmql.compile(({ v }) => ({ a: { $not: v } })),
+        { $gt: 1 },
+      ),
+    ).toThrow(query);
+    expect(() =>
+      both(
+        (v) => jsmql`({ a: { $elemMatch: ${v} } })`,
+        jsmql.compile(({ v }) => ({ a: { $elemMatch: v } })),
+        { $gt: 1 },
+      ),
+    ).toThrow(query);
+    // A document with no `$` in it is written as the source could write it, and stays the query.
+    expect(jsmql`$match(${{ a: 1 }});`).toEqual([{ $match: { a: 1 } }]);
+  });
+
+  it("names the problem when it cannot name a collection", () => {
+    const join = jsmql.compile(({ c }, { $, $$$ }) => {
+      $.j = $$$[c].find((o) => o.x === $.x);
+    });
+    expect(() => join({ c: "$orders" })).toThrow(
+      `The run-time value "$orders" cannot name a collection: the server refuses a name that starts with '$'.`,
+    );
+    expect(() => join({ c: 5 })).toThrow("A collection name must be a string, and this value is a number.");
   });
 });

@@ -566,14 +566,24 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
   // `"abc".length()` is a CALL of a name the row says is READ, and no fold may
   // answer it. The row's `call: false` is the one fact that tells the two apart.
   if (!isCallable(name)) return NOT_CONSTANT;
-  if (!acceptsArgumentCount(name, argNodes.length, family)) return NOT_CONSTANT;
 
+  // A call with a spread reaches here as ONE list that the desugar pass packed
+  // (`[1].concat(...xs)` → `[1].concat([...xs])`). Its elements are the call's
+  // arguments, as JavaScript passes them: `[1].concat(...[[2], 3])` is `[1, 2, 3]`.
+  const packed = argNodes.length === 1 && (argNodes[0] as Any).packed === true;
   const args: Arg[] = [];
-  for (const argNode of argNodes) {
-    const arg = asArg(argNode, env, depth);
-    if (arg === null) return NOT_CONSTANT;
-    args.push(arg);
+  if (packed) {
+    const list = at(argNodes[0], env, depth + 1);
+    if (!list.ok || !Array.isArray(list.value)) return NOT_CONSTANT;
+    for (const value of list.value) args.push({ value });
+  } else {
+    for (const argNode of argNodes) {
+      const arg = asArg(argNode, env, depth);
+      if (arg === null) return NOT_CONSTANT;
+      args.push(arg);
+    }
   }
+  if (!acceptsArgumentCount(name, args.length, family)) return NOT_CONSTANT;
 
   let result: Evaluation;
   try {
@@ -669,7 +679,7 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
         }
         // A declaration or a write inside a literal makes it a pipeline, not a
         // value. `UpdateFilter` is how a `,`-joined run of writes arrives.
-        if (element.type === "LetDecl" || element.type === "FuncDecl") return NOT_CONSTANT;
+        if (element.type === "FuncDecl") return NOT_CONSTANT;
         if (element.type === "AssignExpr" || element.type === "DeleteStmt") return NOT_CONSTANT;
         if (element.type === "UpdateFilter") return NOT_CONSTANT;
         const value = at(element, env, depth + 1);

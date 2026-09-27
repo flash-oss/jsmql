@@ -144,8 +144,10 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
     expect(jsmql("$.a = 1, $.b = 2")).toEqual([{ $set: { a: 1, b: 2 } }]);
   });
 
-  it("trailing `,` (no `;`) wraps as a one-stage pipeline", () => {
-    expect(jsmql("$.a = 1,")).toEqual([{ $set: { a: 1 } }]);
+  it("a trailing `,` (no `;`) is refused, as JavaScript refuses it", () => {
+    expect(() => jsmql("$.a = 1,")).toThrow(
+      "A ',' with no write after it, before end of input at position 7. JavaScript allows a trailing ',' in a list, but not at the end of a statement or of a '( … )' group. Delete the ',' ('$.a = 1;'), or write the next write after it ('$.a = 1, $.b = 2;').",
+    );
   });
 });
 
@@ -198,11 +200,11 @@ describe("implicit pipeline — block-body arrow input", () => {
     ]);
   });
 
-  it("single statement block body without `;` stays object-shaped", () => {
+  it("a one-statement block body is a one-stage pipeline", () => {
     const result = jsmql(({ $ }) => {
       $.a = 1;
     });
-    // One statement with a trailing `;` ⇒ pipeline (one stage).
+    // A write is a statement, so a block body that holds one is a pipeline.
     expect(result).toEqual([{ $set: { a: 1 } }]);
   });
 
@@ -244,10 +246,13 @@ describe("implicit pipeline — error handling", () => {
     );
   });
 
-  it("typo in stage name suggests the closest match", () => {
-    const r = jsmql.validate("$macth($.a); $.b = 1");
+  it("an unknown stage name is your own MQL, and it passes through with no suggestion", () => {
+    // DELIBERATELY invalid: mongod says "Unrecognized pipeline stage name: '$macth'".
+    expect(jsmql("$macth($.a); $.b = 1")).toEqual([{ $macth: "$a" }, { $set: { b: 1 } }]);
+    // A JavaScript name keeps its suggestion, because JSMQL owns that closed set.
+    const r = jsmql.validate("$$.filterr(d => d.a); $.b = 1");
     expect(r.valid).toBe(false);
-    expect(r.errors[0].message).toMatch(/\$match/);
+    expect(r.errors[0].message).toMatch(/Did you mean '\.filter\(\)'/);
   });
 
   it("explicit `[…]` pipeline still uses `[]`-coalescing semantics (regression)", () => {

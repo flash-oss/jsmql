@@ -23,14 +23,14 @@ jsmql.expr('{ year: { $abs: 1900 + $.age } }'); // → { year: { $abs: { $add: [
 
 In your source, the string `"$x"` is the MQL field path `$x`. To get the string itself, write `$literal("$x")`, as in raw MQL.
 
-A value that your program passes in is different. There are two types of such a value: a `jsmql.compile` parameter, and a `${…}` value in a template tag. Such a value can read as MQL, for example the string `"$x"`. In an expression, the compiler then puts the value in `$literal`. This is a safety rule: untrusted input cannot become a field path.
+A value that your program passes in is different. There are two types of such a value: a `jsmql.compile` parameter, and a `${…}` value in a template tag. Such a value can read as MQL, for example the string `"$x"`. In an expression, the compiler then puts the value in `$literal`. This is a safety rule: untrusted input cannot become a field path. In a query, the compiler compares the value as written, and an update document stores it as written. Every other place refuses such a value, and the message names the spelling to write in the source.
 
-**HR2 — `$op(value)` and `{ $op: value }` are two spellings of the same MQL.** The escape hatch is the `$op(…)` form. It calls a MongoDB operator by its name. `$op(value)` lowers to `{ $op: value }`. The compiler does not put the value in an array. Two or more arguments become an array: `$op(a, b)` lowers to `{ $op: [a, b] }`.
+**HR2 — `$op(value)` and `{ $op: value }` are two spellings of the same MQL.** The escape hatch is the `$op(…)` form. It calls a MongoDB operator or stage by its name. `$op(value)` lowers to `{ $op: value }`. The compiler does not put the value in an array. Two or more arguments become an array: `$op(a, b)` lowers to `{ $op: [a, b] }`.
 
 ```js
 $abs($divide("$cents", 100))    // → { $abs: { $divide: ["$cents", 100] } }
 $and({ a: 1 }, { b: 2 })        // → { $and: [{ a: 1 }, { b: 2 }] }
-$eq(1)                          // ✗ "'$eq(expr1, expr2)' requires exactly 2 arguments, got 1" → write $eq(x, y) or $eq([x, y])
+$eq(1)                          // → { $eq: 1 }
 ```
 
 The compiler lowers each argument that is not plain MQL:
@@ -44,21 +44,35 @@ In the escape hatch, one array literal is the operand list, as in MQL. The compi
 
 ```js
 $size([[1, 2, 3]])              // → { $size: [[1, 2, 3]] }
-$size([1, 2, 3])                // ✗ "'$size(operand)' requires exactly 1 argument, got 3: one array literal is the operand list, as in MQL." → write $size([[1, 2, 3]])
-[1, 2, 3].size()                // the JavaScript method counts the array, and gives 3
+$size([1, 2, 3])                // → { $size: [1, 2, 3] }   // three operands: the server refuses it
+[1, 2, 3].size()                // → 3                       // the JavaScript method counts the array
 ```
 
-**HR3 — JSMQL never emits MQL that it knows is invalid.** The registry gives the compiler the shape of each operator and each stage. When a shape shows that the server rejects an output, the compiler does not emit that output. It throws an error that names the fix.
-
-The count of operands is one such shape. `$divide` takes exactly two operands, so the server rejects one. `$add` takes one or more, so one operand is valid MQL:
+Some operators take a document of named keys, for example `$trim` and `$dateTrunc`. For such an operator, the arguments can also give the keys in order. A call with more arguments than keys takes the plain rule above:
 
 ```js
-$divide(10)             // ✗ "'$divide(dividend, divisor)' requires exactly 2 arguments, got 1" → write $divide(a, b) or $divide([a, b])
-$add($.x)               // → { $add: "$x" }   // the server reads "$x" as the one operand
-$round($.x)             // → { $round: "$x" }   // $round accepts one operand, because its place operand is optional
+$trim($.name, " ")              // → { $trim: { input: "$name", chars: " " } }
+$trim({ input: $.name })        // → { $trim: { input: "$name" } }
+$trim($.name, " ", "x")         // → { $trim: ["$name", " ", "x"] }
 ```
 
-HR3 applies to two sources of MQL: the raw MQL that you write, and the MQL that the compiler emits from JavaScript. So `{ $divide: 10 }` gets the same error, and `{ $add: "$x" }` passes unchanged (HR1).
+**HR3 — JSMQL never emits MQL that it knows is invalid.** HR3 does not apply to the escape hatches of HR1 and HR2. HR3 applies to the MQL that the compiler emits from JSMQL code. This is the lowering of each JavaScript construct, and each part that the compiler adds, for example a `$literal` or `$expr` wrapper, a stage, or a query document. When the compiler knows that the server rejects such MQL, it does not emit it. It throws an error that names the fix.
+
+```js
+$.s.trim().map(x => x)          // ✗ "'.map()' is not available on a 'string' …"
+new Date("not-a-date")          // ✗ "… only an ISO 8601 string or a millisecond count is a date constant …"
+$$$.archive = $$; $.a = 1;      // ✗ "Nothing can follow '$$$.archive = …' …"
+$divide(10)                     // → { $divide: 10 }   // one operand: the server refuses it
+jsmql.expr('{ $divide: 10 }')   // → { $divide: 10 }
+```
+
+The compiler also checks the place of each stage, and your stages are included. A source stage stands first. `$out` and `$merge` stand last. A sub-pipeline takes only the stages that the server allows there. `$text` stands in the first `$match`. An aggregation `$match` takes no `$near`, `$nearSphere` or `$where`:
+
+```js
+$out("x"); $.a = 1;                            // ✗ "Nothing can follow '$out' …"
+jsmql('[{ $out: "x" }, { $set: { a: 1 } }]')   // ✗ the same message
+$match({ loc: { $near: [0, 0] } });            // ✗ "'$near' is not allowed inside an aggregation '$match' …"
+```
 
 **HR4 — Each of the four sigils names one scope, at every depth.** The four sigils are the context references:
 
@@ -99,7 +113,7 @@ A string method is the exception. On a missing or `null` string, a string method
 // The document is {}. It has no field `a`.
 $.a.uniq()          // → { $setUnion: { $ifNull: ["$a", []] } }        → []
 $.a.has("red")      // → { $in: ["red", { $ifNull: ["$a", []] }] }     → false
-$.a.sum()           // → { $sum: { $ifNull: ["$a", []] } }             → 0
+$.a.sum()           // → { $sum: "$a" }                                → 0
 $.a?.uniq()         // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setUnion: "$a" } } }   → null
 
 // The document is { a: ["x", "x"] }.
@@ -116,7 +130,7 @@ $.a?.b.uniq()       // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, nul
 $.a?.b.uniq()       // → the same MQL as above                          → null
 ```
 
-When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot.
+When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`.
 
 Two more facts belong to this rule:
 
@@ -124,7 +138,7 @@ Two more facts belong to this rule:
    1. When the compiler knows the type of the receiver, that type selects the operator.
    2. If not, the argument can select the operator. `$indexOfCP` searches only for a string, so an argument that is not a string selects the array operator.
    3. If neither selects the operator, the emitted MQL tests the type when it runs.
-2. Each value that JSMQL computes from a receiver is a method call, never a property. Write `.length()`, `.size()` and `$$.size()`. So `$.a.length` always reads the field `length` of your document.
+2. Each value that JSMQL computes from a receiver is a method call, never a property. Write `.length()`, `.size()` and `$$.size()`. So `$.a.length` reads a field named `length`, never a count. Only an object has fields. When the compiler proves that the value before the dot cannot hold the field, the read is a compile error. The message names the fix: for `$.tags.uniq().length`, it names `.size()`.
 
 ## SOFT RULES
 

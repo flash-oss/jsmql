@@ -16,7 +16,7 @@ import { desugar } from "./compiler/passes/desugar.ts";
 import { inject, replaceIdents, spellValue } from "./compiler/passes/inject.ts";
 import { evaluate } from "./compiler/passes/evaluate.ts";
 import { FILTER, STATEMENT, UPDATE_DOC, VALUE } from "./compiler/passes/position.ts";
-import { isBareAssignWrite, shapeOf } from "./compiler/passes/shape.ts";
+import { isBareAssignWrite, isStageList, shapeOf } from "./compiler/passes/shape.ts";
 import { namedRow } from "./compiler/passes/naming.ts";
 import { Env } from "./compiler/emit/env.ts";
 import { lowerValue } from "./compiler/emit/lower.ts";
@@ -258,7 +258,7 @@ function received(program: Program): { what: string; hint: string } {
     };
   }
   if (program.type === "ArrayLiteral") {
-    return { what: "a Pipeline array (`[{ $stage: … }, …]`)", hint: "jsmql.pipeline()" };
+    return { what: "a bracketed list, which is a Pipeline (`[{ $stage: … }, …]`)", hint: "jsmql.pipeline()" };
   }
   const stage = shapeOf(program) === "pipeline" ? namedRow(program) : null;
   if (stage !== null) {
@@ -353,27 +353,29 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
     case "filter": {
       // `Object.assign($.a, $.b)` standing alone is a write. Asked for an expression,
       // it means the `$mergeObjects` call it lowers to.
-      if (shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected))) {
-        throw wrongShape(api, resolved, injected);
-      }
+      // An expression entry reads a bracketed literal as an array value, unless it is a stage list.
+      const pipelineShaped =
+        resolved === "expr" && injected.type === "ArrayLiteral"
+          ? isStageList(injected)
+          : shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected));
+      if (pipelineShaped) throw wrongShape(api, resolved, injected);
       const program = expressionOf(desugar(fold(injected), resolved === "expr" ? VALUE : FILTER));
       return resolved === "expr"
         ? (lowerValue(program, Env.root(program, "value")) as JsmqlOutput)
         : lowerFilter(program, Env.root(program, "filter"));
     }
     case "pipeline": {
-      // A BRACKETED program is a pipeline the developer wrote as one, whatever it holds.
-      // Handing it to the shape refusal would answer a typo inside it with "use
-      // jsmql.pipeline()" — the entry the developer already called. The lowering
-      // names the stage instead.
-      if (shapeOf(injected) !== "pipeline" && injected.type !== "ArrayLiteral") {
+      // A BRACKETED program is a pipeline the developer wrote as one, whatever it holds
+      // (`shapeOf`). The lowering names a wrong element, not the entry.
+      if (shapeOf(injected) !== "pipeline") {
         // A program is judged for its SHAPE only once it is correct: this reports a
         // defect the developer must fix under every entry before the entry mismatch.
         throw defectAsFilter(injected) ?? wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);
       const stages = lowerProgram(program, Env.root(program, "statement"));
-      if (stages.length === 0) throw noStages((program as { pos: number }).pos);
+      // `[]` is the empty pipeline that the developer wrote, and raw MQL passes unchanged (HR1).
+      if (stages.length === 0 && injected.type !== "ArrayLiteral") throw noStages((program as { pos: number }).pos);
       return stages as object[];
     }
     case "update": {
@@ -421,7 +423,8 @@ function makeCompile<R extends JsmqlOutput>(mode: Mode, api: string): CompileBui
     }
     if (!isEntryForm(src)) {
       throw new FunctionInputError(
-        `${api}() takes the entry form '(params, { $, … }) => …'. This is an arrow whose first destructure names the parameters.`,
+        `The source at position 0 is not the entry form '(params, { $, … }) => …' that ${api}() takes: an arrow whose first destructure names the parameters.`,
+        0,
       );
     }
     const parsed = parseInput(src);

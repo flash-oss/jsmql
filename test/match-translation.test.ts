@@ -33,7 +33,7 @@ describe("$match translation — equality", () => {
     expect(() => jsmql('[$match($.status != "archived")]')).toThrow(/'!='.*only allowed against null/);
   });
 
-  it("accepts the field on either side (5 < $.age flips to $.age > 5)", () => {
+  it('accepts the field on either side ("alice" === $.name)', () => {
     expect(jsmql('[$match("alice" === $.name)]')).toEqual([{ $match: { name: "alice" } }]);
   });
 
@@ -98,7 +98,7 @@ describe("$match translation — boolean combinators", () => {
     ]);
   });
 
-  it("uses $and when `&&` operands collide on the same field", () => {
+  it("merges two `&&` ranges on the same field into one operator document", () => {
     expect(jsmql("[$match($.age > 18 && $.age < 65)]")).toEqual([{ $match: { age: { $gt: 18, $lt: 65 } } }]);
   });
 
@@ -131,10 +131,9 @@ describe("$match translation — partial extraction", () => {
     ]);
   });
 
-  it("residual under `||` falls back to wholesale $expr (no index-safe split)", () => {
-    // We cannot emit `$or: [<query>, { $expr: ... }]` and preserve the
-    // disjunction's index-using guarantee, so if either `||` branch has a
-    // residual, the entire expression becomes a residual.
+  it("lowers each `||` branch on its own: a query clause beside an $expr residual", () => {
+    // A branch's query form never depends on its sibling, so the translatable
+    // branch keeps its query clause and only the other branch becomes `$expr`.
     expect(jsmql('[$match($.status === "active" || $.score > $.threshold)]')).toEqual([
       { $match: { $or: [{ status: "active" }, { $expr: { $gt: ["$score", "$threshold"] } }] } },
     ]);
@@ -196,7 +195,7 @@ describe("$match translation — typeof → $type", () => {
       { $match: { age: { $type: "int", $gt: 18 } } },
     ]);
   });
-  it("falls through to $expr for unknown type aliases", () => {
+  it("refuses a JavaScript type name and names the MongoDB one", () => {
     expect(() => jsmql('[$match(typeof $.fn === "function")]')).toThrow(
       "'typeof' compares against one of MongoDB's type names, and \"function\" is not one. Did you mean 'javascript'? For absence, write 'x === undefined'.",
     );
@@ -317,7 +316,7 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     );
   });
 
-  it("merges with other clauses under && and uses $and on key collision", () => {
+  it("merges two date ranges on one field under && into one operator document", () => {
     expect(jsmql('[$match($.createdAt >= new Date("2026-01-01") && $.createdAt < new Date("2026-02-01"))]')).toEqual([
       {
         $match: {
@@ -515,10 +514,10 @@ describe("$match translation — === undefined / !== undefined → $exists", () 
   });
 });
 
-describe("$match translation — typeof: 'boolean' → 'bool' mapping", () => {
-  it("translates JS-form `typeof === 'boolean'` to BSON `bool`", () => {
-    // JS's typeof returns "boolean"; MongoDB's $type uses "bool". The
-    // translator accepts either spelling and emits the BSON form.
+describe("$match translation — typeof: 'boolean' is refused, 'bool' is the name", () => {
+  it("refuses JS-form `typeof === 'boolean'` and names BSON `bool`", () => {
+    // JS's typeof returns "boolean"; MongoDB's $type uses "bool". A `typeof`
+    // comparison names a BSON type, so the JS name gets the MongoDB one.
     expect(() => jsmql("[$match(typeof $.flag === 'boolean')]")).toThrow(
       "'typeof' compares against one of MongoDB's type names, and \"boolean\" is not one. Did you mean 'bool'? For absence, write 'x === undefined'.",
     );
@@ -609,7 +608,7 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
     // Bracket access reads a property called "length"; "length" is a string key (never a
     // numeric index), so it lowers to $getField.
     expect(jsmql('[$match($.items["length"] === 3)]')).toEqual([
-      { $match: { $expr: { $eq: [{ $getField: { field: "length", input: "$items" } }, 3] } } },
+      { $match: { $expr: { $eq: [{ $getField: { field: "length", input: { $ifNull: ["$items", {}] } } }, 3] } } },
     ]);
     // A string-literal key on the bare root is a plain field reference.
     expect(jsmql('[$match($["cart.field.length"] === 5)]')).toEqual([

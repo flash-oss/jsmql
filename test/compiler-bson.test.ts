@@ -5,11 +5,21 @@
 // because a `toEqual` proves what jsmql emits and never that the server accepts it
 // (HR3). This suite self-skips (green) without a server. See docs/specs/bson-types.md.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID, type Collection } from "mongodb";
+import { BSONRegExp, Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID, type Collection } from "mongodb";
 import { jsmql } from "../src/index.ts";
-import { liveClient } from "./fixtures/live.ts";
+import { liveClient, liveUp } from "./fixtures/live.ts";
+
+const up = await liveUp();
 
 const HEX = "507f1f77bcf86cd799439011";
+
+/**
+ * The BSON type a value carries. `toEqual` holds `MinKey` equal to `MaxKey`, and
+ * `Int32(3)` equal to `Double(3)`, because neither class has an own property that
+ * differs. `toStrictEqual` cannot help either: the driver's classes and jsmql's are
+ * two builds of `bson` (CJS and ESM), so their constructors always differ.
+ */
+const bsonType = (v: unknown): unknown => (v as { _bsontype?: unknown })._bsontype;
 const UUID_TEXT = "6ac24965-7917-4323-8d44-920ad1d69b94";
 
 // Built fresh per insert, never cloned: `structuredClone` drops `_bsontype`, and a
@@ -65,6 +75,11 @@ describe("compiler — a BSON constant is a live value on the query road", () =>
     expect(filter(`$.oid === 0x${HEX}`)).toEqual({ oid: new ObjectId(HEX) });
     expect(filter("$.grade === MinKey()")).toEqual({ grade: new MinKey() });
     expect(filter("$.grade < MaxKey()")).toEqual({ grade: { $lt: new MaxKey() } });
+    // The classes that `toEqual` cannot tell apart.
+    expect(bsonType((jsmql.filter("$.count === Int32(3)") as { count: unknown }).count)).toBe("Int32");
+    expect(bsonType((jsmql.filter("$.ratio === Double(1)") as { ratio: unknown }).ratio)).toBe("Double");
+    expect(bsonType((jsmql.filter("$.grade === MinKey()") as { grade: unknown }).grade)).toBe("MinKey");
+    expect(bsonType((jsmql.filter("$.grade < MaxKey()") as { grade: { $lt: unknown } }).grade.$lt)).toBe("MaxKey");
   });
 
   // MEASURED: for `tags: [Long(5), Long(7)]` the query road matches and
@@ -136,10 +151,11 @@ describe("compiler — jsmql refuses what bson would silently corrupt", () => {
     expect(() => jsmql.pipeline(`$.a = UUID("nothex");`)).toThrow(/not a UUID/);
   });
 
-  it("reports the source position", () => {
-    const { valid, errors } = jsmql.validate("$.a = Int32(5000000000);");
+  it("reports the source position of the call's argument list", () => {
+    const src = "$.a = Int32(5000000000);";
+    const { valid, errors } = jsmql.validate(src);
     expect(valid).toBe(false);
-    expect(errors[0].pos).toBeGreaterThan(0);
+    expect(errors[0].pos).toBe(src.indexOf("(5000000000)"));
   });
 
   // A JavaScript number past 2^53 has already lost the integer it was written as.
@@ -171,9 +187,11 @@ describe("compiler — the server accepts every document above", () => {
     }
     expect(problems, `${problems.length} of ${FILTERS.length + PIPELINES.length}:\n${problems.join("\n")}`).toEqual([]);
   });
+});
 
+describe.skipIf(!up)("compiler — each constant finds the stored document", () => {
   it("finds the document by each constant, so the value really is the one stored", async () => {
-    if (coll === null) return;
+    expect(coll).not.toBeNull();
     for (const src of [
       `$.price === Decimal128("9.99")`,
       `$.n === Long("9007199254740993")`,
@@ -183,11 +201,45 @@ describe("compiler — the server accepts every document above", () => {
       "$.grade === MinKey()",
       `$.tags === Long("5")`,
     ]) {
-      const found = await coll.find(jsmql.filter(src) as Record<string, unknown>).toArray();
+      const found = await coll!.find(jsmql.filter(src) as Record<string, unknown>).toArray();
       expect(
         found.map((d) => d._id),
         src,
       ).toEqual([1]);
+    }
+  });
+});
+
+describe("compiler — a regex keeps its MongoDB options on the wire", () => {
+  // The driver writes a JavaScript RegExp through `bson`, which writes only `i`, `m`,
+  // and the `global` flag as `s`. So the compiler emits a BSONRegExp where the options
+  // hold `s`, and it drops a JavaScript `g` before the regex reaches `bson`.
+  it("emits a BSONRegExp for dotAll, and a RegExp otherwise", () => {
+    expect(jsmql.filter("$.s.match(/a.b/s)")).toEqual({ s: { $regex: new BSONRegExp("a.b", "s") } });
+    expect(jsmql.filter("$.s.match(/a/gi)")).toEqual({ s: { $regex: /a/i } });
+    expect(jsmql.filter("{ s: /a.b/s }")).toEqual({ s: new BSONRegExp("a.b", "s") });
+    expect(jsmql.expr("$regexMatch({ input: $.s, regex: /a.b/is })")).toEqual({
+      $regexMatch: { input: "$s", regex: new BSONRegExp("a.b", "is") },
+    });
+  });
+
+  it.skipIf(!up)("selects the documents that JavaScript selects", async () => {
+    const texts = client!.db("jsmql_compiler_bson").collection("regex");
+    await texts.deleteMany({});
+    await texts.insertMany([
+      { _id: 1, s: "a\nb" },
+      { _id: 2, s: "axb" },
+    ]);
+    for (const [src, re] of [
+      ["$.s.match(/a.b/s)", /a.b/s],
+      ["$.s.match(/a.b/g)", /a.b/g],
+      ["{ s: /a.b/s }", /a.b/s],
+    ] as const) {
+      const found = await texts.find(jsmql.filter(src) as Record<string, unknown>).toArray();
+      const js = ["a\nb", "axb"].flatMap((t, i) =>
+        new RegExp(re.source, re.flags.replace("g", "")).test(t) ? [i + 1] : [],
+      );
+      expect([src, found.map((d) => d._id)]).toEqual([src, js]);
     }
   });
 });

@@ -35,7 +35,7 @@ describe("reusable functions — declaration + call", () => {
     ]);
   });
 
-  it("zero-param function lowers to an empty-vars $let (server-valid, like a 0-arg IIFE)", () => {
+  it("a zero-param function binds nothing, so no $let wraps its body", () => {
     expect(jsmql("const pi = () => 3.14; $ = { x: pi() };")).toEqual([{ $replaceWith: { x: 3.14 } }]);
   });
 
@@ -144,11 +144,15 @@ describe("reusable functions — output stability", () => {
     // Byte-identical to the same pipeline without the declaration: a function
     // declaration is erased unless called.
     expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual([{ $set: { y: { $add: ["$z", 1] } } }]);
-    expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual([{ $set: { y: { $add: ["$z", 1] } } }]);
+    expect(jsmql("const unused = (x) => x; $.y = $.z + 1;")).toEqual(jsmql("$.y = $.z + 1;"));
   });
 
-  it("works as a bracketed-pipeline element", () => {
-    expect(jsmql("[const double = (x) => x * 2, $set({ y: double($.x) })]")).toEqual([
+  it("is refused as a bracketed-pipeline element; the statement form inlines it", () => {
+    // `[const double = …]` is a JavaScript SyntaxError: a declaration is not an array element.
+    expect(() => jsmql("[const double = (x) => x * 2, $set({ y: double($.x) })]")).toThrow(
+      "`const double = …` is a declaration, and JavaScript refuses a declaration as an array element, at position 1. Write the pipeline as statements, with a ';' after each one: `const double = …; $match(…);`. A sub-pipeline takes its statements in an '.aggregate' block: `$.<field> = $$$.<coll>.aggregate(() => { const double = …; $match(…); })` for a '$lookup', `$$.push(...$$$.<coll>.aggregate(() => { … }))` for a '$unionWith', and `$ = { k: $$.aggregate(() => { … }) }` for a '$facet' branch.",
+    );
+    expect(jsmql("const double = (x) => x * 2; $set({ y: double($.x) });")).toEqual([
       { $set: { y: { $let: { vars: { x: "$x" }, in: { $multiply: ["$$x", 2] } } } } },
     ]);
   });
@@ -211,7 +215,7 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("a lone `function` declaration (nothing calls it) is rejected like a lone arrow decl", () => {
     expect(() => jsmql("function foo(a) { return a }")).toThrow(
-      "jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got 'a'. at position 13",
+      "jsmql expects each parameter to be an object destructure pattern, for example '({ $ }) => …'. It got 'a' at position 13.",
     );
   });
 
@@ -234,19 +238,19 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("re-declaring a function in the same pipeline is rejected", () => {
     expect(() => jsmql("const f = (x) => x; const f = (y) => y + 1; $ = { a: f($.n) };")).toThrow(
-      "`function f` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
+      "`const f` at position 20 is already declared earlier in this block, which JavaScript refuses. Pick a different name.",
     );
   });
 
   it("a function name colliding with a `let` binding is rejected", () => {
     expect(() => jsmql("let total = $.amount; const total = (x) => x; $ = { a: total($.n) };")).toThrow(
-      "`function total` is already declared earlier in this block. A re-declaration in the same scope is not allowed. Pick a different name.",
+      "`const total` at position 22 is already declared earlier in this block, which JavaScript refuses. Pick a different name.",
     );
   });
 
   it("a nested function inside an arrow body is rejected", () => {
     expect(() => jsmql("$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };")).toThrow(
-      "`const g = (…) => …` declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write `const g = (…) => …;` as its own statement before this one. Then call 'g(…)' inside the callback. at position 25",
+      "`const g = (…) => …` at position 25 declares a reusable function. A pipeline declares a reusable function at its top level, not inside a callback. Write `const g = (…) => …;` as its own statement before this one. Then call 'g(…)' inside the callback.",
     );
   });
 
@@ -289,18 +293,6 @@ describe("reusable functions — review-driven hardening", () => {
     ]);
   });
 
-  it("a `function`-keyword declaration lowers identically to the `const = arrow` form (DEF-030 success criteria)", () => {
-    const fnForm = jsmql("function double(x) { return x * 2 } $ = { a: double($.price) };");
-    const arrowForm = jsmql("const double = (x) => x * 2; $ = { a: double($.price) };");
-    expect(fnForm).toEqual([
-      { $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } },
-    ]);
-    // …and the self-terminating form (no `;` after `}`) is valid too.
-    expect(jsmql("function double(x) { return x * 2 } $ = { a: double($.price) }")).toEqual([
-      { $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } },
-    ]);
-  });
-
   it("a reusable function passed as a bare array-method callback names it and suggests the wrap", () => {
     expect(() => jsmql("const double = (x) => x * 2; $ = { a: $.items.map(double) };")).toThrow(
       "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
@@ -321,9 +313,9 @@ describe("reusable functions — review-driven hardening", () => {
 describe("`function` keyword — parity with the arrow form", () => {
   it("declaration form lowers identically to `const f = (x) => …`", () => {
     const arrow = jsmql("const double = (x) => x * 2; $ = { a: double($.price) };");
-    expect(jsmql("function double(x) { return x * 2 } $ = { a: double($.price) };")).toEqual([
-      { $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } },
-    ]);
+    const fn = jsmql("function double(x) { return x * 2 } $ = { a: double($.price) };");
+    expect(fn).toEqual([{ $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } }]);
+    expect(fn).toEqual(arrow);
   });
 
   it("is self-terminating — no `;` needed after the closing `}`", () => {
@@ -332,6 +324,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(noSemi).toEqual([
       { $replaceWith: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } },
     ]);
+    expect(noSemi).toEqual(withSemi);
   });
 
   it("a self-terminating chain of declarations composes", () => {
@@ -349,42 +342,48 @@ describe("`function` keyword — parity with the arrow form", () => {
         },
       },
     ]);
+    expect(fn).toEqual(arrow);
   });
 
   it("an anonymous `function` expression works as an inline `.map` callback", () => {
     const arrow = jsmql.expr("$.items.map((x) => x * 2)");
-    expect(jsmql.expr("$.items.map(function (x) { return x * 2 })")).toEqual({
-      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", 2] } },
-    });
+    const fn = jsmql.expr("$.items.map(function (x) { return x * 2 })");
+    expect(fn).toEqual({ $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", 2] } } });
+    expect(fn).toEqual(arrow);
   });
 
   it("a NAMED `function` expression callback ignores the name", () => {
     const anon = jsmql.expr("$.items.map(function (x) { return x * 2 })");
-    expect(jsmql.expr("$.items.map(function scale(x) { return x * 2 })")).toEqual({
-      $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", 2] } },
-    });
+    const named = jsmql.expr("$.items.map(function scale(x) { return x * 2 })");
+    expect(named).toEqual({ $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $multiply: ["$$x", 2] } } });
+    expect(named).toEqual(anon);
   });
 
   it("a `function` body with local `const`/`let` lowers to nested `$let` (≡ block-body arrow)", () => {
     const arrow = jsmql.expr("$.items.map((x) => { const y = x + 1; return y * 2 })");
-    expect(jsmql.expr("$.items.map(function (x) { const y = x + 1; return y * 2 })")).toEqual({
+    const fn = jsmql.expr("$.items.map(function (x) { const y = x + 1; return y * 2 })");
+    expect(fn).toEqual({
       $map: {
         input: { $ifNull: ["$items", []] },
         as: "x",
         in: { $let: { vars: { y: { $add: ["$$x", 1] } }, in: { $multiply: ["$$y", 2] } } },
       },
     });
+    expect(fn).toEqual(arrow);
   });
 
-  it("a parenthesised `function` IIFE lowers to `$let` (≡ the arrow IIFE)", () => {
+  it("a parenthesised `function` IIFE over a constant folds to the value the arrow IIFE folds to", () => {
     const arrow = jsmql.expr("((x) => x * 2)(5)");
-    expect(jsmql.expr("(function (x) { return x * 2 })(5)")).toEqual(10);
+    const fn = jsmql.expr("(function (x) { return x * 2 })(5)");
+    expect(fn).toEqual(10);
+    expect(fn).toEqual(arrow);
   });
 
   it("`function` declaration works as a bracketed-pipeline element", () => {
     const fn = jsmql("[ function double(x) { return x * 2 }, $set({ a: double($.price) }) ]");
-    const arrow = jsmql("[ const double = (x) => x * 2, $set({ a: double($.price) }) ]");
+    const arrow = jsmql("const double = (x) => x * 2; $set({ a: double($.price) });");
     expect(fn).toEqual([{ $set: { a: { $let: { vars: { x: "$price" }, in: { $multiply: ["$$x", 2] } } } } }]);
+    expect(fn).toEqual(arrow);
   });
 
   it("works inside a `$$$.<coll>.find` predicate (expression body) like an arrow", () => {
@@ -415,14 +414,15 @@ describe("`function` keyword — parity with the arrow form", () => {
       { $set: { "__jsmql.var.tags": { $first: "$__jsmql.var.tags" } } },
       { $replaceWith: { tags: "$__jsmql.var.tags" } },
     ]);
+    expect(fn).toEqual(arrow);
   });
 
   it("entry form `jsmql(function ({ $ }) { return … })` lowers like the arrow entry", () => {
-    expect(
-      jsmql(function ({ $ }) {
-        return $.age >= 18;
-      }),
-    ).toEqual({ age: { $gte: 18 } });
+    const fn = jsmql(function ({ $ }) {
+      return $.age >= 18;
+    });
+    expect(fn).toEqual({ age: { $gte: 18 } });
+    expect(fn).toEqual(jsmql(({ $ }) => $.age >= 18));
   });
 
   it("`jsmql.compile(function (params, { $ }) { return … })` lowers like the arrow compile form", () => {
@@ -431,6 +431,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     });
     const arrow = jsmql.compile(({ min }, { $ }) => $.age >= min);
     expect(fn({ min: 21 })).toEqual({ age: { $gte: 21 } });
+    expect(fn({ min: 21 })).toEqual(arrow({ min: 21 }));
   });
 
   // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). Every
@@ -486,7 +487,7 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(() => jsmql("async function f(x) { return x } $.a = f($.n);")).toThrow(
       /jsmql does not support async functions/,
     );
-    expect(() => jsmql("let async = 1; $.a = async;")).not.toThrow();
+    expect(jsmql("let async = 1; $.a = async;")).toEqual([{ $set: { a: 1 } }]);
   });
 
   it("`function` is not a reserved keyword — object keys and field paths keep working", () => {
@@ -515,6 +516,43 @@ describe("compile params resolve inside every higher-order callback", () => {
 
   it("resolves a param inside .groupBy", () => {
     const build = jsmql.expr.compile<{ k: string }>(({ k }, { $ }) => $.items.groupBy((x) => x[k]));
-    expect(JSON.stringify(build({ k: "t" }))).toContain('"t"');
+    expect(build({ k: "t" })).toEqual({
+      $arrayToObject: {
+        $map: {
+          input: {
+            $setUnion: [
+              {
+                $map: {
+                  input: { $ifNull: ["$items", []] },
+                  as: "x",
+                  in: {
+                    $ifNull: [{ $toString: { $getField: { field: "t", input: { $ifNull: ["$$x", {}] } } } }, "null"],
+                  },
+                },
+              },
+              [],
+            ],
+          },
+          as: "jsmqlKey",
+          in: {
+            k: "$$jsmqlKey",
+            v: {
+              $filter: {
+                input: { $ifNull: ["$items", []] },
+                as: "x",
+                cond: {
+                  $eq: [
+                    {
+                      $ifNull: [{ $toString: { $getField: { field: "t", input: { $ifNull: ["$$x", {}] } } } }, "null"],
+                    },
+                    "$$jsmqlKey",
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 });

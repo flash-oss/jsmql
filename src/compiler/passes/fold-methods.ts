@@ -180,9 +180,9 @@ export function foldNamespaceCall(namespace: string, name: string, args: readonl
       case "values":
         return plain(o) ? ok(Object.values(o)) : NO;
       case "entries":
-        // `$objectToArray` — a list of `{k, v}` DOCUMENTS, not JavaScript's
-        // two-element arrays. `.toPairs()` is the one that gives those.
-        return plain(o) ? ok(Object.entries(o).map(([k, v]) => ({ k, v }))) : NO;
+        // JavaScript's [key, value] pairs, as the runtime lowering gives them.
+        // Only the raw `$objectToArray(…)` gives `{ k, v }` documents.
+        return plain(o) ? ok(Object.entries(o)) : NO;
       case "assign":
         return values.every(plain) ? ok(Object.assign({}, ...(values as object[]))) : NO;
       case "fromEntries": {
@@ -216,23 +216,14 @@ export function foldNamespaceConstant(namespace: string, name: string): Evaluati
 }
 
 /**
- * `new X(…)` with constant arguments.
- *
- * `new Set([…])` answers with the ARRAY, unchanged and un-deduplicated, because
- * that is what the language does — measured: `new Set([1,2,2,3])` reads back as
- * `[1,2,2,3]` from the server. jsmql has no set type; the constructor is a way
- * of writing an array that the set operators then read.
+ * `new X(…)` with constant arguments: a date, or a BSON value. Any other class is
+ * not a constant, so its row answers: `new Set([1])` reaches the refusal of its row.
  */
 export function foldConstructor(name: string, args: readonly Arg[]): Evaluation {
   const values = args.map(valueOf);
   switch (canonicalBsonName(name)) {
     case "Date":
       return foldNewDate(values);
-    case "Set": {
-      const [a] = values;
-      if (args.length === 0) return ok([]);
-      return Array.isArray(a) ? ok(a) : NO;
-    }
     default:
       return bsonValue(name, args.length, values);
   }
@@ -594,12 +585,8 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
       if (fn === undefined) return NO;
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(o)) {
-        const verdict = fn(v, k, o);
-        // A predicate that answers with something other than a boolean is where
-        // JavaScript's truthiness and MongoDB's part company: `""` and `0` are
-        // false there and true here. So it does not fold.
-        if (typeof verdict !== "boolean") return NO;
-        if (verdict === (name === "pickBy")) setKey(out, k, v);
+        // The lowering reads the predicate with the JavaScript truth rules, so the fold does too.
+        if (truthy(fn(v, k, o)) === (name === "pickBy")) setKey(out, k, v);
       }
       return ok(out);
     }
@@ -620,6 +607,27 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
  */
 const deepIncludes = (haystack: readonly unknown[], needle: unknown): boolean =>
   haystack.some((h) => sameValue(h, needle));
+
+/**
+ * It keeps the first element for each key, in the order of the list.
+ *
+ * This is how the set family keeps a value once. `$setUnion` gives a repeated
+ * value once. The uniqBy `$reduce` keeps the first element per key, as lodash
+ * does. The server promises no order for a set operator's answer. So the fold
+ * keeps the order of first occurrence. The same list then always gives the same answer.
+ */
+function firstPerKey(
+  items: readonly unknown[],
+  keyOf: (v: unknown, i: number, list: readonly unknown[]) => unknown,
+): unknown[] {
+  const seen: unknown[] = [];
+  return items.filter((v, i) => {
+    const k = keyOf(v, i, items);
+    if (deepIncludes(seen, k)) return false;
+    seen.push(k);
+    return true;
+  });
+}
 
 /** Every element, keyed for comparison. Non-scalar keys have no MongoDB spelling. */
 function keyedBy(xs: readonly unknown[], fn: Callable): unknown[] | null {
@@ -749,8 +757,7 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
    * checks the lowering spells out in the emitted condition: not missing, not
    * null, not `false`, not `""`, not `0`. `.filter("ok")` over `{ ok: "" }` drops
    * the element on the server for exactly that reason, so it does here. The
-   * OBJECT family is not this: `.pickBy` lowers to a raw condition, which is
-   * MongoDB's truthiness, and keeps `""`.
+   * OBJECT family (`.pickBy`, `.omitBy`) reads its predicate the same way.
    */
   const predicate =
     (f: Callable) =>
@@ -809,10 +816,9 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     case "toReversed":
       return ok([...xs].reverse());
     case "concat":
-      // `$concatArrays` takes ARRAYS. `[1].concat(2)` is `[1,2]` in JavaScript
-      // and an error on the server.
-      if (!args.every((x) => Array.isArray(valueOf(x)))) return NO;
-      return ok(xs.concat(...(args.map(valueOf) as unknown[][])));
+      // JavaScript's rule, which the lowering keeps: an array argument adds its
+      // elements, and any other argument adds itself. `[1].concat(2, [3])` is `[1, 2, 3]`.
+      return ok(xs.concat(...args.map(valueOf)));
     // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
     // identity would answer false for `[[1]].includes([1])`, where the server
     // answers true, and every literal here is a fresh object.
@@ -884,30 +890,19 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
 
     // ── the set family, compared the way MongoDB compares ───────────────────
     case "uniq":
-    case "sortedUniq": {
-      const out: unknown[] = [];
-      for (const v of xs) if (!deepIncludes(out, v)) out.push(v);
-      return ok(out);
-    }
+    case "sortedUniq":
+      return ok(firstPerKey(xs, (v) => v));
     case "uniqBy":
-    case "sortedUniqBy": {
-      if (fn === undefined) return NO;
-      const seen: unknown[] = [];
-      const out: unknown[] = [];
-      xs.forEach((v, i) => {
-        const k = fn(v, i, xs);
-        if (deepIncludes(seen, k)) return;
-        seen.push(k);
-        out.push(v);
-      });
-      return ok(out);
-    }
+    case "sortedUniqBy":
+      return fn === undefined ? NO : ok(firstPerKey(xs, fn));
     case "without":
       return ok(xs.filter((v) => !deepIncludes(args.map(valueOf), v)));
     case "xor": {
       if (!Array.isArray(a)) return NO;
       const other = a as unknown[];
-      return ok([...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))]);
+      // `$setUnion` gives each value once, so a value that one side holds twice survives once.
+      const kept = [...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))];
+      return ok(firstPerKey(kept, (v) => v));
     }
     case "differenceBy":
     case "intersectionBy":
@@ -924,17 +919,11 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       if (name === "intersectionBy") return ok(mine);
       const myKeys = xs.map(keyOf);
       const extra = (other as unknown[]).filter((v, i) => !deepIncludes(myKeys, keyOf(v, i, other as unknown[])));
-      if (name === "xorBy") return ok([...notMine, ...extra]);
+      // `_.xorBy` is the uniqBy of the elements whose key the other side does not have. So a
+      // key that one side holds twice survives once, with its first element.
+      if (name === "xorBy") return ok(firstPerKey([...notMine, ...extra], keyOf));
       // `_.unionBy` is the uniqBy of the concatenation: one element per key, the first wins.
-      const seen: unknown[] = [];
-      const union: unknown[] = [];
-      [...xs, ...(other as unknown[])].forEach((v, i, all) => {
-        const k = keyOf(v, i, all);
-        if (deepIncludes(seen, k)) return;
-        seen.push(k);
-        union.push(v);
-      });
-      return ok(union);
+      return ok(firstPerKey([...xs, ...(other as unknown[])], keyOf));
     }
 
     // ── slicing by count ────────────────────────────────────────────────────

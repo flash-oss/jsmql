@@ -2,14 +2,12 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import {
   argCountOf,
-  bodyRuleOf,
   everyOperatorName,
   everyStageName,
   operandShapeOf,
   positionalKeysOf,
   positionsOf,
 } from "../src/compiler/rows.ts";
-import { truthy } from "./truthy.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The rule under test (HR1 — see docs/LANG_RULES.md):
@@ -44,21 +42,6 @@ function arrayArgCount(name: string): number {
   return a.exact ?? a.allowed?.[0] ?? 2;
 }
 
-// A valid sample value for an enum'd slot, so the pass-through probe stays
-// arg-valid (the enum check would reject the `$f` sentinel). The non-enum slots
-// still carry the sentinel — those are what the pass-through assertion checks.
-const ENUM_SAMPLE: Record<string, string> = {
-  timeUnit: "day",
-  weekday: "monday",
-  bsonTypeName: "string",
-  regexFlags: "i",
-};
-function slotLiteral(name: string, key: string): string {
-  const ref = bodyRuleOf(name)?.enums?.[key];
-  if (ref !== undefined) return JSON.stringify(Array.isArray(ref) ? ref[0] : ENUM_SAMPLE[ref]);
-  return JSON.stringify(SENTINEL);
-}
-
 /** Build a minimal `$op(...)` call source from the operator's registry shape. */
 function callSource(name: string): string {
   const q = JSON.stringify(SENTINEL);
@@ -68,10 +51,10 @@ function callSource(name: string): string {
     case "array":
       return `${name}(${Array(arrayArgCount(name)).fill(q).join(", ")})`;
     case "object":
-      // Fill every positional slot (each maps to a named key); enum'd slots get a
-      // valid sample value, the rest the `$`-string sentinel under test.
+      // Fill every positional slot (each maps to a named key) with the `$`-string
+      // sentinel under test. A `$op(…)` call is your own MQL, so no slot is checked.
       return `${name}(${positionalKeysOf(name)
-        .map((k) => slotLiteral(name, k))
+        .map(() => q)
         .join(", ")})`;
     case "flex":
       // flex defaults to the single-value form (1 arg); but an arity rule
@@ -110,8 +93,7 @@ function exprCanTakeStringArg(name: string): boolean {
 }
 
 describe("literal pass-through — every $unwind spelling and its siblings", () => {
-  it("all three $unwind forms (+ raw object form) produce the identical document", () => {
-    const expected = [{ $unwind: "$items" }];
+  it("the three short $unwind forms produce one document, and the object call form keeps its object", () => {
     expect(jsmql(`$unwind("$items");`)).toEqual([{ $unwind: "$items" }]); // string call form
     expect(jsmql(`$unwind($.items);`)).toEqual([{ $unwind: "$items" }]); // field-ref form
     expect(jsmql(`[{ $unwind: "$items" }]`)).toEqual([{ $unwind: "$items" }]); // raw object form
@@ -134,8 +116,14 @@ describe("literal pass-through — every $unwind spelling and its siblings", () 
     expect(jsmql(`$project({ x: $literal("$y") });`)).toEqual([{ $project: { x: { $literal: "$y" } } }]);
   });
 
-  it("a non-$ literal string is still rejected as a $replaceWith new-root", () => {
-    expect(() => jsmql(`$replaceWith("hello");`)).toThrow("'$replaceWith' expects a document, but got a string.");
+  it("a non-$ literal string passes through as a $replaceWith new-root, and `$ =` refuses it", () => {
+    // `$replaceWith` is your own MQL. DELIBERATELY invalid: mongod says "'replacement
+    // document'  must evaluate to an object, but resulting value was: "hello". …"
+    expect(jsmql(`$replaceWith("hello");`)).toEqual([{ $replaceWith: "hello" }]);
+    // `$ = …` is JSMQL code, so the compiler owns its lowering and refuses the string.
+    expect(() => jsmql(`$ = "hello";`)).toThrow(
+      "'$ = …' replaces the document, so the value has to BE a document — a string is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+    );
   });
 });
 
@@ -149,18 +137,23 @@ describe("literal pass-through — every operator in the registry", () => {
     if (!positions.some((p) => p === "value" || p === "group" || p === "window")) continue;
     // the accumulator `$count` takes no operand, and `$expMovingAvg` needs N or alpha: the synthetic call is not a call the server takes
     if (name === "$count" || name === "$expMovingAvg") continue;
+    // a call with no operand (`$rand()`, `$rank()`) has no $-string to pass through
+    if (operandShapeOf(name) === "none") continue;
 
     const call = callSource(name);
     const stageSrc = stageSourceFor(name, call);
+    const sentinel = JSON.stringify(SENTINEL);
 
     it(`${name}: $-string passes through in pipeline context`, () => {
       const out = JSON.stringify(jsmql.pipeline(stageSrc));
+      expect(out).toContain(sentinel);
       expect(out).not.toContain("$literal");
     });
 
     if (exprCanTakeStringArg(name)) {
       it(`${name}: same source $-string ALSO passes through in jsmql.expr (HR1)`, () => {
         const out = JSON.stringify(jsmql.expr(call));
+        expect(out).toContain(sentinel);
         expect(out).not.toContain("$literal");
       });
     }
@@ -172,45 +165,49 @@ describe("literal pass-through — every operator in the registry", () => {
   });
 });
 
-// One representative valid pipeline source per stage that can carry a `$`-string.
-// Every entry asserts the emitted document contains no spurious `$literal`.
+// One representative pipeline source per stage that can carry a `$`-string. Every
+// entry asserts that each `$`-string of the source survives verbatim, with no
+// spurious `$literal`.
 const STAGE_CASES: Record<string, string> = {
   $addFields: `$addFields({ v: "$x" });`,
   $bucket: `$bucket({ groupBy: "$price", boundaries: [0, 100, 200], default: "other" });`,
   $bucketAuto: `$bucketAuto({ groupBy: "$price", buckets: 4 });`,
-  $count: `$count("total");`,
-  $densify: `$densify({ field: "ts", range: { step: 1, unit: "hour", bounds: "full" } });`,
   $documents: `$documents([{ a: "$x" }]);`,
-  $facet: `$facet({ a: [$count("c")] });`,
+  $facet: `$facet({ a: [$set({ v: "$x" })] });`,
   $fill: `$fill({ output: { v: { value: "$x" } } });`,
-  $geoNear: `$geoNear({ near: { type: "Point", coordinates: [0, 0] }, distanceField: "d", key: "loc" });`,
+  $geoNear: `$geoNear({ near: { type: "Point", coordinates: [0, 0] }, distanceField: "d", key: "loc", query: { t: "$x" } });`,
   $graphLookup: `$graphLookup({ from: "c", startWith: "$ref", connectFromField: "ref", connectToField: "_id", as: "out" });`,
   $group: `$group({ _id: "$cat", n: $sum("$qty") });`,
-  $limit: `$limit(5);`,
-  $lookup: `$lookup({ from: "c", localField: "a", foreignField: "b", as: "out" });`,
+  $lookup: `$lookup({ from: "c", let: { v: "$a" }, pipeline: [$match({ $expr: $eq("$b", "$$v") })], as: "out" });`,
   $match: `$match($.x === "$y");`,
-  $merge: `$merge("archived");`,
-  $out: `$out("archived");`,
+  $merge: `$merge({ into: "archived", whenMatched: [$set({ v: "$x" })] });`,
   $project: `$project({ x: "$y" });`,
   $redact: `$redact("$$PRUNE");`,
   $replaceRoot: `$replaceRoot({ newRoot: "$sub" });`,
   $replaceWith: `$replaceWith("$sub");`,
-  $sample: `$sample({ size: 3 });`,
   $set: `$set({ v: "$x" });`,
   $setWindowFields: `$setWindowFields({ partitionBy: "$g", sortBy: { t: 1 }, output: { n: $sum("$q") } });`,
-  $skip: `$skip(2);`,
-  $sort: `$sort({ t: 1 });`,
   $sortByCount: `$sortByCount("$tags");`,
   $unionWith: `$unionWith({ coll: "c", pipeline: [$match({ x: "$y" })] });`, // a `$unionWith` body has no `let`, so it reads its own documents
-  $unset: `$unset(["a", "b"]);`,
   $unwind: `$unwind("$items");`,
 };
+
+/** The `$`-string literals a source spells, each of which must reach the output verbatim. */
+const dollarStrings = (src: string): string[] => [...src.matchAll(/"(\$[^"]*)"/g)].map((m) => m[1]);
 
 // Stages with no `$`-string body to pass through, or that require server/source
 // infrastructure jsmql surfaces only through dedicated sugar (`$$`/`$$$$`). Each is
 // excluded from the pass-through loop with its reason, but still counted by the
 // coverage meta-assertion below so no stage is silently uncovered.
 const STAGE_SKIP: Record<string, string> = {
+  $count: "the body is a field name, which cannot start with '$'",
+  $densify: "every slot is a field name or a constant",
+  $limit: "the body is a constant number",
+  $out: "the body names a collection",
+  $sample: "the body is a constant size",
+  $skip: "the body is a constant number",
+  $sort: "the body holds field names and directions",
+  $unset: "the body holds field names",
   $changeStream: "source stage; no $-string body",
   $changeStreamSplitLargeEvent: "terminal stage; no $-string body",
   $collStats: "diagnostic source stage (option object, no $-string)",
@@ -231,8 +228,11 @@ const STAGE_SKIP: Record<string, string> = {
 
 describe("literal pass-through — every stage in the registry", () => {
   for (const [name, src] of Object.entries(STAGE_CASES)) {
-    it(`${name}: stage body emits no spurious $literal`, () => {
+    it(`${name}: stage body keeps its $-strings and emits no spurious $literal`, () => {
       const out = JSON.stringify(jsmql.pipeline(src));
+      const kept = dollarStrings(src);
+      expect(kept.length).toBeGreaterThan(0);
+      for (const s of kept) expect(out).toContain(JSON.stringify(s));
       expect(out).not.toContain("$literal");
     });
   }
@@ -276,18 +276,24 @@ function collectVarNames(node: unknown, into: string[] = []): string[] {
   return into;
 }
 
-const VALID_VAR = /^[a-z]/; // MongoDB user-variable first-char rule (matches safeVarName)
+const VALID_VAR = /^[a-z][A-Za-z0-9_]*$/; // MongoDB's user-variable grammar, first character and body
 const VALID_REGEX_OPTS = /^[imsx]*$/; // MongoDB $regex* options (no JS g/u/y/d/v)
 
-/** Inputs whose MQL a server rejects if it is built wrong, with how to compile them. */
-const REGRESSION_INPUTS: Array<{ label: string; mql: () => unknown }> = [
+type Input = { label: string; mql: () => unknown };
+
+/** Inputs that bind a user variable, which the server rejects if its name is built wrong. */
+const VAR_INPUTS: Input[] = [
   {
-    label: "$lookup auto-let on $._id (pipeline form)",
-    mql: () => jsmql(`$.u = $$$.users.find(u => u.refId === $._id && u.active);`),
+    label: "$lookup auto-let on $._id (a `.find` with no join pair)",
+    mql: () => jsmql(`$.u = $$$.users.find(u => (u.refId === $._id || u.altId === $._id) && u.active);`),
   },
   {
-    label: "$lookup auto-let on $._id (basic form)",
-    mql: () => jsmql(`$.o = $$$.orders.filter(o => o.userId === $._id);`),
+    label: "$lookup auto-let on $._id (a `.filter` with no join pair)",
+    mql: () => jsmql(`$.o = $$$.orders.filter(o => o.userId === $._id || o.ownerId === $._id);`),
+  },
+  {
+    label: "$lookup auto-let on `$.meta`, read through a hyphenated key",
+    mql: () => jsmql(`$.o = $$$.orders.filter(o => o.total > $.meta["min-total"]);`),
   },
   { label: "|| short-circuit binding", mql: () => jsmql.expr(`($.a + $.b) || $.c`) },
   { label: "&& short-circuit binding", mql: () => jsmql.expr(`($.a + $.b) && $.c`) },
@@ -295,6 +301,10 @@ const REGRESSION_INPUTS: Array<{ label: string; mql: () => unknown }> = [
   { label: ".reduce throwaway _ element param", mql: () => jsmql.expr(`$.xs.reduce((acc, _, i) => acc + i, 0)`) },
   { label: ".fill() statement mutator (bounds)", mql: () => jsmql(`$.xs.fill(0, 1, 3);`) },
   { label: ".fill() statement mutator (no bounds)", mql: () => jsmql(`$.xs.fill(0);`) },
+];
+
+/** Inputs with no user variable, whose MQL the server rejects for a `$limit: 0` or a regex flag. */
+const OTHER_INPUTS: Input[] = [
   { label: "$$ = [] drop-all", mql: () => jsmql(`$$ = [];`) },
   { label: "$$ = source-switch", mql: () => jsmql(`$$ = $$$.transactions.filter(t => t.client === 156);`) },
   { label: ".match(/re/g)", mql: () => jsmql.expr(`$.s.match(/word/g)`) },
@@ -302,11 +312,14 @@ const REGRESSION_INPUTS: Array<{ label: string; mql: () => unknown }> = [
   { label: "/re/gi.test()", mql: () => jsmql.expr(`/pattern/gi.test($.str)`) },
 ];
 
+const REGRESSION_INPUTS: Input[] = [...VAR_INPUTS, ...OTHER_INPUTS];
+
 describe("server-rejection regressions — no invalid var names, $limit:0, or regex flags", () => {
-  for (const { label, mql } of REGRESSION_INPUTS) {
+  for (const { label, mql } of VAR_INPUTS) {
     it(`${label}: emits only MongoDB-valid user variable names`, () => {
-      const bad = collectVarNames(mql()).filter((n) => !VALID_VAR.test(n));
-      expect(bad).toEqual([]);
+      const names = collectVarNames(mql());
+      expect(names.length).toBeGreaterThan(0);
+      expect(names.filter((n) => !VALID_VAR.test(n))).toEqual([]);
     });
   }
 

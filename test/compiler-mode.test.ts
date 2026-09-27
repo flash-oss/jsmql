@@ -114,6 +114,8 @@ describe.skipIf(!up)("compiler/emit/mode — the truth table, measured", () => {
       ];
       await coll.insertMany([...cases.map(([label, a]) => ({ label, a })), { label: "missing" }]);
       const rows = await coll.aggregate([{ $addFields: { t: cond(jsTruthy("$a"), "T", "F") } }]).toArray();
+      // Every value class, and the missing field, reached the comparison below.
+      expect(rows.map((r) => r.label).sort()).toEqual([...cases.map(([label]) => label), "missing"].sort());
       for (const row of rows) {
         const js = row.label === "missing" ? "F" : Boolean(row.a) ? "T" : "F";
         expect(row.t, row.label).toBe(js);

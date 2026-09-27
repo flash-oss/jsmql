@@ -175,6 +175,7 @@ Every refusal is a `CodegenError` with the offending node's `pos`, so `validate(
 | `$$ = $$$.c.find(p)` — one document where a stream is needed | ".find gives ONE document, and a stream is many" |
 | `$ = $$$.c.filter(p)` — many where the root needs one | "… the root needs one document …" |
 | `$$$.orders.fnid(o => …)` | "Unknown method '.fnid()' at position N. Did you mean '.find()'?" |
+| `$$ = $$$.orders.filterr(o => …)` — a link no row knows | "Unknown method '.filterr()' at position N. Did you mean '.filter()'?" |
 | `$$$.orders.find()` | "'.find(predicate)' requires exactly 1 argument, got 0" |
 | `$$$.orders.find(p).size()` | "'.size()' is not available on an 'object' — it is defined on 'array', 'stream'. For the number of fields, write '.keys().size()'." |
 | `$$$.orders.filter(p)` in a filter / `jsmql.expr` | the pipeline-mode refusal above |
