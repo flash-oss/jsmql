@@ -935,11 +935,18 @@ const listOf = (list: Expr): Expr => {
 };
 const arrowOf = (param: string, body: Expr, pos: number): Expr => ({ type: "Lambda", params: [param], body, pos });
 
-/** One document per distinct `key`, the first kept — the stages `.uniq()` and `.intersection()` share. */
-const keepFirstPer = (key: unknown): Stage[] => [
-  { $group: { _id: key, [GROUP_SLOT]: { $first: "$$ROOT" } } },
-  { $replaceWith: `$${GROUP_SLOT}` },
-];
+/**
+ * One document per distinct `key`, the first kept — the stages of each row that
+ * states `restoresDocuments`. A key that IS the document needs no second copy of
+ * it, because the group key is the first document itself. MEASURED: of documents
+ * that compare equal, the key keeps the first one, as `$first` does. An int and a
+ * double of one value compare equal, and so do "A" and "a" under a collation that
+ * ignores case.
+ */
+const keepFirstPer = (key: unknown): Stage[] =>
+  key === "$$ROOT"
+    ? [{ $group: { _id: "$$ROOT" } }, { $replaceWith: "$_id" }]
+    : [{ $group: { _id: key, [GROUP_SLOT]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_SLOT}` }];
 
 const collapse = (key: unknown, acc: Record<string, unknown>): Stage[] => [
   { $group: { _id: key, [GROUP_SLOT]: acc } },
@@ -7275,10 +7282,7 @@ export const NAMES = {
     stream: {
       args: { sig: "", none: true },
       // One document per distinct ELEMENT: the whole document, or the unwound field after `.flatMap`.
-      emit: ({ element }) => [
-        { $group: { _id: element().ref, [GROUP_SLOT]: { $first: "$$ROOT" } } },
-        { $replaceWith: `$${GROUP_SLOT}` },
-      ],
+      emit: ({ element }) => keepFirstPer(element().ref),
     },
     statement: unsupported(
       "'.uniq()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.uniq();'",
@@ -7309,10 +7313,7 @@ export const NAMES = {
     stream: {
       args: { sig: "iteratee", exact: 1 },
       // "First" follows the stream's current order; sort first when it matters.
-      emit: ({ args, reshape }) => [
-        { $group: { _id: reshape(args[0]), [GROUP_SLOT]: { $first: "$$ROOT" } } },
-        { $replaceWith: `$${GROUP_SLOT}` },
-      ],
+      emit: ({ args, reshape }) => keepFirstPer(reshape(args[0])),
     },
     statement: unsupported(
       "'.uniqBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.uniqBy();'",
@@ -7331,13 +7332,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
-    stream: {
-      args: { sig: "", none: true },
-      emit: ({ element }) => [
-        { $group: { _id: element().ref, [GROUP_SLOT]: { $first: "$$ROOT" } } },
-        { $replaceWith: `$${GROUP_SLOT}` },
-      ],
-    },
+    stream: { args: { sig: "", none: true }, emit: ({ element }) => keepFirstPer(element().ref) },
     statement: unsupported(
       "'.sortedUniq()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniq();'",
     ),
@@ -7366,13 +7361,7 @@ export const NAMES = {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ recv, args, iteratee, bind }) => uniqByReduce(recv, iteratee(args[0]), bind),
     },
-    stream: {
-      args: { sig: "iteratee", exact: 1 },
-      emit: ({ args, reshape }) => [
-        { $group: { _id: reshape(args[0]), [GROUP_SLOT]: { $first: "$$ROOT" } } },
-        { $replaceWith: `$${GROUP_SLOT}` },
-      ],
-    },
+    stream: { args: { sig: "iteratee", exact: 1 }, emit: ({ args, reshape }) => keepFirstPer(reshape(args[0])) },
     statement: unsupported(
       "'.sortedUniqBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniqBy();'",
     ),

@@ -622,6 +622,8 @@ describe("compiler/emit/statement — the stream road", () => {
       { $group: { _id: "$k", __jsmqlTmp: { $first: "$$ROOT" } } },
       { $replaceWith: "$__jsmqlTmp" },
     ]);
+    // a key that is the whole document is the kept document: the group holds no second copy
+    expect(compiled("$$.uniq();")).toEqual([{ $group: { _id: "$$ROOT" } }, { $replaceWith: "$_id" }]);
     expect(compiled('$$ = $$.countBy("k");')).toEqual([
       { $group: { _id: "$k", __jsmqlTmp: { $sum: 1 } } },
       {

@@ -7,7 +7,7 @@
 // See docs/specs/types.md.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoClient, type Collection } from "mongodb";
+import { Double, MongoClient, type Collection } from "mongodb";
 import { jsmql } from "../src/index.ts";
 import { DOCUMENT, at, kindsOf, of, written } from "../src/compiler/emit/type.ts";
 import { liveClient } from "./fixtures/live.ts";
@@ -403,8 +403,8 @@ describe("types — the document after a stage, read off the stage itself", () =
     // later link and a later statement read it, and the cleanup drops it at the end.
     const kept = [
       { $set: { "__jsmql.var.t": "$a" } },
-      { $group: { _id: "$$ROOT", __jsmqlTmp: { $first: "$$ROOT" } } },
-      { $replaceWith: "$__jsmqlTmp" },
+      { $group: { _id: "$$ROOT" } },
+      { $replaceWith: "$_id" },
       { $match: { $expr: { $eq: ["$x", "$__jsmql.var.t"] } } },
       { $unset: "__jsmql" },
     ];
@@ -541,7 +541,7 @@ describe.skipIf(up === null)("types — the server agrees with the stage effects
 });
 
 describe.skipIf(up === null)(
-  "types — the server agrees: a link that gives the documents back keeps the element",
+  "types — the server agrees: a link that gives the documents back gives them as they were",
   () => {
     let client: MongoClient;
     let coll: Collection;
@@ -594,6 +594,23 @@ describe.skipIf(up === null)(
           ],
         },
       ]);
+    });
+
+    it("`.uniq()` on whole documents gives back the first of two equal documents", async () => {
+      // An int and a double of one value compare equal, so `.uniq()` keeps one document,
+      // and lodash keeps the first one. `$type` shows which document came back.
+      const pair = client.db("jsmql_compiler_types").collection("first_kept");
+      await pair.deleteMany({});
+      await pair.insertMany([
+        { _id: 1, v: 1 },
+        { _id: 2, v: new Double(1) },
+      ]);
+      const kept = async (order: string): Promise<unknown[]> =>
+        await pair
+          .aggregate(jsmql(`$$.${order}.map(d => ({ v: d.v })).uniq(); $.t = $type($.v);`) as object[])
+          .toArray();
+      expect(await kept('sortBy("_id")')).toEqual([{ v: 1, t: "int" }]);
+      expect(await kept('orderBy("_id", "desc")')).toEqual([{ v: 1, t: "double" }]);
     });
   },
 );

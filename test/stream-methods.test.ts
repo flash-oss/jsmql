@@ -809,6 +809,22 @@ describe(".uniqBy(field) → $group + $replaceWith", () => {
   });
 });
 
+describe(".uniq() → $group + $replaceWith", () => {
+  it("on whole documents the group key IS the kept document, so the group holds no second copy", () => {
+    for (const source of ["$$.uniq();", "$$.sortedUniq();", "$$.uniqBy(d => d);"]) {
+      expect(jsmql(source)).toEqual([{ $group: { _id: "$$ROOT" } }, { $replaceWith: "$_id" }]);
+    }
+  });
+
+  it("after .flatMap the key is the element, and `$first` keeps the document", () => {
+    expect(jsmql('$$.flatMap("ids").uniq();')).toEqual([
+      { $unwind: "$ids" },
+      { $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+    ]);
+  });
+});
+
 describe("lodash iteratee shorthands on stream methods", () => {
   it('.map("field") promotes a subdocument field to the root → $replaceWith', () => {
     // `.map("field")` ≡ `.map(d => d.field)` — the field becomes the new root, so it
@@ -1515,15 +1531,16 @@ describe("a link whose stages keep the first document per key states `restoresDo
   // Without the fact the compiler reads the pair as "the document changed", and it drops
   // each `let`, the element and the cleanup. See docs/specs/types.md § The document after a stage.
   type Stage = Record<string, unknown>;
+  // A key that is the whole document is the kept document itself: `{ _id: "$$ROOT" }`, then `"$_id"`.
   const keepsFirst = (stages: readonly Stage[]): boolean =>
     stages.some((st, i) => {
       const group = st.$group as Record<string, unknown> | undefined;
       const next = stages[i + 1]?.$replaceWith;
-      return (
-        group !== undefined &&
-        JSON.stringify(group[GROUP_SLOT]) === JSON.stringify({ $first: "$$ROOT" }) &&
-        next === `$${GROUP_SLOT}`
-      );
+      if (group === undefined) return false;
+      const byDocument = group._id === "$$ROOT" && Object.keys(group).length === 1 && next === "$_id";
+      const byKey =
+        JSON.stringify(group[GROUP_SLOT]) === JSON.stringify({ $first: "$$ROOT" }) && next === `$${GROUP_SLOT}`;
+      return byDocument || byKey;
     });
 
   it("every such link states it, and every link that states it is such a link", () => {
