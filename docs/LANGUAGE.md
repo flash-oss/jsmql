@@ -1588,7 +1588,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 | `NaN` | **no** — see limitation below |
 | everything else (`[]`, `{}`, `"0"`, `-1`, dates, …) | truthy |
 
-MongoDB's raw `$toBool` and bare `$cond` use a different rule; for example, `""` is truthy in MQL. To get raw MongoDB semantics — for example, to match an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes keep their own meaning. A `$op(…)` call that stands alone as a predicate keeps MongoDB's rule too, because it is your own MQL: `jsmql("$foo($.a)")` → `{ $expr: { $foo: "$a" } }`. Under `&&`, `||` and `!`, the JavaScript rule reads it.
+MongoDB's raw `$toBool` and bare `$cond` use a different rule; for example, `""` is truthy in MQL. To get raw MongoDB semantics — for example, to match an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes keep their own meaning. A `$op(…)` call that stands alone as a predicate keeps MongoDB's rule too, because it is your own MQL: `jsmql("$foo($.a)")` → `{ $expr: { $foo: "$a" } }`. JSMQL refuses such a call as an operand of `&&`, `||` or `!` ([HR6](LANG_RULES.md)).
 
 One rule for every spelling and every position keeps matching pairs equal. `.compact()` is `.filter(Boolean)`. `.reject(p)` is the exact complement of `.filter(p)`. `.partition(p)` is `[filter(p), reject(p)]`, so no element can fall out of both halves. A stream `$$.filter(p)` keeps exactly the documents that the value-mode `.filter(p)` keeps.
 

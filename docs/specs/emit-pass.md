@@ -227,9 +227,9 @@ the tests the value's proof can fail: the subtractive rule and its constant
 folding live in [docs/specs/types.md § The truthiness rule](types.md#the-truthiness-rule).
 A `$op(…)` call keeps MongoDB's own truthiness where no JavaScript spelling
 reads it, because the call is the developer's own MQL: in a filter, `$foo($.a)`
-is `{ $expr: { $foo: "$a" } }` (`mongoTruthy`). Under `&&`, `||` and `!`, and in
-a lambda body, the JavaScript spelling checks the call's value (`jsRead` in
-`filter.ts`). The compiler does not check NaN. `mode.ts` is the one minter of
+is `{ $expr: { $foo: "$a" } }` (`mongoTruthy`). In a lambda body, and through a
+name that holds the call, the JavaScript spelling checks the call's value (`jsRead`
+in `filter.ts`). HR6 refuses the call itself as an operand of `&&`, `||` or `!`. The compiler does not check NaN. `mode.ts` is the one minter of
 `Truth`, and `mql.ts` builds every slot that reads one. The table in
 [docs/LANGUAGE.md § Truthy and falsy](../LANGUAGE.md#truthy-and-falsy) states the
 rule for developers.
