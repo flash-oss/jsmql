@@ -1731,11 +1731,15 @@ $.s.words()              // "fooBarBaz 9" → ["foo", "Bar", "Baz", "9"]  ($rege
 $.s.camelCase()          // "Foo bar-baz" → "fooBarBaz"
 $.s.kebabCase()          // "fooBarBaz" → "foo-bar-baz"
 $.s.snakeCase()          // "fooBarBaz" → "foo_bar_baz"
+$.s.lowerCase()          // "--Foo-Bar--" → "foo bar"
+$.s.upperCase()          // "fooBar" → "FOO BAR"
 $.s.startCase()          // "foo_bar" → "Foo Bar"
 $.s.escape()             // "a<b>&" → "a&lt;b&gt;&amp;"   (&<>"' → HTML entities)
 $.s.truncate()           // > 30 chars → first 27 + "..."
 $.s.truncate({ length: 24, omission: "…" })
 ```
+
+`.lowerCase()` and `.upperCase()` split the string into words and join the words with a space. `.toLowerCase()` and `.toUpperCase()` change only the case, and keep all other characters.
 
 **ASCII-only, by design.** `$toUpper`/`$toLower` work only on ASCII; an accented letter passes through unchanged. Word-splitting uses the ASCII pattern `[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+`. This pattern splits camelCase boundaries and non-alphanumeric characters; an accented character acts as a separator. `truncate`'s word-boundary `separator` option has no MQL equivalent, because MQL cannot search backward. JSMQL omits `deburr`, because it is a no-op without Unicode support. A live mongod verified every shape here.
 
@@ -2631,6 +2635,27 @@ $.n.ceil()             // { $ceil: "$n" }
 $.n.ceil(2)            // scale by 10² via $pow, $ceil, scale back
 $.n.floor(1)           // as ceil, with $floor
 ```
+
+#### `.range()` and `.rangeRight()`
+
+`.range()` is lodash's `_.range`, and the receiver is lodash's first argument. With no argument, the receiver is lodash's `end`, and the range starts at 0. With one or two arguments, the receiver is lodash's `start`, and the arguments are `end` and `step`. The array holds the integers from `start` up to `end`, and it never holds `end`. `.rangeRight()` gives the same array in reverse order.
+
+```js
+(0).range(4)             // { $range: [0, 4] }                 → [0, 1, 2, 3]
+(5).range(1)             // { $range: [5, 1, -1] }             → [5, 4, 3, 2]
+(0).range(20, 5)         // { $range: [0, 20, 5] }             → [0, 5, 10, 15]
+$.n.range()              // { $range: [0, { $ifNull: ["$n", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$n", 0] }] }, 1, -1] }] }
+                         //   n: 4 → [0, 1, 2, 3]   n: -3 → [0, -1, -2]   no n → []
+$.from.range($.to, 2)    // { $range: [{ $ifNull: ["$from", 0] }, { $ifNull: ["$to", 0] }, 2] }
+(1).rangeRight(5)        // { $reverseArray: { $range: [1, 5] } }   → [4, 3, 2, 1]
+```
+
+- **With no step, the range counts down when `start` is more than `end`**, as lodash does. MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds the step `-1` for two constant bounds, and a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
+- **A missing or `null` bound reads as 0**, as lodash reads it. `$range` stops the command on `null`, so the compiler adds `$ifNull`. The answer is never `null`, and a chain after it adds no `$ifNull`. Under `?.`, the chain gives `null`, as every method does.
+- **Each bound and the step must be an integer.** lodash accepts `_.range(0, 1, 0.25)`, but `$range` counts in whole numbers. The compiler refuses a constant with a fraction, and names `Math.ceil(…)` and `Math.floor(…)`. The server refuses a fraction that it reads at run time.
+- **The step cannot be 0.** lodash repeats the start value for a step of 0, but the server refuses it. The compiler refuses a constant 0, and names `$range(0, n).map(() => start)`. The server refuses a 0 that it reads at run time, as it refuses a division by zero.
+
+The `$range(…)` escape hatch stays raw MQL: `$range(5)` is `{ $range: 5 }`.
 
 > `round` uses MongoDB's `$round`, which rounds half-to-even. This **differs from lodash**, where `_.round(2.5) === 3`. JSMQL emits the native operator on purpose, instead of an emulation.
 

@@ -551,6 +551,11 @@ export function readsNullAsEmptyOf(name: string): boolean {
   return (row(name) as { readsNullAsEmpty?: true } | undefined)?.readsNullAsEmpty === true;
 }
 
+/** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0)? */
+export function readsNullReceiverOf(name: string): boolean {
+  return (row(name) as { nullReceiverAs?: 0 } | undefined)?.nullReceiverAs !== undefined;
+}
+
 /**
  * HR5: the EMPTY value that an array or object method runs on when its receiver is
  * null or missing — `[]` for an array, `{}` for an object — or null for a method

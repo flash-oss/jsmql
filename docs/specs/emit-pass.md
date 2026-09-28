@@ -210,7 +210,9 @@ and a production. A `$op(…)` call and a `$stage(…)` call meet only the two
 refusals for a spread or a computed key inside an object body
 (`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check
 reads an `Arity` field the row states — slot types, ranges, enums, `constant`
-slots, a non-empty or non-zero slot — or a `BodyRule` field of a method's
+slots, a non-empty or non-zero slot, a zero with an alternative of its own
+(`zeroRefused`), an integer slot or receiver (`integer`, where `-1` is the
+receiver) — or a `BodyRule` field of a method's
 options document (`args.body`): required and closed keys (with a suggestion),
 enums, key types, `constantKeys`, and keys that never come together
 (`notTogether`). A method row's `elements: "scalar"`
@@ -898,6 +900,23 @@ The server has no set type, so the compiler parses `Set` and refuses it in both
 spellings. Each set operation is a method of an array, and the refusal names
 these methods. `.difference()` is the set difference, `$setDifference`. It is
 not the `$filter` of lodash's `_.difference`, which keeps each duplicate.
+
+`.range()` and `.rangeRight()` follow lodash's `_.range`, and the cell adds
+what `$range` does not do. With no step, the step is `start < end ? 1 : -1`.
+Two constant bounds fold it: the cell writes `-1` only when `start` is more than
+`end`. Otherwise the step is a `$cond` over the two bounds. A bound that is not
+a constant or a field path binds once in a `$let`, because the step reads each
+bound a second time. A bound that is not a constant reads as `{ $ifNull: [x, 0] }`,
+because lodash reads a missing bound as 0 and `$range` stops the command on null.
+The row states `nullReceiverAs: 0` for this reason, so the presence proof counts
+the receiver as there under a dot, and a chain after the call adds no guard.
+`.rangeRight()` is the same document inside `$reverseArray`.
+
+```
+(5).range(1)          → {"$range":[5,1,-1]}
+(1).range($.w + 1)    → {"$let":{"vars":{"jsmqlEnd":{"$ifNull":[{"$add":["$w",1]},0]}},
+                         "in":{"$range":[1,"$$jsmqlEnd",{"$cond":[{"$lt":[1,"$$jsmqlEnd"]},1,-1]}]}}}
+```
 
 A JavaScript aggregate written where a stage takes an ACCUMULATOR — a
 `$group` output field, a `$setWindowFields.output` entry — is the row's

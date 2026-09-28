@@ -592,6 +592,16 @@ const VALUE_METHOD_SIGNATURES = {
   lowerFirst: { recv: "String", sig: "(): string", doc: "Lower-case the first char — `_.lowerFirst`." },
   kebabCase: { recv: "String", sig: "(): string", doc: "`kebab-case` the string — `_.kebabCase`." },
   snakeCase: { recv: "String", sig: "(): string", doc: "`snake_case` the string — `_.snakeCase`." },
+  lowerCase: {
+    recv: "String",
+    sig: "(): string",
+    doc: "`lower case` the string: the words, lower-cased and joined by a space — `_.lowerCase`.",
+  },
+  upperCase: {
+    recv: "String",
+    sig: "(): string",
+    doc: "`UPPER CASE` the string: the words, upper-cased and joined by a space — `_.upperCase`.",
+  },
   startCase: { recv: "String", sig: "(): string", doc: "`Start Case` the string — `_.startCase`." },
   camelCase: { recv: "String", sig: "(): string", doc: "`camelCase` the string — `_.camelCase`." },
   escape: { recv: "String", sig: "(): string", doc: "Escape HTML entities — `_.escape`." },
@@ -626,6 +636,17 @@ const VALUE_METHOD_SIGNATURES = {
     recv: "Number",
     sig: "(precision?: number): number",
     doc: "Round down to `precision` decimals — `_.floor`.",
+  },
+  // The receiver is lodash's `end` alone, and its `start` with more arguments.
+  range: {
+    recv: "Number",
+    sig: "(end?: number, step?: number): number[]",
+    doc: "The integers from the start up to, but not including, the end — `_.range`.",
+  },
+  rangeRight: {
+    recv: "Number",
+    sig: "(end?: number, step?: number): number[]",
+    doc: "The `.range()` array in reverse order — `_.rangeRight`.",
   },
   // ── Date → Date / number / string / boolean ─────────────────────────────────
   // jsmql's date vocabulary beyond what lib.d.ts already types. Every parameter list

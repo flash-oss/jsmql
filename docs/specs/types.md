@@ -214,7 +214,9 @@ An array or object method under a dot is present whatever its receiver: HR5 read
 missing receiver as `[]` or `{}` (`dispatchOn` in
 [lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()` guards
 `a` once. A row that states `readsNullAsEmpty` takes no wrap at all, because its
-operator gives the same answer for null: `$.a.sum()` is `{ $sum: "$a" }`. A `?.` on
+operator gives the same answer for null: `$.a.sum()` is `{ $sum: "$a" }`. A row
+that states `nullReceiverAs` reads a missing receiver as that value in its own cell,
+so it is present under a dot too: `$.n.range().size()` adds no `$ifNull`. A `?.` on
 the spine takes the presence away: the chain stops, and the value may be null.
 
 A cell guards with `$ifNull` exactly where the proof says `absent`. MEASURED:

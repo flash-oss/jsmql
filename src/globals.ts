@@ -3630,6 +3630,8 @@ declare global {
     escape(): string;
     /** `kebab-case` the string — `_.kebabCase`. */
     kebabCase(): string;
+    /** `lower case` the string: the words, lower-cased and joined by a space — `_.lowerCase`. */
+    lowerCase(): string;
     /** Lower-case the first char — `_.lowerFirst`. */
     lowerFirst(): string;
     /** `snake_case` the string — `_.snakeCase`. */
@@ -3638,6 +3640,8 @@ declare global {
     startCase(): string;
     /** Truncate to a length with an omission — `_.truncate`. */
     truncate(options?: { length?: number; omission?: string; separator?: string | RegExp }): string;
+    /** `UPPER CASE` the string: the words, upper-cased and joined by a space — `_.upperCase`. */
+    upperCase(): string;
     /** Upper-case the first char — `_.upperFirst`. */
     upperFirst(): string;
     /** Split into an array of words — `_.words`. */
@@ -3652,6 +3656,10 @@ declare global {
     floor(precision?: number): number;
     /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
     inRange(start: number, end?: number): boolean;
+    /** The integers from the start up to, but not including, the end — `_.range`. */
+    range(end?: number, step?: number): number[];
+    /** The `.range()` array in reverse order — `_.rangeRight`. */
+    rangeRight(end?: number, step?: number): number[];
     /** Round to `precision` decimals — `_.round`. */
     round(precision?: number): number;
   }
