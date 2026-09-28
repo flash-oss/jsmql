@@ -1721,11 +1721,15 @@ $.s.words()              // "fooBarBaz 9" → ["foo", "Bar", "Baz", "9"]  ($rege
 $.s.camelCase()          // "Foo bar-baz" → "fooBarBaz"
 $.s.kebabCase()          // "fooBarBaz" → "foo-bar-baz"
 $.s.snakeCase()          // "fooBarBaz" → "foo_bar_baz"
+$.s.lowerCase()          // "--Foo-Bar--" → "foo bar"
+$.s.upperCase()          // "fooBar" → "FOO BAR"
 $.s.startCase()          // "foo_bar" → "Foo Bar"
 $.s.escape()             // "a<b>&" → "a&lt;b&gt;&amp;"   (&<>"' → HTML entities)
 $.s.truncate()           // > 30 chars → first 27 + "..."
 $.s.truncate({ length: 24, omission: "…" })
 ```
+
+`.lowerCase()` and `.upperCase()` split the string into words and join the words with a space. `.toLowerCase()` and `.toUpperCase()` change only the case, and keep all other characters.
 
 **ASCII-only, by design.** `$toUpper`/`$toLower` work only on ASCII; an accented letter passes through unchanged. Word-splitting uses the ASCII pattern `[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+`. This pattern splits camelCase boundaries and non-alphanumeric characters; an accented character acts as a separator. `truncate`'s word-boundary `separator` option has no MQL equivalent, because MQL cannot search backward. JSMQL omits `deburr`, because it is a no-op without Unicode support. A live mongod verified every shape here.
 

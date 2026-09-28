@@ -3630,6 +3630,8 @@ declare global {
     escape(): string;
     /** `kebab-case` the string — `_.kebabCase`. */
     kebabCase(): string;
+    /** `lower case` the string: the words, lower-cased and joined by a space — `_.lowerCase`. */
+    lowerCase(): string;
     /** Lower-case the first char — `_.lowerFirst`. */
     lowerFirst(): string;
     /** `snake_case` the string — `_.snakeCase`. */
@@ -3638,6 +3640,8 @@ declare global {
     startCase(): string;
     /** Truncate to a length with an omission — `_.truncate`. */
     truncate(options?: { length?: number; omission?: string; separator?: string | RegExp }): string;
+    /** `UPPER CASE` the string: the words, upper-cased and joined by a space — `_.upperCase`. */
+    upperCase(): string;
     /** Upper-case the first char — `_.upperFirst`. */
     upperFirst(): string;
     /** Split into an array of words — `_.words`. */

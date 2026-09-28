@@ -9038,6 +9038,50 @@ export const NAMES = {
     ),
   }),
 
+  lowerCase: name({
+    doc: "'.lowerCase()' — see docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    returns: "string",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => ({ $toLower: joinWords(wordsExpr(recv, bind), " ", bind) }),
+    },
+    stream: unsupported("'.lowerCase()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.lowerCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lowerCase();'",
+    ),
+    group: unsupported("'.lowerCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.lowerCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  upperCase: name({
+    doc: "'.upperCase()' — see docs/LANGUAGE.md.",
+    call: true,
+    on: "string",
+    returns: "string",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => ({ $toUpper: joinWords(wordsExpr(recv, bind), " ", bind) }),
+    },
+    stream: unsupported("'.upperCase()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.upperCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.upperCase();'",
+    ),
+    group: unsupported("'.upperCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.upperCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
   startCase: name({
     doc: "'.startCase()' — see docs/LANGUAGE.md.",
     call: true,

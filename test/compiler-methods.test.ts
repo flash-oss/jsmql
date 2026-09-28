@@ -34,6 +34,9 @@ const DOC = {
   keys: ["a", "_c"],
   kname: "_c",
   h: "<a & b>",
+  // separator runs around the words, for lodash's word-case methods
+  dashed: "--Foo-Bar--",
+  under: "__FOO_BAR__",
   a: [3, 1, 2],
   b: [2, 5],
   // an array that holds a value more than once, for the set operations
@@ -244,6 +247,100 @@ describe("compiler/emit — string methods", () => {
         },
       },
     });
+    // lodash's answers: _.lowerCase and _.upperCase over the same fields
+    expect(compiled("$.w.lowerCase()", () => "foo bar baz qux")).toEqual({
+      $toLower: {
+        $reduce: {
+          input: {
+            $map: {
+              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              as: "jsmqlWord",
+              in: "$$jsmqlWord.match",
+            },
+          },
+          initialValue: "",
+          in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }] },
+        },
+      },
+    });
+    expect(compiled("$.dashed.lowerCase()", () => "foo bar")).toEqual({
+      $toLower: {
+        $reduce: {
+          input: {
+            $map: {
+              input: { $regexFindAll: { input: "$dashed", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              as: "jsmqlWord",
+              in: "$$jsmqlWord.match",
+            },
+          },
+          initialValue: "",
+          in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }] },
+        },
+      },
+    });
+    expect(compiled("$.under.lowerCase()", () => "foo bar")).toEqual({
+      $toLower: {
+        $reduce: {
+          input: {
+            $map: {
+              input: { $regexFindAll: { input: "$under", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              as: "jsmqlWord",
+              in: "$$jsmqlWord.match",
+            },
+          },
+          initialValue: "",
+          in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }] },
+        },
+      },
+    });
+    expect(compiled("$.w.upperCase()", () => "FOO BAR BAZ QUX")).toEqual({
+      $toUpper: {
+        $reduce: {
+          input: {
+            $map: {
+              input: { $regexFindAll: { input: "$w", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              as: "jsmqlWord",
+              in: "$$jsmqlWord.match",
+            },
+          },
+          initialValue: "",
+          in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }] },
+        },
+      },
+    });
+    expect(compiled("$.dashed.upperCase()", () => "FOO BAR")).toEqual({
+      $toUpper: {
+        $reduce: {
+          input: {
+            $map: {
+              input: { $regexFindAll: { input: "$dashed", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              as: "jsmqlWord",
+              in: "$$jsmqlWord.match",
+            },
+          },
+          initialValue: "",
+          in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }] },
+        },
+      },
+    });
+    expect(compiled("$.under.upperCase()", () => "FOO BAR")).toEqual({
+      $toUpper: {
+        $reduce: {
+          input: {
+            $map: {
+              input: { $regexFindAll: { input: "$under", regex: "[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[A-Z]|[0-9]+" } },
+              as: "jsmqlWord",
+              in: "$$jsmqlWord.match",
+            },
+          },
+          initialValue: "",
+          in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", " ", "$$this"] }] },
+        },
+      },
+    });
+    // a missing field: the dot form answers "" as lodash does, and `?.` answers null
+    expect(compiled("$.nope.lowerCase()", () => "")).toHaveProperty("$toLower");
+    expect(compiled("$.nope?.upperCase()", () => null)).toEqual(nullOr("$nope", expr("$.nope.upperCase()")));
     expect(compiled("$.w.snakeCase()", () => "foo_bar_baz_qux")).toEqual({
       $toLower: {
         $reduce: {
@@ -668,6 +765,8 @@ describe("compiler/emit — object methods", () => {
                     "keys",
                     "kname",
                     "h",
+                    "dashed",
+                    "under",
                     "a",
                     "b",
                     "dup",
@@ -2784,6 +2883,8 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   words: ["$.w.words()"],
   kebabCase: ["$.w.kebabCase()"],
   snakeCase: ["$.w.snakeCase()"],
+  lowerCase: ["$.w.lowerCase()"],
+  upperCase: ["$.w.upperCase()"],
   startCase: ["$.w.startCase()"],
   camelCase: ["$.w.camelCase()"],
   escape: ["$.h.escape()"],

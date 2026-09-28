@@ -592,6 +592,16 @@ const VALUE_METHOD_SIGNATURES = {
   lowerFirst: { recv: "String", sig: "(): string", doc: "Lower-case the first char — `_.lowerFirst`." },
   kebabCase: { recv: "String", sig: "(): string", doc: "`kebab-case` the string — `_.kebabCase`." },
   snakeCase: { recv: "String", sig: "(): string", doc: "`snake_case` the string — `_.snakeCase`." },
+  lowerCase: {
+    recv: "String",
+    sig: "(): string",
+    doc: "`lower case` the string: the words, lower-cased and joined by a space — `_.lowerCase`.",
+  },
+  upperCase: {
+    recv: "String",
+    sig: "(): string",
+    doc: "`UPPER CASE` the string: the words, upper-cased and joined by a space — `_.upperCase`.",
+  },
   startCase: { recv: "String", sig: "(): string", doc: "`Start Case` the string — `_.startCase`." },
   camelCase: { recv: "String", sig: "(): string", doc: "`camelCase` the string — `_.camelCase`." },
   escape: { recv: "String", sig: "(): string", doc: "Escape HTML entities — `_.escape`." },
