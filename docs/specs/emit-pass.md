@@ -992,8 +992,8 @@ rejection that comes from a row quotes the row.
 A refusal that names a spelling to write instead names one that runs on every
 document: a present value, an empty one, a null one and a missing field. For
 example, the `.split("")` hint is
-`$map({ input: $range(0, $strLenCP($.<field> ?? "")), as: "i", in: $substrCP($.<field>, "$$i", 1) })`.
-The `?? ""` matters: `$strLenCP` aborts the query on a missing or a null string. `test/compiler-methods.test.ts` reads each such
+`($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))`.
+The `?? 0` matters: `.length()` answers null for a missing string, and a range needs a number. `test/compiler-methods.test.ts` reads each such
 hint out of its message, fills in the placeholder, and runs it on the server.
 
 ## What proves the value target

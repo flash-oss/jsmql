@@ -661,7 +661,7 @@ var RANGE_ARGS = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
   integer: [-1, 0, 1],
-  zeroRefused: { 1: "For the start value n times, write '$range(0, n).map(() => start)'." }
+  zeroRefused: { 1: "For the start value n times, write 'n.range().map(() => start)'." }
 };
 function rangeOf({ recv, args, value, bind, present: present2 }) {
   const bound = (v, there) => v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
@@ -689,7 +689,7 @@ var isIfNullWrappedPath = (v) => {
   return Array.isArray(n2) && n2.length === 2 && isPath(n2[0]) && n2[1] === 0;
 };
 var fromIsNotJsmql = unsupported(
-  `'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'. For a value per index, write '$map({ input: $range(0, n), as: "i", in: \u2026 })', where '"$$i"' is the index. To build an array from one you already have, call '.map(\u2026)' on that array.`
+  "'Array.from(\u2026)' is not part of jsmql. For a range of indices write 'n.range()'. For a value per index, write 'n.range().map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
 );
 var setIsNotJsmql = unsupported(
   "'new Set(\u2026)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'."
@@ -3476,7 +3476,7 @@ var NAMES = {
         nonEmpty: {
           0: {
             noun: "separator character",
-            instead: `MongoDB cannot split a string into characters. For one character per element, write '$map({ input: $range(0, $strLenCP($.<field> ?? "")), as: "i", in: $substrCP($.<field>, "$$i", 1) })'.`
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))'."
           }
         }
       },
@@ -20566,7 +20566,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
       const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$map({ input: $range(0, $strLenCP(<string> ?? "")), as: "i", in: $substrCP(<string>, "$$i", 1) })'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -20880,7 +20880,7 @@ var spreadNotADocument = (noun, pos) => new CodegenError(
   pos
 );
 var spreadOfString = (pos) => new CodegenError(
-  `'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$map({ input: $range(0, $strLenCP(<string> ?? "")), as: "i", in: $substrCP(<string>, "$$i", 1) })'. To keep the string whole, drop the '...'.`,
+  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
   pos
 );
 function noReceiver(name2, pos) {

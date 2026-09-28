@@ -2078,7 +2078,7 @@ describe("compiler/emit — number ranges", () => {
   });
 
   it("refuses a zero step and a fractional bound, and names the alternative", () => {
-    expect(() => expr("(0).range(5, 0)")).toThrow(/cannot be 0.*\$range\(0, n\)\.map/);
+    expect(() => expr("(0).range(5, 0)")).toThrow(/cannot be 0.*n\.range\(\)\.map/);
     expect(() => expr("(0.5).range(3)")).toThrow(/receiver must be an integer.*Math\.ceil/);
     expect(() => expr("(0).range(2.5)")).toThrow(/argument 1 must be an integer/);
     expect(() => expr("$.n.rangeRight($.m, 1.5)")).toThrow(/argument 2 must be an integer/);

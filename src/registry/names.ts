@@ -1254,7 +1254,7 @@ const RANGE_ARGS: Arity = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
   integer: [-1, 0, 1],
-  zeroRefused: { 1: "For the start value n times, write '$range(0, n).map(() => start)'." },
+  zeroRefused: { 1: "For the start value n times, write 'n.range().map(() => start)'." },
 };
 
 /**
@@ -1294,14 +1294,13 @@ const isIfNullWrappedPath = (v: unknown): boolean => {
 };
 
 /**
- * JSMQL refuses `Array.from(…)` in every position. The range operator says the same
- * thing in fewer characters — MEASURED, 'Array.from({ length: 3 }, (_, i) => i * 2)'
- * emitted a '$let' binding a throwaway element that
- * '$map({ input: $range(0, 3), as: "i", in: $multiply("$$i", 2) })' does not — and one
- * capability gets one spelling.
+ * JSMQL refuses `Array.from(…)` in every position. `.range()` says the same thing in
+ * fewer characters — MEASURED, 'Array.from({ length: 3 }, (_, i) => i * 2)' emitted a
+ * '$let' binding a throwaway element that '(3).range().map(i => i * 2)' does not — and
+ * one capability gets one spelling.
  */
 const fromIsNotJsmql = unsupported(
-  "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'. For a value per index, write '$map({ input: $range(0, n), as: \"i\", in: … })', where '\"$$i\"' is the index. To build an array from one you already have, call '.map(…)' on that array.",
+  "'Array.from(…)' is not part of jsmql. For a range of indices write 'n.range()'. For a value per index, write 'n.range().map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.",
 );
 
 /** `new Set(…)` in every position but an accumulator's. MongoDB has no set type, and an array method does each set operation. */
@@ -4342,7 +4341,7 @@ export const NAMES = {
           0: {
             noun: "separator character",
             instead:
-              'MongoDB cannot split a string into characters. For one character per element, write \'$map({ input: $range(0, $strLenCP($.<field> ?? "")), as: "i", in: $substrCP($.<field>, "$$i", 1) })\'.',
+              "MongoDB cannot split a string into characters. For one character per element, write '($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))'.",
           },
         },
       },

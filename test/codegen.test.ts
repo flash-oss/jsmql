@@ -644,7 +644,7 @@ describe("array spread", () => {
   // and answering the bare string "abc" for `[..."abc"]` would be wrong. See docs/DEFERRED.md § B.
   it("refuses to spread a PROVABLE string, in an array literal and in an object literal", () => {
     const message =
-      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$map({ input: $range(0, $strLenCP(<string> ?? \"\")), as: \"i\", in: $substrCP(<string>, \"$$i\", 1) })'. To keep the string whole, drop the '...'.";
+      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '(<string>.length() ?? 0).range().map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
     expect(() => jsmql.expr('[..."abc"]')).toThrow(message);
     expect(() => jsmql.expr('[..."abc", "d"]')).toThrow(message);
     expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(message);
@@ -2627,20 +2627,36 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   // into its characters (HR3).
   it(".split() refuses an empty separator, and names a spelling that works", () => {
     const message =
-      'needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write \'$map({ input: $range(0, $strLenCP($.<field> ?? "")), as: "i", in: $substrCP($.<field>, "$$i", 1) })\'.';
+      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '($.<field>.length() ?? 0).range().map(i => $.<field>.charAt(i))'.";
     expect(() => jsmql.expr('$.s.split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('"abc".split("")')).toThrow(`'.split()' ${message}`);
     // The `$split` call is your own MQL, and it passes through as written (HR2).
     // DELIBERATELY invalid: mongod refuses it, because the separator is empty.
     expect(jsmql.expr('$split($.s, "")')).toEqual({ $split: ["$s", ""] });
     // the spelling the refusal names does compile, and answers per code point
-    expect(
-      jsmql.expr('$map({ input: $range(0, $strLenCP($.s ?? "")), as: "i", in: $substrCP($.s, "$$i", 1) })'),
-    ).toEqual({
+    expect(jsmql.expr("($.s.length() ?? 0).range().map(i => $.s.charAt(i))")).toEqual({
       $map: {
-        input: { $range: [0, { $strLenCP: { $ifNull: ["$s", ""] } }] },
+        input: {
+          $let: {
+            vars: {
+              jsmqlEnd: {
+                $ifNull: [
+                  { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } } },
+                  0,
+                ],
+              },
+            },
+            in: { $range: [0, "$$jsmqlEnd", { $cond: [{ $lt: [0, "$$jsmqlEnd"] }, 1, -1] }] },
+          },
+        },
         as: "i",
-        in: { $substrCP: ["$s", "$$i", 1] },
+        in: {
+          $cond: {
+            if: { $eq: [{ $ifNull: ["$s", null] }, null] },
+            then: null,
+            else: { $cond: { if: { $lt: ["$$i", 0] }, then: "", else: { $substrCP: ["$s", "$$i", 1] } } },
+          },
+        },
       },
     });
     expect(() => jsmql.expr('$.s.replace("a")')).toThrow(
@@ -8358,7 +8374,7 @@ describe("Array.from is not part of jsmql", () => {
   // The name parses, so it gets an answer: '$range' says the same thing, and in
   // fewer characters than a mapped form that binds a throwaway element in a '$let'.
   const REFUSED =
-    "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'. For a value per index, write '$map({ input: $range(0, n), as: \"i\", in: … })', where '\"$$i\"' is the index. To build an array from one you already have, call '.map(…)' on that array.";
+    "'Array.from(…)' is not part of jsmql. For a range of indices write 'n.range()'. For a value per index, write 'n.range().map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.";
   it("refuses every spelling with the same message", () => {
     for (const src of [
       "Array.from({ length: 5 })",
@@ -8375,9 +8391,8 @@ describe("Array.from is not part of jsmql", () => {
     }
   });
   it("the way out it names is the leaner MQL", () => {
-    expect(jsmql.expr("$range(0, 5)")).toEqual({ $range: [0, 5] });
-    expect(jsmql.expr("$range(0, $.n)")).toEqual({ $range: [0, "$n"] });
-    expect(jsmql.expr('$map({ input: $range(0, 3), as: "i", in: $multiply("$$i", 2) })')).toEqual({
+    expect(jsmql.expr("(5).range()")).toEqual({ $range: [0, 5] });
+    expect(jsmql.expr("(3).range().map(i => i * 2)")).toEqual({
       $map: { input: { $range: [0, 3] }, as: "i", in: { $multiply: ["$$i", 2] } },
     });
   });

@@ -1652,7 +1652,7 @@ $.name.substr(-3)                  // the last three characters — a negative s
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
                                    // has no split-into-characters form. For one character per element
-                                   // write `$map({ input: $range(0, $strLenCP($.csv ?? "")), as: "i", in: $substrCP($.csv, "$$i", 1) })`.
+                                   // write `($.csv.length() ?? 0).range().map(i => $.csv.charAt(i))`.
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
@@ -1707,15 +1707,15 @@ Note: the emitted length of a **literal** folds at compile time. It counts **cod
 `$strLenCP` does, not JS's UTF-16 units. So `"a👍b"` is 3, not 4.
 
 **One element per character.** MongoDB has no operator that splits a string into its characters,
-so JSMQL refuses `.split("")` and the spread of a string. Write the characters in MQL instead,
-with `$range` and `$substrCP`:
+so JSMQL refuses `.split("")` and the spread of a string. Write the characters with `.range()` and
+`.charAt()` instead:
 
 ```js
-$map({ input: $range(0, $strLenCP($.s ?? "")), as: "i", in: $substrCP($.s, "$$i", 1) })
+($.s.length() ?? 0).range().map(i => $.s.charAt(i))
 // { s: "abc" } → ["a", "b", "c"]     { s: "" } → []     { s: null } → []     no `s` → []
 ```
 
-`$strLenCP` aborts the query on a missing or a `null` field. The `?? ""` gives it the empty string,
+`.length()` answers `null` for a missing or a null field. The `?? 0` gives the end value `0` to the range,
 so a missing or a null field gives `[]`. JavaScript throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
 gives `["a", "😀"]`, where JavaScript's `"a😀".split("")` gives three UTF-16 units.
 
@@ -2653,7 +2653,7 @@ $.from.range($.to, 2)    // { $range: [{ $ifNull: ["$from", 0] }, { $ifNull: ["$
 - **With no step, the range counts down when `start` is more than `end`**, as lodash does. MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds the step `-1` for two constant bounds, and a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
 - **A missing or `null` bound reads as 0**, as lodash reads it. `$range` stops the command on `null`, so the compiler adds `$ifNull`. The answer is never `null`, and a chain after it adds no `$ifNull`. Under `?.`, the chain gives `null`, as every method does.
 - **Each bound and the step must be an integer.** lodash accepts `_.range(0, 1, 0.25)`, but `$range` counts in whole numbers. The compiler refuses a constant with a fraction, and names `Math.ceil(…)` and `Math.floor(…)`. The server refuses a fraction that it reads at run time.
-- **The step cannot be 0.** lodash repeats the start value for a step of 0, but the server refuses it. The compiler refuses a constant 0, and names `$range(0, n).map(() => start)`. The server refuses a 0 that it reads at run time, as it refuses a division by zero.
+- **The step cannot be 0.** lodash repeats the start value for a step of 0, but the server refuses it. The compiler refuses a constant 0, and names `n.range().map(() => start)`. The server refuses a 0 that it reads at run time, as it refuses a division by zero.
 
 The `$range(…)` escape hatch stays raw MQL: `$range(5)` is `{ $range: 5 }`.
 

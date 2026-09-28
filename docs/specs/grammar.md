@@ -491,4 +491,4 @@ The parser reads `in` like any relational operator. The emitter (`membership` in
 - `<<`, `>>`, `>>>` (bitwise shifts) — no MQL primitive
 - `Number.isFinite()` — MQL has no Infinity literal that can be referenced cleanly
 - `Set` in both spellings (`new Set(…)`, `Set(…)`) — MongoDB has no set type; each set operation is a method of an array, and the refusal names these methods
-- `Array.from(…)` in every form — `$range(0, n)` is the range, and `.map(…)` on an array you already hold is the rest; one capability gets one spelling
+- `Array.from(…)` in every form — `n.range()` is the range, and `.map(…)` on an array you already hold is the rest; one capability gets one spelling
