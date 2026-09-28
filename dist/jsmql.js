@@ -639,6 +639,37 @@ function groupedByKey(input, it, bind) {
     $arrayToObject: { $map: { input: distinctKeysExpr(input, it), as: key.as, in: { k: key.ref, v: filtered } } }
   };
 }
+var RANGE_ARGS = {
+  sig: "[end[, step]]",
+  allowed: [0, 1, 2],
+  integer: [-1, 0, 1],
+  zeroRefused: { 1: "For the start value n times, write '$range(0, n).map(() => start)'." }
+};
+function rangeOf({ recv, args, value, bind, present: present2 }) {
+  const bound = (v, there) => v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
+  const self = bound(recv, present2);
+  const [start, end] = args.length === 0 ? [0, self] : [self, bound(value(args[0]), false)];
+  if (args.length === 2) return { $range: [start, end, value(args[1])] };
+  if (typeof start === "number" && typeof end === "number") {
+    return start > end ? { $range: [start, end, -1] } : { $range: [start, end] };
+  }
+  const cheap = (v) => typeof v === "number" || isIfNullWrappedPath(v) || isPath(v);
+  const vars = {};
+  const once = (v, hint2) => {
+    if (cheap(v)) return v;
+    const b = bind(hint2);
+    vars[b.as] = v;
+    return b.ref;
+  };
+  const [s, e] = [once(start, "start"), once(end, "end")];
+  const out = { $range: [s, e, { $cond: [{ $lt: [s, e] }, 1, -1] }] };
+  return Object.keys(vars).length === 0 ? out : { $let: { vars, in: out } };
+}
+var isPath = (v) => typeof v === "string" && v.startsWith("$");
+var isIfNullWrappedPath = (v) => {
+  const n2 = v?.$ifNull;
+  return Array.isArray(n2) && n2.length === 2 && isPath(n2[0]) && n2[1] === 0;
+};
 var fromIsNotJsmql = unsupported(
   "'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
 );
@@ -8080,6 +8111,42 @@ var NAMES = {
     group: unsupported("'.inRange()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.inRange()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
+  range: name({
+    doc: "'.range()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    on: "number",
+    returns: { arrayOf: "number" },
+    neverNull: "always",
+    nullReceiverAs: 0,
+    where: ["value"],
+    filter: viaFallback,
+    expr: { args: RANGE_ARGS, emit: (input) => rangeOf(input) },
+    stream: unsupported("'.range()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.range()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.range();'"
+    ),
+    group: unsupported("'.range()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.range()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  rangeRight: name({
+    doc: "'.rangeRight()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    on: "number",
+    returns: { arrayOf: "number" },
+    neverNull: "always",
+    nullReceiverAs: 0,
+    where: ["value"],
+    filter: viaFallback,
+    expr: { args: RANGE_ARGS, emit: (input) => ({ $reverseArray: rangeOf(input) }) },
+    stream: unsupported("'.rangeRight()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.rangeRight()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.rangeRight();'"
+    ),
+    group: unsupported("'.rangeRight()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.rangeRight()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+    )
+  }),
   round: name({
     doc: "'.round()' \u2014 see docs/LANGUAGE.md.",
     call: true,
@@ -11514,6 +11581,9 @@ function neverNullAlwaysOf(name2) {
 }
 function readsNullAsEmptyOf(name2) {
   return row(name2)?.readsNullAsEmpty === true;
+}
+function readsNullReceiverOf(name2) {
+  return row(name2)?.nullReceiverAs !== void 0;
 }
 function emptyValueOf(name2, family) {
   const own = families(row(name2)?.on);
@@ -21738,7 +21808,27 @@ function checkBody(name2, rule, args, keys, pos) {
   }
 }
 var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
-function checkSlots(name2, args, operands, hasObjectForm = true) {
+function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
+  for (const i of args.integer ?? []) {
+    const e = i === -1 ? receiver : operands[i];
+    const n2 = e === void 0 ? null : numberOf(e);
+    if (n2 !== null && !Number.isInteger(n2)) {
+      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
+      throw new CodegenError(
+        `'${spell2(name2)}' ${what} must be an integer. The server takes whole numbers here. It got ${n2}. Write an integer literal, or round the value with 'Math.ceil(\u2026)' or 'Math.floor(\u2026)'.`,
+        e.pos
+      );
+    }
+  }
+  for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== void 0 && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${spell2(name2)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
+        e.pos
+      );
+    }
+  }
   for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
     const e = operands[Number(i)];
     if (e !== void 0 && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
@@ -21908,7 +21998,7 @@ function statedPresence(node, env) {
       const name2 = namedRow(node) ?? node.name;
       if (!neverNullOf(name2)) return false;
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
-      const wrapped = !spineHasOptional(node) && emptyValueOf(name2, family) !== null;
+      const wrapped = !spineHasOptional(node) && (emptyValueOf(name2, family) !== null || readsNullReceiverOf(name2));
       const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
       return receiver && argsThere(name2, node.args, env);
     }
@@ -24283,7 +24373,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
-    checkSlots(name2, sel.rule.args, exprArgs);
+    checkSlots(name2, sel.rule.args, exprArgs, true, recvNode);
     checkSlotKinds(name2, sel.rule.args, exprArgs, kinds);
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);

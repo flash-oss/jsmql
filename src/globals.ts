@@ -3652,6 +3652,10 @@ declare global {
     floor(precision?: number): number;
     /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
     inRange(start: number, end?: number): boolean;
+    /** The integers from the start up to, but not including, the end — `_.range`. */
+    range(end?: number, step?: number): number[];
+    /** The `.range()` array in reverse order — `_.rangeRight`. */
+    rangeRight(end?: number, step?: number): number[];
     /** Round to `precision` decimals — `_.round`. */
     round(precision?: number): number;
   }

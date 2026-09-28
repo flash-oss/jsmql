@@ -1908,6 +1908,89 @@ describe("compiler/emit — array methods", () => {
 
 // ── the server ───────────────────────────────────────────────────────────────
 
+/** lodash's `_.range` (its `baseRange`), the answer each `.range()` case compares with. */
+const lodashRange = (start: number, end?: number, step?: number): number[] => {
+  if (end === undefined) [start, end] = [0, start];
+  const by = step === undefined ? (start < end ? 1 : -1) : step;
+  const out: number[] = [];
+  for (let n = Math.max(Math.ceil((end - start) / (by || 1)), 0), v = start; n > 0; n--, v += by) out.push(v);
+  return out;
+};
+
+describe("compiler/emit — number ranges", () => {
+  it("folds the direction when both bounds are constants", () => {
+    expect(compiled("(0).range(4)", () => lodashRange(0, 4))).toEqual({ $range: [0, 4] });
+    expect(compiled("(0).range(-4)", () => lodashRange(0, -4))).toEqual({ $range: [0, -4, -1] });
+    expect(compiled("(1).range(5)", () => lodashRange(1, 5))).toEqual({ $range: [1, 5] });
+    expect(compiled("(5).range(1)", () => lodashRange(5, 1))).toEqual({ $range: [5, 1, -1] });
+    expect(compiled("(3).range(3)", () => lodashRange(3, 3))).toEqual({ $range: [3, 3] });
+    expect(compiled("(4).range()", () => lodashRange(4))).toEqual({ $range: [0, 4] });
+    expect(compiled("(0).range(20, 5)", () => lodashRange(0, 20, 5))).toEqual({ $range: [0, 20, 5] });
+  });
+
+  it("reads the receiver as lodash's end alone, and as its start with more arguments", () => {
+    const neg = { $ifNull: ["$neg", 0] };
+    const id = { $ifNull: ["$_id", 0] };
+    expect(compiled("$._id.range()", (d) => lodashRange(d._id))).toEqual({
+      $range: [0, id, { $cond: [{ $lt: [0, id] }, 1, -1] }],
+    });
+    expect(compiled("$.neg.range()", (d) => lodashRange(d.neg))).toEqual({
+      $range: [0, neg, { $cond: [{ $lt: [0, neg] }, 1, -1] }],
+    });
+    expect(compiled("$._id.range($.neg)", (d) => lodashRange(d._id, d.neg))).toEqual({
+      $range: [id, neg, { $cond: [{ $lt: [id, neg] }, 1, -1] }],
+    });
+    expect(compiled("$.neg.range($._id)", (d) => lodashRange(d.neg, d._id))).toEqual({
+      $range: [neg, id, { $cond: [{ $lt: [neg, id] }, 1, -1] }],
+    });
+    expect(compiled("$._id.range($.neg, -2)", (d) => lodashRange(d._id, d.neg, -2))).toEqual({ $range: [id, neg, -2] });
+  });
+
+  it("reads a missing bound as 0, and binds a computed bound once", () => {
+    expect(compiled("$.nope.range()", () => lodashRange(0))).toEqual({
+      $range: [0, { $ifNull: ["$nope", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$nope", 0] }] }, 1, -1] }],
+    });
+    expect(compiled("(1).range($.neg + 1)", (d) => lodashRange(1, d.neg + 1))).toEqual({
+      $let: {
+        vars: { jsmqlEnd: { $ifNull: [{ $add: ["$neg", 1] }, 0] } },
+        in: { $range: [1, "$$jsmqlEnd", { $cond: [{ $lt: [1, "$$jsmqlEnd"] }, 1, -1] }] },
+      },
+    });
+    // the answer is never null, so a chain after it pays no guard
+    expect(compiled("$.neg.range().size()", (d) => lodashRange(d.neg).length)).toEqual({
+      $size: { $range: [0, { $ifNull: ["$neg", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$neg", 0] }] }, 1, -1] }] },
+    });
+    expect(compiled("$.nope?.range()", () => null)).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$nope", null] }, null] },
+        then: null,
+        else: { $range: [0, "$nope", { $cond: [{ $lt: [0, "$nope"] }, 1, -1] }] },
+      },
+    });
+  });
+
+  it("gives .rangeRight() as the same range, reversed", () => {
+    expect(compiled("(1).rangeRight(5)", () => lodashRange(1, 5).reverse())).toEqual({
+      $reverseArray: { $range: [1, 5] },
+    });
+    expect(compiled("$._id.rangeRight($.neg, -2)", (d) => lodashRange(d._id, d.neg, -2).reverse())).toEqual({
+      $reverseArray: { $range: [{ $ifNull: ["$_id", 0] }, { $ifNull: ["$neg", 0] }, -2] },
+    });
+  });
+
+  it("refuses a zero step and a fractional bound, and names the alternative", () => {
+    expect(() => expr("(0).range(5, 0)")).toThrow(/cannot be 0.*\$range\(0, n\)\.map/);
+    expect(() => expr("(0.5).range(3)")).toThrow(/receiver must be an integer.*Math\.ceil/);
+    expect(() => expr("(0).range(2.5)")).toThrow(/argument 1 must be an integer/);
+    expect(() => expr("$.n.rangeRight($.m, 1.5)")).toThrow(/argument 2 must be an integer/);
+    expect(() => expr("$.n.range(1, 2, 3)")).toThrow(/\.range\(\[end\[, step\]\]\)/);
+  });
+
+  it("leaves the $range escape hatch as raw MQL", () => {
+    expect(expr("$range(5)")).toEqual({ $range: 5 });
+  });
+});
+
 describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
   it("lowers each Math function to its operator", () => {
     expect(compiled("Math.abs($.neg)", () => Math.abs(DOC.neg))).toEqual({ $abs: "$neg" });
@@ -2786,6 +2869,8 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   // numbers and Math
   clamp: ["$.n.clamp(0, 5)"],
   inRange: ["$.n.inRange(0, 10)"],
+  range: ["$.neg.range()", "$.neg.range($.nope)"],
+  rangeRight: ["$.neg.rangeRight()", "$.neg.rangeRight($.nope)"],
   round: ["$.n.round(1)"],
   ceil: ["$.n.ceil()"],
   floor: ["$.n.floor()"],
@@ -2887,8 +2972,14 @@ const NULL_AS_EMPTY: Readonly<Record<string, readonly [string, string]>> = {
   assign: ["$.nope.assign({ z: 1 })", "({}).assign({ z: 1 })"],
 };
 
+/** Each row that states `nullReceiverAs`: the call on a missing receiver, and the same call on the stated value. */
+const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
+  range: ["$.nope.range($.neg)", "(0).range($.neg)"],
+  rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
+};
+
 describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a measurement", () => {
-  type Row = { kind?: string; neverNull?: true | "always"; readsNullAsEmpty?: true };
+  type Row = { kind?: string; neverNull?: true | "always"; readsNullAsEmpty?: true; nullReceiverAs?: 0 };
   const rows = Object.entries(NAMES) as [string, Row][];
   const own = (r: Row) => r.kind === "name" || r.kind === "global";
 
@@ -2905,6 +2996,11 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
   it("measures exactly the rows that state `readsNullAsEmpty`", () => {
     const stating = rows.filter(([, r]) => own(r) && r.readsNullAsEmpty === true).map(([n]) => n);
     expect([...stating].sort()).toEqual(Object.keys(NULL_AS_EMPTY).sort());
+  });
+
+  it("measures exactly the rows that state `nullReceiverAs`", () => {
+    const stating = rows.filter(([, r]) => own(r) && r.nullReceiverAs !== undefined).map(([n]) => n);
+    expect([...stating].sort()).toEqual(Object.keys(NULL_RECEIVER_AS).sort());
   });
 });
 
@@ -2943,6 +3039,19 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
       // and the compiler leaves the `$ifNull` out, which is the reason for the fact
       if (JSON.stringify(expr(onMissing)).includes('"$ifNull":["$nope"'))
         wrong.push(`${row}: ${onMissing} still wraps its receiver`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("answers a missing receiver as the value that `nullReceiverAs` states", async () => {
+    const wrong: string[] = [];
+    const answer = async (src: string) =>
+      canonical(
+        (await coll!.aggregate([{ $addFields: { __v: expr(src) } }, { $project: { _id: 0, v: "$__v" } }]).toArray())[0],
+      );
+    for (const [row, [onMissing, onStated]] of Object.entries(NULL_RECEIVER_AS)) {
+      const [a, b] = [await answer(onMissing), await answer(onStated)];
+      if (a !== b) wrong.push(`${row}: ${onMissing} → ${a}, ${onStated} → ${b}`);
     }
     expect(wrong).toEqual([]);
   });

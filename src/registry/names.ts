@@ -204,6 +204,13 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   readsNullAsEmpty?: true;
   /**
+   * The value the cell reads a null or missing receiver as, so its answer is there
+   * whatever the receiver is. lodash's `_.range` reads a missing bound as 0.
+   * MEASURED: `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
+   * test/compiler-methods.test.ts measures each row.
+   */
+  nullReceiverAs?: 0;
+  /**
    * The way forward when the receiver is PROVEN to be a family this row does not
    * take, one sentence per such family. `.length()` reads a string, so on an array
    * the sentence names `.size()`. The refusal (src/compiler/emit/errors.ts) puts the
@@ -1242,6 +1249,53 @@ function groupedByKey(
     $arrayToObject: { $map: { input: distinctKeysExpr(input, it), as: key.as, in: { k: key.ref, v: filtered } } },
   };
 }
+
+/**
+ * The arguments of `.range()` and `.rangeRight()`: lodash's `end`, or `start` on the
+ * receiver with `end[, step]`. `$range` refuses a zero step and a fractional bound.
+ */
+const RANGE_ARGS: Arity = {
+  sig: "[end[, step]]",
+  allowed: [0, 1, 2],
+  integer: [-1, 0, 1],
+  zeroRefused: { 1: "For the start value n times, write '$range(0, n).map(() => start)'." },
+};
+
+/**
+ * lodash's `_.range` as `$range`. See docs/specs/emit-pass.md § The method cells.
+ *
+ *   (5).range(1)   → { $range: [5, 1, -1] }
+ *   $.n.range()    → { $range: [0, { $ifNull: ["$n", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$n", 0] }] }, 1, -1] }] }
+ */
+function rangeOf({ recv, args, value, bind, present }: ExprIn): unknown {
+  // lodash reads a missing bound as 0; `$range` stops the command on null
+  const bound = (v: unknown, there: boolean): unknown =>
+    v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
+  const self = bound(recv, present);
+  const [start, end] = args.length === 0 ? [0, self] : [self, bound(value(args[0]), false)];
+  if (args.length === 2) return { $range: [start, end, value(args[1])] };
+  if (typeof start === "number" && typeof end === "number") {
+    return start > end ? { $range: [start, end, -1] } : { $range: [start, end] };
+  }
+  // the step reads each bound twice, so a computed bound binds once
+  const cheap = (v: unknown): boolean => typeof v === "number" || isIfNullWrappedPath(v) || isPath(v);
+  const vars: Record<string, unknown> = {};
+  const once = (v: unknown, hint: string): unknown => {
+    if (cheap(v)) return v;
+    const b = bind(hint);
+    vars[b.as] = v;
+    return b.ref;
+  };
+  const [s, e] = [once(start, "start"), once(end, "end")];
+  const out = { $range: [s, e, { $cond: [{ $lt: [s, e] }, 1, -1] }] };
+  return Object.keys(vars).length === 0 ? out : { $let: { vars, in: out } };
+}
+
+const isPath = (v: unknown): boolean => typeof v === "string" && v.startsWith("$");
+const isIfNullWrappedPath = (v: unknown): boolean => {
+  const n = (v as { $ifNull?: unknown } | null)?.$ifNull;
+  return Array.isArray(n) && n.length === 2 && isPath(n[0]) && n[1] === 0;
+};
 
 /**
  * JSMQL refuses `Array.from(…)` in every position. The range operator says the same
@@ -9171,6 +9225,44 @@ export const NAMES = {
     ),
     group: unsupported("'.inRange()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.inRange()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  range: name({
+    doc: "'.range()' — see docs/LANGUAGE.md.",
+    call: true,
+    on: "number",
+    returns: { arrayOf: "number" },
+    neverNull: "always",
+    nullReceiverAs: 0,
+    where: ["value"],
+    filter: viaFallback,
+    expr: { args: RANGE_ARGS, emit: (input) => rangeOf(input) },
+    stream: unsupported("'.range()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.range()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.range();'",
+    ),
+    group: unsupported("'.range()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.range()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  rangeRight: name({
+    doc: "'.rangeRight()' — see docs/LANGUAGE.md.",
+    call: true,
+    on: "number",
+    returns: { arrayOf: "number" },
+    neverNull: "always",
+    nullReceiverAs: 0,
+    where: ["value"],
+    filter: viaFallback,
+    expr: { args: RANGE_ARGS, emit: (input) => ({ $reverseArray: rangeOf(input) }) },
+    stream: unsupported("'.rangeRight()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.rangeRight()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.rangeRight();'",
+    ),
+    group: unsupported("'.rangeRight()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.rangeRight()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
   }),
 
   round: name({

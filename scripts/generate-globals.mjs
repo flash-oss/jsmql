@@ -627,6 +627,17 @@ const VALUE_METHOD_SIGNATURES = {
     sig: "(precision?: number): number",
     doc: "Round down to `precision` decimals — `_.floor`.",
   },
+  // The receiver is lodash's `end` alone, and its `start` with more arguments.
+  range: {
+    recv: "Number",
+    sig: "(end?: number, step?: number): number[]",
+    doc: "The integers from the start up to, but not including, the end — `_.range`.",
+  },
+  rangeRight: {
+    recv: "Number",
+    sig: "(end?: number, step?: number): number[]",
+    doc: "The `.range()` array in reverse order — `_.rangeRight`.",
+  },
   // ── Date → Date / number / string / boolean ─────────────────────────────────
   // jsmql's date vocabulary beyond what lib.d.ts already types. Every parameter list
   // mirrors the `args` that the method's row states (src/registry/names.ts). Every `unit`

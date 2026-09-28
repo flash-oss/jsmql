@@ -331,7 +331,29 @@ export function checkSlots(
    * the server refuses `$documents({ a: 1 })`.
    */
   hasObjectForm = true,
+  /** The receiver of a method call, for a rule that states slot `-1`. */
+  receiver?: Expr,
 ): void {
+  for (const i of args.integer ?? []) {
+    const e = i === -1 ? receiver : operands[i];
+    const n = e === undefined ? null : numberOf(e);
+    if (n !== null && !Number.isInteger(n)) {
+      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
+      throw new CodegenError(
+        `'${spell(name)}' ${what} must be an integer. The server takes whole numbers here. It got ${n}. Write an integer literal, or round the value with 'Math.ceil(…)' or 'Math.floor(…)'.`,
+        e!.pos,
+      );
+    }
+  }
+  for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== undefined && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${spell(name)}' argument ${Number(i) + 1} cannot be 0. The server refuses it. ${instead}`,
+        e.pos,
+      );
+    }
+  }
   for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
     const e = operands[Number(i)];
     if (e !== undefined && e.type === "RegexLiteral" && !e.flags.includes(flag)) {

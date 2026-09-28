@@ -810,7 +810,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
-    checkSlots(name, sel.rule.args, exprArgs);
+    checkSlots(name, sel.rule.args, exprArgs, true, recvNode);
     checkSlotKinds(name, sel.rule.args, exprArgs, kinds);
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
     // the EMPTY value of its family — `[]` for an array method, `{}` for an object

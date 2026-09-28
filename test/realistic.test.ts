@@ -823,6 +823,32 @@ $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.ex
   });
 });
 
+describe("list the start date of each week in a plan (lodash `.range`)", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.plans.aggregate(jsmql(...))" }, () => {
+    // `$.weeks.range()` is `_.range(weeks)`: the integers 0 .. weeks - 1. A plan with
+    // no `weeks` field gets an empty list, because lodash reads a missing bound as 0.
+    expect(
+      jsmql`
+$.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
+      `,
+    ).toEqual([
+      {
+        $set: {
+          weekStarts: {
+            $map: {
+              input: {
+                $range: [0, { $ifNull: ["$weeks", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$weeks", 0] }] }, 1, -1] }],
+              },
+              as: "w",
+              in: { $dateAdd: { startDate: "$start", unit: "week", amount: "$$w" } },
+            },
+          },
+        },
+      },
+    ]);
+  });
+});
+
 describe("monthly revenue rollup per store (`.startOf` as a `$group` key)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // The canonical time-series rollup: bucket paid orders by calendar month and

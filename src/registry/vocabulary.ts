@@ -671,6 +671,19 @@ export type Arity = {
    */
   nonZero?: readonly number[];
   /**
+   * Slots whose literal zero the server refuses for a reason that is not a
+   * division, keyed by slot. The text is the alternative at the end of the
+   * message. MEASURED: `{ $range: [0, 5, 0] }` is refused, and `_.range(0, 5, 0)`
+   * repeats the start value.
+   */
+  zeroRefused?: Readonly<Record<number, string>>;
+  /**
+   * Slots whose literal number must be an integer. `-1` names the receiver.
+   * MEASURED: `{ $range: [0, 2.5] }` is refused, because `$range` counts in
+   * whole numbers.
+   */
+  integer?: readonly number[];
+  /**
    * A closed set of values per slot. The compiler tests it only on a literal slot.
    *   $.d.plus(1, "day")   → accepted
    *   $.d.plus(30, "days") → refused, the plural is not a unit
