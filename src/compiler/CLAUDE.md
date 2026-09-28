@@ -62,8 +62,10 @@ passes/        naming.ts answers "which row does this node name", "what is the
                (fold-dates, fold-methods, evaluate, literal) settle a constant
                expression to its value; desugar rewrites source to source;
                inject carries a runtime value in; fresh mints a parameter name;
-               position and shape decide which document the program becomes.
-               See docs/specs/desugar-pass.md and docs/specs/position-pass.md.
+               position and shape decide which document the program becomes;
+               raw-mql checks HR6 on the tree as parsed, before inject.
+               See docs/specs/desugar-pass.md, docs/specs/position-pass.md and
+               docs/specs/raw-mql-boundary.md.
 emit/          the lowerings, and the dispatcher that checks a row, then runs one.
   consult.ts   what a row says about one name in one position — a pure read.
   select.ts    which rule runs: the receiver's proof (a closed Receiver) and the

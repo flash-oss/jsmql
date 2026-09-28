@@ -640,7 +640,7 @@ function groupedByKey(input, it, bind) {
   };
 }
 var fromIsNotJsmql = unsupported(
-  "'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
+  `'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'. For a value per index, write '$map({ input: $range(0, n), as: "i", in: \u2026 })', where '"$$i"' is the index. To build an array from one you already have, call '.map(\u2026)' on that array.`
 );
 var setIsNotJsmql = unsupported(
   "'new Set(\u2026)' is not part of JSMQL, because MongoDB has no set type. An array method does each set operation: '<array>.uniq()' for the unique values, '.uniq().size()' for their count, '.has(x)', '.union(other)', '.intersection(other)', '.difference(other)' and '.xor(other)'."
@@ -3427,7 +3427,7 @@ var NAMES = {
         nonEmpty: {
           0: {
             noun: "separator character",
-            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))'."
+            instead: `MongoDB cannot split a string into characters. For one character per element, write '$map({ input: $range(0, $strLenCP($.<field> ?? "")), as: "i", in: $substrCP($.<field>, "$$i", 1) })'.`
           }
         }
       },
@@ -7347,16 +7347,15 @@ var NAMES = {
     window: unsupported("'.keyBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   groupBy: name({
-    collapses: "unlessRawBody",
+    collapses: true,
     doc: "'.groupBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream", "Object"],
     params: ["value"],
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
-      // No matcher object: `$$.groupBy({ … })` is a raw '$group' document, whose
-      // '_id' is the group key. The other two spellings are iteratees as usual.
-      stream: { 0: ["propertyPath", "matchesPropertyPair", "omitted"] }
+      // A bare callable takes a VALUE; a stream element is a document.
+      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: { recordOf: "same" }, stream: "stream", Object: { recordOf: { arg: 0 } } },
     neverNull: true,
@@ -11530,7 +11529,7 @@ function restoresDocumentsOf(name2) {
   return row(name2)?.restoresDocuments === true;
 }
 function collapsesOf(name2) {
-  return row(name2)?.collapses ?? null;
+  return row(name2)?.collapses === true;
 }
 function streamBodyOf(name2) {
   return row(name2)?.streamBody ?? null;
@@ -15701,8 +15700,8 @@ function replaceIdents(root2, nodes) {
     return n2.type === "Injected" ? { ...n2, pos } : n2;
   };
   const values = nodes;
-  const walk = (node, shadow) => {
-    if (Array.isArray(node)) return node.map((n3) => walk(n3, shadow));
+  const walk2 = (node, shadow) => {
+    if (Array.isArray(node)) return node.map((n3) => walk2(n3, shadow));
     if (node === null || typeof node !== "object") return node;
     const n2 = node;
     if (n2.type === "Ident" && typeof n2.name === "string" && values.has(n2.name) && !shadow.has(n2.name)) {
@@ -15713,10 +15712,10 @@ function replaceIdents(root2, nodes) {
       inner = /* @__PURE__ */ new Set([...shadow, ...n2.params]);
     }
     const out = {};
-    for (const [k, v] of Object.entries(n2)) out[k] = k === "type" || k === "params" ? v : walk(v, inner);
+    for (const [k, v] of Object.entries(n2)) out[k] = k === "type" || k === "params" ? v : walk2(v, inner);
     return out;
   };
-  return walk(root2, /* @__PURE__ */ new Set());
+  return walk2(root2, /* @__PURE__ */ new Set());
 }
 
 // src/compiler/objectid-guard.ts
@@ -19083,25 +19082,6 @@ function nonFiniteIn(value) {
 // src/registry/ast.ts
 var ASSIGN_OPS = ["=", "+=", "-=", "*=", "/=", "++", "--"];
 
-// src/errors.ts
-var CodegenError = class extends Error {
-  constructor(message, pos = 0) {
-    super(message);
-    this.name = "CodegenError";
-    this.pos = pos;
-  }
-};
-var UnknownIdentifierError = class extends CodegenError {
-  constructor(identifier2, pos = 0) {
-    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
-    this.name = "UnknownIdentifierError";
-    this.identifier = identifier2;
-  }
-};
-function internalError(detail, pos = 0) {
-  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
-}
-
 // src/compiler/passes/desugar.ts
 var MAX_ROUNDS = 1e5;
 var fingerprint = (program) => JSON.stringify(program, (k, v) => k === "pos" ? 0 : v);
@@ -19407,26 +19387,6 @@ function bareCall(callee, param, pos) {
   }
   return void 0;
 }
-var groupBodyLink = {
-  name: "groupBodyLink",
-  apply: (node) => {
-    const n2 = node;
-    if (n2.type !== "MethodCall" || n2.name !== "groupBy") return node;
-    const recv = n2.object;
-    const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
-    if (receiverFamily(named, recv !== void 0 && readsAContextRef(recv), "groupBy") !== "stream") return node;
-    const args = n2.args;
-    if (args.length !== 1 || args[0].type !== "ObjectLiteral" || !Array.isArray(args[0].entries)) return node;
-    const hasId = args[0].entries.some((e) => writtenKey(e) === "_id");
-    if (!hasId) {
-      throw new CodegenError(
-        `'$$.groupBy({ \u2026 })' on the stream is the '$group' stage. Its body needs an '_id' field: the group key. For example, '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field, write '$$.groupBy("status")'.`,
-        args[0].pos
-      );
-    }
-    return { ...n2, name: "$group" };
-  }
-};
 var iterateeShorthand = {
   name: "iterateeShorthand",
   apply: (node, where) => {
@@ -19474,8 +19434,6 @@ var RULES = [
   packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of
   // them matches, and the arrow it builds is not a shape any of them looks for.
-  // This runs BEFORE iterateeShorthand: the `$group` body must not be read as a matcher.
-  groupBodyLink,
   iterateeShorthand
 ];
 function refuseWritesInValues(program, root2) {
@@ -19511,6 +19469,206 @@ function desugarVerbose(program, root2 = STATEMENT) {
 }
 function desugar(program, root2 = STATEMENT) {
   return desugarVerbose(program, root2).program;
+}
+
+// src/errors.ts
+var CodegenError = class extends Error {
+  constructor(message, pos = 0) {
+    super(message);
+    this.name = "CodegenError";
+    this.pos = pos;
+  }
+};
+var UnknownIdentifierError = class extends CodegenError {
+  constructor(identifier2, pos = 0) {
+    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
+    this.name = "UnknownIdentifierError";
+    this.identifier = identifier2;
+  }
+};
+function internalError(detail, pos = 0) {
+  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
+}
+
+// src/compiler/passes/raw-mql.ts
+var isNode5 = (v) => typeof v === "object" && v !== null && typeof v.type === "string";
+function dollarKey(node) {
+  for (const e of node.entries) {
+    if (e.type !== "KeyValueEntry") continue;
+    const key = e.key;
+    if (key.kind === "static" && typeof key.name === "string" && key.name.startsWith("$")) return key.name;
+  }
+  return null;
+}
+function firstKey(node) {
+  for (const e of node.entries) {
+    if (e.type !== "KeyValueEntry") continue;
+    const key = e.key;
+    return key.kind === "static" && typeof key.name === "string" ? key.name : "[\u2026]";
+  }
+  return null;
+}
+function rawSpelling(node) {
+  if (node.type === "OperatorCall") return `${node.name}(\u2026)`;
+  if (node.type === "ObjectLiteral") {
+    const key = dollarKey(node);
+    if (key !== null) return `{ ${key}: \u2026 }`;
+  }
+  return null;
+}
+function refuse(spelled3, role, pos, what = "raw MQL") {
+  return new CodegenError(`'${spelled3}' is ${what}, and raw MQL cannot be ${role}.`, pos);
+}
+function calleeSpelling(callee) {
+  if (!isNode5(callee)) return "\u2026";
+  if (callee.type === "Ident") return callee.name;
+  if (callee.type === "MemberAccess") return `${calleeSpelling(callee.object)}.${callee.name}`;
+  return "\u2026";
+}
+function checkRawMql(program, road) {
+  walk(program, "program", "", road === "filter", road);
+}
+function walk(node, ctx, role, query, road) {
+  if (Array.isArray(node)) {
+    for (const n2 of node) walk(n2, ctx, role, query, road);
+    return;
+  }
+  if (!isNode5(node)) return;
+  const raw = rawSpelling(node);
+  if (raw !== null && ctx === "operand") throw refuse(raw, role, node.pos);
+  const operand = (child, r, q = false) => walk(child, "operand", r, q, road);
+  const whole = (child) => walk(child, "jsmql", "", false, road);
+  const statement = (child) => walk(child, "program", "", road === "filter", road);
+  switch (node.type) {
+    case "Pipeline":
+      for (const s of node.stmts) statement(s);
+      return;
+    case "UpdateFilter":
+      for (const op of node.ops) walk(op, ctx, role, false, road);
+      return;
+    case "LetDecl":
+      whole(node.value);
+      return;
+    case "FuncDecl":
+      walk(node.lambda, "jsmql", "", false, road);
+      return;
+    case "AssignExpr": {
+      const op = node.op;
+      operand(node.target, "the target of an assignment");
+      if (op === "=") whole(node.value);
+      else operand(node.value, `an operand of '${op}'`);
+      return;
+    }
+    case "DeleteStmt":
+      operand(node.target, "an operand of 'delete'");
+      return;
+    case "OperatorCall": {
+      const spine = bodySlotAt(node.name, [])?.at === "filter";
+      for (const a of node.args) walk(a, "raw", "", spine, road);
+      return;
+    }
+    case "ObjectLiteral": {
+      if (raw !== null) {
+        for (const e of node.entries) {
+          if (e.type === "KeyValueEntry") {
+            const key = e.key;
+            if (key.kind === "computed") operand(key.expr, "a computed key");
+            walk(e.value, "raw", "", false, road);
+          } else walk(e, "raw", "", false, road);
+        }
+        return;
+      }
+      for (const e of node.entries) {
+        if (e.type === "KeyValueEntry") {
+          const key = e.key;
+          if (key.kind === "computed") operand(key.expr, "a computed key");
+          walk(e.value, ctx, role, false, road);
+        } else walk(e, ctx, role, false, road);
+      }
+      return;
+    }
+    case "ArrayLiteral":
+      for (const e of node.elements) walk(e, ctx, role, false, road);
+      return;
+    case "KeyValueEntry":
+      walk(node.value, ctx, role, false, road);
+      return;
+    case "SpreadElement":
+      operand(node.argument, "an operand of '...'");
+      return;
+    case "BinaryExpr": {
+      const op = node.op;
+      const spine = query && (op === "&&" || op === "||");
+      for (const side of [node.left, node.right]) {
+        if (spine) queryDocument(side, op);
+        operand(side, `an operand of '${op}'`, spine);
+      }
+      return;
+    }
+    case "UnaryExpr": {
+      const op = node.op;
+      const spine = query && op === "!";
+      if (spine) queryDocument(node.argument, op);
+      operand(node.argument, `an operand of '${op}'`, spine);
+      return;
+    }
+    case "TernaryExpr":
+      for (const part of [node.test, node.consequent, node.alternate]) operand(part, "an operand of '?:'");
+      return;
+    case "TemplateLiteral":
+      for (const e of node.exprs) operand(e, "an operand of a template literal");
+      return;
+    case "MemberAccess":
+      operand(node.object, `the receiver of '.${node.name}'`);
+      return;
+    case "IndexAccess":
+      operand(node.object, "the receiver of '[\u2026]'");
+      operand(node.index, "an operand of '[\u2026]'");
+      return;
+    case "MethodCall": {
+      const name2 = node.name;
+      const recv = node.object;
+      const global = recv.type === "Ident" && isGlobalName(recv.name) ? recv.name : "";
+      const spelled3 = `${global}.${node.wrote ?? name2}`;
+      if (name2.startsWith("$")) {
+        walk(node.object, "jsmql", "", false, road);
+        const spine = bodySlotAt(name2, [])?.at === "filter";
+        for (const a of node.args) walk(a, "raw", "", spine, road);
+        return;
+      }
+      operand(node.object, `the receiver of '${spelled3}()'`);
+      const stages = blockBodyOf(name2) === "stages";
+      for (const a of node.args) {
+        if (stages && isNode5(a) && a.type === "ArrayLiteral") {
+          for (const e of a.elements) statement(e);
+        } else operand(a, `an operand of '${spelled3}()'`);
+      }
+      return;
+    }
+    case "CallExpression":
+      operand(node.callee, "a callee");
+      for (const a of node.args) operand(a, `an operand of '${calleeSpelling(node.callee)}()'`);
+      return;
+    case "NewExpression":
+      for (const a of node.args)
+        operand(a, `an operand of 'new ${calleeSpelling(node.callee)}()'`);
+      return;
+    case "Lambda":
+      if (node.stages !== void 0) walk(node.stages, "program", "", false, road);
+      else whole(node.body);
+      return;
+    case "ExprBlock":
+      for (const d of node.decls) walk(d, "jsmql", "", false, road);
+      whole(node.ret);
+      return;
+    default:
+      return;
+  }
+}
+function queryDocument(node, op) {
+  if (!isNode5(node) || node.type !== "ObjectLiteral" || dollarKey(node) !== null) return;
+  const key = firstKey(node);
+  throw refuse(key === null ? "{}" : `{ ${key}: \u2026 }`, `an operand of '${op}'`, node.pos, "a query document (raw MQL)");
 }
 
 // src/compiler/passes/shape.ts
@@ -20278,7 +20436,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
       const sibling = sel.got === null ? null : siblingOf(sel.name, sel.got);
-      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}.${bare.replace(/^\./, "")}()' \u2014 ${oneRef.place}.` : sibling !== null ? ` ${sibling}` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array. Chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "string" && sel.accepts !== "any" && sel.accepts.includes("array") && !takesString ? ` A string is not a list. For one element per character, write '$map({ input: $range(0, $strLenCP(<string> ?? "")), as: "i", in: $substrCP(<string>, "$$i", 1) })'; to keep the string whole, read it as it is.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(\u2026)' or '[0]' that took one element from it.` : sel.got === "bool" ? ` A boolean has no methods. Use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -20592,7 +20750,7 @@ var spreadNotADocument = (noun, pos) => new CodegenError(
   pos
 );
 var spreadOfString = (pos) => new CodegenError(
-  "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.",
+  `'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this \u2014 '$concatArrays' takes arrays only. For one character per element, write '$map({ input: $range(0, $strLenCP(<string> ?? "")), as: "i", in: $substrCP(<string>, "$$i", 1) })'. To keep the string whole, drop the '...'.`,
   pos
 );
 function noReceiver(name2, pos) {
@@ -22502,8 +22660,7 @@ function lookupOf(node, env, S, over = "$lookup") {
     body.chain.emitted.push(...stages2);
     body = body.document(documentsOf(body.chain.emitted.slice(start), body.documents[body.level]));
     peeledTo = link;
-    const c = collapsesOf(link.name);
-    const collapsed = c === true || c === "unlessRawBody" && link.args[0]?.type !== "ObjectLiteral";
+    const collapsed = collapsesOf(link.name);
     one = collapsed ? "collapse" : false;
     yields = collapsed ? "object" : "array";
   }
@@ -23189,13 +23346,13 @@ function plainQuery(node, env) {
 var spelled2 = (node, name2) => node.type === "MethodCall" ? `.${name2}` : node.type === "BinaryExpr" ? `'${node.op}'` : name2;
 function chainOf(node, op) {
   const out = [];
-  const walk = (e) => {
+  const walk2 = (e) => {
     if (e.type === "BinaryExpr" && e.op === op) {
-      walk(e.left);
+      walk2(e.left);
       out.push(e.right);
     } else out.push(e);
   };
-  walk(node);
+  walk2(node);
   return out;
 }
 function hasChain(path, values) {
@@ -24515,13 +24672,13 @@ function production2(node, key, operands, env) {
 }
 function chainOf2(node, op) {
   const out = [];
-  const walk = (e) => {
+  const walk2 = (e) => {
     if (e.type === "BinaryExpr" && e.op === op) {
-      walk(e.left);
+      walk2(e.left);
       out.push(e.right);
     } else out.push(e);
   };
-  walk(node);
+  walk2(node);
   return out;
 }
 function unary2(node, env) {
@@ -25988,19 +26145,19 @@ function checkValue(value, slot, key) {
       key
     );
   }
-  const refuse = (message, path) => {
+  const refuse2 = (message, path) => {
     throw new JsmqlInterpolationError(`jsmql ${where}${path === "" ? "" : ` at ${path}`} ${message}`, slot, key);
   };
-  const walk = (v, path) => {
-    if (v === void 0) refuse("is undefined. Pass null for a missing value, or leave the slot out.", path);
+  const walk2 = (v, path) => {
+    if (v === void 0) refuse2("is undefined. Pass null for a missing value, or leave the slot out.", path);
     if (typeof v === "function" || typeof v === "symbol") {
-      refuse(
+      refuse2(
         `has type '${typeof v}'. This type has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, array, or plain object.`,
         path
       );
     }
     if (typeof v === "number" && !Number.isFinite(v)) {
-      refuse(
+      refuse2(
         `holds ${v}. This value has no MQL representation (NaN and \xB1Infinity). Replace it with null or a finite number.`,
         path
       );
@@ -26009,12 +26166,12 @@ function checkValue(value, slot, key) {
     if (bsonTagOf(v) !== void 0) return;
     if (isDate(v) || isRegExp(v)) return;
     if (Array.isArray(v)) {
-      v.forEach((x, i) => walk(x, `${path}[${i}]`));
+      v.forEach((x, i) => walk2(x, `${path}[${i}]`));
       return;
     }
-    for (const [k, x] of Object.entries(v)) walk(x, `${path}.${k}`);
+    for (const [k, x] of Object.entries(v)) walk2(x, `${path}.${k}`);
   };
-  walk(value, "");
+  walk2(value, "");
 }
 function templateSource(strings, values) {
   let src = "";
@@ -26176,6 +26333,7 @@ function expressionOf(program) {
 function lowerMode(mode, api, parsed, values) {
   const injected = inject(parsed, values);
   const resolved = mode === "auto" ? shapeOf(injected) === "pipeline" ? "pipeline" : "filter" : mode;
+  checkRawMql(parsed, resolved === "filter" ? "filter" : "other");
   switch (resolved) {
     case "expr":
     case "filter": {

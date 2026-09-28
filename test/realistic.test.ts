@@ -2138,8 +2138,8 @@ describe("formatted date label with ?? chain", { features: ["Nullish coalescing"
     () => {
       expect(
         jsmql.expr`
-$dateToString({ date: $.publishedAt, format: "%Y-%m-%d" }) ??
-$dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
+$.publishedAt.format("%Y-%m-%d") ??
+$.createdAt.format("%Y-%m-%d") ??
 "unknown"
       `,
       ).toEqual({
@@ -2251,14 +2251,12 @@ describe("normalise a string-or-number field with typeof", { features: ["Type ch
   );
 });
 
-describe("days since last login (Math.abs + $dateDiff + ?? + new Date)", { features: ["Date and time"] }, () => {
+describe("days since last login (Math.abs + .diff + ?? + new Date)", { features: ["Date and time"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { daysSinceLogin: jsmql.expr(...) } }])" },
     () => {
-      expect(
-        jsmql.expr(`Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)`),
-      ).toEqual({
+      expect(jsmql.expr(`Math.abs(new Date().diff($.lastLoginAt, "day") ?? -1)`)).toEqual({
         $abs: { $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: "$$NOW", unit: "day" } }, -1] },
       });
     },

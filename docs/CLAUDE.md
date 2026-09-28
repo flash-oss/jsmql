@@ -35,6 +35,7 @@ A new operator or syntax feature lands as a row in the registry. You update the 
 | `specs/grammar.md` | The formal grammar (EBNF) that the parser in `src/compiler/parse/` accepts |
 | `specs/operator-registry.md` | The registry of operator shapes: how it works, and how to add or change an entry |
 | `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` body rule |
+| `specs/raw-mql-boundary.md` | HR6: where the check runs, the four contexts of the walk, the query spine, and the one message |
 | `specs/filter-mode.md` | No-semicolon top-level dispatch: a bare expression → a Filter document |
 | `specs/update-filter.md` | Assignment and `delete` statements → `$set` / `$unset` stages |
 | `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`) → runtime `$set` binding |

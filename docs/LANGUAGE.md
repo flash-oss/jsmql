@@ -1641,7 +1641,7 @@ $.name.substr(-3)                  // the last three characters — a negative s
 $.csv.split(",")                   // { $split: ["$csv", ","] }
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
                                    // has no split-into-characters form. For one character per element
-                                   // write `$range(0, $.csv.length() ?? 0).map(i => $.csv.charAt(i))`.
+                                   // write `$map({ input: $range(0, $strLenCP($.csv ?? "")), as: "i", in: $substrCP($.csv, "$$i", 1) })`.
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
@@ -1696,17 +1696,16 @@ Note: the emitted length of a **literal** folds at compile time. It counts **cod
 `$strLenCP` does, not JS's UTF-16 units. So `"a👍b"` is 3, not 4.
 
 **One element per character.** MongoDB has no operator that splits a string into its characters,
-so JSMQL refuses `.split("")` and the spread of a string. Write the characters with `$range` and
-`.charAt()` instead:
+so JSMQL refuses `.split("")` and the spread of a string. Write the characters in MQL instead,
+with `$range` and `$substrCP`:
 
 ```js
-$range(0, $.s.length() ?? 0).map(i => $.s.charAt(i))
+$map({ input: $range(0, $strLenCP($.s ?? "")), as: "i", in: $substrCP($.s, "$$i", 1) })
 // { s: "abc" } → ["a", "b", "c"]     { s: "" } → []     { s: null } → []     no `s` → []
 ```
 
-`.length()` answers `null` for a missing or a null field, and `$range` aborts the query on a `null`
-end. The `?? 0` gives the range the end `0`, so a missing or a null field gives `[]`. JavaScript
-throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
+`$strLenCP` aborts the query on a missing or a `null` field. The `?? ""` gives it the empty string,
+so a missing or a null field gives `[]`. JavaScript throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
 gives `["a", "😀"]`, where JavaScript's `"a😀".split("")` gives three UTF-16 units.
 
 **Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent. So JSMQL drops them from the emitted `options` and keeps only `i`/`m`/`s`. Dropping `g` causes no problem: `$regexFindAll` is always global, and `g` has no effect on `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex, matching JS, which throws without one. But `g` itself does not appear in the output.
@@ -3033,6 +3032,25 @@ $.items.$size()                    // ✗ an operator called as a method; write 
 $.items.$sort({ a: 1 })            // ✗ a stage runs on a stream, not on a value; use $sortArray(…)
 $.s.Number()                       // ✗ a global function called as a method; write Number($.s)
 ```
+
+**JSMQL cannot take raw MQL as an operand.** An `$op(…)` call and an object with a `$` key are raw
+MQL. Raw MQL can hold JSMQL, but an operator, a method, a template literal or a spread cannot
+take raw MQL as an operand. Write the whole expression in one of the two forms. This is
+[HR6](LANG_RULES.md):
+
+```js
+$ifNull($.a, 0) && $.b > 1         // ✗ '$ifNull(…)' is raw MQL, and raw MQL cannot be an operand of '&&'.
+($.a ?? 0) && $.b > 1              // all JSMQL
+$and($ifNull($.a, 0), $gt($.b, 1)) // all MQL; jsmql.expr → { $and: [{ $ifNull: ["$a", 0] }, { $gt: ["$b", 1] }] }
+$stdDevPop($.m) > 2                // ✗ '$stdDevPop(…)' is raw MQL, and raw MQL cannot be an operand of '>'.
+$gt($stdDevPop($.m), 2)            // jsmql.expr → { $gt: [{ $stdDevPop: "$m" }, 2] }
+```
+
+A whole value is not an operand: the right side of `=`, a `let` value, an entry of a literal in
+such a place, and a callback body. So `$.sd = $stdDevPop($.m)` and `$.tags.map(t => $toUpper(t))`
+compile. In a Filter, a plain object in `&&`, `||` or `!` is a query document, which is raw MQL
+too: write `{ status: "A", qty: { $gt: 5 } }` or `$.status === "A" && $.qty > 5`, not
+`{ status: "A" } && $.qty > 5`.
 
 ### String
 
@@ -4543,8 +4561,8 @@ When JSMQL meets an unknown identifier on the function-form path, the error mess
 A direct `$op(...)` call (for example `$dateDiff`, `$sampleRate`, `$stdDevPop`) works inside the function body, but TypeScript or your IDE flags the operator name as an unknown identifier. To silence that warning, list the operators you use alongside `$` in the toolbox destructure:
 
 ```js
-jsmql(({ $, $dateDiff }) =>
-  $dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }) ?? -1,
+jsmql(({ $, $ifNull, $dateDiff }) =>
+  $ifNull($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: "day" }), -1),
 );
 ```
 

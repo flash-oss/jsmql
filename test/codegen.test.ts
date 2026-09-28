@@ -554,10 +554,10 @@ describe("escape-hatch operators (single-arg, expression-shaped)", () => {
   it("$sampleRate(0.1) → { $sampleRate: 0.1 }, a $match condition", () => {
     // MongoDB has no expression form for $sampleRate, so the query form is the ONLY
     // valid lowering — an $expr wrap emits MQL the server refuses. It composes
-    // with ordinary predicates.
+    // with ordinary predicates inside `$and(…)`.
     expect(jsmql("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
     expect(jsmql("$match($sampleRate(0.1));")).toEqual([{ $match: { $sampleRate: 0.1 } }]);
-    expect(jsmql("$.age > 18 && $sampleRate(0.1)")).toEqual({ age: { $gt: 18 }, $sampleRate: 0.1 });
+    expect(jsmql("$and($.age > 18, $sampleRate(0.1))")).toEqual({ $and: [{ age: { $gt: 18 } }, { $sampleRate: 0.1 }] });
     // In an expression the call is still your own MQL, and it passes through.
     // DELIBERATELY invalid: mongod refuses it, because `$sampleRate` has no expression form.
     expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
@@ -644,7 +644,7 @@ describe("array spread", () => {
   // and answering the bare string "abc" for `[..."abc"]` would be wrong. See docs/DEFERRED.md § B.
   it("refuses to spread a PROVABLE string, in an array literal and in an object literal", () => {
     const message =
-      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$range(0, <string>.length() ?? 0).map(i => <string>.charAt(i))'. To keep the string whole, drop the '...'.";
+      "'...' spreads a string into its characters in JavaScript. MongoDB has no operator that does this — '$concatArrays' takes arrays only. For one character per element, write '$map({ input: $range(0, $strLenCP(<string> ?? \"\")), as: \"i\", in: $substrCP(<string>, \"$$i\", 1) })'. To keep the string whole, drop the '...'.";
     expect(() => jsmql.expr('[..."abc"]')).toThrow(message);
     expect(() => jsmql.expr('[..."abc", "d"]')).toThrow(message);
     expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(message);
@@ -1724,11 +1724,8 @@ describe("string-context +", () => {
   it("empty string → $concat", () => {
     expect(jsmql.expr('$.a + ""')).toEqual({ $concat: ["$a", ""] });
   });
-  it("string-output operator → $concat", () => {
-    expect(jsmql.expr("$toString($.n) + $.s")).toEqual({ $concat: [{ $toString: "$n" }, "$s"] });
-  });
-  it("$toLower result in chain → $concat", () => {
-    expect(jsmql.expr("$.prefix + $toLower($.name)")).toEqual({ $concat: ["$prefix", { $toLower: "$name" }] });
+  it("string-output call → $concat", () => {
+    expect(jsmql.expr("String($.n) + $.s")).toEqual({ $concat: [{ $toString: "$n" }, "$s"] });
   });
   it("mixed numeric + string-output op → $concat", () => {
     expect(jsmql.expr('$.count + " items"')).toEqual({ $concat: ["$count", " items"] });
@@ -2024,7 +2021,7 @@ describe("bracket access", () => {
     });
   });
   it("bracket access on known-array operator result stays compact", () => {
-    expect(jsmql.expr("$reverseArray($.items)[0]")).toEqual({
+    expect(jsmql.expr("const r = $reverseArray($.items); r[0]")).toEqual({
       $arrayElemAt: [{ $ifNull: [{ $reverseArray: "$items" }, []] }, 0],
     });
   });
@@ -2630,34 +2627,20 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   // into its characters (HR3).
   it(".split() refuses an empty separator, and names a spelling that works", () => {
     const message =
-      "needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))'.";
+      'needs at least one separator character. An empty string has none. MongoDB cannot split a string into characters. For one character per element, write \'$map({ input: $range(0, $strLenCP($.<field> ?? "")), as: "i", in: $substrCP($.<field>, "$$i", 1) })\'.';
     expect(() => jsmql.expr('$.s.split("")')).toThrow(`'.split()' ${message}`);
     expect(() => jsmql.expr('"abc".split("")')).toThrow(`'.split()' ${message}`);
     // The `$split` call is your own MQL, and it passes through as written (HR2).
     // DELIBERATELY invalid: mongod refuses it, because the separator is empty.
     expect(jsmql.expr('$split($.s, "")')).toEqual({ $split: ["$s", ""] });
     // the spelling the refusal names does compile, and answers per code point
-    expect(jsmql.expr("$range(0, $.s.length() ?? 0).map(i => $.s.charAt(i))")).toEqual({
+    expect(
+      jsmql.expr('$map({ input: $range(0, $strLenCP($.s ?? "")), as: "i", in: $substrCP($.s, "$$i", 1) })'),
+    ).toEqual({
       $map: {
-        input: {
-          $range: [
-            0,
-            {
-              $ifNull: [
-                { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: "$s" } } },
-                0,
-              ],
-            },
-          ],
-        },
+        input: { $range: [0, { $strLenCP: { $ifNull: ["$s", ""] } }] },
         as: "i",
-        in: {
-          $cond: {
-            if: { $eq: [{ $ifNull: ["$s", null] }, null] },
-            then: null,
-            else: { $cond: { if: { $lt: ["$$i", 0] }, then: "", else: { $substrCP: ["$s", "$$i", 1] } } },
-          },
-        },
+        in: { $substrCP: ["$s", "$$i", 1] },
       },
     });
     expect(() => jsmql.expr('$.s.replace("a")')).toThrow(
@@ -6675,47 +6658,51 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
   it("rejects a wrong-family method on an operator call whose return type is invariant", () => {
     // Every `returns` a row states was read off a live mongod with
     // `{ $type: { <op>: <args> } }` — test/compiler-returns-agrees.test.ts re-measures them.
-    expect(() => jsmql.expr("$concat($.a, $.b).map(x => x)")).toThrow(
+    expect(() => jsmql.expr("const v = $concat($.a, $.b); v.map(x => x)")).toThrow(
       "'.map()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
-    expect(() => jsmql.expr("$abs($.n).trim()")).toThrow(
+    expect(() => jsmql.expr("const v = $abs($.n); v.trim()")).toThrow(
       "'.trim()' is not available on a 'number' — it is defined on 'string'. Render the number as a string first: '.toString()'.",
     );
-    expect(() => jsmql.expr('$dateTrunc($.t, "month").toUpperCase()')).toThrow(
+    expect(() => jsmql.expr('const v = $dateTrunc($.t, "month"); v.toUpperCase()')).toThrow(
       "'.toUpperCase()' is not available on a 'date' — it is defined on 'string'. Render the date as a string first: '.format(\"%Y-%m-%d\")' or '.toISOString()'.",
     );
-    expect(() => jsmql.expr("$dateToParts($.t).map(x => x)")).toThrow(
+    expect(() => jsmql.expr("const v = $dateToParts($.t); v.map(x => x)")).toThrow(
       "'.map()' is not available on an 'object' — it is defined on 'array', 'stream'. A document is not a list. To count its fields, write '.keys().size()'; to read one field, write '.<field>'; to keep the array, remove the '.head()', '.find(…)' or '[0]' that took one element from it.",
     );
   });
   it("leaves an operator whose return type depends on its arguments uncertain", () => {
     // These rows state no `returns` on purpose: $add/$subtract are number OR date,
     // and the element readers and pass-throughs can return anything.
-    expect(jsmql.expr('$add($.a, $.b).plus(1, "day")')).toEqual({
+    expect(jsmql.expr('const v = $add($.a, $.b); v.plus(1, "day")')).toEqual({
       $dateAdd: { startDate: { $add: ["$a", "$b"] }, unit: "day", amount: 1 },
     });
-    expect(jsmql.expr('$subtract($.a, $.b).plus(1, "day")')).toEqual({
+    expect(jsmql.expr('const v = $subtract($.a, $.b); v.plus(1, "day")')).toEqual({
       $dateAdd: { startDate: { $subtract: ["$a", "$b"] }, unit: "day", amount: 1 },
     });
-    expect(jsmql.expr("$ifNull($.a, $.b).trim()")).toEqual({ $trim: { input: { $ifNull: ["$a", "$b"] } } });
-    expect(jsmql.expr("$max($.a).map(x => x)")).toEqual({
+    expect(jsmql.expr("const v = $ifNull($.a, $.b); v.trim()")).toEqual({
+      $trim: { input: { $ifNull: ["$a", "$b"] } },
+    });
+    expect(jsmql.expr("const v = $max($.a); v.map(x => x)")).toEqual({
       $map: { input: { $ifNull: [{ $max: "$a" }, []] }, as: "x", in: "$$x" },
     });
-    expect(jsmql.expr("$first($.a).trim()")).toEqual({ $trim: { input: { $first: "$a" } } });
-    expect(jsmql.expr("$cond($.c, $.a, $.b).map(x => x)")).toEqual({
+    expect(jsmql.expr("const v = $first($.a); v.trim()")).toEqual({ $trim: { input: { $first: "$a" } } });
+    expect(jsmql.expr("const v = $cond($.c, $.a, $.b); v.map(x => x)")).toEqual({
       $map: { input: { $ifNull: [{ $cond: { if: "$c", then: "$a", else: "$b" } }, []] }, as: "x", in: "$$x" },
     });
   });
   it("compatible operator chains still compile", () => {
-    expect(jsmql.expr('$dateTrunc($.t, "month").plus(1, "month")')).toEqual({
+    expect(jsmql.expr('const v = $dateTrunc($.t, "month"); v.plus(1, "month")')).toEqual({
       $dateAdd: { startDate: { $dateTrunc: { date: "$t", unit: "month" } }, unit: "month", amount: 1 },
     });
-    expect(jsmql.expr("$concat($.a, $.b).trim()")).toEqual({ $trim: { input: { $concat: ["$a", "$b"] } } });
-    expect(jsmql.expr('$split($.s, ",").map(x => x)')).toEqual({
+    expect(jsmql.expr("const v = $concat($.a, $.b); v.trim()")).toEqual({
+      $trim: { input: { $concat: ["$a", "$b"] } },
+    });
+    expect(jsmql.expr('const v = $split($.s, ","); v.map(x => x)')).toEqual({
       $map: { input: { $ifNull: [{ $split: ["$s", ","] }, []] }, as: "x", in: "$$x" },
     });
-    expect(jsmql.expr("$year($.t).clamp(0, 5)")).toEqual({ $min: [{ $max: [{ $year: "$t" }, 0] }, 5] });
-    expect(jsmql.expr("$dateToParts($.t).mapValues(v => v)")).toEqual({
+    expect(jsmql.expr("const v = $year($.t); v.clamp(0, 5)")).toEqual({ $min: [{ $max: [{ $year: "$t" }, 0] }, 5] });
+    expect(jsmql.expr("const d = $dateToParts($.t); d.mapValues(v => v)")).toEqual({
       $arrayToObject: {
         $map: {
           input: { $objectToArray: { $ifNull: [{ $dateToParts: { date: "$t" } }, {}] } },
@@ -8374,7 +8361,7 @@ describe("Array.from is not part of jsmql", () => {
   // The name parses, so it gets an answer: '$range' says the same thing, and in
   // fewer characters than a mapped form that binds a throwaway element in a '$let'.
   const REFUSED =
-    "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.";
+    "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'. For a value per index, write '$map({ input: $range(0, n), as: \"i\", in: … })', where '\"$$i\"' is the index. To build an array from one you already have, call '.map(…)' on that array.";
   it("refuses every spelling with the same message", () => {
     for (const src of [
       "Array.from({ length: 5 })",
@@ -8393,7 +8380,7 @@ describe("Array.from is not part of jsmql", () => {
   it("the way out it names is the leaner MQL", () => {
     expect(jsmql.expr("$range(0, 5)")).toEqual({ $range: [0, 5] });
     expect(jsmql.expr("$range(0, $.n)")).toEqual({ $range: [0, "$n"] });
-    expect(jsmql.expr("$range(0, 3).map(i => i * 2)")).toEqual({
+    expect(jsmql.expr('$map({ input: $range(0, 3), as: "i", in: $multiply("$$i", 2) })')).toEqual({
       $map: { input: { $range: [0, 3] }, as: "i", in: { $multiply: ["$$i", 2] } },
     });
   });
@@ -8941,8 +8928,15 @@ describe("template literals", () => {
     });
   });
   it("interpolation containing object literal (brace tracking)", () => {
-    expect(jsmql.expr("`v=${$let({ x: 1 }, x => x)}`")).toEqual({
-      $concat: ["v=", { $toString: { $let: { vars: { x: 1 }, in: "$$x" } } }],
+    expect(jsmql.expr("`v=${$.items.filter({ x: 1 }).size()}`")).toEqual({
+      $concat: [
+        "v=",
+        {
+          $toString: {
+            $size: { $filter: { input: { $ifNull: ["$items", []] }, as: "x", cond: { $eq: ["$$x.x", 1] } } },
+          },
+        },
+      ],
     });
   });
   it("nested template literal", () => {
@@ -9610,7 +9604,9 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
     expect(jsmql.expr("[1, 2].concat($.b).size()")).toEqual({
       $size: { $concatArrays: [[1, 2], { $cond: [{ $isArray: "$b" }, "$b", ["$b"]] }] },
     });
-    expect(jsmql.expr("$range(0, $.n).size()")).toEqual({ $size: { $ifNull: [{ $range: [0, "$n"] }, []] } });
+    expect(jsmql.expr("const r = $range(0, $.n); r.size()")).toEqual({
+      $size: { $ifNull: [{ $range: [0, "$n"] }, []] },
+    });
     expect(jsmql.expr("Object.keys($.o).size()")).toEqual({
       $size: { $ifNull: [{ $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }, []] },
     });
@@ -9629,7 +9625,7 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
         },
       },
     });
-    expect(jsmql.expr("$range(0, 5).size()")).toEqual({ $size: { $range: [0, 5] } });
+    expect(jsmql.expr("const r = $range(0, 5); r.size()")).toEqual({ $size: { $range: [0, 5] } });
     expect(jsmql.expr("[$.a, $.b].size()")).toBe(2);
     // an optional chain reads a missing receiver as [] — which is there
     expect(jsmql.expr("$.a?.map(x => x + 1).size()")).toEqual({

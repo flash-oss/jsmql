@@ -161,7 +161,7 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   });
 
   it("operator-call result on either side stays in $expr", () => {
-    expect(jsmql("[$match($size($.tags) > 0)]")).toEqual([{ $match: { $expr: { $gt: [{ $size: "$tags" }, 0] } } }]);
+    expect(jsmql("[$match($gt($size($.tags), 0))]")).toEqual([{ $match: { $expr: { $gt: [{ $size: "$tags" }, 0] } } }]);
   });
 
   it("Math call result stays in $expr", () => {

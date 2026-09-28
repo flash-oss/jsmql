@@ -157,7 +157,7 @@ describe("a pipeline stage name used where a value is expected", () => {
   const PASSES: [string, string, unknown][] = [
     ["an assignment RHS", "$.x = $limit(5);", [{ $set: { x: { $limit: 5 } } }]],
     ["a `$ = { … }` value", "$ = { a: $sort({ b: 1 }) };", [{ $replaceWith: { a: { $sort: { b: 1 } } } }]],
-    ["an arithmetic operand", '$.y = $out("c") + 1;', [{ $set: { y: { $add: [{ $out: "c" }, 1] } } }]],
+    ["an operator argument", '$.y = $add($out("c"), 1);', [{ $set: { y: { $add: [{ $out: "c" }, 1] } } }]],
     ["a `$match` body", "$match($limit(3));", [{ $match: { $limit: 3 } }]],
     [
       "a callback body",

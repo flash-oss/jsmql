@@ -67,7 +67,7 @@ A `$name` with no row passes through by its argument count, in every position. S
 
 ## Query-position-only operators
 
-`$sampleRate` has no expression form on the server. Its row lists `filter` alone: `$match($sampleRate(0.1))` → `[{ $match: { $sampleRate: 0.1 } }]`. It composes with other clauses (`$.age > 18 && $sampleRate(0.1)`). In an expression position the call is still the developer's own MQL, so it passes through: `jsmql.expr("$sampleRate(0.1)")` → `{ $sampleRate: 0.1 }`, and the server refuses it. The catalog carries the same fact as `matchOnly: true`, for the generated types.
+`$sampleRate` has no expression form on the server. Its row lists `filter` alone: `$match($sampleRate(0.1))` → `[{ $match: { $sampleRate: 0.1 } }]`. It composes with other clauses in `$and(…)`: `$and($.age > 18, $sampleRate(0.1))` → `{ $and: [{ age: { $gt: 18 } }, { $sampleRate: 0.1 }] }`. In an expression position the call is still the developer's own MQL, so it passes through: `jsmql.expr("$sampleRate(0.1)")` → `{ $sampleRate: 0.1 }`, and the server refuses it. The catalog carries the same fact as `matchOnly: true`, for the generated types.
 
 ## Return kinds
 

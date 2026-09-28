@@ -2299,15 +2299,14 @@ describe("chained stage calls on $$$.<coll>", () => {
   });
 
   it("an operator-bearing $match body is NOT converted — it is not a lodash matcher", () => {
-    // `{ qty: { $gt: 5 } }` as a QUERY means "greater than 5"; as a lodash
-    // matches-object it would mean "equals the object { $gt: 5 }". Different
-    // meanings, so `.$match` keeps the query form and `.filter` keeps the equality.
+    // `{ qty: { $gt: 5 } }` as a QUERY means "greater than 5". A lodash matcher
+    // holds JSMQL, so `.filter` refuses the `$` key as raw MQL (HR6).
     expect(jsmql("$.t = $$$.orders.$match({ qty: { $gt: 5 } });")).toEqual([
       { $lookup: { from: "orders", pipeline: [{ $match: { qty: { $gt: 5 } } }], as: "t" } },
     ]);
-    expect(jsmql("$.t = $$$.orders.filter({ qty: { $gt: 5 } });")).toEqual([
-      { $lookup: { from: "orders", pipeline: [{ $match: { "qty.$gt": 5 } }], as: "t" } },
-    ]);
+    expect(() => jsmql("$.t = $$$.orders.filter({ qty: { $gt: 5 } });")).toThrow(
+      "'{ $gt: … }' is raw MQL, and raw MQL cannot be an operand of '.filter()'.",
+    );
   });
 
   // Comparison-operator form correlates too.

@@ -1709,12 +1709,12 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
     expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", maxDistance: $$.size() });')).toThrow(
       /give it a constant or a 'jsmql\.compile' parameter/,
     );
-    // the same for a source stage, and for the array-reducer road, whose `$match` is
-    // placed after its predicate is lowered
+    // the same for a source stage
     expect(() => jsmql("$documents([{ n: $$.size() }]);")).toThrow(/'\$documents' has to be the FIRST stage/);
+    // the predicate of the array-reducer road is JSMQL, so it cannot hold a raw `$text` (HR6)
     expect(() =>
       jsmql('$$.reduce((acc, d) => $text({ $search: "x" }) && d.n === $$.size() ? acc.concat(d) : acc, []);'),
-    ).toThrow(/needs a '\$setWindowFields' stage of its own/);
+    ).toThrow("'$text(…)' is raw MQL, and raw MQL cannot be an operand of '&&'.");
   });
 
   // The rule can belong to an OPERATOR the body holds rather than to the stage.

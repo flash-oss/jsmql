@@ -1241,11 +1241,12 @@ function groupedByKey(
 /**
  * JSMQL refuses `Array.from(…)` in every position. The range operator says the same
  * thing in fewer characters — MEASURED, 'Array.from({ length: 3 }, (_, i) => i * 2)'
- * emitted a '$let' binding a throwaway element that '$range(0, 3).map(i => i * 2)'
- * does not — and one capability gets one spelling.
+ * emitted a '$let' binding a throwaway element that
+ * '$map({ input: $range(0, 3), as: "i", in: $multiply("$$i", 2) })' does not — and one
+ * capability gets one spelling.
  */
 const fromIsNotJsmql = unsupported(
-  "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.",
+  "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'. For a value per index, write '$map({ input: $range(0, n), as: \"i\", in: … })', where '\"$$i\"' is the index. To build an array from one you already have, call '.map(…)' on that array.",
 );
 
 /** `new Set(…)` in every position but an accumulator's. MongoDB has no set type, and an array method does each set operation. */
@@ -4286,7 +4287,7 @@ export const NAMES = {
           0: {
             noun: "separator character",
             instead:
-              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length() ?? 0).map(i => $.<field>.charAt(i))'.",
+              'MongoDB cannot split a string into characters. For one character per element, write \'$map({ input: $range(0, $strLenCP($.<field> ?? "")), as: "i", in: $substrCP($.<field>, "$$i", 1) })\'.',
           },
         },
       },

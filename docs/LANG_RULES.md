@@ -140,6 +140,55 @@ Two more facts belong to this rule:
    3. If neither selects the operator, the emitted MQL tests the type when it runs.
 2. Each value that JSMQL computes from a receiver is a method call, never a property. Write `.length()`, `.size()` and `$$.size()`. So `$.a.length` reads a field named `length`, never a count. Only an object has fields. When the compiler proves that the value before the dot cannot hold the field, the read is a compile error. The message names the fix: for `$.tags.uniq().length`, it names `.size()`.
 
+**HR6 — Raw MQL can hold JSMQL. JSMQL cannot take raw MQL as an operand.**
+
+Raw MQL is an `$op(…)` call, or an object with a `$` key. On the query road, a plain object in `&&`, `||` or `!` is a query document. A query document is raw MQL too. The query road is a Filter, or the body of `$match`.
+
+A JSMQL construct computes with its operands. These are the constructs:
+
+- an operator, for example `&&`, `+`, `===`, `??` or `!`
+- `?:`
+- a method, a static call and a member access
+- a template literal and a spread
+- a compound assignment, for example `+=`
+
+Raw MQL cannot be an operand of one of them, at any depth. An object or an array literal inside an operand is JSMQL too:
+
+```js
+$ifNull($.a, 0) && $.b > 1          // ✗ '$ifNull(…)' is raw MQL, and raw MQL cannot be an operand of '&&'.
+$ifNull($.tags, []).map(t => t)     // ✗ '$ifNull(…)' is raw MQL, and raw MQL cannot be the receiver of '.map()'.
+Math.max($.a, $abs($.b))            // ✗ '$abs(…)' is raw MQL, and raw MQL cannot be an operand of 'Math.max()'.
+$.items.concat([$abs($.x)])         // ✗ '$abs(…)' is raw MQL, and raw MQL cannot be an operand of '.concat()'.
+$.code === $literal("$x")           // ✗ '$literal(…)' is raw MQL, and raw MQL cannot be an operand of '==='.
+{ status: "A" } && $.qty > 5        // ✗ in a Filter: '{ status: … }' is a query document (raw MQL), and raw MQL cannot be an operand of '&&'.
+```
+
+JSMQL inside raw MQL is correct. A whole value is not an operand, so raw MQL can stand there. These are the whole values:
+
+- the program, and a statement
+- the right side of `=`
+- a `let` or `const` value
+- the body or the `return` value of a callback
+
+An entry of an object or an array literal stands where its literal stands:
+
+```js
+$abs($.x + 1)                       // → { $abs: { $add: ["$x", 1] } }
+{ a: $abs($.x), b: $.y + 1 }        // → { a: { $abs: "$x" }, b: { $add: ["$y", 1] } }   (jsmql.expr)
+$.x = $abs($.y)                     // → [{ $set: { x: { $abs: "$y" } } }]
+$.tags.map(t => $toUpper(t))        // → { $map: { input: { $ifNull: ["$tags", []] }, as: "t", in: { $toUpper: "$$t" } } }
+$and($.age > 18, $sampleRate(0.1))  // → { $and: [{ age: { $gt: 18 } }, { $sampleRate: 0.1 }] }
+```
+
+Four more facts belong to this rule:
+
+1. A stage link, for example `.$sort(…)`, is a link of the stream chain, not a value. So a JSMQL method can follow it: `$$.filter(p => p.score > 0).$sort({ score: -1 }).take(10)` is correct.
+2. Each stage of `.aggregate([…])` is a whole value, as each statement of the block form `.aggregate(o => { … })` is.
+3. A name is JSMQL, whatever value it holds. So `let a = $ifNull($.a, 0); $.r = a && $.b > 1` is correct.
+4. A value that your program passes in is not source, so this rule does not apply to it. Such a value is a `jsmql.compile` parameter or a template `${…}` value. So `` jsmql`${base} && $.qty > 5` `` merges the query document `base`.
+
+The error names no other spelling. A developer who writes raw MQL knows MQL, and can write the whole expression in one of the two forms.
+
 ## SOFT RULES
 
 **SR1 — JSMQL guesses what you mean.** Sometimes a construct can lower in more than one way. Then JSMQL selects the meaning that a developer most probably intends. It accepts the short, idiomatic form, and does not ask for the most literal form. The guess is careful. The compiler does not guess when the meaning is not clear, or when the probable meaning gives invalid MQL. In these cases, it throws an error that names the fix.

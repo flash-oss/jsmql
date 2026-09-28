@@ -77,7 +77,7 @@ const SAME_QUERY: readonly string[] = [
   "$.a ? $.b === 1 : $.b === 2",
   "$.n > $.b",
   "$.n + 1 > 5",
-  "$abs($.n) > 5",
+  "Math.abs($.n) > 5",
 ];
 
 /**

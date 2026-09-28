@@ -352,7 +352,7 @@ describe("compiler/emit — string methods", () => {
   it("refuses what JavaScript refuses, and names the type the method takes", () => {
     expect(() => expr("$.s.matchAll(/a/)")).toThrow(/needs the 'g' flag/);
     expect(() => expr('$.s.truncate({ separator: " " })')).toThrow(/has no parameter 'separator'/);
-    expect(() => expr("$abs($.n).trim()")).toThrow(/not available on a 'number'.*toString/);
+    expect(() => expr("Math.abs($.n).trim()")).toThrow(/not available on a 'number'.*toString/);
     expect(() => expr('$.s.startsWith("A").trim()')).toThrow(/not available on a 'bool'/);
     expect(() => expr("$.csv.split(',').toUpperCase()")).toThrow(/Map over the array first/);
   });

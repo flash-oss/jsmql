@@ -24,8 +24,8 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(String(expr("0x507f1f77bcf86cd799439011"))).toBe("507f1f77bcf86cd799439011");
     expect(expr("`n=${$.n}`")).toEqual({ $concat: ["n=", { $toString: "$n" }] });
     // a row that states `returns: "string"` needs no $toString; an unknown one does
-    expect(expr("`a${$toUpper($.s)}`")).toEqual({ $concat: ["a", { $toUpper: "$s" }] });
-    expect(expr("`a${$abs($.n)}`")).toEqual({ $concat: ["a", { $toString: { $abs: "$n" } }] });
+    expect(expr("`a${String($.n)}`")).toEqual({ $concat: ["a", { $toString: "$n" }] });
+    expect(expr("`a${Math.abs($.n)}`")).toEqual({ $concat: ["a", { $toString: { $abs: "$n" } }] });
   });
 
   it("refuses the literals that have no value", () => {
@@ -269,12 +269,9 @@ describe("compiler/emit/lower — a path segment that starts with `$`", () => {
     expect(expr("$.a.$b.c")).toEqual({
       $getField: { field: "c", input: { $getField: { field: { $literal: "$b" }, input: "$a" } } },
     });
-    expect(expr("$.items.filter({ qty: { $gt: 5 } })")).toEqual({
-      $filter: {
-        input: { $ifNull: ["$items", []] },
-        as: "x",
-        cond: { $eq: [{ $getField: { field: { $literal: "$gt" }, input: "$$x.qty" } }, 5] },
-      },
-    });
+    // A matcher object holds JSMQL, so a `$` key in it is raw MQL (HR6).
+    expect(() => expr("$.items.filter({ qty: { $gt: 5 } })")).toThrow(
+      "'{ $gt: … }' is raw MQL, and raw MQL cannot be an operand of '.filter()'.",
+    );
   });
 });
