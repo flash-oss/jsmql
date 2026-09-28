@@ -31,6 +31,15 @@
  * `becomes` does not pass through a const generic, so a conditional on it
  * matches nothing.
  */
+/**
+ * Is this node a `"$…"` string that reads as a field path? In raw MQL and at the
+ * program root it does (HR1). In JSMQL the HR6 pass or the fold marks it as text,
+ * and then it does not. See docs/specs/raw-mql-boundary.md.
+ */
+export function isFieldPathString(e: { type: string; value?: unknown; text?: true }): boolean {
+  return e.type === "StringLiteral" && typeof e.value === "string" && e.value.startsWith("$") && e.text !== true;
+}
+
 export const BINARY_OPS = [
   "??",
   "||",
@@ -118,7 +127,13 @@ export type Expr =
   // ── literals ──────────────────────────────────────────────────────────────
   | { type: "NumberLiteral"; value: number; pos: number }
   | { type: "BigIntLiteral"; value: string; pos: number }
-  | { type: "StringLiteral"; value: string; pos: number }
+  /**
+   * `text` is true for a string that starts with `$` where JSMQL reads it as text:
+   * the HR6 pass marks it in an operand or a whole value that JSMQL owns, and the
+   * fold marks each string it computes. Without the mark, a `"$…"` string is a
+   * field path (HR1). See docs/specs/raw-mql-boundary.md.
+   */
+  | { type: "StringLiteral"; value: string; pos: number; text?: true }
   | { type: "BooleanLiteral"; value: boolean; pos: number }
   | { type: "NullLiteral"; pos: number }
   | { type: "UndefinedLiteral"; pos: number }

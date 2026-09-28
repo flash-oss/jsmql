@@ -173,8 +173,8 @@ JavaScript's left-to-right meaning. It walks the run and opens a new group when:
    `$.a.b = 1, $.a = {}`.
 3. **A write reads what the group wrote** — `$.a = 1, $.b = $.a` →
    `[{ $set: { a: 1 } }, { $set: { b: "$a" } }]`, so `b` sees the new `a` exactly as
-   JavaScript would. A `"$a"` the developer typed is the field `a` (HR1) and ends the
-   group the same way.
+   JavaScript would. A `"$a"` in raw MQL is the field `a` (HR1) and ends the group
+   the same way. On the right side of `=`, a `"$a"` is text (HR6), and it reads nothing.
 
 Each group is one stage: `{ $set: { <path>: <value>, … } }`, or `{ $unset: "path" }`
 for one path and `{ $unset: ["a", "b"] }` for several — the string form is the shorter

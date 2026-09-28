@@ -70,9 +70,24 @@ export const clampNonNegative = (value: unknown): unknown =>
 export const foldedSubtract = (a: unknown, b: unknown): unknown =>
   typeof a === "number" && typeof b === "number" ? a - b : { $subtract: [a, b] };
 
+/**
+ * The text a lowered value holds as a constant, or null. A plain string that starts
+ * with `$` is a field path. `{ $literal: "…" }` is text, whatever it starts with.
+ */
+export function constantText(value: unknown): string | null {
+  if (typeof value === "string") return value.startsWith("$") ? null : value;
+  if (typeof value === "object" && value !== null && Object.keys(value).length === 1) {
+    const held = (value as { $literal?: unknown }).$literal;
+    if (typeof held === "string") return held;
+  }
+  return null;
+}
+
 /** Is the lowered value ONE character, as a literal? A pad of one character repeats cleanly. */
-export const isSingleCodePointLiteral = (value: unknown): boolean =>
-  typeof value === "string" && !value.startsWith("$") && [...value].length === 1;
+export const isSingleCodePointLiteral = (value: unknown): boolean => {
+  const text = constantText(value);
+  return text !== null && [...text].length === 1;
+};
 
 /** The regex options MongoDB knows, from JavaScript's flags. `g` and `y` have no MongoDB meaning. */
 export function mongoRegexOptions(jsFlags: string): string {
@@ -107,7 +122,8 @@ export const clampNonNegativeIndex = (node: Expr, lowered: unknown): unknown => 
  * caller knows it is there (`present`), as the body of a null test does.
  */
 export function strLenOf(value: unknown, present = false): unknown {
-  if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
+  const text = constantText(value);
+  if (text !== null) return [...text].length;
   return { $strLenCP: present || isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
 }
 

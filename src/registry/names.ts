@@ -64,6 +64,7 @@ import {
   atPrecision,
 } from "./mql.ts";
 import type { CallArg } from "./ast.ts";
+import { isFieldPathString } from "./ast.ts";
 import type {
   Expr,
   Binds,
@@ -4315,7 +4316,7 @@ export const NAMES = {
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
-        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
         return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) });
       },
     },
@@ -4348,7 +4349,7 @@ export const NAMES = {
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
-        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
         // `\z` is the end of the subject. PCRE's `$` also matches before a final
         // newline, so it selects "report.pdf\n" where JavaScript's endsWith does not.
         // MEASURED: /\.pdf$/ selects both, new RegExp("\\.pdf\\z") selects only "report.pdf".
@@ -4652,7 +4653,7 @@ export const NAMES = {
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
-        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
         return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
       },
     },

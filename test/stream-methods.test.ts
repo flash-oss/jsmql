@@ -855,8 +855,10 @@ describe("lodash iteratee shorthands on stream methods", () => {
     expect(() => jsmql("$$ = $$.map(d => [1, 2]);")).toThrow(
       "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — an array is not one. Return '({ value: … })' to keep it under a field.",
     );
-    // A field ref / `$`-string stays allowed — data-dependent, could be a subdocument.
-    expect(jsmql('$$ = $$.map(d => "$sub");')).toEqual([{ $replaceWith: "$sub" }]);
+    // A field ref stays allowed — data-dependent, could be a subdocument.
+    expect(jsmql("$$ = $$.map(d => d.sub);")).toEqual([{ $replaceWith: "$sub" }]);
+    // A `"$sub"` in a callback body is text (HR6), and a string is not a document.
+    expect(() => jsmql('$$ = $$.map(d => "$sub");')).toThrow("a string is not one");
   });
 
   it("rejects a computed .map body that the type tracker proves is not a document", () => {

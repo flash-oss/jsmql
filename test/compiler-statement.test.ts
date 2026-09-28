@@ -80,9 +80,14 @@ describe("compiler/emit/statement — the writes", () => {
     // Writing what an earlier value READ needs no split: one `$set` evaluates
     // every value against the document it received.
     expect(compiled("$.a = $.b, $.b = 1;")).toEqual([{ $set: { a: "$b", b: 1 } }]);
-    // A `"$a"` the developer typed IS a read of `a`, so the group ends there too:
+    // A `"$a"` in raw MQL IS a read of `a`, so the group ends there too:
     // one `$set` would have given `b` the value `a` held BEFORE the stage.
-    expect(compiled('$.a = 1, $.b = "$a";')).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a" } }]);
+    expect(compiled('$.a = 1, $.b = $toString("$a");')).toEqual([
+      { $set: { a: 1 } },
+      { $set: { b: { $toString: "$a" } } },
+    ]);
+    // On the right side of `=`, a `"$a"` is text (HR6): it reads nothing, so one `$set` holds both.
+    expect(compiled('$.a = 1, $.b = "$a";')).toEqual([{ $set: { a: 1, b: { $literal: "$a" } } }]);
     // The same path twice is the source saying two things.
     expect(compiled("$.a = 1, $.a = 2;")).toEqual([{ $set: { a: 1 } }, { $set: { a: 2 } }]);
     // A parent beside its own child is refused by the server outright.

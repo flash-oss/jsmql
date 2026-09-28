@@ -155,8 +155,11 @@ export function lowerValue(node: Expr, env: Env): unknown {
   // as `$.o?.p` does: the reads run as plain reads, and one `$ifNull` stands on top.
   if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
   switch (node.type) {
-    case "NumberLiteral":
     case "StringLiteral":
+      // A `"$…"` string that JSMQL reads as text takes the placement of a passed value.
+      if (node.text === true) return textValue(node.value, node.pos, env);
+      return node.value;
+    case "NumberLiteral":
     case "BooleanLiteral":
       return node.value;
     case "NullLiteral":
@@ -408,6 +411,18 @@ function injectedValue(node: Extract<Expr, { type: "Injected" }>, env: Env): unk
   }
 }
 
+/** A `"$…"` string that JSMQL reads as text (HR6): the same placement as a passed value. */
+function textValue(value: string, pos: number, env: Env): unknown {
+  switch (injectedPlacement(env.site)) {
+    case "literal":
+      return { $literal: value };
+    case "asWritten":
+      return value;
+    case "refused":
+      throw E.runTimeValueAsMql(value, env.site.where, pos, "A string that JSMQL reads as text is never MQL.");
+  }
+}
+
 function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): unknown {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list: readonly ObjectEntry[]): unknown => {
@@ -515,6 +530,8 @@ export function locate(node: Expr, env: Env): Located | null {
     // Only on a DOCUMENT (`$`, a parameter): a bracket on a sub-document reads by `$getField`.
     if (base === null || base.kind === "var" || base.path !== "") return null;
     const name = node.index.value;
+    // A path segment cannot start with `$`: such a name reads by `$getField` too.
+    if (name.startsWith("$")) return null;
     return { ...base, path: base.path === "" ? name : `${base.path}.${name}`, hint: name };
   }
   if (node.type === "MemberAccess" && !isPropertyRow(node)) {

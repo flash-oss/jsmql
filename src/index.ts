@@ -14,7 +14,7 @@ import { ParseError } from "./compiler/parse/cursor.ts";
 import { fold } from "./compiler/passes/fold.ts";
 import { desugar } from "./compiler/passes/desugar.ts";
 import { inject, replaceIdents, spellValue } from "./compiler/passes/inject.ts";
-import { checkRawMql } from "./compiler/passes/raw-mql.ts";
+import { rawMqlBoundary } from "./compiler/passes/raw-mql.ts";
 import { evaluate } from "./compiler/passes/evaluate.ts";
 import { FILTER, STATEMENT, UPDATE_DOC, VALUE } from "./compiler/passes/position.ts";
 import { isBareAssignWrite, isStageList, shapeOf } from "./compiler/passes/shape.ts";
@@ -347,10 +347,11 @@ function expressionOf(program: Program): Expr {
 }
 
 function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): JsmqlOutput {
-  const injected = inject(parsed, values);
-  const resolved = mode === "auto" ? (shapeOf(injected) === "pipeline" ? "pipeline" : "filter") : mode;
+  const resolved = mode === "auto" ? (shapeOf(inject(parsed, values)) === "pipeline" ? "pipeline" : "filter") : mode;
   // HR6 reads the source as written: a passed value is a name here, not raw MQL.
-  checkRawMql(parsed, resolved === "filter" ? "filter" : "other");
+  // Its marks go on `parsed`, so the injection runs after it.
+  rawMqlBoundary(parsed, resolved === "filter" ? "filter" : "other");
+  const injected = inject(parsed, values);
   switch (resolved) {
     case "expr":
     case "filter": {

@@ -4211,10 +4211,11 @@ describe("date-method receiver type-check", () => {
       "'.getTime()' is not available on a 'string' — it is defined on 'date'.",
     );
   });
-  it("no-ops on a field ref, new Date(…), or an HR1 $-string receiver (literal-gating)", () => {
+  it("no-ops on a field ref or new Date(…) (literal-gating)", () => {
     expect(jsmql.expr("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
     expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
-    expect(jsmql.expr('"$ts".getHours()')).toEqual({ $hour: "$ts" }); // HR1: a source "$ts" is the field ref $ts
+    // a `"$ts"` receiver in JSMQL is text (HR6), and a string has no date method
+    expect(() => jsmql.expr('"$ts".getHours()')).toThrow("'.getHours()' is not available on a 'string'");
   });
 });
 
@@ -6649,11 +6650,9 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       },
     });
   });
-  it("an HR1 $-string receiver stays uncertain — it IS a field reference", () => {
-    // A source `"$items"` is the field ref $items, a runtime value of any type,
-    // so it must not be treated as a string literal.
-    expect(jsmql.expr('"$items".map(x => x)')).toEqual({ $map: { input: "$items", as: "x", in: "$$x" } });
-    expect(jsmql.expr('"$t".plus(1, "day")')).toEqual({ $dateAdd: { startDate: "$t", unit: "day", amount: 1 } });
+  it("a $-string receiver in JSMQL is text (HR6), so it is a string", () => {
+    expect(() => jsmql.expr('"$items".map(x => x)')).toThrow("'.map()' is not available on a 'string'");
+    expect(() => jsmql.expr('"$t".plus(1, "day")')).toThrow("'.plus()' is not available on a 'string'");
   });
   it("rejects a wrong-family method on an operator call whose return type is invariant", () => {
     // Every `returns` a row states was read off a live mongod with
@@ -8042,7 +8041,6 @@ describe("string padding methods", () => {
     });
   });
   it("a runtime pad expression is always trimmed (length unknown at compile time)", () => {
-    // Includes a `$`-prefixed source string, which per HR1 is a field reference.
     const trimmed = {
       $cond: {
         if: { $eq: [{ $ifNull: ["$code", null] }, null] },
@@ -8072,7 +8070,6 @@ describe("string padding methods", () => {
         },
       },
     };
-    expect(jsmql.expr('$.code.padStart(5, "$sep")')).toEqual(trimmed);
     expect(jsmql.expr("$.code.padStart(5, $.sep)")).toEqual(trimmed);
   });
   it("padStart defaults to space", () => {
@@ -9393,9 +9390,8 @@ describe(".startsWith / .endsWith", () => {
       },
     });
   });
-  it("endsWith with a $-prefixed needle keeps it a field ref, never folds its length", () => {
-    // HR1: a source "$ext" IS the field reference $ext, so its length is a
-    // runtime `$strLenCP`, not the 4 that folding the literal would give.
+  it("endsWith with a $-prefixed needle reads it as text (HR6), and folds its length", () => {
+    // MEASURED on mongod: "a.$ext" → true, "a.ext" → false, a missing file → null.
     expect(jsmql.expr('$.file.endsWith("$ext")')).toEqual({
       $cond: {
         if: { $eq: [{ $ifNull: ["$file", null] }, null] },
@@ -9405,16 +9401,8 @@ describe(".startsWith / .endsWith", () => {
             vars: { jsmqlStr: "$file" },
             in: {
               $eq: [
-                {
-                  $substrCP: [
-                    "$$jsmqlStr",
-                    {
-                      $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$ext", ""] } }] }],
-                    },
-                    { $strLenCP: { $ifNull: ["$ext", ""] } },
-                  ],
-                },
-                "$ext",
+                { $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 4] }] }, 4] },
+                { $literal: "$ext" },
               ],
             },
           },

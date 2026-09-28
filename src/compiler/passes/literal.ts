@@ -82,7 +82,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * of its own, so it borrows the position of the reference it replaces. This is
  * the place a later error should point at.
  */
-export function asLiteral(value: unknown, pos: number): Expr | null {
+export function asLiteral(value: unknown, pos: number, text = false): Expr | null {
   if (value === null) return { type: "NullLiteral", pos };
   // `undefined` is NOT a value a fold may produce. JavaScript answers it for a
   // read that finds nothing, for example `[1,2,3].at(9)`. BSON has no such
@@ -96,7 +96,9 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
       // global names, and MQL has no way to write them at all.
       return Number.isFinite(value) ? { type: "NumberLiteral", value, pos } : null;
     case "string":
-      return { type: "StringLiteral", value, pos };
+      return text && value.startsWith("$")
+        ? { type: "StringLiteral", value, pos, text: true }
+        : { type: "StringLiteral", value, pos };
     case "boolean":
       return { type: "BooleanLiteral", value, pos };
     case "bigint":
@@ -114,7 +116,7 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
   if (Array.isArray(value)) {
     const elements: Expr[] = [];
     for (const element of value) {
-      const spelled = leafOf(element, pos);
+      const spelled = leafOf(element, pos, text);
       if (spelled === null) return null;
       elements.push(spelled);
     }
@@ -123,7 +125,7 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
   if (isPlainObject(value)) {
     const entries: { type: "KeyValueEntry"; key: { kind: "static"; name: string }; value: Expr; pos: number }[] = [];
     for (const [name, held] of Object.entries(value)) {
-      const spelled = leafOf(held, pos);
+      const spelled = leafOf(held, pos, text);
       if (spelled === null) return null;
       entries.push({ type: "KeyValueEntry", key: { kind: "static", name }, value: spelled, pos });
     }
@@ -144,11 +146,11 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
  * spells), while the Date stays the value it is. `undefined` has no spelling
  * and stops the structure. So does a nested structure that `asLiteral` itself refused.
  */
-function leafOf(value: unknown, pos: number): Expr | null {
+function leafOf(value: unknown, pos: number, text: boolean): Expr | null {
   if (value === undefined) return null;
   // A RegExp inside a structure is data the structure carries, never a regex literal to evaluate.
   if (isRegExp(value)) return { type: "Injected", value, pos };
-  const spelled = asLiteral(value, pos);
+  const spelled = asLiteral(value, pos, text);
   if (spelled !== null) return spelled;
   return Array.isArray(value) || isPlainObject(value) ? null : { type: "Injected", value, pos };
 }

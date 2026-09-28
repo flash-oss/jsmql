@@ -17,6 +17,7 @@
 import type { Expr, Kind, Type } from "../../registry/vocabulary.ts";
 import type { FieldFamily } from "../../registry/vocabulary.ts";
 import type { CallArg } from "../../registry/ast.ts";
+import { isFieldPathString } from "../../registry/ast.ts";
 import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
 import {
@@ -373,8 +374,8 @@ function kindsOf(node: Expr, env: Env): Type {
     case "BigIntLiteral":
       return of("number");
     case "StringLiteral":
-      // `"$x"` typed in source IS the field `x` (HR1): its kind is the field's, unknown.
-      return node.value.startsWith("$") ? ANY : of("string");
+      // `"$x"` in raw MQL IS the field `x` (HR1): its kind is the field's, unknown.
+      return isFieldPathString(node) ? ANY : of("string");
     case "TemplateLiteral":
       return of("string");
     case "BooleanLiteral":

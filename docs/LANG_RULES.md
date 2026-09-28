@@ -21,7 +21,17 @@ The compiler lowers only the parts that are not plain MQL:
 jsmql.expr('{ year: { $abs: 1900 + $.age } }'); // → { year: { $abs: { $add: [1900, "$age"] } } }
 ```
 
-In your source, the string `"$x"` is the MQL field path `$x`. To get the string itself, write `$literal("$x")`, as in raw MQL.
+A string that starts with `$` has two readings. In raw MQL and at the program root, `"$x"` is the MQL field path `$x`, as HR1 says. Raw MQL is an argument of an `$op(…)` call or of a stage, and a value under a `$` key. In JSMQL, `"$x"` is text, as in JavaScript. JSMQL is an operand of an operator or a method, the right side of `=`, a `let` or `const` value, and a callback body. An object or an array literal takes the reading of the place where it stands:
+
+```js
+jsmql.expr('"$y"')                   // → "$y"                                        field y: the program root
+$project({ x: "$y" })                // → [{ $project: { x: "$y" } }]                 field y: raw MQL
+$.code === "$x"                      // → { $eq: ["$code", { $literal: "$x" }] }       text  (jsmql.expr)
+$.code === "$x"                      // → { code: "$x" }                               text  (a Filter compares it as written)
+$.x = { a: $abs($.y), b: "$y" }      // → [{ $set: { x: { $mergeObjects: [{ a: { $abs: "$y" }, b: { $literal: "$y" } }] } } }]
+```
+
+In raw MQL, write `$literal("$x")` to get the text, as in MongoDB. JSMQL puts a text string in `$literal` where the server evaluates it. It writes the string unchanged in a query and in an update document, where the server reads a string as written.
 
 A value that your program passes in is different. There are two types of such a value: a `jsmql.compile` parameter, and a `${…}` value in a template tag. Such a value can read as MQL, for example the string `"$x"`. In an expression, the compiler then puts the value in `$literal`. This is a safety rule: untrusted input cannot become a field path. In a query, the compiler compares the value as written, and an update document stores it as written. Every other place refuses such a value, and the message names the spelling to write in the source.
 

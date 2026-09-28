@@ -56,6 +56,7 @@ export const SCRATCH_DBS = [
   "jsmql_compiler_js_agreement",
   "jsmql_compiler_methods",
   "jsmql_compiler_query_expr_agreement",
+  "jsmql_compiler_raw_mql",
   "jsmql_compiler_statement",
   "jsmql_compiler_sugars",
   "jsmql_compiler_types",

@@ -258,13 +258,13 @@ Both single and double quotes. Escape sequences: `\\`, `\"`, `\'`, `\n`, `\t`:
 "escaped \"quote\""
 ```
 
-#### `$`-prefixed strings: a `"$x"` you type is the field ref `$x`
+#### `$`-prefixed strings: a field ref in raw MQL, text in JSMQL
 
 MongoDB reads a string that starts with `$` (like `"$items"`) as a **field
-reference** in an aggregation expression. JSMQL honours that rule. A `"$x"` you type in
-source **is** the field ref `$x`, and it **passes through verbatim in every
-context** — pipelines, stage bodies, and `jsmql.expr` alike. JSMQL never adds a
-`$literal` of its own (this is rule **HR1**; see [LANG_RULES.md](LANG_RULES.md)):
+reference** in an aggregation expression. JSMQL keeps that rule in raw MQL — an
+argument of an `$op(…)` call or of a stage, a value under a `$` key — and at the
+program root. There a `"$x"` passes through as written (rule **HR1**; see
+[LANG_RULES.md](LANG_RULES.md)):
 
 ```js
 jsmql(`$unwind("$items");`)        // → [{ $unwind: "$items" }]
@@ -272,11 +272,23 @@ jsmql(`[{ $unwind: "$items" }]`)   // → [{ $unwind: "$items" }]  (raw MQL, unc
 jsmql(`$project({ t: $concat("$a", "$b") });`)
 //    → [{ $project: { t: { $concat: ["$a", "$b"] } } }]   (even nested in an operator)
 jsmql.expr(`$eq($.x, "$y")`)       // → { $eq: ["$x", "$y"] }   ("$y" is the field ref $y)
+jsmql.expr(`{ a: "$y" }`)          // → { a: "$y" }             (the program root)
 ```
 
-Writing `$.items` instead of `"$items"` produces the identical output, so use
-whichever reads better. To force a **literal** string that starts with
-`$`, use the `$literal(...)` escape hatch, exactly as in raw MQL:
+In JSMQL — an operand of an operator or a method, the right side of `=`, a `let`
+value, a callback body — a `"$x"` is **text**, as in JavaScript. JSMQL puts it in
+`$literal` where the server evaluates it. It writes the string unchanged in a query
+and in an update document, where the server reads a string as written:
+
+```js
+jsmql.expr(`$.code === "$x"`)      // → { $eq: ["$code", { $literal: "$x" }] }
+jsmql(`$.code === "$x"`)           // → { code: "$x" }
+jsmql(`$.label = "$" + $.amount;`) // → [{ $set: { label: { $concat: [{ $literal: "$" }, "$amount"] } } }]
+jsmql(`$.s.startsWith("$")`)       // → { s: { $regex: /^\$/ } }
+```
+
+To read a field in JSMQL, write `$.items`. To force a **literal** string that
+starts with `$` in raw MQL, use the `$literal(...)` escape hatch, exactly as in raw MQL:
 
 ```js
 jsmql.expr(`$literal("$y")`)                // → { $literal: "$y" }
@@ -299,10 +311,9 @@ jsmql(`({ note: /a.b/s })`)                                  // → { note: new 
 jsmql(`$.note.match(/a.b/gi)`)                               // → { note: { $regex: /a.b/i } }
 ```
 
-There is one exception, for safety. A **runtime-injected** value (a `jsmql.compile`
-parameter or a template-tag `${…}` interpolation) that looks like `"$x"` *is*
-wrapped in `$literal` in expression position. This stops untrusted input from
-silently turning into a field reference:
+A **runtime-injected** value (a `jsmql.compile` parameter or a template-tag `${…}`
+interpolation) that looks like `"$x"` is text wherever it stands, in raw MQL too. This
+stops untrusted input from silently turning into a field reference:
 
 ```js
 jsmql.expr`$.x === ${userInput}`   // userInput = "$secret" → { $eq: ["$x", { $literal: "$secret" }] }
@@ -3179,7 +3190,7 @@ $bitNot($.flags)                   // { $bitNot: "$flags" }
 
 ### `$literal` — bypass MongoDB's runtime expression evaluation
 
-A `"$..."` string that you write in the source is MongoDB's own spelling of a field path, and it passes through as written. JSMQL is a strict superset of MQL ([HR1](LANG_RULES.md)), so `{ a: "$b" }` means what it means in raw MQL. To store or compare the *string* `"$foo"`, mark it with `$literal`:
+In raw MQL, a `"$..."` string that you write in the source is MongoDB's own spelling of a field path, and it passes through as written. JSMQL is a strict superset of MQL ([HR1](LANG_RULES.md)), so `{ a: "$b" }` at the program root means what it means in raw MQL. In JSMQL the same string is text (see [`$`-prefixed strings](#-prefixed-strings-a-field-ref-in-raw-mql-text-in-jsmql)). To store or compare the *string* `"$foo"` inside raw MQL, mark it with `$literal`:
 
 ```js
 ({ a: "$b" })                      // { a: "$b" }              — the field b, as in MQL

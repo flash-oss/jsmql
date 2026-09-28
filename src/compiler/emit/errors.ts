@@ -1237,8 +1237,12 @@ function holes(value: unknown): string {
  * a stage slot that the server reads as written, an accumulator, a window function,
  * a statement. HR1: such a value is a value, never MQL. See `injectedPlacement`.
  */
-export function runTimeValueAsMql(value: unknown, where: Where, pos: number): CodegenError {
-  const lead = "A run-time value is a value, never MQL.";
+export function runTimeValueAsMql(
+  value: unknown,
+  where: Where,
+  pos: number,
+  lead = "A run-time value is a value, never MQL.",
+): CodegenError {
   if (where.at === "value" && where.written !== undefined) {
     const { stage, path } = where.written;
     const key = path[path.length - 1];

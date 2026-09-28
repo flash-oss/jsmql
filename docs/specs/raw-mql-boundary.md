@@ -1,7 +1,8 @@
 # The raw MQL boundary (HR6)
 
 This spec owns the implementation of HR6: raw MQL can hold JSMQL, and JSMQL
-cannot take raw MQL as an operand. The rule itself, with its examples, lives in
+cannot take raw MQL as an operand. It also owns the two readings of a `"$…"`
+string: a field path in raw MQL, and text in JSMQL. The rule itself, with its examples, lives in
 [docs/LANG_RULES.md](../LANG_RULES.md). The module is
 [src/compiler/passes/raw-mql.ts](../../src/compiler/passes/raw-mql.ts).
 
@@ -103,3 +104,37 @@ One template serves every refusal:
 `an operand of '&&'`, `the receiver of '.map()'`, `an operand of 'Math.max()'`,
 `an operand of a template literal`. `.pos` is the position of the raw node. The
 message names no other spelling (see the HR6 text).
+
+## The text string
+
+The same walk marks each `StringLiteral` that starts with `$` in the `jsmql` or the
+`operand` context: `text: true`. In the `program` and the `raw` contexts the string
+stays unmarked, and it is a field path (HR1). The marks go on the parsed tree itself.
+A `.compile` builder reuses that tree, and each run gives the same marks. So the
+entry calls the pass before `inject`, which copies the tree.
+
+A mark is not a new node, so each compile-time reader keeps `.value`: the fold, the
+regex road of `.startsWith()`, a constant length, the string type of `+`. The one
+question "is this a field path?" has one answer, `isFieldPathString(node)` in
+[src/registry/ast.ts](../../src/registry/ast.ts). Every site that used to test
+`value.startsWith("$")` on a source node asks it.
+
+The fold computes only from JSMQL constructs (`EVALUABLE_TYPES` in
+[src/compiler/passes/fold.ts](../../src/compiler/passes/fold.ts)), and a `const`
+value is a whole value that JSMQL owns. So each string that the fold spells is text:
+`asLiteral(value, pos, true)`. So `$project({ x: "$y" + "!" })` gives
+`{ $literal: "$y!" }`, and `const s = "$y"; $unwind(s)` is refused, not a path.
+
+The emit phase reads a marked string with the placement of a run-time value
+(`injectedPlacement` in [src/compiler/emit/env.ts](../../src/compiler/emit/env.ts)):
+`{ $literal: … }` where the server evaluates it, the string as written in a query, an
+update document and a developer's own `$literal`, and a refusal where the string
+becomes part of the MQL. A lowered `{ $literal: "…" }` is still constant text:
+`constantText` in [src/registry/mql.ts](../../src/registry/mql.ts) reads it, so a
+length or a one-character pad folds as it does for a plain string.
+
+```
+$.file.endsWith("$ext")   → … { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 4] } … { $literal: "$ext" }
+$.s.startsWith("$")       → { s: { $regex: /^\$/ } }                     (Filter)
+$.a["$y"]                 → { $getField: { field: { $literal: "$y" }, input: { $ifNull: ["$a", {}] } } }
+```

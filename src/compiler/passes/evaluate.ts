@@ -14,6 +14,7 @@
 // what it would have been without this pass at all.
 
 import type { Expr } from "../../registry/ast.ts";
+import { isFieldPathString } from "../../registry/ast.ts";
 import { setKey } from "../../registry/mql.ts";
 import { isSpellable, readLiteral } from "./literal.ts";
 import type { Arg } from "./fold-methods.ts";
@@ -656,7 +657,7 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
   if (depth > MAX_DEPTH) return NOT_CONSTANT;
   // `"$s"` typed in source IS the field `s` (HR1). As an OPERAND it is a value
   // read at run time, so `"$s".trim()` or `"$s" + "x"` must not settle to a string.
-  if (depth > 0 && node.type === "StringLiteral" && node.value.startsWith("$")) return NOT_CONSTANT;
+  if (depth > 0 && isFieldPathString(node)) return NOT_CONSTANT;
   const literal = readLiteral(node);
   if (literal.ok) return literal;
 

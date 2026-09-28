@@ -13,6 +13,7 @@
 
 import type { Expr, QueryDoc, Stage, Type } from "../../registry/vocabulary.ts";
 import type { FuncDecl, LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
+import { isFieldPathString } from "../../registry/ast.ts";
 import { readsRef } from "./mql.ts";
 import { setKey } from "../../registry/mql.ts";
 import type { BodyPath } from "../rows.ts";
@@ -872,7 +873,7 @@ function pathsRead(node: unknown, into: Set<string>): Set<string> {
   // that field. A merge that misses this computes the STALE value.
   // MEASURED: `$.a = 1, $.b = "$a"` as one `$set` gave `b` the
   // pre-stage `a`.
-  if (n.type === "StringLiteral" && typeof n.value === "string" && n.value.startsWith("$")) {
+  if (isFieldPathString(n as { type: string }) && typeof n.value === "string") {
     const spelled = n.value.slice(1);
     if (!spelled.startsWith("$")) into.add(spelled);
     else if (spelled === "$ROOT" || spelled === "$CURRENT") into.add("");

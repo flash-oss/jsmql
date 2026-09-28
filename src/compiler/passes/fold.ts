@@ -197,7 +197,8 @@ function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Pro
     if (!folded.has(n.name)) return node;
     // Every folded value has a literal. `fold` only records the ones that do. So
     // there is no fallback here, and no un-substituted source to capture with.
-    return asLiteral(folded.get(n.name), n.pos as number) as object;
+    // A `const` value is a whole value that JSMQL owns, so its strings are text (HR6).
+    return asLiteral(folded.get(n.name), n.pos as number, true) as object;
   });
 }
 
@@ -251,7 +252,8 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
     }
     const nonFinite = nonFiniteIn(result.value);
     if (nonFinite !== null) throw noLiteralFor(nonFinite, n.pos as number);
-    return (asLiteral(result.value, n.pos as number) ?? inner) as object;
+    // Every EVALUABLE node is JSMQL, so each string it computes is text (HR6).
+    return (asLiteral(result.value, n.pos as number, true) ?? inner) as object;
   });
 }
 

@@ -484,15 +484,15 @@ Two JavaScript meanings the query language does not share by default:
 
 ```js
 $.n = { x: 1 }       // → { $set: { n: { $mergeObjects: [{ x: 1 }] } } }
-$.a = 1, $.b = "$a"  // → two $sets, because `"$a"` IS a read of `a`
+$.a = 1, $.b = $toString("$a")  // → two $sets, because `"$a"` in raw MQL IS a read of `a`
 ```
 
 `{ $set: { n: { x: 1 } } }` MERGES into `n` on the server — measured, `y`
 survived — where a JavaScript assignment replaces the field. `$mergeObjects`
 makes the document the value of an expression rather than a nested field
 spec, and unlike `$literal` an expression inside it still evaluates. A `"$a"`
-the developer typed is the field `a` (HR1), so it ends a write group exactly
-as `$.a` does. Without that, one `$set` would give `b` the value `a` held
+in raw MQL is the field `a` (HR1), so it ends a write group exactly as `$.a`
+does. On the right side of `=`, a `"$a"` is text (HR6), and it reads nothing. Without that, one `$set` would give `b` the value `a` held
 before the stage.
 
 The compiler asks which DOCUMENT the whole program becomes once, at the

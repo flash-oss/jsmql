@@ -117,7 +117,18 @@ var isIfNullWrapped = (value) => typeof value === "object" && value !== null && 
 var coerceStringBinding = (v) => isIfNullWrapped(v) ? v : { $ifNull: [v, ""] };
 var clampNonNegative = (value) => typeof value === "number" ? Math.max(0, value) : { $max: [0, value] };
 var foldedSubtract = (a, b) => typeof a === "number" && typeof b === "number" ? a - b : { $subtract: [a, b] };
-var isSingleCodePointLiteral = (value) => typeof value === "string" && !value.startsWith("$") && [...value].length === 1;
+function constantText(value) {
+  if (typeof value === "string") return value.startsWith("$") ? null : value;
+  if (typeof value === "object" && value !== null && Object.keys(value).length === 1) {
+    const held = value.$literal;
+    if (typeof held === "string") return held;
+  }
+  return null;
+}
+var isSingleCodePointLiteral = (value) => {
+  const text = constantText(value);
+  return text !== null && [...text].length === 1;
+};
 function mongoRegexOptions(jsFlags) {
   let out = "";
   for (const ch of jsFlags) if ("imsx".includes(ch) && !out.includes(ch)) out += ch;
@@ -135,7 +146,8 @@ var clampNonNegativeIndex = (node, lowered) => {
   return lit === null ? { $max: [0, lowered] } : Math.max(0, lit);
 };
 function strLenOf(value, present2 = false) {
-  if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
+  const text = constantText(value);
+  if (text !== null) return [...text].length;
   return { $strLenCP: present2 || isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
 }
 function normaliseSliceIndex(node, lowered, recv, present2 = false) {
@@ -377,6 +389,12 @@ var pairsToObject = (pairs, p) => ({
     $map: { input: pairs, as: p.as, in: [{ $toString: { $arrayElemAt: [p.ref, 0] } }, { $arrayElemAt: [p.ref, 1] }] }
   }
 });
+
+// src/registry/ast.ts
+function isFieldPathString(e) {
+  return e.type === "StringLiteral" && typeof e.value === "string" && e.value.startsWith("$") && e.text !== true;
+}
+var ASSIGN_OPS = ["=", "+=", "-=", "*=", "/=", "++", "--"];
 
 // src/registry/names.ts
 var root = (e) => ({ ...e, kind: "root" });
@@ -3454,7 +3472,7 @@ var NAMES = {
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
-        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
         return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) });
       }
     },
@@ -3485,7 +3503,7 @@ var NAMES = {
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
-        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
         return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) });
       }
     },
@@ -3768,7 +3786,7 @@ var NAMES = {
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
-        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        if (path === null || needle.type !== "StringLiteral" || isFieldPathString(needle)) return null;
         return queryOwnValue(path, { $regex: new RegExp(escapeForRegex(needle.value)) });
       }
     },
@@ -15619,14 +15637,14 @@ function readLiteral(node) {
 function isPlainObject2(v) {
   return isPlainObject(v) && bsonTagOf(v) === void 0;
 }
-function asLiteral(value, pos) {
+function asLiteral(value, pos, text = false) {
   if (value === null) return { type: "NullLiteral", pos };
   if (value === void 0) return null;
   switch (typeof value) {
     case "number":
       return Number.isFinite(value) ? { type: "NumberLiteral", value, pos } : null;
     case "string":
-      return { type: "StringLiteral", value, pos };
+      return text && value.startsWith("$") ? { type: "StringLiteral", value, pos, text: true } : { type: "StringLiteral", value, pos };
     case "boolean":
       return { type: "BooleanLiteral", value, pos };
     case "bigint":
@@ -15643,7 +15661,7 @@ function asLiteral(value, pos) {
   if (Array.isArray(value)) {
     const elements = [];
     for (const element2 of value) {
-      const spelled3 = leafOf(element2, pos);
+      const spelled3 = leafOf(element2, pos, text);
       if (spelled3 === null) return null;
       elements.push(spelled3);
     }
@@ -15652,7 +15670,7 @@ function asLiteral(value, pos) {
   if (isPlainObject2(value)) {
     const entries = [];
     for (const [name2, held] of Object.entries(value)) {
-      const spelled3 = leafOf(held, pos);
+      const spelled3 = leafOf(held, pos, text);
       if (spelled3 === null) return null;
       entries.push({ type: "KeyValueEntry", key: { kind: "static", name: name2 }, value: spelled3, pos });
     }
@@ -15661,10 +15679,10 @@ function asLiteral(value, pos) {
   if (isDate(value)) return { type: "Injected", value, pos };
   return null;
 }
-function leafOf(value, pos) {
+function leafOf(value, pos, text) {
   if (value === void 0) return null;
   if (isRegExp(value)) return { type: "Injected", value, pos };
-  const spelled3 = asLiteral(value, pos);
+  const spelled3 = asLiteral(value, pos, text);
   if (spelled3 !== null) return spelled3;
   return Array.isArray(value) || isPlainObject2(value) ? null : { type: "Injected", value, pos };
 }
@@ -18567,7 +18585,7 @@ function evaluate(node, env) {
 }
 function at(node, env, depth) {
   if (depth > MAX_DEPTH) return NOT_CONSTANT2;
-  if (depth > 0 && node.type === "StringLiteral" && node.value.startsWith("$")) return NOT_CONSTANT2;
+  if (depth > 0 && isFieldPathString(node)) return NOT_CONSTANT2;
   const literal2 = readLiteral(node);
   if (literal2.ok) return literal2;
   if (node.type === "Injected") return isMqlShaped(node.value) ? NOT_CONSTANT2 : ok3(node.value);
@@ -18937,7 +18955,7 @@ function substitute(program, folded) {
     if (n2.type !== "Ident" || typeof n2.name !== "string") return node;
     if (scope.naming || scope.shadowed.has(n2.name)) return node;
     if (!folded.has(n2.name)) return node;
-    return asLiteral(folded.get(n2.name), n2.pos);
+    return asLiteral(folded.get(n2.name), n2.pos, true);
   });
 }
 function foldConstantParts(node, known = EMPTY) {
@@ -18964,7 +18982,7 @@ function foldConstantParts(node, known = EMPTY) {
     }
     const nonFinite = nonFiniteIn(result.value);
     if (nonFinite !== null) throw noLiteralFor(nonFinite, n2.pos);
-    return asLiteral(result.value, n2.pos) ?? inner;
+    return asLiteral(result.value, n2.pos, true) ?? inner;
   });
 }
 function foldPartsIn(stmts, known) {
@@ -19078,9 +19096,6 @@ function nonFiniteIn(value) {
   }
   return null;
 }
-
-// src/registry/ast.ts
-var ASSIGN_OPS = ["=", "+=", "-=", "*=", "/=", "++", "--"];
 
 // src/compiler/passes/desugar.ts
 var MAX_ROUNDS = 1e5;
@@ -19525,7 +19540,7 @@ function calleeSpelling(callee) {
   if (callee.type === "MemberAccess") return `${calleeSpelling(callee.object)}.${callee.name}`;
   return "\u2026";
 }
-function checkRawMql(program, road) {
+function rawMqlBoundary(program, road) {
   walk(program, "program", "", road === "filter", road);
 }
 function walk(node, ctx, role, query, road) {
@@ -19660,6 +19675,9 @@ function walk(node, ctx, role, query, road) {
     case "ExprBlock":
       for (const d of node.decls) walk(d, "jsmql", "", false, road);
       whole(node.ret);
+      return;
+    case "StringLiteral":
+      if ((ctx === "jsmql" || ctx === "operand") && node.value.startsWith("$")) node.text = true;
       return;
     default:
       return;
@@ -21011,8 +21029,7 @@ function holes(value) {
   const hole = (v) => Array.isArray(v) ? v.map(hole) : isPlainObject(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hole(x)])) : "\u2026";
   return stringify2(hole(value)).split('"\u2026"').join("\u2026");
 }
-function runTimeValueAsMql(value, where, pos) {
-  const lead = "A run-time value is a value, never MQL.";
+function runTimeValueAsMql(value, where, pos, lead = "A run-time value is a value, never MQL.") {
   if (where.at === "value" && where.written !== void 0) {
     const { stage, path } = where.written;
     const key = path[path.length - 1];
@@ -21695,7 +21712,7 @@ function literal(e) {
     case "UnaryExpr":
       return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
     case "StringLiteral":
-      return e.value.startsWith("$") ? null : { kind: "string", value: e };
+      return isFieldPathString(e) ? null : { kind: "string", value: e };
     case "BooleanLiteral":
       return { kind: "bool", value: e };
     case "NullLiteral":
@@ -21821,7 +21838,7 @@ function checkType(name2, slot, e, expected) {
   );
 }
 function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
-  if (e.type !== "StringLiteral" || e.value.startsWith("$") && !isConstantSlot) return;
+  if (e.type !== "StringLiteral" || isFieldPathString(e) && !isConstantSlot) return;
   const v = caseInsensitive ? e.value.toLowerCase() : e.value;
   if (allowed.includes(v)) return;
   const near = didYouMean(v, allowed, (s) => s);
@@ -22242,7 +22259,7 @@ function kindsOf2(node, env) {
     case "BigIntLiteral":
       return of("number");
     case "StringLiteral":
-      return node.value.startsWith("$") ? ANY : of("string");
+      return isFieldPathString(node) ? ANY : of("string");
     case "TemplateLiteral":
       return of("string");
     case "BooleanLiteral":
@@ -23976,8 +23993,10 @@ function lowerValue(node, env) {
   }
   if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
   switch (node.type) {
-    case "NumberLiteral":
     case "StringLiteral":
+      if (node.text === true) return textValue(node.value, node.pos, env);
+      return node.value;
+    case "NumberLiteral":
     case "BooleanLiteral":
       return node.value;
     case "NullLiteral":
@@ -24162,6 +24181,16 @@ function injectedValue(node, env) {
       throw runTimeValueAsMql(node.value, env.site.where, node.pos);
   }
 }
+function textValue(value, pos, env) {
+  switch (injectedPlacement(env.site)) {
+    case "literal":
+      return { $literal: value };
+    case "asWritten":
+      return value;
+    case "refused":
+      throw runTimeValueAsMql(value, env.site.where, pos, "A string that JSMQL reads as text is never MQL.");
+  }
+}
 function objectLiteral(node, entries, env) {
   const inner = childEnv(env, node, "entries");
   const staticEntries = (list) => {
@@ -24249,6 +24278,7 @@ function locate(node, env) {
     const base = locate(node.object, env);
     if (base === null || base.kind === "var" || base.path !== "") return null;
     const name2 = node.index.value;
+    if (name2.startsWith("$")) return null;
     return { ...base, path: base.path === "" ? name2 : `${base.path}.${name2}`, hint: name2 };
   }
   if (node.type === "MemberAccess" && !isPropertyRow(node)) {
@@ -25542,7 +25572,7 @@ function pathsRead(node, into2) {
   }
   const n2 = node;
   if (n2.type === "FieldRef" && typeof n2.path === "string") into2.add(n2.path);
-  if (n2.type === "StringLiteral" && typeof n2.value === "string" && n2.value.startsWith("$")) {
+  if (isFieldPathString(n2) && typeof n2.value === "string") {
     const spelled3 = n2.value.slice(1);
     if (!spelled3.startsWith("$")) into2.add(spelled3);
     else if (spelled3 === "$ROOT" || spelled3 === "$CURRENT") into2.add("");
@@ -26331,9 +26361,9 @@ function expressionOf(program) {
   return rest[0];
 }
 function lowerMode(mode, api, parsed, values) {
+  const resolved = mode === "auto" ? shapeOf(inject(parsed, values)) === "pipeline" ? "pipeline" : "filter" : mode;
+  rawMqlBoundary(parsed, resolved === "filter" ? "filter" : "other");
   const injected = inject(parsed, values);
-  const resolved = mode === "auto" ? shapeOf(injected) === "pipeline" ? "pipeline" : "filter" : mode;
-  checkRawMql(parsed, resolved === "filter" ? "filter" : "other");
   switch (resolved) {
     case "expr":
     case "filter": {

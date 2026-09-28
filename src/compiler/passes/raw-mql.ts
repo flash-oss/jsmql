@@ -78,10 +78,12 @@ function calleeSpelling(callee: unknown): string {
 }
 
 /**
- * Throw when a raw MQL value stands as an operand. The walk descends into every
- * node, so the rule holds at every depth, inside raw MQL too.
+ * Throw when a raw MQL value stands as an operand, and mark each `"$…"` string that
+ * JSMQL reads as text. The walk descends into every node, so the rule holds at
+ * every depth, inside raw MQL too. The marks go on the parsed tree itself: a
+ * `.compile` builder reuses that tree, and each run gives the same marks.
  */
-export function checkRawMql(program: Program, road: Road): void {
+export function rawMqlBoundary(program: Program, road: Road): void {
   walk(program as unknown as Any, "program", "", road === "filter", road);
 }
 
@@ -231,6 +233,11 @@ function walk(node: unknown, ctx: Context, role: Role, query: boolean, road: Roa
     case "ExprBlock":
       for (const d of node.decls as readonly unknown[]) walk(d, "jsmql", "", false, road);
       whole(node.ret);
+      return;
+    case "StringLiteral":
+      // In raw MQL and at the program root, a `"$…"` string is a field path (HR1).
+      // In JSMQL, it is text.
+      if ((ctx === "jsmql" || ctx === "operand") && (node.value as string).startsWith("$")) node.text = true;
       return;
     default:
       // A literal, a reference or a name: nothing below it is a value.

@@ -17,6 +17,7 @@ import { didYouMean } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
 import { computedKeyInOperatorBody, spreadInOperatorBody } from "./errors.ts";
 import { evaluate } from "../passes/evaluate.ts";
+import { isFieldPathString } from "../../registry/ast.ts";
 
 type Lit = { kind: "number" | "string" | "bool" | "null" | "array" | "object" | "regex" | "bigint"; value: Expr };
 
@@ -28,8 +29,8 @@ function literal(e: Expr): Lit | null {
     case "UnaryExpr":
       return e.op === "-" && e.argument.type === "NumberLiteral" ? { kind: "number", value: e } : null;
     case "StringLiteral":
-      // A source `"$x"` IS the field reference `$x` — a runtime value, not a literal.
-      return e.value.startsWith("$") ? null : { kind: "string", value: e };
+      // A `"$x"` in raw MQL IS the field reference `$x` — a runtime value, not a literal.
+      return isFieldPathString(e) ? null : { kind: "string", value: e };
     case "BooleanLiteral":
       return { kind: "bool", value: e };
     case "NullLiteral":
@@ -210,7 +211,7 @@ function checkEnum(
   caseInsensitive: boolean,
   isConstantSlot = false,
 ): void {
-  if (e.type !== "StringLiteral" || (e.value.startsWith("$") && !isConstantSlot)) return;
+  if (e.type !== "StringLiteral" || (isFieldPathString(e) && !isConstantSlot)) return;
   const v = caseInsensitive ? e.value.toLowerCase() : e.value;
   if (allowed.includes(v)) return;
   const near = didYouMean(v, allowed, (s) => s);
