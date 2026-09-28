@@ -298,9 +298,8 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
     expect(arg('$.user.pick(["a", "b"])')).toBe("ArrayLiteral");
   });
 
-  it("leaves the one spelling that is a stage body alone", () => {
-    // `$$.groupBy({ … })` is a raw `$group` document; its other spellings are not.
-    expect(arg("$$ = $$.groupBy({ _id: $.k, n: $sum(1) });")).toBe("ObjectLiteral");
+  it("reads an object in a stream's '.groupBy()' as a matcher, as on an array", () => {
+    expect(arg('$$ = $$.groupBy({ status: "A" });')).toBe("Lambda");
     expect(arg('$$ = $$.groupBy("k");')).toBe("Lambda");
   });
 

@@ -41,7 +41,6 @@ One row per rule, in `RULES` order
 | `mutatorForm` | `$.items.pop();` | `$.items = $.items.slice(0, -1);` — the row's `mutatorForm`, JSMQL by argument count |
 | `mutatedArgument` | `Object.assign($.o, x);` | `$.o = Object.assign($.o, x);` — the row's `mutatesArgumentAt` |
 | `packSpread` | `Math.max(...$.a, 1)` | `Math.max([...$.a, 1])` — one list, for a rule that reads one (`args.spread`) |
-| `groupBodyLink` | `$$.groupBy({ _id: "$k", n: $sum(1) })` | `$$.$group({ … })` — an `_id` key on a stream is the stage body |
 | `iterateeShorthand` | `$.items.filter({ a: 1 })` | `$.items.filter(x => x.a === 1)` |
 
 ## Position, and why the pass needs it
@@ -307,15 +306,6 @@ Math.max(...$.a, 1)
   packed   → {"$max":{"$concatArrays":["$a",[1]]}}
 $.a.indexOf(...$.b)
   not packed (the rule reads one argument) → ✗ refused: the spread
-```
-
-**Group body before iteratee shorthand.** Both read an object argument, and the
-`$group` body must not be read as a matcher.
-
-```
-$$.groupBy({ _id: "$k", n: $sum(1) });
-  group body first → [{"$group":{"_id":"$k","n":{"$sum":1}}}]
-  reversed         → the object read as a partial deep match, and a $match of it
 ```
 
 The four mutator rules cannot collide with each other: a row carries an

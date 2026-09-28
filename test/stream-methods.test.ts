@@ -724,16 +724,25 @@ describe(".pick([fields]) / .omit([fields]) → $project (per-document field sel
   });
 });
 
-describe(".groupBy(spec | key) → object collapse / $group", () => {
-  it("raw $group body lowers verbatim (accumulators pass the group gate)", () => {
-    expect(jsmql('$$ = $$.groupBy({ _id: "$dept", n: $sum(1), total: $sum("$amount") });')).toEqual([
+describe(".groupBy(key) → object collapse", () => {
+  // The '$group' stage has one spelling on a stream: the stage link.
+  it("the '$group' stage is the stage link '$$.$group({ … })'", () => {
+    expect(jsmql('$$.$group({ _id: "$dept", n: $sum(1), total: $sum("$amount") });')).toEqual([
       { $group: { _id: "$dept", n: { $sum: 1 }, total: { $sum: "$amount" } } },
     ]);
   });
 
-  it("accumulator-only ops ($addToSet) are allowed in a group field slot", () => {
-    expect(jsmql('$$ = $$.groupBy({ _id: null, ids: $addToSet("$productId") });')).toEqual([
-      { $group: { _id: null, ids: { $addToSet: "$productId" } } },
+  // lodash `_.groupBy(coll, { status: "A" })` → `{ true: [docs], false: [docs] }`. Verified on mongod.
+  it("an object is a matcher, as on an array", () => {
+    expect(jsmql('$$ = $$.groupBy({ status: "A" });')).toEqual([
+      { $group: { _id: { $eq: ["$status", "A"] }, __jsmqlTmp: { $push: "$$ROOT" } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
   });
 
@@ -753,12 +762,9 @@ describe(".groupBy(spec | key) → object collapse / $group", () => {
     ]);
   });
 
-  it("rejects a body without _id and a non-string/non-object arg", () => {
-    expect(() => jsmql("$$ = $$.groupBy({ n: $sum(1) });")).toThrow(
-      "'$$.groupBy({ … })' on the stream is the '$group' stage. Its body needs an '_id' field: the group key. For example, '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field, write '$$.groupBy(\"status\")'.",
-    );
+  it("rejects a number as the key", () => {
     expect(() => jsmql("$$ = $$.groupBy(5);")).toThrow(
-      "'.groupBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a number.",
+      "'.groupBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a number.",
     );
   });
 });
@@ -940,11 +946,11 @@ describe("lodash iteratee shorthands on stream methods", () => {
 // A recommendation-engine pipeline built entirely from lodash-named stream
 // methods — the composed-vocabulary end-to-end case. Verified against a live mongod.
 describe("composed lodash stream vocabulary — full pipeline", () => {
-  it("$$.filter({...}).sort({...}).take(...).flatMap(...).groupBy({...})", () => {
+  it("$$.filter({...}).sort({...}).take(...).flatMap(...).$group({...})", () => {
     expect(
       jsmql(
         '$$ = $$.filter({ status: "CLOSED" }).sort({ createdAt: -1 }).take(10)' +
-          '.flatMap("productIds").groupBy({ _id: null, boughtProductIds: $addToSet("$productIds") });',
+          '.flatMap("productIds").$group({ _id: null, boughtProductIds: $addToSet("$productIds") });',
       ),
     ).toEqual([
       { $match: { status: "CLOSED" } },
@@ -2294,10 +2300,8 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     ]);
   });
 
-  it(".groupBy({ _id, … }) stays the $group-body form, NOT a matches-shorthand key", () => {
-    expect(jsmql(`$$ = $$.groupBy({ _id: "$dept", n: $sum(1) });`)).toEqual([
-      { $group: { _id: "$dept", n: { $sum: 1 } } },
-    ]);
+  it('.groupBy({ cat: "a" }) emits exactly what the equivalent arrow does', () => {
+    expect(jsmql(`$$ = $$.groupBy({ cat: "a" });`)).toEqual(jsmql(`$$ = $$.groupBy(o => o.cat === "a");`));
   });
 
   const PREDICATE_SPELLINGS = [`{ cat: "a" }`, `["cat", "a"]`];
@@ -2400,7 +2404,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
 
   it(".groupBy(<computed>) collapses too — the unwrap follows the key FORM, not its spelling", () => {
     // The collapse is the row's `collapses` fact (src/registry/names.ts), which every
-    // key spelling shares; only the raw `$group`-body form `{ _id: … }` keeps a stream.
+    // key spelling shares.
     expect(jsmql(`$.o = $$$.orders.groupBy("cat");`)).toEqual([
       {
         $lookup: {
@@ -2465,7 +2469,6 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
       },
       { $set: { o: { $ifNull: [{ $first: "$o" }, {}] } } },
     ]);
-    expect(jsmql(`$$ = $$.groupBy({ _id: "$cat" });`)).toEqual([{ $group: { _id: "$cat" } }]);
   });
 
   it("a computed sort key materialises into a scratch field ahead of the $sort", () => {

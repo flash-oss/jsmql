@@ -33,7 +33,6 @@ import {
   type UpdateOp,
   ASSIGN_OPS,
 } from "../../registry/ast.ts";
-import { CodegenError } from "../../errors.ts";
 import { ParseError } from "../parse/cursor.ts";
 import { functionInValueOf, parseExpression, writeInValueOf } from "../parse/parser.ts";
 import {
@@ -585,37 +584,6 @@ function bareCall(callee: Node, param: string, pos: number): object | undefined 
   return undefined;
 }
 
-/**
- * `$$.groupBy({ _id: "$k", n: $sum(1) })` → `$$.$group({ _id: "$k", n: $sum(1) })`
- *
- * On a STREAM, an object with an `_id` key is the `$group` body. Lodash's
- * `groupBy` has no object form, so the spelling is free, and the stage is what
- * a developer who writes `_id` means. An array keeps its `groupBy(key)` reading.
- */
-const groupBodyLink: Rule = {
-  name: "groupBodyLink",
-  apply: (node) => {
-    const n = node as Node;
-    if (n.type !== "MethodCall" || n.name !== "groupBy") return node;
-    const recv = n.object as { type?: string; name?: string } | undefined;
-    const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
-    if (receiverFamily(named, recv !== undefined && readsAContextRef(recv), "groupBy") !== "stream") return node;
-    const args = n.args as readonly Node[];
-    if (args.length !== 1 || args[0].type !== "ObjectLiteral" || !Array.isArray(args[0].entries)) return node;
-    const hasId = (args[0].entries as readonly object[]).some((e) => writtenKey(e) === "_id");
-    // No `_id`: the object cannot be a matcher here (the stream slot takes none),
-    // and it cannot be the stage either. The error names this here, where the
-    // rule is known, not four phases later.
-    if (!hasId) {
-      throw new CodegenError(
-        `'$$.groupBy({ … })' on the stream is the '$group' stage. Its body needs an '_id' field: the group key. For example, '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field, write '$$.groupBy("status")'.`,
-        (args[0] as { pos: number }).pos,
-      );
-    }
-    return { ...n, name: "$group" } as object;
-  },
-};
-
 const iterateeShorthand: Rule = {
   name: "iterateeShorthand",
   apply: (node, where) => {
@@ -686,8 +654,6 @@ export const RULES: readonly Rule[] = [
   packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of
   // them matches, and the arrow it builds is not a shape any of them looks for.
-  // This runs BEFORE iterateeShorthand: the `$group` body must not be read as a matcher.
-  groupBodyLink,
   iterateeShorthand,
 ];
 

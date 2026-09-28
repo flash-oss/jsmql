@@ -168,16 +168,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /** The stream cell takes a callback whose body must BE a document — `.map` replaces the document. */
   streamBody?: "document";
   /**
-   * The stream cell folds the whole stream into ONE document — `countBy` and `keyBy`
-   * always, `groupBy` unless its argument is a RAW `$group` body
-   * (`"unlessRawBody"`): `$$.groupBy(d => d.cat)` builds lodash's one object, but
-   * `$$.groupBy({ _id: "$cat", n: $sum(1) })` is the stage itself and keeps a stream.
-   * On another collection the joined array then holds that one document, which IS
-   * the value — so the read unwraps it. The question is the argument's SHAPE, not its
-   * spelling: the desugar pass rewrites a field-name string into an arrow long before
-   * emit. A test for a string literal here can never be true.
+   * The stream cell folds the whole stream into ONE document — `countBy`, `keyBy`
+   * and `groupBy`: `$$.groupBy(d => d.cat)` builds lodash's one object. On another
+   * collection the joined array then holds that one document, which IS the value —
+   * so the read unwraps it.
    */
-  collapses?: true | "unlessRawBody";
+  collapses?: true;
   /**
    * The value cell answers null ONLY when its receiver or an argument is null or
    * missing — never for an input that is there. `.map`, `.filter`, `.slice`,
@@ -252,13 +248,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * means no slot on any receiver takes one.
    *
    * ONLY these slots accept a short spelling that the compiler rewrites into the
-   * arrow it means. That is the whole reason the field exists: three other kinds
-   * of slot wear the same three spellings and mean none of them.
+   * arrow it means. That is the whole reason the field exists: two other kinds
+   * of slot wear the same spellings and mean none of them.
    *
    *   $.items.filter({ f: 1 })      → {"$eq": ["$$item.f", 1]}     a matcher
    *   $.items.toSorted({ f: 1 })    → {"sortBy": {"f": 1}}         a DIRECTION
    *   $.user.pick(["a", "b"])       → per-key $getField            field NAMES
-   *   $$ = $$.groupBy({ _id: … })   → {"$group": {…}}              a stage body
    *
    * A rewrite that reads the argument's SHAPE instead of this field turns a
    * sort into a matcher without a word of warning. `.sortBy()` refuses the object
@@ -8404,16 +8399,15 @@ export const NAMES = {
   }),
 
   groupBy: name({
-    collapses: "unlessRawBody",
+    collapses: true,
     doc: "'.groupBy()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream", "Object"],
     params: ["value"],
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
-      // No matcher object: `$$.groupBy({ … })` is a raw '$group' document, whose
-      // '_id' is the group key. The other two spellings are iteratees as usual.
-      stream: { 0: ["propertyPath", "matchesPropertyPair", "omitted"] },
+      // A bare callable takes a VALUE; a stream element is a document.
+      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] },
     },
     returns: { array: { recordOf: "same" }, stream: "stream", Object: { recordOf: { arg: 0 } } },
     neverNull: true,

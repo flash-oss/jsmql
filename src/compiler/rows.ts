@@ -581,9 +581,9 @@ export function restoresDocumentsOf(name: string): boolean {
   return (row(name) as { restoresDocuments?: true } | undefined)?.restoresDocuments === true;
 }
 
-/** Does the stream cell fold the stream into ONE document — always, or only when the argument is a field name? */
-export function collapsesOf(name: string): true | "unlessRawBody" | null {
-  return (row(name) as { collapses?: true | "unlessRawBody" } | undefined)?.collapses ?? null;
+/** Does the stream cell fold the stream into ONE document? */
+export function collapsesOf(name: string): boolean {
+  return (row(name) as { collapses?: true } | undefined)?.collapses === true;
 }
 
 /** Does the row's stream cell take a callback whose body must BE a document — `.map`? */

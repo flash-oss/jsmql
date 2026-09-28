@@ -3717,7 +3717,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
 | `.sample()` | Zero arguments | `$sample: { size: 1 }`: one random document (lodash `_.sample`). Use `.sampleSize(n)` for more |
 | `.flatMap(<key>)` | One field key: the array field to flatten | One `$unwind: "$<path>"` stage. From here on **the element is what every callback receives**: `.filter(i => i.qty > 1)` reads `items.qty`, a key-less `.countBy()` groups on the element, and `.sortBy("price")` sorts by `items.price`. The documents keep their other fields, as MQL's `$unwind` does. For "the elements as the documents", chain `.map(item => item)`. JSMQL rejects a complex arrow body (`.flatMap(d => d.items.map(...))`). See [The element after `.flatMap`](#the-element-after-flatmap) |
-| `.groupBy(<key>)` / `.groupBy()` / `.groupBy({ _id, … })` | One field key, or none for the element itself, **or** a raw `$group` body object. The body object must contain `_id`; an accumulator operator such as `$addToSet` is allowed in a field slot | The key form collapses to the lodash object `{ <key>: [docs] }`, like value-mode `$.arr.groupBy(...)`. The body form lowers to `$group: <body>` verbatim: a stream of group documents. The accumulator form has no lodash equivalent |
+| `.groupBy(<key>)` / `.groupBy()` | One key — a field name, an arrow, a matcher object or a `[field, value]` pair — or none for the element itself | Collapses to the lodash object `{ <key>: [docs] }`, like value-mode `$.arr.groupBy(...)`. For a stream of group documents with accumulators, write the stage link `$$.$group({ _id: …, n: $sum(1) })` |
 | `.countBy(<key>)` / `.countBy()` | One field key, or none, in which case the element itself is the key (lodash's identity default, the natural spelling after `.flatMap`) | Collapses to the lodash object `{ <key>: <count> }`, like value-mode `$.arr.countBy(...)`. For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
 | `.keyBy(<key>)` / `.keyBy()` | One field key, or none for the element itself | Collapses to the lodash object `{ <key>: <last doc> }`, like value-mode `$.arr.keyBy(...)`; the last document wins. "Last" follows the current order, so precede it with `.sort(...)` when the order matters |
 | `.uniqBy(<key>)` | One field key | `$group` keeps the first document per key, then `$replaceWith`. "First" follows the current order, so precede it with `.sort(...)` when the order matters |
@@ -3832,7 +3832,7 @@ The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stre
 
 In a **value** position the chain is JavaScript's value. `$$$.orders.flatMap("items")` is the items themselves: the `$lookup` holds one order per line, and the value reads the line off each. So `.size()` counts lines (`{ $size: "$<the joined array>" }`, one joined document per line, so nothing is picked out first), `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
 
-On three methods, an object means something richer than a matcher, so JSMQL reads it that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
+On two methods, an object means something richer than a matcher, so JSMQL reads it that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs.
 
 `.map(d => …)` / `.map("field")` replaces each document with the body through `$replaceWith`, so the **body must resolve to a document**, because MongoDB requires an object root. JSMQL rejects a provably non-document body at compile time — `.map(d => 5)`, `.map(d => "x")`, `.map(d => [1, 2])`, and a computed value such as `.map(d => d.price * 2)`, because `*` never gives a document. A body that may be a document passes, for example `.map(d => d.flag ? d.sub : 0)`. A field reference that turns out to be a scalar at runtime, for example `.map("userId")` where `userId` is an ObjectId, is emitted but errors on the server, exactly like `$ = $.userId`. To keep a single value, wrap it in a document: `.map(d => ({ value: d.x }))`. Use `.map("subdoc")` only to promote a sub-document to the root.
 
@@ -3864,7 +3864,7 @@ jsmql(`$$.filter({ status: "CLOSED" })
   .sort({ createdAt: -1 })
   .take(10)
   .flatMap("productIds")
-  .groupBy({ _id: null, boughtProductIds: $addToSet("$productIds") });`)
+  .$group({ _id: null, boughtProductIds: $addToSet("$productIds") });`)
 // → [ { $match: { status: "CLOSED" } },
 //     { $sort: { createdAt: -1 } },
 //     { $limit: 10 },
