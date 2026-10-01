@@ -9683,11 +9683,14 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "[base]", allowed: [0, 1] }, emit: ({ recv, args, value }) => {
-          if (args.length === 0) return { $ln: recv };
-          const base = value(args[0]);
-          return base === 10 ? { $log10: recv } : { $log: [recv, base] };
-        } },
+        number: {
+          args: { sig: "[base]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) => {
+            if (args.length === 0) return { $ln: recv };
+            const base = value(args[0]);
+            return base === 10 ? { $log10: recv } : { $log: [recv, base] };
+          }
+        },
         Math: mathStatic("Math.log(value)", "<number>.log()", "$.x.log()")
       }
     },
@@ -9732,7 +9735,10 @@ var NAMES = {
     expr: {
       perFamily: {
         // MEASURED: { $trunc: "$x" } is valid, and 2.5 gives 2.
-        number: { args: { sig: "[precision]", allowed: [0, 1] }, emit: ({ recv, args, value }) => ({ $trunc: args.length === 0 ? recv : [recv, value(args[0])] }) },
+        number: {
+          args: { sig: "[precision]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) => ({ $trunc: args.length === 0 ? recv : [recv, value(args[0])] })
+        },
         Math: mathStatic("Math.trunc(value)", "<number>.trunc()", "$.x.trunc()")
       }
     },
@@ -9757,7 +9763,10 @@ var NAMES = {
         // why: `$cmp` answers -1 for a missing value, and the `$pow` factor is 1 for a
         // number and null for nothing. So the product is null there, with no `$cond`.
         // MEASURED: -8 → -1, 0 → 0, missing → null.
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $multiply: [{ $cmp: [recv, 0] }, { $pow: [recv, 0] }] }) },
+        number: {
+          args: { sig: "", none: true },
+          emit: ({ recv }) => ({ $multiply: [{ $cmp: [recv, 0] }, { $pow: [recv, 0] }] })
+        },
         Math: mathStatic("Math.sign(value)", "<number>.sign()", "$.x.sign()")
       }
     },
@@ -9823,7 +9832,12 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "...values", atLeast: 1 }, emit: ({ recv, args, value }) => ({ $sqrt: { $add: [recv, ...args.map(value)].map((v) => ({ $pow: [v, 2] })) } }) },
+        number: {
+          args: { sig: "...values", atLeast: 1 },
+          emit: ({ recv, args, value }) => ({
+            $sqrt: { $add: [recv, ...args.map(value)].map((v) => ({ $pow: [v, 2] })) }
+          })
+        },
         Math: mathStatic("Math.hypot(...values)", "<number>.hypot(<number>, \u2026)", "$.a.hypot($.b)")
       }
     },
