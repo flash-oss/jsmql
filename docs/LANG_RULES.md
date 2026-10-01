@@ -117,6 +117,8 @@ The field that the receiver names can be missing from the document, or it can ho
 
 A string method is the exception. On a missing or `null` string, a string method gives `null`. The reason is that JavaScript throws an error here, and MongoDB has no error to throw inside an expression.
 
+A number has no empty value to run on. The dot still gives a safe answer when the method has one. For example, `$.n.range()` reads a missing receiver as `0` and gives `[]`, and `$.x.clamp(0, 9)` gives `0`. A number method with no safe answer gives `null` on a missing or `null` receiver, in both spellings. A string method does the same. For example, `$.n.round()` gives `null`. The documentation of each number method states its answer.
+
 **You wrote `?.`.** The compiler tests the value before the `?.`. When that value is missing or `null`, the whole chain gives `null`, and nothing after the `?.` runs. This is what `?.` does in JavaScript, with `null` in place of `undefined`. Each `?.` tests only the value before it. A dot after a `?.` obeys the dot rule.
 
 ```js
