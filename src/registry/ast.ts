@@ -299,7 +299,7 @@ export type AssignExpr = {
   op: AssignOp;
   value: Expr;
   pos: number;
-  /** The desugar pass sets this on a MUTATOR's own write (`$.a.pop();`, `Object.assign(r, …);`). JavaScript allows that on a `const` binding, and the emitter allows it too. */
+  /** The desugar pass sets this on a MUTATOR's own write (`$.a.pop();`). JavaScript allows that on a `const` binding, and the emitter allows it too. */
   mutates?: true;
 };
 export type DeleteStmt = { type: "DeleteStmt"; target: Expr; pos: number };

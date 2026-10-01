@@ -28,7 +28,6 @@
 import type { Expr, PipelineStmt, Program } from "../../registry/ast.ts";
 import type { NodeName } from "../../registry/vocabulary.ts";
 import { ParseError } from "../parse/cursor.ts";
-import { mutatedArgumentOf } from "../rows.ts";
 import { asLiteral } from "./literal.ts";
 import type { Constants } from "./evaluate.ts";
 import { asDeclaredFunction, evaluate } from "./evaluate.ts";
@@ -111,17 +110,6 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
       if (where.at === "statement") {
         const receiver = rootName(node.object);
         if (receiver !== null) excluded.add(receiver);
-      }
-      // A call that writes one of its ARGUMENTS in place, wherever it stands —
-      // for example `Object.assign(a, …)`. The row states which argument, not a
-      // name matched here. So a second such name needs a new row, not a branch.
-      if (typeof node.name === "string") {
-        const on = node.object as { type?: string; name?: string } | undefined;
-        const index = mutatedArgumentOf(node.name, on?.type === "Ident" ? (on.name ?? null) : null);
-        if (index !== undefined) {
-          const name = rootName((node.args as readonly unknown[] | undefined)?.[index]);
-          if (name !== null) excluded.add(name);
-        }
       }
     }
   }

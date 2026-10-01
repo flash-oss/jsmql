@@ -170,32 +170,6 @@ export function foldNamespaceCall(namespace: string, name: string, args: readonl
     return name === "UTC" ? foldDateUTC(values) : NO;
   }
 
-  if (namespace === "Object") {
-    const [o, b] = values;
-    const plain = (v: unknown): v is Record<string, unknown> =>
-      typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v);
-    switch (name) {
-      case "keys":
-        return plain(o) ? ok(Object.keys(o)) : NO;
-      case "values":
-        return plain(o) ? ok(Object.values(o)) : NO;
-      case "entries":
-        // JavaScript's [key, value] pairs, as the runtime lowering gives them.
-        // Only the raw `$objectToArray(…)` gives `{ k, v }` documents.
-        return plain(o) ? ok(Object.entries(o)) : NO;
-      case "assign":
-        return values.every(plain) ? ok(Object.assign({}, ...(values as object[]))) : NO;
-      case "fromEntries": {
-        if (!Array.isArray(o)) return NO;
-        if (!o.every((p) => Array.isArray(p) && p.length === 2 && isKey(p[0]))) return NO;
-        return ok(Object.fromEntries(o.map(([k, v]) => [String(k), v])));
-      }
-      default:
-        void b;
-        return NO;
-    }
-  }
-
   return NO;
 }
 
@@ -546,8 +520,20 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
   const [a] = args.map(valueOf);
   const fn = fnOf(args[0]);
   switch (name) {
+    case "keys":
+      return ok(Object.keys(o));
+    case "values":
+      return ok(Object.values(o));
+    // JavaScript's [key, value] pairs, as the runtime lowering gives them.
+    case "entries":
     case "toPairs":
       return ok(Object.entries(o));
+    case "assign": {
+      const plain = (v: unknown): v is Record<string, unknown> =>
+        typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v);
+      const sources = args.map(valueOf);
+      return sources.every(plain) ? ok(Object.assign({}, o, ...sources)) : NO;
+    }
     case "invert": {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(o)) {
@@ -1025,6 +1011,14 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
         if (!isKey(k)) throw NOT_A_KEY;
         setKey(out, String(k), i < values.length ? values[i] : null);
       });
+      return ok(out);
+    }
+    case "fromEntries": {
+      const out: Record<string, unknown> = {};
+      for (const pair of xs) {
+        if (!Array.isArray(pair) || pair.length !== 2 || !isKey(pair[0])) return NO;
+        setKey(out, String(pair[0]), pair[1]);
+      }
       return ok(out);
     }
     case "fromPairs": {

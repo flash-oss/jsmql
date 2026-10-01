@@ -77,7 +77,7 @@ const candidateProductIdCounts = $$$.orders
   .sortBy(([id, count]) => -count)
   .take(10) // top 10
   .fromEntries();
-const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
+const candidateProductIds = candidateProductIdCounts.keys().map(ObjectId);
 
 const candidateProducts = $$$.products
   .filter({ _id: candidateProductIds })
@@ -172,11 +172,7 @@ $$ = candidateProductIds
                               input: {
                                 $map: {
                                   input: {
-                                    $map: {
-                                      input: { $objectToArray: "$__jsmql.tmp.1" },
-                                      as: "jsmqlKv",
-                                      in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
-                                    },
+                                    $map: { input: { $objectToArray: "$__jsmql.tmp.1" }, in: ["$$this.k", "$$this.v"] },
                                   },
                                   as: "x",
                                   in: { k: { $arrayElemAt: ["$$x", 1] }, v: "$$x" },
@@ -192,8 +188,7 @@ $$ = candidateProductIds
                       10,
                     ],
                   },
-                  as: "jsmqlP",
-                  in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+                  in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
                 },
               },
             },
@@ -203,13 +198,7 @@ $$ = candidateProductIds
           $set: {
             "__jsmql.var.candidateProductIds": {
               $map: {
-                input: {
-                  $map: {
-                    input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" },
-                    as: "jsmqlKv",
-                    in: "$$jsmqlKv.k",
-                  },
-                },
+                input: { $map: { input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" }, in: "$$this.k" } },
                 as: "x",
                 in: { $toObjectId: "$$x" },
               },
@@ -2231,17 +2220,16 @@ describe("dynamic pivot row with computed key + shorthand property", { features:
   );
 });
 
-describe("pivot table row through Object.fromEntries(.map(...))", { features: ["Object literals"] }, () => {
+describe("pivot table row through .map(...).fromEntries()", { features: ["Object literals"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.metrics.aggregate([{ $addFields: { row: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`Object.fromEntries($.metrics.map(m => [m.name, m.value]))`)).toEqual({
+      expect(jsmql.expr(`$.metrics.map(m => [m.name, m.value]).fromEntries()`)).toEqual({
         $arrayToObject: {
           $map: {
             input: { $map: { input: { $ifNull: ["$metrics", []] }, as: "m", in: ["$$m.name", "$$m.value"] } },
-            as: "jsmqlP",
-            in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+            in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
           },
         },
       });

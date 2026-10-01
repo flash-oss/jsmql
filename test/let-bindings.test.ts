@@ -1038,48 +1038,29 @@ describe("let bindings — reassignment", () => {
   });
 });
 
-// ── `Object.assign(binding, …)` — JS's mutating merge on a binding ─────────────
+// ── a merge into a binding — an assignment of a spread ─────────────────────────
 
-describe("let bindings — Object.assign mutation", () => {
-  it("`Object.assign(result, …)` re-`$set`s the binding's slot through $mergeObjects", () => {
-    // The JS-faithful mutating form of `result = { ...result, … }`.
-    expect(jsmql("let result = {}; Object.assign(result, { a: $.foo }); $ = result;")).toEqual([
+describe("let bindings — a merge is an assignment of a spread", () => {
+  it("`r = { ...r, … }` re-`$set`s the binding's slot through $mergeObjects", () => {
+    expect(jsmql("let result = {}; result = { ...result, a: $.foo }; $ = result;")).toEqual([
       { $set: { "__jsmql.var.result": {} } },
       { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } },
       { $replaceWith: "$__jsmql.var.result" },
     ]);
   });
 
-  it("allowed on a `const` binding — mutating a const-bound object is legal JS (only rebinding is not)", () => {
-    // `const result = {}; Object.assign(result, …)` must NOT throw, even though
-    // `result = …` on a const would.
-    expect(jsmql("const result = {}; Object.assign(result, { a: $.foo });")).toEqual([
-      { $set: { "__jsmql.var.result": {} } },
-      { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } },
-      { $unset: "__jsmql" },
-    ]);
-  });
-
-  it("multiple sources keep the slot as the first $mergeObjects operand", () => {
-    expect(jsmql("let r = {}; Object.assign(r, { a: 1 }, { b: 2 }); $ = r;")).toEqual([
-      { $set: { "__jsmql.var.r": {} } },
-      { $set: { "__jsmql.var.r": { $mergeObjects: ["$__jsmql.var.r", { a: 1 }, { b: 2 }] } } },
-      { $replaceWith: "$__jsmql.var.r" },
-    ]);
+  it("refuses a statement of 'Object.assign(binding, …)' and of '.assign()', and names the spread", () => {
+    // '.assign()' answers a new object and writes nothing in place.
+    for (const src of ["const r = {}; Object.assign(r, { a: $.foo });", "let r = {}; r.assign({ a: $.foo }); $ = r;"]) {
+      expect(() => jsmql(src)).toThrow("$.f = { ...$.f, ...x };");
+    }
   });
 
   it("refuses the declaration a bracketed pipeline would need before the merge", () => {
-    expect(refusal("[ let r = {}, Object.assign(r, { a: $.foo }), $ = r ]")).toEqual({
+    expect(refusal("[ let r = {}, r = { ...r, a: $.foo }, $ = r ]")).toEqual({
       message: NOT_AN_ELEMENT("let r = …", 2),
       pos: 2,
     });
-  });
-
-  it("Object.assign on an out-of-scope identifier throws an actionable error with a meaningful .pos", () => {
-    const result = jsmql.validate("Object.assign(zzz, { a: 1 });");
-    expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toMatch("Unknown identifier 'zzz'. Did you mean '$.zzz'?");
-    expect(result.errors[0].pos).toBe("Object.assign(".length); // the `zzz` argument
   });
 });
 

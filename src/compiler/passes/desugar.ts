@@ -42,7 +42,6 @@ import {
   isCallable,
   isGlobalName,
   iterateeSlotsOf,
-  mutatedArgumentOf,
   namespaceNames,
   newKeywordOf,
   mutatorFormOf,
@@ -356,29 +355,6 @@ const mutatorForm: Rule = {
 };
 
 /**
- * `Object.assign($.o, x);` → `$.o = Object.assign($.o, x);`
- *
- * A name that writes one of its ARGUMENTS in place (`mutatesArgumentAt` on the
- * row) is, as a statement, a write of that argument. The call itself is the value.
- */
-const mutatedArgument: Rule = {
-  name: "mutatedArgument",
-  apply: (node, where) => {
-    if (where.at !== "statement") return node;
-    const n = node as Node;
-    if (n.type !== "MethodCall" || typeof n.name !== "string") return node;
-    const on = n.object as { type?: string; name?: string } | undefined;
-    const at = mutatedArgumentOf(n.name, on?.type === "Ident" ? (on.name ?? null) : null);
-    if (at === undefined) return node;
-    const args = n.args as readonly Node[];
-    const target = args[at];
-    if (!isNode(target)) return node;
-    if (target.type !== "Ident" && (target.type !== "FieldRef" || target.path === "")) return node;
-    return writeBack(target, { ...n }, n.pos);
-  },
-};
-
-/**
  * `$.a.push(9);` → `$.a = [...$.a, 9];`   and the mirror for `.unshift()`.
  *
  * The rule uses spread rather than `.concat()`, because they are not the same
@@ -649,7 +625,6 @@ export const RULES: readonly Rule[] = [
   mutatorSpread,
   // Independent of the two above: a row carries a twin, an array-literal order or a write form, never two.
   mutatorForm,
-  mutatedArgument,
   // This runs AFTER mutatorSpread: a statement mutator spreads its receiver, and this rule reads none.
   packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of

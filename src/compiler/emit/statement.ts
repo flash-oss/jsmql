@@ -56,7 +56,15 @@ import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, typ
 import { documentAfter, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
-import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf, takesLetOf, takesNoReceiver } from "../rows.ts";
+import {
+  bodySlotAt,
+  lowersOn,
+  positionalKeysOf,
+  positionsOf,
+  statementBodyOf,
+  takesLetOf,
+  takesNoReceiver,
+} from "../rows.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
@@ -671,7 +679,7 @@ function rootAsWritten(target: Expr): string {
  * is still a source switch, not a value.
  *
  * Any value that is not a chain is read as the ARRAY it must be. `$.items`,
- * `[...$.items]` and `Object.entries($.scores)` are one road, because
+ * `[...$.items]` and `$.scores.entries()` are one road, because
  * they say one thing: the stream is these elements, one document each.
  * `$unwind` needs a materialised path, so the compiler parks the array
  * in a scratch slot first.
@@ -1400,7 +1408,7 @@ function unknownCall(sel: Extract<Selected, { kind: "unknown" }>, node: Expr, en
     const recv = node.object;
     if (recv.type === "Ident" && !env.scope.has(recv.name) && namespaceNames().has(recv.name)) {
       const ns = recv.name;
-      const members = everyName().filter((n) => familiesOf(n)?.includes(ns as Family) === true);
+      const members = everyName().filter((n) => familiesOf(n)?.includes(ns as Family) === true && lowersOn(n, ns));
       return E.refusalFor(sel, `${ns}.${sel.name}`, `'${ns}'`, "statement", node.pos, members, (c) => `${ns}.${c}`);
     }
     return E.refusalFor(sel, `.${sel.name}`, "this receiver", "statement", node.pos, JS_NAMES);

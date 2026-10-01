@@ -37,6 +37,8 @@ import {
   bareCallableNames,
   constructibleNames,
   positionsOf,
+  lowersOn,
+  passesNullOf,
   readsNullAsEmptyOf,
   takesNoReceiver,
 } from "../rows.ts";
@@ -145,9 +147,12 @@ export function lowerValue(node: Expr, env: Env): unknown {
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     // `?.` stops the chain: the links after it do not run, and the chain answers null.
     const base = withoutOptional(stopped);
-    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
     // the second branch runs only when the test passed, so the path IS there inside it
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
+    // One call on the tested path, whose bare cell answers null there itself: the
+    // `$cond` would only repeat that null. `$.n?.round()` is `{ $round: "$n" }`.
+    if (base.type === "FieldRef" && passesNullOn(node, stopped)) return lowerValue(withoutOptional(node), proved);
+    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
   // A `?.` read with no call after it is JavaScript's `undefined` where the value is not
@@ -314,6 +319,17 @@ function stoppedChain(node: Expr): Expr | null {
   // guards: `user` for `$.user?.name`, so that `name` is read as any other path inside.
   if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
   return cursor.optionalAt === undefined ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
+}
+
+/**
+ * Is this chain ONE call directly on the path that its `?.` tests, and does that call's
+ * row state `passesNull`? A read or a second call between them could turn the missing
+ * value into something else first, so either one keeps the `$cond`.
+ */
+function passesNullOn(node: Expr, stopped: Expr): boolean {
+  if (node.type !== "MethodCall" || !passesNullOf(node.name)) return false;
+  const o = node.object;
+  return o === stopped || (o.type === "FieldRef" && o.optional === true && o.optionalAt === undefined);
 }
 
 /** A plain read: a field `.p` or an index `[k]`, never a call or a property row such as `Math.PI`. */
@@ -875,7 +891,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     receiver.kind === "namespace"
       ? JS_NAMES.filter((n) => {
           const on = familiesFor(n);
-          return on !== undefined && on !== "any" && on.includes(receiver.name);
+          return on !== undefined && on !== "any" && on.includes(receiver.name) && lowersOn(n, receiver.name);
         })
       : JS_NAMES;
   throw E.refusalFor(sel, spelled, container, position, node.pos, near, format);

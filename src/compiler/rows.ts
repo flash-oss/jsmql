@@ -178,20 +178,6 @@ export function namespaceNames(): ReadonlySet<string> {
 }
 
 /**
- * The index of the argument this name MUTATES in place, or undefined when it
- * mutates none. `Object.assign(target, …)` writes its first argument, so a
- * binding passed there is no longer the constant it was declared as.
- *
- * The fact belongs to the STATIC spelling: `o.assign(p)` writes nothing and
- * answers a new object, so a caller passes the receiver and gets undefined for
- * the method form.
- */
-export function mutatedArgumentOf(name: string, receiver?: string | null): number | undefined {
-  if (receiver !== undefined && (receiver === null || !namespaceNames().has(receiver))) return undefined;
-  return (row(name) as { mutatesArgumentAt?: number } | undefined)?.mutatesArgumentAt;
-}
-
-/**
  * The name that means the same as this mutator without mutating, or undefined.
  * `.sort()` → `"toSorted"`. See `immutableTwin` for what qualifies as a twin.
  */
@@ -551,6 +537,11 @@ export function readsNullAsEmptyOf(name: string): boolean {
   return (row(name) as { readsNullAsEmpty?: true } | undefined)?.readsNullAsEmpty === true;
 }
 
+/** Does the bare value cell answer null for a null or missing receiver, so a `?.` before it needs no `$cond`? */
+export function passesNullOf(name: string): boolean {
+  return (row(name) as { passesNull?: true } | undefined)?.passesNull === true;
+}
+
 /** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0)? */
 export function readsNullReceiverOf(name: string): boolean {
   return (row(name) as { nullReceiverAs?: 0 } | undefined)?.nullReceiverAs !== undefined;
@@ -777,6 +768,17 @@ export function mutatorFormOf(name: string): MutatorForm | undefined {
 // `scripts/generate-globals.mjs` types the ambient `$$` / `$$$` chains and the
 // value methods from these, so the generated `src/globals.ts` cannot drift from
 // the registry: what a row states here is what the editor completes.
+
+/**
+ * Does the row LOWER this name on this family as a value, rather than refuse it there?
+ * `Object.keys` parses, and its `Object` cell only refuses, so a suggestion never names it.
+ */
+export function lowersOn(name: string, family: string): boolean {
+  const expr = (row(name) as { expr?: unknown } | undefined)?.expr;
+  if (expr === null || typeof expr !== "object") return false;
+  const per = (expr as { perFamily?: Record<string, unknown> }).perFamily;
+  return isRuleCell(per === undefined ? expr : per[family]);
+}
 
 /** Is this cell a RULE — something that lowers — rather than a refusal or an in-code marker? */
 function isRuleCell(cell: unknown): boolean {

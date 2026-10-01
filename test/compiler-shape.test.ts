@@ -71,11 +71,10 @@ describe("compiler/passes/shape — an expression makes a filter", () => {
     expect(shape("$.items.toSorted()")).toBe("filter");
   });
 
-  it("reads `Object.assign` on a field as the write it is, and on a fresh object as a value", () => {
-    // a merged object is truthy: as a filter, `Object.assign($.a, $.b)` would keep every document
-    expect(shape("Object.assign($.a, $.b)")).toBe("pipeline");
-    expect(shape("Object.assign($.a, $.b);")).toBe("pipeline");
-    expect(shape("Object.assign({}, $.a, $.b)")).toBe("filter");
+  it("reads `.assign()` as a value: it writes nothing in place, and the `;` alone makes a statement", () => {
+    expect(shape("$.a.assign($.b)")).toBe("filter");
+    expect(shape("({}).assign($.a, $.b)")).toBe("filter");
+    expect(shape("$.a.assign($.b);")).toBe("pipeline");
   });
 });
 

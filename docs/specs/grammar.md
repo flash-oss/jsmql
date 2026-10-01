@@ -324,7 +324,7 @@ Comments are trivia: `skipTrivia()` discards them during tokenisation (it altern
 
 `...expr` is a valid construct anywhere positional args, array literal elements, or object literal entries appear. The AST represents it as a `SpreadElement`. Codegen handles spread in:
 
-- A JavaScript call that takes a list (`Math.min` / `Math.max`, `Object.assign`, …) — a single spread → the bare value; mixed → `$concatArrays`-wrapped per argument
+- A JavaScript call that takes a list (`Math.min` / `Math.max`, `.assign()`, …) — a single spread → the bare value; mixed → `$concatArrays`-wrapped per argument
 - Array literals — `$concatArrays` with consecutive non-spread elements grouped into one literal-array operand; a lone `[...x]` returns `x` directly
 - Object literals — `$mergeObjects` with consecutive non-spread entries grouped into one operand; a lone `{...x}` returns `x` directly
 

@@ -71,7 +71,7 @@ const NAMESPACES = namespaceNames();
 /**
  * Is the value `node` reads certainly THERE — never null, never missing?
  *
- * A literal is. The root document is (`Object.keys($)`). A binding states
+ * A literal is. The root document is (`$.keys()`). A binding states
  * whether it is (a `$lookup`'s array, a `let` of a present value). A call
  * is, when its row states `neverNull` and its receiver and every value
  * argument are also present — `$map` over an array that is there gives an

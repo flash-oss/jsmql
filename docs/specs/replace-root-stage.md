@@ -70,7 +70,7 @@ the user's first cue to what the statement does to the document.
 | `$ = $.mapValues(v => v + 1)` | `{ $replaceWith: { $arrayToObject: { $map: { input: { $objectToArray: "$$ROOT" }, … } } } }` — a method on the bare `$` reads the document |
 | `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, pipeline: [ …, { $limit: 1 }], as: "__jsmql.tmp.N" } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — a document whose `.find` matched nothing leaves the stream (by design) |
 | `$ = { n: $.foo + $$$.coll.find(pred).count }` (buried lookup) | the `$lookup` hoisted ahead into a scratch slot, `{ $set: { slot: { $first: "$slot" } } }`, then `{ $replaceWith: { n: { $add: ["$foo", "$slot.count"] } } }` |
-| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (any array) | refused — `$` takes one document; the message names `$$ = <array>;` for an array |
+| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = $.x.entries()` (any array) | refused — `$` takes one document; the message names `$$ = <array>;` for an array |
 | `$$ = [{…}, {…}]` / `$$ = $.items.map(…)` (the same array, on the STREAM) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out belongs to the stream, not the root](#fan-out-belongs-to-the-stream-not-the-root) |
 
 The direct-lookup form unwinds the slot instead of reading `$first`:
@@ -238,7 +238,7 @@ reading, because its elements are not the documents, and neither is an
 array the data decides, which gives one answer per input document.
 
 **A stream holds DOCUMENTS.** When a row states the kind of ONE element of
-what it returns (a `returns: { arrayOf: … }` term — `.split()` gives strings, `Object.entries()`
+what it returns (a `returns: { arrayOf: … }` term — `.split()` gives strings, `.entries()`
 gives `[key, value]` arrays, `$objectToArray` gives `{ k, v }` documents),
 the compiler refuses an element that is not a document here, rather than
 letting the server do it. MEASURED, the server refuses

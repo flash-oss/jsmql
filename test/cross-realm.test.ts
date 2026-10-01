@@ -68,7 +68,7 @@ describe("a value from another realm is the value it is", () => {
 
   it("the fold reads a value from another realm as its kind", () => {
     expect(jsmql.expr.compile(({ d }) => d.getFullYear())({ d: far('new Date("2026-01-01T00:00:00Z")') })).toBe(2026);
-    expect(jsmql.expr.compile(({ p }) => Object.keys(p))({ p: far("({ a: 1, b: 2 })") })).toEqual(["a", "b"]);
+    expect(jsmql.expr.compile(({ p }) => p.keys())({ p: far("({ a: 1, b: 2 })") })).toEqual(["a", "b"]);
   });
 
   /** Each pair: the value made in this realm, and the source that makes it in another. */

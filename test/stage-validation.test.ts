@@ -113,7 +113,7 @@ describe("a stage body is your own MQL, and it passes through as written", () =>
     // The spread is JavaScript code. It lowers to `$mergeObjects`, which no stage takes as
     // its body, and that MQL is the compiler's own (HR3).
     expect(() => jsmql("$set({ ...$.o });")).toThrow(
-      "MQL has no spread in an object. Write Object.assign(a, b) instead.",
+      "MQL has no spread in an object. Write '<a>.assign(<b>)' instead.",
     );
     expect(() => jsmql("[{ $set: { ...$.o } }]")).toThrow("MQL has no spread in an object.");
   });

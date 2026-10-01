@@ -2160,13 +2160,7 @@ describe("$$$.coll.aggregate — error cases", () => {
         { $lookup: { from: "orders", pipeline: [], as: "__jsmql.tmp.0" } },
         {
           $set: {
-            r: {
-              $map: {
-                input: { $objectToArray: { $ifNull: [{ $first: "$__jsmql.tmp.0" }, {}] } },
-                as: "jsmqlKv",
-                in: "$$jsmqlKv.k",
-              },
-            },
+            r: { $map: { input: { $objectToArray: { $ifNull: [{ $first: "$__jsmql.tmp.0" }, {}] } }, in: "$$this.k" } },
           },
         },
         { $unset: "__jsmql" },

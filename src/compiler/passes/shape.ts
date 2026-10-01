@@ -39,9 +39,6 @@ function statementShaped(node: Any): boolean {
   if (readsAContextRef(node)) return true;
   const name = namedRow(node);
   if (name === null) return false;
-  // `Object.assign($.a, $.b)` standing alone WRITES `$.a`, the same as the mutators do.
-  // A merged object is truthy, so as a filter it would keep every document.
-  if (name === "assign" && writesItsTarget(node)) return true;
   // The `;` decides a row with a VALUE form, not this check. `.filter()`
   // lists one, so `$.items.filter(p)` standing alone is an expression.
   if (lists(name, "value")) return false;
@@ -50,23 +47,6 @@ function statementShaped(node: Any): boolean {
   // bare call: `$.items.$sort(…)` sorts no stream, so the value road refuses it by name.
   if (node.type === "MethodCall" && !isMutator(name)) return false;
   return lists(name, "statement") || lists(name, "stream");
-}
-
-/**
- * Is this program a lone `Object.assign(<field or binding>, …)`? The shape rule
- * treats it as a statement, because standing alone it writes its target. It is
- * a value where a value is asked for (`jsmql.expr`), because `$mergeObjects` is
- * what it means there.
- */
-export function isBareAssignWrite(program: Program): boolean {
-  const node = program as Any;
-  return namedRow(node) === "assign" && writesItsTarget(node);
-}
-
-/** Is the first argument a place a write can land — a field of the document, or a binding? */
-function writesItsTarget(node: Any): boolean {
-  const target = (node as { args?: readonly Any[] }).args?.[0];
-  return target !== undefined && (target.type === "FieldRef" || target.type === "Ident");
 }
 
 /**

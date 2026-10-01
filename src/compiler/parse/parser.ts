@@ -556,10 +556,8 @@ class Parser {
    * A lone statement stands on its own, so the shape phase can read it as a
    * Filter. A lone declaration cannot, because nothing would read it. Nor can a
    * statement that the source ENDED with a `;`, because that `;` is the token
-   * that says pipeline. Collapsing it away lost the distinction:
-   *   Object.assign($.a, $.b)    a value, and a Filter
-   *   Object.assign($.a, $.b);   a write, and a Pipeline
-   * both parsed to the same tree, and nothing downstream could tell them apart.
+   * that says pipeline. A collapse would give the two sources the same tree, and
+   * nothing downstream could tell them apart.
    *
    * This is ONE rule for the top level and the entry block. So `({ $ }) => { X }`
    * means exactly what `X` means, `;` included.

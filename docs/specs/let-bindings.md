@@ -282,19 +282,13 @@ Outside a pipeline — a filter, `jsmql.expr`, an update document — there is
 no binding scope, so the compiler refuses a bare-identifier assignment
 there too.
 
-### `Object.assign` mutation
+### A merge into a binding
 
-`Object.assign(<name>, ...sources)` at statement position is JavaScript's
-*mutating* merge of a binding. Its value twin is
-`<name> = { ...<name>, ...sources }`. The compiler reads it as a write of
-the binding's slot
-(`{ $set: { "__jsmql.var.<name>": { $mergeObjects: ["$__jsmql.var.<name>", …sources] } } }`).
-Unlike `=`, it is **allowed on a `const`**: mutating a const-bound object is
-legal JavaScript, and only rebinding is not. An undeclared name is refused,
-the same as any unknown identifier. The field-path sibling
-(`Object.assign($.x, …)`) and the shape rule that makes a bare call a write
-live in
-[update-filter.md § Mutators and `Object.assign`](update-filter.md).
+A merge into a binding is an assignment of a spread:
+`<name> = { ...<name>, ...sources }` →
+`{ $set: { "__jsmql.var.<name>": { $mergeObjects: ["$__jsmql.var.<name>", …sources] } } }`.
+So the binding must be a `let`. `.assign()` answers a new object and writes
+nothing in place; see [update-filter.md § Mutators](update-filter.md).
 
 ## Lowering
 

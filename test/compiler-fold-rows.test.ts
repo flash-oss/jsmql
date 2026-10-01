@@ -84,7 +84,7 @@ describe("compiler/passes/fold — every case label is a callable row on that fa
       expect(names.length, `the ${ns} block folds some name`).toBeGreaterThan(0);
       for (const name of names) pairs.push([ns, name]);
     }
-    expect([...new Set(pairs.map(([ns]) => ns))].sort()).toEqual(["Date", "Math", "Number", "Object"]);
+    expect([...new Set(pairs.map(([ns]) => ns))].sort()).toEqual(["Date", "Math", "Number"]);
 
     const wrong: string[] = [];
     for (const [ns, name] of pairs) {

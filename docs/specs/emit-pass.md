@@ -91,9 +91,19 @@ row over present operands, a written field whose value was present, a path a
 at run time by the `$type` test of the dispatch branch the cell runs under. A
 row that dispatches on the receiver's type (`.indexOf`) lets null and missing
 fall to its `uncertain` default, which answers `-1`. The `neverNull` fact is
-stated per row: `.map`, `.filter`, `.slice` and `Object.keys` answer null only
+stated per row: `.map`, `.filter`, `.slice` and `.keys` answer null only
 for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.
+
+**A `?.` before a call that passes null needs no `$cond`.** A row states
+`passesNull` when its bare cell, on a receiver it reads as there, answers null for a
+null or missing receiver (`{ $objectToArray: null }` is null). When the chain is ONE
+such call directly on the path that the `?.` tests, `lowerValue` emits the bare call
+under the proof of that path: `$.o?.keys()` is
+`{ $map: { input: { $objectToArray: "$o" }, in: "$$this.k" } }`. A read or a second
+call between the `?.` and the top keeps the `$cond`, because either one can turn the
+missing value into another value first. test/compiler-methods.test.ts measures every
+row that states the fact.
 
 **A `?.` with a CALL after it STOPS the chain.** `stoppedChain`
 (`emit/lower.ts`) walks the receiver spine of a `MemberAccess` /
@@ -135,12 +145,8 @@ can be, because a receiver of that family is not a program that compiles. So
 refused branches return only when nothing else is left, so that the refusal is
 what answers.
 
-A cell has to know two more things about the proof. First, a value the row
-guards may arrive as an ARGUMENT rather than as the receiver — a namespace
-call (`Object.keys(o)`) has a receiver that is the namespace, so nothing about
-it describes `o` — and `ExprIn.optionalArg` answers whether that argument
-carries a `?.`. Second, a cell that reads `present` answers a DIFFERENT
-document inside a dispatch branch, whose `$type` test proves the receiver,
+A cell has to know one more thing about the proof. A cell that reads `present`
+answers a DIFFERENT document inside a dispatch branch, whose `$type` test proves the receiver,
 from the one it answers outside the branch. When a row's family cell and its
 `uncertain` are meant to be one answer, that difference makes the compiler
 emit a `$switch` the row does not want. So those cells share one body that
@@ -845,11 +851,19 @@ A rule that reads its arguments as ONE list states `spread: true` on its
 `args`, and the desugar pass packs a spread call's arguments into one array
 literal for it (see [desugar-pass.md](desugar-pass.md)): `Math.max(...$.a, 1)`
 reaches its cell as one operand, `{ $max: { $concatArrays: ["$a", [1]] } }`,
-and `Object.assign({}, ...$.docs)` reaches it as `{ $mergeObjects: <one list> }`
+and `({}).assign(...$.docs)` reaches it as `{ $mergeObjects: <one list> }`
 — the server reads a single array operand for both (measured). The fold reads a
 packed list as the call's own arguments, one per element, as JavaScript passes
 them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`, and `Math.max(...[1, 5], 7)`
 to `7`.
+
+**`.assign()` puts the receiver first.** With no spread, each argument is one source:
+`$.a.assign($.b)` is `{ $mergeObjects: ["$a", "$b"] }`. A packed list is the list of
+sources, after the receiver: `$.a.assign(...$.docs)` is
+`{ $mergeObjects: { $concatArrays: [["$a"], "$docs"] } }`. An empty-object receiver
+adds nothing, so the cell leaves it out, and one source takes the one-operand form:
+`({}).assign($.docs)` is `{ $mergeObjects: "$docs" }`. The server merges an array
+operand of that form, and refuses an array among two or more operands (measured).
 
 **`.concat()` reads each argument on its own.** JavaScript adds the elements
 of an array argument, and adds any other argument as one element. So the

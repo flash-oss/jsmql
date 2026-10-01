@@ -1147,16 +1147,10 @@ describe("types — a join carries the shape its body made", () => {
 
   it("a `.countBy()` in the body is a present record of numbers: a key read is its own truth", () => {
     const out = jsmql(
-      'const counts = $$$.orders.filter({ status: "a" }).flatMap("pid").countBy(); $.n = Object.keys(counts).size(); $.c = counts[$.pid] ? 1 : 2;',
+      'const counts = $$$.orders.filter({ status: "a" }).flatMap("pid").countBy(); $.n = counts.keys().size(); $.c = counts[$.pid] ? 1 : 2;',
     ) as object[];
     expect(out.slice(2)).toEqual([
-      {
-        $set: {
-          n: {
-            $size: { $map: { input: { $objectToArray: "$__jsmql.var.counts" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
-          },
-        },
-      },
+      { $set: { n: { $size: { $map: { input: { $objectToArray: "$__jsmql.var.counts" }, in: "$$this.k" } } } } },
       {
         $set: {
           c: {

@@ -661,9 +661,7 @@ describe("compiler/emit — object methods", () => {
         ["b", 2],
         ["_c", 3],
       ]),
-    ).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
-    });
+    ).toEqual({ $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: ["$$this.k", "$$this.v"] } });
     expect(compiled('$.o.pick(["a", "b"])', () => ({ a: 1, b: 2 }))).toEqual({
       $let: {
         vars: { jsmqlObj: { $ifNull: ["$o", {}] } },
@@ -964,8 +962,7 @@ describe("compiler/emit — array methods", () => {
       $arrayToObject: {
         $map: {
           input: { $ifNull: ["$pairs", []] },
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
@@ -1582,7 +1579,7 @@ describe("compiler/emit — array methods", () => {
     // number of fields of an object is the size of its keys.
     expect(compiled("$.a.size()", (d) => d.a.length)).toEqual({ $size: { $ifNull: ["$a", []] } });
     expect(compiled("$.o.keys().size()", (d) => Object.keys(d.o).length)).toEqual({
-      $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+      $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } },
     });
     expect(compiled("$.a.toString()", (d) => d.a.toString())).toEqual({
       $let: {
@@ -2153,24 +2150,17 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
     expect(compiled("Array.isArray($.a)", () => Array.isArray(DOC.a))).toEqual({ $isArray: ["$a"] });
     expect(compiled("Array.isArray($.n)", () => Array.isArray(DOC.n))).toEqual({ $isArray: ["$n"] });
-    expect(compiled("Object.assign($.o, { z: 1 })", () => Object.assign({}, DOC.o, { z: 1 }))).toEqual({
-      $mergeObjects: ["$o", { z: 1 }],
-    });
-    expect(compiled("Object.assign({}, ...$.docs)", () => Object.assign({}, ...DOC.docs))).toEqual({
-      $mergeObjects: { $concatArrays: [[{}], "$docs"] },
-    });
-    expect(compiled("Object.fromEntries($.pairs)", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
+    expect(compiled("$.pairs.fromEntries()", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
       $arrayToObject: {
         $map: {
-          input: "$pairs",
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          input: { $ifNull: ["$pairs", []] },
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
     // A list of pairs written in the source is the `$map` input itself, with no extra array level.
     expect(
-      compiled('Object.fromEntries([["a", 1], ["b", $.n]])', (d) =>
+      compiled('[["a", 1], ["b", $.n]].fromEntries()', (d) =>
         Object.fromEntries([
           ["a", 1],
           ["b", d.n],
@@ -2183,14 +2173,13 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
             ["a", 1],
             ["b", "$n"],
           ],
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
     // A number key becomes a string key, as in JavaScript.
     expect(
-      compiled('Object.fromEntries([[7, $.neg], ["b", 1]])', (d) =>
+      compiled('[[7, $.neg], ["b", 1]].fromEntries()', (d) =>
         Object.fromEntries([
           [7, d.neg],
           ["b", 1],
@@ -2203,10 +2192,26 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
             [7, "$neg"],
             ["b", 1],
           ],
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
+    });
+  });
+
+  it("merges with .assign(): the receiver first, an empty receiver left out, a spread as the list of sources", () => {
+    // `({}).assign(list)` is the one spelling that merges an array of objects. The
+    // empty target means nothing is written into `docs[0]`.
+    const merged = (...xs: object[]) => Object.assign({}, ...xs);
+    expect(compiled("({}).assign($.docs)", (d) => merged(...d.docs))).toEqual({ $mergeObjects: "$docs" });
+    expect(compiled("({}).assign(...$.docs)", (d) => merged(...d.docs))).toEqual({ $mergeObjects: "$docs" });
+    expect(compiled("({}).assign($.o, $.mo)", (d) => merged(d.o, d.mo))).toEqual({ $mergeObjects: ["$o", "$mo"] });
+    expect(compiled("$.o.assign($.mo)", (d) => merged(d.o, d.mo))).toEqual({ $mergeObjects: ["$o", "$mo"] });
+    expect(compiled("$.o.assign({ z: 1 })", (d) => merged(d.o, { z: 1 }))).toEqual({ $mergeObjects: ["$o", { z: 1 }] });
+    expect(compiled("$.o.assign(...$.docs)", (d) => merged(d.o, ...d.docs))).toEqual({
+      $mergeObjects: { $concatArrays: [["$o"], "$docs"] },
+    });
+    expect(compiled("$.o.assign($.mo, ...$.docs)", (d) => merged(d.o, d.mo, ...d.docs))).toEqual({
+      $mergeObjects: { $concatArrays: [["$o"], ["$mo"], "$docs"] },
     });
   });
 
@@ -2607,8 +2612,6 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
  *
  *   - a method under a DOT runs on `{}`, so it answers `{}`, or `[]` where it answers an
  *     array — `_.pick(undefined, …)` is `{}`, `Object.keys({})` is `[]`.
- *   - an `Object` static has no receiver to wrap, and `Object.keys(undefined)` is a
- *     TypeError in JavaScript, so it answers null, the nearest thing MongoDB has.
  *   - a `?.` with a call after it STOPS the chain, so the chain answers null.
  *
  * Each row: the source, and what it answers when the receiver is missing.
@@ -2624,27 +2627,25 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o.omitBy(v => v == null)", {}],
   ["$.o.invert()", {}],
   ["$.o.toPairs()", []],
-  // an object method under a dot runs on `{}` (HR5); the `Object` statics have no receiver to wrap
+  // an object method under a dot runs on `{}` (HR5)
   ["$.o.keys()", []],
   ["$.o.values()", []],
   ["$.o.entries()", []],
-  ["Object.keys($.o)", null],
-  ["Object.values($.o)", null],
-  ["Object.entries($.o)", null],
+  ["$.o.assign({ z: 1 })", { z: 1 }],
+  ["({}).assign($.o)", {}],
   // a `?.` with a call after it stops the chain, so the chain answers null
   ["$.o?.keys()", null],
   ["$.o?.values()", null],
   ["$.o?.entries()", null],
+  ["$.o?.toPairs()", null],
+  ["$.o?.assign({ z: 1 })", null],
   ["$.o?.keys().size()", null],
   ["$.s?.trim().length()", null],
   ["$.a?.map(x => x).size()", null],
-  // a NAMESPACE call has no receiver to carry the `?.`, so the row reads it off the
-  // argument — and there is no call AFTER the `?.` to stop, so `{}` still applies
-  ["Object.keys($.o?.sub)", []],
   // nothing runs after this `?.`, so the document and the answer are what they were
   ['$.first + " " + $.user?.last', "An "],
   // the root document is there, so it takes no neutral
-  ["Object.keys($).size()", 2],
+  ["$.keys().size()", 2],
 ];
 
 describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never an aborted command", () => {
@@ -3079,8 +3080,23 @@ const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
 };
 
+/** Each row that states `passesNull`: the call after a `?.` on a receiver the document lacks. */
+const PASSES_NULL: Readonly<Record<string, string>> = {
+  keys: "$.nope?.keys()",
+  values: "$.nope?.values()",
+  entries: "$.nope?.entries()",
+  toPairs: "$.nope?.toPairs()",
+  fromEntries: "$.nope?.fromEntries()",
+};
+
 describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a measurement", () => {
-  type Row = { kind?: string; neverNull?: true | "always"; readsNullAsEmpty?: true; nullReceiverAs?: 0 };
+  type Row = {
+    kind?: string;
+    neverNull?: true | "always";
+    readsNullAsEmpty?: true;
+    nullReceiverAs?: 0;
+    passesNull?: true;
+  };
   const rows = Object.entries(NAMES) as [string, Row][];
   const own = (r: Row) => r.kind === "name" || r.kind === "global";
 
@@ -3102,6 +3118,11 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
   it("measures exactly the rows that state `nullReceiverAs`", () => {
     const stating = rows.filter(([, r]) => own(r) && r.nullReceiverAs !== undefined).map(([n]) => n);
     expect([...stating].sort()).toEqual(Object.keys(NULL_RECEIVER_AS).sort());
+  });
+
+  it("measures exactly the rows that state `passesNull`", () => {
+    const stating = rows.filter(([, r]) => own(r) && r.passesNull === true).map(([n]) => n);
+    expect([...stating].sort()).toEqual(Object.keys(PASSES_NULL).sort());
   });
 });
 
@@ -3144,6 +3165,17 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
     expect(wrong).toEqual([]);
   });
 
+  it("answers null for a missing receiver with no `$cond`, where the row states `passesNull`", async () => {
+    const wrong: string[] = [];
+    for (const [row, src] of Object.entries(PASSES_NULL)) {
+      const t = await typeOf(src);
+      if (t !== "null") wrong.push(`${row}: ${src} → ${t}`);
+      // and the compiler leaves the `$cond` out, which is the reason for the fact
+      if (JSON.stringify(expr(src)).includes('"$cond"')) wrong.push(`${row}: ${src} still tests its receiver`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
   it("answers a missing receiver as the value that `nullReceiverAs` states", async () => {
     const wrong: string[] = [];
     const answer = async (src: string) =>
@@ -3182,7 +3214,7 @@ const GUARD_FREE: readonly string[] = [
   '$.a.sumBy("v")',
   "$.o.mapValues(v => v).keys()",
   "$.o.assign({ z: 1 }).keys()",
-  "Object.assign({}, $.o).keys()",
+  "({}).assign($.o).keys()",
   "$.s.substring(1)",
   "$.s.substr(-3)",
   "$.x = $.a.intersection($.b); $.y = $.x.size();",
