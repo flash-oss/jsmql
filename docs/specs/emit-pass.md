@@ -76,6 +76,14 @@ such a call is present when no `?.` sits on its spine, so a chain pays the one
 `$ifNull` at its head, and `.size()` after `.uniq()` adds nothing. The third
 callback parameter binds the wrapped input, and is present with it.
 
+**A number method takes no wrap.** A number has no empty value, so `emptyValueOf`
+answers null for the number family and `dispatchOn` hands the cell the receiver as
+it is. A row whose operator answers null for a null operand states `passesNull`, so
+`.` and `?.` emit the same MQL (`$.n?.round()` is `{ $round: "$n" }`). A row with a
+safe answer for a missing number states it instead: `nullReceiverAs: 0` (`.range()`),
+or an operator that answers a value for null (`.clamp()`, `.inRange()`). Such a row
+keeps the `$cond` of a `?.`.
+
 **A string method on a receiver that may be missing answers null.** `nullOr`
 in `src/registry/names.ts` is the one shape: `{ $cond: [{ $eq: [{ $ifNull: [r, null] }, null] },
 null, <body over r>] }`, with the receiver bound by `$let` unless it is a path.
@@ -765,7 +773,7 @@ current database (`{ db, coll }` for another), constant, not empty, and not
 document** (`emit/reduce-wrap.ts`): one `$group` with `_id: null` and one
 accumulator per key, then the `$replaceWith` that drops `_id`. The compiler
 reads each body as the accumulator it spells — `acc + d.x` is `$sum`,
-`acc + 1` counts, `Math.max`/`Math.min`, `acc ?? d.x` is `$first`, a bare
+`acc + 1` counts, `[acc, d.x].max()`/`.min()`, `acc ?? d.x` is `$first`, a bare
 `d.x` is `$last`, `[...acc, d.x]` or `acc.concat(d.x)` is `$push` — and it
 refuses a body that spells none, naming them. The object form
 `[$$.reduce((acc, d) => ({ ...acc, k: acc.k + … }), { k: init })]` names
@@ -849,13 +857,11 @@ $.a.reduceRight((acc, x) => acc.concat([x]), [])
 
 A rule that reads its arguments as ONE list states `spread: true` on its
 `args`, and the desugar pass packs a spread call's arguments into one array
-literal for it (see [desugar-pass.md](desugar-pass.md)): `Math.max(...$.a, 1)`
-reaches its cell as one operand, `{ $max: { $concatArrays: ["$a", [1]] } }`,
-and `({}).assign(...$.docs)` reaches it as `{ $mergeObjects: <one list> }`
-— the server reads a single array operand for both (measured). The fold reads a
+literal for it (see [desugar-pass.md](desugar-pass.md)): `({}).assign(...$.docs)`
+reaches its cell as `{ $mergeObjects: <one list> }`
+— the server reads a single array operand there (measured). The fold reads a
 packed list as the call's own arguments, one per element, as JavaScript passes
-them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`, and `Math.max(...[1, 5], 7)`
-to `7`.
+them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`.
 
 **`.assign()` puts the receiver first.** With no spread, each argument is one source:
 `$.a.assign($.b)` is `{ $mergeObjects: ["$a", "$b"] }`. A packed list is the list of
@@ -905,7 +911,7 @@ the month from 0, like `getMonth()`, so the month moves up by one on the way
 to `$dateFromParts` (folded for a literal). `Number.isNaN` reads `$toString`,
 because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
 measured), and `Number.isInteger` excludes NaN and the infinities the same
-way. `Math.cbrt` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
+way. `.cbrt()` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
 `Number` is the one numeric conversion: the compiler parses `parseInt` and
 `parseFloat` and refuses them, because a bare `parseInt` takes the element
 index as its radix, and `$toInt` refuses a fractional string.
@@ -971,7 +977,7 @@ root), and names the pipeline form as the way to compute.
 | `$.a = c` / `delete $.a` | `$set` / `$unset: { a: "" }` |
 | `$.n += c`, `-= c`, `++`, `--` | `$inc` (negated for `-=`) |
 | `$.n *= c`, `/= c` | `$mul` (`1 / c` for `/=`) |
-| `$.n = Math.min($.n, c)` / `Math.max` | `$min` / `$max` (the same path on both sides) |
+| `$.n = [$.n, c].min()` / `.max()` | `$min` / `$max` (the same path first in the list) |
 | `$.t = new Date()` | `$currentDate: { t: true }` |
 | `$.b = $.a; delete $.a;` (either order) | `$rename: { a: "b" }` — a copy without the delete is refused |
 | `$.tags.push(x[, y])`, `.unshift(x)` | `$push`, with `$each` for several and `$position: 0` for unshift |

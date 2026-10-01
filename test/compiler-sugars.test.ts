@@ -203,7 +203,7 @@ describe("compiler/emit — `$$ = [{ k: $$.reduce(…) }]` folds the stream to o
   it("reads each reducer body as the accumulator it spells", () => {
     expect(
       compiled(
-        "$$ = [{ total: $$.reduce((acc, d) => acc + d.a, 0), n: $$.reduce((acc, d) => acc + 1, 0), mx: $$.reduce((acc, d) => Math.max(acc, d.a), 0), tags: $$.reduce((acc, d) => [...acc, d.tag], []), last: $$.reduce((acc, d) => d.a, null), first: $$.reduce((acc, d) => acc ?? d.tag, null) }];",
+        "$$ = [{ total: $$.reduce((acc, d) => acc + d.a, 0), n: $$.reduce((acc, d) => acc + 1, 0), mx: $$.reduce((acc, d) => [acc, d.a].max(), 0), tags: $$.reduce((acc, d) => [...acc, d.tag], []), last: $$.reduce((acc, d) => d.a, null), first: $$.reduce((acc, d) => acc ?? d.tag, null) }];",
         [{ total: 6, n: 3, mx: 3, tags: ["t1", "t2", "t1"], last: 3, first: "t1" }],
       ),
     ).toEqual([

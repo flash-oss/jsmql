@@ -165,7 +165,7 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   });
 
   it("Math call result stays in $expr", () => {
-    expect(jsmql("[$match(Math.abs($.delta) > 5)]")).toEqual([{ $match: { $expr: { $gt: [{ $abs: "$delta" }, 5] } } }]);
+    expect(jsmql("[$match($.delta.abs() > 5)]")).toEqual([{ $match: { $expr: { $gt: [{ $abs: "$delta" }, 5] } } }]);
   });
 
   it("array literal as equality target stays in $expr", () => {

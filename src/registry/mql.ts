@@ -505,13 +505,33 @@ export const indexedPairs = (arr: unknown): Record<string, unknown> => ({
  * ceil(2) of -1.234 → -1.23. Each one is the answer of JavaScript.
  */
 export const atPrecision = (op: "$ceil" | "$floor", value: unknown, precision: unknown): unknown => {
-  const scale = { $pow: [10, precision] };
+  // A constant integer precision folds: MEASURED, `10 ** p` is the double `$pow: [10, p]` gives.
+  const scale = Number.isInteger(precision) ? 10 ** (precision as number) : { $pow: [10, precision] };
   return { $divide: [{ [op]: { $multiply: [value, scale] } }, scale] };
 };
 
-/** `Math.cbrt` keeps the sign, because `$pow` of a negative base to a fractional exponent is NaN on the server. */
+/**
+ * An operand of an operator that answers null for a missing operand. A `?.` read with
+ * nothing after it lowers to `{ $ifNull: [<read>, null] }`, so that a missing value
+ * reads as null. Such an operator gives that null on its own, so the wrap is spare.
+ */
+export const nullPassing = (v: unknown): unknown => {
+  const operands =
+    typeof v === "object" && v !== null && !Array.isArray(v) ? (v as { $ifNull?: unknown }).$ifNull : undefined;
+  return Array.isArray(operands) &&
+    operands.length === 2 &&
+    operands[1] === null &&
+    Object.keys(v as object).length === 1
+    ? operands[0]
+    : v;
+};
+
+/**
+ * `.cbrt()` keeps the sign, because `$pow` of a negative base to a fractional exponent
+ * is NaN on the server. MEASURED: the constant `1 / 3` is the double `$divide: [1, 3]` gives.
+ */
 export const cbrt = (v: unknown): Record<string, unknown> => ({
-  $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, { $divide: [1, 3] }] }],
+  $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, 1 / 3] }],
 });
 
 /** A number, and neither NaN nor an infinity. The test reads `$toString`, because the server holds NaN equal to itself. */

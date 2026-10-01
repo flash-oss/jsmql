@@ -68,7 +68,7 @@ The walk names no operator and no method. It reads three row facts through
 - `bodySlotAt(name, [])?.at === "filter"`: the whole body of the stage is a
   filter (`$match`). Its argument starts a query spine (see below).
 - `isGlobalName(name)`: the receiver is a global, so the message spells a static
-  call with its name (`'Math.max()'`).
+  call with its name (`'Date.UTC()'`).
 
 A method whose name starts with `$` is a stage link. Its receiver is the stream,
 and its argument is raw MQL. So a JSMQL method can follow a stage link.
@@ -101,7 +101,7 @@ One template serves every refusal:
 
 `<raw>` is `$name(…)` for a call, `{ $key: … }` for a `$`-key object, and
 `{ key: … }` for a query document. `<role>` names the nearest JSMQL construct:
-`an operand of '&&'`, `the receiver of '.map()'`, `an operand of 'Math.max()'`,
+`an operand of '&&'`, `the receiver of '.map()'`, `an operand of 'Date.UTC()'`,
 `an operand of a template literal`. `.pos` is the position of the raw node. The
 message names no other spelling (see the HR6 text).
 

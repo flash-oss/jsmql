@@ -648,6 +648,8 @@ export function holderOf(e: Expr, env: Env): string | null {
 function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): unknown {
   // `Math.abs` on its own names a function. Only a call or a callback slot gives it a value.
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
+    // A member that the namespace only refuses (`Math.floor`) answers with its own refusal.
+    if (!lowersOn(node.name, node.object.name)) return dispatchOn(node, node.name, node.object, [], env);
     throw E.unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);

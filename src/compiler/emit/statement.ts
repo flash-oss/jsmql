@@ -1398,7 +1398,7 @@ provideJoin((node, env) => joinValue(node, env, JOIN));
 /**
  * A statement that calls a name no row knows. The suggestion comes from the
  * names of the same kind, spelled the way the value road spells them: a
- * method (`$.a.popp()`), a static (`Math.maxx(…)`), or a global (`assertt(…)`).
+ * method (`$.a.popp()`), a static (`Math.randomm(…)`), or a global (`assertt(…)`).
  */
 function unknownCall(sel: Extract<Selected, { kind: "unknown" }>, node: Expr, env: Env): Error {
   if (node.type === "CallExpression" && node.callee.type === "Ident") {

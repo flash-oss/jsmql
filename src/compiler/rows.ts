@@ -795,7 +795,7 @@ function methodRows(): string[] {
   return Object.keys(ROWS).filter((n) => {
     if (n.startsWith("$") || !isCallable(n) || isGlobalName(n)) return false;
     const on = families(row(n)?.on);
-    // a method on a VALUE — not a namespace static (`Math.abs`) and not a stage on the stream alone
+    // a method on a VALUE — not a namespace static (`Date.now`) and not a stage on the stream alone
     return on === "any" || (on !== undefined && on.some((f) => VALUE_FAMILIES.has(f)));
   });
 }

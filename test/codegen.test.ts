@@ -2701,10 +2701,10 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
     });
   });
   it("static-call families (Math./Array./regex.) use the same formatter", () => {
-    expect(() => jsmql.expr("Math.pow(2)")).toThrow("'Math.pow(base, exponent)' requires exactly 2 arguments, got 1");
-    expect(() => jsmql.expr("Math.hypot()")).toThrow("'Math.hypot(...values)' requires at least 1 argument, got 0");
+    expect(() => jsmql.expr("$.x.atan2()")).toThrow("'.atan2(x)' requires exactly 1 argument, got 0");
+    expect(() => jsmql.expr("$.x.hypot()")).toThrow("'.hypot(...values)' requires at least 1 argument, got 0");
     expect(() => jsmql.expr("Math.random(1)")).toThrow("'Math.random()' takes no arguments, got 1");
-    expect(() => jsmql.expr("Math.floor()")).toThrow("'Math.floor(value)' requires exactly 1 argument, got 0");
+    expect(() => jsmql.expr("$.x.floor(1, 2)")).toThrow("'.floor([precision])' requires 0 or 1 arguments, got 2");
     expect(() => jsmql.expr("Array.isArray()")).toThrow("'Array.isArray(value)' requires exactly 1 argument, got 0");
     expect(() => jsmql.expr("$.a.assign()")).toThrow("'.assign(...sources)' requires at least 1 argument, got 0");
     expect(() => jsmql.expr("/x/.test()")).toThrow("'.test(str)' requires exactly 1 argument, got 0");
@@ -4386,133 +4386,101 @@ describe("type casts", () => {
     expect(() => jsmql.expr("parseInt($.s)")).toThrow(/'parseInt\(\)' is not part of jsmql/);
     expect(() => jsmql.expr("parseFloat($.s)")).toThrow(/'parseFloat\(\)' is not part of jsmql/);
     expect(jsmql.expr("Number($.s)")).toEqual({ $toDouble: "$s" });
-    expect(jsmql.expr("Math.trunc(Number($.s))")).toEqual({ $trunc: { $toDouble: "$s" } });
+    expect(jsmql.expr("Number($.s).trunc()")).toEqual({ $trunc: { $toDouble: "$s" } });
   });
 });
 
 describe("Math.*", () => {
   it("Math.abs", () => {
-    expect(jsmql.expr("Math.abs($.x)")).toEqual({ $abs: "$x" });
+    expect(jsmql.expr("$.x.abs()")).toEqual({ $abs: "$x" });
   });
   it("Math.ceil", () => {
-    expect(jsmql.expr("Math.ceil($.x)")).toEqual({ $ceil: "$x" });
+    expect(jsmql.expr("$.x.ceil()")).toEqual({ $ceil: "$x" });
   });
   it("Math.floor", () => {
-    expect(jsmql.expr("Math.floor($.x)")).toEqual({ $floor: "$x" });
+    expect(jsmql.expr("$.x.floor()")).toEqual({ $floor: "$x" });
   });
-  it("Math.round adds 0 precision", () => {
-    expect(jsmql.expr("Math.round($.x)")).toEqual({ $round: ["$x", 0] });
+  it(".round() takes the one-operand form", () => {
+    expect(jsmql.expr("$.x.round()")).toEqual({ $round: "$x" });
   });
   it("Math.pow", () => {
-    expect(jsmql.expr("Math.pow(2, $.n)")).toEqual({ $pow: [2, "$n"] });
+    expect(jsmql.expr("2 ** $.n")).toEqual({ $pow: [2, "$n"] });
   });
   it("Math.sqrt", () => {
-    expect(jsmql.expr("Math.sqrt($.x)")).toEqual({ $sqrt: "$x" });
+    expect(jsmql.expr("$.x.sqrt()")).toEqual({ $sqrt: "$x" });
   });
   it("Math.exp", () => {
-    expect(jsmql.expr("Math.exp($.x)")).toEqual({ $exp: "$x" });
+    expect(jsmql.expr("$.x.exp()")).toEqual({ $exp: "$x" });
   });
   it("Math.log (natural log → $ln)", () => {
-    expect(jsmql.expr("Math.log($.x)")).toEqual({ $ln: "$x" });
+    expect(jsmql.expr("$.x.log()")).toEqual({ $ln: "$x" });
   });
   it("Math.trunc", () => {
-    expect(jsmql.expr("Math.trunc($.x)")).toEqual({ $trunc: "$x" });
+    expect(jsmql.expr("$.x.trunc()")).toEqual({ $trunc: "$x" });
   });
 });
 
-describe("Math.* as bare callable in array methods", () => {
-  // Unary Math methods can be passed without parens to .map / .filter /
-  // similar — desugars to `(v) => Math.<method>(v)`. Mirrors the existing
-  // Boolean/Number/String bare-callable shape.
-  it("$.scores.map(Math.floor)", () => {
-    expect(jsmql.expr("$.scores.map(Math.floor)")).toEqual({
+describe("a Math member as a bare callback — refused; the arrow calls the number's own method", () => {
+  // `.map(Math.floor)` means `.map(x => Math.floor(x))`, and `Math.floor` is not a JSMQL
+  // name. The refusal names the number method. The arrow form is the one spelling.
+  it.each(["floor", "round", "abs", "ceil", "sqrt", "trunc", "pow", "min"])("$.scores.map(Math.%s)", (m) => {
+    expect(() => jsmql.expr(`$.scores.map(Math.${m})`)).toThrow("is not part of JSMQL");
+  });
+  it("the arrow that calls the number method lowers", () => {
+    expect(jsmql.expr("$.scores.map(x => x.floor())")).toEqual({
       $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $floor: "$$x" } },
     });
   });
-  it("$.scores.map(Math.round) adds the 0 precision arg", () => {
-    expect(jsmql.expr("$.scores.map(Math.round)")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $round: ["$$x", 0] } },
-    });
+  it("a refused Math member as a value answers with its own refusal", () => {
+    expect(() => jsmql.expr("Math.floor")).toThrow("Write '<number>.floor()'");
   });
-  it("$.scores.map(Math.abs)", () => {
-    expect(jsmql.expr("$.scores.map(Math.abs)")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $abs: "$$x" } },
-    });
-  });
-  it("$.scores.map(Math.ceil)", () => {
-    expect(jsmql.expr("$.scores.map(Math.ceil)")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $ceil: "$$x" } },
-    });
-  });
-  it("$.scores.map(Math.sqrt)", () => {
-    expect(jsmql.expr("$.scores.map(Math.sqrt)")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $sqrt: "$$x" } },
-    });
-  });
-  it("$.scores.map(Math.trunc)", () => {
-    expect(jsmql.expr("$.scores.map(Math.trunc)")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $trunc: "$$x" } },
-    });
-  });
-  it("rejects binary Math methods as bare (Math.pow)", () => {
-    expect(() => jsmql.expr("$.scores.map(Math.pow)")).toThrow(
-      "'Math.pow(base, exponent)' requires exactly 2 arguments, got 1",
-    );
-  });
-  it("accepts a variadic Math method as bare (Math.min) — one $min per element", () => {
-    expect(jsmql.expr("$.scores.map(Math.min)")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $min: "$$x" } },
-    });
-  });
-  it("rejects bare Math reference used as a value", () => {
-    expect(() => jsmql.expr("Math.floor")).toThrow(
-      "'Math.floor' is a function, not a value. Call it ('Math.floor(…)'), or hand it to a callback slot ('.map(Math.floor)').",
-    );
+  it("a Math member that JSMQL keeps is a function, not a value", () => {
+    expect(() => jsmql.expr("Math.random")).toThrow("'Math.random' is a function, not a value.");
   });
 });
 
 describe("Math trigonometry", () => {
   it("Math.sin", () => {
-    expect(jsmql.expr("Math.sin($.angle)")).toEqual({ $sin: "$angle" });
+    expect(jsmql.expr("$.angle.sin()")).toEqual({ $sin: "$angle" });
   });
   it("Math.cos", () => {
-    expect(jsmql.expr("Math.cos($.angle)")).toEqual({ $cos: "$angle" });
+    expect(jsmql.expr("$.angle.cos()")).toEqual({ $cos: "$angle" });
   });
   it("Math.tan", () => {
-    expect(jsmql.expr("Math.tan($.angle)")).toEqual({ $tan: "$angle" });
+    expect(jsmql.expr("$.angle.tan()")).toEqual({ $tan: "$angle" });
   });
   it("Math.asin", () => {
-    expect(jsmql.expr("Math.asin($.x)")).toEqual({ $asin: "$x" });
+    expect(jsmql.expr("$.x.asin()")).toEqual({ $asin: "$x" });
   });
   it("Math.acos", () => {
-    expect(jsmql.expr("Math.acos($.x)")).toEqual({ $acos: "$x" });
+    expect(jsmql.expr("$.x.acos()")).toEqual({ $acos: "$x" });
   });
   it("Math.atan", () => {
-    expect(jsmql.expr("Math.atan($.x)")).toEqual({ $atan: "$x" });
+    expect(jsmql.expr("$.x.atan()")).toEqual({ $atan: "$x" });
   });
   it("Math.atan2", () => {
-    expect(jsmql.expr("Math.atan2($.y, $.x)")).toEqual({ $atan2: ["$y", "$x"] });
+    expect(jsmql.expr("$.y.atan2($.x)")).toEqual({ $atan2: ["$y", "$x"] });
   });
-  it("Math.atan2 wrong arity", () => {
-    expect(() => jsmql.expr("Math.atan2($.x)")).toThrow(/exactly 2 arguments/);
+  it(".atan2() wrong arity", () => {
+    expect(() => jsmql.expr("$.y.atan2($.x, 1)")).toThrow(/exactly 1 argument/);
   });
   it("Math.sinh", () => {
-    expect(jsmql.expr("Math.sinh($.x)")).toEqual({ $sinh: "$x" });
+    expect(jsmql.expr("$.x.sinh()")).toEqual({ $sinh: "$x" });
   });
   it("Math.cosh", () => {
-    expect(jsmql.expr("Math.cosh($.x)")).toEqual({ $cosh: "$x" });
+    expect(jsmql.expr("$.x.cosh()")).toEqual({ $cosh: "$x" });
   });
   it("Math.tanh", () => {
-    expect(jsmql.expr("Math.tanh($.x)")).toEqual({ $tanh: "$x" });
+    expect(jsmql.expr("$.x.tanh()")).toEqual({ $tanh: "$x" });
   });
   it("Math.asinh", () => {
-    expect(jsmql.expr("Math.asinh($.x)")).toEqual({ $asinh: "$x" });
+    expect(jsmql.expr("$.x.asinh()")).toEqual({ $asinh: "$x" });
   });
   it("Math.acosh", () => {
-    expect(jsmql.expr("Math.acosh($.x)")).toEqual({ $acosh: "$x" });
+    expect(jsmql.expr("$.x.acosh()")).toEqual({ $acosh: "$x" });
   });
   it("Math.atanh", () => {
-    expect(jsmql.expr("Math.atanh($.x)")).toEqual({ $atanh: "$x" });
+    expect(jsmql.expr("$.x.atanh()")).toEqual({ $atanh: "$x" });
   });
 });
 
@@ -7596,19 +7564,19 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
     });
   });
   it(".round([p]) → MongoDB $round (banker's rounding)", () => {
-    expect(jsmql.expr("$.n.round()")).toEqual({ $round: ["$n", 0] });
+    expect(jsmql.expr("$.n.round()")).toEqual({ $round: "$n" });
     expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: ["$n", 2] });
   });
-  it(".ceil()/.floor() → $ceil/$floor; with precision, scale through $pow", () => {
+  it(".ceil()/.floor() → $ceil/$floor; with precision, scale by 10^p", () => {
     expect(jsmql.expr("$.n.ceil()")).toEqual({ $ceil: "$n" });
     expect(jsmql.expr("$.n.floor()")).toEqual({ $floor: "$n" });
     // Only $round takes a precision on the server, so a precision scales by 10^p,
     // rounds to a whole number and scales back. MEASURED on 1.234: ceil(2) → 1.24.
-    expect(jsmql.expr("$.n.ceil(2)")).toEqual({
-      $divide: [{ $ceil: { $multiply: ["$n", { $pow: [10, 2] }] } }, { $pow: [10, 2] }],
-    });
-    expect(jsmql.expr("$.n.floor(2)")).toEqual({
-      $divide: [{ $floor: { $multiply: ["$n", { $pow: [10, 2] }] } }, { $pow: [10, 2] }],
+    // A constant precision folds the scale; any other keeps the `$pow`.
+    expect(jsmql.expr("$.n.ceil(2)")).toEqual({ $divide: [{ $ceil: { $multiply: ["$n", 100] } }, 100] });
+    expect(jsmql.expr("$.n.floor(2)")).toEqual({ $divide: [{ $floor: { $multiply: ["$n", 100] } }, 100] });
+    expect(jsmql.expr("$.n.floor($.p)")).toEqual({
+      $divide: [{ $floor: { $multiply: ["$n", { $pow: [10, "$p"] }] } }, { $pow: [10, "$p"] }],
     });
   });
 });
@@ -8549,7 +8517,7 @@ describe("error cases", () => {
     expect(() => jsmql.expr("$.name.substing(1)")).toThrow(/Did you mean '\.substring\(\)'/);
   });
   it("near-miss Math member gets a suggestion", () => {
-    expect(() => jsmql.expr("Math.flor($.x)")).toThrow(/Did you mean 'Math\.floor'/);
+    expect(() => jsmql.expr("Math.randon()")).toThrow(/Did you mean 'Math\.random'/);
   });
   it("near-miss Number static method gets a suggestion", () => {
     expect(() => jsmql.expr("Number.isItneger($.x)")).toThrow(/Did you mean 'Number\.isInteger'/);
@@ -9032,19 +9000,21 @@ describe("array .has()", () => {
 
 describe("Math.min / Math.max", () => {
   it("Math.min variadic", () => {
-    expect(jsmql.expr("Math.min($.a, $.b, $.c)")).toEqual({ $min: ["$a", "$b", "$c"] });
+    expect(jsmql.expr("[$.a, $.b, $.c].min()")).toEqual({ $min: ["$a", "$b", "$c"] });
   });
   it("Math.max variadic", () => {
-    expect(jsmql.expr("Math.max($.a, $.b)")).toEqual({ $max: ["$a", "$b"] });
+    expect(jsmql.expr("[$.a, $.b].max()")).toEqual({ $max: ["$a", "$b"] });
   });
   it("Math.max with single array arg", () => {
-    expect(jsmql.expr("Math.max($.scores)")).toEqual({ $max: "$scores" });
+    expect(jsmql.expr("$.scores.max()")).toEqual({ $max: "$scores" });
   });
   it("Math.max with spread arg", () => {
-    expect(jsmql.expr("Math.max(...$.scores)")).toEqual({ $max: "$scores" });
+    expect(jsmql.expr("$.scores.max()")).toEqual({ $max: "$scores" });
   });
   it("Math.min mixed spread + scalar", () => {
-    expect(jsmql.expr("Math.min($.a, ...$.others)")).toEqual({ $min: { $concatArrays: [["$a"], "$others"] } });
+    expect(jsmql.expr("[$.a, ...$.others].min()")).toEqual({
+      $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] },
+    });
   });
 });
 
@@ -9703,22 +9673,22 @@ describe("date .getTime / .toISOString", () => {
 });
 
 describe("Math.sign / log2 / log10 / hypot / cbrt / random / constants", () => {
-  it("Math.sign maps to $cmp(x, 0)", () => {
-    expect(jsmql.expr("Math.sign($.x)")).toEqual({ $cmp: ["$x", 0] });
+  it(".sign() is $cmp times a $pow that is null for a missing value", () => {
+    expect(jsmql.expr("$.x.sign()")).toEqual({ $multiply: [{ $cmp: ["$x", 0] }, { $pow: ["$x", 0] }] });
   });
   it("Math.log2", () => {
-    expect(jsmql.expr("Math.log2($.x)")).toEqual({ $log: ["$x", 2] });
+    expect(jsmql.expr("$.x.log2()")).toEqual({ $log: ["$x", 2] });
   });
   it("Math.log10", () => {
-    expect(jsmql.expr("Math.log10($.x)")).toEqual({ $log10: "$x" });
+    expect(jsmql.expr("$.x.log10()")).toEqual({ $log10: "$x" });
   });
   it("Math.cbrt", () => {
-    expect(jsmql.expr("Math.cbrt($.x)")).toEqual({
-      $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, { $divide: [1, 3] }] }],
+    expect(jsmql.expr("$.x.cbrt()")).toEqual({
+      $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, 0.3333333333333333] }],
     });
   });
   it("Math.hypot 2-arg", () => {
-    expect(jsmql.expr("Math.hypot($.a, $.b)")).toEqual({ $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } });
+    expect(jsmql.expr("$.a.hypot($.b)")).toEqual({ $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } });
   });
   it("Math.random", () => {
     expect(jsmql.expr("Math.random()")).toEqual({ $rand: {} });
@@ -9956,14 +9926,14 @@ describe("flex-shape operators", () => {
   // The `$op(...)` escape hatch rejects the JS spread (HR2 — an operator takes its
   // operands directly). For the array-from-runtime case, write `Math.min(...arr)`
   // (the JS-method form keeps spread) or pass the field as a single array arg.
-  it("flex op rejects single spread, pointing at Math.min", () => {
+  it("flex op rejects single spread, pointing at .min()", () => {
     expect(() => jsmql.expr("$min(...$.scores)")).toThrow(
-      /Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\).*Math\.min\(\.\.\.arr\)/,
+      /Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\).*\[\.\.\.arr\]\.min\(\)/,
     );
   });
-  it("flex op rejects mixed spread + scalar, pointing at Math.max", () => {
+  it("flex op rejects mixed spread + scalar, pointing at .max()", () => {
     expect(() => jsmql.expr("$max($.first, ...$.rest)")).toThrow(
-      /Spread \(\.\.\.\) is not supported in \$max\(\.\.\.\).*Math\.max\(\.\.\.arr\)/,
+      /Spread \(\.\.\.\) is not supported in \$max\(\.\.\.\).*\[\.\.\.arr\]\.max\(\)/,
     );
   });
 
@@ -11017,7 +10987,7 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
 // accepted everywhere, producing output identical to the comma-free form.
 describe("trailing commas (JS syntax)", () => {
   it("Math.method args", () => {
-    expect(jsmql.expr("Math.max(1, 2,)")).toEqual(2);
+    expect(jsmql.expr("[1, 2].max()")).toEqual(2);
   });
 
   it("method-call args", () => {
@@ -11069,7 +11039,7 @@ describe("trailing commas (JS syntax)", () => {
 
   it("static-call args (both shapes)", () => {
     expect(jsmql.expr("Array.isArray($.o,)")).toEqual({ $isArray: ["$o"] });
-    expect(jsmql.expr("Math.max($.a, $.b,)")).toEqual({ $max: ["$a", "$b"] });
+    expect(jsmql.expr("[$.a, $.b].max()")).toEqual({ $max: ["$a", "$b"] });
   });
 
   it("array & object literals", () => {

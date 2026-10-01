@@ -246,8 +246,8 @@ Supported per-key bodies:
 |---|---|
 | `acc + d.<field>` / `acc.<key> + d.<field>` | `$sum: "$<field>"` |
 | `acc + 1` / `acc.<key> + 1` | `$sum: 1` (count documents) |
-| `Math.max(acc, d.<field>)` / `Math.max(acc.<key>, d.<field>)` | `$max: "$<field>"` |
-| `Math.min(acc, d.<field>)` / `Math.min(acc.<key>, d.<field>)` | `$min: "$<field>"` |
+| `[acc, d.<field>].max()` / `[acc.<key>, d.<field>].max()` | `$max: "$<field>"` |
+| `[acc, d.<field>].min()` / `[acc.<key>, d.<field>].min()` | `$min: "$<field>"` |
 | `acc ?? d.<field>` / `acc.<key> ?? d.<field>` | `$first: "$<field>"` (first non-null value seen) |
 | `d.<field>` (body ignores acc — every doc overwrites) | `$last: "$<field>"` |
 | `[...acc, d.<field>]` / `[...acc.<key>, d.<field>]` | `$push: "$<field>"` |

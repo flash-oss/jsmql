@@ -324,7 +324,7 @@ Comments are trivia: `skipTrivia()` discards them during tokenisation (it altern
 
 `...expr` is a valid construct anywhere positional args, array literal elements, or object literal entries appear. The AST represents it as a `SpreadElement`. Codegen handles spread in:
 
-- A JavaScript call that takes a list (`Math.min` / `Math.max`, `.assign()`, …) — a single spread → the bare value; mixed → `$concatArrays`-wrapped per argument
+- A JavaScript call that takes a list (`.assign()`, …) — a single spread → the bare value; mixed → `$concatArrays`-wrapped per argument
 - Array literals — `$concatArrays` with consecutive non-spread elements grouped into one literal-array operand; a lone `[...x]` returns `x` directly
 - Object literals — `$mergeObjects` with consecutive non-spread entries grouped into one operand; a lone `{...x}` returns `x` directly
 
@@ -369,9 +369,9 @@ When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items
 
 ## Built-in call vs bare reference
 
-A one-value-in/one-value-out built-in reads two ways: its call form (`Boolean(x)`, `ObjectId(x)`) and a bare callback reference (`arr.filter(Boolean)`, `ids.map(ObjectId)`). The parser is **name-blind** and settles neither question — `Boolean(x)` is a `CallExpression`, a bare `Boolean` is an `Ident`, and `Math.abs` is a `MemberAccess`, whatever the name spells. Facts on the row decide later which of them MEANS a callback:
+A one-value-in/one-value-out built-in reads two ways: its call form (`Boolean(x)`, `ObjectId(x)`) and a bare callback reference (`arr.filter(Boolean)`, `ids.map(ObjectId)`). The parser is **name-blind** and settles neither question — `Boolean(x)` is a `CallExpression`, a bare `Boolean` is an `Ident`, and `Math.random` is a `MemberAccess`, whatever the name spells. Facts on the row decide later which of them MEANS a callback:
 
-- The desugar pass rewrites a bare callable in an iteratee slot into the arrow that applies it. `bareCall` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts) turns `Boolean` into `x => Boolean(x)` and `Math.abs` into `x => Math.abs(x)`. The row's `iterateeSlots` layout states which slots accept the spelling; the rewrite never guesses this.
+- The desugar pass rewrites a bare callable in an iteratee slot into the arrow that applies it. `bareCall` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts) turns `Boolean` into `x => Boolean(x)`, and a namespace member such as `Math.floor` into `x => Math.floor(x)`, which its row then refuses. The row's `iterateeSlots` layout states which slots accept the spelling; the rewrite never guesses this.
 - A name reaches that rewrite only when its row says `asReference: true` and `call` is not `false`. The parser refuses a name whose row says `new` is *required* (`Date`) as a bare callable — real-JS `Date` without `new` ignores its argument, so JSMQL asks for the explicit arrow instead.
 
 Outside an iteratee slot, a bare name has no value to stand for, and the emit phase refuses it and names the call form (`Boolean(value)`).

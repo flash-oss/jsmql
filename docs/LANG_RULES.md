@@ -169,7 +169,7 @@ Raw MQL cannot be an operand of one of them, at any depth. An object or an array
 ```js
 $ifNull($.a, 0) && $.b > 1          // ✗ '$ifNull(…)' is raw MQL, and raw MQL cannot be an operand of '&&'.
 $ifNull($.tags, []).map(t => t)     // ✗ '$ifNull(…)' is raw MQL, and raw MQL cannot be the receiver of '.map()'.
-Math.max($.a, $abs($.b))            // ✗ '$abs(…)' is raw MQL, and raw MQL cannot be an operand of 'Math.max()'.
+Date.UTC(2020, $abs($.b))           // ✗ '$abs(…)' is raw MQL, and raw MQL cannot be an operand of 'Date.UTC()'.
 $.items.concat([$abs($.x)])         // ✗ '$abs(…)' is raw MQL, and raw MQL cannot be an operand of '.concat()'.
 $.code === $literal("$x")           // ✗ '$literal(…)' is raw MQL, and raw MQL cannot be an operand of '==='.
 { status: "A" } && $.qty > 5        // ✗ in a Filter: '{ status: … }' is a query document (raw MQL), and raw MQL cannot be an operand of '&&'.

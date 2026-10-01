@@ -375,11 +375,15 @@ var indexedPairs = (arr) => ({
   $zip: { inputs: [{ $range: [0, sizeOf(arr)] }, arr] }
 });
 var atPrecision = (op, value, precision) => {
-  const scale = { $pow: [10, precision] };
+  const scale = Number.isInteger(precision) ? 10 ** precision : { $pow: [10, precision] };
   return { $divide: [{ [op]: { $multiply: [value, scale] } }, scale] };
 };
+var nullPassing = (v) => {
+  const operands = typeof v === "object" && v !== null && !Array.isArray(v) ? v.$ifNull : void 0;
+  return Array.isArray(operands) && operands.length === 2 && operands[1] === null && Object.keys(v).length === 1 ? operands[0] : v;
+};
 var cbrt = (v) => ({
-  $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, { $divide: [1, 3] }] }]
+  $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, 1 / 3] }]
 });
 var isFiniteNumber = (v) => ({
   $and: [{ $isNumber: v }, { $not: [{ $in: [{ $toString: v }, ["NaN", "Infinity", "-Infinity"]] }] }]
@@ -710,6 +714,12 @@ var mapIsNotJsmql = unsupported(
 );
 var regExpIsNotJsmql = unsupported(
   "'RegExp(\u2026)' is not part of JSMQL. Write a regular expression literal ('/^ab/i'). For a pattern built at run time, write '$regexMatch({ input: \u2026, regex: \u2026 })'."
+);
+var mathStatic = (call, dot, example) => unsupported(
+  `'${call}' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '${dot}': '${example}' emits the identical MQL.`
+);
+var NO_MATH_POW = unsupported(
+  "'Math.pow(base, exponent)' is not part of JSMQL \u2014 the '**' operator says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.x ** 2' emits the identical MQL."
 );
 var NO_IS_FINITE = unsupported(
   `Number.isFinite($.x) is not supported: jsmql has no syntax for an Infinity or NaN literal to compare against. Three ways round it: check the BSON type with '$type($.x)' and reject the "double" values you know to be non-finite at the source; substitute a sentinel with '$op($convert, { input: $.x, to: "double", onError: 0 })'; or constrain to a known range ('$.x > -1e300 && $.x < 1e300') where the domain allows it.`
@@ -2450,7 +2460,7 @@ var NAMES = {
     category: "comparison",
     returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
-    spreadAlternative: "use the JS form Math.max(...arr)",
+    spreadAlternative: "use the JS form [...arr].max() or <array>.max()",
     shape: "flex",
     filter: viaFallback,
     expr: {
@@ -2478,7 +2488,7 @@ var NAMES = {
     category: "comparison",
     returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
-    spreadAlternative: "use the JS form Math.min(...arr)",
+    spreadAlternative: "use the JS form [...arr].min() or <array>.min()",
     shape: "flex",
     filter: viaFallback,
     expr: {
@@ -6128,16 +6138,17 @@ var NAMES = {
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
     readsNullAsEmpty: true,
+    passesNull: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
-      // MEASURED: Math.max($.a, $.b) → {"$max":["$a","$b"]}; $.rows.max() takes none.
+      // MEASURED: [$.a, $.b].max() → {"$max":["$a","$b"]}; { $max: [] } and a missing operand are null.
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: recv }) },
-        Math: {
-          args: { sig: "...values", atLeast: 1, spread: true },
-          emit: ({ args, value }) => ({ $max: args.length === 1 ? value(args[0]) : args.map(value) })
-        }
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.max(...values)' is not part of JSMQL \u2014 the array's own method says the same thing, and one capability gets one spelling. Write '[a, b, c].max()' or '<array>.max()': '[$.a, $.b].max()' emits the identical MQL."
+        )
       }
     },
     stream: unsupported("'.max()' has no stream form: it produces a value, not a stream of documents."),
@@ -6153,16 +6164,17 @@ var NAMES = {
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
     readsNullAsEmpty: true,
+    passesNull: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
-      // MEASURED: Math.min($.a, $.b) → {"$min":["$a","$b"]}; $.rows.min() takes none.
+      // MEASURED: [$.a, $.b].min() → {"$min":["$a","$b"]}; { $min: [] } and a missing operand are null.
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: recv }) },
-        Math: {
-          args: { sig: "...values", atLeast: 1, spread: true },
-          emit: ({ args, value }) => ({ $min: args.length === 1 ? value(args[0]) : args.map(value) })
-        }
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.min(...values)' is not part of JSMQL \u2014 the array's own method says the same thing, and one capability gets one spelling. Write '[a, b, c].min()' or '<array>.min()': '[$.a, $.b].min()' emits the identical MQL."
+        )
       }
     },
     stream: unsupported("'.min()' has no stream form: it produces a value, not a stream of documents."),
@@ -8220,16 +8232,17 @@ var NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      // MEASURED: $.n.round(2) takes the precision; Math.round($.n, 2) is refused.
       perFamily: {
+        // MEASURED: { $round: "$n" } is valid, and 2.5 gives 2, as { $round: ["$n", 0] } does.
         number: {
           args: { sig: "[precision]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({ $round: [recv, args[0] === void 0 ? 0 : value(args[0])] })
+          emit: ({ recv, args, value }) => ({ $round: args.length === 0 ? recv : [recv, value(args[0])] })
         },
-        Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $round: [value(args[0]), 0] }) }
+        Math: mathStatic("Math.round(value)", "<number>.round()", "$.x.round()")
       }
     },
     stream: unsupported("'.round()' has no stream form: it produces a value, not a stream of documents."),
@@ -8245,16 +8258,17 @@ var NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      // MEASURED: $.n.ceil(2) takes the precision; Math.ceil($.n, 2) is refused.
+      // MEASURED: $.n.ceil(2) takes the precision.
       perFamily: {
         number: {
           args: { sig: "[precision]", allowed: [0, 1] },
           emit: ({ recv, args, value }) => args.length === 0 ? { $ceil: recv } : atPrecision("$ceil", recv, value(args[0]))
         },
-        Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ceil: value(args[0]) }) }
+        Math: mathStatic("Math.ceil(value)", "<number>.ceil()", "$.x.ceil()")
       }
     },
     stream: unsupported("'.ceil()' has no stream form: it produces a value, not a stream of documents."),
@@ -8270,16 +8284,17 @@ var NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      // MEASURED: $.n.floor(2) takes the precision; Math.floor($.n, 2) is refused.
+      // MEASURED: $.n.floor(2) takes the precision.
       perFamily: {
         number: {
           args: { sig: "[precision]", allowed: [0, 1] },
           emit: ({ recv, args, value }) => args.length === 0 ? { $floor: recv } : atPrecision("$floor", recv, value(args[0]))
         },
-        Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $floor: value(args[0]) }) }
+        Math: mathStatic("Math.floor(value)", "<number>.floor()", "$.x.floor()")
       }
     },
     stream: unsupported("'.floor()' has no stream form: it produces a value, not a stream of documents."),
@@ -9261,22 +9276,22 @@ var NAMES = {
     returns: "number",
     where: [],
     filter: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
     ),
     expr: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
     ),
     stream: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
     ),
     statement: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
     ),
     group: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
     ),
     window: unsupported(
-      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Number(<value>).trunc()' for the whole number.`
     )
   }),
   parseFloat: global_({
@@ -9304,433 +9319,534 @@ var NAMES = {
       `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
     )
   }),
-  // ── the Math namespace's members ──
+  // ── the number methods that JavaScript spells as `Math` statics ──
   abs: name({
-    doc: "'Math.abs(value)' \u2014 emits $abs.",
+    doc: "'.abs()' \u2014 emits $abs. 'Math.abs()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $abs: value(args[0]) }) },
-    stream: unsupported("'Math.abs()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $abs: recv }) },
+        Math: mathStatic("Math.abs(value)", "<number>.abs()", "$.x.abs()")
+      }
+    },
+    stream: unsupported("'.abs()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.abs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.abs(\u2026);'"
+      "'.abs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.abs();'"
     ),
-    group: unsupported("'Math.abs()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Math.abs()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    group: unsupported("'.abs()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.abs()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   sqrt: name({
-    doc: "'Math.sqrt(value)' \u2014 emits $sqrt.",
+    doc: "'.sqrt()' \u2014 emits $sqrt. 'Math.sqrt()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sqrt: value(args[0]) }) },
-    stream: unsupported("'Math.sqrt()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sqrt: recv }) },
+        Math: mathStatic("Math.sqrt(value)", "<number>.sqrt()", "$.x.sqrt()")
+      }
+    },
+    stream: unsupported("'.sqrt()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.sqrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.sqrt(\u2026);'"
+      "'.sqrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sqrt();'"
     ),
-    group: unsupported("'Math.sqrt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.sqrt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.sqrt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.sqrt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   exp: name({
-    doc: "'Math.exp(value)' \u2014 emits $exp.",
+    doc: "'.exp()' \u2014 emits $exp. 'Math.exp()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $exp: value(args[0]) }) },
-    stream: unsupported("'Math.exp()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $exp: recv }) },
+        Math: mathStatic("Math.exp(value)", "<number>.exp()", "$.x.exp()")
+      }
+    },
+    stream: unsupported("'.exp()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.exp()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.exp(\u2026);'"
+      "'.exp()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.exp();'"
     ),
-    group: unsupported("'Math.exp()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Math.exp()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
-  }),
-  log: name({
-    doc: "'Math.log(value)' \u2014 emits $ln.",
-    call: true,
-    on: "Math",
-    returns: "number",
-    neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ln: value(args[0]) }) },
-    stream: unsupported("'Math.log()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Math.log()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.log(\u2026);'"
-    ),
-    group: unsupported("'Math.log()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Math.log()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
-  }),
-  log2: name({
-    doc: "'Math.log2(value)' \u2014 emits {$log:[x,2]}.",
-    call: true,
-    on: "Math",
-    returns: "number",
-    neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log: [value(args[0]), 2] }) },
-    stream: unsupported("'Math.log2()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Math.log2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.log2(\u2026);'"
-    ),
-    group: unsupported("'Math.log2()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.log2()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.exp()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.exp()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   log10: name({
-    doc: "'Math.log10(value)' \u2014 emits $log10.",
+    doc: "'.log10()' \u2014 emits $log10. 'Math.log10()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log10: value(args[0]) }) },
-    stream: unsupported("'Math.log10()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $log10: recv }) },
+        Math: mathStatic("Math.log10(value)", "<number>.log10()", "$.x.log10()")
+      }
+    },
+    stream: unsupported("'.log10()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.log10()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.log10(\u2026);'"
+      "'.log10()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.log10();'"
     ),
-    group: unsupported("'Math.log10()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.log10()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
-  }),
-  trunc: name({
-    doc: "'Math.trunc(value)' \u2014 emits $trunc.",
-    call: true,
-    on: "Math",
-    returns: "number",
-    neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $trunc: value(args[0]) }) },
-    stream: unsupported("'Math.trunc()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Math.trunc()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.trunc(\u2026);'"
-    ),
-    group: unsupported("'Math.trunc()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.trunc()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
-  }),
-  sign: name({
-    doc: "'Math.sign(value)' \u2014 emits {$cmp:[x,0]}.",
-    call: true,
-    on: "Math",
-    returns: "number",
-    neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cmp: [value(args[0]), 0] }) },
-    stream: unsupported("'Math.sign()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Math.sign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.sign(\u2026);'"
-    ),
-    group: unsupported("'Math.sign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.sign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
-  }),
-  cbrt: name({
-    doc: "'Math.cbrt(value)' \u2014 emits {$pow:[x,1/3]}.",
-    call: true,
-    on: "Math",
-    returns: "number",
-    neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => cbrt(value(args[0])) },
-    stream: unsupported("'Math.cbrt()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Math.cbrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.cbrt(\u2026);'"
-    ),
-    group: unsupported("'Math.cbrt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.cbrt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.log10()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.log10()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   sin: name({
-    doc: "'Math.sin(value)' \u2014 emits $sin.",
+    doc: "'.sin()' \u2014 emits $sin. 'Math.sin()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sin: value(args[0]) }) },
-    stream: unsupported("'Math.sin()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sin: recv }) },
+        Math: mathStatic("Math.sin(value)", "<number>.sin()", "$.x.sin()")
+      }
+    },
+    stream: unsupported("'.sin()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.sin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.sin(\u2026);'"
+      "'.sin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sin();'"
     ),
-    group: unsupported("'Math.sin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Math.sin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    group: unsupported("'.sin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.sin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   cos: name({
-    doc: "'Math.cos(value)' \u2014 emits $cos.",
+    doc: "'.cos()' \u2014 emits $cos. 'Math.cos()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cos: value(args[0]) }) },
-    stream: unsupported("'Math.cos()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cos: recv }) },
+        Math: mathStatic("Math.cos(value)", "<number>.cos()", "$.x.cos()")
+      }
+    },
+    stream: unsupported("'.cos()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.cos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.cos(\u2026);'"
+      "'.cos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.cos();'"
     ),
-    group: unsupported("'Math.cos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Math.cos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    group: unsupported("'.cos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.cos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   tan: name({
-    doc: "'Math.tan(value)' \u2014 emits $tan.",
+    doc: "'.tan()' \u2014 emits $tan. 'Math.tan()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tan: value(args[0]) }) },
-    stream: unsupported("'Math.tan()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $tan: recv }) },
+        Math: mathStatic("Math.tan(value)", "<number>.tan()", "$.x.tan()")
+      }
+    },
+    stream: unsupported("'.tan()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.tan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.tan(\u2026);'"
+      "'.tan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.tan();'"
     ),
-    group: unsupported("'Math.tan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Math.tan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    group: unsupported("'.tan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.tan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   asin: name({
-    doc: "'Math.asin(value)' \u2014 emits $asin.",
+    doc: "'.asin()' \u2014 emits $asin. 'Math.asin()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asin: value(args[0]) }) },
-    stream: unsupported("'Math.asin()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $asin: recv }) },
+        Math: mathStatic("Math.asin(value)", "<number>.asin()", "$.x.asin()")
+      }
+    },
+    stream: unsupported("'.asin()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.asin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.asin(\u2026);'"
+      "'.asin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.asin();'"
     ),
-    group: unsupported("'Math.asin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.asin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.asin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.asin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   acos: name({
-    doc: "'Math.acos(value)' \u2014 emits $acos.",
+    doc: "'.acos()' \u2014 emits $acos. 'Math.acos()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acos: value(args[0]) }) },
-    stream: unsupported("'Math.acos()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $acos: recv }) },
+        Math: mathStatic("Math.acos(value)", "<number>.acos()", "$.x.acos()")
+      }
+    },
+    stream: unsupported("'.acos()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.acos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.acos(\u2026);'"
+      "'.acos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.acos();'"
     ),
-    group: unsupported("'Math.acos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.acos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.acos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.acos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   atan: name({
-    doc: "'Math.atan(value)' \u2014 emits $atan.",
+    doc: "'.atan()' \u2014 emits $atan. 'Math.atan()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atan: value(args[0]) }) },
-    stream: unsupported("'Math.atan()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $atan: recv }) },
+        Math: mathStatic("Math.atan(value)", "<number>.atan()", "$.x.atan()")
+      }
+    },
+    stream: unsupported("'.atan()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.atan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.atan(\u2026);'"
+      "'.atan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.atan();'"
     ),
-    group: unsupported("'Math.atan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.atan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.atan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.atan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   sinh: name({
-    doc: "'Math.sinh(value)' \u2014 emits $sinh.",
+    doc: "'.sinh()' \u2014 emits $sinh. 'Math.sinh()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sinh: value(args[0]) }) },
-    stream: unsupported("'Math.sinh()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sinh: recv }) },
+        Math: mathStatic("Math.sinh(value)", "<number>.sinh()", "$.x.sinh()")
+      }
+    },
+    stream: unsupported("'.sinh()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.sinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.sinh(\u2026);'"
+      "'.sinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sinh();'"
     ),
-    group: unsupported("'Math.sinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.sinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.sinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.sinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   cosh: name({
-    doc: "'Math.cosh(value)' \u2014 emits $cosh.",
+    doc: "'.cosh()' \u2014 emits $cosh. 'Math.cosh()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cosh: value(args[0]) }) },
-    stream: unsupported("'Math.cosh()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cosh: recv }) },
+        Math: mathStatic("Math.cosh(value)", "<number>.cosh()", "$.x.cosh()")
+      }
+    },
+    stream: unsupported("'.cosh()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.cosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.cosh(\u2026);'"
+      "'.cosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.cosh();'"
     ),
-    group: unsupported("'Math.cosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.cosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.cosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.cosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   tanh: name({
-    doc: "'Math.tanh(value)' \u2014 emits $tanh.",
+    doc: "'.tanh()' \u2014 emits $tanh. 'Math.tanh()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tanh: value(args[0]) }) },
-    stream: unsupported("'Math.tanh()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $tanh: recv }) },
+        Math: mathStatic("Math.tanh(value)", "<number>.tanh()", "$.x.tanh()")
+      }
+    },
+    stream: unsupported("'.tanh()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.tanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.tanh(\u2026);'"
+      "'.tanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.tanh();'"
     ),
-    group: unsupported("'Math.tanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.tanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.tanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.tanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   asinh: name({
-    doc: "'Math.asinh(value)' \u2014 emits $asinh.",
+    doc: "'.asinh()' \u2014 emits $asinh. 'Math.asinh()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asinh: value(args[0]) }) },
-    stream: unsupported("'Math.asinh()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $asinh: recv }) },
+        Math: mathStatic("Math.asinh(value)", "<number>.asinh()", "$.x.asinh()")
+      }
+    },
+    stream: unsupported("'.asinh()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.asinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.asinh(\u2026);'"
+      "'.asinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.asinh();'"
     ),
-    group: unsupported("'Math.asinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.asinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.asinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.asinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   acosh: name({
-    doc: "'Math.acosh(value)' \u2014 emits $acosh.",
+    doc: "'.acosh()' \u2014 emits $acosh. 'Math.acosh()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acosh: value(args[0]) }) },
-    stream: unsupported("'Math.acosh()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $acosh: recv }) },
+        Math: mathStatic("Math.acosh(value)", "<number>.acosh()", "$.x.acosh()")
+      }
+    },
+    stream: unsupported("'.acosh()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.acosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.acosh(\u2026);'"
+      "'.acosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.acosh();'"
     ),
-    group: unsupported("'Math.acosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.acosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.acosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.acosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   atanh: name({
-    doc: "'Math.atanh(value)' \u2014 emits $atanh.",
+    doc: "'.atanh()' \u2014 emits $atanh. 'Math.atanh()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atanh: value(args[0]) }) },
-    stream: unsupported("'Math.atanh()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'Math.atanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.atanh(\u2026);'"
-    ),
-    group: unsupported("'Math.atanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.atanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
-  }),
-  pow: name({
-    doc: "'Math.pow(base, exponent)' \u2014 emits $pow.",
-    call: true,
-    on: "Math",
-    returns: "number",
-    neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "base, exponent", exact: 2 },
-      emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] })
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $atanh: recv }) },
+        Math: mathStatic("Math.atanh(value)", "<number>.atanh()", "$.x.atanh()")
+      }
     },
-    stream: unsupported("'Math.pow()' produces a value, not a stream of documents."),
+    stream: unsupported("'.atanh()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.pow()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.pow(\u2026);'"
+      "'.atanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.atanh();'"
     ),
-    group: unsupported("'Math.pow()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Math.pow()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    group: unsupported("'.atanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.atanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  log: name({
+    doc: "'.log([base])' \u2014 emits $ln, or $log with a base ($log10 for the constant 10). 'Math.log()' is refused.",
+    call: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    passesNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "[base]", allowed: [0, 1] }, emit: ({ recv, args, value }) => {
+          if (args.length === 0) return { $ln: recv };
+          const base = value(args[0]);
+          return base === 10 ? { $log10: recv } : { $log: [recv, base] };
+        } },
+        Math: mathStatic("Math.log(value)", "<number>.log()", "$.x.log()")
+      }
+    },
+    stream: unsupported("'.log()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.log()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.log();'"
+    ),
+    group: unsupported("'.log()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.log()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  log2: name({
+    doc: "'.log2()' \u2014 emits {$log:[x,2]}. 'Math.log2()' is refused.",
+    call: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    passesNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $log: [recv, 2] }) },
+        Math: mathStatic("Math.log2(value)", "<number>.log2()", "$.x.log2()")
+      }
+    },
+    stream: unsupported("'.log2()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.log2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.log2();'"
+    ),
+    group: unsupported("'.log2()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.log2()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  trunc: name({
+    doc: "'.trunc([precision])' \u2014 emits $trunc. 'Math.trunc()' is refused.",
+    call: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    passesNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        // MEASURED: { $trunc: "$x" } is valid, and 2.5 gives 2.
+        number: { args: { sig: "[precision]", allowed: [0, 1] }, emit: ({ recv, args, value }) => ({ $trunc: args.length === 0 ? recv : [recv, value(args[0])] }) },
+        Math: mathStatic("Math.trunc(value)", "<number>.trunc()", "$.x.trunc()")
+      }
+    },
+    stream: unsupported("'.trunc()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.trunc()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.trunc();'"
+    ),
+    group: unsupported("'.trunc()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.trunc()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  sign: name({
+    doc: "'.sign()' \u2014 -1, 0 or 1. 'Math.sign()' is refused.",
+    call: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    passesNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        // why: `$cmp` answers -1 for a missing value, and the `$pow` factor is 1 for a
+        // number and null for nothing. So the product is null there, with no `$cond`.
+        // MEASURED: -8 → -1, 0 → 0, missing → null.
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $multiply: [{ $cmp: [recv, 0] }, { $pow: [recv, 0] }] }) },
+        Math: mathStatic("Math.sign(value)", "<number>.sign()", "$.x.sign()")
+      }
+    },
+    stream: unsupported("'.sign()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.sign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sign();'"
+    ),
+    group: unsupported("'.sign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.sign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  cbrt: name({
+    doc: "'.cbrt()' \u2014 emits {$pow:[x,1/3]}, with the sign kept. 'Math.cbrt()' is refused.",
+    call: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    passesNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => cbrt(recv) },
+        Math: mathStatic("Math.cbrt(value)", "<number>.cbrt()", "$.x.cbrt()")
+      }
+    },
+    stream: unsupported("'.cbrt()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.cbrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.cbrt();'"
+    ),
+    group: unsupported("'.cbrt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.cbrt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   atan2: name({
-    doc: "'Math.atan2(y, x)' \u2014 emits $atan2.",
+    doc: "'<y>.atan2(x)' \u2014 emits $atan2. 'Math.atan2()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "y, x", exact: 2 },
-      emit: ({ args, value }) => ({ $atan2: [value(args[0]), value(args[1])] })
+      perFamily: {
+        number: { args: { sig: "x", exact: 1 }, emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] }) },
+        Math: mathStatic("Math.atan2(y, x)", "<y>.atan2(<x>)", "$.y.atan2($.x)")
+      }
     },
-    stream: unsupported("'Math.atan2()' produces a value, not a stream of documents."),
+    stream: unsupported("'.atan2()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.atan2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.atan2(\u2026);'"
+      "'.atan2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.atan2();'"
     ),
-    group: unsupported("'Math.atan2()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.atan2()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.atan2()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.atan2()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   hypot: name({
-    doc: "'Math.hypot(...values)' \u2014 the square root of the sum of squares.",
+    doc: "'.hypot(...values)' \u2014 the square root of the sum of squares. 'Math.hypot()' is refused.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...values", atLeast: 1 },
-      emit: ({ args, value }) => ({ $sqrt: { $add: args.map((a) => ({ $pow: [value(a), 2] })) } })
+      perFamily: {
+        number: { args: { sig: "...values", atLeast: 1 }, emit: ({ recv, args, value }) => ({ $sqrt: { $add: [recv, ...args.map(value)].map((v) => ({ $pow: [v, 2] })) } }) },
+        Math: mathStatic("Math.hypot(...values)", "<number>.hypot(<number>, \u2026)", "$.a.hypot($.b)")
+      }
     },
-    stream: unsupported("'Math.hypot()' produces a value, not a stream of documents."),
+    stream: unsupported("'.hypot()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.hypot()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.hypot(\u2026);'"
+      "'.hypot()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.hypot();'"
     ),
-    group: unsupported("'Math.hypot()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.hypot()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.hypot()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.hypot()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  pow: name({
+    doc: "'Math.pow()' \u2014 parses, then refused: the '**' operator says the same thing.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: [],
+    // One refusal in every position: the name is legal nowhere.
+    filter: NO_MATH_POW,
+    expr: NO_MATH_POW,
+    stream: NO_MATH_POW,
+    statement: NO_MATH_POW,
+    group: NO_MATH_POW,
+    window: NO_MATH_POW
   }),
   random: name({
     doc: "'Math.random()' \u2014 emits $rand.",
@@ -9779,14 +9895,16 @@ var NAMES = {
     window: unsupported("'Math.E' is a constant, not a window function.")
   }),
   Math: root({
-    doc: 'The JavaScript Math namespace. A receiver only \u2014 `jsmql.expr("Math")` errors.',
+    doc: "The JavaScript Math namespace: 'Math.random()', 'Math.PI' and 'Math.E'. Each other member is refused, and its refusal names the number method.",
     token: "Ident",
     provides: "namespace",
     // MEASURED: the compiler refuses a bare `Math`.
     // It is a receiver and nothing else, so no position lists it.
     where: [],
-    filter: unsupported("'Math' is a namespace, not a test. Compare a member: 'Math.abs($.n) > 2'."),
-    expr: unsupported("'Math' is a namespace, not a value. Write a member: 'Math.abs($.n)'."),
+    filter: unsupported("'Math' is a namespace, not a test. Compare a number method: '$.n.abs() > 2'."),
+    expr: unsupported(
+      "'Math' is a namespace, not a value. Write 'Math.random()', 'Math.PI' or 'Math.E', or a number method: '$.n.abs()'."
+    ),
     stream: unsupported("'Math' is a namespace, not a stage."),
     statement: unsupported("'Math' is a namespace, not a statement."),
     group: unsupported("'Math' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -10647,7 +10765,8 @@ var PRODUCTIONS = {
     filter: viaFallback,
     expr: {
       args: { sig: "left, right", exact: 2 },
-      emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] })
+      // MEASURED: `{ $pow: ["$m", 2] }` and `{ $pow: [2, "$m"] }` are null for a missing `m`.
+      emit: ({ args, value }) => ({ $pow: [nullPassing(value(args[0])), nullPassing(value(args[1]))] })
     },
     stream: unsupported("'**' produces a value, not a stage."),
     statement: unsupported("'**' is not a statement \u2014 see its 'where'.")
@@ -10832,7 +10951,7 @@ var PRODUCTIONS = {
     statement: unsupported("'$op()' is not a statement \u2014 see its 'where'.")
   }),
   namespacedCall: production({
-    doc: "`Math.abs(x)`, `Object.keys(o)`, `Number.isInteger(n)`, `Date.now()`.",
+    doc: "`Math.random()`, `Number.isInteger(n)`, `Date.now()`.",
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
     // `Math.max(a, b)` is a MethodCall whose object is the name `Math`. `Math.PI` is a
@@ -10884,7 +11003,7 @@ var PRODUCTIONS = {
     statement: unsupported("'Number(x)' is not a statement \u2014 see its 'where'.")
   }),
   unappliedReference: production({
-    doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Math.abs)`.",
+    doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Number)`.",
     tokens: ["identifier"],
     spelling: "String",
     // A bare name that the developer does not apply is still only a name. The
@@ -17618,19 +17737,6 @@ var asciiUpper = (s) => s.replace(/[a-z]/g, (c) => c.toUpperCase());
 var asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 var points = (s) => [...s];
 var isInt32 = (n2) => typeof n2 === "number" && Number.isInteger(n2) && n2 >= -2147483648 && n2 <= 2147483647;
-var MATH = {
-  abs: ([x]) => Math.abs(x),
-  sign: ([x]) => Math.sign(x),
-  trunc: ([x]) => Math.trunc(x),
-  floor: ([x]) => Math.floor(x),
-  ceil: ([x]) => Math.ceil(x),
-  // IEEE-754 requires a correctly rounded square root, so this one is safe.
-  sqrt: ([x]) => Math.sqrt(x),
-  min: (xs) => Math.min(...xs),
-  max: (xs) => Math.max(...xs),
-  // `$round` rounds a half to the EVEN neighbour; JavaScript rounds it up.
-  round: ([x]) => roundToPlaces(x, 0)
-};
 function roundToPlaces(n2, places) {
   if (!Number.isFinite(n2) || n2 === 0) return n2;
   const { digits: digits2, exponent } = exactDecimal(n2);
@@ -17662,12 +17768,6 @@ function exactDecimal(n2) {
 }
 function foldNamespaceCall(namespace, name2, args) {
   const values = args.map(valueOf);
-  if (namespace === "Math") {
-    const rule = MATH[name2];
-    if (rule === void 0) return NO2;
-    if (!values.every((v) => typeof v === "number")) return NO2;
-    return ok2(rule(values));
-  }
   if (namespace === "Number") {
     const [x] = values;
     switch (name2) {
@@ -17888,6 +17988,16 @@ function sliceOf(items, start, end, done) {
 function numberMethod(n2, name2, args) {
   const [a, b] = args.map(valueOf);
   switch (name2) {
+    case "abs":
+      return ok2(Math.abs(n2));
+    case "sign":
+      return ok2(Math.sign(n2));
+    // IEEE-754 requires a correctly rounded square root, so this one is safe.
+    case "sqrt":
+      return ok2(Math.sqrt(n2));
+    // A precision is MongoDB's own `$trunc` place count, which JavaScript has no twin for.
+    case "trunc":
+      return a === void 0 ? ok2(Math.trunc(n2)) : NO2;
     case "round":
     case "ceil":
     case "floor": {
@@ -21045,7 +21155,7 @@ var reduceWrapEntry = (pos) => new CodegenError(
   pos
 );
 var reduceWrapShape = (acc, d, pos) => new CodegenError(
-  `This reducer body spells no MongoDB accumulator. The shapes that do: '${acc} + ${d}.<field>' ($sum), '${acc} + 1' ($sum: 1), 'Math.max(${acc}, ${d}.<field>)' / 'Math.min(\u2026)' ($max / $min), '${acc} ?? ${d}.<field>' ($first), '${d}.<field>' ($last), '[...${acc}, ${d}.<field>]' or '${acc}.concat(${d}.<field>)' ($push). For anything else write '$group({ \u2026 })'.`,
+  `This reducer body spells no MongoDB accumulator. The shapes that do: '${acc} + ${d}.<field>' ($sum), '${acc} + 1' ($sum: 1), '[${acc}, ${d}.<field>].max()' / '\u2026.min()' ($max / $min), '${acc} ?? ${d}.<field>' ($first), '${d}.<field>' ($last), '[...${acc}, ${d}.<field>]' or '${acc}.concat(${d}.<field>)' ($push). For anything else write '$group({ \u2026 })'.`,
   pos
 );
 var reduceWrapObjectBody = (acc, pos) => new CodegenError(
@@ -22007,7 +22117,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
     if (n2 !== null && !Number.isInteger(n2)) {
       const what = i === -1 ? "receiver" : `argument ${i + 1}`;
       throw new CodegenError(
-        `'${spell2(name2)}' ${what} must be an integer. The server takes whole numbers here. It got ${n2}. Write an integer literal, or round the value with 'Math.ceil(\u2026)' or 'Math.floor(\u2026)'.`,
+        `'${spell2(name2)}' ${what} must be an integer. The server takes whole numbers here. It got ${n2}. Write an integer literal, or round the value with '<number>.ceil()' or '<number>.floor()'.`,
         e.pos
       );
     }
@@ -24456,6 +24566,7 @@ function holderOf(e, env) {
 }
 function memberAccess(node, env) {
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
+    if (!lowersOn(node.name, node.object.name)) return dispatchOn(node, node.name, node.object, [], env);
     throw unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
@@ -25090,6 +25201,14 @@ function fieldOf(e, param) {
   }
   return null;
 }
+function pairOf(body) {
+  if (body.type !== "MethodCall" || body.name !== "max" && body.name !== "min" || body.args.length !== 0) return null;
+  const list = body.object;
+  if (list.type !== "ArrayLiteral" || list.elements.length !== 2) return null;
+  if (list.elements.some((el) => el.type === "SpreadElement")) return null;
+  const [a, b] = list.elements;
+  return { op: body.name === "max" ? "$max" : "$min", operands: [a, b] };
+}
 function accumulatorOf(body, isAcc, param) {
   if (body.type === "BinaryExpr" && body.op === "+") {
     const other = isAcc(body.left) ? body.right : isAcc(body.right) ? body.left : null;
@@ -25099,11 +25218,12 @@ function accumulatorOf(body, isAcc, param) {
       if (f !== null) return { op: "$sum", value: "$" + f };
     }
   }
-  if (body.type === "MethodCall" && body.object.type === "Ident" && body.object.name === "Math" && (body.name === "max" || body.name === "min") && body.args.length === 2) {
-    const [a, b] = body.args;
+  const pair = pairOf(body);
+  if (pair !== null) {
+    const [a, b] = pair.operands;
     const other = isAcc(a) ? b : isAcc(b) ? a : null;
     const f = other === null ? null : fieldOf(other, param);
-    if (f !== null) return { op: body.name === "max" ? "$max" : "$min", value: "$" + f };
+    if (f !== null) return { op: pair.op, value: "$" + f };
   }
   if (body.type === "BinaryExpr" && body.op === "??" && isAcc(body.left)) {
     const f = fieldOf(body.right, param);
@@ -26234,11 +26354,10 @@ function pathOf2(target, pos) {
   throw updateTargetNeedsField(pos);
 }
 function minMax(v, path) {
-  if (v.type !== "MethodCall" || v.object.type !== "Ident" || v.object.name !== "Math") return null;
-  if (v.name !== "min" && v.name !== "max") return null;
-  const [self, other] = v.args;
-  if (v.args.length !== 2 || self === void 0 || other === void 0) return null;
-  if (self.type === "SpreadElement" || other.type === "SpreadElement") return null;
+  if (v.type !== "MethodCall" || v.name !== "min" && v.name !== "max" || v.args.length !== 0) return null;
+  if (v.object.type !== "ArrayLiteral" || v.object.elements.length !== 2) return null;
+  if (v.object.elements.some((el) => el.type === "SpreadElement")) return null;
+  const [self, other] = v.object.elements;
   if (self.type !== "FieldRef" || self.path !== path) return null;
   return { op: v.name === "min" ? "$min" : "$max", value: other };
 }

@@ -1330,9 +1330,9 @@ type ByArgs<In, Out> = {
 };
 
 /**
- * A renderer. It holds one rule for every family, or one rule PER family. The
- * count of arguments can differ by receiver as well as by position: `Math.max(a, b)`
- * takes arguments, `$.rows.max()` takes none, and both are the `max` entry. Every
+ * A renderer. It holds one rule for every family, or one rule PER family. The rule
+ * can differ by receiver as well as by position: `$.rows.max()` takes no argument,
+ * and the `Math` family of the same `max` entry holds a refusal. Every
  * family that `on` lists must appear, with a rule or with a refusal that says why.
  * No family that `on` omits can appear. `uncertain` answers a receiver whose family
  * the compiler cannot prove. See `Uncertain` for when a row must state it.

@@ -201,7 +201,7 @@ constants only.
 | `$.n *= k` | `$mul` |
 | `delete $.a` | `$unset: { a: "" }` |
 | `$.t = new Date()` | `$currentDate: { t: true }` |
-| `$.n = Math.min($.n, k)` / `Math.max` | `$min` / `$max` |
+| `$.n = [$.n, k].min()` / `.max()` | `$min` / `$max` |
 | `$.tags.push(x)` / `.pop()` / `.shift()` | `$push` / `$pop` |
 | `$.b = $.a` paired with `delete $.a`, either order | `$rename` |
 | `$inc({ n: 2 })`, `{ $set: { a: 1 } }` | merged in as written |

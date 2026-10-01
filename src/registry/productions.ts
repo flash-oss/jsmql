@@ -21,7 +21,7 @@ import type { NodeName, On, Only, Position, TypeExpr } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
 import { bsonTagOf, isDate, isRegExp, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
-import { cond } from "./mql.ts";
+import { cond, nullPassing } from "./mql.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -753,7 +753,8 @@ export const PRODUCTIONS = {
     filter: viaFallback,
     expr: {
       args: { sig: "left, right", exact: 2 },
-      emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] }),
+      // MEASURED: `{ $pow: ["$m", 2] }` and `{ $pow: [2, "$m"] }` are null for a missing `m`.
+      emit: ({ args, value }) => ({ $pow: [nullPassing(value(args[0])), nullPassing(value(args[1]))] }),
     },
     stream: unsupported("'**' produces a value, not a stage."),
     statement: unsupported("'**' is not a statement — see its 'where'."),
@@ -949,7 +950,7 @@ export const PRODUCTIONS = {
   }),
 
   namespacedCall: production({
-    doc: "`Math.abs(x)`, `Object.keys(o)`, `Number.isInteger(n)`, `Date.now()`.",
+    doc: "`Math.random()`, `Number.isInteger(n)`, `Date.now()`.",
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
     // `Math.max(a, b)` is a MethodCall whose object is the name `Math`. `Math.PI` is a
@@ -1004,7 +1005,7 @@ export const PRODUCTIONS = {
   }),
 
   unappliedReference: production({
-    doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Math.abs)`.",
+    doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Number)`.",
     tokens: ["identifier"],
     spelling: "String",
     // A bare name that the developer does not apply is still only a name. The

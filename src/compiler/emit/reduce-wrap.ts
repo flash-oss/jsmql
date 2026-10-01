@@ -9,7 +9,7 @@
 // required and unread, because MongoDB's accumulators have their own neutral elements.
 //
 //   acc + d.total          → { $sum: "$total" }      acc + 1            → { $sum: 1 }
-//   Math.max(acc, d.x)     → { $max: "$x" }          Math.min(acc, d.x) → { $min: "$x" }
+//   [acc, d.x].max()       → { $max: "$x" }          [acc, d.x].min()   → { $min: "$x" }
 //   acc ?? d.x             → { $first: "$x" }        d.x                → { $last: "$x" }
 //   [...acc, d.x]          → { $push: "$x" }         acc.concat(d.x)    → { $push: "$x" }
 //
@@ -25,7 +25,7 @@ type Accumulator = { op: "$sum" | "$max" | "$min" | "$first" | "$last" | "$push"
 
 /**
  * The seed folded in, as JavaScript would fold it: `acc + d.x` from 10 is the sum plus 10,
- * `Math.max` from 5 is the max with 5, `[...acc, d.x]` from `[0]` is `[0, …]`,
+ * `.max()` from 5 is the max with 5, `[...acc, d.x]` from `[0]` is `[0, …]`,
  * and `acc ?? d.x` from a non-null seed IS the seed. `$last` reads no seed. The
  * compiler refuses a seed that is not a constant, because it cannot start a MongoDB accumulator.
  */
@@ -105,6 +105,17 @@ function fieldOf(e: Expr, param: string): string | null {
   return null;
 }
 
+/** `[a, b].max()` or `[a, b].min()`: the two operands, and the accumulator they spell. */
+function pairOf(body: Expr): { op: "$max" | "$min"; operands: readonly [Expr, Expr] } | null {
+  if (body.type !== "MethodCall" || (body.name !== "max" && body.name !== "min") || body.args.length !== 0) return null;
+  const list = body.object;
+  if (list.type !== "ArrayLiteral" || list.elements.length !== 2) return null;
+  if (list.elements.some((el) => el.type === "SpreadElement")) return null;
+  // a statement in a list literal is refused before any reading, so each element is an expression
+  const [a, b] = list.elements as readonly Expr[];
+  return { op: body.name === "max" ? "$max" : "$min", operands: [a, b] };
+}
+
 /** The accumulator a reducer body spells. `isAcc` says which node is the accumulator. */
 function accumulatorOf(body: Expr, isAcc: (e: Expr) => boolean, param: string): Accumulator | null {
   if (body.type === "BinaryExpr" && body.op === "+") {
@@ -115,17 +126,12 @@ function accumulatorOf(body: Expr, isAcc: (e: Expr) => boolean, param: string): 
       if (f !== null) return { op: "$sum", value: "$" + f };
     }
   }
-  if (
-    body.type === "MethodCall" &&
-    body.object.type === "Ident" &&
-    body.object.name === "Math" &&
-    (body.name === "max" || body.name === "min") &&
-    body.args.length === 2
-  ) {
-    const [a, b] = body.args as readonly Expr[];
+  const pair = pairOf(body);
+  if (pair !== null) {
+    const [a, b] = pair.operands;
     const other = isAcc(a) ? b : isAcc(b) ? a : null;
     const f = other === null ? null : fieldOf(other, param);
-    if (f !== null) return { op: body.name === "max" ? "$max" : "$min", value: "$" + f };
+    if (f !== null) return { op: pair.op, value: "$" + f };
   }
   if (body.type === "BinaryExpr" && body.op === "??" && isAcc(body.left)) {
     const f = fieldOf(body.right, param);

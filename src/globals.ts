@@ -3648,20 +3648,66 @@ declare global {
     words(pattern?: string | RegExp): string[];
   }
   interface Number {
+    /** The absolute value — `$abs`. */
+    abs(): number;
+    /** The arccosine, in radians — `$acos`. */
+    acos(): number;
+    /** The inverse hyperbolic cosine — `$acosh`. */
+    acosh(): number;
+    /** The arcsine, in radians — `$asin`. */
+    asin(): number;
+    /** The inverse hyperbolic sine — `$asinh`. */
+    asinh(): number;
+    /** The arctangent, in radians — `$atan`. */
+    atan(): number;
+    /** The arctangent of this / `x`, in radians — `$atan2`. */
+    atan2(x: number): number;
+    /** The inverse hyperbolic tangent — `$atanh`. */
+    atanh(): number;
+    /** The cube root, with the sign kept. */
+    cbrt(): number;
     /** Round up to `precision` decimals — `_.ceil`. */
     ceil(precision?: number): number;
     /** Clamp within `[lower, upper]` — `_.clamp`. */
     clamp(lower: number, upper: number): number;
+    /** The cosine, in radians — `$cos`. */
+    cos(): number;
+    /** The hyperbolic cosine — `$cosh`. */
+    cosh(): number;
+    /** `e` raised to this power — `$exp`. */
+    exp(): number;
     /** Round down to `precision` decimals — `_.floor`. */
     floor(precision?: number): number;
+    /** The square root of the sum of the squares of this and `values`. */
+    hypot(...values: number[]): number;
     /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
     inRange(start: number, end?: number): boolean;
+    /** The natural logarithm — `$ln` — or the logarithm to `base` — `$log`. */
+    log(base?: number): number;
+    /** The base-10 logarithm — `$log10`. */
+    log10(): number;
+    /** The base-2 logarithm — `$log` with base 2. */
+    log2(): number;
     /** The integers from the start up to, but not including, the end — `_.range`. */
     range(end?: number, step?: number): number[];
     /** The `.range()` array in reverse order — `_.rangeRight`. */
     rangeRight(end?: number, step?: number): number[];
     /** Round to `precision` decimals — `_.round`. */
     round(precision?: number): number;
+    /** -1, 0 or 1 — the sign of the number. */
+    sign(): number;
+    /** The sine, in radians — `$sin`. */
+    sin(): number;
+    /** The hyperbolic sine — `$sinh`. */
+    sinh(): number;
+    /** The square root — `$sqrt`. */
+    sqrt(): number;
+    /** The tangent, in radians — `$tan`. */
+    tan(): number;
+    /** The hyperbolic tangent — `$tanh`. */
+    tanh(): number;
+    /** Truncate to `precision` decimals — `$trunc`. */
+    trunc(precision?: number): number;
   }
   interface Date {
     /** Clamp within `[lower, upper]` — `_.clamp`. */

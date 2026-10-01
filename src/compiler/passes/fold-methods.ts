@@ -66,20 +66,6 @@ const isInt32 = (n: unknown): n is number =>
  * answer is whatever the server gives. Agreement at the points one test happens
  * to check is not a guarantee. So the line follows the standard, not luck.
  */
-const MATH: Readonly<Record<string, (a: readonly number[]) => number>> = {
-  abs: ([x]) => Math.abs(x),
-  sign: ([x]) => Math.sign(x),
-  trunc: ([x]) => Math.trunc(x),
-  floor: ([x]) => Math.floor(x),
-  ceil: ([x]) => Math.ceil(x),
-  // IEEE-754 requires a correctly rounded square root, so this one is safe.
-  sqrt: ([x]) => Math.sqrt(x),
-  min: (xs) => Math.min(...xs),
-  max: (xs) => Math.max(...xs),
-  // `$round` rounds a half to the EVEN neighbour; JavaScript rounds it up.
-  round: ([x]) => roundToPlaces(x, 0),
-};
-
 /**
  * MongoDB's rounding: a half goes to the EVEN neighbour, in DECIMAL.
  *
@@ -143,13 +129,6 @@ function exactDecimal(n: number): { digits: bigint; exponent: number } {
  */
 export function foldNamespaceCall(namespace: string, name: string, args: readonly Arg[]): Evaluation {
   const values = args.map(valueOf);
-
-  if (namespace === "Math") {
-    const rule = MATH[name];
-    if (rule === undefined) return NO;
-    if (!values.every((v) => typeof v === "number")) return NO;
-    return ok(rule(values as number[]));
-  }
 
   if (namespace === "Number") {
     const [x] = values;
@@ -485,6 +464,16 @@ function sliceOf<T>(items: T[], start: unknown, end: unknown, done: (parts: T[])
 function numberMethod(n: number, name: string, args: readonly Arg[]): Evaluation {
   const [a, b] = args.map(valueOf);
   switch (name) {
+    case "abs":
+      return ok(Math.abs(n));
+    case "sign":
+      return ok(Math.sign(n));
+    // IEEE-754 requires a correctly rounded square root, so this one is safe.
+    case "sqrt":
+      return ok(Math.sqrt(n));
+    // A precision is MongoDB's own `$trunc` place count, which JavaScript has no twin for.
+    case "trunc":
+      return a === undefined ? ok(Math.trunc(n)) : NO;
     case "round":
     case "ceil":
     case "floor": {

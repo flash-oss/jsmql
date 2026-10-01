@@ -108,9 +108,10 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
   });
 
   it("takes the one field family as the receiver's family, without a dispatch", () => {
-    // `ceil` is on number and Math: an unprovable receiver is a number by the row's claim.
+    // `ceil` is on number and Math: an unprovable receiver is a number by the row's claim,
+    // and the `Math` cell refuses the static.
     expect(at("ceil", OPAQUE).kind).toBe("rule");
-    expect(at("ceil", { kind: "namespace", name: "Math" }, 1).kind).toBe("rule");
+    expect(at("ceil", { kind: "namespace", name: "Math" }, 1).kind).toBe("refused");
   });
 
   it("refuses a receiver the row does not list, naming what it accepts", () => {

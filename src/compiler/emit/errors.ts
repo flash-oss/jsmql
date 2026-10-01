@@ -227,7 +227,7 @@ export const lambdaAsValue = (pos: number): CodegenError =>
     pos,
   );
 
-/** A callable name read without being called — `Number + 1`, `Math.floor + 5`. */
+/** A callable name read without being called — `Number + 1`, `Math.random + 5`. */
 export const callableAsValue = (spelled: string, pos: number): CodegenError =>
   new CodegenError(
     `'${spelled}' used as a value is only valid as a callback to a higher-order array method — for example, $.items.map(${spelled}). To apply it to one value, write ${spelled}(value).`,
@@ -1098,7 +1098,7 @@ export const reduceWrapEntry = (pos: number): CodegenError =>
 
 export const reduceWrapShape = (acc: string, d: string, pos: number): CodegenError =>
   new CodegenError(
-    `This reducer body spells no MongoDB accumulator. The shapes that do: '${acc} + ${d}.<field>' ($sum), '${acc} + 1' ($sum: 1), 'Math.max(${acc}, ${d}.<field>)' / 'Math.min(…)' ($max / $min), '${acc} ?? ${d}.<field>' ($first), '${d}.<field>' ($last), '[...${acc}, ${d}.<field>]' or '${acc}.concat(${d}.<field>)' ($push). For anything else write '$group({ … })'.`,
+    `This reducer body spells no MongoDB accumulator. The shapes that do: '${acc} + ${d}.<field>' ($sum), '${acc} + 1' ($sum: 1), '[${acc}, ${d}.<field>].max()' / '….min()' ($max / $min), '${acc} ?? ${d}.<field>' ($first), '${d}.<field>' ($last), '[...${acc}, ${d}.<field>]' or '${acc}.concat(${d}.<field>)' ($push). For anything else write '$group({ … })'.`,
     pos,
   );
 
@@ -1547,7 +1547,7 @@ export const notAnUpdate = (pos: number): CodegenError =>
     pos,
   );
 
-/** `Math.abs` as a value — a function, not a number. */
+/** `Math.random` as a value — a function, not a number. */
 export const unappliedReference = (ns: string, name: string, pos: number): CodegenError =>
   new CodegenError(
     `'${ns}.${name}' is a function, not a value. Call it ('${ns}.${name}(…)'), or hand it to a callback slot ('.map(${ns}.${name})').`,
