@@ -256,20 +256,18 @@ export function receiverFamiliesOf(name: string): readonly Family[] | "any" | un
 
 type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
 
-/**
- * How many arguments a name takes in value position, on a given receiver family.
- *
- * The family is not optional in practice: `max` is `.max()` on an array and
- * `Math.max(a, b)` on the namespace, one row with two counts. If this function
- * read only the first branch and hoped for the best, it would refuse
- * `Math.max(3, 7)` for taking two arguments.
- */
 /** What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an array makes the server refuse. */
 export function elementsOf(name: string): "scalar" | undefined {
   return (row(name) as { elements?: "scalar" } | undefined)?.elements;
 }
 
-/** The kind of ONE element of the array a name returns, where its own lowering fixes it. */
+/**
+ * How many arguments a name takes in value position, on a given receiver family.
+ *
+ * The family is not optional in practice: a row with `perFamily` states one count
+ * per family. If this function read only the first branch, it would refuse a call
+ * that the receiver's own family accepts.
+ */
 export function argCountOf(name: string, family?: Family): ArgCount | undefined {
   const cell = (row(name) as { expr?: unknown } | undefined)?.expr;
   if (cell === null || typeof cell !== "object") return undefined;
