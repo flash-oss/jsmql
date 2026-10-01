@@ -867,9 +867,12 @@ them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`.
 `$.a.assign($.b)` is `{ $mergeObjects: ["$a", "$b"] }`. A packed list is the list of
 sources, after the receiver: `$.a.assign(...$.docs)` is
 `{ $mergeObjects: { $concatArrays: [["$a"], "$docs"] } }`. An empty-object receiver
-adds nothing, so the cell leaves it out, and one source takes the one-operand form:
-`({}).assign($.docs)` is `{ $mergeObjects: "$docs" }`. The server merges an array
-operand of that form, and refuses an array among two or more operands (measured).
+adds nothing, so the cell leaves it out where the sources stay objects:
+`({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, and `({}).assign($.a, $.b)`
+is `{ $mergeObjects: ["$a", "$b"] }`. One source with no spread keeps the `{}`:
+`({}).assign($.o)` is `{ $mergeObjects: [{}, "$o"] }`, because the one-operand form
+would merge an array source. The server merges an array in the one-operand form, and
+refuses an array among two or more operands (measured).
 
 **`.concat()` reads each argument on its own.** JavaScript adds the elements
 of an array argument, and adds any other argument as one element. So the

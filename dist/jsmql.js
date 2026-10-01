@@ -647,8 +647,7 @@ var mergedSources = (recv, args, value) => {
     return { $mergeObjects: { $concatArrays: [[recv], ...tail] } };
   }
   const sources = args.map(value);
-  if (empty) return { $mergeObjects: sources.length === 1 ? sources[0] : sources };
-  return { $mergeObjects: [recv, ...sources] };
+  return { $mergeObjects: empty && sources.length > 1 ? sources : [recv, ...sources] };
 };
 var nullOr = (recv, present2, bind, body) => {
   if (present2) return body(recv);
@@ -1873,7 +1872,7 @@ var NAMES = {
     returns: "object",
     neverNull: "always",
     where: ["value", "group"],
-    spreadAlternative: "use object spread ({ ...a, ...b }) or ({}).assign(docs)",
+    spreadAlternative: "use object spread ({ ...a, ...b }) or ({}).assign(...docs)",
     shape: "flex",
     filter: viaFallback,
     expr: {
@@ -9048,7 +9047,7 @@ var NAMES = {
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Object: unsupported(
-          "'Object.assign(target, ...sources)' is not part of JSMQL \u2014 the object's own method says the same thing, and one capability gets one spelling. Write '({}).assign($.docs)' to merge an array of objects, or '<object>.assign(<object>, \u2026)'. JSMQL writes nothing into the target, so to change a field write '$.f = { ...$.f, ...x };'."
+          "'Object.assign(target, ...sources)' is not part of JSMQL \u2014 the object's own method says the same thing, and one capability gets one spelling. Write '({}).assign(...$.docs)' to merge an array of objects, or '<object>.assign(<object>, \u2026)'. JSMQL writes nothing into the target, so to change a field write '$.f = { ...$.f, ...x };'."
         )
       }
     },

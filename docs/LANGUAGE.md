@@ -3153,7 +3153,8 @@ $.obj.entries()                    // { $map: { input: { $objectToArray: { $ifNu
 $.pairs.fromEntries()              // { $arrayToObject: { $map: { input: { $ifNull: ["$pairs", []] }, in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] } } }
 $.a.assign($.b)                    // { $mergeObjects: ["$a", "$b"] }
 $.a.assign($.b, $.c)               // { $mergeObjects: ["$a", "$b", "$c"] }
-({}).assign($.docs)                // { $mergeObjects: "$docs" }   (merge an array of objects)
+({}).assign(...$.docs)             // { $mergeObjects: "$docs" }   (merge an array of objects)
+({}).assign($.o)                   // { $mergeObjects: [{}, "$o"] }   (a copy of one object)
 $.a.assign(...$.docs)              // { $mergeObjects: { $concatArrays: [["$a"], "$docs"] } }   (spread)
 
 Array.isArray($.items)             // { $isArray: "$items" }
@@ -3163,15 +3164,15 @@ $setField("fieldName", $.doc, val) // { $setField: { field: "fieldName", input: 
 $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input: "$doc" } }
 ```
 
-`.assign()` answers a new object: the receiver comes first, and each argument follows. An empty-object receiver (`({})`) adds nothing, so the merge leaves it out. With one argument, `({}).assign(x)` merges the array `x`, or gives the object `x` as it is. A spread argument is a list of sources.
+`.assign()` answers a new object: the receiver comes first, and each argument follows. An argument with no spread is one source object, as in JavaScript. A spread argument is a list of sources, so `({}).assign(...$.docs)` merges each object of `docs`. An empty-object receiver (`({})`) adds nothing, so the merge leaves it out where the sources stay objects.
 
-> **This is different from JavaScript.** `Object.assign({}, $.docs)` copies the indexes of the array as keys, and `({}).assign($.docs)` merges its elements. JavaScript's `Object.assign(...$.docs)` also writes into `$.docs[0]`. `({}).assign($.docs)` writes nothing, because its target is a new empty object.
+> **This is different from JavaScript.** JavaScript's `Object.assign(...$.docs)` writes into `$.docs[0]`. `({}).assign(...$.docs)` writes nothing, because its target is a new empty object. An array with no spread, as in `({}).assign($.docs)`, is one source: JavaScript copies its indexes as keys, and the server refuses it. Write the spread.
 
 **The `Object` statics are not JSMQL names.** Each one says the same thing as a method of the object, and one capability gets one spelling. The names still parse, so the error names the method that works:
 
 ```js
 Object.keys($.doc)          // ✗ not a JSMQL name; write $.doc.keys()
-Object.assign(...$.docs)    // ✗ not a JSMQL name; write ({}).assign($.docs)
+Object.assign(...$.docs)    // ✗ not a JSMQL name; write ({}).assign(...$.docs)
 ```
 
 ### Spread in Variadic Calls

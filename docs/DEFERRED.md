@@ -198,7 +198,7 @@ A refused static still parses, so it gets an answer, and the refusal names the s
 
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 
-The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`[...arr].max()`, `({}).assign(arr)`, the object spread `{ ...a, ...b }`, `[...a, ...b]`, `.concat()`).
+The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`[...arr].max()`, `({}).assign(...arr)`, the object spread `{ ...a, ...b }`, `[...a, ...b]`, `.concat()`).
 
 ### Checks on the escape hatch (`$op(…)`, `$stage(…)`, a raw `{ $op: … }` document)
 

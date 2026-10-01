@@ -4563,7 +4563,7 @@ describe("the Object statics — refused; the object's own method is the one spe
     ["Object.entries($.doc)", "'$.doc.entries()'"],
     ["Object.fromEntries($.pairs)", "'$.pairs.fromEntries()'"],
     ["Object.assign($.a, $.b)", "'<object>.assign(<object>, …)'"],
-    ["Object.assign(...$.docs)", "'({}).assign($.docs)'"],
+    ["Object.assign(...$.docs)", "'({}).assign(...$.docs)'"],
   ])("%s names %s", (src, dot) => {
     expect(() => jsmql.expr(src)).toThrow("is not part of JSMQL");
     expect(() => jsmql.expr(src)).toThrow(dot);

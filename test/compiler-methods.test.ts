@@ -2234,11 +2234,15 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   });
 
   it("merges with .assign(): the receiver first, an empty receiver left out, a spread as the list of sources", () => {
-    // `({}).assign(list)` is the one spelling that merges an array of objects. The
-    // empty target means nothing is written into `docs[0]`.
+    // `({}).assign(...list)` is the one spelling that merges an array of objects. The
+    // empty target means nothing is written into `docs[0]`. With no spread, one
+    // argument is one source object, so the `{}` stays and keeps it an object operand.
     const merged = (...xs: object[]) => Object.assign({}, ...xs);
-    expect(compiled("({}).assign($.docs)", (d) => merged(...d.docs))).toEqual({ $mergeObjects: "$docs" });
     expect(compiled("({}).assign(...$.docs)", (d) => merged(...d.docs))).toEqual({ $mergeObjects: "$docs" });
+    expect(compiled("({}).assign($.o)", (d) => merged(d.o))).toEqual({ $mergeObjects: [{}, "$o"] });
+    expect(compiled("({}).assign($.o, ...$.docs)", (d) => merged(d.o, ...d.docs))).toEqual({
+      $mergeObjects: { $concatArrays: [["$o"], "$docs"] },
+    });
     expect(compiled("({}).assign($.o, $.mo)", (d) => merged(d.o, d.mo))).toEqual({ $mergeObjects: ["$o", "$mo"] });
     expect(compiled("$.o.assign($.mo)", (d) => merged(d.o, d.mo))).toEqual({ $mergeObjects: ["$o", "$mo"] });
     expect(compiled("$.o.assign({ z: 1 })", (d) => merged(d.o, { z: 1 }))).toEqual({ $mergeObjects: ["$o", { z: 1 }] });

@@ -1164,11 +1164,13 @@ const pairsRead = (obj: unknown, project: (ref: string) => unknown): unknown => 
 /**
  * `.assign(...sources)` as one `$mergeObjects`, the receiver first.
  *
- * A spread argument reaches the cell as ONE packed list (`packSpread` in the desugar
- * pass), so the sources are that list. An empty-object receiver is a spare operand: the
- * merge leaves it out, and one source takes the one-operand form, where the server
- * merges an array and answers an object as it is. MEASURED: `{ $mergeObjects: "$docs" }`
- * merges the array `docs`, and `{ $mergeObjects: [{}, "$docs"] }` is a server error.
+ * An argument with no spread is ONE source object, as in JavaScript. A spread argument
+ * reaches the cell as ONE packed list (`packSpread` in the desugar pass), so the sources
+ * are that list. An empty-object receiver adds nothing, so the merge leaves it out where
+ * a source remains an object operand. One source with no spread keeps the `{}`: the
+ * one-operand form would merge an array source, which the developer reads as an object.
+ * MEASURED: `{ $mergeObjects: "$docs" }` merges the array `docs`, and
+ * `{ $mergeObjects: [{}, "$o"] }` answers `o`, and `{}` for a missing `o`.
  */
 const mergedSources = (recv: unknown, args: readonly Expr[], value: ExprIn["value"]): unknown => {
   const empty = isPlainObject(recv) && Object.keys(recv).length === 0;
@@ -1180,8 +1182,7 @@ const mergedSources = (recv: unknown, args: readonly Expr[], value: ExprIn["valu
     return { $mergeObjects: { $concatArrays: [[recv], ...(tail as unknown[])] } };
   }
   const sources = args.map(value);
-  if (empty) return { $mergeObjects: sources.length === 1 ? sources[0] : sources };
-  return { $mergeObjects: [recv, ...sources] };
+  return { $mergeObjects: empty && sources.length > 1 ? sources : [recv, ...sources] };
 };
 
 /**
@@ -2605,7 +2606,7 @@ export const NAMES = {
     returns: "object",
     neverNull: "always",
     where: ["value", "group"],
-    spreadAlternative: "use object spread ({ ...a, ...b }) or ({}).assign(docs)",
+    spreadAlternative: "use object spread ({ ...a, ...b }) or ({}).assign(...docs)",
     shape: "flex",
     filter: viaFallback,
     expr: {
@@ -10222,7 +10223,7 @@ export const NAMES = {
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Object: unsupported(
-          "'Object.assign(target, ...sources)' is not part of JSMQL — the object's own method says the same thing, and one capability gets one spelling. Write '({}).assign($.docs)' to merge an array of objects, or '<object>.assign(<object>, …)'. JSMQL writes nothing into the target, so to change a field write '$.f = { ...$.f, ...x };'.",
+          "'Object.assign(target, ...sources)' is not part of JSMQL — the object's own method says the same thing, and one capability gets one spelling. Write '({}).assign(...$.docs)' to merge an array of objects, or '<object>.assign(<object>, …)'. JSMQL writes nothing into the target, so to change a field write '$.f = { ...$.f, ...x };'.",
         ),
       },
     },
