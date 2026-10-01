@@ -107,11 +107,11 @@ $.t = $$$.orders.$set({ owner: $.tag });    // → let: { jsmql_f0_tag: "$tag" }
 $.t = $$$.orders.$set({ owner: "$tag" });   // → $set: { owner: "$tag" }                                            ← the document from orders
 ```
 
-**HR5 — A dot runs the method on an empty array or object. A `?.` gives `null`.**
+**HR5 — A dot gives a safe value. A `?.` gives `null`.**
 
 A method is a call after a dot, for example `.uniq()`. The value before the dot is the receiver. Each method works on one kind of value, and its name tells which kind. For example, `.length()` works on a string, `.size()` works on an array, and `.pick()` works on an object.
 
-The field that the receiver names can be missing from the document, or it can hold `null`. This rule tells what the method gives in these two cases. The answer depends on the accessor before the method name: a dot or `?.`.
+The field that the receiver names can be missing from the document, or it can hold `null`. This rule tells what the method gives in these two cases. The answer depends on the accessor before the method name: a dot or `?.`. Under a dot, the method gives a safe value wherever one exists, as lodash does, for every kind of receiver.
 
 **You wrote a dot.** The compiler replaces a missing or `null` receiver with an empty array or object, to match the kind of the method: `[]` for an array method, and `{}` for an object method. The method then runs on that empty array or object. The answer is what the MongoDB operator gives for it. So the answer always has the type that you expect, and it is never `null`.
 
