@@ -357,34 +357,27 @@ $match($.n > 5);  $.x = $.n ? 1 : 2;     // n: a number or an array, present →
 
 ## The consumers
 
-### The dispatch
+### The receiver
 
 `receiverOf` in [lower.ts](../../src/compiler/emit/lower.ts) hands `select.ts`
 the receiver's proof as a closed `Receiver`:
 
-- one field family → `value`: the row's cell for that family runs, with no test;
-- several kinds → `opaque` with `possible` (the field families among them),
-  `exact` (does `possible` name every kind?) and `present`;
+- one field family → `value`: the row's cell for that family runs;
+- two or more kinds → `opaque` with `possible` (the field families among them);
 - a kind no family covers (`bool`, `objectId`) → `opaque` with `proved`, and every
   field-family row refuses it, naming what it takes;
-- nothing proven → `opaque`, today's full runtime dispatch.
+- nothing proven → `opaque`.
 
-`fromPerFamily` in [select.ts](../../src/compiler/emit/select.ts) then applies four rules:
+`fromPerFamily` in [select.ts](../../src/compiler/emit/select.ts) then applies two
+rules. Nothing tests the receiver's type when the query runs (HR5).
 
-1. **Branches for the possible families only.** The dispatch runs over the row's
-   families that the receiver can be, in the row's order.
-2. **The default only when it can fire.** A dispatch is `complete` when the value
-   is present and every kind it can be has a branch. A complete dispatch is a
-   `$switch` with **no `default`**. It is never a `$cond`: MEASURED, the server
-   optimises a `$cond`'s branches before it reads the test, so
-   `{ $cond: [<is array>, { $size: v }, { $strLenCP: v }] }` over a constant `v`
-   (a `$let` variable, a `$literal`) fails. The same branches under `$switch` run
-   on every receiver (`switchOver` in [mql.ts](../../src/compiler/emit/mql.ts)).
-3. **Refuse at compile time only when no possible kind is accepted.** `$.b.trim()`
+1. **Refuse at compile time only when the row accepts none of the possible kinds.** `$.b.trim()`
    after `$.b = $.arr.has("x")` is a compile error. A partial overlap is not:
-   `{string, number}` under `.trim()` runs the string branch and the number falls
-   to the null default, because "possible" is not "proven".
-4. **`ANY` on a one-family row is that family**, by the row's claim, as before.
+   `{string, number}` under `.trim()` runs the string form, and the server judges
+   a number, because "possible" is not "proven".
+2. **An unproven receiver is the row's one lowering family**, by the row's claim.
+   A row lowers on one field family at most. test/compiler-select.test.ts audits
+   this.
 
 ```js
 $.v = $.flag ? "abc" : [1, 2];  $.len = $.v.length();   // the value can be a string → the string form runs
@@ -410,11 +403,10 @@ can fail.
 
 An array, an object, a date, an ObjectId or binData owes no test: JavaScript
 reads each one as true. Three shape rules follow. One test left is emitted bare,
-with no `$and`. No test left is the constant `TRUE`, and the slot that reads it
-folds: `cond`, `filter`, `switchOn` and `switchOver` in
-[mql.ts](../../src/compiler/emit/mql.ts) and the registry's own `cond` builder
-pick their branch at compile time, and `and`, `or` and `not` fold a constant
-operand. A value whose only possible kinds are `bool` or `number` is its own
+with no `$and`. No test left is the constant `TRUE`. The slot that reads it
+folds. `cond`, `filter` and `switchOn` in [mql.ts](../../src/compiler/emit/mql.ts)
+and the registry's own `cond` builder pick their branch at compile time. `and`,
+`or` and `not` fold a constant operand. A value whose only possible kinds are `bool` or `number` is its own
 truth, whatever its `absent`: MEASURED, MongoDB reads `0`, a `Long` zero, a
 `Decimal128` zero, negative zero, `false`, null and missing as false, so
 `{ $cond: ["$n", …] }` agrees with JavaScript on every number.

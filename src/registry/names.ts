@@ -6070,7 +6070,6 @@ export const NAMES = {
           "'Object.entries(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`]),
     },
     stream: unsupported("'.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6100,7 +6099,6 @@ export const NAMES = {
           "'Object.keys(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.k`),
     },
     stream: unsupported("'.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6130,7 +6128,6 @@ export const NAMES = {
           "'Object.values(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()'.",
         ),
       },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.v`),
     },
     stream: unsupported("'.values()' produces a value, not a stream of documents."),
     statement: unsupported(

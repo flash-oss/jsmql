@@ -32,28 +32,23 @@ switch. Each case is one of three kinds.
 `lowerTruth(node, env)` is the second reading: `&&`/`||`/`!`/`?:` recurse as
 truths, and anything else is `truthOf(value, row says bool)`. See `mode.ts`.
 
-## The receiver's proof and the runtime dispatch
+## The receiver's proof
 
 `prove.ts` answers `typeOf(node, env)`, the receiver's proof: a literal, a
 binding's recorded `Type`, a row's `returns` term evaluated at the call site, a
 written field's recorded proof, and `ANY` for a field nothing wrote. The model,
-the sources of a proof and the four dispatch rules — branches for the possible
-families only, a default only where it can fire, a compile-time refusal only
-where no possible kind is accepted, the one-family claim for `ANY` — are the
-subject of [docs/specs/types.md](types.md). This section keeps what a CELL has to
-know about the proof it runs under.
+the sources of a proof and the two receiver rules are the subject of
+[docs/specs/types.md](types.md). This section keeps what a CELL has to know about
+the proof it runs under.
 
-An unprovable receiver on a row with ONE field family is that family, by the
-row's claim. On a row with two or more LOWERING field families, the compiler
-dispatches it at run time over the families the receiver can be. A JavaScript
+An unproven receiver is the one field family that the row lowers on, by the
+row's claim. Nothing tests its type when the query runs (HR5). A JavaScript
 method reads one family, and its row states a `sibling` sentence per family it
 refuses. The refusal (`errors.ts`) puts that sentence after its head. For example, for
 `.length()` on an array, the message names `string` as the family that has the
-method. It also suggests `.size()` to count the elements. A branch whose
-`slotType` cannot take a PROVEN argument kind drops
-out of the dispatch (`argsFit` in `select.ts`), and one branch left runs alone;
-`checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven
-kind.
+method. It also suggests `.size()` to count the elements.
+
+`checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven kind.
 
 ```js
 $.x.indexOf("a")
@@ -86,11 +81,8 @@ test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
 `isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
 array, a `let` of a present value through the binding's proof, a `neverNull`
 row over present operands, a written field whose value was present, a path a
-`?.` proved through `Env.proving`, or an array or object receiver that `dispatchOn` wrapped), or proven
-at run time by the `$type` test of the dispatch branch the cell runs under. A
-row that dispatches on the receiver's type lets null and missing fall to its
-`uncertain` default. The `neverNull` fact is
-stated per row: `.map`, `.filter`, `.slice` and `.keys` answer null only
+`?.` proved through `Env.proving`, or an array or object receiver that `dispatchOn` wrapped).
+Each row states its `neverNull` fact: `.map`, `.filter`, `.slice` and `.keys` answer null only
 for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.
 
@@ -133,19 +125,6 @@ can be, because a receiver of that family is not a program that compiles. So
 `.keys()` on an unproven field is a call on an object, and takes the `{}`. The
 refused branches return only when nothing else is left, so that the refusal is
 what answers.
-
-A cell has to know one more thing about the proof. A cell that reads `present` answers a DIFFERENT
-document inside a dispatch branch, whose `$type` test proves the receiver,
-from the one it answers outside the branch. When a row's family cell and its
-`uncertain` are meant to be one answer, that difference makes the compiler
-emit a `$switch` the row does not want. So those cells share one body that
-does not read `present` at all (`lastIndexOfArray`, `pairsRead` in
-`src/registry/names.ts`).
-
-The branches are the field families that hold a rule, in the row's order. The
-guard is `$type` against the family's BSON types, widened by the rule's
-`alsoTypes`. The default is the row's required `uncertain`. The compiler binds
-a receiver that is not a path or a variable once, with `$let`.
 
 When a row states a REFUSAL for the position, that refusal is the answer even
 on a receiver the row's `on` does not admit. It is the more specific sentence,

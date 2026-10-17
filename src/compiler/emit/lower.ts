@@ -51,7 +51,7 @@ import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
 import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, boolTruth, not, or, truthOf } from "./mode.ts";
-import { cond, letOne, readsRef, switchOn, switchOver } from "./mql.ts";
+import { cond, letOne, readsRef, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { chainHasOptional, familyOfKind, isPresent, kindOf, sourceFamily, typeOf } from "./prove.ts";
@@ -804,11 +804,11 @@ function receiverOf(recv: Expr, env: Env): Receiver {
     // is not "unknown": every row refuses it, naming what it takes.
     return { kind: "opaque", lowered, proved: kinds[0] };
   }
-  // Several possible kinds: the dispatch runs over the field families among them,
-  // and a kind no family has falls to the row's default. None at all is a refusal.
+  // Two or more possible kinds: a row that takes none of their field families refuses
+  // the receiver. None at all is a refusal.
   const possible = kinds.map(familyOfKind).filter((f): f is FieldFamily => f !== null);
   if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
-  return { kind: "opaque", lowered, possible, exact: possible.length === kinds.length, present: !t.absent };
+  return { kind: "opaque", lowered, possible };
 }
 
 const spelledMethod = (name: string, recv: Expr): string =>
@@ -855,11 +855,10 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     throw E.noReceiver(name, node.pos);
   }
   const exprArgs = args.filter(isExpr);
-  // What each argument PROVABLY is. A branch whose slot cannot take it drops out
-  // of the dispatch, and a rule whose slot cannot take it is refused.
+  // What each argument PROVABLY is. The compiler refuses a rule whose slot cannot take it.
   const argEnv = childEnv(env, node, "args");
   const kinds = (args as readonly Expr[]).map((a) => (isExpr(a) ? kindOf(a, argEnv) : "unknown"));
-  const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length, kinds);
+  const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
   const spelled = spelledMethod(wroteName(node, name), recvNode);
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
@@ -907,10 +906,6 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       ),
     );
   }
-  if (sel.kind === "dispatch") {
-    if (receiver.kind !== "opaque") internalError("the select pass chose a dispatch for a proven receiver");
-    return runDispatch(sel, name, recv, exprArgs, env, node, spelled, container);
-  }
   const format = receiver.kind === "namespace" ? (c: string) => `${receiver.name}.${c}` : (c: string) => `.${c}()`;
   // A namespace's suggestion draws from its own members; a value's from every JavaScript name.
   const near =
@@ -928,72 +923,6 @@ function arraysHolder(recv: Expr): string | null {
   if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
   if (recv.type === "MethodCall" && recv.name === "partition") return "'.partition(...)'";
   return null;
-}
-
-/**
- * Can a dispatch read this receiver once per `$type` guard instead of binding it?
- *
- * A path or a variable can. So can the `$ifNull` an optional chain wraps one in: it is
- * a read of that same path against a constant, and every row that takes the neutral
- * has ONE family left to test, so the guards collapse and the wrapper is written once.
- * A binding there would cost a `$let` around a document that reads its receiver once.
- */
-function cheapToRepeat(lowered: unknown): boolean {
-  if (typeof lowered === "string") return lowered.startsWith("$");
-  if (typeof lowered !== "object" || lowered === null || Array.isArray(lowered)) return false;
-  const keys = Object.keys(lowered);
-  if (keys.length !== 1 || keys[0] !== "$ifNull") return false;
-  const operands = (lowered as { $ifNull: unknown }).$ifNull;
-  return Array.isArray(operands) && operands.length === 2 && cheapToRepeat(operands[0]);
-}
-
-/** The runtime dispatch: the receiver bound once, one `$switch`, the row's `uncertain` as default. */
-function runDispatch(
-  sel: Extract<Selected, { kind: "dispatch" }>,
-  name: string,
-  lowered: unknown,
-  args: readonly Expr[],
-  env: Env,
-  node: Expr,
-  spelled: string,
-  container: string,
-): unknown {
-  const position = positionIn(env);
-  // A path or a variable is cheap to repeat. Anything else is bound once.
-  const bound = cheapToRepeat(lowered) ? null : env.fresh("recv");
-  const ref = bound === null ? lowered : bound.ref;
-  const bodyEnv = bound === null ? env : bound.env;
-  const run = (rule: Extract<Selected, { kind: "dispatch" }>["branches"][number]["rule"]) => {
-    checkSlots(name, rule.args, args);
-    // The branch's `$type` test proved the receiver's family — and that it is there,
-    // unless the branch admits a null or a missing value too (`alsoTypes`).
-    const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
-    return rule.emit(
-      exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ, undefined, undefined, present),
-    );
-  };
-  const branches = sel.branches.map((b) => ({ case: boolTruth(b.guard(ref)), then: run(b.rule) }));
-  // Every kind the receiver can be has a branch, and the value is there: the default
-  // can never fire, so the `$switch` states none. See `switchOver` for why it is not a `$cond`.
-  if (sel.complete && branches.length >= 2) {
-    const doc = switchOver(branches);
-    return bound === null ? doc : letOne(bound.as, lowered, doc);
-  }
-  const otherwise = sel.otherwise;
-  let fallback: unknown;
-  if (typeof otherwise === "function")
-    fallback = otherwise(exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ));
-  else
-    throw E.refusalFor(
-      { kind: "refused", name, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },
-      spelled,
-      container,
-      position,
-      node.pos,
-      [],
-    );
-  const doc = switchOn(branches, fallback);
-  return bound === null ? doc : letOne(bound.as, lowered, doc);
 }
 
 function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: Env): unknown {
@@ -1037,7 +966,6 @@ function dispatchBare(node: Expr, name: string, args: readonly CallArg[], env: E
   const exprArgs = args.filter(isExpr);
   const sel = select(consult(name, position), { kind: "none" }, shapeOf(args as readonly Expr[]), args.length);
   if (sel.kind === "rule") return sel.rule.emit(exprInputs(name, null, exprArgs, [], env, node, READ));
-  if (sel.kind === "dispatch") internalError(`a bare call to '${name}' selected a receiver dispatch`);
   throw E.refusalFor(sel, name, "", position, node.pos, []);
 }
 
@@ -1106,7 +1034,6 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   const exprArgs = args.filter(isExpr);
   const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count);
   if (sel.kind === "spreadRefused") throw E.refusalFor(sel, node.name, "", position, node.pos, []);
-  if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
   if (sel.kind !== "rule") return plainOperator(node, env);
   // A body of named keys: a JavaScript spread or computed key has no lowering there.
   if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
@@ -1202,7 +1129,6 @@ function production(node: Expr, key: string, operands: readonly Expr[], env: Env
   const sel = select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length);
   const spelled = spelledProduction(node, key);
   if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`production '${key}' selected a receiver dispatch`);
     throw E.refusalFor(sel, `'${spelled}'`, "", positionIn(env), node.pos, []);
   }
   checkSlots(spelled, sel.rule.args, operands);

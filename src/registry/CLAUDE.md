@@ -13,9 +13,9 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
   initialises after the code that reads it.
 - **Every fact is stated, never derived.** A phase might compute a fact from
   other fields, but the registry still writes it down, so a reader sees it and
-  a test can check it. `bodyPositions`, `evaluates`, `returns`, `document`, `binds` and
-  `alsoTypes` are all measured on a running `mongod`, and the `// MEASURED:` comment beside
-  each one shows the command and the answer. `neverNull`, `readsNullAsEmpty`
+  a test can check it. Each of `bodyPositions`, `evaluates`, `returns`, `document`
+  and `binds` comes from a measurement on `mongod`. The `// MEASURED:` comment
+  beside each one shows the command and the answer. `neverNull`, `readsNullAsEmpty`
   and `passesNull` are measured by a table in test/compiler-methods.test.ts (and, for an
   operator, by test/compiler-returns-agrees.test.ts). The test fails when a row
   states one of them and has no measurement.
@@ -40,10 +40,7 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
 
 The vocabulary's types hold the rules. `where` and the cells cannot disagree
 (`Cell`/`Lists`). A filter renderer may answer null only where a value form
-exists (`FilterOut`). The type decides whether a receiver has an unprovable
-family: every row with two or more field families states this decision
-(`Uncertain`), and no row with only one field family states it. An
-argument-shape dispatch is a keyed partition with its leftover stated
+exists (`FilterOut`). An argument-shape dispatch is a keyed partition with its leftover stated
 (`ByArgs`). Each file ends with type-level audits over its own
 cross-references.
 

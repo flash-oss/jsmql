@@ -22,21 +22,11 @@ const R = { args: A, emit: () => 1 };
 
 type Value<F extends Family> = Cell<true, F, ExprIn, OutOf["value"]>;
 
-// ── `uncertain`: required with two field families, refused with one ──────────
-
-export const twoFamilies: Value<"array" | "string"> = { perFamily: { array: R, string: R }, uncertain: () => 1 };
-// @ts-expect-error — two field families and no `uncertain`: the unprovable receiver is undecided
-export const twoFamiliesUndecided: Value<"array" | "string"> = { perFamily: { array: R, string: R } };
+// ── `perFamily`: a rule or a refusal per family ───────────────────────────────
 
 export const oneFamily: Value<"array" | "Math"> = { perFamily: { array: R, Math: R } };
-// @ts-expect-error — one field family: the receiver IS that family by the row's own claim
-export const oneFamilyOverstated: Value<"array" | "Math"> = { perFamily: { array: R, Math: R }, uncertain: () => 1 };
-
-// A refusal is a decision too.
-export const uncertainRefused: Value<"array" | "string"> = {
-  perFamily: { array: R, string: R },
-  uncertain: unsupported("cannot tell"),
-};
+// @ts-expect-error — a family that `on` omits cannot appear
+export const strayFamily: Value<"array"> = { perFamily: { array: R, string: R } };
 
 // ── `byArgs`: keyed, `constant` never a rule, the leftover stated ─────────────
 

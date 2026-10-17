@@ -5064,8 +5064,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.entries(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`])
+      }
     },
     stream: unsupported("'.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -5093,8 +5092,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.keys(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.k`)
+      }
     },
     stream: unsupported("'.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -5122,8 +5120,7 @@ var NAMES = {
         Object: unsupported(
           "'Object.values(obj)' is not part of JSMQL \u2014 the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()'."
         )
-      },
-      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.v`)
+      }
     },
     stream: unsupported("'.values()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -12073,7 +12070,7 @@ function isRuleCell(cell) {
   if ("unsupported" in c || "inCode" in c || "because" in c) return false;
   if ("perFamily" in c) return Object.values(c.perFamily).some(isRuleCell);
   if ("byArgs" in c) return Object.values(c.byArgs).some(isRuleCell);
-  return "emit" in c || "uncertain" in c;
+  return "emit" in c;
 }
 var VALUE_FAMILIES = /* @__PURE__ */ new Set(["array", "string", "number", "object", "date", "regexp", "set"]);
 function methodRows() {
@@ -20796,7 +20793,7 @@ function consult(name2, position, family) {
   if (isObj2(cell) && isObj2(cell.perFamily)) {
     const branches = cell.perFamily;
     if (family !== void 0 && family in branches) return readCell(name2, position, branches[family]);
-    return { kind: "perFamily", name: name2, position, branches, uncertain: cell.uncertain };
+    return { kind: "perFamily", name: name2, position, branches };
   }
   return readCell(name2, position, cell);
 }
@@ -20894,7 +20891,6 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
     case "noCell":
       return new CodegenError(NO_CELL[position](spelled3.startsWith("'") ? spelled3 : `'${spelled3}'`, bare), pos);
     case "rule":
-    case "dispatch":
       return new CodegenError(
         `jsmql internal error (please report to the jsmql maintainers): refusalFor received a '${sel.kind}' answer for ${spelled3}`,
         pos
@@ -21942,12 +21938,7 @@ function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
   const v = evaluate(args[0], constants);
   return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
 }
-var TYPES = FIELD_FAMILY_TYPES;
-function guardFor(family, also = []) {
-  const types = [...TYPES[family], ...also];
-  return (recv) => ({ $in: [{ $type: recv }, types] });
-}
-var FIELD_FAMILIES2 = Object.keys(TYPES);
+var FIELD_FAMILIES2 = Object.keys(FIELD_FAMILY_TYPES);
 var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
 var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
 var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
@@ -22036,11 +22027,7 @@ function kindFits(kind, expected) {
       return false;
   }
 }
-var argsFit = (rule, kinds) => Object.entries(rule.args.slotType ?? {}).every(([i, t]) => {
-  const k = kinds[Number(i)];
-  return k === void 0 || kindFits(k, t);
-});
-function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kinds) {
+function fromPerFamily(name2, branches, receiver, shaped, count) {
   const on = familiesFor(name2);
   if (receiver.kind !== "opaque") {
     const family = familyOf2(receiver);
@@ -22055,39 +22042,14 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kind
     return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
   }
   const lowering = listed.filter((f) => !isRefusal(branches[f]));
-  const fieldFamilies = lowering.length > 0 ? lowering : listed;
-  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-  const fitting = fieldFamilies.filter((f) => {
-    const b = branches[f];
-    return !isRule(b) || argsFit(b, kinds);
-  });
-  if (fitting.length === 1 && fieldFamilies.length > 1) {
-    const branch = branches[fitting[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count, fitting[0]);
+  const families2 = lowering.length > 0 ? lowering : listed;
+  if (families2.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+  if (lowering.length > 1) {
+    internalError(`the row '${name2}' lowers on ${lowering.join(" and ")}. A row lowers on one field family`);
   }
-  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
-  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
-    const branch = branches[fieldFamilies[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count, fieldFamilies[0]);
-  }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
-    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
-  }
-  const out = [];
-  for (const family of fieldFamilies) {
-    const branch = branches[family];
-    if (isRefusal(branch) || branch === void 0) continue;
-    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
-    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
-    if (bad !== null && bad.kind !== "rule") return bad;
-    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
-  }
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
-  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
+  return settle(name2, branches[families2[0]], shaped, count, families2[0]);
 }
-function select(verdict, receiver, shaped, count, kinds = []) {
+function select(verdict, receiver, shaped, count) {
   const name2 = verdict.name;
   switch (verdict.kind) {
     case "unknown":
@@ -22107,7 +22069,7 @@ function select(verdict, receiver, shaped, count, kinds = []) {
       return gate ?? { kind: "noCell", name: name2 };
     }
     case "perFamily":
-      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count, kinds);
+      return fromPerFamily(name2, verdict.branches, receiver, shaped, count);
     case "lower": {
       const gate = receiverGate(name2, receiver);
       if (gate !== null) return gate;
@@ -23519,11 +23481,6 @@ var switchOn = (candidates, otherwise) => {
   if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
 };
-var switchOver = (candidates) => {
-  const { kept: branches, decided } = liveBranches(candidates);
-  if (decided !== void 0) return switchOn(branches, decided);
-  return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) } };
-};
 var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
   $let: { vars: { [as]: value }, in: body }
@@ -24886,7 +24843,7 @@ function receiverOf(recv, env) {
   }
   const possible = kinds.map(familyOfKind).filter((f) => f !== null);
   if (possible.length === 0) return { kind: "opaque", lowered, proved: kinds.join(" or ") };
-  return { kind: "opaque", lowered, possible, exact: possible.length === kinds.length, present: !t.absent };
+  return { kind: "opaque", lowered, possible };
 }
 var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES3.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
 var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
@@ -24914,7 +24871,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
   const kinds = args.map((a) => isExpr2(a) ? kindOf3(a, argEnv) : "unknown");
-  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length, kinds);
+  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
@@ -24948,10 +24905,6 @@ function dispatchOn(node, name2, recvNode, args, env) {
       )
     );
   }
-  if (sel.kind === "dispatch") {
-    if (receiver.kind !== "opaque") internalError("the select pass chose a dispatch for a proven receiver");
-    return runDispatch(sel, name2, recv, exprArgs, env, node, spelled3, container);
-  }
   const format = receiver.kind === "namespace" ? (c) => `${receiver.name}.${c}` : (c) => `.${c}()`;
   const near = receiver.kind === "namespace" ? JS_NAMES.filter((n2) => {
     const on = familiesFor(n2);
@@ -24963,47 +24916,6 @@ function arraysHolder(recv) {
   if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
   if (recv.type === "MethodCall" && recv.name === "partition") return "'.partition(...)'";
   return null;
-}
-function cheapToRepeat(lowered) {
-  if (typeof lowered === "string") return lowered.startsWith("$");
-  if (typeof lowered !== "object" || lowered === null || Array.isArray(lowered)) return false;
-  const keys = Object.keys(lowered);
-  if (keys.length !== 1 || keys[0] !== "$ifNull") return false;
-  const operands = lowered.$ifNull;
-  return Array.isArray(operands) && operands.length === 2 && cheapToRepeat(operands[0]);
-}
-function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) {
-  const position = positionIn(env);
-  const bound = cheapToRepeat(lowered) ? null : env.fresh("recv");
-  const ref = bound === null ? lowered : bound.ref;
-  const bodyEnv = bound === null ? env : bound.env;
-  const run = (rule) => {
-    checkSlots(name2, rule.args, args);
-    const present2 = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
-    return rule.emit(
-      exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present2)
-    );
-  };
-  const branches = sel.branches.map((b) => ({ case: boolTruth(b.guard(ref)), then: run(b.rule) }));
-  if (sel.complete && branches.length >= 2) {
-    const doc2 = switchOver(branches);
-    return bound === null ? doc2 : letOne(bound.as, lowered, doc2);
-  }
-  const otherwise = sel.otherwise;
-  let fallback;
-  if (typeof otherwise === "function")
-    fallback = otherwise(exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ));
-  else
-    throw refusalFor(
-      { kind: "refused", name: name2, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },
-      spelled3,
-      container,
-      position,
-      node.pos,
-      []
-    );
-  const doc = switchOn(branches, fallback);
-  return bound === null ? doc : letOne(bound.as, lowered, doc);
 }
 function callExpression(node, env) {
   const { callee } = node;
@@ -25040,7 +24952,6 @@ function dispatchBare(node, name2, args, env) {
   const exprArgs = args.filter(isExpr2);
   const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length);
   if (sel.kind === "rule") return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
-  if (sel.kind === "dispatch") internalError(`a bare call to '${name2}' selected a receiver dispatch`);
   throw refusalFor(sel, name2, "", position, node.pos, []);
 }
 function applyLambda2(lambda, args, env, pos, label, fnName) {
@@ -25084,7 +24995,6 @@ function operatorCall(node, env) {
   const exprArgs = args.filter(isExpr2);
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), count);
   if (sel.kind === "spreadRefused") throw refusalFor(sel, node.name, "", position, node.pos, []);
-  if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
   if (sel.kind !== "rule") return plainOperator(node, env);
   if (exprArgs.length === 1 && positionalKeysOf(node.name).length > 0) checkBodyKeys(exprArgs[0]);
   for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
@@ -25147,7 +25057,6 @@ function production2(node, key, operands, env) {
   const sel = select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length);
   const spelled3 = spelledProduction(node, key);
   if (sel.kind !== "rule") {
-    if (sel.kind === "dispatch") internalError(`production '${key}' selected a receiver dispatch`);
     throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, []);
   }
   checkSlots(spelled3, sel.rule.args, operands);
@@ -26242,7 +26151,6 @@ function refStatement(node, ref, env, first) {
   const receiver = ref === "StreamRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
   const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length);
   const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-  if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
   const args = node.args;
   const escape = node.name.startsWith("$");
   let stages;
@@ -26280,7 +26188,6 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
     );
   }
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-  if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
   const args = link.args;
   let stages;
   if (escape) {
@@ -26388,7 +26295,6 @@ function stageStatement(node, env, first) {
   if (node.type === "MethodCall" && takesNoReceiver(name2)) throw noReceiver(name2, node.pos);
   const verdict = consult(name2, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
-  if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
