@@ -62,6 +62,7 @@ import {
   uniqByReduce,
   wordsExpr,
   atPrecision,
+  isNullish,
 } from "./mql.ts";
 import type { CallArg } from "./ast.ts";
 import { isFieldPathString } from "./ast.ts";
@@ -994,8 +995,7 @@ function padded(
   // there ("7".padStart(null) is "7"), so the receiver stands when nothing is
   // needed. MEASURED: `$gt: [null, 0]` is false, so one test covers null, missing
   // and a target already shorter than the string. A number LITERAL needs no test.
-  const bounded =
-    args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
+  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [need, 0] }, padding, v.ref] };
   // every caller hands over a receiver that the `nullOr` test proved, so the binding takes it as it is
   return { $let: { vars: { [v.as]: recv }, in: bounded } };
 }
@@ -1218,7 +1218,7 @@ const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r:
   const cheap = typeof recv === "string" && recv.startsWith("$");
   const bound = cheap ? null : bind("recv");
   const ref = bound === null ? recv : bound.ref;
-  const doc = cond({ $eq: [{ $ifNull: [ref, null] }, null] }, null, body(ref));
+  const doc = cond(isNullish(ref), null, body(ref));
   return bound === null ? doc : { $let: { vars: { [bound.as]: recv }, in: doc } };
 };
 
@@ -1304,11 +1304,11 @@ function randomOf({ recv, args, value, bind, present }: ExprIn): unknown {
   const body = fixed
     ? fraction(lo.ref, span)
     : {
-        $cond: {
-          if: { $and: [isWhole(lo.ref), isWhole(hi.ref)] },
-          then: whole(lo.ref, { $add: [span, 1] }),
-          else: fraction(lo.ref, span),
-        },
+        $cond: [
+          { $and: [isWhole(lo.ref), isWhole(hi.ref)] },
+          whole(lo.ref, { $add: [span, 1] }),
+          fraction(lo.ref, span),
+        ],
       };
   return { $let: { vars: { [lo.as]: { $min: [a, b] }, [hi.as]: { $max: [a, b] } }, in: body } };
 }

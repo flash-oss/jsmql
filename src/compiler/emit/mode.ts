@@ -35,6 +35,7 @@
 
 import type { Truth, Type } from "../../registry/vocabulary.ts";
 import { ANY, isNothing, mayBe } from "./type.ts";
+import { isNotNullish } from "../../registry/mql.ts";
 
 const mint = (doc: unknown): Truth => doc as Truth;
 
@@ -59,15 +60,15 @@ export const mongoTruthy = (value: unknown): Truth => mint(value);
 /**
  * A lowered value read as a condition, under what the compiler proves of it.
  *
- *   $.a ? 1 : 2      a: unknown         → { $and: [{ $ne: [{ $ifNull: ["$a", null] }, null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] }
- *   $.s ? 1 : 2      s: string, absent  → { $and: [{ $ne: [{ $ifNull: ["$s", null] }, null] }, { $ne: ["$s", ""] }] }
+ *   $.a ? 1 : 2      a: unknown         → { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] }
+ *   $.s ? 1 : 2      s: string, absent  → { $and: [{ $gt: ["$s", null] }, { $ne: ["$s", ""] }] }
  *   $.s ? 1 : 2      s: string, present → { $ne: ["$s", ""] }
  *   $.n ? 1 : 2      n: number          → "$n"
  *   $.b ? 1 : 2      b: bool            → "$b"
- *   $.o ? 1 : 2      o: object, absent  → { $ne: [{ $ifNull: ["$o", null] }, null] }
+ *   $.o ? 1 : 2      o: object, absent  → { $gt: ["$o", null] }
  *   $.o ? 1 : 2      o: object, present → true — and the `$cond` folds to its `then`
  *
- * The `$ifNull` folds missing into null, so one comparison covers both.
+ * `$gt: [v, null]` is false for missing and for null, so one comparison covers both.
  */
 export function truthOf(value: unknown, type: Type): Truth {
   if (isNothing(type)) return FALSE;
@@ -75,7 +76,7 @@ export function truthOf(value: unknown, type: Type): Truth {
   // A boolean or a number is its own truth on the server, whether or not it is there.
   if (kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number")) return mint(value);
   const tests: unknown[] = [];
-  if (type.absent) tests.push({ $ne: [{ $ifNull: [value, null] }, null] });
+  if (type.absent) tests.push(isNotNullish(value));
   if (mayBe(type, "bool")) tests.push({ $ne: [value, false] });
   if (mayBe(type, "string")) tests.push({ $ne: [value, ""] });
   if (mayBe(type, "number")) tests.push({ $ne: [value, 0] });

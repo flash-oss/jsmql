@@ -147,16 +147,7 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
 
   it("method call on a field stays in $expr", () => {
     expect(jsmql('[$match($.name.toLowerCase() === "alice")]')).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              { $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toLower: "$name" } } },
-              "alice",
-            ],
-          },
-        },
-      },
+      { $match: { $expr: { $eq: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, "alice"] } } },
     ]);
   });
 
@@ -204,16 +195,7 @@ describe("$match translation — typeof → $type", () => {
     expect(jsmql('[$match(typeof $.name.toLowerCase() === "string")]')).toEqual([
       {
         $match: {
-          $expr: {
-            $eq: [
-              {
-                $type: {
-                  $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toLower: "$name" } },
-                },
-              },
-              "string",
-            ],
-          },
+          $expr: { $eq: [{ $type: { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] } }, "string"] },
         },
       },
     ]);
@@ -386,13 +368,7 @@ describe("$match translation — .match(regex) → BSON regex", () => {
     expect(jsmql('[$match($.name.match("^a"))]')).toEqual([
       {
         $match: {
-          $expr: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$name", null] }, null] },
-              then: null,
-              else: { $regexMatch: { input: "$name", regex: "^a" } },
-            },
-          },
+          $expr: { $cond: [{ $lte: ["$name", null] }, null, { $regexMatch: { input: "$name", regex: "^a" } }] },
         },
       },
     ]);
@@ -429,18 +405,7 @@ describe("$match translation — .some(p) → $elemMatch", () => {
               $map: {
                 input: { $ifNull: ["$items", []] },
                 as: "it",
-                in: {
-                  $eq: [
-                    {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$$it.tag", null] }, null] },
-                        then: null,
-                        else: { $toLower: "$$it.tag" },
-                      },
-                    },
-                    "vip",
-                  ],
-                },
+                in: { $eq: [{ $cond: [{ $lte: ["$$it.tag", null] }, null, { $toLower: "$$it.tag" }] }, "vip"] },
               },
             },
           },
@@ -462,7 +427,7 @@ describe("$match translation — .some(p) → $elemMatch", () => {
                 as: "it",
                 in: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$$it", null] }, null] },
+                    { $gt: ["$$it", null] },
                     { $ne: ["$$it", false] },
                     { $ne: ["$$it", ""] },
                     { $ne: ["$$it", 0] },
@@ -504,9 +469,7 @@ describe("$match translation — === undefined / !== undefined → $exists", () 
     // `$type` distinguishes a missing field ("missing") from a present-but-null one
     // ("null"), which is exactly the line `$exists` draws — so the expression language
     // CAN express existence, and does.
-    expect(jsmql.expr("$.x === undefined ? 1 : 2")).toEqual({
-      $cond: { if: { $eq: [{ $type: "$x" }, "missing"] }, then: 1, else: 2 },
-    });
+    expect(jsmql.expr("$.x === undefined ? 1 : 2")).toEqual({ $cond: [{ $eq: [{ $type: "$x" }, "missing"] }, 1, 2] });
   });
 
   it("still rejects `undefined` used as a VALUE rather than compared", () => {
@@ -589,18 +552,7 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
 
   it("reads `.length()` on a bare field as a string length: `$strLenCP` under a null guard", () => {
     expect(jsmql("[$match($.name.length() === 3)]")).toEqual([
-      {
-        $match: {
-          $expr: {
-            $eq: [
-              {
-                $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $strLenCP: "$name" } },
-              },
-              3,
-            ],
-          },
-        },
-      },
+      { $match: { $expr: { $eq: [{ $cond: [{ $lte: ["$name", null] }, null, { $strLenCP: "$name" }] }, 3] } } },
     ]);
   });
 

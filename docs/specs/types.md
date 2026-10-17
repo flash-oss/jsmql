@@ -299,11 +299,11 @@ that the last link left. See `afterLink` in
 
 ```js
 $group({ _id: $.k, total: $sum($.amount), items: $push($.item) });  $.t = $.total ? 1 : 2;
-// → …, { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } }
+// → …, { $set: { t: { $cond: ["$total", 1, 2] } } }
 $.p = { a: 1, b: "x" };  $ = $.p;  $.c = $.b.length();
 // → …, { $replaceWith: "$p" }, { $set: { c: { $strLenCP: "$b" } } }
 $.a = "x";  $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));
-// → …, { $replaceWith: { n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } } } }
+// → …, { $replaceWith: { n: { $cond: [{ $lte: ["$a", null] }, null, { $strLenCP: "$a" }] } } }
 let t = $.a;  $$.uniq();  $match($.x === t);
 // → …, { $match: { $expr: { $eq: ["$x", "$__jsmql.var.t"] } } }, { $unset: "__jsmql" }
 $$.map(d => ({ a: d.a })).shuffle();
@@ -345,7 +345,7 @@ inside one BSON type bracket, so `{ a: { $gt: 5 } }` never selects a string.
 $match($.tags != null);  $.arr = $.tags.uniq();  $.bool = $.arr.has("red");
 // → [{ $match: { tags: { $ne: null } } }, { $set: { arr: { $setUnion: "$tags" } } }, { $set: { bool: { $in: ["red", "$arr"] } } }]
 $match($.n > 5);  $.x = $.n ? 1 : 2;     // n: a number or an array, present → only the zero test
-// → [{ $match: { n: { $gt: 5 } } }, { $set: { x: { $cond: { if: { $ne: ["$n", 0] }, then: 1, else: 2 } } } }]
+// → [{ $match: { n: { $gt: 5 } } }, { $set: { x: { $cond: [{ $ne: ["$n", 0] }, 1, 2] } } }]
 ```
 
 ## The consumers
@@ -397,7 +397,7 @@ can fail.
 
 | Test | Kept while |
 |---|---|
-| `{ $ne: [{ $ifNull: [v, null] }, null] }` | `absent` is true |
+| `{ $gt: [v, null] }` | `absent` is true |
 | `{ $ne: [v, false] }` | `bool` is a possible kind |
 | `{ $ne: [v, ""] }` | `string` is a possible kind |
 | `{ $ne: [v, 0] }` | `number` is a possible kind |
@@ -411,17 +411,17 @@ pick their branch at compile time, and `and`, `or` and `not` fold a constant
 operand. A value whose only possible kinds are `bool` or `number` is its own
 truth, whatever its `absent`: MEASURED, MongoDB reads `0`, a `Long` zero, a
 `Decimal128` zero, negative zero, `false`, null and missing as false, so
-`{ $cond: { if: "$n", … } }` agrees with JavaScript on every number.
+`{ $cond: ["$n", …] }` agrees with JavaScript on every number.
 
 ```js
 $.s = $.a.trim();  $.t = $.s ? 1 : 2;   // s: string, maybe absent
-// → …, { $set: { t: { $cond: { if: { $and: [{ $ne: [{ $ifNull: ["$s", null] }, null] }, { $ne: ["$s", ""] }] }, then: 1, else: 2 } } } }
+// → …, { $set: { t: { $cond: [{ $and: [{ $gt: ["$s", null] }, { $ne: ["$s", ""] }] }, 1, 2] } } }
 $.u = "x";  $.v = $.u ? 1 : 2;           // u: string, present
-// → …, { $set: { v: { $cond: { if: { $ne: ["$u", ""] }, then: 1, else: 2 } } } }
+// → …, { $set: { v: { $cond: [{ $ne: ["$u", ""] }, 1, 2] } } }
 $.arr = [1];  $.w = $.arr ? 1 : 2;       // arr: array, present — always true
 // → …, { $set: { w: 1 } }
 $.n = $.a.length();  $.x = $.n ? 1 : 2;  // n: number, maybe absent
-// → …, { $set: { x: { $cond: { if: "$n", then: 1, else: 2 } } } }
+// → …, { $set: { x: { $cond: ["$n", 1, 2] } } }
 ```
 
 The rule rejected: `{ $gt: [v, ""] }` covers a string of any presence in one

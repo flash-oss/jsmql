@@ -126,7 +126,7 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -153,7 +153,7 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -335,7 +335,7 @@ describe("update filters: in pipelines", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -354,7 +354,7 @@ describe("update filters: in pipelines", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -381,7 +381,7 @@ describe("update filters: in pipelines", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -419,7 +419,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -438,7 +438,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },

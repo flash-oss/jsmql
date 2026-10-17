@@ -39,7 +39,7 @@ An expression-body predicate lowers through the filter road ([filter-mode.md § 
 |---|---|
 | `o._id === "X"` | `{ $match: { _id: "X" } }` |
 | `o.tier === "gold"` | `{ $match: { tier: "gold" } }` |
-| `o.active` (truthiness) | `{ $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] }, { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } }` — the JavaScript truthiness test |
+| `o.active` (truthiness) | `{ $match: { $expr: { $and: [{ $gt: ["$active", null] }, { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } }` — the JavaScript truthiness test |
 | `o.active && o.tier === "gold"` | `{ $match: { tier: "gold", $expr: { … } } }` |
 
 Block-body predicates pass through verbatim — JSMQL lowers each statement to a

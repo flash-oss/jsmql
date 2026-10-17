@@ -45,15 +45,25 @@ export function setKey<T>(out: Record<string, T>, name: string, value: T): Recor
 }
 
 /**
- * `{ $cond: { if, then, else } }` — the one spelling of a condition. A test the
- * compiler settled to a constant picks its branch here, so a `? :` whose test
- * cannot fail emits the branch alone.
+ * `{ $cond: [if, then, else] }` — the one spelling of a condition, in the short array
+ * form. A test the compiler settled to a constant picks its branch here, so a `? :`
+ * whose test cannot fail emits the branch alone.
  */
 export const cond = (ifExpr: unknown, thenExpr: unknown, elseExpr: unknown): unknown => {
   if (ifExpr === true) return thenExpr;
   if (ifExpr === false) return elseExpr;
-  return { $cond: { if: ifExpr, then: thenExpr, else: elseExpr } };
+  return { $cond: [ifExpr, thenExpr, elseExpr] };
 };
+
+/**
+ * Is the value missing or null? Null sorts below every other value but `MinKey`, so one
+ * comparison covers both. MEASURED: `{ $lte: [v, null] }` is true for a missing `v` and for
+ * `null`, and false for `0`, `""`, `false`, `[]` and `{}`.
+ */
+export const isNullish = (value: unknown): Record<string, unknown> => ({ $lte: [value, null] });
+
+/** Is the value there and not null? The negation of `isNullish`, measured on the same values. */
+export const isNotNullish = (value: unknown): Record<string, unknown> => ({ $gt: [value, null] });
 
 /** Is `value` already `{ $ifNull: [ … ] }`? A second wrap says nothing more. */
 export const isIfNullWrapped = (value: unknown): boolean =>
@@ -299,12 +309,7 @@ export const slotAggregate = (
 
 /** The JavaScript truth of a lowered value: not missing, and not null, false, "" or 0. */
 export const jsTruth = (value: unknown): unknown => ({
-  $and: [
-    { $ne: [{ $ifNull: [value, null] }, null] },
-    { $ne: [value, false] },
-    { $ne: [value, ""] },
-    { $ne: [value, 0] },
-  ],
+  $and: [isNotNullish(value), { $ne: [value, false] }, { $ne: [value, ""] }, { $ne: [value, 0] }],
 });
 
 /** `0 - n`. It folds for a constant. */

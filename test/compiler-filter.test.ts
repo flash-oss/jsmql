@@ -6,9 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { filter } from "../src/compiler/index.ts";
 
-const TRUTHY = (v: unknown) => ({
-  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
-});
+const TRUTHY = (v: unknown) => ({ $and: [{ $gt: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }] });
 
 describe("compiler/emit/filter — comparisons", () => {
   // Every comparison reads the field's OWN value: MongoDB would satisfy `{ a: 1 }`
@@ -334,13 +332,7 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
     // a field against a field has no query form: the value cell's shape under `$expr`
     expect(filter("$.s.startsWith($.prefix)")).toEqual({
-      $expr: {
-        $cond: {
-          if: { $eq: [{ $ifNull: ["$s", null] }, null] },
-          then: null,
-          else: { $eq: [{ $indexOfCP: ["$s", "$prefix"] }, 0] },
-        },
-      },
+      $expr: { $cond: [{ $lte: ["$s", null] }, null, { $eq: [{ $indexOfCP: ["$s", "$prefix"] }, 0] }] },
     });
   });
 

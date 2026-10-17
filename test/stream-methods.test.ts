@@ -36,7 +36,7 @@ describe(".slice(start, end?) — on $$ (top-level stream)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -332,12 +332,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
               $max: {
                 $cond: [
                   {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$ok", null] }, null] },
-                      { $ne: ["$ok", false] },
-                      { $ne: ["$ok", ""] },
-                      { $ne: ["$ok", 0] },
-                    ],
+                    $and: [{ $gt: ["$ok", null] }, { $ne: ["$ok", false] }, { $ne: ["$ok", ""] }, { $ne: ["$ok", 0] }],
                   },
                   0,
                   1,
@@ -361,12 +356,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
               $max: {
                 $cond: [
                   {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$ok", null] }, null] },
-                      { $ne: ["$ok", false] },
-                      { $ne: ["$ok", ""] },
-                      { $ne: ["$ok", 0] },
-                    ],
+                    $and: [{ $gt: ["$ok", null] }, { $ne: ["$ok", false] }, { $ne: ["$ok", ""] }, { $ne: ["$ok", 0] }],
                   },
                   0,
                   1,
@@ -451,12 +441,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
               $max: {
                 $cond: [
                   {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$ok", null] }, null] },
-                      { $ne: ["$ok", false] },
-                      { $ne: ["$ok", ""] },
-                      { $ne: ["$ok", 0] },
-                    ],
+                    $and: [{ $gt: ["$ok", null] }, { $ne: ["$ok", false] }, { $ne: ["$ok", ""] }, { $ne: ["$ok", 0] }],
                   },
                   0,
                   1,
@@ -492,7 +477,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
                               $cond: [
                                 {
                                   $and: [
-                                    { $ne: [{ $ifNull: ["$$o.ok", null] }, null] },
+                                    { $gt: ["$$o.ok", null] },
                                     { $ne: ["$$o.ok", false] },
                                     { $ne: ["$$o.ok", ""] },
                                     { $ne: ["$$o.ok", 0] },
@@ -535,7 +520,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
                               $cond: [
                                 {
                                   $and: [
-                                    { $ne: [{ $ifNull: ["$$o.ok", null] }, null] },
+                                    { $gt: ["$$o.ok", null] },
                                     { $ne: ["$$o.ok", false] },
                                     { $ne: ["$$o.ok", ""] },
                                     { $ne: ["$$o.ok", 0] },
@@ -894,18 +879,18 @@ describe("lodash iteratee shorthands on stream methods", () => {
     expect(jsmql("$$.map(d => d.flag ? d.sub : d.a * 2);")).toEqual([
       {
         $replaceWith: {
-          $cond: {
-            if: {
+          $cond: [
+            {
               $and: [
-                { $ne: [{ $ifNull: ["$flag", null] }, null] },
+                { $gt: ["$flag", null] },
                 { $ne: ["$flag", false] },
                 { $ne: ["$flag", ""] },
                 { $ne: ["$flag", 0] },
               ],
             },
-            then: "$sub",
-            else: { $multiply: ["$a", 2] },
-          },
+            "$sub",
+            { $multiply: ["$a", 2] },
+          ],
         },
       },
     ]);
@@ -933,7 +918,7 @@ describe("lodash iteratee shorthands on stream methods", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -2011,11 +1996,11 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
-              { $ne: [{ $ifNull: ["$contactDetails.email", null] }, null] },
+              { $gt: ["$contactDetails.email", null] },
               { $ne: ["$contactDetails.email", false] },
               { $ne: ["$contactDetails.email", ""] },
               { $ne: ["$contactDetails.email", 0] },
@@ -2087,7 +2072,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -2325,12 +2310,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   // path, so it cannot. The split below is that line, and nothing else.
   it("a computed key lowers straight into $group._id — no extra stages", () => {
     expect(jsmql(`$$ = $$.countBy(d => d.cat.toLowerCase());`)).toEqual([
-      {
-        $group: {
-          _id: { $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } } },
-          __jsmqlTmp: { $sum: 1 },
-        },
-      },
+      { $group: { _id: { $cond: [{ $lte: ["$cat", null] }, null, { $toLower: "$cat" }] }, __jsmqlTmp: { $sum: 1 } } },
       {
         $group: {
           _id: null,
@@ -2452,9 +2432,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
           pipeline: [
             {
               $group: {
-                _id: {
-                  $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
-                },
+                _id: { $cond: [{ $lte: ["$cat", null] }, null, { $toLower: "$cat" }] },
                 __jsmqlTmp: { $push: "$$ROOT" },
               },
             },
@@ -2477,24 +2455,12 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     // `$sort` needs a literal field path, so unlike `$group._id` the expression cannot
     // go inline — one `$addFields` puts it in a `__jsmql.tmp` slot first.
     expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase());`)).toEqual([
-      {
-        $addFields: {
-          "__jsmql.tmp.0": {
-            $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
-          },
-        },
-      },
+      { $addFields: { "__jsmql.tmp.0": { $cond: [{ $lte: ["$cat", null] }, null, { $toLower: "$cat" }] } } },
       { $sort: { "__jsmql.tmp.0": 1 } },
       { $unset: "__jsmql" },
     ]);
     expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
-      {
-        $addFields: {
-          "__jsmql.tmp.0": {
-            $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
-          },
-        },
-      },
+      { $addFields: { "__jsmql.tmp.0": { $cond: [{ $lte: ["$cat", null] }, null, { $toLower: "$cat" }] } } },
       { $sort: { "__jsmql.tmp.0": -1 } },
       { $unset: "__jsmql" },
     ]);
@@ -2506,26 +2472,14 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     // The `$sort` must remain adjacent to whatever follows, so the cleanup is held to
     // the end of the chain rather than emitted right after the `$sort`.
     expect(jsmql(`$$ = $$.sortBy(d => d.cat.toLowerCase()).take(3);`)).toEqual([
-      {
-        $addFields: {
-          "__jsmql.tmp.0": {
-            $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
-          },
-        },
-      },
+      { $addFields: { "__jsmql.tmp.0": { $cond: [{ $lte: ["$cat", null] }, null, { $toLower: "$cat" }] } } },
       { $sort: { "__jsmql.tmp.0": 1 } },
       { $limit: 3 },
       { $unset: "__jsmql" },
     ]);
     // Descending is written directly — there is no reverse-a-previous-sort form.
     expect(jsmql(`$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);`)).toEqual([
-      {
-        $addFields: {
-          "__jsmql.tmp.0": {
-            $cond: { if: { $eq: [{ $ifNull: ["$cat", null] }, null] }, then: null, else: { $toLower: "$cat" } },
-          },
-        },
-      },
+      { $addFields: { "__jsmql.tmp.0": { $cond: [{ $lte: ["$cat", null] }, null, { $toLower: "$cat" }] } } },
       { $sort: { "__jsmql.tmp.0": -1 } },
       { $unset: "__jsmql" },
     ]);

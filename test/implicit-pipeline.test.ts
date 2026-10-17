@@ -33,14 +33,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
       { $set: { a: 1, b: 2 } },
       {
         $match: {
-          $expr: {
-            $and: [
-              { $ne: [{ $ifNull: ["$x", null] }, null] },
-              { $ne: ["$x", false] },
-              { $ne: ["$x", ""] },
-              { $ne: ["$x", 0] },
-            ],
-          },
+          $expr: { $and: [{ $gt: ["$x", null] }, { $ne: ["$x", false] }, { $ne: ["$x", ""] }, { $ne: ["$x", 0] }] },
         },
       },
     ]);
@@ -56,7 +49,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -97,7 +90,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -163,7 +156,7 @@ describe("implicit pipeline — block-body arrow input", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -187,7 +180,7 @@ describe("implicit pipeline — block-body arrow input", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },

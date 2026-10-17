@@ -79,7 +79,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     expect(r.kind).toBe("rule");
     // a receiver that is not proven `present` is tested first, and answers null when it is not there
     expect((r as { rule: { emit: (i: unknown) => unknown } }).rule.emit({ recv: "$x" })).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $strLenCP: "$x" } },
+      $cond: [{ $lte: ["$x", null] }, null, { $strLenCP: "$x" }],
     });
   });
 

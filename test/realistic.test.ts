@@ -674,7 +674,7 @@ $.result = $.bool ? "R" : "OTHER";
     ).toEqual([
       { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } },
       { $set: { bool: { $in: ["red", "$arr"] } } },
-      { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } },
+      { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } },
     ]);
   });
 });
@@ -694,13 +694,7 @@ $.plan = $.plan.toUpperCase();
     ).toEqual([
       { $match: { status: "active" } },
       { $project: { name: 1, email: 1, plan: 1, lastLoginAt: 1, _id: 0 } },
-      {
-        $set: {
-          plan: {
-            $cond: { if: { $eq: [{ $ifNull: ["$plan", null] }, null] }, then: null, else: { $toUpper: "$plan" } },
-          },
-        },
-      },
+      { $set: { plan: { $cond: [{ $lte: ["$plan", null] }, null, { $toUpper: "$plan" }] } } },
     ]);
   });
 });
@@ -939,22 +933,22 @@ $$ = ["sender", "recipient"].map(party => {
                         $let: {
                           vars: { score: { $ifNull: ["$$leg.riskScore", null] } },
                           in: {
-                            $cond: {
-                              if: {
+                            $cond: [
+                              {
                                 $and: [
-                                  { $ne: [{ $ifNull: ["$$score", null] }, null] },
+                                  { $gt: ["$$score", null] },
                                   { $ne: ["$$score", false] },
                                   { $ne: ["$$score", ""] },
                                   { $ne: ["$$score", 0] },
                                 ],
                               },
-                              then: {
+                              {
                                 party: "$$party",
                                 score: "$$score",
-                                band: { $cond: { if: { $gt: ["$$score", 50] }, then: "high", else: "low" } },
+                                band: { $cond: [{ $gt: ["$$score", 50] }, "high", "low"] },
                               },
-                              else: null,
-                            },
+                              null,
+                            ],
                           },
                         },
                       },
@@ -963,7 +957,7 @@ $$ = ["sender", "recipient"].map(party => {
                 },
               },
               as: "x",
-              cond: { $ne: [{ $ifNull: ["$$x", null] }, null] },
+              cond: { $gt: ["$$x", null] },
             },
           },
         },
@@ -1003,13 +997,7 @@ describe("uppercase a user's name through updateOne", { features: ["Update filte
       // is an array; the bare-doc form would store the literal expression
       // object instead. See docs/specs/update-filter.md.
       expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([
-        {
-          $set: {
-            name: {
-              $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toUpper: "$name" } },
-            },
-          },
-        },
+        { $set: { name: { $cond: [{ $lte: ["$name", null] }, null, { $toUpper: "$name" }] } } },
       ]);
     },
   );
@@ -1283,13 +1271,7 @@ $.customer.region.trim().toLowerCase() === "us"
               {
                 $let: {
                   vars: { jsmqlRecv: { $trim: { input: "$customer.region" } } },
-                  in: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                      then: null,
-                      else: { $toLower: "$$jsmqlRecv" },
-                    },
-                  },
+                  in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toLower: "$$jsmqlRecv" }] },
                 },
               },
               "us",
@@ -1354,78 +1336,56 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { value: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.active && $.role.toLowerCase().includes("admin") && $.name.trim().length() > 0`)).toEqual({
-        $cond: {
-          if: {
+        $cond: [
+          {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
             ],
           },
-          then: {
-            $cond: {
-              if: {
+          {
+            $cond: [
+              {
                 $let: {
-                  vars: {
-                    jsmqlRecv: {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$role", null] }, null] },
-                        then: null,
-                        else: { $toLower: "$role" },
-                      },
-                    },
-                  },
+                  vars: { jsmqlRecv: { $cond: [{ $lte: ["$role", null] }, null, { $toLower: "$role" }] } },
                   in: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                      then: null,
-                      else: { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
-                    },
+                    $cond: [
+                      { $lte: ["$$jsmqlRecv", null] },
+                      null,
+                      { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
+                    ],
                   },
                 },
               },
-              then: {
+              {
                 $gt: [
                   {
                     $let: {
                       vars: { jsmqlRecv: { $trim: { input: "$name" } } },
-                      in: {
-                        $cond: {
-                          if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                          then: null,
-                          else: { $strLenCP: "$$jsmqlRecv" },
-                        },
-                      },
+                      in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] },
                     },
                   },
                   0,
                 ],
               },
-              else: {
+              {
                 $let: {
-                  vars: {
-                    jsmqlRecv: {
-                      $cond: {
-                        if: { $eq: [{ $ifNull: ["$role", null] }, null] },
-                        then: null,
-                        else: { $toLower: "$role" },
-                      },
-                    },
-                  },
+                  vars: { jsmqlRecv: { $cond: [{ $lte: ["$role", null] }, null, { $toLower: "$role" }] } },
                   in: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                      then: null,
-                      else: { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
-                    },
+                    $cond: [
+                      { $lte: ["$$jsmqlRecv", null] },
+                      null,
+                      { $gte: [{ $indexOfCP: ["$$jsmqlRecv", "admin"] }, 0] },
+                    ],
                   },
                 },
               },
-            },
+            ],
           },
-          else: "$active",
-        },
+          "$active",
+        ],
       });
     },
   );
@@ -1451,11 +1411,11 @@ describe("tiered loyalty discount price", { features: ["Ternaries"] }, () => {
             $multiply: [
               "$price",
               {
-                $cond: {
-                  if: { $and: [{ $gte: ["$loyalty.years", 5] }, { $gte: ["$loyalty.totalSpend", 10000] }] },
-                  then: 0.85,
-                  else: { $cond: { if: { $gte: ["$loyalty.years", 2] }, then: 0.92, else: 1 } },
-                },
+                $cond: [
+                  { $and: [{ $gte: ["$loyalty.years", 5] }, { $gte: ["$loyalty.totalSpend", 10000] }] },
+                  0.85,
+                  { $cond: [{ $gte: ["$loyalty.years", 2] }, 0.92, 1] },
+                ],
               },
             ],
           },
@@ -1472,11 +1432,11 @@ describe("stock status label", { features: ["Ternaries"] }, () => {
     { kind: "expression", usage: "db.products.aggregate([{ $addFields: { stockLabel: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.stock >= $.reorderPoint ? "ok" : $.stock > 0 ? "low" : "out-of-stock"`)).toEqual({
-        $cond: {
-          if: { $gte: ["$stock", "$reorderPoint"] },
-          then: "ok",
-          else: { $cond: { if: { $gt: ["$stock", 0] }, then: "low", else: "out-of-stock" } },
-        },
+        $cond: [
+          { $gte: ["$stock", "$reorderPoint"] },
+          "ok",
+          { $cond: [{ $gt: ["$stock", 0] }, "low", "out-of-stock"] },
+        ],
       });
     },
   );
@@ -1494,13 +1454,13 @@ $.quantity > 1 && $.price >= 10 && $.category in ["sale", "clearance"]
   : $.price
       `,
       ).toEqual({
-        $cond: {
-          if: {
+        $cond: [
+          {
             $and: [{ $gt: ["$quantity", 1] }, { $gte: ["$price", 10] }, { $in: ["$category", ["sale", "clearance"]] }],
           },
-          then: { $multiply: ["$price", 0.8] },
-          else: "$price",
-        },
+          { $multiply: ["$price", 0.8] },
+          "$price",
+        ],
       });
     },
   );
@@ -1551,7 +1511,7 @@ describe("reorder alert with ** and unary !", { features: ["Arithmetic and Math"
           {
             $not: {
               $and: [
-                { $ne: [{ $ifNull: ["$discontinued", null] }, null] },
+                { $gt: ["$discontinued", null] },
                 { $ne: ["$discontinued", false] },
                 { $ne: ["$discontinued", ""] },
                 { $ne: ["$discontinued", 0] },
@@ -1615,17 +1575,7 @@ describe("URL slug through .toLowerCase().trim().replaceAll()", { features: ["St
           "-",
           {
             $replaceAll: {
-              input: {
-                $trim: {
-                  input: {
-                    $cond: {
-                      if: { $eq: [{ $ifNull: ["$title", null] }, null] },
-                      then: null,
-                      else: { $toLower: "$title" },
-                    },
-                  },
-                },
-              },
+              input: { $trim: { input: { $cond: [{ $lte: ["$title", null] }, null, { $toLower: "$title" }] } } },
               find: " ",
               replacement: "-",
             },
@@ -1644,13 +1594,7 @@ describe("email domain through .split().at().toLowerCase()", { features: ["Strin
       expect(jsmql.expr(`$.email.split("@").at(1).toLowerCase()`)).toEqual({
         $let: {
           vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } },
-          in: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-              then: null,
-              else: { $toLower: "$$jsmqlRecv" },
-            },
-          },
+          in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toLower: "$$jsmqlRecv" }] },
         },
       });
     },
@@ -1682,17 +1626,17 @@ describe("invoice line greeting with ?., ??, and .startsWith", { features: ["Tem
           { $toString: { $ifNull: [{ $ifNull: ["$customer.firstName", null] }, "there"] } },
           " — your ",
           {
-            $cond: {
-              if: {
-                $cond: {
-                  if: { $eq: [{ $ifNull: ["$invoice.id", null] }, null] },
-                  then: null,
-                  else: { $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] },
-                },
+            $cond: [
+              {
+                $cond: [
+                  { $lte: ["$invoice.id", null] },
+                  null,
+                  { $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] },
+                ],
               },
-              then: "VIP ",
-              else: "",
-            },
+              "VIP ",
+              "",
+            ],
           },
           "invoice ",
           { $toString: "$invoice.id" },
@@ -1717,21 +1661,9 @@ describe("audit log line with .toISOString and .charAt(0).toUpperCase", { featur
           {
             $let: {
               vars: {
-                jsmqlRecv: {
-                  $cond: {
-                    if: { $eq: [{ $ifNull: ["$event.level", null] }, null] },
-                    then: null,
-                    else: { $substrCP: ["$event.level", 0, 1] },
-                  },
-                },
+                jsmqlRecv: { $cond: [{ $lte: ["$event.level", null] }, null, { $substrCP: ["$event.level", 0, 1] }] },
               },
-              in: {
-                $cond: {
-                  if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                  then: null,
-                  else: { $toUpper: "$$jsmqlRecv" },
-                },
-              },
+              in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toUpper: "$$jsmqlRecv" }] },
             },
           },
           "] ",
@@ -1799,40 +1731,23 @@ describe("full display name through .filter(Boolean).join", { features: ["Array 
                   input: ["$firstName", "$middleName", "$lastName"],
                   as: "x",
                   cond: {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                      { $ne: ["$$x", false] },
-                      { $ne: ["$$x", ""] },
-                      { $ne: ["$$x", 0] },
-                    ],
+                    $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
                   },
                 },
               },
               initialValue: null,
               in: {
-                $cond: {
-                  if: { $eq: ["$$value", null] },
-                  then: {
-                    $cond: {
-                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                      then: "",
-                      else: { $toString: "$$this" },
-                    },
-                  },
-                  else: {
+                $cond: [
+                  { $eq: ["$$value", null] },
+                  { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                  {
                     $concat: [
                       "$$value",
                       " ",
-                      {
-                        $cond: {
-                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                          then: "",
-                          else: { $toString: "$$this" },
-                        },
-                      },
+                      { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
                     ],
                   },
-                },
+                ],
               },
             },
           },
@@ -1862,18 +1777,18 @@ describe("full address with conditional inclusion + filter + join", { features: 
                 $filter: {
                   input: [
                     {
-                      $cond: {
-                        if: {
+                      $cond: [
+                        {
                           $and: [
-                            { $ne: [{ $ifNull: ["$building", null] }, null] },
+                            { $gt: ["$building", null] },
                             { $ne: ["$building", false] },
                             { $ne: ["$building", ""] },
                             { $ne: ["$building", 0] },
                           ],
                         },
-                        then: { $concat: ["$building", ","] },
-                        else: "$building",
-                      },
+                        { $concat: ["$building", ","] },
+                        "$building",
+                      ],
                     },
                     "$streetNo",
                     "$street",
@@ -1884,40 +1799,23 @@ describe("full address with conditional inclusion + filter + join", { features: 
                   ],
                   as: "x",
                   cond: {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                      { $ne: ["$$x", false] },
-                      { $ne: ["$$x", ""] },
-                      { $ne: ["$$x", 0] },
-                    ],
+                    $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
                   },
                 },
               },
               initialValue: null,
               in: {
-                $cond: {
-                  if: { $eq: ["$$value", null] },
-                  then: {
-                    $cond: {
-                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                      then: "",
-                      else: { $toString: "$$this" },
-                    },
-                  },
-                  else: {
+                $cond: [
+                  { $eq: ["$$value", null] },
+                  { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                  {
                     $concat: [
                       "$$value",
                       " ",
-                      {
-                        $cond: {
-                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                          then: "",
-                          else: { $toString: "$$this" },
-                        },
-                      },
+                      { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
                     ],
                   },
-                },
+                ],
               },
             },
           },
@@ -1946,29 +1844,17 @@ describe("tag aggregation through .map.flat.join", { features: ["Array methods"]
               },
               initialValue: null,
               in: {
-                $cond: {
-                  if: { $eq: ["$$value", null] },
-                  then: {
-                    $cond: {
-                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                      then: "",
-                      else: { $toString: "$$this" },
-                    },
-                  },
-                  else: {
+                $cond: [
+                  { $eq: ["$$value", null] },
+                  { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                  {
                     $concat: [
                       "$$value",
                       ", ",
-                      {
-                        $cond: {
-                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                          then: "",
-                          else: { $toString: "$$this" },
-                        },
-                      },
+                      { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
                     ],
                   },
-                },
+                ],
               },
             },
           },
@@ -2051,21 +1937,15 @@ $.file.size <= 25_000_000
         $and: [
           {
             $in: [
-              {
-                $cond: {
-                  if: { $eq: [{ $ifNull: ["$file.ext", null] }, null] },
-                  then: null,
-                  else: { $toLower: "$file.ext" },
-                },
-              },
+              { $cond: [{ $lte: ["$file.ext", null] }, null, { $toLower: "$file.ext" }] },
               [".jpg", ".png", ".pdf", ".docx"],
             ],
           },
           {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$file.name", null] }, null] },
-              then: null,
-              else: {
+            $cond: [
+              { $lte: ["$file.name", null] },
+              null,
+              {
                 $let: {
                   vars: { jsmqlStr: "$file.name" },
                   in: {
@@ -2089,7 +1969,7 @@ $.file.size <= 25_000_000
                   },
                 },
               },
-            },
+            ],
           },
         ],
       },
@@ -2187,11 +2067,7 @@ describe("arr.max() - arr.min() with Array.isArray guard", { features: ["Array s
     { kind: "expression", usage: "db.students.aggregate([{ $addFields: { range: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Array.isArray($.scores) ? $.scores.max() - $.scores.min() : 0`)).toEqual({
-        $cond: {
-          if: { $isArray: ["$scores"] },
-          then: { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] },
-          else: 0,
-        },
+        $cond: [{ $isArray: ["$scores"] }, { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] }, 0],
       });
     },
   );
@@ -2255,11 +2131,7 @@ describe("normalise a string-or-number field with typeof", { features: ["Type ch
     { kind: "expression", usage: "db.items.aggregate([{ $addFields: { trimmed: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : String($.value)`)).toEqual({
-        $cond: {
-          if: { $eq: [{ $type: "$value" }, "string"] },
-          then: { $trim: { input: "$value" } },
-          else: { $toString: "$value" },
-        },
+        $cond: [{ $eq: [{ $type: "$value" }, "string"] }, { $trim: { input: "$value" } }, { $toString: "$value" }],
       });
     },
   );
@@ -3111,11 +2983,11 @@ $$$$.exports.email_contacts = $$;
             $match: {
               $expr: {
                 $and: [
-                  { $ne: [{ $ifNull: ["$active", null] }, null] },
+                  { $gt: ["$active", null] },
                   { $ne: ["$active", false] },
                   { $ne: ["$active", ""] },
                   { $ne: ["$active", 0] },
-                  { $ne: [{ $ifNull: ["$contactDetails.email", null] }, null] },
+                  { $gt: ["$contactDetails.email", null] },
                   { $ne: ["$contactDetails.email", false] },
                   { $ne: ["$contactDetails.email", ""] },
                   { $ne: ["$contactDetails.email", 0] },
@@ -3347,7 +3219,7 @@ $$ = $$$.orders
   .take(10);
           `,
         ).toEqual([
-          { $set: { "__jsmql.var.minSpend": { $cond: { if: { $eq: ["$tier", "gold"] }, then: 500, else: 100 } } } },
+          { $set: { "__jsmql.var.minSpend": { $cond: [{ $eq: ["$tier", "gold"] }, 500, 100] } } },
           {
             $lookup: {
               from: "orders",
@@ -3764,11 +3636,11 @@ describe("staged rollout bucket through .random()", { features: ["Arithmetic and
       {
         $set: {
           variant: {
-            $cond: {
-              if: { $lte: [{ $add: [1, { $floor: { $multiply: [{ $rand: {} }, 100] } }] }, "$rolloutPercent"] },
-              then: "B",
-              else: "A",
-            },
+            $cond: [
+              { $lte: [{ $add: [1, { $floor: { $multiply: [{ $rand: {} }, 100] } }] }, "$rolloutPercent"] },
+              "B",
+              "A",
+            ],
           },
         },
       },

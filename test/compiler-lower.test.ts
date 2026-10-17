@@ -10,9 +10,7 @@ import { Long } from "../src/bson.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { operandShapeOf } from "../src/compiler/rows.ts";
 
-const TRUTHY = (v: unknown) => ({
-  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
-});
+const TRUTHY = (v: unknown) => ({ $and: [{ $gt: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }] });
 
 describe("compiler/emit/lower — literals and references", () => {
   it("lowers each literal to its BSON value", () => {
@@ -87,17 +85,17 @@ describe("compiler/emit/lower — operators", () => {
   });
 
   it("checks truthiness on a value and not on a boolean", () => {
-    expect(expr("$.a ? 1 : 2")).toEqual({ $cond: { if: TRUTHY("$a"), then: 1, else: 2 } });
-    expect(expr("$.a > 1 ? 1 : 2")).toEqual({ $cond: { if: { $gt: ["$a", 1] }, then: 1, else: 2 } });
+    expect(expr("$.a ? 1 : 2")).toEqual({ $cond: [TRUTHY("$a"), 1, 2] });
+    expect(expr("$.a > 1 ? 1 : 2")).toEqual({ $cond: [{ $gt: ["$a", 1] }, 1, 2] });
     expect(expr("$.a > 1 && $.b < 2")).toEqual({ $and: [{ $gt: ["$a", 1] }, { $lt: ["$b", 2] }] });
-    expect(expr("$.a && $.b")).toEqual({ $cond: { if: TRUTHY("$a"), then: "$b", else: "$a" } });
-    expect(expr("$.a || $.b")).toEqual({ $cond: { if: TRUTHY("$a"), then: "$a", else: "$b" } });
+    expect(expr("$.a && $.b")).toEqual({ $cond: [TRUTHY("$a"), "$b", "$a"] });
+    expect(expr("$.a || $.b")).toEqual({ $cond: [TRUTHY("$a"), "$a", "$b"] });
   });
 
   it("binds a computed left side once, under a namespaced mint", () => {
     const out = expr("$.a && $.b || $.c") as { $let: { vars: Record<string, unknown>; in: unknown } };
     expect(Object.keys(out.$let.vars)).toEqual(["jsmqlV"]);
-    expect(out.$let.in).toEqual({ $cond: { if: TRUTHY("$$jsmqlV"), then: "$$jsmqlV", else: "$c" } });
+    expect(out.$let.in).toEqual({ $cond: [TRUTHY("$$jsmqlV"), "$$jsmqlV", "$c"] });
   });
 
   it("lowers the presence and type tests through the predicate vocabulary", () => {
@@ -144,9 +142,7 @@ describe("compiler/emit/lower — access", () => {
     expect(expr("[$.a, 2].size()")).toBe(2);
     // an unproven receiver takes the method's one family, and the server judges the value:
     // `.length()` reads a string under a null guard, `.size()` reads a missing array as empty
-    expect(expr("$.x.length()")).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $strLenCP: "$x" } },
-    });
+    expect(expr("$.x.length()")).toEqual({ $cond: [{ $lte: ["$x", null] }, null, { $strLenCP: "$x" }] });
     expect(expr("$.x.size()")).toEqual({ $size: { $ifNull: ["$x", []] } });
     // a proven array refuses `.length()`, and the refusal names `.size()`
     expect(() => expr("[$.a, 2].length()")).toThrow(

@@ -77,7 +77,7 @@ such a call is present when no `?.` sits on its spine, so a chain pays the one
 callback parameter binds the wrapped input, and is present with it.
 
 **A string method on a receiver that may be missing answers null.** `nullOr`
-in `src/registry/names.ts` is the one shape: `{ $cond: [{ $eq: [{ $ifNull: [r, null] }, null] },
+in `src/registry/names.ts` is the one shape: `{ $cond: [{ $lte: [r, null] },
 null, <body over r>] }`, with the receiver bound by `$let` unless it is a path.
 A cell calls it where its operator would otherwise ABORT on null (`$strLenCP`)
 or would answer a VALUE for it (`$toUpper` → "", `$substrCP` → "", `$regexMatch`

@@ -14,7 +14,7 @@ import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
 import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
-import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
+import { isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -151,7 +151,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     // each call after the `?.` answers null for null on its own, so the test adds nothing
     if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
-    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
+    const gone = boolTruth(isNullish(lowerValue(base, env)));
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
   // A `?.` read with no call after it is JavaScript's `undefined` where the value is not

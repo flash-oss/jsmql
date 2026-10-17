@@ -652,7 +652,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
               },
             },
             { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
-            { $match: { $expr: { $ne: [{ $ifNull: ["$__jsmql.tmp.0", null] }, null] } } },
+            { $match: { $expr: { $gt: ["$__jsmql.tmp.0", null] } } },
             { $limit: 1 },
             { $unset: "__jsmql" },
           ],
@@ -790,7 +790,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },
@@ -926,7 +926,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },
@@ -1015,7 +1015,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },
@@ -1167,7 +1167,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },
@@ -1273,7 +1273,7 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
                   {
                     $expr: {
                       $and: [
-                        { $ne: [{ $ifNull: ["$cancelled", null] }, null] },
+                        { $gt: ["$cancelled", null] },
                         { $ne: ["$cancelled", false] },
                         { $ne: ["$cancelled", ""] },
                         { $ne: ["$cancelled", 0] },

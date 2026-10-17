@@ -543,7 +543,7 @@ describe("let bindings — RHS expression coverage", () => {
 
   it("ternary RHS", () => {
     expect(jsmql('let cat = $.age > 18 ? "adult" : "minor"; $project({ cat })')).toEqual([
-      { $set: { "__jsmql.var.cat": { $cond: { if: { $gt: ["$age", 18] }, then: "adult", else: "minor" } } } },
+      { $set: { "__jsmql.var.cat": { $cond: [{ $gt: ["$age", 18] }, "adult", "minor"] } } },
       { $project: { cat: "$__jsmql.var.cat" } },
       { $unset: "__jsmql" },
     ]);
@@ -617,13 +617,7 @@ describe("let bindings — member / method / index access", () => {
       { $set: { "__jsmql.var.name": "$name" } },
       {
         $project: {
-          upper: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$__jsmql.var.name", null] }, null] },
-              then: null,
-              else: { $toUpper: "$__jsmql.var.name" },
-            },
-          },
+          upper: { $cond: [{ $lte: ["$__jsmql.var.name", null] }, null, { $toUpper: "$__jsmql.var.name" }] },
         },
       },
       { $unset: "__jsmql" },

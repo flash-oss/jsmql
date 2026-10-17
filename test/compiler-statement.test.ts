@@ -912,12 +912,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
             {
               $match: {
                 $expr: {
-                  $and: [
-                    { $ne: [{ $ifNull: ["$a", null] }, null] },
-                    { $ne: ["$a", false] },
-                    { $ne: ["$a", ""] },
-                    { $ne: ["$a", 0] },
-                  ],
+                  $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }],
                 },
               },
             },

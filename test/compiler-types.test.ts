@@ -26,18 +26,14 @@ describe("types — a written field carries what its value proved", () => {
     ).toEqual([
       { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } },
       { $set: { bool: { $in: ["red", "$arr"] } } },
-      { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } },
+      { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } },
     ]);
   });
 
   it("a string write, then a string method: the method's own form, guarded only while the value may be missing", () => {
     expect(jsmql("$.s = $.a.trim(); $.t = $.s.toUpperCase();")).toEqual([
       { $set: { s: { $trim: { input: "$a" } } } },
-      {
-        $set: {
-          t: { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $toUpper: "$s" } } },
-        },
-      },
+      { $set: { t: { $cond: [{ $lte: ["$s", null] }, null, { $toUpper: "$s" }] } } },
     ]);
     // A literal is there: no guard at all.
     expect(jsmql('$.s = "abc"; $.t = $.s.toUpperCase();')).toEqual([
@@ -50,17 +46,7 @@ describe("types — a written field carries what its value proved", () => {
     expect(jsmql("let x = $.n + 1; x = $.s.trim(); $.len = x.length();")).toEqual([
       { $set: { "__jsmql.var.x": { $add: ["$n", 1] } } },
       { $set: { "__jsmql.var.x": { $trim: { input: "$s" } } } },
-      {
-        $set: {
-          len: {
-            $cond: {
-              if: { $eq: [{ $ifNull: ["$__jsmql.var.x", null] }, null] },
-              then: null,
-              else: { $strLenCP: "$__jsmql.var.x" },
-            },
-          },
-        },
-      },
+      { $set: { len: { $cond: [{ $lte: ["$__jsmql.var.x", null] }, null, { $strLenCP: "$__jsmql.var.x" }] } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -78,18 +64,18 @@ describe("types — a written field carries what its value proved", () => {
       {
         $set: {
           v: {
-            $cond: {
-              if: {
+            $cond: [
+              {
                 $and: [
-                  { $ne: [{ $ifNull: ["$flag", null] }, null] },
+                  { $gt: ["$flag", null] },
                   { $ne: ["$flag", false] },
                   { $ne: ["$flag", ""] },
                   { $ne: ["$flag", 0] },
                 ],
               },
-              then: "abc",
-              else: [1, 2],
-            },
+              "abc",
+              [1, 2],
+            ],
           },
         },
       },
@@ -261,21 +247,13 @@ describe.skipIf(up === null)("types — the server agrees", () => {
 describe("types — the truthiness check keeps only the tests the value can fail", () => {
   it("a string keeps the empty-string test, and the null test while it may be missing", () => {
     expect(jsmql("$.s = $.a.trim(); $.t = $.s ? 1 : 2;")[1]).toEqual({
-      $set: {
-        t: {
-          $cond: { if: { $and: [{ $ne: [{ $ifNull: ["$s", null] }, null] }, { $ne: ["$s", ""] }] }, then: 1, else: 2 },
-        },
-      },
+      $set: { t: { $cond: [{ $and: [{ $gt: ["$s", null] }, { $ne: ["$s", ""] }] }, 1, 2] } },
     });
-    expect(jsmql('$.u = "x"; $.v = $.u ? 1 : 2;')[1]).toEqual({
-      $set: { v: { $cond: { if: { $ne: ["$u", ""] }, then: 1, else: 2 } } },
-    });
+    expect(jsmql('$.u = "x"; $.v = $.u ? 1 : 2;')[1]).toEqual({ $set: { v: { $cond: [{ $ne: ["$u", ""] }, 1, 2] } } });
   });
 
   it("a boolean or a number is its own truth; an array that is there needs no test at all", () => {
-    expect(jsmql("$.n = $.a.length(); $.x = $.n ? 1 : 2;")[1]).toEqual({
-      $set: { x: { $cond: { if: "$n", then: 1, else: 2 } } },
-    });
+    expect(jsmql("$.n = $.a.length(); $.x = $.n ? 1 : 2;")[1]).toEqual({ $set: { x: { $cond: ["$n", 1, 2] } } });
     expect(jsmql("$.arr = [1]; $.w = $.arr ? 1 : 2;")[1]).toEqual({ $set: { w: 1 } });
   });
 
@@ -336,7 +314,7 @@ describe("types — the document after a stage, read off the stage itself", () =
       ),
     ).toEqual([
       { $group: { _id: "$k", total: { $sum: "$amount" }, items: { $push: "$item" } } },
-      { $set: { t: { $cond: { if: "$total", then: 1, else: 2 } } } },
+      { $set: { t: { $cond: ["$total", 1, 2] } } },
       { $set: { n: { $size: "$items" } } },
     ]);
   });
@@ -375,7 +353,7 @@ describe("types — the document after a stage, read off the stage itself", () =
   it("a stage whose output no layout states yet leaves the document unknown", () => {
     // `a` was a present string; after the stage it may be missing, so the null guard is back.
     expect(jsmql('$.a = "x"; $sortByCount($.a); $.n = $.a.length();')[2]).toEqual({
-      $set: { n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } } },
+      $set: { n: { $cond: [{ $lte: ["$a", null] }, null, { $strLenCP: "$a" }] } },
     });
   });
 
@@ -384,11 +362,7 @@ describe("types — the document after a stage, read off the stage itself", () =
     expect(jsmql('$.a = "x"; $$.$set({ a: $.label }).map(d => ({ n: $.a.length() }));')).toEqual([
       { $set: { a: "x" } },
       { $set: { a: "$label" } },
-      {
-        $replaceWith: {
-          n: { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $strLenCP: "$a" } } },
-        },
-      },
+      { $replaceWith: { n: { $cond: [{ $lte: ["$a", null] }, null, { $strLenCP: "$a" }] } } },
     ]);
     // A link that replaced the document took the `let` field with it, as a stage statement does.
     expect(() => jsmql("let t = $.a; $$.map(d => ({ x: 1 })).filter(d => d.x === t);")).toThrow(
@@ -622,13 +596,7 @@ describe("types — a call's result follows its row's `returns` term", () => {
         n: {
           $let: {
             vars: { jsmqlRecv: { $arrayElemAt: ["$names", 0] } },
-            in: {
-              $cond: {
-                if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                then: null,
-                else: { $strLenCP: "$$jsmqlRecv" },
-              },
-            },
+            in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] },
           },
         },
       },
@@ -637,10 +605,10 @@ describe("types — a call's result follows its row's `returns` term", () => {
 
   it("a spread and `.assign()` merge object shapes, so a merged property has its type", () => {
     expect(jsmql("const addr1 = { ...$.address, done: true }; $.r = addr1.done ? 1 : 2;")[1]).toEqual({
-      $set: { r: { $cond: { if: "$__jsmql.var.addr1.done", then: 1, else: 2 } } },
+      $set: { r: { $cond: ["$__jsmql.var.addr1.done", 1, 2] } },
     });
     expect(jsmql("$.a2 = $.address.assign({ done: true }); $.r = $.a2.done ? 1 : 2;")[1]).toEqual({
-      $set: { r: { $cond: { if: "$a2.done", then: 1, else: 2 } } },
+      $set: { r: { $cond: ["$a2.done", 1, 2] } },
     });
   });
 
@@ -656,13 +624,7 @@ describe("types — a call's result follows its row's `returns` term", () => {
   it("`.filter(p)` keeps the elements; `.head()` may find nothing, so a property of it may be missing", () => {
     expect(
       jsmql('$.items = [{ q: "s" }]; $.first = $.items.filter(i => i.q).head(); $.n = $.first.q.length();')[2],
-    ).toEqual({
-      $set: {
-        n: {
-          $cond: { if: { $eq: [{ $ifNull: ["$first.q", null] }, null] }, then: null, else: { $strLenCP: "$first.q" } },
-        },
-      },
-    });
+    ).toEqual({ $set: { n: { $cond: [{ $lte: ["$first.q", null] }, null, { $strLenCP: "$first.q" }] } } });
   });
 });
 
@@ -676,7 +638,7 @@ describe("types — a `$match` narrows the document for the statements after it"
       { $match: { tags: { $ne: null } } },
       { $set: { arr: { $setUnion: "$tags" } } },
       { $set: { bool: { $in: ["red", "$arr"] } } },
-      { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } },
+      { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } },
     ]);
   });
 
@@ -690,7 +652,7 @@ describe("types — a `$match` narrows the document for the statements after it"
     // `n` is a number, or an array holding one (the query language reads an array element by element):
     // a number owes only the zero test, an array none, and neither can be missing.
     expect(jsmql("$match($.n > 5); $.x = $.n ? 1 : 2;")[1]).toEqual({
-      $set: { x: { $cond: { if: { $ne: ["$n", 0] }, then: 1, else: 2 } } },
+      $set: { x: { $cond: [{ $ne: ["$n", 0] }, 1, 2] } },
     });
   });
 
@@ -698,18 +660,11 @@ describe("types — a `$match` narrows the document for the statements after it"
     expect(jsmql("$match($.x === 5 || $.y > 1); $.z = $.x ? 1 : 2;")[1]).toEqual({
       $set: {
         z: {
-          $cond: {
-            if: {
-              $and: [
-                { $ne: [{ $ifNull: ["$x", null] }, null] },
-                { $ne: ["$x", false] },
-                { $ne: ["$x", ""] },
-                { $ne: ["$x", 0] },
-              ],
-            },
-            then: 1,
-            else: 2,
-          },
+          $cond: [
+            { $and: [{ $gt: ["$x", null] }, { $ne: ["$x", false] }, { $ne: ["$x", ""] }, { $ne: ["$x", 0] }] },
+            1,
+            2,
+          ],
         },
       },
     });
@@ -798,18 +753,11 @@ describe("types — a refusal reads the whole kind set", () => {
     expect(jsmql("$ = $.f ? $.sub : $.a * 2;")).toEqual([
       {
         $replaceWith: {
-          $cond: {
-            if: {
-              $and: [
-                { $ne: [{ $ifNull: ["$f", null] }, null] },
-                { $ne: ["$f", false] },
-                { $ne: ["$f", ""] },
-                { $ne: ["$f", 0] },
-              ],
-            },
-            then: "$sub",
-            else: { $multiply: ["$a", 2] },
-          },
+          $cond: [
+            { $and: [{ $gt: ["$f", null] }, { $ne: ["$f", false] }, { $ne: ["$f", ""] }, { $ne: ["$f", 0] }] },
+            "$sub",
+            { $multiply: ["$a", 2] },
+          ],
         },
       },
     ]);
@@ -1154,11 +1102,11 @@ describe("types — a join carries the shape its body made", () => {
       {
         $set: {
           c: {
-            $cond: {
-              if: { $getField: { field: { $toString: { $ifNull: ["$pid", ""] } }, input: "$__jsmql.var.counts" } },
-              then: 1,
-              else: 2,
-            },
+            $cond: [
+              { $getField: { field: { $toString: { $ifNull: ["$pid", ""] } }, input: "$__jsmql.var.counts" } },
+              1,
+              2,
+            ],
           },
         },
       },
@@ -1180,13 +1128,7 @@ describe("types — a join carries the shape its body made", () => {
           n: {
             $let: {
               vars: { jsmqlRecv: { $arrayElemAt: ["$a", 0] } },
-              in: {
-                $cond: {
-                  if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] },
-                  then: null,
-                  else: { $strLenCP: "$$jsmqlRecv" },
-                },
-              },
+              in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] },
             },
           },
         },
@@ -1196,7 +1138,7 @@ describe("types — a join carries the shape its body made", () => {
 
   it("`.fromEntries()` over tuple literals is a record of the second items; a named key may be missing", () => {
     expect(jsmql('$.r = [["a", 1], ["b", 2]].fromEntries(); $.t = $.r.a ? "y" : "n";')[1]).toEqual({
-      $set: { t: { $cond: { if: "$r.a", then: "y", else: "n" } } },
+      $set: { t: { $cond: ["$r.a", "y", "n"] } },
     });
   });
 
@@ -1204,21 +1146,16 @@ describe("types — a join carries the shape its body made", () => {
     expect(jsmql('$.s = ["a", "b"]; $.t = $.s[$.i] ? 1 : 2;')[1]).toEqual({
       $set: {
         t: {
-          $cond: {
-            if: {
+          $cond: [
+            {
               $and: [
                 {
-                  $ne: [
+                  $gt: [
                     {
-                      $ifNull: [
-                        {
-                          $switch: {
-                            branches: [{ case: { $isNumber: "$i" }, then: { $arrayElemAt: ["$s", "$i"] } }],
-                            default: "$$REMOVE",
-                          },
-                        },
-                        null,
-                      ],
+                      $switch: {
+                        branches: [{ case: { $isNumber: "$i" }, then: { $arrayElemAt: ["$s", "$i"] } }],
+                        default: "$$REMOVE",
+                      },
                     },
                     null,
                   ],
@@ -1236,9 +1173,9 @@ describe("types — a join carries the shape its body made", () => {
                 },
               ],
             },
-            then: 1,
-            else: 2,
-          },
+            1,
+            2,
+          ],
         },
       },
     });

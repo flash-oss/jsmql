@@ -23,7 +23,7 @@ jsmql("$.age > 18 && $.status === 'active'");
 // Method calls aren't expressible in the query language, so the whole thing
 // falls into `$expr` (still a legal Filter operator).
 jsmql("$.email.split('@').at(1).toLowerCase() === 'gmail.com'");
-// → { $expr: { $eq: [ { $let: { vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $toLower: "$$jsmqlRecv" } } } } }, "gmail.com" ] } }
+// → { $expr: { $eq: [ { $let: { vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } }, in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toLower: "$$jsmqlRecv" }] } } }, "gmail.com" ] } }
 
 // Any `;` flips to Pipeline mode — even one stage with a trailing `;`.
 jsmql("$match($.age > 18); $sort({ age: 1 });");
@@ -112,7 +112,7 @@ jsmql("$.status === 'active' && $.name.trim() === 'alice'");
 // A value that is not a predicate — the JavaScript truthiness test rides in $expr.
 // A sum is a number or a date, so only the null test and the zero test can fail.
 jsmql("$.a + $.b");
-// → { $expr: { $and: [{ $ne: [{ $ifNull: [{ $add: ["$a", "$b"] }, null] }, null] },
+// → { $expr: { $and: [{ $gt: [{ $add: ["$a", "$b"] }, null] },
 //                     { $ne: [{ $add: ["$a", "$b"] }, 0] }] } }
 
 // A `$op(…)` call is your own MQL, so its truth is MongoDB's own: "" and [] are true there
@@ -338,7 +338,7 @@ a nested template literal, and so on — skips the wrap, to keep the output comp
 
 ```js
 `name=${$.name.toLowerCase()}`
-// → { $concat: ["name=", { $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toLower: "$name" } } }] }
+// → { $concat: ["name=", { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }] }
 ```
 
 Templates with no expressions resolve to plain strings. Escape sequences support `\\`, `` \` ``, `\$`, `\n`, `\t`, `\r`. Templates nest: `` `outer ${`inner ${$.x}`}` `` works.
@@ -607,7 +607,7 @@ string method answers null for a missing string, so `.toLowerCase()` takes this 
 
 ```js
 $.config["host"]              // → { $getField: { field: "host", input: { $ifNull: ["$config", {}] } } }
-$.scores[$.key.toLowerCase()] // → { $getField: { field: { $ifNull: [{ $cond: { if: { $eq: [{ $ifNull: ["$key", null] }, null] }, then: null, else: { $toLower: "$key" } } }, ""] }, input: { $ifNull: ["$scores", {}] } } }
+$.scores[$.key.toLowerCase()] // → { $getField: { field: { $ifNull: [{ $cond: [{ $lte: ["$key", null] }, null, { $toLower: "$key" }] }, ""] }, input: { $ifNull: ["$scores", {}] } } }
 
 // `party` iterates a string array → typed `string`, so `$.cre.result[party]` is a getter:
 ["sender", "recipient"].map(party => $.cre.result[party])
@@ -649,11 +649,11 @@ $[$.fieldName]                      // → { $getField: { field: { $toString: { 
 
 ```js
 $.s?.trim().length() // a call runs after the ?. — the chain stops, and answers null
-// → { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: { $trim: { input: "$s" } } } } }
+// → { $cond: [{ $lte: ["$s", null] }, null, { $strLenCP: { $trim: { input: "$s" } } }] }
 $.s.trim().length()  // no ?. — but `.length()` is a string method, and its receiver may be null, so it too answers null
-// → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
+// → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] } } }
 $.a?.b.uniq()        // the ?. tests `a` alone; `a.b` inside follows the dot rule
-// → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setUnion: { $ifNull: ["$a.b", []] } } } }
+// → { $cond: [{ $lte: ["$a", null] }, null, { $setUnion: { $ifNull: ["$a.b", []] } }] }
 $.a.uniq()           // no ?. — an array method on a field that may be missing runs on []
 // → { $setUnion: { $ifNull: ["$a", []] } }
 $.a?.max()           // `$max` gives null for null, so the chain needs no test
@@ -668,10 +668,10 @@ Some operators give `null` for a `null` operand. When each call after the `?.` u
 |---|---|---|
 | Bare read | `null` for a missing value | `$.user?.name` → `{ $ifNull: ["$user.name", null] }` |
 | Array spread | `[]` — under `.` as well: a missing array spreads as an empty array (HR5) | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
-| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user", null] }, null] }, then: null, else: { $trim: { input: "$user.name" } } } }` |
+| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $trim: { input: "$user.name" } }] }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
-| `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user", null] }, null] }, then: null, else: { $size: { $ifNull: ["$user.tags", []] } } } }` |
+| `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $size: { $ifNull: ["$user.tags", []] } }] }` |
 | Index access (`obj?.[k]`, or a `?.` earlier in the chain) | `null` for a missing value, as a bare read | `$.scoresByLevel?.[$.level]` → `{ $ifNull: [<the index read>, null] }` |
 | A field read after a value | `null` for a missing value, as a bare read | `$.items[0]?.label` → `{ $ifNull: [{ $let: { vars: { jsmqlV: <the read of $.items[0]> }, in: "$$jsmqlV.label" } }, null] }` |
 
@@ -1574,7 +1574,7 @@ $.building && $.building + ","      // includes the suffix only when $.building 
 ### Conditional
 
 ```js
-$.age >= 18 ? "adult" : "minor"     // { $cond: { if: { $gte: ["$age", 18] }, then: "adult", else: "minor" } }
+$.age >= 18 ? "adult" : "minor"     // { $cond: [{ $gte: ["$age", 18] }, "adult", "minor"] }
 $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 ```
 
@@ -1602,11 +1602,11 @@ $match($.active)                    // the same check, as a stage
 $$.filter(o => o.active)            // and again, on a stream
 ```
 
-**The check shrinks to what the value can be.** Each of the four tests belongs to one kind of value, so a value the compiler has a type for — a field the pipeline wrote, a `let`, a literal, a method result — keeps only the tests that value can fail. A field written as a string keeps the `""` test, and the null test while it may be missing. A field written as an array, an object or a date keeps only the null test, and none at all when it is certainly there, so `$.arr ? a : b` becomes `a`. A boolean or a number is its own truth, because MongoDB already reads `0`, `false`, null and missing as false: `$.n ? 1 : 2` is `{ $cond: { if: "$n", then: 1, else: 2 } }`. In a Filter or a `$match`, a bare field with a known type takes the query form — `{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that may be missing — unless the field may hold an array, which the query language reads element by element. See [docs/specs/types.md](specs/types.md).
+**The check shrinks to what the value can be.** Each of the four tests belongs to one kind of value, so a value the compiler has a type for — a field the pipeline wrote, a `let`, a literal, a method result — keeps only the tests that value can fail. A field written as a string keeps the `""` test, and the null test while it may be missing. A field written as an array, an object or a date keeps only the null test, and none at all when it is certainly there, so `$.arr ? a : b` becomes `a`. A boolean or a number is its own truth, because MongoDB already reads `0`, `false`, null and missing as false: `$.n ? 1 : 2` is `{ $cond: ["$n", 1, 2] }`. In a Filter or a `$match`, a bare field with a known type takes the query form — `{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that may be missing — unless the field may hold an array, which the query language reads element by element. See [docs/specs/types.md](specs/types.md).
 
 ```js
 $.s = $.a.trim(); $.t = $.s ? 1 : 2;
-// → [{ $set: { s: { $trim: { input: "$a" } } } }, { $set: { t: { $cond: { if: { $and: [{ $ne: [{ $ifNull: ["$s", null] }, null] }, { $ne: ["$s", ""] }] }, then: 1, else: 2 } } } }]
+// → [{ $set: { s: { $trim: { input: "$a" } } } }, { $set: { t: { $cond: [{ $and: [{ $gt: ["$s", null] }, { $ne: ["$s", ""] }] }, 1, 2] } } }]
 $.b = $.n > 1; $match($.b);
 // → [{ $set: { b: { $gt: ["$n", 1] } } }, { $match: { b: true } }]
 ```
@@ -1861,14 +1861,14 @@ $.a.indexOf("x")
 $.arr = $.tags.uniq();
 $.bool = $.arr.has("red");
 $.result = $.bool ? "R" : "OTHER";
-// → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } } ]
+// → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } } ]
 ```
 
 **A method on a receiver that is null or missing answers what it answers on an empty array or object.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]` and an object method on `{}`: the compiler wraps the receiver in `$ifNull`, and the operator gives the answer — `[]` for `.uniq()`, `0` for `.sum()` and `.size()`, `false` for `.has(x)`, `true` for `.every(p)`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. A string method answers `null`: JavaScript throws there (`undefined.trim()` is a TypeError), MongoDB has no error to raise inside an expression, and `null` is the nearest value it holds; `$strLenCP` and `$toUpper` would abort or answer `""`, so the receiver is tested first. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
 
 ```js
 $.s.trim().length()               // a STRING method: `s` may be missing → tested first, and answers null
-// → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $strLenCP: "$$jsmqlRecv" } } } } }
+// → { $let: { vars: { jsmqlRecv: { $trim: { input: "$s" } } }, in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $strLenCP: "$$jsmqlRecv" }] } } }
 
 $.a.map(x => x + 1).size()        // an ARRAY method: a missing `a` is [], so the count is 0, and `.size()` adds no guard of its own
 // → { $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } } }
@@ -1880,7 +1880,7 @@ $.keys().size()                   // the root document is always there
 // → { $size: { $map: { input: { $objectToArray: "$$ROOT" }, in: "$$this.k" } } }
 
 $.a?.map(x => x + 1).size()       // `?.` with a call after it stops the chain — see Optional Chaining
-// → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } } } }
+// → { $cond: [{ $lte: ["$a", null] }, null, { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } }] }
 
 $.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).size();   // a $lookup always writes its array
 // → …, { $set: { n: { $size: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } } }, …
@@ -2404,7 +2404,7 @@ $.legs.map(leg => {
 })
 // → { $map: { input: "$legs", as: "leg", in:
 //      { $let: { vars: { score: "$$leg.riskScore" }, in:
-//        { $let: { vars: { band: { $cond: { if: { $gt: ["$$score", 50] }, then: "high", else: "low" } } }, in:
+//        { $let: { vars: { band: { $cond: [{ $gt: ["$$score", 50] }, "high", "low"] } }, in:
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
@@ -3500,7 +3500,7 @@ jsmql(`[
   $sort({ score: -1 })
 ]`)
 // → [
-//     { $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] },   // `$.active` is the JavaScript truthiness test
+//     { $match: { $expr: { $and: [{ $gt: ["$active", null] },   // `$.active` is the JavaScript truthiness test
 //                                 { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } },
 //     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: "$$NOW" } },
 //     { $sort: { score: -1 } }
@@ -4226,7 +4226,7 @@ jsmql(`[{ $match: $.status === "active" && $.score > $.threshold }]`);
 
 // Untranslatable shape → falls back to $expr entirely
 jsmql("[{ $match: $.name.toLowerCase() === \"alice\" }]");
-// → [{ $match: { $expr: { $eq: [{ $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toLower: "$name" } } }, "alice"] } } }]
+// → [{ $match: { $expr: { $eq: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, "alice"] } } }]
 
 // Object-literal body is passed through unchanged (also the escape hatch)
 jsmql("[{ $match: { age: { $gt: 18 } } }]");
@@ -5209,7 +5209,7 @@ jsmql.expr('$.firstName + " " + $.lastName')
 
 // Normalized email
 jsmql.expr("$.email.toLowerCase().trim()")
-// → { $trim: { input: { $cond: { if: { $eq: [{ $ifNull: ["$email", null] }, null] }, then: null, else: { $toLower: "$email" } } } } }
+// → { $trim: { input: { $cond: [{ $lte: ["$email", null] }, null, { $toLower: "$email" }] } } }
 
 // Check domain
 jsmql.expr('$.email.substr($.email.indexOf("@") + 1)')
@@ -5223,8 +5223,7 @@ jsmql.expr('$.email.substr($.email.indexOf("@") + 1)')
 ```js
 // Age category
 jsmql.expr('$.age < 13 ? "child" : $.age < 18 ? "teen" : "adult"')
-// → { $cond: { if: { $lt: ["$age", 13] }, then: "child",
-//     else: { $cond: { if: { $lt: ["$age", 18] }, then: "teen", else: "adult" } } } }
+// → { $cond: [{ $lt: ["$age", 13] }, "child", { $cond: [{ $lt: ["$age", 18] }, "teen", "adult"] }] }
 
 // Fallback value (chained ?? flattens into a single $ifNull)
 jsmql.expr("$.nickname ?? $.firstName ?? 'Unknown'")

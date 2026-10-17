@@ -337,7 +337,7 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
                 $expr: {
                   $and: [
                     { $or: [{ $eq: ["$refId", "$$jsmql_f0__id"] }, { $eq: ["$altId", "$$jsmql_f0__id"] }] },
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },
@@ -368,18 +368,10 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
 
   it("regex options carry only MongoDB-valid flags (JS g/u/y dropped)", () => {
     expect(jsmql.expr(`$.s.match(/word/g)`)).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$s", null] }, null] },
-        then: null,
-        else: { $regexMatch: { input: "$s", regex: "word" } },
-      },
+      $cond: [{ $lte: ["$s", null] }, null, { $regexMatch: { input: "$s", regex: "word" } }],
     });
     expect(jsmql.expr(`$.s.matchAll(/word/g)`)).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$s", null] }, null] },
-        then: null,
-        else: { $regexFindAll: { input: "$s", regex: "word" } },
-      },
+      $cond: [{ $lte: ["$s", null] }, null, { $regexFindAll: { input: "$s", regex: "word" } }],
     });
     expect(jsmql.expr(`/pattern/gi.test($.str)`)).toEqual({
       $regexMatch: { input: "$str", regex: "pattern", options: "i" },

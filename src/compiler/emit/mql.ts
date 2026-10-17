@@ -14,11 +14,11 @@ import type { QueryDoc, Truth } from "../../registry/vocabulary.ts";
 import type { MongoVar } from "./names.ts";
 import { constantOf } from "./mode.ts";
 
-/** `{ $cond: { if, then, else } }`. A constant test picks its branch at compile time. */
+/** `{ $cond: [if, then, else] }`. A constant test picks its branch at compile time. */
 export const cond = (test: Truth, then: unknown, otherwise: unknown): unknown => {
   const c = constantOf(test);
   if (c !== null) return c ? then : otherwise;
-  return { $cond: { if: test, then, else: otherwise } };
+  return { $cond: [test, then, otherwise] };
 };
 
 /** `{ $filter: { input, as, cond[, limit] } }`. A test that is always true keeps the whole input; one that is always false keeps nothing. */

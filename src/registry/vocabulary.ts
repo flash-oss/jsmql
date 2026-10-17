@@ -1000,7 +1000,7 @@ export type ExprIn = {
    * it:
    * `{ as: "kv", ref: "$$kv", body: { $let: { vars: { v: "$$kv.v", k: "$$kv.k" }, in: … } } }`.
    * `mode` reads the body as a value, or as a condition with the JavaScript truth rules:
-   *   $.o.pickBy(v => v)   in: { $and: [{ $ne: [{ $ifNull: ["$$v", null] }, null] }, …, { $ne: ["$$v", ""] }, …] }
+   *   $.o.pickBy(v => v)   in: { $and: [{ $gt: ["$$v", null] }, …, { $ne: ["$$v", ""] }, …] }
    */
   objIteratee: (cb: Expr, mode: "value" | "truth") => { as: string; ref: string; body: unknown };
   /**

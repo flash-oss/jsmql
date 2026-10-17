@@ -613,7 +613,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },
@@ -724,7 +724,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },
@@ -1128,7 +1128,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
                     as: "o",
                     in: {
                       $and: [
-                        { $ne: [{ $ifNull: ["$$o.paid", null] }, null] },
+                        { $gt: ["$$o.paid", null] },
                         { $ne: ["$$o.paid", false] },
                         { $ne: ["$$o.paid", ""] },
                         { $ne: ["$$o.paid", 0] },
@@ -1156,7 +1156,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
                     as: "o",
                     cond: {
                       $and: [
-                        { $ne: [{ $ifNull: ["$$o.vip", null] }, null] },
+                        { $gt: ["$$o.vip", null] },
                         { $ne: ["$$o.vip", false] },
                         { $ne: ["$$o.vip", ""] },
                         { $ne: ["$$o.vip", 0] },
@@ -1172,7 +1172,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
                       $not: [
                         {
                           $and: [
-                            { $ne: [{ $ifNull: ["$$o.vip", null] }, null] },
+                            { $gt: ["$$o.vip", null] },
                             { $ne: ["$$o.vip", false] },
                             { $ne: ["$$o.vip", ""] },
                             { $ne: ["$$o.vip", 0] },

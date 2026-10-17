@@ -111,8 +111,10 @@ function setKey(out, name2, value) {
 var cond = (ifExpr, thenExpr, elseExpr) => {
   if (ifExpr === true) return thenExpr;
   if (ifExpr === false) return elseExpr;
-  return { $cond: { if: ifExpr, then: thenExpr, else: elseExpr } };
+  return { $cond: [ifExpr, thenExpr, elseExpr] };
 };
+var isNullish = (value) => ({ $lte: [value, null] });
+var isNotNullish = (value) => ({ $gt: [value, null] });
 var isIfNullWrapped = (value) => typeof value === "object" && value !== null && "$ifNull" in value && Object.keys(value).length === 1;
 var coerceStringBinding = (v) => isIfNullWrapped(v) ? v : { $ifNull: [v, ""] };
 var clampNonNegative = (value) => typeof value === "number" ? Math.max(0, value) : { $max: [0, value] };
@@ -232,12 +234,7 @@ var lastOf = (a) => ({ $last: singleArrayArg(a) });
 var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
 var slotAggregate = (op, recv, perDocument) => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
 var jsTruth = (value) => ({
-  $and: [
-    { $ne: [{ $ifNull: [value, null] }, null] },
-    { $ne: [value, false] },
-    { $ne: [value, ""] },
-    { $ne: [value, 0] }
-  ]
+  $and: [isNotNullish(value), { $ne: [value, false] }, { $ne: [value, ""] }, { $ne: [value, 0] }]
 });
 var negate = (n2) => typeof n2 === "number" ? -n2 : { $subtract: [0, n2] };
 var stringKeyExpr = (value) => ({ $ifNull: [{ $toString: value }, "null"] });
@@ -563,7 +560,7 @@ function padded(side, recv, args, value, bind) {
   const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad2] } } };
   const filler = isSingleCodePointLiteral(pad2) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
   const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
-  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
+  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [need, 0] }, padding, v.ref] };
   return { $let: { vars: { [v.as]: recv }, in: bounded } };
 }
 function identity(bind) {
@@ -650,7 +647,7 @@ var nullOr = (recv, present2, bind, body) => {
   const cheap = typeof recv === "string" && recv.startsWith("$");
   const bound = cheap ? null : bind("recv");
   const ref = bound === null ? recv : bound.ref;
-  const doc = cond({ $eq: [{ $ifNull: [ref, null] }, null] }, null, body(ref));
+  const doc = cond(isNullish(ref), null, body(ref));
   return bound === null ? doc : { $let: { vars: { [bound.as]: recv }, in: doc } };
 };
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
@@ -684,11 +681,11 @@ function randomOf({ recv, args, value, bind, present: present2 }) {
   const isWhole = (ref) => ({ $eq: [ref, { $trunc: ref }] });
   const fixed = [a, b].some((v) => typeof v === "number" && !Number.isInteger(v));
   const body = fixed ? fraction(lo.ref, span) : {
-    $cond: {
-      if: { $and: [isWhole(lo.ref), isWhole(hi.ref)] },
-      then: whole(lo.ref, { $add: [span, 1] }),
-      else: fraction(lo.ref, span)
-    }
+    $cond: [
+      { $and: [isWhole(lo.ref), isWhole(hi.ref)] },
+      whole(lo.ref, { $add: [span, 1] }),
+      fraction(lo.ref, span)
+    ]
   };
   return { $let: { vars: { [lo.as]: { $min: [a, b] }, [hi.as]: { $max: [a, b] } }, in: body } };
 }
@@ -23361,7 +23358,7 @@ function truthOf(value, type) {
   const kinds = type.kinds;
   if (kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number")) return mint(value);
   const tests = [];
-  if (type.absent) tests.push({ $ne: [{ $ifNull: [value, null] }, null] });
+  if (type.absent) tests.push(isNotNullish(value));
   if (mayBe(type, "bool")) tests.push({ $ne: [value, false] });
   if (mayBe(type, "string")) tests.push({ $ne: [value, ""] });
   if (mayBe(type, "number")) tests.push({ $ne: [value, 0] });
@@ -23395,7 +23392,7 @@ var not = (t) => t === TRUE ? FALSE : t === FALSE ? TRUE : mint({ $not: t });
 var cond2 = (test, then, otherwise) => {
   const c = constantOf(test);
   if (c !== null) return c ? then : otherwise;
-  return { $cond: { if: test, then, else: otherwise } };
+  return { $cond: [test, then, otherwise] };
 };
 var liveBranches = (branches) => {
   const kept = [];
@@ -24314,7 +24311,7 @@ function lowerValue(node, env) {
     const base = withoutOptional(stopped);
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
     if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
-    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
+    const gone = boolTruth(isNullish(lowerValue(base, env)));
     return cond2(gone, null, lowerValue(withoutOptional(node), proved));
   }
   if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
