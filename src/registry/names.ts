@@ -4847,6 +4847,10 @@ export const NAMES = {
         if (path !== null) {
           const c = constant(args[0]);
           if (c === null) return null;
+          // HR5: a dot reads a missing array as [], which holds no null. `{ f: null }` also
+          // matches a missing or null field, so a null needle tests the elements alone.
+          // MEASURED: `{ f: { $elemMatch: { $eq: null } } }` selects `[null]`. It does not select `null` or {}.
+          if (c.value === null) return queryOwnValue(path, { $elemMatch: { $eq: null } });
           return queryOwnValue(path, { $eq: c.value });
         }
         if (recv.type !== "ArrayLiteral") return null;

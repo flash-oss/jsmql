@@ -359,14 +359,21 @@ writes by hand, and the server's own rules apply to it.
 expression.
 
 HR5 also applies to a query. A dot reads a missing or null receiver as the safe
-value of its kind. A query clause never matches a missing field. So a cell whose
-test is true for the safe value calls `orMissing` for its clause. The clause is the
-test, or the field missing or null (`queryOrMissing` in `src/registry/vocabulary.ts`).
+value of its kind. A clause such as `{ s: { $regex: /^$/ } }` never matches a
+missing field. So a cell whose test is true for the safe value calls `orMissing`
+for its clause. The clause matches
+when the test is true, or when the field is missing or null (`queryOrMissing` in
+`src/registry/vocabulary.ts`).
 
 A regex test and the null test share one `$in`. An `$elemMatch` body over a value
 can contain this `$in` too. Any other test takes an `$or`. After a `?.` the call
 gives null, so the clause has no null test. A `?.` earlier in the path gives null
 only where its own link is missing, so the cell takes the `$expr` road there.
+
+The reverse case also exists. `{ tags: null }` matches a missing or null field,
+and `[]` holds no null. So the `.has()` cell tests the elements alone for a null
+needle. An `$all` list of null needles alone also matches a missing field, so such
+a chain keeps the clause of each leaf (`extractHasChain` in `emit/filter.ts`).
 
 | source | shape |
 |---|---|
@@ -374,6 +381,7 @@ only where its own link is missing, so the cell takes the `$expr` road there.
 | `$.s?.match(/^$/)` | `{"s":{"$regex":/^$/}}` |
 | `$.tags.some(t => t.includes(""))` | `{"tags":{"$elemMatch":{"$in":[/(?:)/,null]}}}` |
 | `$.s.match(/a/)` | `{"s":{"$regex":/a/}}` |
+| `$.tags.has(null)` | `{"tags":{"$elemMatch":{"$eq":null}}}` |
 
 MongoDB then satisfies a field comparison when any ELEMENT of an array value
 satisfies it, and it traverses an array in the middle of a path. JavaScript

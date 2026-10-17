@@ -18,12 +18,22 @@ import { liveClient } from "./fixtures/live.ts";
 const URI = SCRATCH_URI;
 
 const DOCS = [
-  { _id: 1, a: "hello", s: "Abc", tags: ["red", "blue"], n: 7, o: { k: 1 }, d: new Date("2024-06-01"), b: 2 },
+  {
+    _id: 1,
+    a: "hello",
+    s: "Abc",
+    tags: ["red", "blue"],
+    n: 7,
+    o: { k: 1 },
+    d: new Date("2024-06-01"),
+    b: 2,
+    h: [null, 1],
+  },
   { _id: 2, a: 1, s: "az", tags: "red", n: 3, o: { k: 2 }, d: new Date("2023-01-01"), b: 0 },
-  { _id: 3, a: 1.5, s: "", tags: [], n: 5, t: "5", b: 2 },
-  { _id: 4, a: true, s: "hello", tags: ["blue"], n: 10, b: 1 },
-  { _id: 5, a: null, s: "Hello ", tags: ["red"], t: "abc", b: 1 },
-  { _id: 6, a: [1, 2, 3], s: "x", tags: ["green"], b: 2 },
+  { _id: 3, a: 1.5, s: "", tags: [], n: 5, t: "5", b: 2, h: [] },
+  { _id: 4, a: true, s: "hello", tags: ["blue"], n: 10, b: 1, h: [[null]] },
+  { _id: 5, a: null, s: "Hello ", tags: ["red"], t: "abc", b: 1, h: null },
+  { _id: 6, a: [1, 2, 3], s: "x", tags: ["green"], b: 2, h: [1] },
   { _id: 7, a: [{ q: 1 }], s: " x ", d: new Date("2025-01-01") },
   { _id: 8, a: { k: 1 }, s: "abz", b: 1 },
   { _id: 9, a: new Date("2024-06-01"), s: "A" },
@@ -73,6 +83,11 @@ const AGREE: readonly string[] = [
   "!$.s.match(/^$/)",
   "$.s?.match(/^$/)",
   '$.s.includes("b")',
+  // HR5: a dot reads a missing array as [], which holds no null. `h` is an array, null or missing.
+  "$.h.has(null)",
+  "!$.h.has(null)",
+  "$.h?.has(null)",
+  "$.h.has(null) && $.h.has(1)",
 ];
 
 /**

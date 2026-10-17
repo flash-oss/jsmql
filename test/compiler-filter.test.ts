@@ -136,6 +136,10 @@ describe("compiler/emit/filter — && and ||", () => {
   it("folds a chain of .has on one field into $all", () => {
     expect(filter('$.tags.has("a") && $.tags.has("b")')).toEqual({ tags: { $all: ["a", "b"] } });
     expect(filter('$.tags.has("a") && $.other.has("b")')).toEqual({ tags: "a", other: "b" });
+    // A null needle beside another needle stays in the list: the other needle excludes a missing field.
+    expect(filter('$.tags.has(null) && $.tags.has("a")')).toEqual({ tags: { $all: [null, "a"] } });
+    // A list of null needles alone matches a missing field, so each leaf keeps its own clause.
+    expect(filter("$.tags.has(null) && $.tags.has(null)")).toEqual({ tags: { $elemMatch: { $eq: null } } });
     // A substring test is a regex, and two regexes on one path stay two clauses.
     expect(filter('$.s.includes("a") && $.s.includes("b")')).toEqual({
       $and: [{ s: { $regex: /a/ } }, { s: { $regex: /b/ } }],
@@ -261,6 +265,8 @@ describe("compiler/emit/filter — methods and operators", () => {
     // `.includes` is the substring test of a string, and the query spelling for it is an
     // escaped `$regex`.
     expect(filter('$.tags.has("x")')).toEqual({ tags: "x" });
+    // Under HR5 a dot reads a missing array as [], which holds no null. `{ tags: null }` matches a missing field.
+    expect(filter("$.tags.has(null)")).toEqual({ tags: { $elemMatch: { $eq: null } } });
     expect(filter('["a", "b"].has($.s)')).toEqual({ s: { $in: ["a", "b"] } });
     expect(filter('$.s.includes("x")')).toEqual({ s: { $regex: /x/ } });
     expect(filter('$.s.includes("a.b")')).toEqual({ s: { $regex: /a\.b/ } });

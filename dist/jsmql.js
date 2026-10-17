@@ -3918,6 +3918,7 @@ var NAMES = {
         if (path !== null) {
           const c = constant(args[0]);
           if (c === null) return null;
+          if (c.value === null) return queryOwnValue(path, { $elemMatch: { $eq: null } });
           return queryOwnValue(path, { $eq: c.value });
         }
         if (recv.type !== "ArrayLiteral") return null;
@@ -23838,6 +23839,7 @@ function extractHasChain(node, env) {
     path = p;
     values.push(c.value);
   }
+  if (values.every((v) => v === null)) return null;
   return path === null ? null : { path, values };
 }
 function pathOfIn(e, env) {
