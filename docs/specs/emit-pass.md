@@ -273,6 +273,7 @@ $.tags === "red" || $.q * $.p > 100    // → {"$or":[{"tags":"red"},{"$expr":{"
 $.a || $.b                             // → {"$expr":{"$or":[<truth a>,<truth b>]}}            every branch $expr: one $expr
 $.tags.has("a") && $.tags.has("b")  // → {"tags":{"$all":["a","b"]}}
 $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
+$.items.some(i => i.q > 2 || i.r === 1) // → {"items":{"$elemMatch":{"$or":[{"q":{"$gt":2}},{"r":1}]}}}
 $.tags.some(t => t === "red")          // → {"tags":{"$elemMatch":{"$eq":"red"}}}   the element itself is the path "", one operator document
 { status: "a", x: $gt($.y) }           // → {"status":"a","$expr":{"$gt":["$x","$y"]}}   a raw document keeps its keys, but an operand that READS the document has no query form and lifts through the row's `liftsTo` twin
 $abs($.delta)                          // → {"$expr":{"$abs":"$delta"}}           a `$op(…)` call keeps MongoDB's truthiness
@@ -433,6 +434,11 @@ operator, so its cell orders the pair at COMPILE time — which it can only do
 when both bounds are constants of one kind, two numbers or two dates. Any
 other pair answers null and takes the `$expr` road, so the compiler emits no
 clause from a comparison it could not actually make.
+
+`.some()` writes its body as the `$elemMatch` of the field. A body over the fields of
+an element can contain `$and`, `$or` and `$nor`. MEASURED: the server refuses them over
+tests of the element itself (`{ $elemMatch: { $or: [{ $gt: 1 }] } }`), and it refuses
+`$expr` in any body. So those bodies take the `$expr` road.
 
 The predicate alias tables (`typeof` spellings, the numeric group) are
 registry data in `vocabulary.ts`, and both the query and the expression cells

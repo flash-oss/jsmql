@@ -29,13 +29,13 @@ const DOCS = [
     b: 2,
     h: [null, 1],
   },
-  { _id: 2, a: 1, s: "az", tags: "red", n: 3, o: { k: 2 }, d: new Date("2023-01-01"), b: 0 },
-  { _id: 3, a: 1.5, s: "", tags: [], n: 5, t: "5", b: 2, h: [] },
+  { _id: 2, a: 1, s: "az", tags: "red", n: 3, o: { k: 2 }, d: new Date("2023-01-01"), b: 0, it: [{ n: 5 }] },
+  { _id: 3, a: 1.5, s: "", tags: [], n: 5, t: "5", b: 2, h: [], it: [{ m: 1 }] },
   { _id: 4, a: true, s: "hello", tags: ["blue"], n: 10, b: 1, h: [[null]] },
   { _id: 5, a: null, s: "Hello ", tags: ["red"], t: "abc", b: 1, h: null },
-  { _id: 6, a: [1, 2, 3], s: "x", tags: ["green"], b: 2, h: [1] },
-  { _id: 7, a: [{ q: 1 }], s: " x ", d: new Date("2025-01-01") },
-  { _id: 8, a: { k: 1 }, s: "abz", b: 1 },
+  { _id: 6, a: [1, 2, 3], s: "x", tags: ["green"], b: 2, h: [1], it: [{ n: 20 }] },
+  { _id: 7, a: [{ q: 1 }], s: " x ", d: new Date("2025-01-01"), it: [] },
+  { _id: 8, a: { k: 1 }, s: "abz", b: 1, it: [{ n: null }] },
   { _id: 9, a: new Date("2024-06-01"), s: "A" },
   { _id: 10 },
   { _id: 11, a: 0, s: "", tags: ["red", "blue"], b: 1 },
@@ -88,6 +88,10 @@ const AGREE: readonly string[] = [
   "!$.h.has(null)",
   "$.h?.has(null)",
   "$.h.has(null) && $.h.has(1)",
+  // an `$elemMatch` body keeps `$or` and `$nor` over the fields of an element; `it` holds documents
+  "$.it.some(i => i.n.inRange(10))",
+  "$.it.some(i => i.n > 2 || i.m === 1)",
+  "$.it.some(i => !(i.n === 5))",
 ];
 
 /**

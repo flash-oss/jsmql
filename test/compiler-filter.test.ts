@@ -289,6 +289,28 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
   });
 
+  it("keeps $and, $or and $nor over the fields of an element inside $elemMatch", () => {
+    expect(filter("$.items.some(i => i.q > 2 || i.r === 1)")).toEqual({
+      items: { $elemMatch: { $or: [{ q: { $gt: 2 } }, { r: 1 }] } },
+    });
+    expect(filter("$.items.some(i => i.n.inRange(10))")).toEqual({
+      items: { $elemMatch: { $or: [{ n: { $gte: 0, $lt: 10 } }, { n: null }] } },
+    });
+    expect(filter("$.items.some(i => !(i.q === 1))")).toEqual({ items: { $elemMatch: { $nor: [{ q: 1 }] } } });
+    // The server refuses an `$or` over tests of the element itself, so this body takes the expression road.
+    expect(filter('$.tags.some(t => t === "a" || t === "b")')).toEqual({
+      $expr: {
+        $anyElementTrue: {
+          $map: {
+            input: { $ifNull: ["$tags", []] },
+            as: "t",
+            in: { $or: [{ $eq: ["$$t", "a"] }, { $eq: ["$$t", "b"] }] },
+          },
+        },
+      },
+    });
+  });
+
   it('matches a missing or null string where the test is true for the safe value "" (HR5)', () => {
     // A dot reads a missing string as "". A query clause never matches a missing field.
     // So a test that is true for "" takes the null test beside it, in one `$in`.

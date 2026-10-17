@@ -666,6 +666,10 @@ var nullOr = (recv, present2, bind, body) => {
 };
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
 var safeNumber = (recv, present2, sameAsNull) => present2 || sameAsNull ? recv : { $ifNull: [recv, 0] };
+var LOGICAL = /* @__PURE__ */ new Set(["$and", "$or", "$nor"]);
+var overFields = (q) => isPlainObject(q) && Object.entries(q).every(
+  ([k, v]) => !k.startsWith("$") || LOGICAL.has(k) && Array.isArray(v) && v.every(overFields)
+);
 var mayHoldZero = (lo, hi) => {
   const bounds = orderedBounds(lo, hi);
   if (bounds === null) return true;
@@ -4700,10 +4704,8 @@ var NAMES = {
         const q = elementQuery(args[0]);
         if (q === null) return null;
         const keys = Object.keys(q);
-        const operators = keys.filter((k) => k.startsWith("$"));
-        if (operators.length > 0 && operators.length < keys.length) return null;
-        if (operators.some((k) => k === "$and" || k === "$or" || k === "$nor" || k === "$expr")) return null;
-        return queryOwnValue(path, { $elemMatch: q });
+        const itself = keys.length > 0 && keys.every((k) => k.startsWith("$") && !LOGICAL.has(k) && k !== "$expr");
+        return itself || overFields(q) ? queryOwnValue(path, { $elemMatch: q }) : null;
       }
     },
     expr: {
@@ -23674,7 +23676,7 @@ function rawQuery(node, env) {
   return out;
 }
 var NEAR = /* @__PURE__ */ new Set(["$near", "$nearSphere"]);
-var LOGICAL = /* @__PURE__ */ new Set(["$and", "$or", "$nor"]);
+var LOGICAL2 = /* @__PURE__ */ new Set(["$and", "$or", "$nor"]);
 function operatorEntries(e) {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
     return [{ op: e.name, value: e.args[0], pos: e.pos }];
@@ -23725,7 +23727,7 @@ function rawDocument(node, env) {
       continue;
     }
     if (NEAR.has(key) && env.site.root !== "filter") throw nearInMatch(key, e.pos);
-    if (LOGICAL.has(key) && e.value.type === "ArrayLiteral") {
+    if (LOGICAL2.has(key) && e.value.type === "ArrayLiteral") {
       out[key] = e.value.elements.map((el) => {
         if (el.type === "SpreadElement") throw spreadInOperatorBody(el.pos);
         return lowerFilter(el, env);

@@ -1252,6 +1252,19 @@ const spelledKeys = (e: Expr): string[] | null =>
 const safeNumber = (recv: unknown, present: boolean, sameAsNull: boolean): unknown =>
   present || sameAsNull ? recv : { $ifNull: [recv, 0] };
 
+/** The query operators that join other queries. */
+const LOGICAL: ReadonlySet<string> = new Set(["$and", "$or", "$nor"]);
+
+/**
+ * A query over the fields of a document: each key names a field, or joins such queries
+ * with `$and`, `$or` or `$nor`. An `$elemMatch` body over a document can hold it.
+ */
+const overFields = (q: unknown): boolean =>
+  isPlainObject(q) &&
+  Object.entries(q).every(
+    ([k, v]) => !k.startsWith("$") || (LOGICAL.has(k) && Array.isArray(v) && v.every(overFields)),
+  );
+
 /**
  * Is 0 in the range? Two constant numbers give the answer at compile time. A number
  * sorts before every date, so 0 is never in a range of two dates. For any other pair,
@@ -5693,15 +5706,15 @@ export const NAMES = {
         // element — so it takes no leaf exclusion, and a PREFIX array is still
         // absent, where JavaScript's `.some` throws and selects nothing.
         // MEASURED: a body that tests the element ITSELF is one operator document
-        // (`{ $elemMatch: { $gt: 1, $lt: 5 } }`); `$and`, `$or`, `$nor` and `$expr`
-        // over operator-only clauses are refused there, and so is a mix of a field
-        // and an operator. Those bodies take the expression road.
+        // (`{ $elemMatch: { $gt: 1, $lt: 5 } }`), and the server refuses `$and`, `$or`
+        // and `$nor` over such tests. A body over the element's FIELDS may hold them
+        // (`{ $elemMatch: { $or: [{ q: 1 }, { r: 2 }] } }`). The server refuses `$expr`
+        // in any body, and a mix of a field and a test of the element. Those bodies
+        // take the expression road.
         if (q === null) return null;
         const keys = Object.keys(q);
-        const operators = keys.filter((k) => k.startsWith("$"));
-        if (operators.length > 0 && operators.length < keys.length) return null;
-        if (operators.some((k) => k === "$and" || k === "$or" || k === "$nor" || k === "$expr")) return null;
-        return queryOwnValue(path, { $elemMatch: q });
+        const itself = keys.length > 0 && keys.every((k) => k.startsWith("$") && !LOGICAL.has(k) && k !== "$expr");
+        return itself || overFields(q) ? queryOwnValue(path, { $elemMatch: q }) : null;
       },
     },
     expr: {
