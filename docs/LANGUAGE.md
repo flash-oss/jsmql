@@ -2535,7 +2535,7 @@ item => item.price > 0
 
 ### Destructured parameters
 
-A parameter may be an array or object pattern of plain names, as in JavaScript. The pattern is one parameter, and each name is that parameter's part wherever the body reads it. So `([id, count]) => -count` **is** `x => -x[1]`: the MQL is the same, and a sort key still reads its minus sign as the direction:
+A parameter can be an array or object pattern of plain names, as in JavaScript. The pattern is one parameter, and each name is a part of that parameter wherever the body reads it. So `([id, count]) => -count` **is** `x => -x[1]`: the MQL is the same, and a sort key still reads its minus sign as the direction:
 
 ```js
 $.tally.entries().sortBy(([id, count]) => -count)       // ≡ .sortBy(e => -e[1]) — count descending
@@ -2549,7 +2549,7 @@ $.items.map(({ sku, qty: n }) => sku + n)                // ≡ .map(x => x.sku 
 $.pairs.map(([, second]) => second)                     // an elision skips an element
 ```
 
-The names are the pattern's whole vocabulary. JSMQL refuses a default value (`[a = 1]`), a rest element (`[a, ...rest]`), a nested pattern (`[[a]]`, `{ a: { b } }`), or a computed key (`{ [k]: v }`). Each error names the plain-name spelling to write instead: `x => x.a ?? 1`, `x => x.slice(1)`, `x => x[0][0]`. The `function` form takes the same patterns.
+A pattern holds plain names only. JSMQL refuses a default value (`[a = 1]`), a rest element (`[a, ...rest]`), a nested pattern (`[[a]]`, `{ a: { b } }`), or a computed key (`{ [k]: v }`). Each error names the plain-name spelling to write instead: `x => x.a ?? 1`, `x => x.slice(1)`, `x => x[0][0]`. The `function` form takes the same patterns.
 
 Lambda parameters shadow outer field references within their scope:
 
@@ -2560,7 +2560,7 @@ $.items.map(price => price * $.taxRate)
 
 ### Block bodies with local `const` (→ `$let`)
 
-A lambda can have a **block body** that declares local `const` / `let` bindings and ends with a `return`. Each binding becomes a MongoDB `$let` variable, so you can name an intermediate value and reuse it, just as in JavaScript:
+A lambda can have a **block body** that declares local `const` or `let` bindings and ends with a `return`. Each binding becomes a MongoDB `$let` variable, so you can name an intermediate value and use it again, as in JavaScript:
 
 ```js
 $.legs.map(leg => {
@@ -2574,7 +2574,13 @@ $.legs.map(leg => {
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
-JSMQL nests bindings in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value — an in-document array method, the `$let(vars, fn)` form, an IIFE — **and in every predicate position**, including a `$$$.<coll>` lookup, `$$.filter` / `$$.reject`, a `$facet` branch, an `$out` write chain, and a `$$.push(...)` union source:
+JSMQL nests bindings in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value: an in-document array method, the `$let(vars, fn)` form, or an IIFE. It also works **in every predicate position**, for example:
+
+- a `$$$.<coll>` lookup
+- `$$.filter` and `$$.reject`
+- a `$facet` branch
+- an `$out` write chain
+- a `$$.push(...)` union source
 
 ```js
 $.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });
@@ -2586,9 +2592,9 @@ $.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; })
 //      as: "recent" } }]
 ```
 
-A `$let` has no query-document form, so a predicate written this way rides entirely in `$expr`; JSMQL does not translate it to indexable query syntax. Note this when the predicate is one an index would otherwise serve. Everything else behaves as it does elsewhere: bindings nest, a `$.<field>` read still hoists into the `$lookup.let`, and `.reject` negates the `return` while it keeps the bindings.
+A `$let` has no query-document form, so a predicate with a block body goes entirely into `$expr`. JSMQL does not translate it to indexable query syntax. Remember this when an index could serve the predicate otherwise. Everything else behaves as it does elsewhere. Bindings nest, a `$.<field>` read still hoists into the `$lookup.let`, and `.reject` negates the `return` and keeps the bindings.
 
-A lambda's parameters and the declarations at the top of its block share one scope, as in JavaScript. So JSMQL refuses when a `const` names a parameter again. A nested lambda opens a scope of its own, and its `const` may shadow the outer name:
+The parameters of a lambda and the declarations at the top of its block share one scope, as in JavaScript. So JSMQL refuses a `const` that uses the name of a parameter again. A nested lambda opens a scope of its own, and its `const` can shadow the outer name:
 
 ```js
 $.items.map(x => { const x = 99; return x })   // ✗ the const uses the parameter name x again
@@ -2599,11 +2605,11 @@ $.items.map(x => $.other.map(y => { const x = 99; return x + y }))
 //        { $let: { vars: { x: 99 }, in: { $add: ["$$x", "$$y"] } } } } } } }
 ```
 
-> **⚠️ JavaScript pitfall — `=> {` always opens a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. Writing `x => { a: 1 }` is an error, because it has no `return`; JSMQL points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
+> **⚠️ JavaScript pitfall — `=> {` always opens a block.** Exactly as in JavaScript, `x => { … }` opens a *statement block*, not an object. To return an object, wrap it in parentheses: `x => ({ a: 1 })`. `x => { a: 1 }` is an error, because it has no `return`. JSMQL points you at the parenthesised form. A block body must be `{ (const|let … ;)* return <expr>; }`.
 
 ### Immediately-invoked arrow functions (IIFE → `$let`)
 
-A call expression whose callee is an arrow-function literal compiles to MongoDB's `$let`. This is the JS-natural way to bind a name and avoid computing a sub-expression twice:
+A call expression whose callee is an arrow-function literal compiles to MongoDB's `$let`. This is the natural JS way to bind a name, so that the query computes a sub-expression only once:
 
 ```js
 ((maxAge, minAge) => $.age >= minAge && $.age <= maxAge)(65, 18)
@@ -2616,13 +2622,13 @@ A call expression whose callee is an arrow-function literal compiles to MongoDB'
 // → { $let: { vars: { d: { $multiply: ["$price", 0.1] } }, in: { $subtract: ["$price", "$$d"] } } }
 ```
 
-Either single-parameter paren style works: `(x => body)(arg)` and `((x) => body)(arg)` produce identical MQL. A parameter may be destructured into plain names (see [Destructured parameters](#destructured-parameters)). JSMQL refuses a default value or a rest parameter; write the default with `??` in the body, and slice the parameter for the rest.
+Both single-parameter paren styles work: `(x => body)(arg)` and `((x) => body)(arg)` give identical MQL. You can destructure a parameter into plain names (see [Destructured parameters](#destructured-parameters)). JSMQL refuses a default value or a rest parameter. Write the default with `??` in the body, and slice the parameter for the rest.
 
-The body of the IIFE can reference outer `$.fields` freely. Only the lambda parameters are rebound.
+The body of the IIFE can refer to outer `$.fields` freely. Only the lambda parameters get a new binding.
 
 ### Reusable functions
 
-Inside a pipeline, you can give an arrow function a **name** — `const f = (a) => …` — and call it by that name, as a named IIFE. The declaration itself emits nothing. Each call expands the body inline as its own `$let`, so you can declare a helper once and reuse it across many fields, without storing anything in the document:
+Inside a pipeline, you can give an arrow function a **name** (`const f = (a) => …`), and call it by that name, as a named IIFE. The declaration itself emits nothing. Each call expands the body inline as its own `$let`. So you can declare a helper once and use it again in many fields, and the document stores nothing:
 
 ```js
 const money = (n) => (n * 100).round() / 100;
@@ -2639,7 +2645,7 @@ $ = {
 //   } }]
 ```
 
-A practical example: a formatter declared once, reused for sender and recipient.
+A practical example is a formatter that you declare once, and use for the sender and for the recipient.
 
 ```js
 const addressToString = (a) => {
@@ -2653,7 +2659,7 @@ $ = {
 };
 ```
 
-The **`function` keyword** is a second spelling of the same thing. Write it however you would write JavaScript. It works everywhere an arrow does: as a declaration, as an inline callback, and as the `jsmql(fn)` input. A `function` declaration is *self-terminating*: it needs no `;` after the `}`, exactly like JS:
+The **`function` keyword** is a second spelling of the same thing. Write it as you would write it in JavaScript. It works everywhere an arrow does: as a declaration, as an inline callback, and as the `jsmql(fn)` input. A `function` declaration is *self-terminating*: it needs no `;` after the `}`, exactly as in JS:
 
 ```js
 function money(n) { return (n * 100).round() / 100 }
@@ -2669,11 +2675,15 @@ JSMQL accepts a named function *expression*, such as `.map(function scale(x) { �
 Notes:
 
 - **Both `=>` styles, the `function` keyword, and a block body all work**: `x => …`, `(x) => …`, `(x) => { const t = …; return …; }`, and `function f(x) { return …; }`. A block body uses the same local-`const` rules described above.
-- **A function body can close over the document.** Beyond its parameters, a function body may read `$.fields` and in-scope `let` bindings.
-- **Functions compose.** One function may call another declared earlier in the same pipeline.
-- **Functions are pipeline-only.** A function is a pipeline statement, exactly like [`let`](#local-bindings-let). An arrow declaration needs the `;` that puts the source into pipeline mode. A `function` declaration is self-terminating and triggers pipeline mode on its own. Declare functions at the top level of the pipeline, not inside an arrow body.
-- **JSMQL re-lowers a function per call.** Calling a function twice produces two independent `$let` blocks. JSMQL stores no shared definition anywhere, and a declared-but-uncalled function adds nothing to the output.
-- Each of these produces an actionable error: calling an undeclared name, using the wrong argument count, recursion, or using a function as a value instead of calling it.
+- **A function body can close over the document.** In addition to its parameters, a function body can read `$.fields` and the `let` bindings in scope.
+- **Functions compose.** One function can call another function that comes earlier in the same pipeline.
+- **Functions are pipeline-only.** A function is a pipeline statement, exactly like [`let`](#local-bindings-let). An arrow declaration needs the `;` that puts the source into pipeline mode. A `function` declaration is self-terminating, and it starts pipeline mode on its own. Declare functions at the top level of the pipeline, not inside an arrow body.
+- **JSMQL lowers a function again for each call.** Two calls of a function give two independent `$let` blocks. JSMQL stores no shared definition anywhere, and a function that you declare but never call adds nothing to the output.
+- Each of these mistakes gives an error that tells you what to do:
+  - a call of a name that you did not declare
+  - the wrong number of arguments
+  - recursion
+  - a function that you use as a value, and do not call
 
 ---
 
@@ -2713,7 +2723,7 @@ A number method on a missing or `null` number gives `null`, under a dot and unde
 
 ### Trigonometry
 
-All angles are in radians (matches both JS and MongoDB).
+All angles are in radians, in JS and in MongoDB.
 
 ```js
 $.angle.sin()                      // { $sin: "$angle" }
@@ -2731,7 +2741,7 @@ $.x.acosh()                        // { $acosh: "$x" }
 $.x.atanh()                        // { $atanh: "$x" }
 ```
 
-MongoDB has no JS equivalent for degree/radian conversion. Use the escape hatch:
+MongoDB has no JS equivalent for the conversion between degrees and radians. Use the escape hatch:
 ```js
 $degreesToRadians($.degAngle)      // { $degreesToRadians: "$degAngle" }
 $radiansToDegrees($.radAngle)      // { $radiansToDegrees: "$radAngle" }
@@ -2747,7 +2757,7 @@ Math.PI                            // 3.141592653589793
 Math.E                             // 2.718281828459045
 ```
 
-Each other `Math` member says the same thing as a number method or an operator, and one capability gets one spelling. The name still parses, so the error names the form that works:
+Each other `Math` member says the same thing as a number method or an operator, and one capability gets one spelling. The name parses, so the error names the form that works:
 
 ```js
 Math.abs($.delta)                  // ✗ not a JSMQL name; write $.delta.abs()
@@ -2800,9 +2810,9 @@ typeof $.age === "string"          // { $eq: [{ $type: "$age" }, "string"] }
 typeof $.age === "number"          // { $in: [{ $type: "$age" }, ["double", "int", "long", "decimal"]] }
 ```
 
-It returns the BSON type name as a string, for example `"string"`, `"bool"`, `"objectId"` or `"date"`. An **umbrella** name, such as `"number"`, tests membership over the concrete types it covers, because `$type` answers with one concrete type.
+It returns the BSON type name as a string, for example `"string"`, `"bool"`, `"objectId"` or `"date"`. A name that covers more than one type, such as `"number"`, tests membership in those concrete types. The reason is that `$type` answers with one concrete type.
 
-**A `typeof` comparison names a BSON type, not a JavaScript type.** MongoDB's vocabulary is the only vocabulary here: `"bool"`, not JavaScript's `"boolean"`; `"long"`, not `"bigint"`; `"javascript"`, not `"function"`. JSMQL refuses each of these three names and points at the MongoDB name, instead of a test that silently matches nothing. `"undefined"` is a MongoDB type, the deprecated BSON one, so it means only that. Absence has its own spelling: `x === undefined`.
+**A `typeof` comparison names a BSON type, not a JavaScript type.** MongoDB's vocabulary is the only vocabulary here: `"bool"`, not JavaScript's `"boolean"`; `"long"`, not `"bigint"`; `"javascript"`, not `"function"`. JSMQL refuses each of these three JavaScript names, and the error points at the MongoDB name. So you never get a test that silently matches nothing. `"undefined"` is a MongoDB type, the deprecated BSON one, so it means only that. Absence has its own spelling: `x === undefined`.
 
 ### Number static predicates
 
@@ -2814,11 +2824,11 @@ Number.isNaN($.x)                  // { $and: [{ $isNumber: "$x" }, { $eq: [{ $t
                                    // a string comparison of the value's own rendering.
 ```
 
-JSMQL does not support `Number.isFinite()`, because MongoDB has no Infinity literal to reference cleanly. For finite-bound checks, write the bounds directly, for example `$.x > -1e300 && $.x < 1e300`. You can also use `$convert` with an `onError` clause.
+JSMQL does not support `Number.isFinite()`, because MongoDB has no Infinity literal to refer to cleanly. To test for a finite value, write the bounds directly, for example `$.x > -1e300 && $.x < 1e300`. You can also use `$convert` with an `onError` clause.
 
 ### lodash number methods
 
-Value-mode methods on a number field (per document, not stream methods):
+These are value-mode methods on a number field. They run for each document, and they are not stream methods:
 
 ```js
 $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
@@ -2834,7 +2844,9 @@ $.n.floor(1)           // as ceil, with $floor
 
 #### `.random()`
 
-`.random()` is lodash's `_.random`, and the receiver is lodash's first argument. With no argument, the number is between 0 and the receiver. With one argument, it is between the receiver and the argument. The bounds swap when the first one is larger. Two whole bounds give a whole number, both ends included. Any other pair gives a fractional number. A missing bound reads as `0`, as lodash reads it.
+`.random()` is lodash's `_.random`, and the receiver is lodash's first argument. With no argument, the number is between 0 and the receiver. With one argument, it is between the receiver and the argument. The bounds swap when the first one is larger.
+
+Two whole bounds give a whole number, both ends included. Any other pair gives a fractional number. A missing bound reads as `0`, as lodash reads it.
 
 ```js
 (1).random(6)            // { $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] }   → 1 … 6, whole
@@ -2889,7 +2901,7 @@ $convert($.field, "int", 0, null)       // { $convert: { input: "$field", to: "i
 
 ### ObjectId literals
 
-Write a constant `_id` in three ways. They all produce the same live BSON ObjectId:
+You can write a constant `_id` in three ways. They all give the same live BSON ObjectId:
 
 ```js
 $._id === 0x507f1f77bcf86cd799439011        // leanest: type `0x`, paste the 24-char id
@@ -2901,11 +2913,11 @@ $._id === new ObjectId("507f1f77bcf86cd799439011")
 // { _id: { $in: [new ObjectId("507f…"), new ObjectId("698a…")] } }
 ```
 
-The **`0x` hex form** is the easiest to use. It needs no quotes and no wrapper: paste a 24-character hex `_id` after `0x` (numeric separators like `0x507f_1f77_…` are allowed). A `0x` literal with **exactly 24 hex digits** is an ObjectId. A shorter one is an ordinary integer (`0xff` → `255`). JSMQL rejects a longer, non-24-digit hex value that exceeds the safe integer range.
+The **`0x` hex form** is the easiest to use. It needs no quotes and no wrapper: paste a 24-character hex `_id` after `0x`. Numeric separators like `0x507f_1f77_…` are allowed. A `0x` literal with **exactly 24 hex digits** is an ObjectId. A shorter one is an ordinary integer (`0xff` → `255`). JSMQL rejects a hex value of another length that is past the safe integer range.
 
-JSMQL emits a real BSON `ObjectId` value. This is the only value the MongoDB driver accepts in a query document, so the equality test uses the index with no `$expr` wrapper. (A hand-written Extended JSON envelope is **not** equivalent: the driver passes it to the server as written, and the server rejects it as an unknown operator.) JSMQL checks the string passed to `ObjectId("…")` for 24 hex characters at compile time, so it catches a typo early.
+JSMQL emits a real BSON `ObjectId` value. This is the only value that the MongoDB driver accepts in a query document, so the equality test uses the index with no `$expr` wrapper. A hand-written Extended JSON envelope is **not** equivalent. The driver passes it to the server as written, and the server rejects it as an unknown operator. At compile time, JSMQL checks that the string of `ObjectId("…")` has 24 hex characters, so it catches a typo early.
 
-**Typo guard.** The first four bytes of an ObjectId are a creation timestamp. MongoDB did not exist before 2009, so JSMQL rejects any ObjectId whose timestamp predates that date (the smallest accepted id is `0x4a000000…`, 2009-05-05). This catches common mistakes: an all-zeros id, a sequential placeholder such as `0x1234…`, or a dropped leading digit. The error names the decoded date, so you can see what you typed.
+**Typo guard.** The first four bytes of an ObjectId are a creation timestamp. MongoDB did not exist before 2009, so JSMQL rejects any ObjectId whose timestamp is before that date. The smallest id that JSMQL accepts is `0x4a000000…` (2009-05-05). This catches common mistakes: an id of all zeros, a sequential placeholder such as `0x1234…`, or a missing leading digit. The error names the decoded date, so you can see what you typed.
 
 Two more forms handle the non-constant cases:
 
@@ -2914,14 +2926,14 @@ $.userId = ObjectId($.idString)    // dynamic value → { $toObjectId: "$idStrin
 $.newId  = ObjectId()              // no argument   → { $createObjectId: {} } (server-side fresh id)
 ```
 
-For an id you only have **at runtime**, pass a real ObjectId through the template tag or a `jsmql.compile` parameter. Do not bake a string into the source:
+For an id that you have only **at runtime**, pass a real ObjectId through the template tag or a `jsmql.compile` parameter. Do not write the id as a string in the source:
 
 ```js
 jsmql`$._id === ${someObjectId}`              // interpolate a live ObjectId instance
 jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObjectId }
 ```
 
-The value is an `ObjectId` from **your own `bson`** package. JSMQL declares `bson` as a peer dependency, so it resolves to the one copy your driver already carries. The value passes `instanceof` in your code, and it moves to any other module unchanged.
+The value is an `ObjectId` from **your own `bson`** package. JSMQL declares `bson` as a peer dependency, so it resolves to the one copy that your driver already has. The value passes `instanceof` in your code, and it goes to any other module with no change.
 
 ### The other BSON types
 
@@ -2941,11 +2953,11 @@ $.a = Decimal128($.s);             // → [{ $set: { a: { $toDecimal: "$s" } } }
 
 If you know mongosh, its names also work here and mean exactly the same thing: `NumberDecimal` → `Decimal128`, `NumberLong` → `Long`, `NumberInt` → `Int32`, `ISODate` → `Date`.
 
-`Timestamp`, `Binary`, `DBRef`, `Code`, `BSONSymbol` and `BSONRegExp` have **no source spelling**, because they are not analytics types. `Timestamp` in particular is MongoDB's *internal* oplog type, not a date. Interpolate one when you need it (`` jsmql`$.ts === ${new Timestamp({ t, i })}` ``). JSMQL passes it through unchanged, and `jsmql.stringify` prints it correctly.
+`Timestamp`, `Binary`, `DBRef`, `Code`, `BSONSymbol` and `BSONRegExp` have **no source spelling**, because they are not analytics types. `Timestamp` in particular is MongoDB's *internal* oplog type, not a date. Interpolate one when you need it (`` jsmql`$.ts === ${new Timestamp({ t, i })}` ``). JSMQL passes it through with no change, and `jsmql.stringify` prints it correctly.
 
 **`Double` changes the stored type.** The driver writes a whole JavaScript number as an **int**, so `$.a = 1;` stores an int, and `$.a = Double(1);` stores a double.
 
-**Arithmetic stays on the server.** JSMQL never computes arithmetic on a BSON number at compile time. Computing it in JavaScript would break the guarantee you asked for when you wrote the type:
+**Arithmetic stays on the server.** JSMQL never computes arithmetic on a BSON number at compile time. A computation in JavaScript would break the guarantee that you asked for when you wrote the type:
 
 ```js
 $.a = Decimal128("0.1") + Decimal128("0.2");
@@ -2955,7 +2967,7 @@ $.a = Decimal128("0.1") + Decimal128("0.2");
 
 The one thing that does fold is an exact read: `Decimal128("1.50").toString()` → `"1.50"`.
 
-**JSMQL refuses what `bson` would silently wrap.** `new Int32(5000000000)` becomes `705032704` in `bson` and in mongosh, a wrong number that looks plausible. JSMQL rejects it at the source position and names the type that fits:
+**JSMQL refuses what `bson` would silently wrap.** `new Int32(5000000000)` becomes `705032704` in `bson` and in mongosh. That is a wrong number that looks plausible. JSMQL rejects it at the source position, and the error names the type that fits:
 
 ```js
 $.a = Int32(5000000000);   // ✗ out of the 32-bit range; write Long(…), or Double(…) for a fraction
@@ -2971,9 +2983,9 @@ $.price === Decimal128("0.1")   // finds it
 $.price === 0.1                 // finds NOTHING — and reports no error
 ```
 
-The double `0.1` is really `0.1000000000000000055…`, which truly differs from decimal `0.1`. On a `Decimal128` column, write the constant as `Decimal128(…)`. (`1.5` happens to store exactly, so it matches either way. This is what makes the mistake easy to miss.)
+The double `0.1` is really `0.1000000000000000055…`, which truly differs from decimal `0.1`. On a `Decimal128` column, write the constant as `Decimal128(…)`. (`1.5` has an exact double value, so it matches either way. This is why the mistake is easy to miss.)
 
-Two more measured surprises are worth knowing. `Long + Double` promotes to a double and loses the integer: `$add: [Long("9007199254740993"), Double(0.5)]` gives `9007199254740992`. `MinKey` and `MaxKey` **compare** with every type but **compute** with none: `$add: [MinKey(), 1]` is a server error.
+Measurements show two more surprises. `Long + Double` promotes to a double and loses the integer: `$add: [Long("9007199254740993"), Double(0.5)]` gives `9007199254740992`. `MinKey` and `MaxKey` **compare** with every type but **compute** with none: `$add: [MinKey(), 1]` is a server error.
 
 ---
 
