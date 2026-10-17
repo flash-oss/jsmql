@@ -3410,12 +3410,16 @@ describe("date arithmetic (.plus / .minus)", () => {
     );
   });
   it("rejects a non-integer literal amount (mongod requires an integer)", () => {
-    expect(() => jsmql.expr('$.t.plus(1.5, "day")')).toThrow("'plus' expects an integer, but got a number.");
-    expect(() => jsmql.expr('$.t.minus("30", "day")')).toThrow("'minus' expects an integer, but got a string.");
+    expect(() => jsmql.expr('$.t.plus(1.5, "day")')).toThrow(
+      "'.plus()' takes an integer, but this value is a fraction.",
+    );
+    expect(() => jsmql.expr('$.t.minus("30", "day")')).toThrow(
+      "'.minus()' takes an integer, but this value is a string.",
+    );
   });
   it("rejects a non-string literal timezone", () => {
     expect(() => jsmql.expr('$.t.plus(1, "day", 5)')).toThrow(
-      "'plus' takes a string or a document here, and a number is neither.",
+      "'.plus()' takes a string or a document, but this value is a number.",
     );
   });
   it("allows a negative integer amount and dynamic amount/timezone (literal-gating)", () => {
@@ -3558,8 +3562,12 @@ describe("replacing date parts (.set)", () => {
     );
   });
   it("rejects a part that is not an integer, as mongod does", () => {
-    expect(() => jsmql.expr("$.t.set({ year: 2030.5 })")).toThrow("'set' year expects an integer, but got a number.");
-    expect(() => jsmql.expr('$.t.set({ year: "2030" })')).toThrow("'set' year expects an integer, but got a string.");
+    expect(() => jsmql.expr("$.t.set({ year: 2030.5 })")).toThrow(
+      "'.set()' year takes an integer, but this value is a fraction.",
+    );
+    expect(() => jsmql.expr('$.t.set({ year: "2030" })')).toThrow(
+      "'.set()' year takes an integer, but this value is a string.",
+    );
   });
   it("the $dateFromParts operator form is your own MQL, and it passes through", () => {
     // DELIBERATELY invalid: mongod refuses it, because `year` needs an integer, and gets a string.
@@ -3602,7 +3610,7 @@ describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
       "'isSame' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'days'. Did you mean 'day'?",
     );
     expect(() => jsmql.expr('$.a.isSame("2020-01-01", "day")')).toThrow(
-      "'isSame' expects a date, but got a string. Use a field path or new Date(…).",
+      "'.isSame()' takes a date, but this value is a string. Use a field path or new Date(…).",
     );
   });
 });
@@ -3693,7 +3701,9 @@ describe("date formatting (.format)", () => {
     expect(jsmql.expr("$.createdAt.format($.fmt)")).toEqual({ $dateToString: { date: "$createdAt", format: "$fmt" } });
   });
   it("rejects a non-string literal format and the wrong argument count", () => {
-    expect(() => jsmql.expr("$.createdAt.format(5)")).toThrow("'format' expects a string, but got a number.");
+    expect(() => jsmql.expr("$.createdAt.format(5)")).toThrow(
+      "'.format()' takes a string, but this value is a number.",
+    );
     expect(() => jsmql.expr("$.createdAt.format()")).toThrow(
       "'.format(format[, timezone])' requires 1 or 2 arguments, got 0",
     );
@@ -3861,7 +3871,7 @@ describe("date difference (.diff)", () => {
   });
   it("rejects a literal non-date argument", () => {
     expect(() => jsmql.expr('$.end.diff("2020-01-01", "day")')).toThrow(
-      "'diff' expects a date, but got a string. Use a field path or new Date(…).",
+      "'.diff()' takes a date, but this value is a string. Use a field path or new Date(…).",
     );
   });
   it("a non-literal unit / other is not checked (literal-gating)", () => {
@@ -3889,7 +3899,7 @@ describe("date-method trailing options argument", () => {
   });
   it("gates option value types the same way the operator form does", () => {
     expect(() => jsmql.expr('$.end.diff($.start, "day", { timezone: 5 })')).toThrow(
-      "'diff' timezone expects a string, but got a number.",
+      "'.diff()' timezone takes a string, but this value is a number.",
     );
     expect(() => jsmql.expr('$.end.diff($.start, "week", { startOfWeek: "moonday" })')).toThrow(
       "'diff' startOfWeek must be one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday, mon, tue, wed, thu, fri, sat, sun. It got 'moonday'. Did you mean 'monday'?",
@@ -5464,7 +5474,7 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
         },
       },
     });
-    expect(() => jsmql.expr('$.o.pick("a")')).toThrow("'pick' expects an array, but got a string.");
+    expect(() => jsmql.expr('$.o.pick("a")')).toThrow("'.pick()' takes an array, but this value is a string.");
   });
   it(".omit([keys]) → $arrayToObject over a filtered $objectToArray", () => {
     expect(jsmql.expr('$.o.omit(["a"])')).toEqual({
@@ -11122,7 +11132,7 @@ describe("rejects fractional counts, and never passes them to $slice", () => {
   ];
   for (const [name, src] of rejected) {
     it(`rejects a fraction — ${name}`, () => {
-      expect(() => jsmql.expr(src)).toThrow(/needs a whole number|expects an integer/);
+      expect(() => jsmql.expr(src)).toThrow(/takes an integer, but this value is a fraction/);
     });
   }
 

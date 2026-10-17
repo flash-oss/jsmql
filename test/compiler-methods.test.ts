@@ -534,7 +534,7 @@ describe("compiler/emit — date methods", () => {
 
   it("refuses a unit, a format or a part the server refuses", () => {
     expect(() => expr('$.d.plus(1, "fortnight")')).toThrow(/must be one of/);
-    expect(() => expr('$.d.plus(1.5, "day")')).toThrow(/expects an integer/);
+    expect(() => expr('$.d.plus(1.5, "day")')).toThrow(/takes an integer, but this value is a fraction/);
     expect(() => expr("$.d.isAfter($.e)")).toThrow(/without a unit is just '>'/);
     expect(() => expr('$.d.format("YYYY-MM-DD")')).toThrow(/Moment or Luxon/);
     expect(() => expr('$.d.format("%Q")')).toThrow(/invalid specifier '%Q'/);
@@ -1910,33 +1910,37 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr('$.a.uniq().indexOfSubstring("b")')).toThrow(
       "For the position of a value in an array, write '.indexOf(value)'.",
     );
-    expect(() => expr("$.s.indexOfSubstring(1)")).toThrow("'indexOfSubstring' expects a string, but got a number.");
+    expect(() => expr("$.s.indexOfSubstring(1)")).toThrow(
+      "'.indexOfSubstring()' takes a string, but this value is a number.",
+    );
     // Each argument of a string method takes one kind (HR7). The server refuses a fractional
     // index or count, and a number where it reads a string.
-    expect(() => expr("$.s.substring(1.5)")).toThrow("'substring' expects an integer, but got a number.");
-    expect(() => expr("$.s.substring(0, 2.5)")).toThrow("'substring' expects an integer, but got a number.");
-    expect(() => expr("$.s.substr(1.5)")).toThrow("'substr' expects an integer, but got a number.");
-    expect(() => expr('$.s.charAt("1")')).toThrow("'charAt' expects an integer, but got a string.");
-    expect(() => expr("$.s.repeat(2.5)")).toThrow("'repeat' expects an integer, but got a number.");
-    expect(() => expr('$.s.padStart("3")')).toThrow("'padStart' expects an integer, but got a string.");
-    expect(() => expr("$.s.padEnd(3, 0)")).toThrow("'padEnd' expects a string, but got a number.");
-    expect(() => expr("$.s.split(1)")).toThrow("'split' expects a string, but got a number.");
-    expect(() => expr("$.s.startsWith(1)")).toThrow("'startsWith' expects a string, but got a number.");
-    expect(() => expr("$.s.endsWith(1)")).toThrow("'endsWith' expects a string, but got a number.");
-    expect(() => expr("$.s.includes(1)")).toThrow("'includes' expects a string, but got a number.");
-    expect(() => expr('$.s.replace(1, "x")')).toThrow("'replace' expects a string, but got a number.");
-    expect(() => expr('$.s.replaceAll(",", 1)')).toThrow("'replaceAll' expects a string, but got a number.");
+    expect(() => expr("$.s.substring(1.5)")).toThrow("'.substring()' takes an integer, but this value is a fraction.");
+    expect(() => expr("$.s.substring(0, 2.5)")).toThrow(
+      "'.substring()' takes an integer, but this value is a fraction.",
+    );
+    expect(() => expr("$.s.substr(1.5)")).toThrow("'.substr()' takes an integer, but this value is a fraction.");
+    expect(() => expr('$.s.charAt("1")')).toThrow("'.charAt()' takes an integer, but this value is a string.");
+    expect(() => expr("$.s.repeat(2.5)")).toThrow("'.repeat()' takes an integer, but this value is a fraction.");
+    expect(() => expr('$.s.padStart("3")')).toThrow("'.padStart()' takes an integer, but this value is a string.");
+    expect(() => expr("$.s.padEnd(3, 0)")).toThrow("'.padEnd()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.split(1)")).toThrow("'.split()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.startsWith(1)")).toThrow("'.startsWith()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.endsWith(1)")).toThrow("'.endsWith()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.includes(1)")).toThrow("'.includes()' takes a string, but this value is a number.");
+    expect(() => expr('$.s.replace(1, "x")')).toThrow("'.replace()' takes a string, but this value is a number.");
+    expect(() => expr('$.s.replaceAll(",", 1)')).toThrow("'.replaceAll()' takes a string, but this value is a number.");
     expect(() => expr("$.s.includes($.s.length())")).toThrow(
       "'.includes()' takes a string, but this value is a number.",
     );
     // The query road falls back to the value cell. Both cells state the kind.
-    expect(() => jsmql("$.s.startsWith(1)")).toThrow("'startsWith' expects a string, but got a number.");
+    expect(() => jsmql("$.s.startsWith(1)")).toThrow("'.startsWith()' takes a string, but this value is a number.");
     // the position is an integer: `$indexOfCP` refuses a fractional start (HR7)
     expect(() => expr('$.s.indexOfSubstring("b", 1.9)')).toThrow(
-      "'indexOfSubstring' expects an integer, but got a number.",
+      "'.indexOfSubstring()' takes an integer, but this value is a fraction.",
     );
     expect(() => expr('$.s.indexOfSubstring("b", "2")')).toThrow(
-      "'indexOfSubstring' expects an integer, but got a string.",
+      "'.indexOfSubstring()' takes an integer, but this value is a string.",
     );
     expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
@@ -2013,9 +2017,9 @@ describe("compiler/emit — number ranges", () => {
 
   it("refuses a zero step and a fractional bound, and names the alternative", () => {
     expect(() => expr("(0).range(5, 0)")).toThrow(/cannot be 0.*n\.range\(\)\.map/);
-    expect(() => expr("(0.5).range(3)")).toThrow(/receiver must be an integer.*\.ceil\(\)/);
-    expect(() => expr("(0).range(2.5)")).toThrow(/argument 1 must be an integer/);
-    expect(() => expr("$.n.rangeRight($.m, 1.5)")).toThrow(/argument 2 must be an integer/);
+    expect(() => expr("(0.5).range(3)")).toThrow(/receiver takes an integer, but this value is a fraction.*\.ceil\(\)/);
+    expect(() => expr("(0).range(2.5)")).toThrow(/argument 1 takes an integer/);
+    expect(() => expr("$.n.rangeRight($.m, 1.5)")).toThrow(/argument 2 takes an integer/);
     expect(() => expr("$.n.range(1, 2, 3)")).toThrow(/\.range\(\[end\[, step\]\]\)/);
   });
 

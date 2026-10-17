@@ -22150,7 +22150,7 @@ var NOUN = {
   bool: "a boolean",
   null: "null",
   array: "an array",
-  object: "an object",
+  object: "a document",
   regex: "a regular expression",
   bigint: "a bigint"
 };
@@ -22178,20 +22178,23 @@ function matches(lit, expected) {
       return false;
   }
 }
-var EXPECTS = {
-  number: "expects a number",
-  int: "expects an integer",
-  "int-or-long": "expects an integer",
-  "number-or-date": "expects a number or a date",
-  string: "expects a string",
-  fieldName: "expects a field NAME to write: a plain string with no '$' and no dot",
-  fieldPath: "expects a field PATH to read: a string that starts with '$'",
-  bool: "expects a boolean",
-  array: "expects an array",
-  object: "expects a document",
-  date: "expects a date",
-  timestamp: "expects a timestamp"
+var TAKES = {
+  number: "a number",
+  int: "an integer",
+  "int-or-long": "an integer",
+  "number-or-date": "a number or a date",
+  string: "a string",
+  fieldName: "a field NAME to write: a plain string with no '$' and no dot",
+  fieldPath: "a field PATH to read: a string that starts with '$'",
+  bool: "a boolean",
+  array: "an array",
+  object: "a document",
+  date: "a date",
+  timestamp: "a timestamp"
 };
+var takesOf = (t) => Array.isArray(t) ? t.map((x) => TAKES[x]).join(" or ") : TAKES[t];
+var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
+var wrongKind = (name2, slot, takes, got, hint2 = "") => `'${spell2(name2)}'${slot ? ` ${slot}` : ""} takes ${takes}, but this value is ${got}.${hint2}`;
 var hint = (expected) => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
@@ -22202,8 +22205,7 @@ function checkSlotKinds(name2, args, operands, kinds) {
     const e = operands[Number(i)];
     const k = kinds[Number(i)];
     if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
-    const expected = Array.isArray(t) ? t.map((x) => EXPECTS[x].replace(/^expects /, "")).join(" or ") : EXPECTS[t].replace(/^expects /, "");
-    throw new CodegenError(`'${spell2(name2)}' takes ${expected}, but this value is ${KIND_NOUN2[k] ?? `a ${k}`}.`, e.pos);
+    throw new CodegenError(wrongKind(name2, "", takesOf(t), KIND_NOUN2[k] ?? `a ${k}`), e.pos);
   }
 }
 var KIND_NOUN2 = {
@@ -22221,7 +22223,7 @@ function checkType(name2, slot, e, expected) {
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
       throw new CodegenError(
-        `'${name2}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
         e.pos
       );
     }
@@ -22232,22 +22234,23 @@ function checkType(name2, slot, e, expected) {
       const other = literal(e);
       if (other === null || other.kind === "null") return;
       throw new CodegenError(
-        `'${name2}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
+        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos
       );
     }
     const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
     if (bad === null) return;
     throw new CodegenError(
-      `'${name2}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
       e.pos
     );
   }
   const lit = literal(e);
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
+  const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
-    `'${name2}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(expected)}`,
+    wrongKind(name2, slot, TAKES[expected], fraction ? "a fraction" : NOUN[lit.kind], fraction ? ROUND : hint(expected)),
     e.pos
   );
 }
@@ -22333,10 +22336,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
     const n2 = e === void 0 ? null : numberOf(e);
     if (n2 !== null && !Number.isInteger(n2)) {
       const what = i === -1 ? "receiver" : `argument ${i + 1}`;
-      throw new CodegenError(
-        `'${spell2(name2)}' ${what} must be an integer. The server takes whole numbers here. It got ${n2}. Write an integer literal, or round the value with '.ceil()' or '.floor()'.`,
-        e.pos
-      );
+      throw new CodegenError(wrongKind(name2, what, "an integer", "a fraction", ROUND), e.pos);
     }
   }
   for (const [i, instead] of Object.entries(args.zeroRefused ?? {})) {
@@ -22393,10 +22393,7 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
     }
     const lit = literal(e);
     if (lit === null || types.some((one) => matches(lit, one))) continue;
-    throw new CodegenError(
-      `'${name2}' takes ${types.map((one) => EXPECTS[one].replace(/^expects /, "")).join(" or ")} here, and ${NOUN[lit.kind]} is neither.`,
-      e.pos
-    );
+    throw new CodegenError(wrongKind(name2, "", takesOf(types), NOUN[lit.kind]), e.pos);
   }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
