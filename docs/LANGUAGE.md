@@ -1988,7 +1988,7 @@ $.s.trim().indexOf("x")        // ✗ .indexOf() is for an array; for a substrin
 $.s.trim().lastIndexOf("x")    // ✗ a string has no search from the end; for the first match write .indexOfSubstring("x")
 ```
 
-**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();`, the compiler knows that `arr` is an array, or null when `tags` is missing. So `$.arr.has("red")` takes the array form with only the null guard. After `$.bool = $.arr.has("red");`, the compiler knows that `bool` is a boolean. So `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows every write: a whole field, a dotted path such as `$.address.full = …`, and a `let` with each of its later values.
+**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();`, the compiler knows that `arr` is an array that is there, because `.uniq()` under a dot gives `[]` for a missing `tags`. So `$.arr.has("red")` is `{ $in: ["red", "$arr"] }`, with no guard. After `$.bool = $.arr.has("red");`, the compiler knows that `bool` is a boolean. So `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows every write: a whole field, a dotted path such as `$.address.full = …`, and a `let` with each of its later values.
 
 The proof also follows the result of a method. `$.tags.map(t => t.trim())` is an array of strings. `{ ...$.address, done: true }` and `$.address.assign({ done: true })` are objects whose `done` is a boolean. `$.o.pick(["a"])` holds `a` and nothing else, and `.filter(p).head()` is one element that can be missing. The proof follows every stage too:
 
