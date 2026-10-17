@@ -117,6 +117,8 @@ The field that the receiver names can be missing from the document, or it can ho
 
 A string method is the exception. On a missing or `null` string, a string method gives `null`. The reason is that JavaScript throws an error here, and MongoDB has no error to throw inside an expression.
 
+A number method gives the safe value, as lodash does. On a missing or `null` number, a dot gives the safe value of the method where one exists. For example, `.clamp()` gives its lower bound. A method with no safe value gives `null`. Most arithmetic methods, for example `.round()`, have no safe value.
+
 **You wrote `?.`.** The compiler tests the value before the `?.`. When that value is missing or `null`, the whole chain gives `null`, and nothing after the `?.` runs. This is what `?.` does in JavaScript, with `null` in place of `undefined`. Each `?.` tests only the value before it. A dot after a `?.` obeys the dot rule.
 
 ```js
@@ -138,6 +140,10 @@ $.a?.b.uniq()       // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, nul
 
 // The document is {}. It has no field `a`.
 $.a?.b.uniq()       // → the same MQL as above                          → null
+
+// The document is {}. It has no field `n`.
+$.n.clamp(0, 9)     // → { $min: [{ $max: ["$n", 0] }, 9] }             → 0
+$.n.round(2)        // → { $round: ["$n", 2] }                          → null
 ```
 
 When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`.
