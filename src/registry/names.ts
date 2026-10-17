@@ -1243,14 +1243,21 @@ const spelledKeys = (e: Expr): string[] | null =>
     : null;
 
 /**
- * HR5's safe number for a cell that serves two families. A receiver that may be
- * missing reads as 0, as lodash reads `_.inRange(null, -1, 1)`. `dispatchOn` wraps
- * the receiver of a one-family row on its own. `.clamp()` and `.inRange()` take a
- * number or a date, so the cell states the wrap. `sameAsNull` says that 0 gives the
- * answer that null gives there, so the wrap adds nothing.
+ * HR5's safe value for a cell that serves a number and a date. It is 0, as lodash reads
+ * `_.inRange(null, -1, 1)`, or the epoch when a bound is a date. `dispatchOn` wraps the
+ * receiver of a one-family row on its own, and a receiver of a proven family too.
+ * `.clamp()` and `.inRange()` take a number or a date. So for any other receiver the
+ * cell states the wrap, and the kind of its bounds picks the value.
  */
-const safeNumber = (recv: unknown, present: boolean, sameAsNull: boolean): unknown =>
-  present || sameAsNull ? recv : { $ifNull: [recv, 0] };
+const safeOfBounds = (kind: ExprIn["kind"], bounds: readonly Expr[]): 0 | Date =>
+  bounds.some((b) => kind(b) === "date") ? new Date(0) : 0;
+
+/**
+ * The receiver of such a cell, read as `safe` when it may be missing. `sameAsNull` says
+ * that `safe` gives the answer that null gives there, so the wrap adds nothing.
+ */
+const safeBound = (recv: unknown, present: boolean, safe: 0 | Date, sameAsNull: boolean): unknown =>
+  present || sameAsNull ? recv : { $ifNull: [recv, safe] };
 
 /** The query operators that join other queries. */
 const LOGICAL: ReadonlySet<string> = new Set(["$and", "$or", "$nor"]);
@@ -1266,14 +1273,16 @@ const overFields = (q: unknown): boolean =>
   );
 
 /**
- * Is 0 in the range? Two constant numbers give the answer at compile time. A number
- * sorts before every date, so 0 is never in a range of two dates. For any other pair,
- * 0 can be in the range.
+ * Is the safe value in the range? Two constant bounds of one kind give the answer at
+ * compile time. A number sorts before every date, so 0 is never in a range of two dates,
+ * and the epoch is never in a range of two numbers. For any other pair, the safe value
+ * can be in the range.
  */
-const mayHoldZero = (lo: unknown, hi: unknown): boolean => {
+const mayHold = (safe: 0 | Date, lo: unknown, hi: unknown): boolean => {
   const bounds = orderedBounds(lo, hi);
   if (bounds === null) return true;
-  return typeof bounds[0] === "number" && bounds[0] <= 0 && 0 < (bounds[1] as number);
+  if (isDate(safe) !== isDate(bounds[0])) return false;
+  return (bounds[0] as number) <= (safe as unknown as number) && (safe as unknown as number) < (bounds[1] as number);
 };
 
 /**
@@ -9419,11 +9428,12 @@ export const NAMES = {
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
       args: { sig: "lower, upper", exact: 2 },
-      emit: ({ recv, args, value, present }) => {
+      emit: ({ recv, args, value, present, kind }) => {
         const lower = value(args[0]);
-        // `$max` ignores null, so 0 gives null's answer for a lower bound of 0 or more, or a date
-        const same = isDate(lower) || (typeof lower === "number" && lower >= 0);
-        return { $min: [{ $max: [safeNumber(recv, present, same), lower] }, value(args[1])] };
+        const safe = safeOfBounds(kind, args);
+        // `$max` ignores null, so the safe value gives null's answer when the lower bound has its kind and is not less
+        const same = isDate(safe) ? isDate(lower) && lower >= safe : typeof lower === "number" && lower >= 0;
+        return { $min: [{ $max: [safeBound(recv, present, safe, same), lower] }, value(args[1])] };
       },
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
@@ -9455,17 +9465,20 @@ export const NAMES = {
         const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
         if (bounds === null) return null;
         const test = { $gte: bounds[0], $lt: bounds[1] };
-        // HR5: a dot reads a missing number as 0, so a range that contains 0 also matches it
-        return mayHoldZero(bounds[0], bounds[1]) ? orMissing(path, test) : queryOwnValue(path, test);
+        // HR5: a dot reads a missing number as 0, and a missing date as the epoch. So a
+        // range that contains the safe value also matches a missing field.
+        const safe = isDate(bounds[0]) ? new Date(0) : 0;
+        return mayHold(safe, bounds[0], bounds[1]) ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
-      emit: ({ recv, args, value, present }) => {
+      emit: ({ recv, args, value, present, kind }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
-        // null and 0 are both outside a range that does not contain 0
-        const r = safeNumber(recv, present, !mayHoldZero(lo, hi));
+        const safe = safeOfBounds(kind, args);
+        // null and the safe value are both outside a range that does not contain the safe value
+        const r = safeBound(recv, present, safe, !mayHold(safe, lo, hi));
         return { $and: [{ $gte: [r, { $min: [lo, hi] }] }, { $lt: [r, { $max: [lo, hi] }] }] };
       },
     },

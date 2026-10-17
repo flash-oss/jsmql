@@ -454,53 +454,100 @@ describe("compiler/emit — string methods", () => {
 describe("compiler/emit — date methods", () => {
   it("counts months and weekdays from 0, as JavaScript does", () => {
     // measured: `$month` of March is 3, `$dayOfWeek` of a Sunday is 1
-    expect(compiled("$.d.getUTCFullYear()", (d) => d.d.getUTCFullYear())).toEqual({ $year: "$d" });
-    expect(compiled("$.d.getUTCMonth()", (d) => d.d.getUTCMonth())).toEqual({ $subtract: [{ $month: "$d" }, 1] });
-    expect(compiled("$.d.getUTCDate()", (d) => d.d.getUTCDate())).toEqual({ $dayOfMonth: "$d" });
-    expect(compiled("$.d.getUTCDay()", (d) => d.d.getUTCDay())).toEqual({ $subtract: [{ $dayOfWeek: "$d" }, 1] });
-    expect(compiled("$.d.getUTCHours()", (d) => d.d.getUTCHours())).toEqual({ $hour: "$d" });
-    expect(compiled("$.d.getUTCMinutes()", (d) => d.d.getUTCMinutes())).toEqual({ $minute: "$d" });
-    expect(compiled("$.d.getUTCSeconds()", (d) => d.d.getUTCSeconds())).toEqual({ $second: "$d" });
-    expect(compiled("$.d.getUTCMilliseconds()", (d) => d.d.getUTCMilliseconds())).toEqual({ $millisecond: "$d" });
+    expect(compiled("$.d.getUTCFullYear()", (d) => d.d.getUTCFullYear())).toEqual({
+      $year: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCMonth()", (d) => d.d.getUTCMonth())).toEqual({
+      $subtract: [{ $month: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
+    expect(compiled("$.d.getUTCDate()", (d) => d.d.getUTCDate())).toEqual({
+      $dayOfMonth: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCDay()", (d) => d.d.getUTCDay())).toEqual({
+      $subtract: [{ $dayOfWeek: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
+    expect(compiled("$.d.getUTCHours()", (d) => d.d.getUTCHours())).toEqual({
+      $hour: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCMinutes()", (d) => d.d.getUTCMinutes())).toEqual({
+      $minute: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCSeconds()", (d) => d.d.getUTCSeconds())).toEqual({
+      $second: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.getUTCMilliseconds()", (d) => d.d.getUTCMilliseconds())).toEqual({
+      $millisecond: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
     // the local-time accessors are the same operators: the server knows no client timezone, so they read UTC
     expect(compiled("$.d.getMonth()", (d) => d.d.getUTCMonth(), "local time is UTC on the server")).toEqual({
-      $subtract: [{ $month: "$d" }, 1],
+      $subtract: [{ $month: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
     });
-    expect(compiled("$.d.getTime()", (d) => d.d.getTime())).toEqual({ $toLong: "$d" });
-    expect(compiled("$.d.toISOString()", (d) => d.d.toISOString())).toEqual({ $dateToString: { date: "$d" } });
+    expect(compiled("$.d.getTime()", (d) => d.d.getTime())).toEqual({
+      $toLong: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(compiled("$.d.toISOString()", (d) => d.d.toISOString())).toEqual({
+      $dateToString: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } },
+    });
   });
 
   it("lowers the date arithmetic with its options", () => {
     expect(compiled('$.d.plus(1, "day")', (d) => new Date(d.d.getTime() + 86400000))).toEqual({
-      $dateAdd: { startDate: "$d", unit: "day", amount: 1 },
+      $dateAdd: { startDate: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 1 },
     });
     expect(compiled('$.d.minus(30, "minute", "UTC")', (d) => new Date(d.d.getTime() - 1800000))).toEqual({
-      $dateSubtract: { startDate: "$d", unit: "minute", amount: 30, timezone: "UTC" },
+      $dateSubtract: {
+        startDate: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "minute",
+        amount: 30,
+        timezone: "UTC",
+      },
     });
     expect(compiled('$.d.isSame($.e, "month")', () => true)).toEqual({
-      $eq: [{ $dateTrunc: { date: "$d", unit: "month" } }, { $dateTrunc: { date: "$e", unit: "month" } }],
+      $eq: [
+        { $dateTrunc: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } },
+        { $dateTrunc: { date: "$e", unit: "month" } },
+      ],
     });
     expect(compiled('$.d.isAfter($.e, "day", { timezone: "UTC", startOfWeek: "mon" })', () => true)).toEqual({
       $gt: [
-        { $dateTrunc: { date: "$d", unit: "day", timezone: "UTC", startOfWeek: "mon" } },
+        {
+          $dateTrunc: {
+            date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] },
+            unit: "day",
+            timezone: "UTC",
+            startOfWeek: "mon",
+          },
+        },
         { $dateTrunc: { date: "$e", unit: "day", timezone: "UTC", startOfWeek: "mon" } },
       ],
     });
-    expect(compiled("$.d.quarter()", () => 1)).toEqual({ $toInt: { $ceil: { $divide: [{ $month: "$d" }, 3] } } });
-    expect(compiled('$.d.isoWeek("UTC")', () => 11)).toEqual({ $isoWeek: { date: "$d", timezone: "UTC" } });
-    expect(compiled('$.d.format("%Y-%m-%d")', () => "2026-03-15")).toEqual({
-      $dateToString: { date: "$d", format: "%Y-%m-%d" },
+    expect(compiled("$.d.quarter()", () => 1)).toEqual({
+      $toInt: { $ceil: { $divide: [{ $month: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } }, 3] } },
     });
-    expect(compiled('$.d.startOf("month")', (d) => d.e)).toEqual({ $dateTrunc: { date: "$d", unit: "month" } });
+    expect(compiled('$.d.isoWeek("UTC")', () => 11)).toEqual({
+      $isoWeek: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "UTC" },
+    });
+    expect(compiled('$.d.format("%Y-%m-%d")', () => "2026-03-15")).toEqual({
+      $dateToString: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, format: "%Y-%m-%d" },
+    });
+    expect(compiled('$.d.startOf("month")', (d) => d.e)).toEqual({
+      $dateTrunc: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" },
+    });
     expect(compiled('$.d.endOf("day")', () => new Date("2026-03-15T23:59:59.999Z"))).toEqual({
       $dateSubtract: {
-        startDate: { $dateAdd: { startDate: { $dateTrunc: { date: "$d", unit: "day" } }, unit: "day", amount: 1 } },
+        startDate: {
+          $dateAdd: {
+            startDate: { $dateTrunc: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } },
+            unit: "day",
+            amount: 1,
+          },
+        },
         unit: "millisecond",
         amount: 1,
       },
     });
     expect(compiled('$.d.diff($.e, "day")', () => 14)).toEqual({
-      $dateDiff: { startDate: "$e", endDate: "$d", unit: "day" },
+      $dateDiff: { startDate: "$e", endDate: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" },
     });
     expect(
       compiled(
@@ -509,7 +556,7 @@ describe("compiler/emit — date methods", () => {
       ),
     ).toEqual({
       $let: {
-        vars: { jsmqlParts: { $dateToParts: { date: "$d" } } },
+        vars: { jsmqlParts: { $dateToParts: { date: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } } } },
         in: {
           $dateFromParts: {
             year: "$$jsmqlParts.year",
@@ -2479,7 +2526,14 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(expr("new Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
     expect(expr("new Date($.n, $.neg)")).toEqual({ $dateFromParts: { year: "$n", month: { $add: ["$neg", 1] } } });
     expect(compiled("Date.UTC($.d.getFullYear(), 0, 1)", () => Date.UTC(DOC.d.getUTCFullYear(), 0, 1))).toEqual({
-      $toLong: { $dateFromParts: { year: { $year: "$d" }, month: 1, day: 1, timezone: "UTC" } },
+      $toLong: {
+        $dateFromParts: {
+          year: { $year: { $ifNull: ["$d", new Date("1970-01-01T00:00:00.000Z")] } },
+          month: 1,
+          day: 1,
+          timezone: "UTC",
+        },
+      },
     });
   });
 });

@@ -155,6 +155,10 @@ $.a?.b.uniq()       // → the same MQL as above                          → nu
 $.n.round(2)        // → { $round: [{ $ifNull: ["$n", 0] }, 2] }         → 0
 $.n.log()           // → { $ln: { $ifNull: ["$n", 1] } }                 → 0
 $.n?.round(2)       // → { $round: ["$n", 2] }                          → null: $round gives null for null
+
+// The document is {}. It has no field `t`.
+$.t.getFullYear()   // → { $year: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }   → 1970
+$.t?.getFullYear()  // → { $year: "$t" }                               → null: $year gives null for null
 ```
 
 When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the safe value. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`. In the same way, the compiler adds no `?.` test when each call after the `?.` gives `null` for `null` on its own: `$.a?.uniq()` is `{ $setUnion: "$a" }`.

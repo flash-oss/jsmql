@@ -1863,7 +1863,7 @@ $.result = $.bool ? "R" : "OTHER";
 // → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } } ]
 ```
 
-**A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, a string method on `""`, and a number method on `0`. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. lodash answers the same way: `_.upperCase(null)` is `""`.
+**A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, a string method on `""`, a number method on `0`, and a date method on the epoch. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. lodash answers the same way: `_.upperCase(null)` is `""`.
 
 In a Filter this reading also decides which documents match: `$.s.length() === 0` matches a document with no `s`, as `$.tags.size() === 0` does. To match only a string that is there, write `$.s?.length() === 0`. A query clause follows the same reading: `$.s.match(/^$/)` becomes `{ s: { $in: [/^$/, null] } }`, so it also matches a document with no `s`. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
 
@@ -2824,7 +2824,7 @@ Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y",
 ```js
 new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
 new Date(2024, 12, 1)              // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
-$.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }   — January is 0
+$.createdAt.getMonth()             // { $subtract: [{ $month: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   — January is 0
 $month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```
 
@@ -2835,42 +2835,44 @@ $month($.createdAt)                // { $month: "$createdAt" }                  
 Call on any expression that produces a date:
 
 ```js
-$.createdAt.getFullYear()          // { $year: "$createdAt" }
-$.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }   (January = 0, as in JS)
-$.createdAt.getDate()              // { $dayOfMonth: "$createdAt" }
-$.createdAt.getDay()               // { $subtract: [{ $dayOfWeek: "$createdAt" }, 1] }   (0 = Sunday … 6 = Saturday, as in JS)
-$.createdAt.getHours()             // { $hour: "$createdAt" }
-$.createdAt.getMinutes()           // { $minute: "$createdAt" }
-$.createdAt.getSeconds()           // { $second: "$createdAt" }
-$.createdAt.getMilliseconds()      // { $millisecond: "$createdAt" }
-$.createdAt.getTime()              // { $toLong: "$createdAt" }   (ms since epoch)
-$.createdAt.toISOString()          // { $dateToString: { date: "$createdAt" } }   (that format IS $dateToString's default)
+$.createdAt.getFullYear()          // { $year: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getMonth()             // { $subtract: [{ $month: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   (January = 0, as in JS)
+$.createdAt.getDate()              // { $dayOfMonth: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getDay()               // { $subtract: [{ $dayOfWeek: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   (0 = Sunday … 6 = Saturday, as in JS)
+$.createdAt.getHours()             // { $hour: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getMinutes()           // { $minute: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getSeconds()           // { $second: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getMilliseconds()      // { $millisecond: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getTime()              // { $toLong: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }   (ms since epoch)
+$.createdAt.toISOString()          // { $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } } }   (that format IS $dateToString's default)
 ```
+
+Under a dot, a date method reads a missing or `null` date as the epoch, `new Date(0)`, the safe value of a date. See [HR5](LANG_RULES.md). So `$.createdAt.getFullYear()` gives `1970` for a document with no `createdAt`. Under `?.`, a date method gives `null`: `$.createdAt?.getFullYear()` is `{ $year: "$createdAt" }`. So a `??` after a date method needs the `?.`: `$.publishedAt?.format("%Y-%m-%d") ?? "unknown"` falls back for a missing `publishedAt`. The dot spelling formats the epoch instead.
 
 Each component getter has a `getUTC*` variant that reads the date in UTC instead of the server's local zone. This matches JavaScript's split between `getHours()` (local) and `getUTCHours()` (UTC):
 
 ```js
-$.createdAt.getUTCFullYear()       // { $year: "$createdAt" }
-$.createdAt.getUTCMonth()          // { $subtract: [{ $month: "$createdAt" }, 1] }   (January = 0)
-$.createdAt.getUTCDate()           // { $dayOfMonth: "$createdAt" }
-$.createdAt.getUTCDay()            // { $subtract: [{ $dayOfWeek: "$createdAt" }, 1] }   (0 = Sunday, as in JS)
-$.createdAt.getUTCHours()          // { $hour: "$createdAt" }
-$.createdAt.getUTCMinutes()        // { $minute: "$createdAt" }
-$.createdAt.getUTCSeconds()        // { $second: "$createdAt" }
-$.createdAt.getUTCMilliseconds()   // { $millisecond: "$createdAt" }
+$.createdAt.getUTCFullYear()       // { $year: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCMonth()          // { $subtract: [{ $month: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   (January = 0)
+$.createdAt.getUTCDate()           // { $dayOfMonth: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCDay()            // { $subtract: [{ $dayOfWeek: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }, 1] }   (0 = Sunday, as in JS)
+$.createdAt.getUTCHours()          // { $hour: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCMinutes()        // { $minute: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCSeconds()        // { $second: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
+$.createdAt.getUTCMilliseconds()   // { $millisecond: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] } }
 ```
 
 **Parts with no JavaScript getter.** MongoDB counts weeks, ISO weeks and days of the year, but JavaScript's `Date` does not. So these methods carry Moment's method names and MQL's own numbering:
 
 ```js
-$.t.week()                         // { $week: "$t" }             → 32   (weeks start Sunday, 0–53)
-$.t.isoWeek()                      // { $isoWeek: "$t" }          → 33   (ISO 8601, 1–53)
-$.t.isoWeekYear()                  // { $isoWeekYear: "$t" }      → 2026 (the year the ISO week belongs to)
-$.t.isoWeekday()                   // { $isoDayOfWeek: "$t" }     → 3    (1 = Monday … 7 = Sunday)
-$.t.dayOfYear()                    // { $dayOfYear: "$t" }        → 224
-$.t.quarter()                      // { $toInt: { $ceil: { $divide: [{ $month: "$t" }, 3] } } }   → 3
+$.t.week()                         // { $week: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }             → 32   (weeks start Sunday, 0–53)
+$.t.isoWeek()                      // { $isoWeek: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }          → 33   (ISO 8601, 1–53)
+$.t.isoWeekYear()                  // { $isoWeekYear: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }      → 2026 (the year the ISO week belongs to)
+$.t.isoWeekday()                   // { $isoDayOfWeek: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }     → 3    (1 = Monday … 7 = Sunday)
+$.t.dayOfYear()                    // { $dayOfYear: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }        → 224
+$.t.quarter()                      // { $toInt: { $ceil: { $divide: [{ $month: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }, 3] } } }   → 3
 
-$.t.week("America/New_York")       // { $week: { date: "$t", timezone: "America/New_York" } }
+$.t.week("America/New_York")       // { $week: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "America/New_York" } }
 ```
 
 Each method takes the optional `timezone` argument, which switches the operator to its `{ date, timezone }` form. `.quarter()` is the one derived value, because MongoDB has no `$quarter` operator. The `$toInt` keeps the result an integer, like every other getter (`$ceil` of a division gives a double). To group *by* quarter, prefer `.startOf("quarter")`, which is one operator and sorts as a date.
@@ -2878,10 +2880,10 @@ Each method takes the optional `timezone` argument, which switches the operator 
 **Date arithmetic.** Add or subtract a span of time with `.plus(amount, unit)` and `.minus(amount, unit)`. Both take an optional third `timezone` argument:
 
 ```js
-$.subscribedAt.plus(30, "day")     // { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } }
-$.expiresAt.minus(1, "month")      // { $dateSubtract: { startDate: "$expiresAt", unit: "month", amount: 1 } }
+$.subscribedAt.plus(30, "day")     // { $dateAdd: { startDate: { $ifNull: ["$subscribedAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 30 } }
+$.expiresAt.minus(1, "month")      // { $dateSubtract: { startDate: { $ifNull: ["$expiresAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month", amount: 1 } }
 $.t.plus(2, "hour", "America/New_York")
-// { $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" } }
+// { $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "hour", amount: 2, timezone: "America/New_York" } }
 ```
 
 On a constant date the call folds to the instant the server would compute. See [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below). JSMQL rejects a literal typo with a suggestion (for `.plus(30, "days")`, the suggestion is `"day"`). A literal `amount` must be an integer, and a literal `timezone` must be a string. A field path or parameter in either slot passes through unchecked. The `$dateAdd(…)` operator form is your own MQL, so JSMQL does not check it, and the server gives the error. The method name follows Temporal and Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)`: `amount` first, `unit` second.
@@ -2890,7 +2892,7 @@ On a constant date the call folds to the instant the server would compute. See [
 
 ```js
 $.end.diff($.start, "day")
-// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
+// { $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } }
 
 new Date().diff($._id, "day")      // how old is this document?
 // { $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" } }
@@ -2904,10 +2906,12 @@ new Date().diff($._id, "day")      // how old is this document?
 
 ```js
 $.createdAt.startOf("month")
-// { $dateTrunc: { date: "$createdAt", unit: "month" } }
+// { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } }
 
 $group({ _id: $.createdAt.startOf("month"), revenue: $sum($.total) });
-// { $group: { _id: { $dateTrunc: { date: "$createdAt", unit: "month" } }, revenue: { $sum: "$total" } } }
+// { $group: { _id: { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } }, revenue: { $sum: "$total" } } }
+// a document with no `createdAt` counts in the bucket of the epoch.
+// `$.createdAt?.startOf("month")` puts that document in the bucket null.
 ```
 
 Because the result is a date, it sorts, compares and chains like one: `$.createdAt.startOf("month").plus(1, "month")` is the exclusive end of the same bucket. `"quarter"` is available here even though no getter returns a quarter number.
@@ -2916,20 +2920,20 @@ Two options refine it. `binSize` groups several units into one bucket, and `star
 
 ```js
 $.createdAt.startOf("minute", { binSize: 15 })    // 15-minute buckets
-// { $dateTrunc: { date: "$createdAt", unit: "minute", binSize: 15 } }
+// { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "minute", binSize: 15 } }
 
 $.createdAt.startOf("week", { startOfWeek: "monday" })
-// { $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" } }
+// { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "week", startOfWeek: "monday" } }
 ```
 
 **Format a date as a string.** `.format(spec)` takes MongoDB's own format specifiers:
 
 ```js
 $.createdAt.format("%Y-%m-%d")
-// { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }        → "2026-08-12"
+// { $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, format: "%Y-%m-%d" } }        → "2026-08-12"
 
 $.createdAt.startOf("month").format("%Y-%m")
-// { $dateToString: { date: { $dateTrunc: { date: "$createdAt", unit: "month" } }, format: "%Y-%m" } }
+// { $dateToString: { date: { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } }, format: "%Y-%m" } }
 //                                                                     → "2026-08"
 
 $.createdAt.format("%H:%M", "America/New_York")
@@ -2951,7 +2955,8 @@ $.createdAt.format("%H:%M", "America/New_York")
 
 ```js
 $.createdAt.endOf("month")
-// { $dateSubtract: { startDate: { $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt", unit: "month" } },
+// { $dateSubtract: { startDate: { $dateAdd: { startDate: { $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+//                                                                       unit: "month" } },
 //                                            unit: "month", amount: 1 } },
 //                    unit: "millisecond", amount: 1 } }
 //                                        → 2026-08-31T23:59:59.999Z for any August date
@@ -2975,7 +2980,7 @@ $.createdAt >= $.t.startOf("month") && $.createdAt <= $.t.endOf("month")
 
 ```js
 $.t.set({ year: 2030 })
-// { $let: { vars: { jsmqlParts: { $dateToParts: { date: "$t" } } },
+// { $let: { vars: { jsmqlParts: { $dateToParts: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } } } },
 //           in: { $dateFromParts: { year: 2030, month: "$$jsmqlParts.month", day: "$$jsmqlParts.day",
 //                                   hour: "$$jsmqlParts.hour", minute: "$$jsmqlParts.minute",
 //                                   second: "$$jsmqlParts.second", millisecond: "$$jsmqlParts.millisecond" } } } }
@@ -2996,11 +3001,11 @@ Write the parts out as an object literal, because MongoDB reads them by name. Th
 
 ```js
 $.a.isSame($.b, "day")
-// { $eq: [{ $dateTrunc: { date: "$a", unit: "day" } },
+// { $eq: [{ $dateTrunc: { date: { $ifNull: ["$a", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } },
 //         { $dateTrunc: { date: "$b", unit: "day" } }] }
 
 $.a.isBefore($.b, "month")           // strictly an earlier calendar month
-// { $lt: [{ $dateTrunc: { date: "$a", unit: "month" } },
+// { $lt: [{ $dateTrunc: { date: { $ifNull: ["$a", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } },
 //         { $dateTrunc: { date: "$b", unit: "month" } }] }
 ```
 
@@ -3012,7 +3017,7 @@ Every date method takes the same optional last argument: a **timezone string**, 
 
 ```js
 $.end.diff($.start, "week", "UTC")
-// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "UTC" } }
+// { $dateDiff: { startDate: "$start", endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] }, unit: "week", timezone: "UTC" } }
 
 $.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })
 // { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week",

@@ -352,9 +352,10 @@ describe("compiler/emit/filter — methods and operators", () => {
     expect(filter("$.n.inRange($.lo, $.hi)")).toEqual({
       $expr: { $and: [{ $gte: [n, { $min: ["$lo", "$hi"] }] }, { $lt: [n, { $max: ["$lo", "$hi"] }] }] },
     });
-    // a number against a date does not compare, so the pair keeps the expression form too
+    // a number against a date does not compare, so the pair keeps the expression form too.
+    // A date bound reads a missing receiver as the epoch.
     const d = new Date("2024-01-01T00:00:00.000Z");
-    const t = { $ifNull: ["$t", 0] };
+    const t = { $ifNull: ["$t", new Date(0)] };
     expect(filter('$.t.inRange(new Date("2024-01-01"))')).toEqual({
       $expr: { $and: [{ $gte: [t, { $min: [0, d] }] }, { $lt: [t, { $max: [0, d] }] }] },
     });

@@ -553,11 +553,14 @@ function nullReceiverAsOf(name: string): 1 | "" | undefined {
 /**
  * HR5: under a dot, a method runs on the SAFE value of its kind when its receiver is
  * null or missing: `[]` for an array, `{}` for an object, `""` for a string, `0` for a
- * number. A family with no safe value gives null. A row that states `nullReceiverAs` reads that value. Else
+ * number, and the epoch for a date. A family with no safe value gives null. A row that states `nullReceiverAs` reads that value. Else
  * `family` is the receiver's proven family, or null; then the row's own field families
  * decide, and they must agree on one safe value.
  */
-export function emptyValueOf(name: string, family: string | null): [] | Record<string, never> | "" | 0 | 1 | null {
+export function emptyValueOf(
+  name: string,
+  family: string | null,
+): [] | Record<string, never> | "" | 0 | 1 | Date | null {
   const stated = nullReceiverAsOf(name);
   if (stated !== undefined) return stated;
   const own = families(row(name)?.on);
@@ -572,6 +575,7 @@ export function emptyValueOf(name: string, family: string | null): [] | Record<s
   if (fams.every((f) => f === "object")) return {};
   if (fams.every((f) => f === "string")) return "";
   if (fams.every((f) => f === "number")) return 0;
+  if (fams.every((f) => f === "date")) return new Date(0);
   return null;
 }
 

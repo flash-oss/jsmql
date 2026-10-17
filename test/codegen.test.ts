@@ -3315,28 +3315,44 @@ describe("bare built-in callbacks", () => {
 
 describe("date methods", () => {
   it("getFullYear", () => {
-    expect(jsmql.expr("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
+    expect(jsmql.expr("$.ts.getFullYear()")).toEqual({
+      $year: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getMonth (0-based, as in JavaScript)", () => {
-    expect(jsmql.expr("$.ts.getMonth()")).toEqual({ $subtract: [{ $month: "$ts" }, 1] });
+    expect(jsmql.expr("$.ts.getMonth()")).toEqual({
+      $subtract: [{ $month: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
   });
   it("getDate", () => {
-    expect(jsmql.expr("$.ts.getDate()")).toEqual({ $dayOfMonth: "$ts" });
+    expect(jsmql.expr("$.ts.getDate()")).toEqual({
+      $dayOfMonth: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getDay (0 = Sunday, as in JavaScript)", () => {
-    expect(jsmql.expr("$.ts.getDay()")).toEqual({ $subtract: [{ $dayOfWeek: "$ts" }, 1] });
+    expect(jsmql.expr("$.ts.getDay()")).toEqual({
+      $subtract: [{ $dayOfWeek: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
   });
   it("getHours", () => {
-    expect(jsmql.expr("$.ts.getHours()")).toEqual({ $hour: "$ts" });
+    expect(jsmql.expr("$.ts.getHours()")).toEqual({
+      $hour: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getMinutes", () => {
-    expect(jsmql.expr("$.ts.getMinutes()")).toEqual({ $minute: "$ts" });
+    expect(jsmql.expr("$.ts.getMinutes()")).toEqual({
+      $minute: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getSeconds", () => {
-    expect(jsmql.expr("$.ts.getSeconds()")).toEqual({ $second: "$ts" });
+    expect(jsmql.expr("$.ts.getSeconds()")).toEqual({
+      $second: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getMilliseconds", () => {
-    expect(jsmql.expr("$.ts.getMilliseconds()")).toEqual({ $millisecond: "$ts" });
+    expect(jsmql.expr("$.ts.getMilliseconds()")).toEqual({
+      $millisecond: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
 
   // The accessors read the whole date, so an argument has nowhere to go — dropping
@@ -3353,9 +3369,11 @@ describe("date methods", () => {
     // A timezone the developer TYPED is kept, even when it names the default — the
     // object form is what carries it. Only the implicit UTC that `.getUTCxxx()` names
     // through its own method name collapses to the single-argument form (see "date methods (UTC variants)").
-    expect(jsmql.expr('$.ts.week("UTC")')).toEqual({ $week: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr('$.ts.week("UTC")')).toEqual({
+      $week: { date: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "UTC" },
+    });
     expect(jsmql.expr('$.ts.week("America/New_York")')).toEqual({
-      $week: { date: "$ts", timezone: "America/New_York" },
+      $week: { date: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "America/New_York" },
     });
   });
 });
@@ -3363,26 +3381,45 @@ describe("date methods", () => {
 describe("date arithmetic (.plus / .minus)", () => {
   it("plus(amount, unit) → $dateAdd", () => {
     expect(jsmql.expr('$.subscribedAt.plus(30, "day")')).toEqual({
-      $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 },
+      $dateAdd: {
+        startDate: { $ifNull: ["$subscribedAt", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "day",
+        amount: 30,
+      },
     });
   });
   it("minus(amount, unit) → $dateSubtract", () => {
     expect(jsmql.expr('$.expiresAt.minus(1, "month")')).toEqual({
-      $dateSubtract: { startDate: "$expiresAt", unit: "month", amount: 1 },
+      $dateSubtract: {
+        startDate: { $ifNull: ["$expiresAt", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "month",
+        amount: 1,
+      },
     });
   });
   it("optional timezone third arg", () => {
     expect(jsmql.expr('$.t.plus(2, "hour", "America/New_York")')).toEqual({
-      $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" },
+      $dateAdd: {
+        startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "hour",
+        amount: 2,
+        timezone: "America/New_York",
+      },
     });
   });
   it("amount may be a runtime expression", () => {
     expect(jsmql.expr('$.order.createdAt.plus($.slaDays, "day")')).toEqual({
-      $dateAdd: { startDate: "$order.createdAt", unit: "day", amount: "$slaDays" },
+      $dateAdd: {
+        startDate: { $ifNull: ["$order.createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "day",
+        amount: "$slaDays",
+      },
     });
   });
   it("a non-literal unit is not enum-checked (literal-gating)", () => {
-    expect(jsmql.expr("$.t.plus(1, $.unit)")).toEqual({ $dateAdd: { startDate: "$t", unit: "$unit", amount: 1 } });
+    expect(jsmql.expr("$.t.plus(1, $.unit)")).toEqual({
+      $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "$unit", amount: 1 },
+    });
   });
   it("rejects an unknown unit with a suggestion", () => {
     expect(() => jsmql.expr('$.t.plus(30, "days")')).toThrow(
@@ -3404,9 +3441,16 @@ describe("date arithmetic (.plus / .minus)", () => {
     );
   });
   it("allows a negative integer amount and dynamic amount/timezone (literal-gating)", () => {
-    expect(jsmql.expr('$.t.plus(-5, "day")')).toEqual({ $dateAdd: { startDate: "$t", unit: "day", amount: -5 } });
+    expect(jsmql.expr('$.t.plus(-5, "day")')).toEqual({
+      $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: -5 },
+    });
     expect(jsmql.expr('$.t.plus($.n, "day", $.tz)')).toEqual({
-      $dateAdd: { startDate: "$t", unit: "day", amount: "$n", timezone: "$tz" },
+      $dateAdd: {
+        startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "day",
+        amount: "$n",
+        timezone: "$tz",
+      },
     });
   });
 });
@@ -3419,7 +3463,7 @@ describe("replacing date parts (.set)", () => {
   it("reads the parts, overrides the named ones, rebuilds", () => {
     expect(jsmql.expr("$.t.set({ year: 2030 })")).toEqual({
       $let: {
-        vars: { jsmqlParts: { $dateToParts: { date: "$t" } } },
+        vars: { jsmqlParts: { $dateToParts: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } } } },
         in: {
           $dateFromParts: {
             year: 2030,
@@ -3438,7 +3482,7 @@ describe("replacing date parts (.set)", () => {
     // { month: 1 } is January — MQL's base, not JavaScript's 0-based one.
     expect(jsmql.expr("$.t.set({ month: 1, day: 1 })")).toEqual({
       $let: {
-        vars: { jsmqlParts: { $dateToParts: { date: "$t" } } },
+        vars: { jsmqlParts: { $dateToParts: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } } } },
         in: {
           $dateFromParts: {
             year: "$$jsmqlParts.year",
@@ -3461,7 +3505,11 @@ describe("replacing date parts (.set)", () => {
   it("switches to the ISO family, which needs iso8601 on the read side", () => {
     expect(jsmql.expr("$.t.set({ isoWeek: 5 })")).toEqual({
       $let: {
-        vars: { jsmqlParts: { $dateToParts: { date: "$t", iso8601: true } } },
+        vars: {
+          jsmqlParts: {
+            $dateToParts: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, iso8601: true },
+          },
+        },
         in: {
           $dateFromParts: {
             isoWeekYear: "$$jsmqlParts.isoWeekYear",
@@ -3479,7 +3527,14 @@ describe("replacing date parts (.set)", () => {
   it("threads the timezone through both the read and the rebuild", () => {
     expect(jsmql.expr('$.t.set({ year: 2030 }, "America/New_York")')).toEqual({
       $let: {
-        vars: { jsmqlParts: { $dateToParts: { date: "$t", timezone: "America/New_York" } } },
+        vars: {
+          jsmqlParts: {
+            $dateToParts: {
+              date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+              timezone: "America/New_York",
+            },
+          },
+        },
         in: {
           $dateFromParts: {
             year: 2030,
@@ -3502,7 +3557,11 @@ describe("replacing date parts (.set)", () => {
         as: "jsmqlParts",
         in: {
           $let: {
-            vars: { jsmqlParts2: { $dateToParts: { date: "$$jsmqlParts.t" } } },
+            vars: {
+              jsmqlParts2: {
+                $dateToParts: { date: { $ifNull: ["$$jsmqlParts.t", new Date("1970-01-01T00:00:00.000Z")] } },
+              },
+            },
             in: {
               $dateFromParts: {
                 year: 2030,
@@ -3558,21 +3617,36 @@ describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
   // afterMonth false, sameMonth in America/New_York false.
   it("isSame(other, unit) truncates both sides, then compares", () => {
     expect(jsmql.expr('$.a.isSame($.b, "day")')).toEqual({
-      $eq: [{ $dateTrunc: { date: "$a", unit: "day" } }, { $dateTrunc: { date: "$b", unit: "day" } }],
+      $eq: [
+        { $dateTrunc: { date: { $ifNull: ["$a", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } },
+        { $dateTrunc: { date: "$b", unit: "day" } },
+      ],
     });
   });
   it("isBefore / isAfter are the same shape with $lt / $gt", () => {
     expect(jsmql.expr('$.a.isBefore($.b, "month")')).toEqual({
-      $lt: [{ $dateTrunc: { date: "$a", unit: "month" } }, { $dateTrunc: { date: "$b", unit: "month" } }],
+      $lt: [
+        { $dateTrunc: { date: { $ifNull: ["$a", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } },
+        { $dateTrunc: { date: "$b", unit: "month" } },
+      ],
     });
     expect(jsmql.expr('$.a.isAfter($.b, "month")')).toEqual({
-      $gt: [{ $dateTrunc: { date: "$a", unit: "month" } }, { $dateTrunc: { date: "$b", unit: "month" } }],
+      $gt: [
+        { $dateTrunc: { date: { $ifNull: ["$a", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } },
+        { $dateTrunc: { date: "$b", unit: "month" } },
+      ],
     });
   });
   it("applies the options to both sides — a one-sided timezone would compare different calendars", () => {
     expect(jsmql.expr('$.a.isSame($.b, "week", { startOfWeek: "monday" })')).toEqual({
       $eq: [
-        { $dateTrunc: { date: "$a", unit: "week", startOfWeek: "monday" } },
+        {
+          $dateTrunc: {
+            date: { $ifNull: ["$a", new Date("1970-01-01T00:00:00.000Z")] },
+            unit: "week",
+            startOfWeek: "monday",
+          },
+        },
         { $dateTrunc: { date: "$b", unit: "week", startOfWeek: "monday" } },
       ],
     });
@@ -3597,21 +3671,40 @@ describe("date parts JavaScript has no getter for", () => {
   // week 32, isoWeek 33, isoWeekYear 2026, isoWeekday 3, dayOfYear 224,
   // quarter 3 (and `$type` of it is "int", not "double").
   it("week / isoWeek / isoWeekYear / isoWeekday / dayOfYear map to their operators", () => {
-    expect(jsmql.expr("$.t.week()")).toEqual({ $week: "$t" });
-    expect(jsmql.expr("$.t.isoWeek()")).toEqual({ $isoWeek: "$t" });
-    expect(jsmql.expr("$.t.isoWeekYear()")).toEqual({ $isoWeekYear: "$t" });
-    expect(jsmql.expr("$.t.isoWeekday()")).toEqual({ $isoDayOfWeek: "$t" });
-    expect(jsmql.expr("$.t.dayOfYear()")).toEqual({ $dayOfYear: "$t" });
+    expect(jsmql.expr("$.t.week()")).toEqual({ $week: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } });
+    expect(jsmql.expr("$.t.isoWeek()")).toEqual({
+      $isoWeek: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(jsmql.expr("$.t.isoWeekYear()")).toEqual({
+      $isoWeekYear: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(jsmql.expr("$.t.isoWeekday()")).toEqual({
+      $isoDayOfWeek: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(jsmql.expr("$.t.dayOfYear()")).toEqual({
+      $dayOfYear: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("quarter derives from $month, kept an int — MongoDB has no $quarter", () => {
     // $ceil of a $divide is a double on its own, which would make this the one
     // date getter returning a non-integer.
-    expect(jsmql.expr("$.t.quarter()")).toEqual({ $toInt: { $ceil: { $divide: [{ $month: "$t" }, 3] } } });
+    expect(jsmql.expr("$.t.quarter()")).toEqual({
+      $toInt: { $ceil: { $divide: [{ $month: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] } }, 3] } },
+    });
   });
   it("a timezone switches the operator to its { date, timezone } form", () => {
-    expect(jsmql.expr('$.t.week("America/New_York")')).toEqual({ $week: { date: "$t", timezone: "America/New_York" } });
+    expect(jsmql.expr('$.t.week("America/New_York")')).toEqual({
+      $week: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "America/New_York" },
+    });
     expect(jsmql.expr('$.t.quarter({ timezone: "UTC" })')).toEqual({
-      $toInt: { $ceil: { $divide: [{ $month: { date: "$t", timezone: "UTC" } }, 3] } },
+      $toInt: {
+        $ceil: {
+          $divide: [
+            { $month: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, timezone: "UTC" } },
+            3,
+          ],
+        },
+      },
     });
   });
   it("rejects extra arguments, unknown options and a literal non-date receiver", () => {
@@ -3630,22 +3723,34 @@ describe("date formatting (.format)", () => {
   // "2026-08-12" under "%Y-%m-%d", and .startOf("month").format("%Y-%m") → "2026-08".
   it("format(spec) → $dateToString", () => {
     expect(jsmql.expr('$.createdAt.format("%Y-%m-%d")')).toEqual({
-      $dateToString: { date: "$createdAt", format: "%Y-%m-%d" },
+      $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, format: "%Y-%m-%d" },
     });
   });
   it("chains onto .startOf, which is the month-label idiom", () => {
     expect(jsmql.expr('$.createdAt.startOf("month").format("%Y-%m")')).toEqual({
-      $dateToString: { date: { $dateTrunc: { date: "$createdAt", unit: "month" } }, format: "%Y-%m" },
+      $dateToString: {
+        date: {
+          $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" },
+        },
+        format: "%Y-%m",
+      },
     });
   });
   it("takes the timezone as its second argument", () => {
     expect(jsmql.expr('$.createdAt.format("%H:%M", "America/New_York")')).toEqual({
-      $dateToString: { date: "$createdAt", format: "%H:%M", timezone: "America/New_York" },
+      $dateToString: {
+        date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+        format: "%H:%M",
+        timezone: "America/New_York",
+      },
     });
   });
   it("produces a string, so `+` concatenates", () => {
     expect(jsmql.expr('$.t.format("%Y") + "-x"')).toEqual({
-      $concat: [{ $dateToString: { date: "$t", format: "%Y" } }, "-x"],
+      $concat: [
+        { $dateToString: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, format: "%Y" } },
+        "-x",
+      ],
     });
   });
   it("rejects a specifier MongoDB has no format character for", () => {
@@ -3671,11 +3776,13 @@ describe("date formatting (.format)", () => {
   });
   it("passes literal text with no tokens through — that is valid MQL", () => {
     expect(jsmql.expr('$.createdAt.format("Report")')).toEqual({
-      $dateToString: { date: "$createdAt", format: "Report" },
+      $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, format: "Report" },
     });
   });
   it("does not check a non-literal format (literal-gating)", () => {
-    expect(jsmql.expr("$.createdAt.format($.fmt)")).toEqual({ $dateToString: { date: "$createdAt", format: "$fmt" } });
+    expect(jsmql.expr("$.createdAt.format($.fmt)")).toEqual({
+      $dateToString: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, format: "$fmt" },
+    });
   });
   it("rejects a non-string literal format and the wrong argument count", () => {
     expect(() => jsmql.expr("$.createdAt.format(5)")).toThrow("'format' expects a string, but got a number.");
@@ -3696,29 +3803,49 @@ describe("date truncation (.startOf)", () => {
   // week → 2026-08-09 (Sunday, MQL's default), week/monday → 2026-08-10,
   // minute binSize 15 → 15:45Z, day in America/New_York → 2026-08-12T04:00Z.
   it("startOf(unit) → $dateTrunc", () => {
-    expect(jsmql.expr('$.createdAt.startOf("month")')).toEqual({ $dateTrunc: { date: "$createdAt", unit: "month" } });
+    expect(jsmql.expr('$.createdAt.startOf("month")')).toEqual({
+      $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" },
+    });
   });
   it("truncates to a quarter, which no date getter exposes", () => {
     expect(jsmql.expr('$.createdAt.startOf("quarter")')).toEqual({
-      $dateTrunc: { date: "$createdAt", unit: "quarter" },
+      $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "quarter" },
     });
   });
   it("a bare second argument is the timezone", () => {
     expect(jsmql.expr('$.createdAt.startOf("day", "America/New_York")')).toEqual({
-      $dateTrunc: { date: "$createdAt", unit: "day", timezone: "America/New_York" },
+      $dateTrunc: {
+        date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "day",
+        timezone: "America/New_York",
+      },
     });
   });
   it("takes binSize and startOfWeek as options", () => {
     expect(jsmql.expr('$.createdAt.startOf("minute", { binSize: 15 })')).toEqual({
-      $dateTrunc: { date: "$createdAt", unit: "minute", binSize: 15 },
+      $dateTrunc: {
+        date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "minute",
+        binSize: 15,
+      },
     });
     expect(jsmql.expr('$.createdAt.startOf("week", { startOfWeek: "monday" })')).toEqual({
-      $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" },
+      $dateTrunc: {
+        date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "week",
+        startOfWeek: "monday",
+      },
     });
   });
   it("chains, since the result is a date", () => {
     expect(jsmql.expr('$.createdAt.startOf("month").plus(1, "month")')).toEqual({
-      $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt", unit: "month" } }, unit: "month", amount: 1 },
+      $dateAdd: {
+        startDate: {
+          $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" },
+        },
+        unit: "month",
+        amount: 1,
+      },
     });
   });
   it("rejects the wrong argument count, naming the parameters", () => {
@@ -3748,7 +3875,13 @@ describe("inclusive bucket end (.endOf)", () => {
     expect(jsmql.expr('$.createdAt.endOf("month")')).toEqual({
       $dateSubtract: {
         startDate: {
-          $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt", unit: "month" } }, unit: "month", amount: 1 },
+          $dateAdd: {
+            startDate: {
+              $dateTrunc: { date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" },
+            },
+            unit: "month",
+            amount: 1,
+          },
         },
         unit: "millisecond",
         amount: 1,
@@ -3760,7 +3893,13 @@ describe("inclusive bucket end (.endOf)", () => {
       $dateSubtract: {
         startDate: {
           $dateAdd: {
-            startDate: { $dateTrunc: { date: "$createdAt", unit: "day", timezone: "America/New_York" } },
+            startDate: {
+              $dateTrunc: {
+                date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+                unit: "day",
+                timezone: "America/New_York",
+              },
+            },
             unit: "day",
             amount: 1,
             timezone: "America/New_York",
@@ -3776,7 +3915,13 @@ describe("inclusive bucket end (.endOf)", () => {
       $dateSubtract: {
         startDate: {
           $dateAdd: {
-            startDate: { $dateTrunc: { date: "$createdAt", unit: "minute", binSize: 15 } },
+            startDate: {
+              $dateTrunc: {
+                date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+                unit: "minute",
+                binSize: 15,
+              },
+            },
             unit: "minute",
             amount: 15,
           },
@@ -3791,7 +3936,13 @@ describe("inclusive bucket end (.endOf)", () => {
       $dateSubtract: {
         startDate: {
           $dateAdd: {
-            startDate: { $dateTrunc: { date: "$createdAt", unit: "week", startOfWeek: "monday" } },
+            startDate: {
+              $dateTrunc: {
+                date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+                unit: "week",
+                startOfWeek: "monday",
+              },
+            },
             unit: "week",
             amount: 1,
           },
@@ -3816,17 +3967,32 @@ describe("date difference (.diff)", () => {
   // end = 2026-11-30T01:02:03Z → day 110, week (Monday) 16.
   it("diff(other, unit) → $dateDiff, receiver is the endDate", () => {
     expect(jsmql.expr('$.end.diff($.start, "day")')).toEqual({
-      $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" },
+      $dateDiff: {
+        startDate: "$start",
+        endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "day",
+      },
     });
   });
   it("a bare third argument is the timezone", () => {
     expect(jsmql.expr('$.end.diff($.start, "week", "UTC")')).toEqual({
-      $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "UTC" },
+      $dateDiff: {
+        startDate: "$start",
+        endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "week",
+        timezone: "UTC",
+      },
     });
   });
   it("an object third argument carries timezone and startOfWeek, in the operator's field order", () => {
     expect(jsmql.expr('$.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })')).toEqual({
-      $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "Europe/Kyiv", startOfWeek: "monday" },
+      $dateDiff: {
+        startDate: "$start",
+        endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "week",
+        timezone: "Europe/Kyiv",
+        startOfWeek: "monday",
+      },
     });
   });
   it("accepts an ObjectId receiver and argument (mongod reads their timestamps)", () => {
@@ -3851,7 +4017,11 @@ describe("date difference (.diff)", () => {
   });
   it("a non-literal unit / other is not checked (literal-gating)", () => {
     expect(jsmql.expr("$.end.diff($.start, $.unit)")).toEqual({
-      $dateDiff: { startDate: "$start", endDate: "$end", unit: "$unit" },
+      $dateDiff: {
+        startDate: "$start",
+        endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "$unit",
+      },
     });
   });
 });
@@ -3882,12 +4052,23 @@ describe("date-method trailing options argument", () => {
   });
   it("passes option values that are field paths through unchecked (literal-gating)", () => {
     expect(jsmql.expr('$.end.diff($.start, "week", { timezone: $.tz, startOfWeek: $.wk })')).toEqual({
-      $dateDiff: { startDate: "$start", endDate: "$end", unit: "week", timezone: "$tz", startOfWeek: "$wk" },
+      $dateDiff: {
+        startDate: "$start",
+        endDate: { $ifNull: ["$end", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "week",
+        timezone: "$tz",
+        startOfWeek: "$wk",
+      },
     });
   });
   it("takes the timezone shorthand on .plus / .minus too", () => {
     expect(jsmql.expr('$.t.plus(2, "hour", { timezone: "America/New_York" })')).toEqual({
-      $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" },
+      $dateAdd: {
+        startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "hour",
+        amount: 2,
+        timezone: "America/New_York",
+      },
     });
   });
 });
@@ -3913,8 +4094,12 @@ describe("date-method receiver type-check", () => {
     );
   });
   it("no-ops on a field ref or new Date(…) (literal-gating)", () => {
-    expect(jsmql.expr("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
-    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
+    expect(jsmql.expr("$.ts.getFullYear()")).toEqual({
+      $year: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
+    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({
+      $subtract: [{ $month: { $ifNull: [{ $toDate: "$x" }, new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
     // a `"$ts"` receiver in JSMQL is text (HR6), and a string has no date method
     expect(() => jsmql.expr('"$ts".getHours()')).toThrow("'.getHours()' is not available on a 'string'");
   });
@@ -3925,28 +4110,44 @@ describe("date methods (UTC variants)", () => {
   // Verified against a live mongod (t = 2023-03-15T18:45:30.123Z, a Wednesday):
   // → { y:2023, mo:3, d:15, dow:4, h:18, mi:45, s:30, ms:123 }.
   it("getUTCFullYear", () => {
-    expect(jsmql.expr("$.ts.getUTCFullYear()")).toEqual({ $year: "$ts" });
+    expect(jsmql.expr("$.ts.getUTCFullYear()")).toEqual({
+      $year: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getUTCMonth (0-based, as in JavaScript)", () => {
-    expect(jsmql.expr("$.ts.getUTCMonth()")).toEqual({ $subtract: [{ $month: "$ts" }, 1] });
+    expect(jsmql.expr("$.ts.getUTCMonth()")).toEqual({
+      $subtract: [{ $month: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
   });
   it("getUTCDate", () => {
-    expect(jsmql.expr("$.ts.getUTCDate()")).toEqual({ $dayOfMonth: "$ts" });
+    expect(jsmql.expr("$.ts.getUTCDate()")).toEqual({
+      $dayOfMonth: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getUTCDay (0 = Sunday, as in JavaScript)", () => {
-    expect(jsmql.expr("$.ts.getUTCDay()")).toEqual({ $subtract: [{ $dayOfWeek: "$ts" }, 1] });
+    expect(jsmql.expr("$.ts.getUTCDay()")).toEqual({
+      $subtract: [{ $dayOfWeek: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
   });
   it("getUTCHours", () => {
-    expect(jsmql.expr("$.ts.getUTCHours()")).toEqual({ $hour: "$ts" });
+    expect(jsmql.expr("$.ts.getUTCHours()")).toEqual({
+      $hour: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getUTCMinutes", () => {
-    expect(jsmql.expr("$.ts.getUTCMinutes()")).toEqual({ $minute: "$ts" });
+    expect(jsmql.expr("$.ts.getUTCMinutes()")).toEqual({
+      $minute: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getUTCSeconds", () => {
-    expect(jsmql.expr("$.ts.getUTCSeconds()")).toEqual({ $second: "$ts" });
+    expect(jsmql.expr("$.ts.getUTCSeconds()")).toEqual({
+      $second: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("getUTCMilliseconds", () => {
-    expect(jsmql.expr("$.ts.getUTCMilliseconds()")).toEqual({ $millisecond: "$ts" });
+    expect(jsmql.expr("$.ts.getUTCMilliseconds()")).toEqual({
+      $millisecond: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
 });
 
@@ -6035,7 +6236,9 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // clamp's result type follows its args (number OR date), so it is uncertain —
     // `.clamp(...).getFullYear()` must compile.
     expect(jsmql.expr("$.d.clamp($.a, $.b).getFullYear()")).toEqual({
-      $year: { $min: [{ $max: [{ $ifNull: ["$d", 0] }, "$a"] }, "$b"] },
+      $year: {
+        $ifNull: [{ $min: [{ $max: [{ $ifNull: ["$d", 0] }, "$a"] }, "$b"] }, new Date("1970-01-01T00:00:00.000Z")],
+      },
     });
   });
   it("rejects a date-receiver + string/number/array/object method", () => {
@@ -6068,25 +6271,47 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
   it("compatible date chains still compile — a date method, or a universal one", () => {
     const plusDay = { $dateAdd: { startDate: "$t", unit: "day", amount: 1 } };
     expect(jsmql.expr('$.t.startOf("month").plus(1, "month")')).toEqual({
-      $dateAdd: { startDate: { $dateTrunc: { date: "$t", unit: "month" } }, unit: "month", amount: 1 },
+      $dateAdd: {
+        startDate: { $dateTrunc: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } },
+        unit: "month",
+        amount: 1,
+      },
     });
     expect(jsmql.expr('$.t.plus(1, "day").format("%Y")')).toEqual({
-      $dateToString: { date: { $dateAdd: { startDate: "$t", unit: "day", amount: 1 } }, format: "%Y" },
+      $dateToString: {
+        date: {
+          $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 1 },
+        },
+        format: "%Y",
+      },
     });
     expect(jsmql.expr('$.t.startOf("month").isSame($.b, "day")')).toEqual({
       $eq: [
-        { $dateTrunc: { date: { $dateTrunc: { date: "$t", unit: "month" } }, unit: "day" } },
+        {
+          $dateTrunc: {
+            date: { $dateTrunc: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "month" } },
+            unit: "day",
+          },
+        },
         { $dateTrunc: { date: "$b", unit: "day" } },
       ],
     });
-    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
+    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({
+      $subtract: [{ $month: { $ifNull: [{ $toDate: "$x" }, new Date("1970-01-01T00:00:00.000Z")] } }, 1],
+    });
     // The universal pair is exempt on every receiver type.
     expect(jsmql.expr('$.t.plus(1, "day").getTime()')).toEqual({
-      $toLong: { $dateAdd: { startDate: "$t", unit: "day", amount: 1 } },
+      $toLong: {
+        $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 1 },
+      },
     });
     expect(jsmql.expr('$.t.plus(1, "day").toString()')).toEqual({
       $let: {
-        vars: { jsmqlV: { $ifNull: [{ $dateAdd: { startDate: "$t", unit: "day", amount: 1 } }, ""] } },
+        vars: {
+          jsmqlV: {
+            $dateAdd: { startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day", amount: 1 },
+          },
+        },
         in: {
           $cond: [
             { $isArray: "$$jsmqlV" },
@@ -6121,7 +6346,21 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
     // .clamp is number-OR-date, so it is never gated in either direction.
     expect(jsmql.expr('$.t.plus(1, "day").clamp($.a, $.b)')).toEqual({
-      $min: [{ $max: [{ $ifNull: [{ $dateAdd: { startDate: "$t", unit: "day", amount: 1 } }, 0] }, "$a"] }, "$b"],
+      $min: [
+        {
+          $max: [
+            {
+              $dateAdd: {
+                startDate: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] },
+                unit: "day",
+                amount: 1,
+              },
+            },
+            "$a",
+          ],
+        },
+        "$b",
+      ],
     });
   });
   it("rejects a wrong-family method on a literal or template receiver", () => {
@@ -6238,10 +6477,18 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // These rows state no `returns` on purpose: $add/$subtract are number OR date,
     // and the element readers and pass-throughs can return anything.
     expect(jsmql.expr('const v = $add($.a, $.b); v.plus(1, "day")')).toEqual({
-      $dateAdd: { startDate: { $add: ["$a", "$b"] }, unit: "day", amount: 1 },
+      $dateAdd: {
+        startDate: { $ifNull: [{ $add: ["$a", "$b"] }, new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "day",
+        amount: 1,
+      },
     });
     expect(jsmql.expr('const v = $subtract($.a, $.b); v.plus(1, "day")')).toEqual({
-      $dateAdd: { startDate: { $subtract: ["$a", "$b"] }, unit: "day", amount: 1 },
+      $dateAdd: {
+        startDate: { $ifNull: [{ $subtract: ["$a", "$b"] }, new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "day",
+        amount: 1,
+      },
     });
     expect(jsmql.expr("const v = $ifNull($.a, $.b); v.trim()")).toEqual({
       $trim: { input: { $ifNull: [{ $ifNull: ["$a", "$b"] }, ""] } },
@@ -6258,7 +6505,11 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
   });
   it("compatible operator chains still compile", () => {
     expect(jsmql.expr('const v = $dateTrunc($.t, "month"); v.plus(1, "month")')).toEqual({
-      $dateAdd: { startDate: { $dateTrunc: { date: "$t", unit: "month" } }, unit: "month", amount: 1 },
+      $dateAdd: {
+        startDate: { $ifNull: [{ $dateTrunc: { date: "$t", unit: "month" } }, new Date("1970-01-01T00:00:00.000Z")] },
+        unit: "month",
+        amount: 1,
+      },
     });
     expect(jsmql.expr("const v = $concat($.a, $.b); v.trim()")).toEqual({
       $trim: { input: { $ifNull: [{ $concat: ["$a", "$b"] }, ""] } },
@@ -7153,13 +7404,13 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
       $and: [
         {
           $gte: [
-            { $dateTrunc: { date: "$t", unit: "day" } },
+            { $dateTrunc: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } },
             { $min: [new Date("2024-01-01T00:00:00.000Z"), new Date("2025-01-01T00:00:00.000Z")] },
           ],
         },
         {
           $lt: [
-            { $dateTrunc: { date: "$t", unit: "day" } },
+            { $dateTrunc: { date: { $ifNull: ["$t", new Date("1970-01-01T00:00:00.000Z")] }, unit: "day" } },
             { $max: [new Date("2024-01-01T00:00:00.000Z"), new Date("2025-01-01T00:00:00.000Z")] },
           ],
         },
@@ -9058,10 +9309,14 @@ describe(".flat / .flatMap", () => {
 
 describe("date .getTime / .toISOString", () => {
   it("getTime", () => {
-    expect(jsmql.expr("$.ts.getTime()")).toEqual({ $toLong: "$ts" });
+    expect(jsmql.expr("$.ts.getTime()")).toEqual({
+      $toLong: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] },
+    });
   });
   it("toISOString", () => {
-    expect(jsmql.expr("$.ts.toISOString()")).toEqual({ $dateToString: { date: "$ts" } });
+    expect(jsmql.expr("$.ts.toISOString()")).toEqual({
+      $dateToString: { date: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] } },
+    });
   });
 });
 

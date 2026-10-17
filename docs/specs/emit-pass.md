@@ -82,9 +82,17 @@ the number family. So under a dot, `dispatchOn` wraps the receiver in
 `{ $round: [{ $ifNull: ["$n", 0] }, 2] }`. A row whose operator refuses 0 states its own
 safe value. The logarithm of 0 stops the command, so `.log()` states
 `nullReceiverAs: 1`, and `$.n.log()` is 0. A row with two families, for example
-`.clamp()` on a number or a date, wraps the receiver in its own cell (`safeNumber` in
+`.clamp()` on a number or a date, wraps the receiver in its own cell (`safeBound` in
 `src/registry/names.ts`). A row whose operator answers null for a null operand states
 `passesNull`, so `$.n?.round(2)` is `{ $round: ["$n", 2] }`, with no `$cond`.
+
+**A date method reads a missing date as the epoch.** `emptyValueOf` answers
+`new Date(0)` for the date family, so under a dot `dispatchOn` wraps the receiver in
+`{ $ifNull: [<recv>, new Date(0)] }`. `$.t.getFullYear()` is 1970 for a missing `t`.
+`.clamp()` and `.inRange()` serve a number and a date, and a receiver of no proven
+family gives the cell no kind. So the kind of the bounds picks the safe value
+(`safeOfBounds`): the epoch when a bound is a date, and 0 for any other bound. A bound
+read at run time gives 0.
 
 **A string method reads a missing string as `""`.** `emptyValueOf` answers `""` for
 the string family, so `dispatchOn` wraps the receiver in `{ $ifNull: [<recv>, ""] }`

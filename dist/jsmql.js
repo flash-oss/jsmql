@@ -665,15 +665,17 @@ var nullOr = (recv, present2, bind, body) => {
   return bound === null ? doc : { $let: { vars: { [bound.as]: recv }, in: doc } };
 };
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
-var safeNumber = (recv, present2, sameAsNull) => present2 || sameAsNull ? recv : { $ifNull: [recv, 0] };
+var safeOfBounds = (kind, bounds) => bounds.some((b) => kind(b) === "date") ? /* @__PURE__ */ new Date(0) : 0;
+var safeBound = (recv, present2, safe, sameAsNull) => present2 || sameAsNull ? recv : { $ifNull: [recv, safe] };
 var LOGICAL = /* @__PURE__ */ new Set(["$and", "$or", "$nor"]);
 var overFields = (q) => isPlainObject(q) && Object.entries(q).every(
   ([k, v]) => !k.startsWith("$") || LOGICAL.has(k) && Array.isArray(v) && v.every(overFields)
 );
-var mayHoldZero = (lo, hi) => {
+var mayHold = (safe, lo, hi) => {
   const bounds = orderedBounds(lo, hi);
   if (bounds === null) return true;
-  return typeof bounds[0] === "number" && bounds[0] <= 0 && 0 < bounds[1];
+  if (isDate(safe) !== isDate(bounds[0])) return false;
+  return bounds[0] <= safe && safe < bounds[1];
 };
 var orderedBounds = (a, b) => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
@@ -8267,10 +8269,11 @@ var NAMES = {
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
       args: { sig: "lower, upper", exact: 2 },
-      emit: ({ recv, args, value, present: present2 }) => {
+      emit: ({ recv, args, value, present: present2, kind }) => {
         const lower = value(args[0]);
-        const same = isDate(lower) || typeof lower === "number" && lower >= 0;
-        return { $min: [{ $max: [safeNumber(recv, present2, same), lower] }, value(args[1])] };
+        const safe = safeOfBounds(kind, args);
+        const same = isDate(safe) ? isDate(lower) && lower >= safe : typeof lower === "number" && lower >= 0;
+        return { $min: [{ $max: [safeBound(recv, present2, safe, same), lower] }, value(args[1])] };
       }
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
@@ -8301,15 +8304,17 @@ var NAMES = {
         const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
         if (bounds === null) return null;
         const test = { $gte: bounds[0], $lt: bounds[1] };
-        return mayHoldZero(bounds[0], bounds[1]) ? orMissing(path, test) : queryOwnValue(path, test);
+        const safe = isDate(bounds[0]) ? /* @__PURE__ */ new Date(0) : 0;
+        return mayHold(safe, bounds[0], bounds[1]) ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
-      emit: ({ recv, args, value, present: present2 }) => {
+      emit: ({ recv, args, value, present: present2, kind }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
-        const r = safeNumber(recv, present2, !mayHoldZero(lo, hi));
+        const safe = safeOfBounds(kind, args);
+        const r = safeBound(recv, present2, safe, !mayHold(safe, lo, hi));
         return { $and: [{ $gte: [r, { $min: [lo, hi] }] }, { $lt: [r, { $max: [lo, hi] }] }] };
       }
     },
@@ -12020,6 +12025,7 @@ function emptyValueOf(name2, family) {
   if (fams.every((f) => f === "object")) return {};
   if (fams.every((f) => f === "string")) return "";
   if (fams.every((f) => f === "number")) return 0;
+  if (fams.every((f) => f === "date")) return /* @__PURE__ */ new Date(0);
   return null;
 }
 function siblingOf(name2, family) {

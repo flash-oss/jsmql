@@ -798,8 +798,20 @@ $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.ex
       {
         $replaceWith: {
           userId: "$_id",
-          graceEndsAt: { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } },
-          remindAt: { $dateSubtract: { startDate: "$expiresAt", unit: "day", amount: 3 } },
+          graceEndsAt: {
+            $dateAdd: {
+              startDate: { $ifNull: ["$subscribedAt", new Date("1970-01-01T00:00:00.000Z")] },
+              unit: "day",
+              amount: 30,
+            },
+          },
+          remindAt: {
+            $dateSubtract: {
+              startDate: { $ifNull: ["$expiresAt", new Date("1970-01-01T00:00:00.000Z")] },
+              unit: "day",
+              amount: 3,
+            },
+          },
         },
       },
     ]);
@@ -823,7 +835,13 @@ $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
                 $range: [0, { $ifNull: ["$weeks", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$weeks", 0] }] }, 1, -1] }],
               },
               as: "w",
-              in: { $dateAdd: { startDate: "$start", unit: "week", amount: "$$w" } },
+              in: {
+                $dateAdd: {
+                  startDate: { $ifNull: ["$start", new Date("1970-01-01T00:00:00.000Z")] },
+                  unit: "week",
+                  amount: "$$w",
+                },
+              },
             },
           },
         },
@@ -853,7 +871,13 @@ $limit(12);
       {
         $group: {
           _id: {
-            month: { $dateTrunc: { date: "$createdAt", unit: "month", timezone: "America/New_York" } },
+            month: {
+              $dateTrunc: {
+                date: { $ifNull: ["$createdAt", new Date("1970-01-01T00:00:00.000Z")] },
+                unit: "month",
+                timezone: "America/New_York",
+              },
+            },
             store: "$storeId",
           },
           revenue: { $sum: "$total" },
@@ -1617,7 +1641,7 @@ describe("audit log line with .toISOString and .charAt(0).toUpperCase", { featur
         jsmql.expr(`\`\${$.event.ts.toISOString()} [\${$.event.level.charAt(0).toUpperCase()}] \${$.event.message}\``),
       ).toEqual({
         $concat: [
-          { $dateToString: { date: "$event.ts" } },
+          { $dateToString: { date: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } } },
           " [",
           { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
           "] ",
@@ -1651,7 +1675,7 @@ $.sessions
               },
             },
             as: "e",
-            in: { $toLong: "$$e.ts" },
+            in: { $toLong: { $ifNull: ["$$e.ts", new Date("1970-01-01T00:00:00.000Z")] } },
           },
         },
       });
@@ -1954,10 +1978,11 @@ describe("formatted date label with ?? chain", { features: ["Nullish coalescing"
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.articles.aggregate([{ $addFields: { dateLabel: jsmql.expr(...) } }])" },
     () => {
+      // `?.` gives null for a missing date, so `??` falls back. A dot would format the epoch.
       expect(
         jsmql.expr`
-$.publishedAt.format("%Y-%m-%d") ??
-$.createdAt.format("%Y-%m-%d") ??
+$.publishedAt?.format("%Y-%m-%d") ??
+$.createdAt?.format("%Y-%m-%d") ??
 "unknown"
       `,
       ).toEqual({
@@ -2095,7 +2120,20 @@ describe("days since event (Date.now + .getTime + 86_400_000)", { features: ["Da
     () => {
       expect(jsmql.expr(`((Date.now() - $.event.ts.getTime()) / 86_400_000).floor()`)).toEqual({
         $floor: {
-          $ifNull: [{ $divide: [{ $subtract: [{ $toLong: "$$NOW" }, { $toLong: "$event.ts" }] }, 86400000] }, 0],
+          $ifNull: [
+            {
+              $divide: [
+                {
+                  $subtract: [
+                    { $toLong: "$$NOW" },
+                    { $toLong: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } },
+                  ],
+                },
+                86400000,
+              ],
+            },
+            0,
+          ],
         },
       });
     },
@@ -2110,7 +2148,10 @@ describe("event fell within UTC business hours (.getUTCHours)", { features: ["Da
       // Was the event logged between 09:00 and 17:00 UTC? Reading the hour in UTC
       // (not the server's local zone) keeps the window stable across deployments.
       expect(jsmql.expr(`$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17`)).toEqual({
-        $and: [{ $gte: [{ $hour: "$event.ts" }, 9] }, { $lt: [{ $hour: "$event.ts" }, 17] }],
+        $and: [
+          { $gte: [{ $hour: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } }, 9] },
+          { $lt: [{ $hour: { $ifNull: ["$event.ts", new Date("1970-01-01T00:00:00.000Z")] } }, 17] },
+        ],
       });
     },
   );
