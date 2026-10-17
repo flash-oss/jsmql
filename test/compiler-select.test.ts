@@ -83,25 +83,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     });
   });
 
-  it("dispatches an unprovable receiver across field families, with the row's default", () => {
-    const r = at("indexOf", OPAQUE, 1);
-    expect(r.kind).toBe("dispatch");
-    if (r.kind !== "dispatch") return;
-    expect(r.branches.map((b) => b.family)).toEqual(["array", "string"]);
-    // no branch admits null or missing: they fall to the row's `uncertain`, which answers -1
-    expect(r.branches[1].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["string"]] });
-    expect(r.branches[0].guard("$$v")).toEqual({ $in: [{ $type: "$$v" }, ["array"]] });
-    expect(typeof r.otherwise).toBe("function");
-  });
-
-  it("drops a branch whose slot cannot take a proven argument kind, and runs the one left alone", () => {
-    const pick = (kind: "number" | "string" | "unknown") =>
-      select(consult("indexOf", "value"), OPAQUE, { kind: "dynamic" }, 1, [kind]);
-    // `$indexOfCP` takes a string: a number argument leaves the array branch
-    expect(pick("number").kind).toBe("rule");
-    // a string fits both branches, and so does an argument the proof says nothing about
-    expect(pick("string").kind).toBe("dispatch");
-    expect(pick("unknown").kind).toBe("dispatch");
+  it("fits a proven argument kind to a slot type", () => {
     expect(kindFits("number", "string")).toBe(false);
     expect(kindFits("unknown", "string")).toBe(true);
     expect(kindFits("date", "number-or-date")).toBe(true);
@@ -171,7 +153,6 @@ describe("compiler/emit/select — the table audits", () => {
     const wrong: string[] = [];
     let rows = 0;
     let audited = 0;
-    let dispatched = 0;
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       if (row.kind !== "name" || !(typeof row.expr === "object" && row.expr !== null && "perFamily" in row.expr))
         continue;
@@ -183,15 +164,12 @@ describe("compiler/emit/select — the table audits", () => {
         continue;
       }
       audited++;
-      if (r.kind === "dispatch") dispatched++;
       if (tests(row) >= 2 !== (r.kind === "dispatch")) wrong.push(`${name}: ${r.kind}`);
     }
     expect(wrong).toEqual([]);
-    // Every `perFamily` row reached the audit, and the audit met both answers.
+    // Every `perFamily` row reached the audit.
     expect(audited).toBe(rows);
     expect(rows).toBeGreaterThanOrEqual(15);
-    expect(dispatched).toBeGreaterThan(0);
-    expect(dispatched).toBeLessThan(rows);
   });
 
   it("holds a guard for every field family — the type keeps the table complete", () => {

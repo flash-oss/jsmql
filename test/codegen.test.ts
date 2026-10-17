@@ -2204,21 +2204,12 @@ describe("string methods", () => {
   it("split", () => {
     expect(jsmql.expr('$.csv.split(",")')).toEqual({ $split: ["$csv", ","] });
   });
-  it("indexOf on bare field → runtime $cond on $isArray", () => {
-    expect(jsmql.expr('$.name.indexOf("@")')).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$name" }, ["array"]] }, then: { $indexOfArray: ["$name", "@"] } },
-          { case: { $in: [{ $type: "$name" }, ["string"]] }, then: { $indexOfCP: ["$name", "@"] } },
-        ],
-        default: -1,
-      },
-    });
+  it("indexOfSubstring → $indexOfCP", () => {
+    expect(jsmql.expr('$.name.indexOfSubstring("@")')).toEqual({ $indexOfCP: ["$name", "@"] });
+    expect(jsmql.expr('$.name.indexOfSubstring("@", 2)')).toEqual({ $indexOfCP: ["$name", "@", 2] });
   });
-  it("indexOf on known string → $indexOfCP", () => {
-    expect(jsmql.expr('$.name.toLowerCase().indexOf("@")')).toEqual({
-      $indexOfCP: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, "@"],
-    });
+  it("indexOf on a known string is refused, and the refusal names indexOfSubstring", () => {
+    expect(() => jsmql.expr('$.name.toLowerCase().indexOf("@")')).toThrow(/indexOfSubstring/);
   });
   it("replace", () => {
     expect(jsmql.expr('$.name.replace("a", "b")')).toEqual({
@@ -2939,7 +2930,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     const p = jsmql.pipeline(
       `const s = $.name.trim();
        const t = $.other.trim();
-       $set({ inc: s.includes("x"), idx: s.indexOf("x"), sl: s.substring(1, 3), sum: s + t, tpl: \`\${s}-\${t}\` });`,
+       $set({ inc: s.includes("x"), idx: s.indexOfSubstring("x"), sl: s.substring(1, 3), sum: s + t, tpl: \`\${s}-\${t}\` });`,
     );
     expect(setOf(p, 2)).toEqual({
       inc: {
@@ -3058,35 +3049,12 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
   });
 
   it("a SUB-PATH capture stays untyped — the binding's type says nothing about a member of it", () => {
-    // `.indexOf` reads both families, so an untyped receiver keeps the runtime dispatch.
+    // An untyped receiver of `.indexOf` is an array by the row's claim, and the dot reads a missing one as [].
     const p = jsmql.pipeline(
       `const cfg = ({}).assign($.cfg); const r = $$$.orders.filter(o => cfg.ids.indexOf(o.pid) >= 0);`,
     );
     expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline).toEqual([
-      {
-        $match: {
-          $expr: {
-            $gte: [
-              {
-                $switch: {
-                  branches: [
-                    {
-                      case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["array"]] },
-                      then: { $indexOfArray: ["$$jsmql_v0_ids", "$pid"] },
-                    },
-                    {
-                      case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["string"]] },
-                      then: { $indexOfCP: ["$$jsmql_v0_ids", "$pid"] },
-                    },
-                  ],
-                  default: -1,
-                },
-              },
-              0,
-            ],
-          },
-        },
-      },
+      { $match: { $expr: { $gte: [{ $indexOfArray: [{ $ifNull: ["$$jsmql_v0_ids", []] }, "$pid"] }, 0] } } },
     ]);
   });
 });
@@ -4764,7 +4732,7 @@ describe("array method additions", () => {
     });
   });
   it(".lastIndexOf on a known string receiver throws", () => {
-    expect(() => jsmql.expr('$.s.toLowerCase().lastIndexOf("x")')).toThrow(/forward-only/);
+    expect(() => jsmql.expr('$.s.toLowerCase().lastIndexOf("x")')).toThrow(/indexOfSubstring/);
   });
   it(".reduceRight(fn, init) reverses the input array", () => {
     expect(jsmql.expr("$.xs.reduceRight((acc, x) => acc + x, 0)")).toEqual({
@@ -8935,21 +8903,11 @@ describe("array .indexOf", () => {
   it("on array literal → $indexOfArray", () => {
     expect(jsmql.expr('["a", "b", "c"].indexOf($.x)')).toEqual({ $indexOfArray: [["a", "b", "c"], "$x"] });
   });
-  it("on known string → $indexOfCP", () => {
-    expect(jsmql.expr('$.email.toLowerCase().indexOf("@")')).toEqual({
-      $indexOfCP: [{ $cond: [{ $lte: ["$email", null] }, null, { $toLower: "$email" }] }, "@"],
-    });
+  it("on a known string → refused; a string takes .indexOfSubstring()", () => {
+    expect(() => jsmql.expr('$.email.toLowerCase().indexOf("@")')).toThrow(/indexOfSubstring/);
   });
-  it("on bare field → runtime $cond on $isArray", () => {
-    expect(jsmql.expr('$.email.indexOf("@")')).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$email" }, ["array"]] }, then: { $indexOfArray: ["$email", "@"] } },
-          { case: { $in: [{ $type: "$email" }, ["string"]] }, then: { $indexOfCP: ["$email", "@"] } },
-        ],
-        default: -1,
-      },
-    });
+  it("on a bare field → $indexOfArray over the field, a missing one read as []", () => {
+    expect(jsmql.expr('$.email.indexOf("@")')).toEqual({ $indexOfArray: [{ $ifNull: ["$email", []] }, "@"] });
   });
 });
 

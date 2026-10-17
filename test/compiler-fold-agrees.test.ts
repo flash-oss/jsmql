@@ -101,7 +101,6 @@ const EXPRESSIONS: readonly string[] = [
   '"hello".startsWith("he")',
   '"hello".endsWith("lo")',
   '"hello".includes("ell")',
-  '"hello".indexOf("l")',
   '"hello".indexOfSubstring("l")',
   '"hello".indexOfSubstring("l", 3)',
   '"hello".indexOfSubstring("l", -2.5)',

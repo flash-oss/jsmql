@@ -3802,38 +3802,21 @@ var NAMES = {
   indexOf: name({
     doc: "'.indexOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    sibling: { string: "For the position of a substring, write '.indexOfSubstring(searchString)'." },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
-      perFamily: {
-        array: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] })
-        },
-        // `$indexOfCP` takes a string: an argument PROVEN to be something else picks the array branch.
-        string: {
-          args: {
-            sig: "searchValue",
-            exact: 1,
-            slotType: { 0: "string" },
-            noCallback: {
-              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
-            }
-          },
-          emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] })
+      args: {
+        sig: "searchValue",
+        exact: 1,
+        noCallback: {
+          0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
         }
       },
-      // A receiver that is neither — null, missing, a number — has no position to answer: -1, as `_.indexOf(undefined, x)`.
-      uncertain: () => -1
+      emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] })
     },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -4660,25 +4643,16 @@ var NAMES = {
   lastIndexOf: name({
     doc: "'.lastIndexOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "string"],
+    on: "array",
+    // `$indexOfCP` searches forward only, so a string has the first match alone.
+    sibling: {
+      string: "A string has no search from the end. For the first match, write '.indexOfSubstring(searchString)'."
+    },
     returns: "number",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: {
-      // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
-      // two answers — a single flat cell hides the refusal, which is the useful fact.
-      perFamily: {
-        array: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
-        string: unsupported(
-          ".lastIndexOf() on strings isn't supported \u2014 MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing."
-        )
-      },
-      // A receiver that cannot be proven takes the array form: this row refuses the
-      // string form on its own, so nothing is lost, and a string that reaches
-      // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
-      uncertain: lastIndexOfArray
-    },
+    expr: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lastIndexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lastIndexOf();'"
@@ -18175,16 +18149,6 @@ function stringMethod(s, name2, args) {
       return typeof a === "string" ? ok2(s.includes(a)) : NO2;
     case "length":
       return ok2(points(s).length);
-    case "indexOf": {
-      if (typeof a !== "string") return NO2;
-      if (b !== void 0 && !isInt32(b)) return NO2;
-      const cps = points(s);
-      const needle = points(a);
-      for (let i = Math.max(0, typeof b === "number" ? b : 0); i <= cps.length - needle.length; i++) {
-        if (cps.slice(i, i + needle.length).join("") === a) return ok2(i);
-      }
-      return ok2(-1);
-    }
     case "indexOfSubstring": {
       if (typeof a !== "string") return NO2;
       if (b !== void 0 && (typeof b !== "number" || !Number.isFinite(b))) return NO2;

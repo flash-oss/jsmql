@@ -1476,34 +1476,13 @@ describe("compiler/emit — array methods", () => {
     });
   });
 
-  it("dispatches `.indexOf` on the receiver's type at run time, unless the argument settles it", () => {
-    // `.indexOf` is the one method of two families. A string argument leaves both open, so
-    // a bare receiver takes a `$switch`; an argument proven not to be a string picks the
-    // array form alone, and a receiver the row proves runs its one family with no test.
-    expect(compiled('$.csv.indexOf("b")', (d) => d.csv.indexOf("b"))).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$csv" }, ["array"]] }, then: { $indexOfArray: ["$csv", "b"] } },
-          { case: { $in: [{ $type: "$csv" }, ["string"]] }, then: { $indexOfCP: ["$csv", "b"] } },
-        ],
-        default: -1,
-      },
-    });
-    expect(compiled('$.a.indexOf("x")', (d) => d.a.indexOf("x"))).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $indexOfArray: ["$a", "x"] } },
-          { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $indexOfCP: ["$a", "x"] } },
-        ],
-        default: -1,
-      },
-    });
+  it("lowers `.indexOf` and `.lastIndexOf` to the array form on a bare receiver", () => {
+    // Both are array methods: the receiver is an array by the row's claim, and the
+    // server judges any other value. A string takes `.indexOfSubstring`.
     expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, 1] });
     expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
       $indexOfArray: [{ $ifNull: [{ $split: ["$csv", ","] }, []] }, "b"],
     });
-    // `.lastIndexOf` states one emitting family — the string form is refused — so it
-    // answers the array reading outright rather than testing the receiver's type.
     expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
@@ -1925,7 +1904,16 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.s.trim().at(0)")).toThrow("For one character, write '.charAt(index)'.");
     expect(() => expr("$.s.trim().slice(1)")).toThrow("For a part of a string, write '.substring(start, end)'.");
     expect(() => expr('$.s.trim().concat("x")')).toThrow("To join strings, write '+' between them: 'a + b'.");
-    expect(() => expr("$.s.trim().indexOf(1)")).toThrow("'indexOf' expects a string, but got a number.");
+    expect(() => expr('$.s.trim().indexOf("b")')).toThrow(
+      "For the position of a substring, write '.indexOfSubstring(searchString)'.",
+    );
+    expect(() => expr('$.s.trim().lastIndexOf("b")')).toThrow(
+      "For the first match, write '.indexOfSubstring(searchString)'.",
+    );
+    expect(() => expr('$.a.uniq().indexOfSubstring("b")')).toThrow(
+      "For the position of a value in an array, write '.indexOf(value)'.",
+    );
+    expect(() => expr("$.s.indexOfSubstring(1)")).toThrow("'indexOfSubstring' expects a string, but got a number.");
     expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
   });

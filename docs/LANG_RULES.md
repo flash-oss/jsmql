@@ -151,10 +151,13 @@ When the compiler can prove that the receiver is there, it adds no check, for ex
 
 Two more facts belong to this rule:
 
-1. `.indexOf()` works on a string and on an array, because JavaScript has no other spelling for the position of a value in a string. The compiler selects the operator in this sequence:
-   1. When the compiler knows the type of the receiver, that type selects the operator.
-   2. If not, the argument can select the operator. `$indexOfCP` searches only for a string, so an argument that is not a string selects the array operator.
-   3. If neither selects the operator, the emitted MQL tests the type when it runs.
+1. `.indexOf()` is an array method. A string takes `.indexOfSubstring()`. This is a JSMQL name (SR3) with the API of JavaScript's `String.prototype.indexOf`. The compiler never selects the operator from the type of the receiver or of the argument. The emitted MQL never tests the type when it runs. When the compiler proves that the receiver is a string, `.indexOf()` is a compile error, and the message names `.indexOfSubstring()`:
+
+   ```js
+   $.tags.indexOf("vip")          // → { $indexOfArray: [{ $ifNull: ["$tags", []] }, "vip"] }
+   $.title.indexOfSubstring(":")  // → { $indexOfCP: ["$title", ":"] }
+   $.title.trim().indexOf(":")    // ✗ the receiver is a string; write .indexOfSubstring(":")
+   ```
 2. Each value that JSMQL computes from a receiver is a method call, never a property. Write `.length()`, `.size()` and `$$.size()`. So `$.a.length` reads a field named `length`, never a count. Only an object has fields. When the compiler proves that the value before the dot cannot hold the field, the read is a compile error. The message names the fix: for `$.tags.uniq().length`, it names `.size()`.
 
 **HR6 — Raw MQL can hold JSMQL. JSMQL cannot take raw MQL as an operand.**

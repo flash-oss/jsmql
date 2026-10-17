@@ -47,7 +47,6 @@ for (const v of STRING_SAMPLES) {
     '.includes("o")',
     '.startsWith("f")',
     '.endsWith("r")',
-    '.indexOf("o")',
     '.indexOfSubstring("o")',
     '.indexOfSubstring("o", 2)',
     ".repeat(2)",

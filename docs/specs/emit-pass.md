@@ -44,11 +44,10 @@ subject of [docs/specs/types.md](types.md). This section keeps what a CELL has t
 know about the proof it runs under.
 
 An unprovable receiver on a row with ONE field family is that family, by the
-row's claim. On a row with two or more families, the compiler dispatches it at
-run time over the families the receiver can be. `.indexOf()` and `.lastIndexOf()`
-are the two such rows among the JavaScript methods: every other method reads one
-family, and its row states a `sibling` sentence per family it refuses. The
-refusal (`errors.ts`) puts that sentence after its head. For example, for
+row's claim. On a row with two or more LOWERING field families, the compiler
+dispatches it at run time over the families the receiver can be. A JavaScript
+method reads one family, and its row states a `sibling` sentence per family it
+refuses. The refusal (`errors.ts`) puts that sentence after its head. For example, for
 `.length()` on an array, the message names `string` as the family that has the
 method. It also suggests `.size()` to count the elements. A branch whose
 `slotType` cannot take a PROVEN argument kind drops
@@ -58,9 +57,9 @@ kind.
 
 ```js
 $.x.indexOf("a")
-// → { $switch: { branches: [ { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $indexOfArray: ["$x", "a"] } }, { case: { $in: [{ $type: "$x" }, ["string"]] }, then: { $indexOfCP: ["$x", "a"] } } ], default: -1 } }
-$.x.indexOf(1)
-// → { $indexOfArray: [{ $ifNull: ["$x", []] }, 1] }
+// → { $indexOfArray: [{ $ifNull: ["$x", []] }, "a"] }
+$.x.trim().indexOf("a")
+// ✗ the receiver is a proven string; the sibling sentence names .indexOfSubstring()
 ```
 
 **HR5 — a dot runs an array or object method on `[]` or `{}`.**
@@ -89,8 +88,8 @@ array, a `let` of a present value through the binding's proof, a `neverNull`
 row over present operands, a written field whose value was present, a path a
 `?.` proved through `Env.proving`, or an array or object receiver that `dispatchOn` wrapped), or proven
 at run time by the `$type` test of the dispatch branch the cell runs under. A
-row that dispatches on the receiver's type (`.indexOf`) lets null and missing
-fall to its `uncertain` default, which answers `-1`. The `neverNull` fact is
+row that dispatches on the receiver's type lets null and missing fall to its
+`uncertain` default. The `neverNull` fact is
 stated per row: `.map`, `.filter`, `.slice` and `.keys` answer null only
 for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.

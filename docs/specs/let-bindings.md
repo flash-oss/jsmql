@@ -254,7 +254,7 @@ message echoes the keyword the user wrote.
 
 A binding carries the kind the registry can prove of its initialiser
 (`kindOf`). A later read dispatches at compile time where the kind is known,
-and takes the dual-receiver form where it is not — the same rule every
+and takes the row's form for an unproven receiver where it is not — the same rule every
 other value follows ([emit-pass.md](emit-pass.md)). A `const` and a `let`
 are typed alike at declaration; a reassignment writes the same slot.
 

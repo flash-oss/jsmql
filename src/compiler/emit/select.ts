@@ -324,7 +324,7 @@ function fromPerFamily(
   const fieldFamilies = lowering.length > 0 ? lowering : listed;
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
   // A branch whose slot cannot take a PROVEN argument kind is not the branch the
-  // call means: `.indexOf(1)` searches an array, because `$indexOfCP` takes a string.
+  // call means: a number argument picks a branch whose slot takes a number.
   // The receiver's proof, then the argument's, then the runtime test — in that order.
   // One branch left by the argument runs on its own, by the same claim a one-family
   // row makes: the call is on that family, or the server raises an error.
@@ -339,7 +339,7 @@ function fromPerFamily(
   }
   // Does the row take EVERY kind the value can be? Only then can a lone branch run
   // with no test, and only then can a dispatch drop its default. A possible kind
-  // the row has no branch for — a number under `.indexOf` — falls to the default.
+  // the row has no branch for — a number under an array-or-string row — falls to the default.
   const covered = possible !== undefined && receiver.exact === true && possible.every((f) => listed.includes(f));
   // One family left, and the value can be nothing else: the rule runs directly. So does
   // a row with ONE field family and no `uncertain`: the call is on that family, or the

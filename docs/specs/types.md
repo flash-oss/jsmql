@@ -387,11 +387,10 @@ the receiver's proof as a closed `Receiver`:
 4. **`ANY` on a one-family row is that family**, by the row's claim, as before.
 
 ```js
-$.v = $.flag ? "abc" : [1, 2];  $.i = $.v.indexOf("x");
-// → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }, { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "x"] } }] } } } }
+$.v = $.flag ? "abc" : [1, 2];  $.len = $.v.length();   // the value can be a string → the string form runs
+// → …, { $set: { len: { $strLenCP: "$v" } } }
 
-$.v = $.flag ? 5 : [1, 2];  $.i = $.v.indexOf("x");   // a number has no `.indexOf` form → the default stays
-// → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }], default: null } } } }
+$.v = $.flag ? 5 : [1, 2];  $.len = $.v.length();       // ✗ no possible kind is a string
 ```
 
 ### The truthiness rule

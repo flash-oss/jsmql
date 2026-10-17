@@ -58,75 +58,15 @@ describe("types — a written field carries what its value proved", () => {
   });
 
   it("a stage that replaces the document forgets every written type", () => {
-    // `.indexOf` has two families. Over the two written kinds the `$switch` needs no default;
-    // after the replacement `v` is unknown, so the null default is back.
-    expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $ = { v: $.other }; $.i = $.v.indexOf("b");')).toEqual([
-      {
-        $set: {
-          v: {
-            $cond: [
-              {
-                $and: [
-                  { $gt: ["$flag", null] },
-                  { $ne: ["$flag", false] },
-                  { $ne: ["$flag", ""] },
-                  { $ne: ["$flag", 0] },
-                ],
-              },
-              "abc",
-              [1, 2],
-            ],
-          },
-        },
-      },
-      { $replaceWith: { v: "$other" } },
-      {
-        $set: {
-          i: {
-            $switch: {
-              branches: [
-                { case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "b"] } },
-                { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "b"] } },
-              ],
-              default: -1,
-            },
-          },
-        },
-      },
-    ]);
+    // `v` is a present string, so `.length()` needs no null test. After the replacement
+    // `v` is unknown, so the null test is back.
+    const src = '$.v = $.flag ? "abc" : "de"; $ = { v: $.other }; $.n = $.v.length();';
+    expect(jsmql(src)[2]).toEqual({ $set: { n: { $cond: [{ $lte: ["$v", null] }, null, { $strLenCP: "$v" }] } } });
+    expect(jsmql('$.v = $.flag ? "abc" : "de"; $.n = $.v.length();')[1]).toEqual({ $set: { n: { $strLenCP: "$v" } } });
   });
 });
 
-describe("types — a value of several possible kinds dispatches over those kinds alone", () => {
-  // `.indexOf` is the method with two families, so it is the one that dispatches.
-  it("two kinds the row covers, present: a `$switch` over the two, with no default", () => {
-    expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.i = $.v.indexOf("b");')[1]).toEqual({
-      $set: {
-        i: {
-          $switch: {
-            branches: [
-              { case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "b"] } },
-              { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "b"] } },
-            ],
-          },
-        },
-      },
-    });
-  });
-
-  it("a kind the row has no form for keeps the null default", () => {
-    expect(jsmql('$.v = $.flag ? 5 : [1, 2]; $.i = $.v.indexOf("b");')[1]).toEqual({
-      $set: {
-        i: {
-          $switch: {
-            branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "b"] } }],
-            default: -1,
-          },
-        },
-      },
-    });
-  });
-
+describe("types — a value of several possible kinds", () => {
   it("a method of one family takes that family's operator while the value may be of that kind", () => {
     // `.length()` is a string length. The value may be a string, so the string form runs, and the
     // server judges an array at run time. A value that can NEVER be a string is refused.
@@ -137,6 +77,10 @@ describe("types — a value of several possible kinds dispatches over those kind
       "'.length()' is not available on a 'number' or an 'array' — it is defined on 'string'.",
     );
     expect(() => jsmql("$.v = [1, 2]; $.len = $.v.length();")).toThrow("For the number of elements, write '.size()'.");
+    // `.indexOf()` is an array method: the array form runs, and the server judges a string.
+    expect(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.i = $.v.indexOf("b");')[1]).toEqual({
+      $set: { i: { $indexOfArray: ["$v", "b"] } },
+    });
   });
 });
 
@@ -189,21 +133,6 @@ describe.skipIf(up === null)("types — the server agrees", () => {
       .toArray();
     expect(out.map((d) => d.result)).toEqual(["R", "OTHER", "OTHER"]);
     expect(out.map((d) => d.bool)).toEqual([true, false, false]);
-  });
-
-  it("a default-less `$switch` over two present kinds runs on both", async () => {
-    await coll.deleteMany({});
-    await coll.insertMany([
-      { _id: 1, flag: true },
-      { _id: 2, flag: false },
-    ]);
-    const out = await coll
-      .aggregate([
-        ...(jsmql('$.v = $.flag ? "abc" : [1, 2]; $.i = $.v.indexOf("b");') as object[]),
-        { $sort: { _id: 1 } },
-      ])
-      .toArray();
-    expect(out.map((d) => d.i)).toEqual([1, -1]);
   });
 
   it("a dotted `$set` lands on a scalar as an object and into every element of an array", async () => {
