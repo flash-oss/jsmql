@@ -28,7 +28,6 @@ import {
   namespaceNames,
   neverNullAlwaysOf,
   neverNullOf,
-  readsNullReceiverOf,
   productionForOperator,
   returnsOf,
   soleFieldFamilyOf,
@@ -110,13 +109,12 @@ function statedPresence(node: Expr, env: Env): boolean | null {
       const name = namedRow(node) ?? node.name;
       if (!neverNullOf(name)) return false;
       // A namespace (`Number.isInteger(n)`) is not a value; its arguments carry the answer.
-      // HR5: under a dot, an array or object method runs on `[]` or `{}` when
-      // its receiver is null or missing (`lower.ts` wraps it), so its receiver counts as
-      // there. A `?.` anywhere on the spine below stops the chain instead, and the value
-      // is then null when the tested link is. A row that reads a missing receiver as a
-      // value of its own (`.range()` reads it as 0) answers there too.
+      // HR5: under a dot, a method runs on the safe value of its kind when its receiver
+      // is null or missing (`[]`, `{}`, `""`, `0`, or the value its row states). `lower.ts`
+      // wraps the receiver, so the receiver counts as there. A `?.` anywhere on the spine
+      // below stops the chain instead, and the value is then null when the tested link is.
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name);
-      const wrapped = !spineHasOptional(node) && (emptyValueOf(name, family) !== null || readsNullReceiverOf(name));
+      const wrapped = !spineHasOptional(node) && emptyValueOf(name, family) !== null;
       const receiver =
         node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES.has(node.object.name)
           ? true

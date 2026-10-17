@@ -1997,49 +1997,60 @@ describe("compiler/emit — number ranges", () => {
 
 describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
   it("lowers each number method to its operator, the receiver first", () => {
-    expect(compiled("$.neg.abs()", () => Math.abs(DOC.neg))).toEqual({ $abs: "$neg" });
-    expect(compiled("$.n.sqrt()", () => Math.sqrt(DOC.n))).toEqual({ $sqrt: "$n" });
+    expect(compiled("$.neg.abs()", () => Math.abs(DOC.neg))).toEqual({ $abs: { $ifNull: ["$neg", 0] } });
+    expect(compiled("$.n.sqrt()", () => Math.sqrt(DOC.n))).toEqual({ $sqrt: { $ifNull: ["$n", 0] } });
     expect(compiled("$.neg.cbrt()", () => Math.cbrt(DOC.neg))).toEqual({
-      $multiply: [{ $cmp: ["$neg", 0] }, { $pow: [{ $abs: "$neg" }, 0.3333333333333333] }],
+      $multiply: [
+        { $cmp: [{ $ifNull: ["$neg", 0] }, 0] },
+        { $pow: [{ $abs: { $ifNull: ["$neg", 0] } }, 0.3333333333333333] },
+      ],
     });
     expect(compiled("$.neg.sign()", () => Math.sign(DOC.neg))).toEqual({ $cmp: [{ $ifNull: ["$neg", 0] }, 0] });
     // HR5: a missing number reads as 0, the safe value, so its sign is 0
     expect(compiled("$.nope.sign()", () => 0)).toEqual({ $cmp: [{ $ifNull: ["$nope", 0] }, 0] });
-    expect(compiled("$.n.trunc()", () => Math.trunc(DOC.n))).toEqual({ $trunc: "$n" });
-    expect(compiled("$.n.trunc(2)", () => Math.trunc(DOC.n * 100) / 100)).toEqual({ $trunc: ["$n", 2] });
-    expect(compiled("$.n.round()", () => Math.round(DOC.n))).toEqual({ $round: "$n" });
-    expect(compiled("$.n.ceil()", () => Math.ceil(DOC.n))).toEqual({ $ceil: "$n" });
-    expect(compiled("$.n.floor()", () => Math.floor(DOC.n))).toEqual({ $floor: "$n" });
+    expect(compiled("$.n.trunc()", () => Math.trunc(DOC.n))).toEqual({ $trunc: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.trunc(2)", () => Math.trunc(DOC.n * 100) / 100)).toEqual({
+      $trunc: [{ $ifNull: ["$n", 0] }, 2],
+    });
+    expect(compiled("$.n.round()", () => Math.round(DOC.n))).toEqual({ $round: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.ceil()", () => Math.ceil(DOC.n))).toEqual({ $ceil: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.floor()", () => Math.floor(DOC.n))).toEqual({ $floor: { $ifNull: ["$n", 0] } });
     expect(compiled("$.n.floor(1)", () => Math.floor(DOC.n * 10) / 10)).toEqual({
-      $divide: [{ $floor: { $multiply: ["$n", 10] } }, 10],
+      $divide: [{ $floor: { $multiply: [{ $ifNull: ["$n", 0] }, 10] } }, 10],
     });
     expect(compiled("$.n.ceil(-1)", () => Math.ceil(DOC.n * 0.1) / 0.1)).toEqual({
-      $divide: [{ $ceil: { $multiply: ["$n", 0.1] } }, 0.1],
+      $divide: [{ $ceil: { $multiply: [{ $ifNull: ["$n", 0] }, 0.1] } }, 0.1],
     });
-    expect(compiled("$.n.log()", () => Math.log(DOC.n))).toEqual({ $ln: "$n" });
-    expect(compiled("$.n.log(3)", () => Math.log(DOC.n) / Math.log(3))).toEqual({ $log: ["$n", 3] });
-    expect(expr("$.n.log($.b)")).toEqual({ $log: ["$n", "$b"] });
-    expect(compiled("$.n.log(10)", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
-    expect(compiled("$.n.log2()", () => Math.log2(DOC.n))).toEqual({ $log: ["$n", 2] });
-    expect(compiled("$.n.log10()", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
-    expect(compiled("$.neg.exp()", () => Math.exp(DOC.neg))).toEqual({ $exp: "$neg" });
+    expect(compiled("$.n.log()", () => Math.log(DOC.n))).toEqual({ $ln: { $ifNull: ["$n", 1] } });
+    expect(compiled("$.n.log(3)", () => Math.log(DOC.n) / Math.log(3))).toEqual({ $log: [{ $ifNull: ["$n", 1] }, 3] });
+    expect(expr("$.n.log($.b)")).toEqual({ $log: [{ $ifNull: ["$n", 1] }, "$b"] });
+    expect(compiled("$.n.log(10)", () => Math.log10(DOC.n))).toEqual({ $log10: { $ifNull: ["$n", 1] } });
+    expect(compiled("$.n.log2()", () => Math.log2(DOC.n))).toEqual({ $log: [{ $ifNull: ["$n", 1] }, 2] });
+    expect(compiled("$.n.log10()", () => Math.log10(DOC.n))).toEqual({ $log10: { $ifNull: ["$n", 1] } });
+    expect(compiled("$.neg.exp()", () => Math.exp(DOC.neg))).toEqual({ $exp: { $ifNull: ["$neg", 0] } });
     expect(compiled("$.neg ** 3", () => DOC.neg ** 3)).toEqual({ $pow: ["$neg", 3] });
     expect(compiled("$.neg.hypot(4)", () => Math.hypot(DOC.neg, 4))).toEqual({
-      $sqrt: { $add: [{ $pow: ["$neg", 2] }, { $pow: [4, 2] }] },
+      $sqrt: { $add: [{ $pow: [{ $ifNull: ["$neg", 0] }, 2] }, { $pow: [4, 2] }] },
     });
-    expect(compiled("$.neg.atan2(4)", () => Math.atan2(DOC.neg, 4))).toEqual({ $atan2: ["$neg", 4] });
-    expect(compiled("$.n.sin()", () => Math.sin(DOC.n))).toEqual({ $sin: "$n" });
-    expect(compiled("$.n.cos()", () => Math.cos(DOC.n))).toEqual({ $cos: "$n" });
-    expect(compiled("$.n.tan()", () => Math.tan(DOC.n))).toEqual({ $tan: "$n" });
-    expect(compiled("($.n / 10).asin()", () => Math.asin(DOC.n / 10))).toEqual({ $asin: { $divide: ["$n", 10] } });
-    expect(compiled("($.n / 10).acos()", () => Math.acos(DOC.n / 10))).toEqual({ $acos: { $divide: ["$n", 10] } });
-    expect(compiled("$.n.atan()", () => Math.atan(DOC.n))).toEqual({ $atan: "$n" });
-    expect(compiled("$.n.sinh()", () => Math.sinh(DOC.n))).toEqual({ $sinh: "$n" });
-    expect(compiled("$.n.cosh()", () => Math.cosh(DOC.n))).toEqual({ $cosh: "$n" });
-    expect(compiled("$.n.tanh()", () => Math.tanh(DOC.n))).toEqual({ $tanh: "$n" });
-    expect(compiled("$.n.asinh()", () => Math.asinh(DOC.n))).toEqual({ $asinh: "$n" });
-    expect(compiled("$.n.acosh()", () => Math.acosh(DOC.n))).toEqual({ $acosh: "$n" });
-    expect(compiled("($.n / 10).atanh()", () => Math.atanh(DOC.n / 10))).toEqual({ $atanh: { $divide: ["$n", 10] } });
+    expect(compiled("$.neg.atan2(4)", () => Math.atan2(DOC.neg, 4))).toEqual({ $atan2: [{ $ifNull: ["$neg", 0] }, 4] });
+    expect(compiled("$.n.sin()", () => Math.sin(DOC.n))).toEqual({ $sin: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.cos()", () => Math.cos(DOC.n))).toEqual({ $cos: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.tan()", () => Math.tan(DOC.n))).toEqual({ $tan: { $ifNull: ["$n", 0] } });
+    expect(compiled("($.n / 10).asin()", () => Math.asin(DOC.n / 10))).toEqual({
+      $asin: { $ifNull: [{ $divide: ["$n", 10] }, 0] },
+    });
+    expect(compiled("($.n / 10).acos()", () => Math.acos(DOC.n / 10))).toEqual({
+      $acos: { $ifNull: [{ $divide: ["$n", 10] }, 0] },
+    });
+    expect(compiled("$.n.atan()", () => Math.atan(DOC.n))).toEqual({ $atan: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.sinh()", () => Math.sinh(DOC.n))).toEqual({ $sinh: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.cosh()", () => Math.cosh(DOC.n))).toEqual({ $cosh: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.tanh()", () => Math.tanh(DOC.n))).toEqual({ $tanh: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.asinh()", () => Math.asinh(DOC.n))).toEqual({ $asinh: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.acosh()", () => Math.acosh(DOC.n))).toEqual({ $acosh: { $ifNull: ["$n", 1] } });
+    expect(compiled("($.n / 10).atanh()", () => Math.atanh(DOC.n / 10))).toEqual({
+      $atanh: { $ifNull: [{ $divide: ["$n", 10] }, 0] },
+    });
     expect(compiled("[$.neg, $.n].min()", () => Math.min(DOC.neg, DOC.n))).toEqual({ $min: ["$neg", "$n"] });
     expect(compiled("$.a.max()", () => Math.max(...DOC.a))).toEqual({ $max: "$a" });
     expect(compiled("[...$.a, 9].max()", () => Math.max(...DOC.a, 9))).toEqual({
@@ -2166,7 +2177,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       },
     });
     expect(compiled("[$.neg, $.n].map(x => x.abs())", () => [DOC.neg, DOC.n].map(Math.abs))).toEqual({
-      $map: { input: ["$neg", "$n"], as: "x", in: { $abs: "$$x" } },
+      $map: { input: ["$neg", "$n"], as: "x", in: { $abs: { $ifNull: ["$$x", 0] } } },
     });
     expect(compiled("$.a.some(Number.isInteger)", () => DOC.a.some(Number.isInteger))).toEqual({
       $anyElementTrue: {
@@ -3009,10 +3020,10 @@ const NULL_AS_EMPTY: Readonly<Record<string, readonly [string, string]>> = {
 
 /** Each row that states `nullReceiverAs`: the call on a missing receiver, and the same call on the stated value. */
 const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
-  range: ["$.nope.range($.neg)", "(0).range($.neg)"],
-  rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
-  sign: ["$.nope.sign()", "(0).sign()"],
-  random: ["$.nope.random(0)", "(0).random(0)"],
+  log: ["$.nope.log()", "(1).log()"],
+  log2: ["$.nope.log2()", "(1).log2()"],
+  log10: ["$.nope.log10()", "(1).log10()"],
+  acosh: ["$.nope.acosh()", "(1).acosh()"],
   toString: ["$.nope.toString()", '""'],
 };
 
@@ -3153,7 +3164,7 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
     kind?: string;
     neverNull?: true | "always";
     readsNullAsEmpty?: true;
-    nullReceiverAs?: 0;
+    nullReceiverAs?: 1 | "";
     passesNull?: true;
   };
   const rows = Object.entries(NAMES) as [string, Row][];

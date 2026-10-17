@@ -76,13 +76,15 @@ such a call is present when no `?.` sits on its spine, so a chain pays the one
 `$ifNull` at its head, and `.size()` after `.uniq()` adds nothing. The third
 callback parameter binds the wrapped input, and is present with it.
 
-**A number method takes no wrap.** A number has no empty value, so `emptyValueOf`
-answers null for the number family and `dispatchOn` hands the cell the receiver as
-it is. A row whose operator answers null for a null operand states `passesNull`, so
-`.` and `?.` emit the same MQL (`$.n?.round()` is `{ $round: "$n" }`). A row with a
-safe answer for a missing number states it instead: `nullReceiverAs: 0` (`.range()`,
-`.sign()`), or an operator that answers a value for null (`.clamp()`, `.inRange()`).
-Such a row keeps the `$cond` of a `?.`.
+**A number method reads a missing number as `0`.** `emptyValueOf` answers `0` for
+the number family. So under a dot, `dispatchOn` wraps the receiver in
+`{ $ifNull: [<recv>, 0] }`, as it does with `[]`, `{}` and `""`. `$.n.round(2)` is
+`{ $round: [{ $ifNull: ["$n", 0] }, 2] }`. A row whose operator refuses 0 states its own
+safe value. The logarithm of 0 stops the command, so `.log()` states
+`nullReceiverAs: 1`, and `$.n.log()` is 0. A row with two families, for example
+`.clamp()` on a number or a date, wraps the receiver in its own cell (`safeNumber` in
+`src/registry/names.ts`). A row whose operator answers null for a null operand states
+`passesNull`, so `$.n?.round(2)` is `{ $round: ["$n", 2] }`, with no `$cond`.
 
 **A string method reads a missing string as `""`.** `emptyValueOf` answers `""` for
 the string family, so `dispatchOn` wraps the receiver in `{ $ifNull: [<recv>, ""] }`
@@ -960,7 +962,7 @@ Two constant bounds fold it: the cell writes `-1` only when `start` is more than
 a constant or a field path binds once in a `$let`, because the step reads each
 bound a second time. A bound that is not a constant reads as `{ $ifNull: [x, 0] }`,
 because lodash reads a missing bound as 0 and `$range` stops the command on null.
-The row states `nullReceiverAs: 0` for this reason, so the presence proof counts
+HR5 reads a missing receiver as 0 for the same reason. So the presence proof counts
 the receiver as there under a dot, and a chain after the call adds no guard.
 `.rangeRight()` is the same document inside `$reverseArray`.
 

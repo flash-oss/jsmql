@@ -52,7 +52,7 @@ describe("compiler/emit/filter — comparisons", () => {
   it("falls back to $expr where the query language has no form", () => {
     expect(filter("$.a > $.b")).toEqual({ $expr: { $gt: ["$a", "$b"] } });
     expect(filter("$.a + 1 === 2")).toEqual({ $expr: { $eq: [{ $add: ["$a", 1] }, 2] } });
-    expect(filter("$.a.abs() === 2")).toEqual({ $expr: { $eq: [{ $abs: "$a" }, 2] } });
+    expect(filter("$.a.abs() === 2")).toEqual({ $expr: { $eq: [{ $abs: { $ifNull: ["$a", 0] } }, 2] } });
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
     expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
@@ -314,20 +314,27 @@ describe("compiler/emit/filter — methods and operators", () => {
     expect(filter("$.age.inRange(18, 65)")).toEqual({ age: { $gte: 18, $lt: 65 } });
     // the bounds order at COMPILE time, so the swapped spelling is the same clause
     expect(filter("$.age.inRange(65, 18)")).toEqual({ age: { $gte: 18, $lt: 65 } });
-    expect(filter("$.n.inRange(10)")).toEqual({ n: { $gte: 0, $lt: 10 } });
+    // HR5: a dot reads a missing number as 0. 0 is in [0, 10), so the clause also matches a missing `n`.
+    expect(filter("$.n.inRange(10)")).toEqual({ $or: [{ n: { $gte: 0, $lt: 10 } }, { n: null }] });
+    expect(filter("$.n.inRange(-1, 1)")).toEqual({ $or: [{ n: { $gte: -1, $lt: 1 } }, { n: null }] });
+    // After a `?.` the call gives null. A range without 0 is never true for a missing `n`.
+    expect(filter("$.n?.inRange(10)")).toEqual({ n: { $gte: 0, $lt: 10 } });
+    expect(filter("$.n.inRange(-10, 0)")).toEqual({ n: { $gte: -10, $lt: 0 } });
     expect(filter("$.a.b.inRange(1, 2)")).toEqual({ "a.b": { $gte: 1, $lt: 2 } });
     // a date field takes the same clause
     expect(filter('$.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))')).toEqual({
       t: { $gte: new Date("2024-01-01T00:00:00.000Z"), $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
     // a bound read at run time cannot order here, and keeps the $min/$max expression
+    const n = { $ifNull: ["$n", 0] };
     expect(filter("$.n.inRange($.lo, $.hi)")).toEqual({
-      $expr: { $and: [{ $gte: ["$n", { $min: ["$lo", "$hi"] }] }, { $lt: ["$n", { $max: ["$lo", "$hi"] }] }] },
+      $expr: { $and: [{ $gte: [n, { $min: ["$lo", "$hi"] }] }, { $lt: [n, { $max: ["$lo", "$hi"] }] }] },
     });
     // a number against a date does not compare, so the pair keeps the expression form too
     const d = new Date("2024-01-01T00:00:00.000Z");
+    const t = { $ifNull: ["$t", 0] };
     expect(filter('$.t.inRange(new Date("2024-01-01"))')).toEqual({
-      $expr: { $and: [{ $gte: ["$t", { $min: [0, d] }] }, { $lt: ["$t", { $max: [0, d] }] }] },
+      $expr: { $and: [{ $gte: [t, { $min: [0, d] }] }, { $lt: [t, { $max: [0, d] }] }] },
     });
   });
 

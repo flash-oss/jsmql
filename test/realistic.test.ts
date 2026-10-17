@@ -1366,15 +1366,20 @@ describe("tiered loyalty discount price", { features: ["Ternaries"] }, () => {
       ).toEqual({
         $round: [
           {
-            $multiply: [
-              "$price",
+            $ifNull: [
               {
-                $cond: [
-                  { $and: [{ $gte: ["$loyalty.years", 5] }, { $gte: ["$loyalty.totalSpend", 10000] }] },
-                  0.85,
-                  { $cond: [{ $gte: ["$loyalty.years", 2] }, 0.92, 1] },
+                $multiply: [
+                  "$price",
+                  {
+                    $cond: [
+                      { $and: [{ $gte: ["$loyalty.years", 5] }, { $gte: ["$loyalty.totalSpend", 10000] }] },
+                      0.85,
+                      { $cond: [{ $gte: ["$loyalty.years", 2] }, 0.92, 1] },
+                    ],
+                  },
                 ],
               },
+              0,
             ],
           },
           2,
@@ -1445,17 +1450,22 @@ describe("scientific projection (hypot, log2/log10, sign, cbrt, PI, E)", { featu
         distance: {
           $sqrt: {
             $add: [
-              { $pow: [{ $subtract: ["$point.x", "$origin.x"] }, 2] },
+              { $pow: [{ $ifNull: [{ $subtract: ["$point.x", "$origin.x"] }, 0] }, 2] },
               { $pow: [{ $subtract: ["$point.y", "$origin.y"] }, 2] },
             ],
           },
         },
-        octave: { $log: [{ $divide: ["$frequency", 440] }, 2] },
-        decibels: { $multiply: [{ $log10: "$amplitude" }, 20] },
+        octave: { $log: [{ $ifNull: [{ $divide: ["$frequency", 440] }, 1] }, 2] },
+        decibels: { $multiply: [{ $log10: { $ifNull: ["$amplitude", 1] } }, 20] },
         fovRad: { $divide: [{ $multiply: ["$fovDeg", 3.141592653589793] }, 180] },
         growthFactor: { $pow: [2.718281828459045, "$rate"] },
         trend: { $cmp: [{ $ifNull: ["$delta", 0] }, 0] },
-        cubeSide: { $multiply: [{ $cmp: ["$volume", 0] }, { $pow: [{ $abs: "$volume" }, 0.3333333333333333] }] },
+        cubeSide: {
+          $multiply: [
+            { $cmp: [{ $ifNull: ["$volume", 0] }, 0] },
+            { $pow: [{ $abs: { $ifNull: ["$volume", 0] } }, 0.3333333333333333] },
+          ],
+        },
       });
     },
   );
@@ -1504,7 +1514,7 @@ describe("age decade bucket through .floor()", { features: ["Arithmetic and Math
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { ageDecade: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`($.age / 10).floor() * 10`)).toEqual({
-        $multiply: [{ $floor: { $divide: ["$age", 10] } }, 10],
+        $multiply: [{ $floor: { $ifNull: [{ $divide: ["$age", 10] }, 0] } }, 10],
       });
     },
   );
@@ -1516,7 +1526,15 @@ describe("invoice line total with compound tax", { features: ["Arithmetic and Ma
     { kind: "expression", usage: "db.invoices.aggregate([{ $addFields: { lineTotal: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`($.quantity * ($.unitPrice + $.unitPrice * $.taxRate)).round(2)`)).toEqual({
-        $round: [{ $multiply: ["$quantity", { $add: ["$unitPrice", { $multiply: ["$unitPrice", "$taxRate"] }] }] }, 2],
+        $round: [
+          {
+            $ifNull: [
+              { $multiply: ["$quantity", { $add: ["$unitPrice", { $multiply: ["$unitPrice", "$taxRate"] }] }] },
+              0,
+            ],
+          },
+          2,
+        ],
       });
     },
   );
@@ -2076,7 +2094,9 @@ describe("days since event (Date.now + .getTime + 86_400_000)", { features: ["Da
     { kind: "expression", usage: "db.events.aggregate([{ $addFields: { daysSinceEvent: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`((Date.now() - $.event.ts.getTime()) / 86_400_000).floor()`)).toEqual({
-        $floor: { $divide: [{ $subtract: [{ $toLong: "$$NOW" }, { $toLong: "$event.ts" }] }, 86400000] },
+        $floor: {
+          $ifNull: [{ $divide: [{ $subtract: [{ $toLong: "$$NOW" }, { $toLong: "$event.ts" }] }, 86400000] }, 0],
+        },
       });
     },
   );
@@ -2136,7 +2156,7 @@ describe("discount breakdown — bind once, reuse across fields", { features: ["
           in: {
             finalPrice: { $subtract: ["$price", "$$discount"] },
             savings: "$$discount",
-            savingsPercent: { $round: { $multiply: [{ $divide: ["$$discount", "$price"] }, 100] } },
+            savingsPercent: { $round: { $ifNull: [{ $multiply: [{ $divide: ["$$discount", "$price"] }, 100] }, 0] } },
           },
         },
       });
@@ -2164,19 +2184,19 @@ $ = {
           subtotal: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty"] } },
-              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+              in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
             },
           },
           tax: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
-              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+              in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
             },
           },
           total: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty", { $add: [1, "$taxRate"] }] } },
-              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+              in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
             },
           },
         },
@@ -2207,13 +2227,13 @@ $ = {
             subtotal: {
               $let: {
                 vars: { n: { $multiply: ["$price", "$qty"] } },
-                in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+                in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
               },
             },
             tax: {
               $let: {
                 vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
-                in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
+                in: { $divide: [{ $round: { $ifNull: [{ $multiply: ["$$n", 100] }, 0] } }, 100] },
               },
             },
           },

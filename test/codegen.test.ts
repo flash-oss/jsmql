@@ -4068,37 +4068,37 @@ describe("type casts", () => {
     expect(() => jsmql.expr("parseInt($.s)")).toThrow(/'parseInt\(\)' is not part of jsmql/);
     expect(() => jsmql.expr("parseFloat($.s)")).toThrow(/'parseFloat\(\)' is not part of jsmql/);
     expect(jsmql.expr("Number($.s)")).toEqual({ $toDouble: "$s" });
-    expect(jsmql.expr("(Number($.s)).trunc()")).toEqual({ $trunc: { $toDouble: "$s" } });
+    expect(jsmql.expr("(Number($.s)).trunc()")).toEqual({ $trunc: { $ifNull: [{ $toDouble: "$s" }, 0] } });
   });
 });
 
 describe("Math.*", () => {
   it(".abs()", () => {
-    expect(jsmql.expr("$.x.abs()")).toEqual({ $abs: "$x" });
+    expect(jsmql.expr("$.x.abs()")).toEqual({ $abs: { $ifNull: ["$x", 0] } });
   });
   it(".ceil()", () => {
-    expect(jsmql.expr("$.x.ceil()")).toEqual({ $ceil: "$x" });
+    expect(jsmql.expr("$.x.ceil()")).toEqual({ $ceil: { $ifNull: ["$x", 0] } });
   });
   it(".floor()", () => {
-    expect(jsmql.expr("$.x.floor()")).toEqual({ $floor: "$x" });
+    expect(jsmql.expr("$.x.floor()")).toEqual({ $floor: { $ifNull: ["$x", 0] } });
   });
   it(".round() takes the one-operand form", () => {
-    expect(jsmql.expr("$.x.round()")).toEqual({ $round: "$x" });
+    expect(jsmql.expr("$.x.round()")).toEqual({ $round: { $ifNull: ["$x", 0] } });
   });
   it(".pow()", () => {
     expect(jsmql.expr("2 ** $.n")).toEqual({ $pow: [2, "$n"] });
   });
   it(".sqrt()", () => {
-    expect(jsmql.expr("$.x.sqrt()")).toEqual({ $sqrt: "$x" });
+    expect(jsmql.expr("$.x.sqrt()")).toEqual({ $sqrt: { $ifNull: ["$x", 0] } });
   });
   it(".exp()", () => {
-    expect(jsmql.expr("$.x.exp()")).toEqual({ $exp: "$x" });
+    expect(jsmql.expr("$.x.exp()")).toEqual({ $exp: { $ifNull: ["$x", 0] } });
   });
   it(".log() (natural log → $ln)", () => {
-    expect(jsmql.expr("$.x.log()")).toEqual({ $ln: "$x" });
+    expect(jsmql.expr("$.x.log()")).toEqual({ $ln: { $ifNull: ["$x", 1] } });
   });
   it(".trunc()", () => {
-    expect(jsmql.expr("$.x.trunc()")).toEqual({ $trunc: "$x" });
+    expect(jsmql.expr("$.x.trunc()")).toEqual({ $trunc: { $ifNull: ["$x", 0] } });
   });
 });
 
@@ -4107,32 +4107,32 @@ describe("number methods in a callback, and the refused Math members", () => {
   // and the other members with a receiver method are refused, as bare callables too.
   it("$.scores.map(x => x.floor())", () => {
     expect(jsmql.expr("$.scores.map(x => x.floor())")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $floor: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $floor: { $ifNull: ["$$x", 0] } } },
     });
   });
   it("$.scores.map(x => x.round())", () => {
     expect(jsmql.expr("$.scores.map(x => x.round())")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $round: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $round: { $ifNull: ["$$x", 0] } } },
     });
   });
   it("$.scores.map(x => x.abs())", () => {
     expect(jsmql.expr("$.scores.map(x => x.abs())")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $abs: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $abs: { $ifNull: ["$$x", 0] } } },
     });
   });
   it("$.scores.map(x => x.ceil())", () => {
     expect(jsmql.expr("$.scores.map(x => x.ceil())")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $ceil: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $ceil: { $ifNull: ["$$x", 0] } } },
     });
   });
   it("$.scores.map(x => x.sqrt())", () => {
     expect(jsmql.expr("$.scores.map(x => x.sqrt())")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $sqrt: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $sqrt: { $ifNull: ["$$x", 0] } } },
     });
   });
   it("$.scores.map(x => x.trunc())", () => {
     expect(jsmql.expr("$.scores.map(x => x.trunc())")).toEqual({
-      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $trunc: "$$x" } },
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $trunc: { $ifNull: ["$$x", 0] } } },
     });
   });
   it("refuses $.scores.map(Math.floor), and names the method", () => {
@@ -4153,46 +4153,46 @@ describe("number methods in a callback, and the refused Math members", () => {
 
 describe("number trigonometry", () => {
   it(".sin()", () => {
-    expect(jsmql.expr("$.angle.sin()")).toEqual({ $sin: "$angle" });
+    expect(jsmql.expr("$.angle.sin()")).toEqual({ $sin: { $ifNull: ["$angle", 0] } });
   });
   it(".cos()", () => {
-    expect(jsmql.expr("$.angle.cos()")).toEqual({ $cos: "$angle" });
+    expect(jsmql.expr("$.angle.cos()")).toEqual({ $cos: { $ifNull: ["$angle", 0] } });
   });
   it(".tan()", () => {
-    expect(jsmql.expr("$.angle.tan()")).toEqual({ $tan: "$angle" });
+    expect(jsmql.expr("$.angle.tan()")).toEqual({ $tan: { $ifNull: ["$angle", 0] } });
   });
   it(".asin()", () => {
-    expect(jsmql.expr("$.x.asin()")).toEqual({ $asin: "$x" });
+    expect(jsmql.expr("$.x.asin()")).toEqual({ $asin: { $ifNull: ["$x", 0] } });
   });
   it(".acos()", () => {
-    expect(jsmql.expr("$.x.acos()")).toEqual({ $acos: "$x" });
+    expect(jsmql.expr("$.x.acos()")).toEqual({ $acos: { $ifNull: ["$x", 0] } });
   });
   it(".atan()", () => {
-    expect(jsmql.expr("$.x.atan()")).toEqual({ $atan: "$x" });
+    expect(jsmql.expr("$.x.atan()")).toEqual({ $atan: { $ifNull: ["$x", 0] } });
   });
   it(".atan2()", () => {
-    expect(jsmql.expr("$.y.atan2($.x)")).toEqual({ $atan2: ["$y", "$x"] });
+    expect(jsmql.expr("$.y.atan2($.x)")).toEqual({ $atan2: [{ $ifNull: ["$y", 0] }, "$x"] });
   });
   it(".atan2() wrong arity", () => {
     expect(() => jsmql.expr("$.x.atan2()")).toThrow(/exactly 1 argument/);
   });
   it(".sinh()", () => {
-    expect(jsmql.expr("$.x.sinh()")).toEqual({ $sinh: "$x" });
+    expect(jsmql.expr("$.x.sinh()")).toEqual({ $sinh: { $ifNull: ["$x", 0] } });
   });
   it(".cosh()", () => {
-    expect(jsmql.expr("$.x.cosh()")).toEqual({ $cosh: "$x" });
+    expect(jsmql.expr("$.x.cosh()")).toEqual({ $cosh: { $ifNull: ["$x", 0] } });
   });
   it(".tanh()", () => {
-    expect(jsmql.expr("$.x.tanh()")).toEqual({ $tanh: "$x" });
+    expect(jsmql.expr("$.x.tanh()")).toEqual({ $tanh: { $ifNull: ["$x", 0] } });
   });
   it(".asinh()", () => {
-    expect(jsmql.expr("$.x.asinh()")).toEqual({ $asinh: "$x" });
+    expect(jsmql.expr("$.x.asinh()")).toEqual({ $asinh: { $ifNull: ["$x", 0] } });
   });
   it(".acosh()", () => {
-    expect(jsmql.expr("$.x.acosh()")).toEqual({ $acosh: "$x" });
+    expect(jsmql.expr("$.x.acosh()")).toEqual({ $acosh: { $ifNull: ["$x", 1] } });
   });
   it(".atanh()", () => {
-    expect(jsmql.expr("$.x.atanh()")).toEqual({ $atanh: "$x" });
+    expect(jsmql.expr("$.x.atanh()")).toEqual({ $atanh: { $ifNull: ["$x", 0] } });
   });
 });
 
@@ -6035,7 +6035,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // clamp's result type follows its args (number OR date), so it is uncertain —
     // `.clamp(...).getFullYear()` must compile.
     expect(jsmql.expr("$.d.clamp($.a, $.b).getFullYear()")).toEqual({
-      $year: { $min: [{ $max: ["$d", "$a"] }, "$b"] },
+      $year: { $min: [{ $max: [{ $ifNull: ["$d", 0] }, "$a"] }, "$b"] },
     });
   });
   it("rejects a date-receiver + string/number/array/object method", () => {
@@ -6121,7 +6121,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     });
     // .clamp is number-OR-date, so it is never gated in either direction.
     expect(jsmql.expr('$.t.plus(1, "day").clamp($.a, $.b)')).toEqual({
-      $min: [{ $max: [{ $dateAdd: { startDate: "$t", unit: "day", amount: 1 } }, "$a"] }, "$b"],
+      $min: [{ $max: [{ $ifNull: [{ $dateAdd: { startDate: "$t", unit: "day", amount: 1 } }, 0] }, "$a"] }, "$b"],
     });
   });
   it("rejects a wrong-family method on a literal or template receiver", () => {
@@ -6266,7 +6266,9 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(jsmql.expr('const v = $split($.s, ","); v.map(x => x)')).toEqual({
       $map: { input: { $ifNull: [{ $split: ["$s", ","] }, []] }, as: "x", in: "$$x" },
     });
-    expect(jsmql.expr("const v = $year($.t); v.clamp(0, 5)")).toEqual({ $min: [{ $max: [{ $year: "$t" }, 0] }, 5] });
+    expect(jsmql.expr("const v = $year($.t); v.clamp(0, 5)")).toEqual({
+      $min: [{ $max: [{ $ifNull: [{ $year: "$t" }, 0] }, 0] }, 5],
+    });
     expect(jsmql.expr("const d = $dateToParts($.t); d.mapValues(v => v)")).toEqual({
       $arrayToObject: {
         $map: {
@@ -7135,7 +7137,10 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
   });
   it(".inRange(end) → [0, end); .inRange(start, end) → [start, end) (bounds swap through $min/$max)", () => {
     expect(jsmql.expr("$.n.inRange(10)")).toEqual({
-      $and: [{ $gte: ["$n", { $min: [0, 10] }] }, { $lt: ["$n", { $max: [0, 10] }] }],
+      $and: [
+        { $gte: [{ $ifNull: ["$n", 0] }, { $min: [0, 10] }] },
+        { $lt: [{ $ifNull: ["$n", 0] }, { $max: [0, 10] }] },
+      ],
     });
     expect(jsmql.expr("$.n.inRange(5, 10)")).toEqual({
       $and: [{ $gte: ["$n", { $min: [5, 10] }] }, { $lt: ["$n", { $max: [5, 10] }] }],
@@ -7162,19 +7167,23 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
     });
   });
   it(".round([p]) → MongoDB $round (banker's rounding)", () => {
-    expect(jsmql.expr("$.n.round()")).toEqual({ $round: "$n" });
-    expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: ["$n", 2] });
+    expect(jsmql.expr("$.n.round()")).toEqual({ $round: { $ifNull: ["$n", 0] } });
+    expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: [{ $ifNull: ["$n", 0] }, 2] });
   });
   it(".ceil()/.floor() → $ceil/$floor; with precision, scale by 10^p", () => {
-    expect(jsmql.expr("$.n.ceil()")).toEqual({ $ceil: "$n" });
-    expect(jsmql.expr("$.n.floor()")).toEqual({ $floor: "$n" });
+    expect(jsmql.expr("$.n.ceil()")).toEqual({ $ceil: { $ifNull: ["$n", 0] } });
+    expect(jsmql.expr("$.n.floor()")).toEqual({ $floor: { $ifNull: ["$n", 0] } });
     // Only $round takes a precision on the server, so a precision scales by 10^p,
     // rounds to a whole number and scales back. MEASURED on 1.234: ceil(2) → 1.24.
     // A constant precision folds the scale; a precision read at run time takes `$pow`.
-    expect(jsmql.expr("$.n.ceil(2)")).toEqual({ $divide: [{ $ceil: { $multiply: ["$n", 100] } }, 100] });
-    expect(jsmql.expr("$.n.floor(2)")).toEqual({ $divide: [{ $floor: { $multiply: ["$n", 100] } }, 100] });
+    expect(jsmql.expr("$.n.ceil(2)")).toEqual({
+      $divide: [{ $ceil: { $multiply: [{ $ifNull: ["$n", 0] }, 100] } }, 100],
+    });
+    expect(jsmql.expr("$.n.floor(2)")).toEqual({
+      $divide: [{ $floor: { $multiply: [{ $ifNull: ["$n", 0] }, 100] } }, 100],
+    });
     expect(jsmql.expr("$.n.floor($.p)")).toEqual({
-      $divide: [{ $floor: { $multiply: ["$n", { $pow: [10, "$p"] }] } }, { $pow: [10, "$p"] }],
+      $divide: [{ $floor: { $multiply: [{ $ifNull: ["$n", 0] }, { $pow: [10, "$p"] }] } }, { $pow: [10, "$p"] }],
     });
   });
 });
@@ -9099,18 +9108,23 @@ describe(".sign() / .log2() / .log10() / .hypot() / .cbrt() / Math.random() / co
     expect(jsmql.expr("$.x?.sign()")).toEqual({ $cond: [{ $lte: ["$x", null] }, null, { $cmp: ["$x", 0] }] });
   });
   it(".log2()", () => {
-    expect(jsmql.expr("$.x.log2()")).toEqual({ $log: ["$x", 2] });
+    expect(jsmql.expr("$.x.log2()")).toEqual({ $log: [{ $ifNull: ["$x", 1] }, 2] });
   });
   it(".log10()", () => {
-    expect(jsmql.expr("$.x.log10()")).toEqual({ $log10: "$x" });
+    expect(jsmql.expr("$.x.log10()")).toEqual({ $log10: { $ifNull: ["$x", 1] } });
   });
   it(".cbrt()", () => {
     expect(jsmql.expr("$.x.cbrt()")).toEqual({
-      $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, 0.3333333333333333] }],
+      $multiply: [
+        { $cmp: [{ $ifNull: ["$x", 0] }, 0] },
+        { $pow: [{ $abs: { $ifNull: ["$x", 0] } }, 0.3333333333333333] },
+      ],
     });
   });
   it(".hypot() 2-arg", () => {
-    expect(jsmql.expr("$.a.hypot($.b)")).toEqual({ $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } });
+    expect(jsmql.expr("$.a.hypot($.b)")).toEqual({
+      $sqrt: { $add: [{ $pow: [{ $ifNull: ["$a", 0] }, 2] }, { $pow: ["$b", 2] }] },
+    });
   });
   it("Math.random", () => {
     expect(jsmql.expr("Math.random()")).toEqual({ $rand: {} });

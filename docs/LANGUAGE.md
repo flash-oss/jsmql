@@ -1863,7 +1863,7 @@ $.result = $.bool ? "R" : "OTHER";
 // → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } } ]
 ```
 
-**A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, and a string method on `""`. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. lodash answers the same way: `_.upperCase(null)` is `""`.
+**A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, a string method on `""`, and a number method on `0`. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. lodash answers the same way: `_.upperCase(null)` is `""`.
 
 In a Filter this reading also decides which documents match: `$.s.length() === 0` matches a document with no `s`, as `$.tags.size() === 0` does. To match only a string that is there, write `$.s?.length() === 0`. A query clause follows the same reading: `$.s.match(/^$/)` becomes `{ s: { $in: [/^$/, null] } }`, so it also matches a document with no `s`. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
 
@@ -2517,53 +2517,53 @@ Notes:
 A number method reads the number before the dot:
 
 ```js
-$.delta.abs()                      // { $abs: "$delta" }
-$.avg.ceil()                       // { $ceil: "$avg" }
-$.avg.floor()                      // { $floor: "$avg" }
-$.avg.floor(1)                     // { $divide: [{ $floor: { $multiply: ["$avg", 10] } }, 10] }
-$.avg.round()                      // { $round: "$avg" }
-$.avg.round(2)                     // { $round: ["$avg", 2] }   (2 decimal places)
-$.avg.trunc()                      // { $trunc: "$avg" }
-$.avg.trunc(2)                     // { $trunc: ["$avg", 2] }
+$.delta.abs()                      // { $abs: { $ifNull: ["$delta", 0] } }
+$.avg.ceil()                       // { $ceil: { $ifNull: ["$avg", 0] } }
+$.avg.floor()                      // { $floor: { $ifNull: ["$avg", 0] } }
+$.avg.floor(1)                     // { $divide: [{ $floor: { $multiply: [{ $ifNull: ["$avg", 0] }, 10] } }, 10] }
+$.avg.round()                      // { $round: { $ifNull: ["$avg", 0] } }
+$.avg.round(2)                     // { $round: [{ $ifNull: ["$avg", 0] }, 2] }   (2 decimal places)
+$.avg.trunc()                      // { $trunc: { $ifNull: ["$avg", 0] } }
+$.avg.trunc(2)                     // { $trunc: [{ $ifNull: ["$avg", 0] }, 2] }
 $.base ** 2                        // { $pow: ["$base", 2] }
-$.variance.sqrt()                  // { $sqrt: "$variance" }
-$.x.cbrt()                         // { $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, 0.3333333333333333] }] }
+$.variance.sqrt()                  // { $sqrt: { $ifNull: ["$variance", 0] } }
+$.x.cbrt()                         // { $multiply: [{ $cmp: [{ $ifNull: ["$x", 0] }, 0] }, { $pow: [{ $abs: { $ifNull: ["$x", 0] } }, 0.3333333333333333] }] }
                                    // the sign is factored out: (-8).cbrt() is -2, as in JavaScript,
                                    // and $pow of a negative base to a fractional exponent is not that
-$.rate.exp()                       // { $exp: "$rate" }
-$.value.log()                      // { $ln: "$value" }   (natural log)
-$.value.log($.base)                // { $log: ["$value", "$base"] }
-$.value.log(10)                    // { $log10: "$value" }
-$.value.log2()                     // { $log: ["$value", 2] }
-$.value.log10()                    // { $log10: "$value" }
+$.rate.exp()                       // { $exp: { $ifNull: ["$rate", 0] } }
+$.value.log()                      // { $ln: { $ifNull: ["$value", 1] } }   (natural log)
+$.value.log($.base)                // { $log: [{ $ifNull: ["$value", 1] }, "$base"] }
+$.value.log(10)                    // { $log10: { $ifNull: ["$value", 1] } }
+$.value.log2()                     // { $log: [{ $ifNull: ["$value", 1] }, 2] }
+$.value.log10()                    // { $log10: { $ifNull: ["$value", 1] } }
 $.delta.sign()                     // { $cmp: [{ $ifNull: ["$delta", 0] }, 0] }   (-1 / 0 / 1)
-$.a.hypot($.b)                     // { $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } }
+$.a.hypot($.b)                     // { $sqrt: { $add: [{ $pow: [{ $ifNull: ["$a", 0] }, 2] }, { $pow: ["$b", 2] }] } }
 
 [$.a, $.b, $.c].min()              // { $min: ["$a", "$b", "$c"] }
 $.scores.max()                     // { $max: "$scores" }
 [$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
 
-A number method on a missing or `null` number gives `null`, under a dot and under `?.`. See [HR5](LANG_RULES.md). Some methods have a safe value, and a dot gives it instead: `.sign()` gives `0`, because a missing number reads as `0`. `.clamp()`, `.inRange()` and `.range()` give a safe value too; see [lodash number methods](#lodash-number-methods).
+Under a dot, a number method reads a missing or `null` number as `0`, the safe value of a number. See [HR5](LANG_RULES.md). So `$.n.round(2)` gives `0` for a document with no `n`. A method whose operator refuses `0` reads `1` instead, as lodash's `_.divide()` reads a missing divisor. The logarithm of `0` stops the command, so `$.n.log()` gives `0`, the logarithm of `1`. Under `?.`, a number method gives `null`: `$.n?.round(2)` is `{ $round: ["$n", 2] }`.
 
 ### Trigonometry
 
 All angles are in radians (matches both JS and MongoDB).
 
 ```js
-$.angle.sin()                      // { $sin: "$angle" }
-$.angle.cos()                      // { $cos: "$angle" }
-$.angle.tan()                      // { $tan: "$angle" }
-$.x.asin()                         // { $asin: "$x" }
-$.x.acos()                         // { $acos: "$x" }
-$.x.atan()                         // { $atan: "$x" }
-$.y.atan2($.x)                     // { $atan2: ["$y", "$x"] }
-$.x.sinh()                         // { $sinh: "$x" }
-$.x.cosh()                         // { $cosh: "$x" }
-$.x.tanh()                         // { $tanh: "$x" }
-$.x.asinh()                        // { $asinh: "$x" }
-$.x.acosh()                        // { $acosh: "$x" }
-$.x.atanh()                        // { $atanh: "$x" }
+$.angle.sin()                      // { $sin: { $ifNull: ["$angle", 0] } }
+$.angle.cos()                      // { $cos: { $ifNull: ["$angle", 0] } }
+$.angle.tan()                      // { $tan: { $ifNull: ["$angle", 0] } }
+$.x.asin()                         // { $asin: { $ifNull: ["$x", 0] } }
+$.x.acos()                         // { $acos: { $ifNull: ["$x", 0] } }
+$.x.atan()                         // { $atan: { $ifNull: ["$x", 0] } }
+$.y.atan2($.x)                     // { $atan2: [{ $ifNull: ["$y", 0] }, "$x"] }
+$.x.sinh()                         // { $sinh: { $ifNull: ["$x", 0] } }
+$.x.cosh()                         // { $cosh: { $ifNull: ["$x", 0] } }
+$.x.tanh()                         // { $tanh: { $ifNull: ["$x", 0] } }
+$.x.asinh()                        // { $asinh: { $ifNull: ["$x", 0] } }
+$.x.acosh()                        // { $acosh: { $ifNull: ["$x", 1] } }
+$.x.atanh()                        // { $atanh: { $ifNull: ["$x", 0] } }
 ```
 
 MongoDB has no JS equivalent for degree/radian conversion. Use the escape hatch:
@@ -2601,7 +2601,7 @@ $.scores.map(Math.floor)           // ✗ not a JSMQL name; write $.scores.map(x
 Number($.stringField)              // { $toDouble: "$stringField" }
 String($.numField)                 // { $toString: "$numField" }
 Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
-Number($.stringField).trunc()      // { $trunc: { $toDouble: "$stringField" } } — the whole number
+Number($.stringField).trunc()      // { $trunc: { $ifNull: [{ $toDouble: "$stringField" }, 0] } } — the whole number
 ```
 
 `Boolean(x)` follows JavaScript's truthy and falsy rules. `Boolean("")` is `false`, `Boolean(0)` is `false`, and `Boolean([])` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
@@ -2639,12 +2639,14 @@ $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
 $.n.inRange(10)        // 0 <= n < 10   (checked with $min/$max so negative ranges swap)
 $.n.inRange(5, 10)     // 5 <= n < 10
 $.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))   // a date reads the same range test
-$.n.round()            // { $round: "$n" }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
-$.n.round(2)           // { $round: ["$n", 2] }
-$.n.ceil()             // { $ceil: "$n" }
-$.n.ceil(2)            // { $divide: [{ $ceil: { $multiply: ["$n", 100] } }, 100] }
+$.n.round()            // { $round: { $ifNull: ["$n", 0] } }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
+$.n.round(2)           // { $round: [{ $ifNull: ["$n", 0] }, 2] }
+$.n.ceil()             // { $ceil: { $ifNull: ["$n", 0] } }
+$.n.ceil(2)            // { $divide: [{ $ceil: { $multiply: [{ $ifNull: ["$n", 0] }, 100] } }, 100] }
 $.n.floor(1)           // as ceil, with $floor
 ```
+
+A missing `n` reads as `0` under a dot, so `$.n.inRange(10)` is true for a document with no `n`. A Filter also matches that document: `{ $or: [{ n: { $gte: 0, $lt: 10 } }, { n: null }] }`. To match only a number that is there, write `$.n?.inRange(10)`.
 
 #### `.random()`
 

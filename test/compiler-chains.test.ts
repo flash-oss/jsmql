@@ -10,7 +10,7 @@
 //   - An index read `[k]` reads the field `k` of an object, the element of an array for a
 //     number key, and missing for anything else. A missing key reads no field.
 //   - A method under a dot on a null or missing value runs on its safe value: `.uniq()`
-//     answers `[]`, and `.trim()` answers `""`.
+//     answers `[]`, `.trim()` answers `""`, and `.abs()` answers `0`.
 //   - A `?.` with a method after it stops the chain where the value before the LAST `?.`
 //     is null or missing. The chain then answers null.
 //   - A `?.` read with no method after it answers null where the value is missing.
@@ -31,7 +31,7 @@ await up?.close();
 // ── the grammar ──────────────────────────────────────────────────────────────
 
 type Read = { readonly name: "b" | "c" | "d"; readonly optional: boolean; readonly computed: boolean };
-type Method = { readonly name: "trim" | "uniq"; readonly optional: boolean };
+type Method = { readonly name: "trim" | "uniq" | "abs"; readonly optional: boolean };
 type Chain = { readonly src: string; readonly reads: readonly Read[]; readonly method: Method | null };
 
 const readsFor = (name: Read["name"], withComputedOptional: boolean): Read[] => [
@@ -48,6 +48,8 @@ const METHODS: (Method | null)[] = [
   { name: "trim", optional: true },
   { name: "uniq", optional: false },
   { name: "uniq", optional: true },
+  { name: "abs", optional: false },
+  { name: "abs", optional: true },
 ];
 
 const CHAINS: Chain[] = [];
@@ -68,14 +70,15 @@ for (const b of readsFor("b", true)) {
 
 // ── the documents ────────────────────────────────────────────────────────────
 
-// Each level holds each kind of value: missing, null, a string, an array, and an object
-// that holds the next level. An array of objects checks the field path through an array.
-const D = [undefined, null, " w ", [3, 3]];
-const C = [undefined, null, " x ", [2, 2], ...D.map((d) => (d === undefined ? {} : { d }))];
+// Each level holds each kind of value: missing, null, a string, a number, an array, and an
+// object that holds the next level. An array of objects checks the field path through an array.
+const D = [undefined, null, " w ", -4, [3, 3]];
+const C = [undefined, null, " x ", -3, [2, 2], ...D.map((d) => (d === undefined ? {} : { d }))];
 const B = [
   undefined,
   null,
   " y ",
+  -2,
   [1, 1],
   [{ c: " x " }, { c: " y " }],
   ...C.map((c) => (c === undefined ? {} : { c })),
@@ -125,6 +128,7 @@ const absent = (v: unknown): boolean => v === MISSING || v === null;
 /** The method under a dot: a null or missing receiver runs on its safe value. */
 function apply(method: Method, v: unknown): unknown {
   if (method.name === "trim") return absent(v) ? "" : typeof v === "string" ? v.trim() : SKIP;
+  if (method.name === "abs") return absent(v) ? 0 : typeof v === "number" ? Math.abs(v) : SKIP;
   if (absent(v)) return [];
   return Array.isArray(v) ? [...new Set(v.map((e) => JSON.stringify(e)))].map((e) => JSON.parse(e)) : SKIP;
 }
@@ -153,7 +157,7 @@ const canonical = (chain: Chain, v: unknown): string =>
 
 describe("compiler — every read chain compiles", () => {
   it("covers each shape of the grammar", () => {
-    expect(CHAINS.length).toBe(340);
+    expect(CHAINS.length).toBe(476);
     expect(CHAINS.map((c) => c.src)).toContain("$.a?.b.c.uniq()");
     expect(CHAINS.map((c) => c.src)).toContain("$.a?.[$.kb]?.c");
   });

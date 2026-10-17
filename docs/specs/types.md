@@ -210,13 +210,12 @@ value for any operand (`$eq`, `$type`). So only its receiver counts:
 operator's literal object operand is a body (`$map({ input, … })`, `$hour({ date })`),
 and it proves nothing, because no row states which key is the input.
 
-An array or object method under a dot is present whatever its receiver: HR5 reads a
-missing receiver as `[]` or `{}` (`dispatchOn` in
-[lower.ts](../../src/compiler/emit/lower.ts) wraps it), so `$.a.uniq().size()` guards
-`a` once. A row that states `readsNullAsEmpty` takes no wrap at all, because its
-operator gives the same answer for null: `$.a.sum()` is `{ $sum: "$a" }`. A row
-that states `nullReceiverAs` reads a missing receiver as that value in its own cell,
-so it is present under a dot too: `$.n.range().size()` adds no `$ifNull`. A `?.` on
+A method under a dot is present whatever its receiver, when its kind has a safe
+value. Under a dot, a missing receiver reads as `[]`, `{}`, `""`, `0`, or the value the
+row states in `nullReceiverAs` (`dispatchOn` in [lower.ts](../../src/compiler/emit/lower.ts)
+wraps it). So `$.a.uniq().size()` guards `a` once, and `$.n.range().size()` adds no
+`$ifNull`. A row that states `readsNullAsEmpty` takes no wrap at all, because its
+operator gives the same answer for null: `$.a.sum()` is `{ $sum: "$a" }`. A `?.` on
 the spine takes the presence away: the chain stops, and the value may be null.
 
 A row that states `passesNull` answers null for a null receiver through its own
@@ -226,16 +225,15 @@ after the `?.` states the fact and the `?.` tests a field path. So the compiler 
 calls alone, with the path proved present. Then the compiler adds no dot wrap: `$.o?.keys()` is
 `{ $map: { input: { $objectToArray: "$o" }, … } }`. A plain read between the `?.` and a
 call keeps the test, because the call after the read runs under a dot. `$.o?.a.keys()` is
-`[]` for `o: {}`. A row that reads a missing receiver as a value (`nullReceiverAs`)
-cannot state the fact.
+`[]` for `o: {}`. A row can state both `passesNull` and `nullReceiverAs`: `$.n.log()`
+reads a missing `n` as 1, and `$.n?.log()` is `{ $ln: "$n" }`.
 
 A production states `passesNull` too, when its operator answers a missing operand as it
 answers `null`: the arithmetic operators and `??`. A `?.` read as its operand then runs as
 a plain read, with no `$ifNull: [x, null]` (`nullPassing` in
 [lower.ts](../../src/compiler/emit/lower.ts)). `== null` and a truth test read the operand
 the same way. A comparison does not state the fact, because `{ $eq: ["$nope", null] }` is
-false where `{ $eq: [null, null] }` is true. `NullAnswer` in [names.ts](../../src/registry/names.ts) refuses
-the pair.
+false where `{ $eq: [null, null] }` is true.
 
 A cell guards with `$ifNull` exactly where the proof says `absent`. MEASURED:
 `{ $size: null }` and `{ $in: [x, null] }` abort the command. The same rule holds for

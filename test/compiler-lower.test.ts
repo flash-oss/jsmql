@@ -23,7 +23,7 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(expr("`n=${$.n}`")).toEqual({ $concat: ["n=", { $toString: "$n" }] });
     // a row that states `returns: "string"` needs no $toString; an unknown one does
     expect(expr("`a${String($.n)}`")).toEqual({ $concat: ["a", { $toString: "$n" }] });
-    expect(expr("`a${$.n.abs()}`")).toEqual({ $concat: ["a", { $toString: { $abs: "$n" } }] });
+    expect(expr("`a${$.n.abs()}`")).toEqual({ $concat: ["a", { $toString: { $abs: { $ifNull: ["$n", 0] } } }] });
   });
 
   it("refuses the literals that have no value", () => {

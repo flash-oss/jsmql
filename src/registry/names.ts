@@ -205,12 +205,13 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   readsNullAsEmpty?: true;
   /**
    * Under a dot (HR5), the row reads a null or missing receiver as this value. A row
-   * states it only where it differs from the safe value of the row's family. lodash's `_.range` reads a
-   * missing bound as 0. `.toString()` works on every kind, and answers a string, so it
-   * reads `""`. MEASURED: `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)`
-   * is. test/compiler-methods.test.ts measures each row.
+   * states it only where it differs from the safe value of the row's family. The
+   * logarithm of 0 stops the command, so `.log()` reads 1, as lodash's `_.divide()`
+   * reads a missing divisor as 1. `.toString()` works on every kind, and answers a
+   * string, so it reads `""`. MEASURED: `{ $ln: 0 }` stops the command, and
+   * `$.nope.log()` is 0, as `(1).log()` is. test/compiler-methods.test.ts measures each row.
    */
-  nullReceiverAs?: 0 | "";
+  nullReceiverAs?: 1 | "";
   /**
    * The operator answers null for a null or missing receiver, on its own. So a `?.`
    * before the call needs no `$cond` null test: the bare call gives the answer the
@@ -701,14 +702,6 @@ type GlobalSpec<W extends readonly Position[]> = {
   updateDoc?: Cell<Lists<W, "updateDoc">, Family, ExprIn, OutOf["updateDoc"]>;
 };
 
-/**
- * A cell answers null for a missing receiver (`passesNull`), or it reads that receiver
- * as a value of its own (`nullReceiverAs`). One row cannot state both.
- */
-export type NullAnswer =
-  | { passesNull?: true; nullReceiverAs?: undefined }
-  | { passesNull?: undefined; nullReceiverAs?: 0 | "" };
-
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
 export type NameEntry<W extends readonly Position[], O extends On, T extends string = never> = NameSpec<W, O, T> & {
   kind: "name";
@@ -728,7 +721,7 @@ const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W>
 // file. On the spec alone it widens to `string`. The audit then reads `string`
 // from every row, and it can never name the row at fault.
 const name = <const W extends readonly Position[], const O extends On, const T extends string = never>(
-  e: NameSpec<W, O, T> & NullAnswer,
+  e: NameSpec<W, O, T>,
 ): NameEntry<W, O, T> => ({ ...e, kind: "name" });
 const mongo = <
   const W extends readonly Position[],
@@ -1248,6 +1241,27 @@ const spelledKeys = (e: Expr): string[] | null =>
   e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral")
     ? e.elements.map((el) => (el as Extract<Expr, { type: "StringLiteral" }>).value)
     : null;
+
+/**
+ * HR5's safe number for a cell that serves two families. A receiver that may be
+ * missing reads as 0, as lodash reads `_.inRange(null, -1, 1)`. `dispatchOn` wraps
+ * the receiver of a one-family row on its own. `.clamp()` and `.inRange()` take a
+ * number or a date, so the cell states the wrap. `sameAsNull` says that 0 gives the
+ * answer that null gives there, so the wrap adds nothing.
+ */
+const safeNumber = (recv: unknown, present: boolean, sameAsNull: boolean): unknown =>
+  present || sameAsNull ? recv : { $ifNull: [recv, 0] };
+
+/**
+ * Is 0 in the range? Two constant numbers give the answer at compile time. A number
+ * sorts before every date, so 0 is never in a range of two dates. For any other pair,
+ * 0 can be in the range.
+ */
+const mayHoldZero = (lo: unknown, hi: unknown): boolean => {
+  const bounds = orderedBounds(lo, hi);
+  if (bounds === null) return true;
+  return typeof bounds[0] === "number" && bounds[0] <= 0 && 0 < (bounds[1] as number);
+};
 
 /**
  * Two constant bounds in low-to-high order, or null when the pair does not
@@ -9392,7 +9406,12 @@ export const NAMES = {
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
       args: { sig: "lower, upper", exact: 2 },
-      emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] }),
+      emit: ({ recv, args, value, present }) => {
+        const lower = value(args[0]);
+        // `$max` ignores null, so 0 gives null's answer for a lower bound of 0 or more, or a date
+        const same = isDate(lower) || (typeof lower === "number" && lower >= 0);
+        return { $min: [{ $max: [safeNumber(recv, present, same), lower] }, value(args[1])] };
+      },
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -9414,7 +9433,7 @@ export const NAMES = {
     // index answers, and the document a MongoDB developer writes by hand.
     filter: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
-      emit: ({ recv, args, pathOf, constant }) => {
+      emit: ({ recv, args, pathOf, constant, orMissing }) => {
         const path = recv === null ? null : pathOf(recv);
         if (path === null) return null;
         const given = args.map(constant);
@@ -9422,15 +9441,19 @@ export const NAMES = {
         const values = given.map((c) => c!.value);
         const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
         if (bounds === null) return null;
-        return queryOwnValue(path, { $gte: bounds[0], $lt: bounds[1] });
+        const test = { $gte: bounds[0], $lt: bounds[1] };
+        // HR5: a dot reads a missing number as 0, so a range that contains 0 also matches it
+        return mayHoldZero(bounds[0], bounds[1]) ? orMissing(path, test) : queryOwnValue(path, test);
       },
     },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
-      emit: ({ recv, args, value }) => {
+      emit: ({ recv, args, value, present }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
-        return { $and: [{ $gte: [recv, { $min: [lo, hi] }] }, { $lt: [recv, { $max: [lo, hi] }] }] };
+        // null and 0 are both outside a range that does not contain 0
+        const r = safeNumber(recv, present, !mayHoldZero(lo, hi));
+        return { $and: [{ $gte: [r, { $min: [lo, hi] }] }, { $lt: [r, { $max: [lo, hi] }] }] };
       },
     },
     stream: unsupported("'.inRange()' has no stream form: it produces a value, not a stream of documents."),
@@ -9447,7 +9470,6 @@ export const NAMES = {
     on: "number",
     returns: { arrayOf: "number" },
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: { args: RANGE_ARGS, emit: (input) => rangeOf(input) },
@@ -9465,7 +9487,6 @@ export const NAMES = {
     on: "number",
     returns: { arrayOf: "number" },
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: { args: RANGE_ARGS, emit: (input) => ({ $reverseArray: rangeOf(input) }) },
@@ -10756,6 +10777,8 @@ export const NAMES = {
     doc: "'.log()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -10792,6 +10815,8 @@ export const NAMES = {
     doc: "'.log2()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -10818,6 +10843,8 @@ export const NAMES = {
     doc: "'.log10()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -10876,13 +10903,12 @@ export const NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        // HR5: a missing or null number reads as 0, the safe value, so the sign is 0 there
-        number: { args: { sig: "", none: true }, emit: ({ recv, present }) => ({ $cmp: [orZero(recv, present), 0] }) },
+        // under a dot, a missing or null number reads as 0, so the sign is 0 there
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cmp: [recv, 0] }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.sign(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'. In a callback, write 'x => x.sign()'.",
@@ -11187,6 +11213,8 @@ export const NAMES = {
     doc: "'.acosh()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -11319,7 +11347,6 @@ export const NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {

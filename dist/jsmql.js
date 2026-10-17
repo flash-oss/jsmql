@@ -665,6 +665,12 @@ var nullOr = (recv, present2, bind, body) => {
   return bound === null ? doc : { $let: { vars: { [bound.as]: recv }, in: doc } };
 };
 var spelledKeys = (e) => e.type === "ArrayLiteral" && e.elements.every((el) => el.type === "StringLiteral") ? e.elements.map((el) => el.value) : null;
+var safeNumber = (recv, present2, sameAsNull) => present2 || sameAsNull ? recv : { $ifNull: [recv, 0] };
+var mayHoldZero = (lo, hi) => {
+  const bounds = orderedBounds(lo, hi);
+  if (bounds === null) return true;
+  return typeof bounds[0] === "number" && bounds[0] <= 0 && 0 < bounds[1];
+};
 var orderedBounds = (a, b) => {
   if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
   if (isDate(a) && isDate(b)) return a <= b ? [a, b] : [b, a];
@@ -8259,7 +8265,11 @@ var NAMES = {
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
       args: { sig: "lower, upper", exact: 2 },
-      emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] })
+      emit: ({ recv, args, value, present: present2 }) => {
+        const lower = value(args[0]);
+        const same = isDate(lower) || typeof lower === "number" && lower >= 0;
+        return { $min: [{ $max: [safeNumber(recv, present2, same), lower] }, value(args[1])] };
+      }
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8280,7 +8290,7 @@ var NAMES = {
     // index answers, and the document a MongoDB developer writes by hand.
     filter: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
-      emit: ({ recv, args, pathOf: pathOf3, constant }) => {
+      emit: ({ recv, args, pathOf: pathOf3, constant, orMissing }) => {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
         const given = args.map(constant);
@@ -8288,15 +8298,17 @@ var NAMES = {
         const values = given.map((c) => c.value);
         const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
         if (bounds === null) return null;
-        return queryOwnValue(path, { $gte: bounds[0], $lt: bounds[1] });
+        const test = { $gte: bounds[0], $lt: bounds[1] };
+        return mayHoldZero(bounds[0], bounds[1]) ? orMissing(path, test) : queryOwnValue(path, test);
       }
     },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
-      emit: ({ recv, args, value }) => {
+      emit: ({ recv, args, value, present: present2 }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
-        return { $and: [{ $gte: [recv, { $min: [lo, hi] }] }, { $lt: [recv, { $max: [lo, hi] }] }] };
+        const r = safeNumber(recv, present2, !mayHoldZero(lo, hi));
+        return { $and: [{ $gte: [r, { $min: [lo, hi] }] }, { $lt: [r, { $max: [lo, hi] }] }] };
       }
     },
     stream: unsupported("'.inRange()' has no stream form: it produces a value, not a stream of documents."),
@@ -8312,7 +8324,6 @@ var NAMES = {
     on: "number",
     returns: { arrayOf: "number" },
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: { args: RANGE_ARGS, emit: (input) => rangeOf(input) },
@@ -8329,7 +8340,6 @@ var NAMES = {
     on: "number",
     returns: { arrayOf: "number" },
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: { args: RANGE_ARGS, emit: (input) => ({ $reverseArray: rangeOf(input) }) },
@@ -9527,6 +9537,8 @@ var NAMES = {
     doc: "'.log()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9559,6 +9571,8 @@ var NAMES = {
     doc: "'.log2()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9584,6 +9598,8 @@ var NAMES = {
     doc: "'.log10()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9639,13 +9655,12 @@ var NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        // HR5: a missing or null number reads as 0, the safe value, so the sign is 0 there
-        number: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => ({ $cmp: [orZero(recv, present2), 0] }) },
+        // under a dot, a missing or null number reads as 0, so the sign is 0 there
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cmp: [recv, 0] }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.sign(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'. In a callback, write 'x => x.sign()'."
@@ -9938,6 +9953,8 @@ var NAMES = {
     doc: "'.acosh()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    // the logarithm of 0 stops the command, so the row reads 1, as `_.divide()` reads a missing divisor
+    nullReceiverAs: 1,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -10065,7 +10082,6 @@ var NAMES = {
     on: ["number", "Math"],
     returns: "number",
     neverNull: "always",
-    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11988,9 +12004,6 @@ function productionPassesNullOf(key) {
 function nullReceiverAsOf(name2) {
   return row(name2)?.nullReceiverAs;
 }
-function readsNullReceiverOf(name2) {
-  return nullReceiverAsOf(name2) !== void 0;
-}
 function emptyValueOf(name2, family) {
   const stated = nullReceiverAsOf(name2);
   if (stated !== void 0) return stated;
@@ -12000,6 +12013,7 @@ function emptyValueOf(name2, family) {
   if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
   if (fams.every((f) => f === "string")) return "";
+  if (fams.every((f) => f === "number")) return 0;
   return null;
 }
 function siblingOf(name2, family) {
@@ -22534,7 +22548,7 @@ function statedPresence(node, env) {
       const name2 = namedRow(node) ?? node.name;
       if (!neverNullOf(name2)) return false;
       const family = receiverFamilyOf(node.object, env) ?? soleFieldFamilyOf(name2);
-      const wrapped = !spineHasOptional(node) && (emptyValueOf(name2, family) !== null || readsNullReceiverOf(name2));
+      const wrapped = !spineHasOptional(node) && emptyValueOf(name2, family) !== null;
       const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : wrapped || isPresent(node.object, env);
       return receiver && argsThere(name2, node.args, env);
     }

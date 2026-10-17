@@ -545,24 +545,19 @@ export function productionPassesNullOf(key: string): boolean {
   return ((PRODUCTIONS as Record<string, unknown>)[key] as { passesNull?: true } | undefined)?.passesNull === true;
 }
 
-/** The safe value a row states for a null or missing receiver (`.range()` reads 0, `.toString()` reads ""). */
-function nullReceiverAsOf(name: string): 0 | "" | undefined {
-  return (row(name) as { nullReceiverAs?: 0 | "" } | undefined)?.nullReceiverAs;
-}
-
-/** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0)? */
-export function readsNullReceiverOf(name: string): boolean {
-  return nullReceiverAsOf(name) !== undefined;
+/** The safe value a row states for a null or missing receiver (`.log()` reads 1, `.toString()` reads ""). */
+function nullReceiverAsOf(name: string): 1 | "" | undefined {
+  return (row(name) as { nullReceiverAs?: 1 | "" } | undefined)?.nullReceiverAs;
 }
 
 /**
  * HR5: under a dot, a method runs on the SAFE value of its kind when its receiver is
- * null or missing: `[]` for an array, `{}` for an object, `""` for a string. A family
- * with no safe value gives null. A row that states `nullReceiverAs` reads that value. Else
+ * null or missing: `[]` for an array, `{}` for an object, `""` for a string, `0` for a
+ * number. A family with no safe value gives null. A row that states `nullReceiverAs` reads that value. Else
  * `family` is the receiver's proven family, or null; then the row's own field families
  * decide, and they must agree on one safe value.
  */
-export function emptyValueOf(name: string, family: string | null): [] | Record<string, never> | "" | 0 | null {
+export function emptyValueOf(name: string, family: string | null): [] | Record<string, never> | "" | 0 | 1 | null {
   const stated = nullReceiverAsOf(name);
   if (stated !== undefined) return stated;
   const own = families(row(name)?.on);
@@ -576,6 +571,7 @@ export function emptyValueOf(name: string, family: string | null): [] | Record<s
   if (fams.every((f) => f === "array")) return [];
   if (fams.every((f) => f === "object")) return {};
   if (fams.every((f) => f === "string")) return "";
+  if (fams.every((f) => f === "number")) return 0;
   return null;
 }
 
