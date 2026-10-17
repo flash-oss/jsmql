@@ -204,19 +204,47 @@ carry the spelling of one variable encoder: `$let({ v_x: 1 }, (v_x) => v_x)` →
 `check.ts` holds the literal-gated checks for JSMQL code: a method, a global
 and a production. A `$op(…)` call and a `$stage(…)` call meet only the two
 refusals for a spread or a computed key inside an object body
-(`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check
-reads an `Arity` field the row states — slot types, ranges, enums, `constant`
-slots, a non-empty or non-zero slot, a zero with an alternative of its own
-(`zeroRefused`), an integer slot or receiver (`integer`, where `-1` is the
-receiver) — or a `BodyRule` field of a method's
-options document (`args.body`): required and closed keys (with a suggestion),
-enums, key types, `constantKeys`, and keys that never come together
-(`notTogether`). A method row's `elements: "scalar"`
+(`checkBodyKeys`), because a JavaScript spread has no MQL there. Each check reads an `Arity` field that the row states:
+
+- whole-number, field-name and field-path slots, ranges and enums;
+- `constant` slots, and a non-empty or non-zero slot;
+- a zero with an alternative of its own (`zeroRefused`);
+- an integer slot or receiver (`integer`, where `-1` is the receiver);
+- a `BodyRule` field of a method's options document (`args.body`): required and
+  closed keys (with a suggestion), enums, key types, `constantKeys`, and keys that
+  never come together (`notTogether`).
+
+A method row's `elements: "scalar"`
 refuses a receiver that provably holds arrays (a literal of literals,
 `.partition(…)`) before its rule runs. The checks never judge a slot that is a
 field path, an expression or a spread. The checks run on every rule of a
 method, a global and a production, and `test/registry-fields-read.test.ts`
 makes sure that every stated rule field has a reader.
+
+### The kind of a slot
+
+The KIND of each operand is not a literal check. HR7 judges it from the proof of
+the operand, so a value that an earlier statement computed is judged like a
+literal. `select` in [select.ts](../../src/compiler/emit/select.ts) reads the
+rule of the row (`slotType`, `rest`, `homogeneous`, and `elements` on the row)
+against the `Proofs` that the call site passes. The rule itself is in
+[types.md § The kind check](types.md#the-kind-check). Every site that selects a
+rule from a JSMQL spelling passes the proofs, and `proofsFor` in
+[prove.ts](../../src/compiler/emit/prove.ts) is the one reader that builds them:
+
+- a method call, a named call and the receiver dispatch (`lower.ts`);
+- a production, and the passes that own the lowering of `+` and `in` (`lower.ts`);
+- a query leaf (`filter.ts`). It tells `proofsFor` which operands are fields, so that a field
+  which holds an array proves the kinds of its elements (SR2);
+- a stage call, a stream link and the `$$ = [ … ]` sugar (`statement.ts`).
+
+`proofsFor` also gives the proof of each position (`items`) when the element source is
+an array of a fixed length, for example a literal. The `elements` rule then judges
+each position alone. See [types.md § The kind check](types.md#the-kind-check).
+
+A `$op(…)` call and a `$stage(…)` call pass `UNPROVEN`, so no kind rule judges
+them. When a kind refusal and an error inside an operand both apply, the error
+inside the operand comes first, because that message names the real cause.
 
 ## Truthiness
 

@@ -1910,7 +1910,7 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.s.trim().at(0)")).toThrow("For one character, write '.charAt(index)'.");
     expect(() => expr("$.s.trim().slice(1)")).toThrow("For a part of a string, write '.substring(start, end)'.");
     expect(() => expr('$.s.trim().concat("x")')).toThrow("To join strings, write '+' between them: 'a + b'.");
-    expect(() => expr("$.s.trim().indexOf(1)")).toThrow("'indexOf' expects a string, but got a number.");
+    expect(() => expr("$.s.trim().indexOf(1)")).toThrow("'.indexOf()' takes strings");
     expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
   });

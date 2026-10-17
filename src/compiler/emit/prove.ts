@@ -47,6 +47,7 @@ import {
   elementOf,
   evaluate,
   flattenOnce,
+  isNothing,
   isOnly,
   itemOf,
   join,
@@ -60,8 +61,13 @@ import {
   single,
   tupleOf,
   written,
+  elementProofOf,
+  itemProofsOf,
+  proofOf,
 } from "./type.ts";
 import type { Site } from "./type.ts";
+import type { Proof, Proofs } from "../kinds.ts";
+import { kindOfValue } from "../kinds.ts";
 import { staticKey } from "../passes/naming.ts";
 
 export type Known = Kind | "unknown";
@@ -229,6 +235,92 @@ export const kindOf = (node: Expr, env: Env): Known => single(typeOf(node, env))
 /** The one kind of ONE element of the array `node` reads, or "unknown". */
 export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(typeOf(node, env)));
 
+/**
+ * What a call's operands prove, for the kind check of select.ts (HR7). `env` is the Env in
+ * which the operands are evaluated. `source` is the node whose elements a row reads, with its own
+ * Env: the receiver of a method, the last operand of a production, or null where the
+ * call has none.
+ *
+ * `objectForm` says that the row takes a document in place of its other slot kinds
+ * (the date accessors take a date OR `{ date, timezone }`). An object literal then
+ * proves nothing: the row's own `body` rule judges it. A spread proves nothing, because
+ * its elements are the runtime's. This is the one reader of the operands' kinds, so no
+ * call site builds a check of its own.
+ *
+ * `isField` is given on the query road only, and it says which operands name a field of
+ * the document. SR2: a query compares a FIELD that holds an array through the elements
+ * of the array, so `{ tags: "x" }` tests a string against the elements of `tags`. Such a
+ * field proves the kinds of its elements in place of `array`, and this rule lives in one
+ * place, in this function. The array itself stays a possible kind when another operand can be an
+ * array too, because `{ tags: ["a"] }` compares the whole array. An element of unknown
+ * kind makes the field unproven.
+ */
+export function proofsFor(
+  args: readonly CallArg[],
+  env: Env,
+  objectForm: boolean,
+  source: { readonly node: Expr; readonly env: Env } | null = null,
+  isField?: (a: Expr) => boolean,
+): Proofs {
+  const proven = (a: CallArg): Proof => {
+    if (a.type === "SpreadElement" || (objectForm && a.type === "ObjectLiteral")) return "unknown";
+    // Only a `null` that the source wrote proves the kind "null". A read that the proof
+    // shows gives no value has its own refusal, and that one names the field. A value
+    // that the call supplies is not source.
+    const t = typeOf(a, env);
+    const written = a.type === "NullLiteral" && a.injected !== true;
+    return isNothing(t) && !written ? "unknown" : proofOf(t);
+  };
+  const sourceType = source === null ? null : typeOf(source.node, source.env);
+  const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
+  // An element source of a fixed length, such as a literal, proves each position on its own.
+  const found = sourceType === null ? undefined : itemProofsOf(sourceType);
+  // A `null` element that the source wrote proves the kind `null`, as a `null` operand does.
+  // A `null` that the call supplies proves no kind.
+  const elementNodes = source !== null && source.node.type === "ArrayLiteral" ? source.node.elements : [];
+  const items =
+    found === undefined || elementNodes.length !== found.length
+      ? found
+      : found.map((p, i) => {
+          const el = elementNodes[i];
+          return el.type === "NullLiteral" && el.injected !== true ? (["null"] as const) : p;
+        });
+  // A call with a spread passes its arguments as ONE packed list (the desugar pass). Each
+  // element of the list is an argument, and a spread proves the kinds of its elements.
+  const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
+  if (list !== null) {
+    const own = (e: CallArg): Proof =>
+      e.type === "SpreadElement" ? elementProofOf(typeOf(e.argument, env)) : proven(e);
+    // The desugar pass built the list out of the call's own arguments.
+    const packedArgs = list.elements as readonly CallArg[];
+    return {
+      args: packedArgs.map(own),
+      elements,
+      ...(items === undefined ? {} : { items }),
+      viaElements: packedArgs.map((e) => e.type === "SpreadElement"),
+      packed: true,
+    };
+  }
+  const plain = args.map(proven);
+  const mayBeArray = (p: Proof): boolean => p !== "unknown" && p.includes("array");
+  const via: boolean[] = [];
+  const throughElements = (a: CallArg, i: number): Proof => {
+    const p = plain[i];
+    if (isField === undefined || a.type === "SpreadElement" || !isField(a) || p === "unknown" || !mayBeArray(p))
+      return p;
+    if (plain.some((other, j) => j !== i && mayBeArray(other))) return p;
+    const held = elementProofOf(typeOf(a, env));
+    if (held === "unknown") return "unknown";
+    via[i] = p.every((k) => k === "array");
+    return [...new Set([...p.filter((k) => k !== "array"), ...held])];
+  };
+  const proofs = args.map(throughElements);
+  const tuple = items === undefined ? {} : { items };
+  return via.some(Boolean)
+    ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true) }
+    : { args: proofs, elements, ...tuple };
+}
+
 /** The receiver family a node has, for a row's per-family `returns`: a source family, else its kind's. */
 export function receiverFamilyOf(node: Expr, env: Env): FieldFamily | "regexp" | string | null {
   const src = sourceFamily(node);
@@ -340,18 +432,10 @@ const isFamilyMap = (r: unknown): boolean => typeof r === "object" && r !== null
 
 /** A runtime value carried in: its proof, as deep as a plain value can show. */
 function injectedType(v: unknown): Type {
-  if (typeof v === "number" || typeof v === "bigint") return of("number");
-  if (typeof v === "string") return isMqlShaped(v) ? ANY : of("string");
-  if (typeof v === "boolean") return of("bool");
-  if (isDate(v)) return of("date");
-  if (Array.isArray(v)) return isMqlShaped(v) ? ANY : of("array");
-  const tag = bsonTagOf(v);
-  if (tag !== undefined) {
-    const k = BSON_KIND[tag];
-    return k === undefined ? ANY : of(k);
-  }
-  if (isPlainObject(v)) return isMqlShaped(v) ? ANY : of("object");
-  return ANY;
+  const k = kindOfValue(v);
+  if (k === null) return ANY;
+  // a string, a list or a document that reads as MQL is MQL, and proves nothing
+  return (k === "string" || k === "array" || k === "object") && isMqlShaped(v) ? ANY : of(k);
 }
 
 /**

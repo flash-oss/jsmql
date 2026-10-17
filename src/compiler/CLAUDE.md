@@ -42,6 +42,9 @@ index.ts       source → MQL. The public entries: `expr(source)`, `filter(sourc
 rows.ts        the registry readers every phase shares: one question about a name,
                one answer from a row, spelled out once.
 objectid-guard.ts  the one plausibility rule for an ObjectId the source spells.
+kinds.ts       the kind check of HR7: the fit rule, the fault a call can break, and
+               the proof of a known value. The dispatcher and the constant
+               evaluator both read it. See docs/specs/types.md § The kind check.
 
 lex/
   token.ts     the Token record and the source-position helpers.
@@ -68,9 +71,10 @@ passes/        naming.ts answers "which row does this node name", "what is the
                docs/specs/raw-mql-boundary.md.
 emit/          the lowerings, and the dispatcher that checks a row, then runs one.
   consult.ts   what a row says about one name in one position — a pure read.
-  select.ts    which rule runs: the receiver's proof (a closed Receiver) and the
-               arguments' class (a closed partition) against the row — a rule, a
-               runtime dispatch over the field families, or one of nine refusals.
+  select.ts    which rule runs: the receiver's proof (a closed Receiver), the
+               arguments' class (a closed partition) and the proof of each operand
+               against the row — a rule, a runtime dispatch over the field
+               families, or one of the closed refusals.
   names.ts     every MongoDB variable name the compiler writes: the injective encoding, the
                brands (MongoVar / VarRef / FieldSlot), and Scope — what each
                JavaScript name stands for, and which names a mint must avoid.
@@ -88,7 +92,8 @@ emit/          the lowerings, and the dispatcher that checks a row, then runs on
                call site, a binding's type, the document's proof at a field path.
   inputs.ts    the one constructor of the `In` record a renderer receives.
   check.ts     the literal-gated argument checks on JSMQL code. Each check reads a
-               stated rule. A `$op(…)` or `$stage(…)` call meets none of them (HR3).
+               stated rule. The kind of a slot is not here: `select` judges it.
+               A `$op(…)` or `$stage(…)` call meets none of them (HR3).
   errors.ts    every message the phase can produce, worded once.
   lower.ts     the value and truth readings over every node type. See
                docs/specs/emit-pass.md.

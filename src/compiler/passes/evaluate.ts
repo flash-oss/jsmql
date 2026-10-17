@@ -27,7 +27,8 @@ import {
   foldNamespaceConstant,
 } from "./fold-methods.ts";
 import type { Family } from "../../registry/vocabulary.ts";
-import { acceptsArgumentCount, isCallable, namespaceNames } from "../rows.ts";
+import { acceptsArgumentCount, isCallable, namespaceNames, operandRuleOf } from "../rows.ts";
+import { elementsFaultOf, faultOf, proofsOfValues } from "../kinds.ts";
 import { isMqlShaped } from "./inject.ts";
 import { isDate, isRegExp } from "../../bson.ts";
 
@@ -307,6 +308,12 @@ function bitwise(op: string, left: unknown, right: unknown): Evaluation {
   }
 }
 
+/** Does the production row of an operator refuse these constants by their kinds (HR7)? */
+function breaksKindRule(nodeType: "BinaryExpr" | "UnaryExpr", op: string, values: readonly unknown[]): boolean {
+  const stated = operandRuleOf(nodeType, op);
+  return stated !== undefined && faultOf(stated.key, stated.rule, proofsOfValues(values)) !== null;
+}
+
 function binary(op: string, left: unknown, right: unknown): Evaluation {
   switch (op) {
     case "+":
@@ -567,6 +574,9 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
   // `"abc".length()` is a CALL of a name the row says is READ, and no fold may
   // answer it. The row's `call: false` is the one fact that tells the two apart.
   if (!isCallable(name)) return NOT_CONSTANT;
+  // A receiver whose elements are of a kind the row never takes does not fold, for example
+  // `[1, "a"].sum()`: the emitter refuses the call (HR7), where a fold would hide it.
+  if (!onNamespace && elementsFaultOf(name, proofsOfValues([receiverValue])) !== null) return NOT_CONSTANT;
 
   // A call with a spread reaches here as ONE list that the desugar pass packed
   // (`[1].concat(...xs)` → `[1].concat([...xs])`). Its elements are the call's
@@ -743,6 +753,9 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
       if (shortCircuit !== null) return shortCircuit;
       const right = at(node.right, env, depth + 1);
       if (!right.ok) return propagate(right);
+      // Two constants of kinds that the operator never takes together do not fold, for
+      // example `1 === "a"`: the emitter refuses the node (HR7), where a fold would hide it.
+      if (breaksKindRule("BinaryExpr", node.op, [left.value, right.value])) return NOT_CONSTANT;
       return binary(node.op, left.value, right.value);
     }
 

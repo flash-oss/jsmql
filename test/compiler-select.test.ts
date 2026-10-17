@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
 import { consult } from "../src/compiler/emit/consult.ts";
-import { guardFor, select, shapeOf, type Receiver, kindFits } from "../src/compiler/emit/select.ts";
+import { guardFor, select, shapeOf, type Receiver, kindFits, UNPROVEN } from "../src/compiler/emit/select.ts";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { FIELD_FAMILY_TYPES, type FieldFamily } from "../src/registry/vocabulary.ts";
@@ -41,7 +41,7 @@ describe("compiler/emit/select — the argument partition", () => {
 
 describe("compiler/emit/select — a keyed byArgs routes by class and states its leftover", () => {
   const pick = (name: string, src: string, receiver: Receiver = NONE) =>
-    select(consult(name, "value"), receiver, shapeOf(argsOf(src)), argsOf(src).length);
+    select(consult(name, "value"), receiver, shapeOf(argsOf(src)), argsOf(src).length, UNPROVEN);
 
   it("routes each class of `new Date(…)`", () => {
     expect(pick("Date", "f()").kind).toBe("rule");
@@ -72,7 +72,7 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
 
 describe("compiler/emit/select — a per-family cell and the receiver's proof", () => {
   const at = (name: string, receiver: Receiver, n = 0) =>
-    select(consult(name, "value"), receiver, n === 0 ? { kind: "none" } : { kind: "dynamic" }, n);
+    select(consult(name, "value"), receiver, n === 0 ? { kind: "none" } : { kind: "dynamic" }, n, UNPROVEN);
 
   it("runs the branch a proven receiver names", () => {
     const r = at("length", value("string"));
@@ -96,7 +96,10 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
 
   it("drops a branch whose slot cannot take a proven argument kind, and runs the one left alone", () => {
     const pick = (kind: "number" | "string" | "unknown") =>
-      select(consult("indexOf", "value"), OPAQUE, { kind: "dynamic" }, 1, [kind]);
+      select(consult("indexOf", "value"), OPAQUE, { kind: "dynamic" }, 1, {
+        args: [kind === "unknown" ? "unknown" : [kind]],
+        elements: "unknown",
+      });
     // `$indexOfCP` takes a string: a number argument leaves the array branch
     expect(pick("number").kind).toBe("rule");
     // a string fits both branches, and so does an argument the proof says nothing about
@@ -127,15 +130,15 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
   it("checks the count against the branch that will run", () => {
     expect(at("length", value("string"), 1)).toMatchObject({ kind: "wrongCount", got: 1 });
     // `$abs` takes one operand; two is the count no rule states
-    expect(select(consult("$abs", "value"), NONE, { kind: "multiple" }, 2)).toMatchObject({
+    expect(select(consult("$abs", "value"), NONE, { kind: "multiple" }, 2, UNPROVEN)).toMatchObject({
       kind: "wrongCount",
       got: 2,
     });
-    expect(select(consult("$abs", "value"), NONE, { kind: "dynamic" }, 1).kind).toBe("rule");
+    expect(select(consult("$abs", "value"), NONE, { kind: "dynamic" }, 1, UNPROVEN).kind).toBe("rule");
   });
 
   it("refuses a spread on a rule that reads arguments one by one, quoting the signature", () => {
-    expect(select(consult("$abs", "value"), NONE, { kind: "spread" }, 1)).toMatchObject({
+    expect(select(consult("$abs", "value"), NONE, { kind: "spread" }, 1, UNPROVEN)).toMatchObject({
       kind: "spreadRefused",
       sig: "operand",
     });
@@ -176,7 +179,7 @@ describe("compiler/emit/select — the table audits", () => {
       if (row.kind !== "name" || !(typeof row.expr === "object" && row.expr !== null && "perFamily" in row.expr))
         continue;
       rows++;
-      const answers = probes.map(({ shape, n }) => select(consult(name, "value"), OPAQUE, shape, n));
+      const answers = probes.map(({ shape, n }) => select(consult(name, "value"), OPAQUE, shape, n, UNPROVEN));
       const r = answers.find((a) => a.kind !== "wrongCount" && a.kind !== "rejectedCount");
       if (r === undefined) {
         wrong.push(`${name}: refuses every argument count from 0 to 3`);

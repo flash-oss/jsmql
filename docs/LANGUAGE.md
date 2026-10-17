@@ -1390,10 +1390,11 @@ jsmql("$match($.x > 1); $$.indexStats();");  // ✗ $indexStats must be the firs
 
 ## Mistakes caught at compile time
 
-JSMQL checks two things at compile time:
+JSMQL checks these things at compile time:
 
 - **Where each stage is in the pipeline.** A source stage, for example `$collStats`, `$geoNear` or `$changeStream`, must be the first stage. `$out` and `$merge` must be the last stage. A sub-pipeline of `$facet`, `$lookup` or `$unionWith` can hold only the stages that the server allows in it. `$text` must be in the first `$match` of the pipeline, at any depth of its body. An aggregation `$match` cannot hold `$near`, `$nearSphere` or `$where`. Use these operators in a `find()` filter.
 - **A method on the wrong type of value.** See [A method chained on the wrong type](#a-method-chained-on-the-wrong-type) below.
+- **A value of the wrong kind.** See [A value of the wrong kind](#a-value-of-the-wrong-kind) below.
 
 JSMQL checks the place of each stage, and your own stages are included:
 
@@ -1444,6 +1445,20 @@ Where JSMQL does not know the type, it rejects nothing and emits the MQL: a fiel
 
 JSMQL leaves each constraint that depends on your deployment to the server, for example
 sharding, transactions, memory limits and Atlas availability.
+
+### A value of the wrong kind
+
+Each method, operator and argument slot takes a kind of value: a number, a string, an array, a date or a document. When JSMQL can prove that a value has another kind, it refuses the program. It refuses it even when the server would accept the MQL. This is rule [HR7](LANG_RULES.md).
+
+```js
+"a" + 1                  // ✗ + takes operands of one kind
+[1, "a"].max()           // ✗ .max() takes numbers, and the array holds a string
+$.str.trim() + 1         // ✗ .trim() gives a string
+$.str + 1                // → { $add: ["$str", 1] }   the kind of a bare field is unknown, so the server decides
+$max(1, "a")             // → { $max: [1, "a"] }      the escape hatch passes the values as written
+```
+
+**This is a surprise for a JavaScript developer.** JavaScript adds `"a" + 1` and gives `"a1"`, and MongoDB accepts `{ $max: [1, "a"] }`. JSMQL refuses the first, and the second is yours to write with `$op(…)`. A value of unknown kind always passes, and a value that can have two or more kinds passes when one of them fits. A literal array is the exception: each element is certain, so one element of the wrong kind is enough to refuse it. See [docs/specs/types.md](specs/types.md#the-kind-check).
 
 ### A read that gives no value
 

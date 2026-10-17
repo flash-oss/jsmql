@@ -8,6 +8,7 @@
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 
 import type {
+  Arity,
   Family,
   FieldFamily,
   IterateeSlots,
@@ -256,9 +257,12 @@ export function receiverFamiliesOf(name: string): readonly Family[] | "any" | un
 
 type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
 
-/** What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an array makes the server refuse. */
-export function elementsOf(name: string): "scalar" | undefined {
-  return (row(name) as { elements?: "scalar" } | undefined)?.elements;
+/**
+ * What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an
+ * array makes the server refuse, or the one kind that every element must have (HR7).
+ */
+export function elementsOf(name: string): "scalar" | Kind | undefined {
+  return (row(name) as { elements?: "scalar" | Kind } | undefined)?.elements;
 }
 
 /** The kind of ONE element of the array a name returns, where its own lowering fixes it. */
@@ -733,6 +737,21 @@ export function productionForOperator(nodeType: "BinaryExpr" | "UnaryExpr", op: 
     if (p.becomes === nodeType && p.tokens[0] === op) return key;
   }
   return undefined;
+}
+
+/**
+ * The rule for the operand kinds of an operator, as the row of its production states
+ * it, with the key of that row. A pass that owns the lowering states the rule too
+ * (`inCode`), so this reads the value cell in both cases.
+ */
+export function operandRuleOf(
+  nodeType: "BinaryExpr" | "UnaryExpr",
+  op: string,
+): { key: string; rule: Arity } | undefined {
+  const key = productionForOperator(nodeType, op);
+  if (key === undefined) return undefined;
+  const cell = (PRODUCTIONS as Record<string, { expr?: { args?: Arity } }>)[key]?.expr;
+  return cell?.args === undefined ? undefined : { key, rule: cell.args };
 }
 
 /** Does this production state that a left-nested chain lowers as one operator? */

@@ -74,7 +74,7 @@ var TYPEOF_HINTS = {
   bigint: "long",
   function: "javascript"
 };
-var inCode = (file) => ({ inCode: file });
+var inCode = (file, args) => args === void 0 ? { inCode: file } : { inCode: file, args };
 var composedInto = (...owners) => ({
   composedInto: owners
 });
@@ -422,11 +422,15 @@ var dateRow = (spelling) => global_({
       constant: unsupported(
         `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`
       ),
-      dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
+      dynamic: {
+        args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
+        emit: ({ args, value }) => ({ $toDate: value(args[0]) })
+      },
       // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
-      // an eighth argument. Months are 1-BASED here, unlike JavaScript.
+      // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an
+      // integer: the server refuses 2024.5 as a year.
       multiple: {
-        args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
+        args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7], rest: "int" },
         emit: ({ args, value }) => dateFromParts(args.map(value), null)
       },
       otherwise: unsupported(
@@ -456,7 +460,7 @@ var bsonValue = (e) => global_({
     byArgs: {
       constant: unsupported(e.refuseConstant),
       dynamic: {
-        args: { sig: "value", exact: 1 },
+        args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
         emit: ({ args, value }) => ({ [e.convert]: value(args[0]) })
       },
       otherwise: unsupported(`'${e.spelling}(\u2026)' takes one value to convert, or one constant.`)
@@ -693,6 +697,7 @@ var RANGE_ARGS = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
   integer: [-1, 0, 1],
+  slotType: { 0: "int", 1: "int" },
   zeroRefused: { 1: "For the start value n times, write 'n.range().map(() => start)'." }
 };
 function rangeOf({ recv, args, value, bind, present: present2 }) {
@@ -3425,7 +3430,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, count]", allowed: [1, 2] },
+      args: { sig: "start[, count]", allowed: [1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => {
         const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
         const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
@@ -3448,7 +3453,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, end]", allowed: [0, 1, 2] },
+      args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => {
         if (args.length === 0) return recv;
         return nullOr(recv, present2, bind, (r) => {
@@ -3476,7 +3481,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => {
         const lit = literalIndexValue(args[0]);
         if (lit !== null && lit < 0) return "";
@@ -3507,6 +3512,7 @@ var NAMES = {
       args: {
         sig: "separator",
         exact: 1,
+        slotType: { 0: "string" },
         // MEASURED: the server refuses `{ $split: ["$s", ""] }`, and MongoDB has no
         // operator that splits into characters. So this row refuses the empty separator
         // and emits nothing.
@@ -3536,7 +3542,7 @@ var NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3545,7 +3551,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
     },
     stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
@@ -3567,7 +3573,7 @@ var NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3576,7 +3582,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
@@ -3615,7 +3621,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceOne: { input: recv, find: value(args[0]), replacement: value(args[1]) }
       })
@@ -3637,7 +3643,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceAll: { input: recv, find: value(args[0]), replacement: value(args[1]) }
       })
@@ -3672,7 +3678,7 @@ var NAMES = {
     // there) — no regex reaches: a regex literal is only an argument to `.match` and its
     // siblings, never an element of a written list.
     filter: {
-      args: { sig: "regexp", exact: 1 },
+      args: { sig: "regexp", exact: 1, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, pathOf: pathOf3, literal: literal2 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const re = args[0];
@@ -3681,7 +3687,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "regex", exact: 1 },
+      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
@@ -3700,7 +3706,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" } },
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
@@ -3721,7 +3727,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1 },
+      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({
         $ifNull: [
           { $getField: { field: "idx", input: { $regexFind: regexBody(r, args[0], () => value(args[0])) } } },
@@ -3745,7 +3751,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("start", r, args, value, bind))
     },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
@@ -3767,7 +3773,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("end", r, args, value, bind))
     },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
@@ -3787,7 +3793,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "count", exact: 1 },
+      args: { sig: "count", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({
         $reduce: { input: { $range: [0, value(args[0])] }, initialValue: "", in: { $concat: ["$$value", recv] } }
       })
@@ -3813,6 +3819,7 @@ var NAMES = {
           args: {
             sig: "searchValue",
             exact: 1,
+            slotType: { 0: "element" },
             noCallback: {
               0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => \u2026)'."
             }
@@ -3854,7 +3861,7 @@ var NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3866,6 +3873,7 @@ var NAMES = {
       args: {
         sig: "searchString",
         exact: 1,
+        slotType: { 0: "string" },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => \u2026)'."
         }
@@ -3894,7 +3902,7 @@ var NAMES = {
     // exactly what `.has` means on an array. `["a", "b"].has($.s)` → { s: { $in: […] } }.
     // Anything else keeps the expression fallback.
     filter: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", exact: 1, slotType: { 0: "element" } },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
         if (recv === null) return null;
         const path = pathOf3(recv);
@@ -3919,6 +3927,7 @@ var NAMES = {
       args: {
         sig: "value",
         exact: 1,
+        slotType: { 0: "element" },
         noCallback: {
           0: "'.has()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
         }
@@ -3942,7 +3951,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
@@ -4021,7 +4030,7 @@ var NAMES = {
         // constant operands during the optimisation and raises there on a wrong type. So
         // a constant without the `[x]` wrap stops the pipeline before any branch runs.
         array: {
-          args: { sig: "...items", atLeast: 1, spread: true },
+          args: { sig: "...items", atLeast: 1, spread: true, rest: "any" },
           emit: ({ recv, args, value, type, bind }) => {
             const first = args[0];
             const list = args.length === 1 && first.type === "ArrayLiteral" && first.packed === true ? first.elements : args;
@@ -4109,7 +4118,11 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: '"field" | ["a", "b"] | { field: dir } | keyFn | comparator', allowed: [0, 1] },
+      args: {
+        sig: '"field" | ["a", "b"] | { field: dir } | keyFn | comparator',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       emit: ({ recv, args, sortSpec, callback: callback2, bind }) => {
         if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
         const ask = sortSpec(args[0]);
@@ -4132,7 +4145,11 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: '["field" | [fields] | { field: dir } | comparator]', allowed: [0, 1] },
+      args: {
+        sig: '["field" | [fields] | { field: dir } | comparator]',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       // No key: the natural order of the unwound values.
       emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0]), slot, reshape)
     },
@@ -4167,7 +4184,12 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: '["field" | keyFn | [fields]]', allowed: [0, 1] },
+      // An object is lodash's matcher, so the kind is welcome here and the cell's own refusal names `.orderBy()`.
+      args: {
+        sig: '["field" | keyFn | [fields]]',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       emit: ({ recv, args, sortSpec, callback: callback2, bind }) => {
         if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
         const ask = sortSpec(args[0], false);
@@ -4190,7 +4212,11 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: '["field" | [fields] | keyFn]', allowed: [0, 1] },
+      args: {
+        sig: '["field" | [fields] | keyFn]',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       // An object here is a lodash matcher, not directions — the reader refuses it.
       // No key: the natural order of the unwound values.
       emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0], false), slot, reshape)
@@ -4220,7 +4246,11 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] },
+      args: {
+        sig: "keys[, orders] | { field: dir }",
+        allowed: [1, 2],
+        slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] }
+      },
       emit: ({ recv, args, orderBy, callback: callback2, bind }) => {
         const ask = orderBy(args[0], args[1]);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
@@ -4242,7 +4272,11 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] },
+      args: {
+        sig: "keys[, orders] | { field: dir }",
+        allowed: [1, 2],
+        slotType: { 0: ["string", "array", "object", "callback"], 1: ["string", "number", "array"] }
+      },
       emit: ({ args, orderBy, slot, reshape }) => sortStages(orderBy(args[0], args[1]), slot, reshape)
     },
     statement: unsupported(
@@ -4265,6 +4299,7 @@ var NAMES = {
         sig: "start[, deleteCount, ...items]",
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
+        rest: "any",
         // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
         // typo far more often than an intent, so the count stays closed but the start opens.
         slotRange: { 1: [0, Infinity] }
@@ -4326,7 +4361,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index, value", exact: 2, slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      args: { sig: "index, value", exact: 2, slotType: { 0: "int", 1: "any" }, slotRange: { 0: [0, Infinity] } },
       emit: ({ recv, args, value, bind }) => {
         const arr = bind("arr");
         const idx = bind("idx");
@@ -4405,7 +4440,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "value");
         return {
@@ -4418,7 +4453,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string"] } },
       // The array field to unwind, named through the parameter: `d => d.items` is "$items".
       // Its elements are what the links after it work on — a later callback's
       // parameter is the unwound field, and the documents keep their other fields.
@@ -4453,14 +4488,14 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "value");
         return { $map: { input: cb.input, as: cb.as, in: cb.in } };
       }
     },
     stream: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string"] } },
       emit: ({ args, document }) => [{ $replaceWith: document(args[0]) }]
     },
     statement: unsupported(
@@ -4487,7 +4522,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2, bind }) => {
         const cb = callback2(args[0], "truth");
         const kept = { $filter: { input: cb.input, as: cb.as, cond: cb.in } };
@@ -4496,7 +4531,10 @@ var NAMES = {
         return { $map: { input: kept, as: p.as, in: { $arrayElemAt: [p.ref, 1] } } };
       }
     },
-    stream: { args: { sig: "predicate", exact: 1 }, emit: ({ args, predicate }) => [{ $match: predicate(args[0]) }] },
+    stream: {
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ args, predicate }) => [{ $match: predicate(args[0]) }]
+    },
     statement: unsupported(
       "'.filter()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.filter();'"
     ),
@@ -4516,7 +4554,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "truth");
         const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, 0] };
@@ -4543,7 +4581,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
@@ -4575,7 +4613,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "truth");
         const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, -1] };
@@ -4604,7 +4642,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", exact: 1 },
+      args: { sig: "callback", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
@@ -4638,7 +4676,7 @@ var NAMES = {
       // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
       // two answers — a single flat cell hides the refusal, which is the useful fact.
       perFamily: {
-        array: { args: { sig: "searchValue", exact: 1 }, emit: lastIndexOfArray },
+        array: { args: { sig: "searchValue", exact: 1, slotType: { 0: "element" } }, emit: lastIndexOfArray },
         string: unsupported(
           ".lastIndexOf() on strings isn't supported \u2014 MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing."
         )
@@ -4669,7 +4707,7 @@ var NAMES = {
     // `$.items.some(i => i.q > 2)` → { items: { $elemMatch: { q: { $gt: 2 } } } } — when the
     // whole body has a native form against the element as root. Otherwise the expression form.
     filter: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, pathOf: pathOf3, elementQuery }) => {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
@@ -4683,7 +4721,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         return nullOr(recv, present2, bind, (r) => ({
@@ -4709,7 +4747,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, callback: callback2, present: present2, bind }) => {
         const cb = callback2(args[0], "truth");
         return nullOr(recv, present2, bind, (r) => ({
@@ -4736,7 +4774,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "lambda, initialValue", exact: 2 },
+      args: { sig: "lambda, initialValue", exact: 2, slotType: { 0: "callback", 1: "any" } },
       emit: ({ recv, args, value, reducer }) => {
         const r = reducer(args[0], args[1]);
         return { $reduce: { input: r.input, initialValue: value(args[1]), in: r.in } };
@@ -4763,7 +4801,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "lambda, initialValue", exact: 2 },
+      args: { sig: "lambda, initialValue", exact: 2, slotType: { 0: "callback", 1: "any" } },
       emit: ({ recv, args, value, reducer }) => {
         const r = reducer(args[0], args[1]);
         return { $reduce: { input: { $reverseArray: r.input }, initialValue: value(args[1]), in: r.in } };
@@ -4791,7 +4829,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "separator", allowed: [0, 1] },
+      args: { sig: "separator", allowed: [0, 1], slotType: { 0: "string" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => joinedWith(r, args.length === 1 ? value(args[0]) : ","))
     },
     stream: because(
@@ -4859,7 +4897,11 @@ var NAMES = {
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field."
     ),
     stream: {
-      args: { sig: '["field" | [fields] | { field: dir } | comparator]', allowed: [0, 1] },
+      args: {
+        sig: '["field" | [fields] | { field: dir } | comparator]',
+        allowed: [0, 1],
+        slotType: { 0: ["string", "array", "object", "callback"] }
+      },
       // No key: the natural order of the unwound values.
       emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0]), slot, reshape)
     },
@@ -5518,7 +5560,7 @@ var NAMES = {
         sig: "amount, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "int-or-long", 2: ["string", "object"] },
+        slotType: { 0: "int-or-long", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -5553,7 +5595,7 @@ var NAMES = {
         sig: "amount, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "int-or-long", 2: ["string", "object"] },
+        slotType: { 0: "int-or-long", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -5593,7 +5635,7 @@ var NAMES = {
         sig: "other, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -5640,7 +5682,7 @@ var NAMES = {
             caseInsensitiveKeys: ["startOfWeek"]
           }
         },
-        slotType: { 1: ["string", "object"] }
+        slotType: { 0: "string", 1: ["string", "object"] }
       },
       emit: ({ recv, args, value }) => ({
         $dateTrunc: { date: recv, unit: value(args[0]), ...dateOptions(args[1], value) }
@@ -5921,7 +5963,7 @@ var NAMES = {
           1: `.isSame(other) without a unit is just '===' \u2014 write 'a === b'. Pass a unit to compare at that granularity: .isSame(other, "day").`
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -5963,7 +6005,7 @@ var NAMES = {
           1: `.isBefore(other) without a unit is just '<' \u2014 write 'a < b'. Pass a unit to compare at that granularity: .isBefore(other, "day").`
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -6007,7 +6049,7 @@ var NAMES = {
           1: `.isAfter(other) without a unit is just '>' \u2014 write 'a > b'. Pass a unit to compare at that granularity: .isAfter(other, "day").`
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -6139,7 +6181,7 @@ var NAMES = {
             caseInsensitiveKeys: ["startOfWeek"]
           }
         },
-        slotType: { 1: ["string", "object"] }
+        slotType: { 0: "string", 1: ["string", "object"] }
       },
       emit: ({ recv, args, value }) => {
         const opts = dateOptions(args[1], value);
@@ -6163,6 +6205,7 @@ var NAMES = {
     doc: "'.sum()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    elements: "number",
     returns: "number",
     neverNull: true,
     readsNullAsEmpty: true,
@@ -6180,6 +6223,7 @@ var NAMES = {
     doc: "'.mean()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    elements: "number",
     returns: "number",
     readsNullAsEmpty: true,
     where: ["value", "group", "window"],
@@ -6197,6 +6241,7 @@ var NAMES = {
     call: true,
     passesNull: true,
     on: ["array", "Math"],
+    elements: "number",
     returns: { array: "element" },
     readsNullAsEmpty: true,
     where: ["value", "group", "window"],
@@ -6223,6 +6268,7 @@ var NAMES = {
     call: true,
     passesNull: true,
     on: ["array", "Math"],
+    elements: "number",
     returns: { array: "element" },
     readsNullAsEmpty: true,
     where: ["value", "group", "window"],
@@ -6256,7 +6302,7 @@ var NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
         return { $sum: { $map: { input: recv, as: it.as, in: it.in } } };
@@ -6267,7 +6313,7 @@ var NAMES = {
       "'.sumBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sumBy();'"
     ),
     group: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // the accumulator of each document's own value: '$sum' of the per-document '$sum' (the accumulator ignores an array operand alone, measured)
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
@@ -6287,7 +6333,7 @@ var NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
         return { $avg: { $map: { input: recv, as: it.as, in: it.in } } };
@@ -6298,7 +6344,7 @@ var NAMES = {
       "'.meanBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.meanBy();'"
     ),
     group: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // the accumulator of each document's own value: '$avg' of the per-document '$avg' (the accumulator ignores an array operand alone, measured)
       emit: ({ recv, args, iteratee }) => {
         const it = iteratee(args[0]);
@@ -6317,7 +6363,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => {
         const it = iteratee(args[0]);
         const sorted = bind("sorted");
@@ -6353,7 +6399,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => {
         const it = iteratee(args[0]);
         const sorted = bind("sorted");
@@ -6419,11 +6465,11 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => uniqByReduce(recv, iteratee(args[0]), bind)
     },
     stream: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // "First" follows the stream's current order; sort first when it matters.
       emit: ({ args, reshape }) => keepFirstPer(reshape(args[0]))
     },
@@ -6470,10 +6516,13 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => uniqByReduce(recv, iteratee(args[0]), bind)
     },
-    stream: { args: { sig: "iteratee", exact: 1 }, emit: ({ args, reshape }) => keepFirstPer(reshape(args[0])) },
+    stream: {
+      args: { sig: "iteratee", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
+      emit: ({ args, reshape }) => keepFirstPer(reshape(args[0]))
+    },
     statement: unsupported(
       "'.sortedUniqBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniqBy();'"
     ),
@@ -6496,7 +6545,7 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "...values", atLeast: 1 },
+      args: { sig: "...values", atLeast: 1, rest: "element" },
       emit: ({ recv, args, value, bind }) => {
         const values = args.map((a) => value(a));
         const item = bind("item");
@@ -6504,7 +6553,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "...values", atLeast: 1 },
+      args: { sig: "...values", atLeast: 1, rest: "element" },
       // `.difference([...values])`: the same predicate over the values as a list.
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
@@ -6529,7 +6578,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, type }) => {
         const other = listArgument(value, type, args[0]);
         return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
@@ -6562,7 +6611,11 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
@@ -6576,7 +6629,11 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
       // The element's key against the keys of `other`.
       emit: ({ args, reshape, value }) => {
         const key = reshape(args[1]);
@@ -6613,7 +6670,11 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const keys = bind("otherKeys");
@@ -6627,7 +6688,11 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
       // The element's key against the keys of `other`, one document per distinct key kept.
       emit: ({ args, reshape, value }) => {
         const key = reshape(args[1]);
@@ -6655,7 +6720,11 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
       emit: ({ recv, args, value, iteratee, bind, type }) => uniqByReduce({ $concatArrays: [recv, listArgument(value, type, args[0])] }, iteratee(args[1]), bind)
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
@@ -6677,7 +6746,11 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other, iteratee", exact: 2 },
+      args: {
+        sig: "other, iteratee",
+        exact: 2,
+        slotType: { 0: "array", 1: ["callback", "string", "object", "array"] }
+      },
       emit: ({ recv, args, value, iteratee, bind, type }) => {
         const it = iteratee(args[1]);
         const other = listArgument(value, type, args[0]);
@@ -7014,7 +7087,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "[n=0]", allowed: [0, 1] },
+      args: { sig: "[n=0]", allowed: [0, 1], slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === void 0 ? 0 : value(args[0])] })
     },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
@@ -7088,14 +7161,14 @@ var NAMES = {
     only: ["afterSort"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate, bind }) => {
         const p = predicate(args[0]);
         return takeDropWhile(recv, p, false, bind);
       }
     },
     stream: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
       emit: ({ args, condition, sortedBy, slot }) => {
         const flag = slot();
@@ -7142,14 +7215,14 @@ var NAMES = {
     only: ["afterSort"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate, bind }) => {
         const p = predicate(args[0]);
         return takeDropWhile(recv, p, true, bind);
       }
     },
     stream: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
       emit: ({ args, condition, sortedBy, slot }) => {
         const flag = slot();
@@ -7189,7 +7262,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate, bind }) => {
         const p = predicate(args[0]);
         return reverseArrayOf(takeDropWhile(reverseArrayOf(recv), p, false, bind));
@@ -7216,7 +7289,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate, bind }) => {
         const p = predicate(args[0]);
         return reverseArrayOf(takeDropWhile(reverseArrayOf(recv), p, true, bind));
@@ -7330,7 +7403,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "values", exact: 1 },
+      args: { sig: "values", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, bind, present: present2 }) => {
         const values = value(args[0]);
         const i = bind("i");
@@ -7364,7 +7437,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...arrays", atLeast: 1 },
+      args: { sig: "...arrays", atLeast: 1, rest: "array" },
       emit: ({ recv, args, value }) => ({
         $zip: { inputs: [recv, ...args.map((a) => value(a))], useLongestLength: true }
       })
@@ -7427,7 +7500,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...arrays, iteratee", atLeast: 2 },
+      args: { sig: "...arrays, iteratee", atLeast: 2, rest: ["array", "callback"] },
       emit: ({ recv, args, value, elements }) => {
         const arrays = [recv, ...args.slice(0, -1).map(value)];
         const cb = elements(args[args.length - 1], arrays.length);
@@ -7483,14 +7556,14 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => {
         const it = args[0] === void 0 ? identity(bind) : iteratee(args[0]);
         return { $arrayToObject: { $map: { input: recv, as: it.as, in: { k: stringKeyExpr(it.in), v: it.ref } } } };
       }
     },
     stream: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       // Last wins, as lodash's does; "last" follows the stream's current order.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" })
     },
@@ -7520,7 +7593,7 @@ var NAMES = {
       // MEASURED: jsmql refuses Object.groupBy($.items) — the call must give the discriminator.
       perFamily: {
         array: {
-          args: { sig: "[iteratee]", allowed: [0, 1] },
+          args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
           emit: ({ recv, args, iteratee, bind }) => groupedByKey(recv, args[0] === void 0 ? identity(bind) : iteratee(args[0]), bind)
         },
         stream: unsupported("'.groupBy()' on a stream is a stage, not a value \u2014 see its 'stream' cell."),
@@ -7532,7 +7605,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       // lodash's object `{ <key>: [docs] }`, as one document: group, gather the pairs, build the object.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $push: "$$ROOT" })
     },
@@ -7559,7 +7632,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, iteratee, bind }) => {
         const it = args[0] === void 0 ? identity(bind) : iteratee(args[0]);
         const key = bind("key");
@@ -7572,7 +7645,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "[iteratee]", allowed: [0, 1] },
+      args: { sig: "[iteratee]", allowed: [0, 1], slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $sum: 1 })
     },
     statement: unsupported(
@@ -7592,7 +7665,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate }) => {
         const p = predicate(args[0]);
         return [
@@ -7626,14 +7699,14 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       emit: ({ recv, args, predicate }) => {
         const p = predicate(args[0]);
         return { $filter: { input: recv, as: p.as, cond: { $not: [p.in] } } };
       }
     },
     stream: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: ["callback", "string", "object", "array"] } },
       // The COMPLEMENT of the predicate's own clause — `$nor`, as `!p` is.
       emit: ({ args, predicate }) => [{ $match: { $nor: [predicate(args[0])] } }]
     },
@@ -7659,7 +7732,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: "callback" } },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0], "value");
         return {
@@ -7694,7 +7767,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "iteratee", exact: 1, slotType: { 0: "callback" } },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0], "value");
         return {
@@ -7833,7 +7906,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: "callback" } },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0], "truth");
         return { $arrayToObject: { $filter: { input: pairsOfObject(recv, present2), as: it.as, cond: it.body } } };
@@ -7862,7 +7935,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", exact: 1 },
+      args: { sig: "predicate", exact: 1, slotType: { 0: "callback" } },
       emit: ({ recv, args, objIteratee, present: present2 }) => {
         const it = objIteratee(args[0], "truth");
         return {
@@ -8238,7 +8311,7 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       // a number and a date clamp the same way, so one cell serves both families
-      args: { sig: "lower, upper", exact: 2 },
+      args: { sig: "lower, upper", exact: 2, slotType: { 0: "number-or-date", 1: "number-or-date" } },
       emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] })
     },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
@@ -8259,7 +8332,7 @@ var NAMES = {
     // A field against two constant bounds is a range on one field — the clause an
     // index answers, and the document a MongoDB developer writes by hand.
     filter: {
-      args: { sig: "[start, ]end", allowed: [1, 2] },
+      args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
@@ -8272,7 +8345,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "[start, ]end", allowed: [1, 2] },
+      args: { sig: "[start, ]end", allowed: [1, 2], slotType: { 0: "number-or-date", 1: "number-or-date" } },
       emit: ({ recv, args, value }) => {
         const lo = args.length === 2 ? value(args[0]) : 0;
         const hi = value(args[args.length === 2 ? 1 : 0]);
@@ -8335,7 +8408,7 @@ var NAMES = {
       // MEASURED: $.n.round(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           // MEASURED: `{ $round: "$x" }` takes one operand, and 2.5 rounds to 2.
           emit: ({ recv, args, value }) => args[0] === void 0 ? { $round: recv } : { $round: [recv, value(args[0])] }
         },
@@ -8365,7 +8438,7 @@ var NAMES = {
       // MEASURED: $.n.ceil(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           emit: ({ recv, args, value }) => args.length === 0 ? { $ceil: recv } : atPrecision("$ceil", recv, value(args[0]))
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -8394,7 +8467,7 @@ var NAMES = {
       // MEASURED: $.n.floor(2) takes the precision.
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           emit: ({ recv, args, value }) => args.length === 0 ? { $floor: recv } : atPrecision("$floor", recv, value(args[0]))
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -8425,11 +8498,11 @@ var NAMES = {
     },
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, type }) => ({ $setIntersection: [recv, listArgument(value, type, args[0])] })
     },
     stream: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       // The elements in `other`, one document per distinct element — lodash keeps each value once.
       emit: ({ args, predicate, bind, element: element2 }) => {
         const x = bind("x").as;
@@ -8458,7 +8531,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, type }) => ({ $setUnion: [recv, listArgument(value, type, args[0])] })
     },
     stream: because("merges a second array. Append another source with '.concat(...)' \u2014 that is '$unionWith'."),
@@ -8486,14 +8559,14 @@ var NAMES = {
         // The set difference: each value once, as a JavaScript Set holds it. MEASURED:
         // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1]. The stream cell keeps each document.
         array: {
-          args: { sig: "other", exact: 1 },
+          args: { sig: "other", exact: 1, slotType: { 0: "array" } },
           emit: ({ recv, args, value, type }) => ({ $setDifference: [recv, listArgument(value, type, args[0])] })
         },
         stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
       }
     },
     stream: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       // The elements not in `other`: the predicate `x => !other.includes(x)`, through the filter road.
       emit: ({ args, predicate, bind }) => {
         const x = bind("x").as;
@@ -8518,7 +8591,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [r, listArgument(value, type, args[0])] }))
     },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
@@ -8539,7 +8612,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({ $setIsSubset: [listArgument(value, type, args[0]), r] }))
     },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
@@ -8560,7 +8633,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "str", exact: 1 },
+      args: { sig: "str", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value }) => ({
         $regexMatch: regexBody(value(args[0]), recv, () => value(recv))
       })
@@ -8580,7 +8653,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "str", exact: 1 },
+      args: { sig: "str", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value }) => ({
         $regexFind: regexBody(value(args[0]), recv, () => value(recv))
       })
@@ -9100,6 +9173,7 @@ var NAMES = {
       args: {
         sig: "stages | (o) => { \u2026stages }",
         exact: 1,
+        slotType: { 0: ["callback", "array"] },
         nonEmpty: {
           0: {
             noun: "stage",
@@ -9126,7 +9200,7 @@ var NAMES = {
     ),
     stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
     statement: {
-      args: { sig: "condition[, message]", allowed: [1, 2] },
+      args: { sig: "condition[, message]", allowed: [1, 2], slotType: { 0: "any", 1: "string" } },
       // a `$convert` to a type named by the message: the server refuses the name and the error carries it (measured)
       emit: ({ args, truth, value }) => {
         const prefix = "jsmql assertion failed";
@@ -9153,7 +9227,7 @@ var NAMES = {
         // The method form answers a NEW object, as '.pick()' and '.omit()' do —
         // the receiver is the first source, and the call writes nothing in place.
         object: {
-          args: { sig: "...sources", atLeast: 1, spread: true },
+          args: { sig: "...sources", atLeast: 1, spread: true, rest: "object" },
           emit: ({ recv, args, value }) => merged(recv, args, value)
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -9206,7 +9280,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
       emit: ({ args, value }) => ({
         $and: [isFiniteNumber(value(args[0])), { $eq: [value(args[0]), { $trunc: value(args[0]) }] }]
       })
@@ -9229,7 +9303,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "value", exact: 1 },
+      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
       emit: ({ args, value }) => ({
         $and: [{ $isNumber: value(args[0]) }, { $eq: [{ $toString: value(args[0]) }, "NaN"] }]
       })
@@ -9267,7 +9341,10 @@ var NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
+    expr: {
+      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, value }) => ({ $isArray: [value(args[0])] })
+    },
     stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Array.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Array.isArray(\u2026);'"
@@ -9287,7 +9364,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, bind, type }) => {
         const a = bind("a");
         const b = bind("b");
@@ -9317,7 +9394,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
+      args: { sig: "other", exact: 1, slotType: { 0: "array" } },
       emit: ({ recv, args, value, present: present2, bind, type }) => nullOr(recv, present2, bind, (r) => ({
         $eq: [sizeOf({ $setIntersection: [r, listArgument(value, type, args[0])] }), 0]
       }))
@@ -9351,7 +9428,10 @@ var NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toString: value(args[0]) }) },
+    expr: {
+      args: { sig: "value", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, value }) => ({ $toString: value(args[0]) })
+    },
     stream: unsupported("'String()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'String()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = String(\u2026);'"
@@ -9367,7 +9447,7 @@ var NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, truth }) => truth(args[0]) },
+    expr: { args: { sig: "value", exact: 1, slotType: { 0: "any" } }, emit: ({ args, truth }) => truth(args[0]) },
     stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Boolean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Boolean(\u2026);'"
@@ -9515,7 +9595,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "[base]", allowed: [0, 1] },
+          args: { sig: "[base]", allowed: [0, 1], slotType: { 0: "number" } },
           emit: ({ recv, args, value }) => {
             const base = args[0];
             if (base === void 0) return { $ln: recv };
@@ -9597,7 +9677,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
+          args: { sig: "[precision]", allowed: [0, 1], slotType: { 0: "int" } },
           emit: ({ recv, args, value }) => args[0] === void 0 ? { $trunc: recv } : { $trunc: [recv, value(args[0])] }
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
@@ -9995,7 +10075,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "x", exact: 1 }, emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] }) },
+        number: {
+          args: { sig: "x", exact: 1, slotType: { 0: "number" } },
+          emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] })
+        },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.atan2(y, x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<y>.atan2(<x>)': '$.y.atan2($.x)'."
@@ -10021,7 +10104,7 @@ var NAMES = {
     expr: {
       perFamily: {
         number: {
-          args: { sig: "...values", atLeast: 1 },
+          args: { sig: "...values", atLeast: 1, slotType: { 0: "number" }, rest: "number" },
           emit: ({ recv, args, value }) => ({
             $sqrt: { $add: [recv, ...args.map(value)].map((v) => ({ $pow: [v, 2] })) }
           })
@@ -10050,7 +10133,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        number: { args: { sig: "[upper]", allowed: [0, 1] }, emit: (input) => randomOf(input) },
+        number: {
+          args: { sig: "[upper]", allowed: [0, 1], slotType: { 0: "number" } },
+          emit: (input) => randomOf(input)
+        },
         Math: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) }
       }
     },
@@ -10193,7 +10279,10 @@ var NAMES = {
         constant: unsupported(
           `'ObjectId(<constant>)' \u2014 this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId("507f1f77bcf86cd799439011")').`
         ),
-        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toObjectId: value(args[0]) }) },
+        dynamic: {
+          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          emit: ({ args, value }) => ({ $toObjectId: value(args[0]) })
+        },
         otherwise: unsupported("'ObjectId(\u2026)' takes no argument (a new id) or one value to convert.")
       }
     },
@@ -10256,6 +10345,7 @@ var NAMES = {
     convert: "$toUUID",
     isA: "a UUID",
     compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
+    takes: "string",
     refuseConstant: `'UUID(<constant>)' \u2014 this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID("6ac24965-7917-4323-8d44-920ad1d69b94")').`
   }),
   MinKey: bsonSentinel("MinKey", "The value that compares below every other type.", "$.grade === MinKey()"),
@@ -10301,8 +10391,14 @@ var NAMES = {
         // The fold never runs here: `Number("3")` is a DOUBLE on the server, and a folded
         // `3` would be an int. The constant converts like anything else, and a string the
         // server cannot parse is the server's own error.
-        constant: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
-        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
+        constant: {
+          args: { sig: "value", exact: 1, slotType: { 0: "any" } },
+          emit: ({ args, value }) => ({ $toDouble: value(args[0]) })
+        },
+        dynamic: {
+          args: { sig: "value", exact: 1, slotType: { 0: "any" } },
+          emit: ({ args, value }) => ({ $toDouble: value(args[0]) })
+        },
         otherwise: unsupported("'Number(x)' takes exactly one value.")
       }
     },
@@ -10429,7 +10525,8 @@ var NAMES = {
       args: {
         sig: "year[, month, day, hour, minute, second, ms]",
         allowed: [1, 2, 3, 4, 5, 6, 7],
-        slotType: { 1: "int" }
+        slotType: { 1: "int" },
+        rest: "int"
       },
       emit: ({ args, value }) => ({ $toLong: dateFromParts(args.map(value), "UTC") })
     },
@@ -10573,7 +10670,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "test, then, else", exact: 3 },
+      args: { sig: "test, then, else", exact: 3, slotType: { 0: "any", 1: "any", 2: "any" } },
       emit: ({ args, value, truth }) => cond(truth(args[0]), value(args[1]), value(args[2]))
     },
     stream: unsupported("'?:' produces a value, not a stage."),
@@ -10594,7 +10691,10 @@ var PRODUCTIONS = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $ifNull: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "any" },
+      emit: ({ args, value }) => ({ $ifNull: args.map(value) })
+    },
     stream: unsupported("'??' produces a value, not a stage."),
     statement: unsupported("'??' is not a statement \u2014 see its 'where'.")
   }),
@@ -10609,8 +10709,8 @@ var PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: inCode("src/compiler/emit/filter.ts"),
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: inCode("src/compiler/emit/filter.ts", { sig: "operands", atLeast: 2, rest: "any" }),
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: "any" }),
     stream: unsupported("'||' produces a value, not a stage."),
     statement: unsupported("'||' is not a statement \u2014 see its 'where'.")
   }),
@@ -10625,8 +10725,8 @@ var PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: inCode("src/compiler/emit/filter.ts"),
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: inCode("src/compiler/emit/filter.ts", { sig: "operands", atLeast: 2, rest: "any" }),
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "operands", atLeast: 2, rest: "any" }),
     stream: unsupported("'&&' produces a value, not a stage."),
     statement: unsupported("'&&' is not a statement \u2014 see its 'where'.")
   }),
@@ -10644,7 +10744,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitOr: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "number" },
+      emit: ({ args, value }) => ({ $bitOr: args.map(value) })
+    },
     stream: unsupported("'|' produces a value, not a stage."),
     statement: unsupported("'|' is not a statement \u2014 see its 'where'.")
   }),
@@ -10662,7 +10765,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitXor: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "number" },
+      emit: ({ args, value }) => ({ $bitXor: args.map(value) })
+    },
     stream: unsupported("'^' produces a value, not a stage."),
     statement: unsupported("'^' is not a statement \u2014 see its 'where'.")
   }),
@@ -10680,7 +10786,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $bitAnd: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "number" },
+      emit: ({ args, value }) => ({ $bitAnd: args.map(value) })
+    },
     stream: unsupported("'&' produces a value, not a stage."),
     statement: unsupported("'&' is not a statement \u2014 see its 'where'.")
   }),
@@ -10695,9 +10804,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, false) },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => strictEqualityQuery(input, false)
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: ({ args, value }) => ({ $eq: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'===' produces a value, not a stage."),
@@ -10714,9 +10826,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, true) },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => strictEqualityQuery(input, true)
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
       emit: ({ args, value }) => ({ $ne: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'!==' produces a value, not a stage."),
@@ -10733,8 +10848,8 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, false) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "left, right", exact: 2, rest: "any" }, emit: (input) => looseEqualityQuery(input, false) },
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "left, right", exact: 2, rest: "any" }),
     stream: unsupported("'==' produces a value, not a stage."),
     statement: unsupported("'==' is not a statement \u2014 see its 'where'.")
   }),
@@ -10749,8 +10864,8 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, true) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "left, right", exact: 2, rest: "any" }, emit: (input) => looseEqualityQuery(input, true) },
+    expr: inCode("src/compiler/emit/lower.ts", { sig: "left, right", exact: 2, rest: "any" }),
     stream: unsupported("'!=' produces a value, not a stage."),
     statement: unsupported("'!=' is not a statement \u2014 see its 'where'.")
   }),
@@ -10765,9 +10880,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$gt") },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => orderedQuery(input, "$gt")
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $gt: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'>' produces a value, not a stage."),
@@ -10784,9 +10902,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$gte") },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => orderedQuery(input, "$gte")
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $gte: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'>=' produces a value, not a stage."),
@@ -10803,9 +10924,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$lt") },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => orderedQuery(input, "$lt")
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $lt: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'<' produces a value, not a stage."),
@@ -10822,9 +10946,12 @@ var PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$lte") },
+    filter: {
+      args: { sig: "left, right", exact: 2, rest: "any", homogeneous: true },
+      emit: (input) => orderedQuery(input, "$lte")
+    },
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "orderable", homogeneous: true },
       emit: ({ args, value }) => ({ $lte: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'<=' produces a value, not a stage."),
@@ -10842,8 +10969,12 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value", "filter"],
     // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the query form that uses an index. A list that is not a constant falls back to `$expr`
-    filter: { args: { sig: "value, list", exact: 2 }, emit: (input) => membershipQuery(input) },
-    expr: inCode("src/compiler/emit/lower.ts"),
+    filter: { args: { sig: "value, list", exact: 2, rest: "any" }, emit: (input) => membershipQuery(input) },
+    expr: inCode("src/compiler/emit/lower.ts", {
+      sig: "value, list",
+      exact: 2,
+      slotType: { 0: "element", 1: "array" }
+    }),
     stream: unsupported("'x in [ \u2026 ]' produces a value, not a stage."),
     statement: unsupported("'x in [ \u2026 ]' is not a statement \u2014 see its 'where'.")
   }),
@@ -10863,7 +10994,12 @@ var PRODUCTIONS = {
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
-    expr: inCode("src/compiler/emit/lower.ts"),
+    expr: inCode("src/compiler/emit/lower.ts", {
+      sig: "operands",
+      atLeast: 2,
+      rest: ["number", "string"],
+      homogeneous: true
+    }),
     stream: unsupported("'+' produces a value, not a stage."),
     statement: unsupported("'+' is not a statement \u2014 see its 'where'.")
   }),
@@ -10883,7 +11019,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "number-or-date" },
       emit: ({ args, value }) => ({ $subtract: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'-' produces a value, not a stage."),
@@ -10904,7 +11040,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operands", atLeast: 2 }, emit: ({ args, value }) => ({ $multiply: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 2, rest: "number" },
+      emit: ({ args, value }) => ({ $multiply: args.map(value) })
+    },
     stream: unsupported("'*' produces a value, not a stage."),
     statement: unsupported("'*' is not a statement \u2014 see its 'where'.")
   }),
@@ -10923,7 +11062,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2, nonZero: [1] },
+      args: { sig: "left, right", exact: 2, rest: "number", nonZero: [1] },
       emit: ({ args, value }) => ({ $divide: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'/' produces a value, not a stage."),
@@ -10944,7 +11083,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: {
-      args: { sig: "left, right", exact: 2, nonZero: [1] },
+      args: { sig: "left, right", exact: 2, rest: "number", nonZero: [1] },
       emit: ({ args, value }) => ({ $mod: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'%' produces a value, not a stage."),
@@ -10966,7 +11105,7 @@ var PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, rest: "number" },
       emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] })
     },
     stream: unsupported("'**' produces a value, not a stage."),
@@ -10984,7 +11123,10 @@ var PRODUCTIONS = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, truth }) => ({ $not: truth(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, truth }) => ({ $not: truth(args[0]) })
+    },
     stream: unsupported("'!' produces a value, not a stage."),
     statement: unsupported("'!' is not a statement \u2014 see its 'where'.")
   }),
@@ -11002,7 +11144,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $multiply: [value(args[0]), -1] }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "number" } },
+      emit: ({ args, value }) => ({ $multiply: [value(args[0]), -1] })
+    },
     stream: unsupported("'-x' produces a value, not a stage."),
     statement: unsupported("'-x' is not a statement \u2014 see its 'where'.")
   }),
@@ -11019,7 +11164,10 @@ var PRODUCTIONS = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $bitNot: value(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "number" } },
+      emit: ({ args, value }) => ({ $bitNot: value(args[0]) })
+    },
     stream: unsupported("'~' produces a value, not a stage."),
     statement: unsupported("'~' is not a statement \u2014 see its 'where'.")
   }),
@@ -11036,7 +11184,10 @@ var PRODUCTIONS = {
     returns: "string",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ args, value }) => ({ $type: value(args[0]) }) },
+    expr: {
+      args: { sig: "operand", exact: 1, slotType: { 0: "any" } },
+      emit: ({ args, value }) => ({ $type: value(args[0]) })
+    },
     stream: unsupported("'typeof' produces a value, not a stage."),
     statement: unsupported("'typeof' is not a statement \u2014 see its 'where'.")
   }),
@@ -12040,6 +12191,12 @@ function productionForOperator(nodeType, op) {
     if (p.becomes === nodeType && p.tokens[0] === op) return key;
   }
   return void 0;
+}
+function operandRuleOf(nodeType, op) {
+  const key = productionForOperator(nodeType, op);
+  if (key === void 0) return void 0;
+  const cell = PRODUCTIONS[key]?.expr;
+  return cell?.args === void 0 ? void 0 : { key, rule: cell.args };
 }
 function flattensChain(productionKey) {
   return PRODUCTIONS[productionKey]?.flattensChain === true;
@@ -16153,6 +16310,7 @@ function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
 function spellValue(value, pos) {
   const literal2 = isMqlShaped(value) ? null : asLiteral(value, pos);
   if (literal2 !== null && literal2.type === "RegexLiteral" && isRegExp(value)) return { ...literal2, injected: value };
+  if (literal2 !== null && literal2.type === "NullLiteral") return { ...literal2, injected: true };
   return literal2 ?? { type: "Injected", value, pos };
 }
 function inject(root2, values) {
@@ -18664,6 +18822,120 @@ function arrayMethod(xs, name2, args) {
 }
 var NOT_A_KEY = /* @__PURE__ */ Symbol("value cannot be an object key");
 
+// src/compiler/kinds.ts
+var UNPROVEN = { args: [], elements: "unknown" };
+function kindFits(kind, expected, elements = "unknown") {
+  if (kind === "unknown") return true;
+  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t, elements));
+  switch (expected) {
+    case "any":
+      return true;
+    case "number":
+    case "int":
+    case "int-or-long":
+      return kind === "number";
+    case "number-or-date":
+      return kind === "number" || kind === "date";
+    case "orderable":
+      return kind === "number" || kind === "string" || kind === "date" || kind === "objectId" || isSentinel(kind);
+    case "string":
+    case "fieldName":
+    case "fieldPath":
+    case "regex":
+      return kind === "string";
+    case "bool":
+    case "array":
+    case "object":
+    case "date":
+      return kind === expected;
+    case "element":
+      return elements === "unknown" || elements.includes(kind);
+    case "timestamp":
+    case "callback":
+      return false;
+  }
+}
+var isSentinel = (kind) => kind === "minKey" || kind === "maxKey";
+var proofFits = (proof, expected, elements) => proof === "unknown" || proof.some((k) => kindFits(k, expected, elements));
+var slotTypeOf = (rule, i) => rule.slotType?.[i] ?? rule.rest;
+var takesCallback = (t) => Array.isArray(t) ? t.includes("callback") : t === "callback";
+var concreteKinds = (proof) => proof === "unknown" || proof.some((k) => k === "null" || isSentinel(k)) ? null : proof;
+function elementsFaultOf(name2, proofs) {
+  const need = elementsOf(name2);
+  if (need === void 0 || need === "scalar") return null;
+  const takes = (p) => p === "unknown" || p.includes(need);
+  const broken = proofs.items !== void 0 ? proofs.items.some((p) => !takes(p)) : !takes(proofs.elements);
+  if (!broken) return null;
+  const held = (proofs.items ?? [proofs.elements]).flatMap((p) => p === "unknown" ? [] : p);
+  return { rule: "elements", expected: need, held: [...new Set(held)] };
+}
+function faultOf(name2, rule, proofs) {
+  let spread = false;
+  for (let i = 0; i < proofs.args.length; i++) {
+    const via = proofs.viaElements?.[i] === true;
+    spread = spread || proofs.packed === true && via;
+    const expected = spread ? rule.rest : slotTypeOf(rule, i);
+    const proof = proofs.args[i];
+    if (expected === void 0 || takesCallback(expected) || proof === "unknown") continue;
+    if (proofFits(proof, expected, proofs.elements)) continue;
+    const through = via ? { viaElements: true } : {};
+    return expected === "element" && proofs.elements !== "unknown" ? { rule: "element", slot: i, got: proof, held: proofs.elements, ...through } : { rule: "slot", slot: i, expected, got: proof, ...through };
+  }
+  if (rule.homogeneous === true) {
+    let shared = null;
+    const taking = [];
+    for (let i = 0; i < proofs.args.length; i++) {
+      const kinds = concreteKinds(proofs.args[i]);
+      if (kinds === null) continue;
+      const left = shared === null ? kinds : shared.filter((k) => kinds.includes(k));
+      if (left.length === 0) {
+        const other = taking.find((t) => !t.kinds.some((k) => kinds.includes(k))) ?? taking[0];
+        return {
+          rule: "homogeneous",
+          first: other.slot,
+          firstKinds: other.kinds,
+          ...proofs.viaElements?.[other.slot] === true ? { firstViaElements: true } : {},
+          slot: i,
+          got: kinds,
+          ...proofs.viaElements?.[i] === true ? { viaElements: true } : {}
+        };
+      }
+      shared = left;
+      taking.push({ slot: i, kinds });
+    }
+  }
+  return elementsFaultOf(name2, proofs);
+}
+function kindOfValue(v) {
+  if (typeof v === "number" || typeof v === "bigint") return "number";
+  if (typeof v === "string") return "string";
+  if (typeof v === "boolean") return "bool";
+  if (isDate(v)) return "date";
+  if (Array.isArray(v)) return "array";
+  const tag = bsonTagOf(v);
+  if (tag !== void 0) return BSON_KIND[tag] ?? null;
+  return isPlainObject(v) ? "object" : null;
+}
+var proofOfValue = (v) => {
+  if (v === null || v === void 0) return ["null"];
+  const k = kindOfValue(v);
+  return k === null ? "unknown" : [k];
+};
+function proofsOfValues(values) {
+  const last = values[values.length - 1];
+  const kinds = /* @__PURE__ */ new Set();
+  const items = [];
+  if (Array.isArray(last)) {
+    for (const el of last) {
+      const k = el === null || el === void 0 ? null : kindOfValue(el);
+      if (k !== null) kinds.add(k);
+      items.push(el === null || el === void 0 ? ["null"] : k === null ? "unknown" : [k]);
+    }
+  }
+  const elements = kinds.size === 0 ? "unknown" : [...kinds];
+  return Array.isArray(last) ? { args: values.map(proofOfValue), elements, items } : { args: values.map(proofOfValue), elements };
+}
+
 // src/compiler/passes/evaluate.ts
 var asDeclaredFunction = (lambda) => ({ lambda });
 var isDeclaredFunction = (v) => typeof v === "object" && v !== null && "lambda" in v && Object.keys(v).length === 1;
@@ -18816,6 +19088,10 @@ function bitwise(op, left, right) {
       return NOT_CONSTANT2;
   }
 }
+function breaksKindRule(nodeType, op, values) {
+  const stated = operandRuleOf(nodeType, op);
+  return stated !== void 0 && faultOf(stated.key, stated.rule, proofsOfValues(values)) !== null;
+}
 function binary(op, left, right) {
   switch (op) {
     case "+":
@@ -18955,6 +19231,7 @@ function methodCall(node, env, depth) {
   }
   const family = onNamespace ? receiverNode.name : familyOfValue(receiverValue);
   if (!isCallable(name2)) return NOT_CONSTANT2;
+  if (!onNamespace && elementsFaultOf(name2, proofsOfValues([receiverValue])) !== null) return NOT_CONSTANT2;
   const packed = argNodes.length === 1 && argNodes[0].packed === true;
   const args = [];
   if (packed) {
@@ -19089,6 +19366,7 @@ function at(node, env, depth) {
       if (shortCircuit !== null) return shortCircuit;
       const right = at(node.right, env, depth + 1);
       if (!right.ok) return propagate(right);
+      if (breaksKindRule("BinaryExpr", node.op, [left.value, right.value])) return NOT_CONSTANT2;
       return binary(node.op, left.value, right.value);
     }
     case "TernaryExpr": {
@@ -20330,6 +20608,18 @@ function single2(t) {
   return [...t.kinds][0];
 }
 var kindsOf = (t) => t.kinds === "any" ? null : [...t.kinds];
+function proofOf(t) {
+  if (t.kinds === "any") return "unknown";
+  return t.kinds.size === 0 ? ["null"] : [...t.kinds];
+}
+function elementProofOf(t) {
+  const e = elementOf(t);
+  return e.kinds === "any" || e.kinds.size === 0 ? "unknown" : [...e.kinds];
+}
+function itemProofsOf(t) {
+  if (!has(t, "array") || t.items === void 0) return void 0;
+  return t.items.map((i) => i.kinds === "any" || i.kinds.size === 0 ? "unknown" : [...i.kinds]);
+}
 function elementOf(t) {
   if (!has(t, "array")) return NOTHING;
   const element2 = t.element ?? ANY;
@@ -20773,7 +21063,9 @@ function readCell(name2, position, cell) {
       needsSubject: cell.subjectFromCaller === true
     };
   }
-  if (typeof cell.inCode === "string") return { kind: "inCode", name: name2, position, file: cell.inCode };
+  if (typeof cell.inCode === "string") {
+    return { kind: "inCode", name: name2, position, file: cell.inCode, args: cell.args };
+  }
   if (cell.fallback === "expr") return { kind: "fallback", name: name2, position };
   if (Array.isArray(cell.composedInto)) {
     return { kind: "composedOnly", name: name2, position, owners: cell.composedInto };
@@ -20838,7 +21130,7 @@ function valueStart(bare) {
   if (bare.startsWith(".")) return `<value>${bare}(\u2026)`;
   return /^[A-Za-z$_]/.test(bare) ? `${bare}\u2026` : `<a> ${bare} <b>`;
 }
-function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`) {
+function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`, subjects = { args: [] }) {
   const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
     case "refused":
@@ -20872,6 +21164,8 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
     }
     case "rejectedCount":
       return new CodegenError(sel.message, pos);
+    case "wrongKind":
+      return wrongKind(sel.fault, spelled3, subjects, pos);
     case "spreadRefused": {
       const alt = spreadAlternativeOf(sel.name);
       const fix = alt !== void 0 ? `${alt}, or pass a single array (${spelled3}([a, b]))` : bare.startsWith("$") ? `pass operands directly (${spelled3}(a, b)) or as a single array (${spelled3}([a, b]))` : `pass each argument on its own: '${spelled3}(${sel.sig})'`;
@@ -21143,7 +21437,8 @@ var KIND_NOUN = {
   binData: "binary data",
   stream: "a stream",
   minKey: "a MinKey",
-  maxKey: "a MaxKey"
+  maxKey: "a MaxKey",
+  null: "null"
 };
 var ELEMENT_NOUN = {
   number: "numbers",
@@ -21156,6 +21451,96 @@ var ELEMENT_NOUN = {
   binData: "binary data"
 };
 var nounFor = (k, table) => table[k] ?? `a ${k}`;
+var TAKES = {
+  number: "numbers",
+  int: "integers",
+  "int-or-long": "integers",
+  "number-or-date": "numbers or dates",
+  orderable: "numbers, strings, dates or ObjectIds",
+  string: "strings",
+  fieldName: "strings",
+  fieldPath: "strings",
+  bool: "booleans",
+  object: "documents",
+  array: "arrays",
+  date: "dates",
+  timestamp: "timestamps",
+  any: "values",
+  callback: "callbacks",
+  regex: "regular expressions or strings",
+  element: "elements of the array"
+};
+var orList = (items) => {
+  const once = [...new Set(items)];
+  return once.length < 2 ? once[0] ?? "" : `${once.slice(0, -1).join(", ")} or ${once[once.length - 1]}`;
+};
+var kindNoun = (k) => KIND_NOUN[k] ?? `a ${k}`;
+var kindsNoun = (ks, join2) => ks.map(kindNoun).join(join2);
+var pluralKind = (k) => ELEMENT_NOUN[k] ?? `${k}s`;
+function spellOperand(e) {
+  if (e === void 0) return "this value";
+  try {
+    const v = evaluate(e, /* @__PURE__ */ new Map());
+    if (!v.ok || v.value === null || v.value === void 0) return "this value";
+    const text = stringify2(v.value);
+    return text.length > 24 ? "this value" : text;
+  } catch {
+    return "this value";
+  }
+}
+function spellArray(e) {
+  const node = e;
+  if (node?.type === "SpreadElement") return spellArray(node.argument);
+  return node?.type === "FieldRef" && node.path !== void 0 && node.path !== "" ? `'${node.path}'` : "this value";
+}
+function operandIs(e, kinds, viaElements) {
+  return viaElements ? `the elements of ${spellArray(e)} are ${orList(kinds.map(pluralKind))}` : `${spellOperand(e)} is ${kindsNoun(kinds, " or ")}`;
+}
+function operandAt(subjects, slot) {
+  const only = subjects.args.length === 1 ? subjects.args[0] : null;
+  if (only !== null && only.type === "ArrayLiteral" && only.packed === true) {
+    return only.elements[slot];
+  }
+  return subjects.args[slot];
+}
+function shownName(spelled3) {
+  if (spelled3.startsWith("'")) return spelled3;
+  if (spelled3.startsWith("$")) return `'${spelled3}'`;
+  return `'${spelled3.replace(/\(\)$/, "")}()'`;
+}
+function wrongKind(fault, spelled3, subjects, pos) {
+  const name2 = shownName(spelled3);
+  switch (fault.rule) {
+    case "slot": {
+      const e = operandAt(subjects, fault.slot);
+      const types = Array.isArray(fault.expected) ? fault.expected : [fault.expected];
+      const takes = orList(types.map((t) => TAKES[t]));
+      return new CodegenError(
+        `${name2} takes ${takes}, but ${operandIs(e, fault.got, fault.viaElements === true)}.`,
+        e?.pos ?? pos
+      );
+    }
+    case "element": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        `${name2} takes an element of this array, but ${operandIs(e, fault.got, fault.viaElements === true)} and the array holds ${orList(fault.held.map(pluralKind))}.`,
+        e?.pos ?? pos
+      );
+    }
+    case "elements":
+      return new CodegenError(
+        `${name2} takes ${pluralKind(fault.expected)}, but this array holds ${kindsNoun(fault.held, " and ")}.`,
+        subjects.receiver?.pos ?? pos
+      );
+    case "homogeneous": {
+      const e = operandAt(subjects, fault.slot);
+      return new CodegenError(
+        `${name2} takes operands of one kind, but ${operandIs(operandAt(subjects, fault.first), fault.firstKinds, fault.firstViaElements === true)} and ${operandIs(e, fault.got, fault.viaElements === true)}.`,
+        e?.pos ?? pos
+      );
+    }
+  }
+}
 function nounOfKinds(t) {
   if (t.kinds === "any") return "a value";
   if (t.kinds.size === 0) return "null";
@@ -21921,196 +22306,6 @@ var Env = class _Env {
   }
 };
 
-// src/compiler/emit/select.ts
-var isObj3 = (v) => typeof v === "object" && v !== null;
-function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
-  if (args.some((a) => a.type === "SpreadElement")) return { kind: "spread" };
-  if (args.length === 0) return { kind: "none" };
-  if (args.length > 1) return { kind: "multiple" };
-  const only = args[0];
-  if (only.type === "ObjectLiteral") {
-    const keys = (only.entries ?? []).map(staticKey).filter((k) => k !== null);
-    return { kind: "object", keys };
-  }
-  const v = evaluate(args[0], constants);
-  return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
-}
-var TYPES = FIELD_FAMILY_TYPES;
-function guardFor(family, also = []) {
-  const types = [...TYPES[family], ...also];
-  return (recv) => ({ $in: [{ $type: recv }, types] });
-}
-var FIELD_FAMILIES2 = Object.keys(TYPES);
-var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
-var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
-var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
-function countOf(name2, args, n2) {
-  const rejected = args.reject?.[n2];
-  if (rejected !== void 0) return { kind: "rejectedCount", name: name2, message: rejected };
-  const ok4 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
-  return ok4 ? null : { kind: "wrongCount", name: name2, got: n2, args };
-}
-function settle(name2, branch, shaped, count, family) {
-  if (isRefusal(branch)) {
-    return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
-  }
-  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
-  if (shaped.kind === "spread") {
-    if (branch.args.spread === true) {
-      internalError(`a spread reached '${name2}'. Its rule reads one array argument, and the desugar pass packs it`);
-    }
-    return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
-  }
-  return countOf(name2, branch.args, count) ?? (family === void 0 ? { kind: "rule", name: name2, rule: branch } : { kind: "rule", name: name2, rule: branch, family });
-}
-function familyOf2(receiver) {
-  switch (receiver.kind) {
-    case "none":
-      return null;
-    case "namespace":
-      return receiver.name;
-    case "stream":
-      return "stream";
-    case "value":
-      return receiver.family;
-    case "opaque":
-      return null;
-  }
-}
-function receiverGate(name2, receiver) {
-  const on = familiesFor(name2);
-  if (on === void 0 || on === "any") return null;
-  if (receiver.kind === "opaque") {
-    if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
-    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
-      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
-    }
-    return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
-  }
-  const family = familyOf2(receiver);
-  if (family !== null && on.includes(family)) return null;
-  return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
-}
-function fromByArgs(name2, byArgs, shaped, count) {
-  const otherwise = byArgs.otherwise;
-  if (!isRefusal(otherwise)) internalError(`the row '${name2}' states a byArgs cell without its 'otherwise'`);
-  const leftover = () => settle(name2, otherwise, shaped, count);
-  switch (shaped.kind) {
-    case "spread":
-      return leftover();
-    case "constant":
-      return byArgs.constant === void 0 ? leftover() : settle(name2, byArgs.constant, shaped, count);
-    default: {
-      const entry = byArgs[shaped.kind];
-      return entry === void 0 ? leftover() : settle(name2, entry, shaped, count);
-    }
-  }
-}
-function kindFits(kind, expected) {
-  if (kind === "unknown") return true;
-  if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t));
-  switch (expected) {
-    case "number":
-    case "int":
-    case "int-or-long":
-      return kind === "number";
-    case "number-or-date":
-      return kind === "number" || kind === "date";
-    case "string":
-    case "fieldName":
-    case "fieldPath":
-      return kind === "string";
-    case "bool":
-    case "array":
-    case "object":
-    case "date":
-      return kind === expected;
-    case "timestamp":
-      return false;
-  }
-}
-var argsFit = (rule, kinds) => Object.entries(rule.args.slotType ?? {}).every(([i, t]) => {
-  const k = kinds[Number(i)];
-  return k === void 0 || kindFits(k, t);
-});
-function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, kinds) {
-  const on = familiesFor(name2);
-  if (receiver.kind !== "opaque") {
-    const family = familyOf2(receiver);
-    const branch = family === null ? void 0 : branches[family];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count, isFieldFamily(family) ? family : void 0);
-  }
-  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
-  const possible = receiver.possible;
-  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
-  if (possible !== void 0 && listed.length === 0) {
-    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
-  }
-  const lowering = listed.filter((f) => !isRefusal(branches[f]));
-  const fieldFamilies = lowering.length > 0 ? lowering : listed;
-  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-  const fitting = fieldFamilies.filter((f) => {
-    const b = branches[f];
-    return !isRule(b) || argsFit(b, kinds);
-  });
-  if (fitting.length === 1 && fieldFamilies.length > 1) {
-    const branch = branches[fitting[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count, fitting[0]);
-  }
-  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
-  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
-    const branch = branches[fieldFamilies[0]];
-    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
-    return settle(name2, branch, shaped, count, fieldFamilies[0]);
-  }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
-    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
-  }
-  const out = [];
-  for (const family of fieldFamilies) {
-    const branch = branches[family];
-    if (isRefusal(branch) || branch === void 0) continue;
-    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
-    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
-    if (bad !== null && bad.kind !== "rule") return bad;
-    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
-  }
-  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
-  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
-}
-function select(verdict, receiver, shaped, count, kinds = []) {
-  const name2 = verdict.name;
-  switch (verdict.kind) {
-    case "unknown":
-      return { kind: "unknown", name: name2 };
-    case "refused": {
-      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
-      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
-    }
-    case "fallback":
-      return { kind: "fallback", name: name2 };
-    case "composedOnly":
-      return { kind: "composedOnly", name: name2, owners: verdict.owners };
-    case "noCell":
-      return { kind: "noCell", name: name2 };
-    case "inCode": {
-      const gate = receiverGate(name2, receiver);
-      return gate ?? { kind: "noCell", name: name2 };
-    }
-    case "perFamily":
-      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count, kinds);
-    case "lower": {
-      const gate = receiverGate(name2, receiver);
-      if (gate !== null) return gate;
-      const cell = verdict.cell;
-      if (isObj3(cell) && isObj3(cell.byArgs)) return fromByArgs(name2, cell.byArgs, shaped, count);
-      return settle(name2, cell, shaped, count);
-    }
-  }
-}
-
 // src/compiler/emit/check.ts
 function literal(e) {
   switch (e.type) {
@@ -22166,8 +22361,16 @@ function matches(lit, expected) {
     case "fieldName":
     case "fieldPath":
       return false;
+    case "regex":
+      return lit.kind === "regex" || lit.kind === "string";
+    case "any":
+    case "element":
+      return true;
+    case "orderable":
+      return lit.kind === "number" || lit.kind === "bigint" || lit.kind === "string";
     case "date":
     case "timestamp":
+    case "callback":
       return false;
   }
 }
@@ -22176,6 +22379,7 @@ var EXPECTS = {
   int: "expects an integer",
   "int-or-long": "expects an integer",
   "number-or-date": "expects a number or a date",
+  orderable: "expects a number, a string, a date or an ObjectId",
   string: "expects a string",
   fieldName: "expects a field NAME to write: a plain string with no '$' and no dot",
   fieldPath: "expects a field PATH to read: a string that starts with '$'",
@@ -22183,31 +22387,16 @@ var EXPECTS = {
   array: "expects an array",
   object: "expects a document",
   date: "expects a date",
-  timestamp: "expects a timestamp"
+  timestamp: "expects a timestamp",
+  any: "expects a value",
+  callback: "expects a callback",
+  regex: "expects a regular expression or a string",
+  element: "expects an element of the array"
 };
 var hint = (expected) => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
-};
-function checkSlotKinds(name2, args, operands, kinds) {
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    const k = kinds[Number(i)];
-    if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
-    const expected = Array.isArray(t) ? t.map((x) => EXPECTS[x].replace(/^expects /, "")).join(" or ") : EXPECTS[t].replace(/^expects /, "");
-    throw new CodegenError(`'${spell2(name2)}' takes ${expected}, but this value is ${KIND_NOUN2[k] ?? `a ${k}`}.`, e.pos);
-  }
-}
-var KIND_NOUN2 = {
-  string: "a string",
-  number: "a number",
-  bool: "a boolean",
-  array: "an array",
-  object: "a document",
-  date: "a date",
-  objectId: "an ObjectId",
-  binData: "binary data"
 };
 function checkType(name2, slot, e, expected) {
   if (expected === "fieldPath") {
@@ -22320,6 +22509,7 @@ function checkBody(name2, rule, args, keys, pos) {
   }
 }
 var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
+var SOURCE_CHECKED = /* @__PURE__ */ new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
 function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
   for (const i of args.integer ?? []) {
     const e = i === -1 ? receiver : operands[i];
@@ -22375,21 +22565,9 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
   for (const [i, t] of Object.entries(args.slotType ?? {})) {
     const e = operands[Number(i)];
     if (e === void 0 || hasObjectForm && e.type === "ObjectLiteral") continue;
-    if (!Array.isArray(t)) {
-      checkType(name2, "", e, t);
-      continue;
-    }
-    const types = t;
-    if (e.type === "StringLiteral" && types.includes("fieldPath")) {
-      checkType(name2, "", e, "fieldPath");
-      continue;
-    }
-    const lit = literal(e);
-    if (lit === null || types.some((one) => matches(lit, one))) continue;
-    throw new CodegenError(
-      `'${name2}' takes ${types.map((one) => EXPECTS[one].replace(/^expects /, "")).join(" or ")} here, and ${NOUN[lit.kind]} is neither.`,
-      e.pos
-    );
+    const own = (Array.isArray(t) ? t : [t]).find((one) => SOURCE_CHECKED.has(one));
+    if (own === void 0) continue;
+    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name2, "", e, own);
   }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
@@ -22592,6 +22770,50 @@ function sourceFamily(node) {
   return null;
 }
 var kindOf3 = (node, env) => single2(typeOf(node, env));
+function proofsFor(args, env, objectForm, source = null, isField) {
+  const proven = (a) => {
+    if (a.type === "SpreadElement" || objectForm && a.type === "ObjectLiteral") return "unknown";
+    const t = typeOf(a, env);
+    const written2 = a.type === "NullLiteral" && a.injected !== true;
+    return isNothing(t) && !written2 ? "unknown" : proofOf(t);
+  };
+  const sourceType = source === null ? null : typeOf(source.node, source.env);
+  const elements = sourceType === null ? "unknown" : elementProofOf(sourceType);
+  const found2 = sourceType === null ? void 0 : itemProofsOf(sourceType);
+  const elementNodes = source !== null && source.node.type === "ArrayLiteral" ? source.node.elements : [];
+  const items = found2 === void 0 || elementNodes.length !== found2.length ? found2 : found2.map((p, i) => {
+    const el = elementNodes[i];
+    return el.type === "NullLiteral" && el.injected !== true ? ["null"] : p;
+  });
+  const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
+  if (list !== null) {
+    const own = (e) => e.type === "SpreadElement" ? elementProofOf(typeOf(e.argument, env)) : proven(e);
+    const packedArgs = list.elements;
+    return {
+      args: packedArgs.map(own),
+      elements,
+      ...items === void 0 ? {} : { items },
+      viaElements: packedArgs.map((e) => e.type === "SpreadElement"),
+      packed: true
+    };
+  }
+  const plain = args.map(proven);
+  const mayBeArray2 = (p) => p !== "unknown" && p.includes("array");
+  const via = [];
+  const throughElements = (a, i) => {
+    const p = plain[i];
+    if (isField === void 0 || a.type === "SpreadElement" || !isField(a) || p === "unknown" || !mayBeArray2(p))
+      return p;
+    if (plain.some((other, j) => j !== i && mayBeArray2(other))) return p;
+    const held = elementProofOf(typeOf(a, env));
+    if (held === "unknown") return "unknown";
+    via[i] = p.every((k) => k === "array");
+    return [.../* @__PURE__ */ new Set([...p.filter((k) => k !== "array"), ...held])];
+  };
+  const proofs = args.map(throughElements);
+  const tuple = items === void 0 ? {} : { items };
+  return via.some(Boolean) ? { args: proofs, elements, ...tuple, viaElements: proofs.map((_, i) => via[i] === true) } : { args: proofs, elements, ...tuple };
+}
 function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
   if (src !== null) return src;
@@ -22659,18 +22881,9 @@ function callOnUnproven(name2, receiver, args, env) {
 var TERMS = ["arrayOf", "elementOf", "callback", "arg", "args", "merge", "oneOf", "recordOf", "tuple", "itemOf"];
 var isFamilyMap = (r) => typeof r === "object" && r !== null && !TERMS.some((k) => k in r);
 function injectedType(v) {
-  if (typeof v === "number" || typeof v === "bigint") return of("number");
-  if (typeof v === "string") return isMqlShaped(v) ? ANY : of("string");
-  if (typeof v === "boolean") return of("bool");
-  if (isDate(v)) return of("date");
-  if (Array.isArray(v)) return isMqlShaped(v) ? ANY : of("array");
-  const tag = bsonTagOf(v);
-  if (tag !== void 0) {
-    const k = BSON_KIND[tag];
-    return k === void 0 ? ANY : of(k);
-  }
-  if (isPlainObject(v)) return isMqlShaped(v) ? ANY : of("object");
-  return ANY;
+  const k = kindOfValue(v);
+  if (k === null) return ANY;
+  return (k === "string" || k === "array" || k === "object") && isMqlShaped(v) ? ANY : of(k);
 }
 function typeOf(node, env) {
   const joined = env.chain.proofOf(node);
@@ -23531,6 +23744,183 @@ var readsRef = (mql, ref) => {
   return false;
 };
 
+// src/compiler/emit/select.ts
+var isObj3 = (v) => typeof v === "object" && v !== null;
+function shapeOf2(args, constants = /* @__PURE__ */ new Map()) {
+  if (args.some((a) => a.type === "SpreadElement")) return { kind: "spread" };
+  if (args.length === 0) return { kind: "none" };
+  if (args.length > 1) return { kind: "multiple" };
+  const only = args[0];
+  if (only.type === "ObjectLiteral") {
+    const keys = (only.entries ?? []).map(staticKey).filter((k) => k !== null);
+    return { kind: "object", keys };
+  }
+  const v = evaluate(args[0], constants);
+  return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
+}
+var TYPES = FIELD_FAMILY_TYPES;
+function guardFor(family, also = []) {
+  const types = [...TYPES[family], ...also];
+  return (recv) => ({ $in: [{ $type: recv }, types] });
+}
+var FIELD_FAMILIES2 = Object.keys(TYPES);
+var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
+var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
+var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
+function countOf(name2, args, n2) {
+  const rejected = args.reject?.[n2];
+  if (rejected !== void 0) return { kind: "rejectedCount", name: name2, message: rejected };
+  const ok4 = args.none === true ? n2 === 0 : args.exact !== void 0 ? n2 === args.exact : args.allowed !== void 0 ? args.allowed.includes(n2) : args.atLeast !== void 0 ? n2 >= args.atLeast : true;
+  return ok4 ? null : { kind: "wrongCount", name: name2, got: n2, args };
+}
+function settle(name2, branch, shaped, count, proofs, family) {
+  if (isRefusal(branch)) {
+    return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
+  }
+  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
+  if (shaped.kind === "spread") {
+    if (branch.args.spread === true) {
+      internalError(`a spread reached '${name2}'. Its rule reads one array argument, and the desugar pass packs it`);
+    }
+    return { kind: "spreadRefused", name: name2, sig: branch.args.sig };
+  }
+  return countOf(name2, branch.args, count) ?? kindFault(name2, branch.args, proofs) ?? (family === void 0 ? { kind: "rule", name: name2, rule: branch } : { kind: "rule", name: name2, rule: branch, family });
+}
+function familyOf2(receiver) {
+  switch (receiver.kind) {
+    case "none":
+      return null;
+    case "namespace":
+      return receiver.name;
+    case "stream":
+      return "stream";
+    case "value":
+      return receiver.family;
+    case "opaque":
+      return null;
+  }
+}
+function receiverGate(name2, receiver) {
+  const on = familiesFor(name2);
+  if (on === void 0 || on === "any") return null;
+  if (receiver.kind === "opaque") {
+    if (receiver.proved !== void 0) return { kind: "wrongReceiver", name: name2, got: receiver.proved, accepts: on };
+    if (receiver.possible !== void 0 && !receiver.possible.some((f) => on.includes(f))) {
+      return { kind: "wrongReceiver", name: name2, got: receiver.possible.join(" or "), accepts: on };
+    }
+    return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name: name2, got: null, accepts: on };
+  }
+  const family = familyOf2(receiver);
+  if (family !== null && on.includes(family)) return null;
+  return { kind: "wrongReceiver", name: name2, got: family, accepts: on };
+}
+function fromByArgs(name2, byArgs, shaped, count, proofs) {
+  const otherwise = byArgs.otherwise;
+  if (!isRefusal(otherwise)) internalError(`the row '${name2}' states a byArgs cell without its 'otherwise'`);
+  const leftover = () => settle(name2, otherwise, shaped, count, proofs);
+  switch (shaped.kind) {
+    case "spread":
+      return leftover();
+    case "constant":
+      return byArgs.constant === void 0 ? leftover() : settle(name2, byArgs.constant, shaped, count, proofs);
+    default: {
+      const entry = byArgs[shaped.kind];
+      return entry === void 0 ? leftover() : settle(name2, entry, shaped, count, proofs);
+    }
+  }
+}
+function kindFault(name2, rule, proofs) {
+  const fault = faultOf(name2, rule, proofs);
+  return fault === null ? null : { kind: "wrongKind", name: name2, fault };
+}
+function fromPerFamily(name2, branches, uncertain, receiver, shaped, count, proofs) {
+  const on = familiesFor(name2);
+  if (receiver.kind !== "opaque") {
+    const family = familyOf2(receiver);
+    const branch = family === null ? void 0 : branches[family];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
+    return settle(
+      name2,
+      branch,
+      shaped,
+      count,
+      proofs,
+      isFieldFamily(family) ? family : void 0
+    );
+  }
+  const accepted = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
+  const possible = receiver.possible;
+  const listed = possible === void 0 ? accepted : accepted.filter((f) => possible.includes(f));
+  if (possible !== void 0 && listed.length === 0) {
+    return { kind: "wrongReceiver", name: name2, got: possible.join(" or "), accepts: on ?? "any" };
+  }
+  const lowering = listed.filter((f) => !isRefusal(branches[f]));
+  const fieldFamilies = lowering.length > 0 ? lowering : listed;
+  if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+  const fault = (f) => {
+    const b = branches[f];
+    return isRule(b) ? kindFault(name2, b.args, proofs) : null;
+  };
+  const fitting = fieldFamilies.filter((f) => fault(f) === null);
+  if (fitting.length === 0 && fieldFamilies.length > 1) return fault(fieldFamilies[0]);
+  if (fitting.length === 1 && fieldFamilies.length > 1) {
+    const branch = branches[fitting[0]];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+    return settle(name2, branch, shaped, count, proofs, fitting[0]);
+  }
+  const covered = possible !== void 0 && receiver.exact === true && possible.every((f) => listed.includes(f));
+  if (fieldFamilies.length === 1 && (possible === void 0 || covered || uncertain === void 0)) {
+    const branch = branches[fieldFamilies[0]];
+    if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
+    return settle(name2, branch, shaped, count, proofs, fieldFamilies[0]);
+  }
+  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
+    internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
+  }
+  const out = [];
+  for (const family of fitting) {
+    const branch = branches[family];
+    if (isRefusal(branch) || branch === void 0) continue;
+    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
+    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count, proofs) : countOf(name2, branch.args, count);
+    if (bad !== null && bad.kind !== "rule") return bad;
+    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
+  }
+  const complete = covered && receiver.present === true && possible.every((f) => out.some((b) => b.family === f));
+  return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain, complete };
+}
+function select(verdict, receiver, shaped, count, proofs) {
+  const name2 = verdict.name;
+  switch (verdict.kind) {
+    case "unknown":
+      return { kind: "unknown", name: name2 };
+    case "refused": {
+      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
+      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
+    }
+    case "fallback":
+      return { kind: "fallback", name: name2 };
+    case "composedOnly":
+      return { kind: "composedOnly", name: name2, owners: verdict.owners };
+    case "noCell":
+      return { kind: "noCell", name: name2 };
+    case "inCode": {
+      const gate = receiverGate(name2, receiver);
+      if (gate !== null) return gate;
+      return (verdict.args === void 0 ? null : kindFault(name2, verdict.args, proofs)) ?? { kind: "noCell", name: name2 };
+    }
+    case "perFamily":
+      return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count, proofs);
+    case "lower": {
+      const gate = receiverGate(name2, receiver);
+      if (gate !== null) return gate;
+      const cell = verdict.cell;
+      if (isObj3(cell) && isObj3(cell.byArgs)) return fromByArgs(name2, cell.byArgs, shaped, count, proofs);
+      return settle(name2, cell, shaped, count, proofs);
+    }
+  }
+}
+
 // src/compiler/emit/filter.ts
 function lowerFilter(node, env, jsRead = false) {
   const q = translate(node, env, false, jsRead);
@@ -23753,7 +24143,15 @@ function leaf(node, env) {
     return node.type === "OperatorCall" ? plainQuery(node, env) : null;
   }
   const receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
-  const sel = select(verdict, receiver, shapeOf2(args), args.length);
+  const source = recv ?? args[args.length - 1];
+  const proofs = escape ? UNPROVEN : proofsFor(args, env, true, source === void 0 ? null : { node: source, env }, (a) => pathOfIn(a, env) !== null);
+  const sel = select(verdict, receiver, shapeOf2(args), args.length, proofs);
+  if (sel.kind === "wrongKind") {
+    throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, [], void 0, {
+      ...recv === null ? {} : { receiver: recv },
+      args
+    });
+  }
   if (sel.kind === "spreadRefused") throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
   if (sel.kind === "wrongCount" || sel.kind === "rejectedCount") {
     if (node.type === "OperatorCall") return plainQuery(node, env);
@@ -23982,10 +24380,8 @@ var childEnv = (env, node, key) => {
   if (n2.type === "ObjectLiteral" || n2.type === "KeyValueEntry" || n2.type === "ArrayLiteral") return at3;
   return at3.inside(null);
 };
-function callback(cb, env, read) {
-  if (cb.type !== "Lambda" || cb.body === void 0) {
-    internalError("a renderer asked for a callback body from an argument that is not an expression arrow");
-  }
+function callback(cb, env, read, refusal) {
+  if (cb.type !== "Lambda" || cb.body === void 0) throw refusal();
   if (cb.params.length !== 1) {
     internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
@@ -24116,6 +24512,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
   const argEnv = childEnv(env, node, "args");
   const value = (e) => overrides.has(e) ? overrides.get(e) : read.value(e, argEnv);
   const elementOfRecv = () => recvNode === void 0 ? ANY : flattenOnce(typeOf(recvNode, env));
+  const notArrow = (cb, what) => notAnArrow(name2, what, slotFormsOf(name2, "array", Math.max(0, args.indexOf(cb))), cb);
   return {
     name: name2,
     recv,
@@ -24126,8 +24523,8 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     kind: (e) => kindOf3(e, argEnv),
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
-    iteratee: (cb) => callback(cb, argEnv, read.value),
-    predicate: (cb) => callback(cb, argEnv, read.truth),
+    iteratee: (cb) => callback(cb, argEnv, read.value, () => notArrow(cb, "a key")),
+    predicate: (cb) => callback(cb, argEnv, read.truth, () => notArrow(cb, "a predicate")),
     callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2, present2),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name2),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
@@ -24677,7 +25074,7 @@ function objectLiteral(node, entries, env) {
 function rootAsValue(node, env) {
   const name2 = rowForNodeType(node.type);
   if (name2 === void 0) internalError(`no root row builds a '${node.type}'`);
-  const sel = select(consult(name2, positionIn(env)), { kind: "none" }, { kind: "none" }, 0);
+  const sel = select(consult(name2, positionIn(env)), { kind: "none" }, { kind: "none" }, 0, UNPROVEN);
   throw refusalFor(sel, name2, "", positionIn(env), node.pos, []);
 }
 function identifier(node, env) {
@@ -24909,8 +25306,8 @@ function dispatchOn(node, name2, recvNode, args, env) {
   }
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
-  const kinds = args.map((a) => isExpr2(a) ? kindOf3(a, argEnv) : "unknown");
-  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length, kinds);
+  const proofs = proofsFor(args, argEnv, true, { node: recvNode, env: recvEnv });
+  const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length, proofs);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   const recv = receiver.kind === "value" || receiver.kind === "opaque" ? receiver.lowered : null;
@@ -24920,7 +25317,6 @@ function dispatchOn(node, name2, recvNode, args, env) {
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
     checkSlots(name2, sel.rule.args, exprArgs, true, recvNode);
-    checkSlotKinds(name2, sel.rule.args, exprArgs, kinds);
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
     const empty = emptyValueOf(name2, family);
@@ -24953,7 +25349,11 @@ function dispatchOn(node, name2, recvNode, args, env) {
     const on = familiesFor(n2);
     return on !== void 0 && on !== "any" && on.includes(receiver.name) && lowersOn(n2, receiver.name);
   }) : JS_NAMES;
-  throw refusalFor(sel, spelled3, container, position, node.pos, near, format);
+  if (sel.kind === "wrongKind") operandsFirst(exprArgs, argEnv);
+  throw refusalFor(sel, spelled3, container, position, node.pos, near, format, {
+    receiver: recvNode,
+    args
+  });
 }
 function arraysHolder(recv) {
   if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
@@ -25034,10 +25434,11 @@ function newExpression(node, env) {
 function dispatchBare(node, name2, args, env) {
   const position = positionIn(env);
   const exprArgs = args.filter(isExpr2);
-  const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length);
+  const proofs = proofsFor(args, childEnv(env, node, "args"), true);
+  const sel = select(consult(name2, position), { kind: "none" }, shapeOf2(args), args.length, proofs);
   if (sel.kind === "rule") return sel.rule.emit(exprInputs(name2, null, exprArgs, [], env, node, READ));
   if (sel.kind === "dispatch") internalError(`a bare call to '${name2}' selected a receiver dispatch`);
-  throw refusalFor(sel, name2, "", position, node.pos, []);
+  throw refusalFor(sel, name2, "", position, node.pos, [], void 0, { args });
 }
 function applyLambda2(lambda, args, env, pos, label, fnName) {
   if (lambda.body === void 0) throw lambdaAsValue(lambda.pos);
@@ -25078,7 +25479,7 @@ function operatorCall(node, env) {
   }
   const loneOperand = shape === "array" && node.args.length === 1 && first.type !== "SpreadElement" && lone === null;
   const exprArgs = args.filter(isExpr2);
-  const sel = select(verdict, { kind: "none" }, shapeOf2(args), count);
+  const sel = select(verdict, { kind: "none" }, shapeOf2(args), count, UNPROVEN);
   if (sel.kind === "spreadRefused") throw refusalFor(sel, node.name, "", position, node.pos, []);
   if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
   if (sel.kind !== "rule") return plainOperator(node, env);
@@ -25139,12 +25540,30 @@ function plainOperator(node, env) {
   return { [node.name]: args.map((a) => lowerValue(a, inner)) };
 }
 var spelledProduction = (node, key) => node.type === "BinaryExpr" || node.type === "UnaryExpr" ? node.op : node.type === "TernaryExpr" ? "?:" : key;
+function selectProduction(key, operands, env) {
+  const last = operands[operands.length - 1];
+  const proofs = proofsFor(operands, env, false, last === void 0 ? null : { node: last, env });
+  return select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length, proofs);
+}
+function operandsFirst(operands, env) {
+  for (const e of operands) if (e.type !== "Lambda") lowerValue(e, env);
+}
+function checkOperandKinds(node, key, operands, env) {
+  const sel = selectProduction(key, operands, env);
+  if (sel.kind === "wrongKind") {
+    operandsFirst(operands, env);
+    throw refusalFor(sel, `'${spelledProduction(node, key)}'`, "", positionIn(env), node.pos, [], void 0, {
+      args: operands
+    });
+  }
+}
 function production2(node, key, operands, env) {
-  const sel = select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length);
+  const sel = selectProduction(key, operands, env);
   const spelled3 = spelledProduction(node, key);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`production '${key}' selected a receiver dispatch`);
-    throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, []);
+    if (sel.kind === "wrongKind") operandsFirst(operands, env);
+    throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, [], void 0, { args: operands });
   }
   checkSlots(spelled3, sel.rule.args, operands);
   const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
@@ -25174,6 +25593,7 @@ function binary2(node, env) {
   switch (node.op) {
     case "+": {
       const operands = chainOf2(node, "+");
+      checkOperandKinds(node, productionKeyOf(node), operands, inner);
       if (operands.some((e) => kindOf3(e, inner) === "string")) {
         return {
           $concat: operands.map((e) => chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))
@@ -25203,9 +25623,13 @@ function binary2(node, env) {
       break;
     }
   }
+  const key = productionKeyOf(node);
+  return production2(node, key, flattensChain(key) ? chainOf2(node, node.op) : [node.left, node.right], env);
+}
+function productionKeyOf(node) {
   const key = productionForOperator("BinaryExpr", node.op);
   if (key === void 0) internalError(`no production builds a binary '${node.op}'`);
-  return production2(node, key, flattensChain(key) ? chainOf2(node, node.op) : [node.left, node.right], env);
+  return key;
 }
 function typeofComparison(node, env) {
   const { left, right } = node;
@@ -25251,6 +25675,7 @@ function logicalValue(node, env) {
 function membership2(node, env) {
   const { left, right } = node;
   if (right.type !== "ArrayLiteral") throw inNeedsList(node.pos);
+  checkOperandKinds(node, productionKeyOf(node), [left, right], env);
   return { $in: [lowerValue(left, env), lowerValue(right, env)] };
 }
 function exprBlock(node, env, ret) {
@@ -25818,7 +26243,13 @@ function documentsStages(list, env, written2 = "$$ = [ \u2026 ]") {
   if (holdsStreamReduce(list)) throw reduceWrapMisplaced(list.pos);
   const dropAll = { $match: { $expr: false } };
   if (list.elements.length === 0) return [dropAll];
-  const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
+  const sel = select(
+    consult(DOCUMENTS2, "statement"),
+    { kind: "none" },
+    { kind: "multiple" },
+    1,
+    proofsFor([list], env, false)
+  );
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
   checkSlots(written2, sel.rule.args, [list], false);
   const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
@@ -26236,18 +26667,21 @@ function refStatement(node, ref, env, first) {
   }
   if (ref === "DatabaseRef") throw noStageOnDatabase(node.name, node.pos);
   const receiver = ref === "StreamRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
-  const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length);
-  const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-  if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
   const args = node.args;
   const escape = node.name.startsWith("$");
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
+  const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length, proofs);
+  const spelled3 = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
+  if (sel.kind === "dispatch") internalError(`statement '${name2}' selected a receiver dispatch`);
   let stages;
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
     stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
   } else {
-    if (sel.kind !== "rule") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
+    if (sel.kind !== "rule") {
+      throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, [], void 0, { args });
+    }
     checkSlots(node.name, sel.rule.args, args, false);
     stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   }
@@ -26275,16 +26709,19 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
       []
     );
   }
-  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-  if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
   const args = link.args;
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, link, "args"), false);
+  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length, proofs);
+  if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
   let stages;
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
     if (args.length === 1 && isStageName(name2)) checkBodyKeys(args[0]);
     stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)) : [plainStage(name2, link, args, env)];
   } else {
-    if (sel.kind !== "rule") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    if (sel.kind !== "rule") {
+      throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, [], void 0, { args });
+    }
     checkSlots(link.name, sel.rule.args, args, false);
     stages = sel.rule.emit(
       stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
@@ -26383,7 +26820,8 @@ function stageStatement(node, env, first) {
   if (node.type === "MethodCall" && isMutator(name2)) throw mutatorNeedsField(name2, node.pos);
   if (node.type === "MethodCall" && takesNoReceiver(name2)) throw noReceiver(name2, node.pos);
   const verdict = consult(name2, "statement");
-  const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
+  const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length, proofs);
   if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw refusalFor(sel, name2, "", "statement", node.pos, []);
@@ -26396,7 +26834,7 @@ function stageStatement(node, env, first) {
   }
   if (sel.kind !== "rule") {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
-    throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s);
+    throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s, { args });
   }
   checkSlots(name2, sel.rule.args, args, false);
   const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));

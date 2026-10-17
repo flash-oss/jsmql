@@ -2988,9 +2988,10 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     const lk = "$$$.users.filter(u => u._id === $._id)";
     expect(setOfLast(`$.u = ${lk}.at(0);`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
     expect(setOfLast(`$.u = ${lk}[0];`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
-    expect(setOfLast(`$.b = ${lk}.has(1);`)).toEqual({ b: { $in: [1, "$__jsmql.tmp.0"] } });
+    // HR7: the slot holds documents, so a membership test of a number is refused
+    expect(() => jsmql.pipeline(`$.b = ${lk}.has(1);`)).toThrow("'.has()' takes an element of this array");
     expect(setOfLast(`$.s = ${lk}.size();`)).toEqual({ s: { $size: "$__jsmql.tmp.0" } });
-    expect(setOfLast(`$.i = ${lk}.indexOf(1);`)).toEqual({ i: { $indexOfArray: ["$__jsmql.tmp.0", 1] } });
+    expect(() => jsmql.pipeline(`$.i = ${lk}.indexOf(1);`)).toThrow("'.indexOf()' takes an element of this array");
     // A COLLAPSING terminal overwrites the slot with the single object it unwrapped,
     // so the registry records "object", and `.keys().size()` counts its fields.
     expect(setOfLast(`$.k = ${lk}.countBy("tier").keys().size();`)).toEqual({
@@ -2999,10 +3000,12 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
   });
 
   it("a `$$$.<coll>` lookup const is an array — `.filter` / `.aggregate` keep the `as` array", () => {
-    const p = jsmql.pipeline(
-      `const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.has(1) });`,
-    );
-    expect(setOf(p, 1)).toEqual({ any: { $in: [1, "$__jsmql.var.orders"] } });
+    const p = jsmql.pipeline(`const orders = $$$.orders.filter(o => o.userId === $._id); $set({ n: orders.size() });`);
+    expect(setOf(p, 1)).toEqual({ n: { $size: "$__jsmql.var.orders" } });
+    // HR7: the const holds documents, so a membership test of a number is refused
+    expect(() =>
+      jsmql.pipeline(`const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.has(1) });`),
+    ).toThrow("'.has()' takes an element of this array");
   });
 
   it("the chain type-check reads binding types too", () => {
@@ -3443,12 +3446,10 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
   it("rejects a non-integer literal amount (mongod requires an integer)", () => {
     expect(() => jsmql.expr('$.t.plus(1.5, "day")')).toThrow("'plus' expects an integer, but got a number.");
-    expect(() => jsmql.expr('$.t.minus("30", "day")')).toThrow("'minus' expects an integer, but got a string.");
+    expect(() => jsmql.expr('$.t.minus("30", "day")')).toThrow("'.minus()' takes integers");
   });
   it("rejects a non-string literal timezone", () => {
-    expect(() => jsmql.expr('$.t.plus(1, "day", 5)')).toThrow(
-      "'plus' takes a string or a document here, and a number is neither.",
-    );
+    expect(() => jsmql.expr('$.t.plus(1, "day", 5)')).toThrow("'.plus()' takes strings or documents");
   });
   it("allows a negative integer amount and dynamic amount/timezone (literal-gating)", () => {
     expect(jsmql.expr('$.t.plus(-5, "day")')).toEqual({ $dateAdd: { startDate: "$t", unit: "day", amount: -5 } });
@@ -3633,9 +3634,7 @@ describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
     expect(() => jsmql.expr('$.a.isSame($.b, "days")')).toThrow(
       "'isSame' argument 2 must be one of: year, quarter, month, week, day, hour, minute, second, millisecond. It got 'days'. Did you mean 'day'?",
     );
-    expect(() => jsmql.expr('$.a.isSame("2020-01-01", "day")')).toThrow(
-      "'isSame' expects a date, but got a string. Use a field path or new Date(…).",
-    );
+    expect(() => jsmql.expr('$.a.isSame("2020-01-01", "day")')).toThrow("'.isSame()' takes dates");
   });
 });
 
@@ -3725,7 +3724,7 @@ describe("date formatting (.format)", () => {
     expect(jsmql.expr("$.createdAt.format($.fmt)")).toEqual({ $dateToString: { date: "$createdAt", format: "$fmt" } });
   });
   it("rejects a non-string literal format and the wrong argument count", () => {
-    expect(() => jsmql.expr("$.createdAt.format(5)")).toThrow("'format' expects a string, but got a number.");
+    expect(() => jsmql.expr("$.createdAt.format(5)")).toThrow("'.format()' takes strings");
     expect(() => jsmql.expr("$.createdAt.format()")).toThrow(
       "'.format(format[, timezone])' requires 1 or 2 arguments, got 0",
     );
@@ -3892,9 +3891,7 @@ describe("date difference (.diff)", () => {
     );
   });
   it("rejects a literal non-date argument", () => {
-    expect(() => jsmql.expr('$.end.diff("2020-01-01", "day")')).toThrow(
-      "'diff' expects a date, but got a string. Use a field path or new Date(…).",
-    );
+    expect(() => jsmql.expr('$.end.diff("2020-01-01", "day")')).toThrow("'.diff()' takes dates");
   });
   it("a non-literal unit / other is not checked (literal-gating)", () => {
     expect(jsmql.expr("$.end.diff($.start, $.unit)")).toEqual({
@@ -4282,7 +4279,8 @@ describe("bitwise infix operators", () => {
     });
   });
   it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
-    expect(jsmql.expr("$.a === $.b & $.c")).toEqual({ $bitAnd: [{ $eq: ["$a", "$b"] }, "$c"] });
+    // HR7: `===` gives a boolean, and `&` takes numbers, so the refusal shows the grouping
+    expect(() => jsmql.expr("$.a === $.b & $.c")).toThrow("'&' takes numbers");
   });
   it("unary ~ has higher precedence than &", () => {
     expect(jsmql.expr("~$.flags & 255")).toEqual({ $bitAnd: [{ $bitNot: "$flags" }, 255] });
@@ -5496,7 +5494,7 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
         },
       },
     });
-    expect(() => jsmql.expr('$.o.pick("a")')).toThrow("'pick' expects an array, but got a string.");
+    expect(() => jsmql.expr('$.o.pick("a")')).toThrow("'.pick()' takes arrays");
   });
   it(".omit([keys]) → $arrayToObject over a filtered $objectToArray", () => {
     expect(jsmql.expr('$.o.omit(["a"])')).toEqual({

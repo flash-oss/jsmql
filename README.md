@@ -230,6 +230,7 @@ jsmql() **never runs** the arrow function. It calls `Function.prototype.toString
   - An aggregation `$match` cannot hold `$near`, `$nearSphere` or `$where`. Use these operators in a `find()` filter.
 
   See [docs/LANGUAGE.md → Mistakes caught at compile time](docs/LANGUAGE.md#mistakes-caught-at-compile-time).
+- **JSMQL refuses a value of the wrong kind** — every method, operator and argument slot takes a kind of value. When JSMQL proves another kind, it refuses the program even where the server accepts the MQL: `"a" + 1` and `[1, "a"].max()` are errors, and `$.str + 1` passes because the kind of a field is unknown. `$op(…)` gives the server's own behaviour. See [docs/LANGUAGE.md → A value of the wrong kind](docs/LANGUAGE.md#a-value-of-the-wrong-kind).
 - **Actionable errors** — every error names the construct, suggests the nearest valid JavaScript name, and carries a real `.pos` value, so an editor can underline the offending region.
 - **Strict TypeScript, strippable source** — the source runs as-is on Node 22.18+ / 24.3+, Deno, and Bun, with no flags and no transpile step.
 - **`jsmql` on the command line** — put JSMQL on stdin, and get MQL on stdout, written as the JavaScript that rebuilds it, so it pastes straight into mongosh or a driver script. `echo '$.age > 18' | jsmql`. Opt-in flags `--filter` / `--pipeline` / `--expr` / `--update` / `--validate` and `--compact` are available, plus `--arg` / `--argjson` for parameterised arrows. See [Command line](#command-line-jsmql).

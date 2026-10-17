@@ -159,7 +159,6 @@ const EXPRESSIONS: readonly string[] = [
   // the array aggregate, set, slicing and reshaping families
   "[1, 2, 3].sum()",
   "[].sum()",
-  "[1, 'a', 3].sum()",
   "[1, 2, 3, 4].mean()",
   "[].mean()",
   "[3, 1, 2].min()",

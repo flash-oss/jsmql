@@ -53,7 +53,7 @@ import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
-import { documentAfter, kindOf, typeOf } from "./prove.ts";
+import { documentAfter, kindOf, proofsFor, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
 import {
@@ -65,7 +65,7 @@ import {
   takesLetOf,
   takesNoReceiver,
 } from "../rows.ts";
-import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
+import { select, UNPROVEN, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
 import { FILTER } from "../passes/position.ts";
@@ -479,7 +479,13 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
   if (list.elements.length === 0) return [dropAll];
   // The sugar IS the stage call, so the row judges the list: `$$ = [{ a: 1 }, 5]`
   // meets the same element rule `$documents([{ a: 1 }, 5])` meets.
-  const sel = select(consult(DOCUMENTS, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
+  const sel = select(
+    consult(DOCUMENTS, "statement"),
+    { kind: "none" },
+    { kind: "multiple" },
+    1,
+    proofsFor([list], env, false),
+  );
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS}' has no statement rule`);
   checkSlots(written, sel.rule.args, [list], false);
   // The documents run inside the `$unionWith`, with NO input document.
@@ -1276,13 +1282,14 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
       : ref === "ClusterRef"
         ? { kind: "namespace", name: "cluster" }
         : { kind: "none" };
-  const sel = select(consult(name, "statement"), receiver, { kind: "multiple" }, node.args.length);
-  const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-  if (sel.kind === "dispatch") internalError(`statement '${name}' selected a receiver dispatch`);
   const args = node.args as readonly Expr[];
   // A `$`-named stage on a reference is the developer's own MQL, as the bare stage
   // call is: no body is checked, and its place stays checked.
   const escape = node.name.startsWith("$");
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
+  const sel = select(consult(name, "statement"), receiver, { kind: "multiple" }, node.args.length, proofs);
+  const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
+  if (sel.kind === "dispatch") internalError(`statement '${name}' selected a receiver dispatch`);
   let stages: Stage[];
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
@@ -1293,7 +1300,9 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
         ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[])
         : [plainStage(name, node, args, env)];
   } else {
-    if (sel.kind !== "rule") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
+    if (sel.kind !== "rule") {
+      throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, [], undefined, { args });
+    }
     checkSlots(node.name, sel.rule.args, args, false);
     stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   }
@@ -1344,9 +1353,10 @@ function streamLink(
       [],
     );
   }
-  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-  if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
   const args = link.args as readonly Expr[];
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, link, "args"), false);
+  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length, proofs);
+  if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
   let stages: Stage[];
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
@@ -1357,7 +1367,9 @@ function streamLink(
         ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ, soFar, link.name)) as Stage[])
         : [plainStage(name, link, args, env)];
   } else {
-    if (sel.kind !== "rule") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    if (sel.kind !== "rule") {
+      throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, [], undefined, { args });
+    }
     checkSlots(link.name, sel.rule.args, args, false);
     // `name` is the row that runs; `link.name` is what the developer typed. A message
     // that swaps them tells the reader about a method they did not write.
@@ -1533,7 +1545,8 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
   // is the bare call. The stage document of `$.items.$sort(…);` has no place for `$.items`.
   if (node.type === "MethodCall" && takesNoReceiver(name)) throw E.noReceiver(name, node.pos);
   const verdict = consult(name, "statement");
-  const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
+  const proofs = escape ? UNPROVEN : proofsFor(args, childEnv(env, node, "args"), false);
+  const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length, proofs);
   if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, name, "", "statement", node.pos, []);
@@ -1555,7 +1568,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
   }
   if (sel.kind !== "rule") {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
-    throw E.refusalFor(sel, name, "", "statement", node.pos, [], (s) => s);
+    throw E.refusalFor(sel, name, "", "statement", node.pos, [], (s) => s, { args });
   }
   checkSlots(name, sel.rule.args, args, false);
   const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];

@@ -535,16 +535,15 @@ describe("$match translation — .size() → a guarded $size under $expr", () =>
   });
 
   it("compares the count against any literal, natural or not", () => {
-    // A count is a whole number, so `=== 3.5`, `=== "x"` and `=== -1` select nothing; the shape stays the same.
+    // A count is a whole number, so `=== 3.5` and `=== -1` select nothing; the shape stays the same.
     expect(jsmql("[$match($.items.size() === 3.5)]")).toEqual([
       { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, 3.5] } } },
     ]);
     expect(jsmql("[$match($.items.size() < 3.5)]")).toEqual([
       { $match: { $expr: { $lt: [{ $size: { $ifNull: ["$items", []] } }, 3.5] } } },
     ]);
-    expect(jsmql('[$match($.items.size() === "x")]')).toEqual([
-      { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, "x"] } } },
-    ]);
+    // HR7: a count is a number, so a comparison with a string is refused
+    expect(() => jsmql('[$match($.items.size() === "x")]')).toThrow("'===' takes operands of one kind");
     expect(jsmql("[$match($.items.size() === -1)]")).toEqual([
       { $match: { $expr: { $eq: [{ $size: { $ifNull: ["$items", []] } }, -1] } } },
     ]);

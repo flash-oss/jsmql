@@ -8,6 +8,11 @@
 // answer. Nothing here builds a document. A `dispatch` answer carries the guards
 // as functions of the bound receiver, and the caller assembles the `$switch`.
 //
+// The kinds of the arguments are PROVEN or they are not, in the same way (HR7). A
+// value proven to have a kind that its slot never takes is refused, even where the
+// server accepts the MQL. A value of unknown kind passes. See docs/specs/types.md
+// § The kind check.
+//
 // The receiver's family is PROVEN or it is not. A literal proves it. A producing
 // row's measured `returns` proves it. A field path proves nothing. An unprovable
 // receiver on a row with one field family IS that family — `$.price.ceil()` is a
@@ -30,9 +35,14 @@ import type { Expr } from "../../registry/vocabulary.ts";
 import type { Verdict } from "./consult.ts";
 import { familiesFor } from "./consult.ts";
 import { isMutator } from "../rows.ts";
+import { faultOf } from "../kinds.ts";
+import type { KindFault, Proofs } from "../kinds.ts";
 import { evaluate, type Constants } from "../passes/evaluate.ts";
 import { staticKey } from "../passes/naming.ts";
 import { internalError } from "../../errors.ts";
+
+export { kindFits, UNPROVEN } from "../kinds.ts";
+export type { KindFault, Proofs } from "../kinds.ts";
 
 /** A rule as this module reads it. Its `In`/`Out` are the caller's business. */
 export type AnyRule = Rule<unknown, unknown>;
@@ -140,7 +150,9 @@ export type Selected =
   /** The count is not one the rule takes. `args` carries the signature to quote. */
   | { readonly kind: "wrongCount"; readonly name: string; readonly got: number; readonly args: Arity }
   /** The count parses, but the row has a reason to refuse it — `args.reject[n]`. */
-  | { readonly kind: "rejectedCount"; readonly name: string; readonly message: string };
+  | { readonly kind: "rejectedCount"; readonly name: string; readonly message: string }
+  /** A value is proven to have a kind that the slot never takes (HR7). `fault` says which rule and which operand. */
+  | { readonly kind: "wrongKind"; readonly name: string; readonly fault: KindFault };
 
 // ── the runtime guards: one per field family, held complete by the type ──────
 
@@ -183,8 +195,15 @@ function countOf(name: string, args: Arity, n: number): Selected | null {
   return ok ? null : { kind: "wrongCount", name, got: n, args };
 }
 
-/** A resolved branch — a rule or a refusal — checked against the argument list. */
-function settle(name: string, branch: unknown, shaped: Shaped, count: number, family?: FieldFamily): Selected {
+/** A resolved branch — a rule or a refusal — checked against the argument list and the proofs of its operands. */
+function settle(
+  name: string,
+  branch: unknown,
+  shaped: Shaped,
+  count: number,
+  proofs: Proofs,
+  family?: FieldFamily,
+): Selected {
   if (isRefusal(branch)) {
     return { kind: "refused", name, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
   }
@@ -197,6 +216,7 @@ function settle(name: string, branch: unknown, shaped: Shaped, count: number, fa
   }
   return (
     countOf(name, branch.args, count) ??
+    kindFault(name, branch.args, proofs) ??
     (family === undefined ? { kind: "rule", name, rule: branch } : { kind: "rule", name, rule: branch, family })
   );
 }
@@ -235,57 +255,33 @@ function receiverGate(name: string, receiver: Receiver): Selected | null {
   return { kind: "wrongReceiver", name, got: family, accepts: on };
 }
 
-function fromByArgs(name: string, byArgs: Record<string, unknown>, shaped: Shaped, count: number): Selected {
+function fromByArgs(
+  name: string,
+  byArgs: Record<string, unknown>,
+  shaped: Shaped,
+  count: number,
+  proofs: Proofs,
+): Selected {
   const otherwise = byArgs.otherwise;
   if (!isRefusal(otherwise)) internalError(`the row '${name}' states a byArgs cell without its 'otherwise'`);
-  const leftover = (): Selected => settle(name, otherwise, shaped, count);
+  const leftover = (): Selected => settle(name, otherwise, shaped, count, proofs);
   switch (shaped.kind) {
     case "spread":
       return leftover();
     case "constant":
-      return byArgs.constant === undefined ? leftover() : settle(name, byArgs.constant, shaped, count);
+      return byArgs.constant === undefined ? leftover() : settle(name, byArgs.constant, shaped, count, proofs);
     default: {
       const entry = byArgs[shaped.kind];
-      return entry === undefined ? leftover() : settle(name, entry, shaped, count);
+      return entry === undefined ? leftover() : settle(name, entry, shaped, count, proofs);
     }
   }
 }
 
-/**
- * Can a value PROVEN to be `kind` fill a slot that takes `expected`? An unproven
- * value can fill any slot, and the server judges it. A `fieldName` or a `fieldPath`
- * slot reads a string, and a date slot takes a date alone.
- */
-export function kindFits(kind: Kind | "unknown", expected: ArgType | readonly ArgType[]): boolean {
-  if (kind === "unknown") return true;
-  if (Array.isArray(expected)) return (expected as readonly ArgType[]).some((t) => kindFits(kind, t));
-  switch (expected as ArgType) {
-    case "number":
-    case "int":
-    case "int-or-long":
-      return kind === "number";
-    case "number-or-date":
-      return kind === "number" || kind === "date";
-    case "string":
-    case "fieldName":
-    case "fieldPath":
-      return kind === "string";
-    case "bool":
-    case "array":
-    case "object":
-    case "date":
-      return kind === expected;
-    case "timestamp":
-      return false;
-  }
+/** The refusal for a call that breaks a kind rule, or null. */
+function kindFault(name: string, rule: Arity, proofs: Proofs): Selected | null {
+  const fault = faultOf(name, rule, proofs);
+  return fault === null ? null : { kind: "wrongKind", name, fault };
 }
-
-/** Does a proven argument kind rule this branch out — a string slot handed a number? */
-const argsFit = (rule: AnyRule, kinds: readonly (Kind | "unknown")[]): boolean =>
-  Object.entries(rule.args.slotType ?? {}).every(([i, t]) => {
-    const k = kinds[Number(i)];
-    return k === undefined || kindFits(k, t);
-  });
 
 function fromPerFamily(
   name: string,
@@ -294,14 +290,21 @@ function fromPerFamily(
   receiver: Receiver,
   shaped: Shaped,
   count: number,
-  kinds: readonly (Kind | "unknown")[],
+  proofs: Proofs,
 ): Selected {
   const on = familiesFor(name);
   if (receiver.kind !== "opaque") {
     const family = familyOf(receiver);
     const branch = family === null ? undefined : branches[family];
     if (branch === undefined) return { kind: "wrongReceiver", name, got: family, accepts: on ?? "any" };
-    return settle(name, branch, shaped, count, isFieldFamily(family as string) ? (family as FieldFamily) : undefined);
+    return settle(
+      name,
+      branch,
+      shaped,
+      count,
+      proofs,
+      isFieldFamily(family as string) ? (family as FieldFamily) : undefined,
+    );
   }
   // An unprovable receiver. With one field family in `on`, the receiver IS that
   // family. With two or more, the compiler runs the runtime dispatch, in the row's
@@ -327,15 +330,18 @@ function fromPerFamily(
   // call means: `.indexOf(1)` searches an array, because `$indexOfCP` takes a string.
   // The receiver's proof, then the argument's, then the runtime test — in that order.
   // One branch left by the argument runs on its own, by the same claim a one-family
-  // row makes: the call is on that family, or the server raises an error.
-  const fitting = fieldFamilies.filter((f) => {
+  // row makes: the call is on that family, or the server raises an error. When no
+  // branch takes the argument, the call is wrong on every family (HR7).
+  const fault = (f: FieldFamily): Selected | null => {
     const b = branches[f];
-    return !isRule(b) || argsFit(b, kinds);
-  });
+    return isRule(b) ? kindFault(name, b.args, proofs) : null;
+  };
+  const fitting = fieldFamilies.filter((f) => fault(f) === null);
+  if (fitting.length === 0 && fieldFamilies.length > 1) return fault(fieldFamilies[0]) as Selected;
   if (fitting.length === 1 && fieldFamilies.length > 1) {
     const branch = branches[fitting[0]];
     if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
-    return settle(name, branch, shaped, count, fitting[0]);
+    return settle(name, branch, shaped, count, proofs, fitting[0]);
   }
   // Does the row take EVERY kind the value can be? Only then can a lone branch run
   // with no test, and only then can a dispatch drop its default. A possible kind
@@ -347,17 +353,19 @@ function fromPerFamily(
   if (fieldFamilies.length === 1 && (possible === undefined || covered || uncertain === undefined)) {
     const branch = branches[fieldFamilies[0]];
     if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
-    return settle(name, branch, shaped, count, fieldFamilies[0]);
+    return settle(name, branch, shaped, count, proofs, fieldFamilies[0]);
   }
   if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
     internalError(`the row '${name}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
   }
   const out: Branch[] = [];
-  for (const family of fieldFamilies) {
+  // A branch that the arguments rule out can never run, so the dispatch holds none of it.
+  for (const family of fitting) {
     const branch = branches[family];
     if (isRefusal(branch) || branch === undefined) continue;
     if (!isRule(branch)) internalError(`the row '${name}' holds an unreadable '${family}' branch`);
-    const bad = shaped.kind === "spread" ? settle(name, branch, shaped, count) : countOf(name, branch.args, count);
+    const bad =
+      shaped.kind === "spread" ? settle(name, branch, shaped, count, proofs) : countOf(name, branch.args, count);
     if (bad !== null && bad.kind !== "rule") return bad;
     out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
   }
@@ -378,8 +386,11 @@ export function select(
   receiver: Receiver,
   shaped: Shaped,
   count: number,
-  /** The PROVEN kind of each positional argument, `"unknown"` where the proof says nothing. */
-  kinds: readonly (Kind | "unknown")[] = [],
+  /**
+   * What the compiler proves of the arguments and of the elements of the element source
+   * (HR7). A call that no kind rule judges passes `UNPROVEN`.
+   */
+  proofs: Proofs,
 ): Selected {
   const name = verdict.name;
   switch (verdict.kind) {
@@ -403,17 +414,19 @@ export function select(
       // A pass owns this cell, so there is no rule to read. The RECEIVER still
       // answers: '$$.pop()' is a stream where the row states an array, and the
       // reader must hear that fact, not that a pass declined the node.
+      // The row may still state the kind of each operand, because HR7 judges them.
       const gate = receiverGate(name, receiver);
-      return gate ?? { kind: "noCell", name };
+      if (gate !== null) return gate;
+      return (verdict.args === undefined ? null : kindFault(name, verdict.args, proofs)) ?? { kind: "noCell", name };
     }
     case "perFamily":
-      return fromPerFamily(name, verdict.branches, verdict.uncertain, receiver, shaped, count, kinds);
+      return fromPerFamily(name, verdict.branches, verdict.uncertain, receiver, shaped, count, proofs);
     case "lower": {
       const gate = receiverGate(name, receiver);
       if (gate !== null) return gate;
       const cell = verdict.cell;
-      if (isObj(cell) && isObj(cell.byArgs)) return fromByArgs(name, cell.byArgs, shaped, count);
-      return settle(name, cell, shaped, count);
+      if (isObj(cell) && isObj(cell.byArgs)) return fromByArgs(name, cell.byArgs, shaped, count, proofs);
+      return settle(name, cell, shaped, count, proofs);
     }
   }
 }

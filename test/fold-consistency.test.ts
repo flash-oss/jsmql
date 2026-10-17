@@ -93,9 +93,19 @@ for (const v of NUMBER_SAMPLES) {
 
 const ARRAY_SAMPLES: unknown[][] = [[], [1, 2, 3, 4, 5], [3, 1, 2], ["a", "b", "c"], [1, 2, 2, 3]];
 const arrayCases: Case[] = [];
+// HR7: a row that takes numbers refuses an array of strings, and a comparison takes operands
+// of one kind. So the string sample runs these calls in a form that matches its elements.
+const NUMBERS_ONLY = new Set([".sum()", ".mean()", ".min()", ".max()"]);
+const FOR_STRINGS: Record<string, string> = {
+  ".filter(x => x !== 2)": '.filter(x => x !== "b")',
+  ".find(x => x === 2)": '.find(x => x === "b")',
+  ".some(x => x === 2)": '.some(x => x === "b")',
+  ".every(x => x > 0)": '.every(x => x > "a")',
+};
 for (const v of ARRAY_SAMPLES) {
   const lit = JSON.stringify(v);
-  for (const call of [
+  const strings = v.some((x) => typeof x === "string");
+  for (const written of [
     ".map(x => x)",
     ".filter(x => x !== 2)",
     // array `.slice` — full matrix: 1-arg pos/neg/0/out-of-range, 2-arg
@@ -177,7 +187,8 @@ for (const v of ARRAY_SAMPLES) {
     ".zipWith([10, 20, 30], (a, b) => a + b)",
     ".zipObject([10, 20, 30, 40])",
   ]) {
-    arrayCases.push({ lit, val: v, call });
+    if (strings && NUMBERS_ONLY.has(written)) continue;
+    arrayCases.push({ lit, val: v, call: strings ? (FOR_STRINGS[written] ?? written) : written });
   }
 }
 // pairs arrays for unzip / fromPairs

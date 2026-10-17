@@ -33,9 +33,9 @@ import { childEnv, filterInputs, onOwnStream } from "./inputs.ts";
 import { holderOf, lowerTruth, lowerValue, readablePath } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { FALSE, mongoTruthy, or } from "./mode.ts";
-import { typeOf } from "./prove.ts";
+import { proofsFor, typeOf } from "./prove.ts";
 import { isNothing, unreadable } from "./type.ts";
-import { select, shapeOf, type Receiver } from "./select.ts";
+import { select, shapeOf, UNPROVEN, type Receiver } from "./select.ts";
 import {
   isCallable,
   isKnownName,
@@ -417,7 +417,19 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     return node.type === "OperatorCall" ? plainQuery(node, env) : null;
   }
   const receiver: Receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
-  const sel = select(verdict, receiver, shapeOf(args), args.length);
+  // A `$`-named call is the developer's own MQL, so no kind rule judges it (HR7). The
+  // elements are the receiver's, or those of the last operand of an operator.
+  const source = recv ?? args[args.length - 1];
+  const proofs = escape
+    ? UNPROVEN
+    : proofsFor(args, env, true, source === undefined ? null : { node: source, env }, (a) => pathOfIn(a, env) !== null);
+  const sel = select(verdict, receiver, shapeOf(args), args.length, proofs);
+  if (sel.kind === "wrongKind") {
+    throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, [], undefined, {
+      ...(recv === null ? {} : { receiver: recv }),
+      args,
+    });
+  }
   if (sel.kind === "spreadRefused") throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, []);
   if (sel.kind === "wrongCount" || sel.kind === "rejectedCount") {
     if (node.type === "OperatorCall") return plainQuery(node, env);

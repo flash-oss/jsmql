@@ -394,6 +394,86 @@ $.v = $.flag ? 5 : [1, 2];  $.i = $.v.indexOf("x");   // a number has no `.index
 // → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }], default: null } } } }
 ```
 
+### The kind check
+
+HR7 says that a value that is PROVEN to have a kind its slot never takes is
+refused, even where the server accepts the MQL. A value of unknown kind passes.
+The rule lives in [kinds.ts](../../src/compiler/kinds.ts), and the fold and the
+dispatcher both read it, so a constant gets the same answer as a computed value.
+
+A row states the rule, never the compiler:
+
+- `slotType` gives the kind of one slot, or a set of kinds. `rest` gives the
+  kind of every other slot. `"any"` is the stated answer for a slot that takes
+  every kind, so "takes every kind" and "not yet typed" are different facts.
+  `test/registry-slot-kinds.test.ts` reports each slot that has neither.
+- `"element"` is the kind of one element of the element source: the receiver of
+  a method, the last operand of a production.
+- `homogeneous` says that every operand has one kind. The first operand of one
+  proven kind sets it. An operand of unknown kind, or of two or more kinds, sets no
+  kind and breaks no rule.
+- `elements` on the row of a method demands one kind of every element of the
+  receiver.
+
+A proof is a set of possible kinds. The compiler refuses a value only when NO
+possible kind fits. This holds for every rule: a slot, an element of the element
+source, the shared kind of `homogeneous` operands, and `elements` on the row.
+
+One case differs: the elements of an array of a fixed length, for example a literal.
+Each position of such an array is certain, so the proof of the elements is a TUPLE,
+one proof per position. A tuple breaks the `elements` rule when ANY position has no
+fitting kind. A set of kinds breaks it only when NO kind fits. So `[1, "a"].max()` is
+refused, and `$.nums.map(x => x + 1).max()` passes, because a computed array has one
+proof for all its positions. A position of unknown kind fits. A `null` that the source wrote proves the kind `null`, so it fits no position that needs numbers. The constant fold reads
+the same rule, so `[1, "a"].sum()` is not folded.
+
+A slot that takes a callback is not judged here, because the lowering of the callback
+names every spelling that the slot takes. A call with a spread passes its arguments as
+one packed list. The compiler judges the kind of each element of that list against its
+slot.
+
+A `null` that the source wrote proves the kind `null`, and that kind fits only `"any"`.
+A read that the proof shows to give no value keeps its own refusal, which names the
+field. A `null` that the call supplies proves no kind, because `jsmql.validate` binds
+every parameter to `null`.
+
+```js
+$.str + 1                  // → { $add: ["$str", 1] }   the kind of `$.str` is unknown
+$.str.trim() + 1           // ✗ `.trim()` gives a string, and `+` takes operands of one kind
+$.a = "x"; $.b = $.a + 1;  // ✗ the stage proved that `a` is a string
+$max(1, "a")               // → { $max: [1, "a"] }   the escape hatch passes each value as written
+```
+
+The query road obeys the same rule. The query cell of a comparison states
+`homogeneous`, as its value cell does. One addition comes from SR2: a query
+compares a FIELD that holds an array through the elements of the array, so
+`{ tags: "x" }` tests a string against the elements of `tags`. In a query, a
+field that the proof shows to be an array proves the kinds of its elements in
+place of `array`. A field with elements of unknown kind proves nothing. The array
+stays a possible kind when another operand can be an array too, because
+`{ tags: ["a"] }` compares the whole array.
+
+`proofsFor` states this once, for every query cell. The refusal then says that the elements of the field are the
+kind, because the value of the field is an array.
+
+```js
+$.tags = ["a"]; $match($.tags === "x");   // → { $match: { tags: "x" } }   a string meets the string elements
+$.tags = [1];   $match($.tags === "x");   // ✗ the elements are numbers
+$.n = 1;        $match($.n === "x");      // ✗ the stage proved that `n` is a number
+```
+
+The ordering operators take an `"orderable"` operand: a number, a string, a date
+or an ObjectId. The two sentinels, MinKey and MaxKey, compare with every kind and
+compute with none. So `kindFits` lets a sentinel fill every comparison slot
+(`"orderable"` and `"any"`). A sentinel never sets the kind of a `homogeneous`
+rule and never breaks it. A sentinel still fails each arithmetic slot, because the
+server refuses `$add: [MinKey, 1]`.
+
+A comparison that falls to `$expr` meets the rule of the value cell. The dispatch
+of the previous section reads the same rule: a branch whose slot refuses the
+ See
+[emit-pass.md](emit-pass.md#the-kind-of-a-slot) for the call sites.
+
 ### The truthiness rule
 
 `truthOf(value, type)` in [mode.ts](../../src/compiler/emit/mode.ts) reads a

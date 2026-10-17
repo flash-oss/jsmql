@@ -85,10 +85,14 @@ export const childEnv = (env: Env, node: object, key: string): Env => {
  * An index or receiver parameter is a different lowering. No row that
  * reaches this constructor states one.
  */
-function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { as: string; ref: string; in: unknown } {
-  if (cb.type !== "Lambda" || cb.body === undefined) {
-    internalError("a renderer asked for a callback body from an argument that is not an expression arrow");
-  }
+function callback(
+  cb: Expr,
+  env: Env,
+  read: (body: Expr, e: Env) => unknown,
+  /** The refusal for an argument that is no arrow. A row that states its iteratee slots never reaches the internal error. */
+  refusal: () => CodegenError,
+): { as: string; ref: string; in: unknown } {
+  if (cb.type !== "Lambda" || cb.body === undefined) throw refusal();
   if (cb.params.length !== 1) {
     internalError(`a renderer asked for a one-parameter callback, and the arrow has ${cb.params.length} parameters`);
   }
@@ -291,6 +295,10 @@ export function exprInputs(
   const value = (e: Expr): unknown => (overrides.has(e) ? overrides.get(e) : read.value(e, argEnv));
   // What one element of the receiver is, for a sort by name.
   const elementOfRecv = (): Type => (recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env)));
+  // An argument that is no arrow, where an iteratee or a predicate stands. An earlier pass
+  // rewrites each short spelling that the row accepts, so the refusal names the spellings left.
+  const notArrow = (cb: Expr, what: string): CodegenError =>
+    notAnArrow(name, what, slotFormsOf(name, "array", Math.max(0, args.indexOf(cb))), cb);
   return {
     name,
     recv,
@@ -301,8 +309,9 @@ export function exprInputs(
     kind: (e) => kindOf(e, argEnv),
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
-    iteratee: (cb) => callback(cb, argEnv, read.value),
-    predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
+    iteratee: (cb) => callback(cb, argEnv, read.value, () => notArrow(cb, "a key")),
+    predicate: (cb) =>
+      callback(cb, argEnv, read.truth, () => notArrow(cb, "a predicate")) as { as: string; ref: string; in: Truth },
     callback: (cb, mode) =>
       arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name, present),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),

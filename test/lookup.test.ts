@@ -2042,7 +2042,6 @@ describe("$$$.coll.aggregate — error cases", () => {
       ["size()", ".size()"],
       ["last()", ".last()"],
       ["nth(1)", ".nth(...)"],
-      ["sum()", ".sum()"],
       ["maxBy('total')", ".maxBy(...)"],
       ["every(o => o.v > 0)", ".every(...)"],
       ["reduce((a, o) => a + o.v, 0)", ".reduce(...)"],
@@ -2057,6 +2056,12 @@ describe("$$$.coll.aggregate — error cases", () => {
         );
       });
     }
+
+    // HR7: the slot holds documents, so a numeric terminal over it is refused first.
+    it("a numeric terminal over documents is refused before the chain is read", () => {
+      expect(() => jsmql("$.x = $$$.orders.sum().aggregate((o) => { $limit(1); });")).toThrow("'.sum()' takes numbers");
+      expect(() => jsmql("$.x = $$$.orders.sum();")).toThrow("'.sum()' takes numbers");
+    });
 
     it("a field read (.length / .<field>) and an index are named the same way", () => {
       expect(() => jsmql("$.x = $$$.orders.filter(o => o.v > 0).length.aggregate((o) => { $limit(1); });")).toThrow(
@@ -2114,8 +2119,6 @@ describe("$$$.coll.aggregate — error cases", () => {
       "at(0)",
       "nth(1)",
       "findLast(o => o.total > 1)",
-      "min()",
-      "max()",
       'minBy("total")',
       'maxBy("total")',
     ]) {
@@ -2123,6 +2126,16 @@ describe("$$$.coll.aggregate — error cases", () => {
         expect(() => jsmql(`$.r = $$$.orders.${terminal}.map(x => x);`)).toThrow(
           /'\.map\(\)' is not available on an 'object'/,
         );
+      });
+    }
+
+    // A numeric terminal over documents is refused (HR7), and `.size()` gives a number, not a document.
+    it("refuses '.map()' after '.size()'", () => {
+      expect(() => jsmql("$.r = $$$.orders.size().map(x => x);")).toThrow(/'\.map\(\)' is not available on a 'number'/);
+    });
+    for (const terminal of ["min()", "max()", "mean()"]) {
+      it(`refuses '.${terminal}' over documents`, () => {
+        expect(() => jsmql(`$.r = $$$.orders.${terminal};`)).toThrow(/takes numbers, but this array holds a document/);
       });
     }
 

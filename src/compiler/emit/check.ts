@@ -10,8 +10,7 @@
 // server always refuses. Each rule read here is a `BodyRule` field or an
 // `Arity` field the row states.
 
-import type { Arity, ArgType, BodyRule, Expr, Kind } from "../../registry/vocabulary.ts";
-import { kindFits } from "./select.ts";
+import type { Arity, ArgType, BodyRule, Expr } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
@@ -86,8 +85,16 @@ function matches(lit: Lit, expected: ArgType): boolean {
     case "fieldPath":
       // checkType handles this case before the literal gate runs — see `checkType`.
       return false;
+    case "regex":
+      return lit.kind === "regex" || lit.kind === "string";
+    case "any":
+    case "element":
+      return true;
+    case "orderable":
+      return lit.kind === "number" || lit.kind === "bigint" || lit.kind === "string";
     case "date":
     case "timestamp":
+    case "callback":
       return false;
   }
 }
@@ -97,6 +104,7 @@ const EXPECTS: Record<ArgType, string> = {
   int: "expects an integer",
   "int-or-long": "expects an integer",
   "number-or-date": "expects a number or a date",
+  orderable: "expects a number, a string, a date or an ObjectId",
   string: "expects a string",
   fieldName: "expects a field NAME to write: a plain string with no '$' and no dot",
   fieldPath: "expects a field PATH to read: a string that starts with '$'",
@@ -105,46 +113,16 @@ const EXPECTS: Record<ArgType, string> = {
   object: "expects a document",
   date: "expects a date",
   timestamp: "expects a timestamp",
+  any: "expects a value",
+  callback: "expects a callback",
+  regex: "expects a regular expression or a string",
+  element: "expects an element of the array",
 };
 
 const hint = (expected: ArgType): string => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
-};
-
-/**
- * A positional operand PROVEN to be a kind the slot can never take: `$.s.indexOf(n)`
- * with `n` a number the program wrote. The literal check above reads the source; this
- * one reads the proof, so a value computed three statements earlier is refused too.
- */
-export function checkSlotKinds(
-  name: string,
-  args: Arity,
-  operands: readonly Expr[],
-  kinds: readonly (Kind | "unknown")[],
-): void {
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    const k = kinds[Number(i)];
-    if (e === undefined || k === undefined || k === "unknown" || kindFits(k, t)) continue;
-    const expected = Array.isArray(t)
-      ? (t as readonly ArgType[]).map((x) => EXPECTS[x].replace(/^expects /, "")).join(" or ")
-      : EXPECTS[t as ArgType].replace(/^expects /, "");
-    throw new CodegenError(`'${spell(name)}' takes ${expected}, but this value is ${KIND_NOUN[k] ?? `a ${k}`}.`, e.pos);
-  }
-}
-
-/** The kind of a PROVEN value, as a noun with its article. */
-const KIND_NOUN: Readonly<Partial<Record<Kind, string>>> = {
-  string: "a string",
-  number: "a number",
-  bool: "a boolean",
-  array: "an array",
-  object: "a document",
-  date: "a date",
-  objectId: "an ObjectId",
-  binData: "binary data",
 };
 
 /** A literal of a type the slot can never take. `slot` is the key, or "" for a positional operand. */
@@ -315,10 +293,17 @@ export function checkBody(
   }
 }
 
-/** The per-slot literal checks an `Arity` states — `slotType`, `slotEnums` — over positional operands. */
 /** How the source spells a name: a stage or an operator keeps its '$', a method gets its dot and parentheses. */
 const spell = (name: string): string => (name.startsWith("$") ? name : `.${name}()`);
 
+/** The slot types whose literal rule reads the source text, so that no kind can state it. */
+const SOURCE_CHECKED: ReadonlySet<ArgType> = new Set(["int", "int-or-long", "fieldName", "fieldPath"]);
+
+/**
+ * The literal checks an `Arity` states, over positional operands: whole numbers, field
+ * names and paths, enums, ranges and the rest. The KIND of each slot is not here. HR7
+ * reads it from the proof of the operand, in `select`.
+ */
 export function checkSlots(
   name: string,
   args: Arity,
@@ -386,28 +371,17 @@ export function checkSlots(
       );
     }
   }
+  // The KIND of a slot is HR7's, and `select` judges it from the proof of each operand.
+  // Only the checks that read the SOURCE of a literal stay here: a whole number, and a
+  // field name or a field path, whose rules a kind cannot state.
   for (const [i, t] of Object.entries(args.slotType ?? {})) {
     const e = operands[Number(i)];
     if (e === undefined || (hasObjectForm && e.type === "ObjectLiteral")) continue;
-    if (!Array.isArray(t)) {
-      checkType(name, "", e, t as ArgType);
-      continue;
-    }
-    // A slot that takes more than one shape: the literal must match one of them,
-    // and the message names them all.
-    const types = t as readonly ArgType[];
     // A type with a message of its own answers for itself, so the reason names the
     // one shape the value nearly was: `$unwind("items")` is a path missing its '$'.
-    if (e.type === "StringLiteral" && types.includes("fieldPath")) {
-      checkType(name, "", e, "fieldPath");
-      continue;
-    }
-    const lit = literal(e);
-    if (lit === null || types.some((one) => matches(lit, one))) continue;
-    throw new CodegenError(
-      `'${name}' takes ${types.map((one) => EXPECTS[one].replace(/^expects /, "")).join(" or ")} here, and ${NOUN[lit.kind]} is neither.`,
-      e.pos,
-    );
+    const own = (Array.isArray(t) ? (t as readonly ArgType[]) : [t as ArgType]).find((one) => SOURCE_CHECKED.has(one));
+    if (own === undefined) continue;
+    if (e.type === "StringLiteral" || !Array.isArray(t)) checkType(name, "", e, own);
   }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
