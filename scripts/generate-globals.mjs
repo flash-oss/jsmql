@@ -467,7 +467,23 @@ const ITER = "iteratee: string | ((value: T) => any)";
 // (`keyBy`/`groupBy`/`countBy` — omitting the iteratee counts/groups by identity).
 const OPT_ITER = "iteratee?: string | ((value: T) => any)";
 const PRED = "predicate: string | [string, any] | Record<string, any> | ((value: T) => any)";
+/** The interfaces of the values that a `$to…` conversion reads. */
+const CONVERTIBLE = ["String", "Number", "Date", "Boolean"];
+
 const VALUE_METHOD_SIGNATURES = {
+  // ── conversions: MongoDB's `$to…` operators, on every kind of value ─────────
+  toDouble: { recv: CONVERTIBLE, sig: "(): number", doc: "The value as a double — `$toDouble`." },
+  toInt: { recv: CONVERTIBLE, sig: "(): number", doc: "The value as a 32-bit integer — `$toInt`." },
+  toLong: { recv: CONVERTIBLE, sig: "(): number", doc: "The value as a 64-bit integer — `$toLong`." },
+  toDecimal: { recv: CONVERTIBLE, sig: "(): number", doc: "The value as a Decimal128 — `$toDecimal`." },
+  toBool: {
+    recv: CONVERTIBLE,
+    sig: "(): boolean",
+    doc: "The value as a boolean — MongoDB's `$toBool`, which reads every string as true.",
+  },
+  toDate: { recv: ["String", "Number", "Date"], sig: "(): Date", doc: "The value as a date — `$toDate`." },
+  toObjectId: { recv: "String", sig: "(): any", doc: "A 24-hex string as an ObjectId — `$toObjectId`." },
+  toUUID: { recv: "String", sig: "(): any", doc: "A UUID string as a UUID — `$toUUID`." },
   // ── Array<T> — duplicate-free / element-preserving → T[] ────────────────────
   uniq: { recv: "Array", sig: "(): T[]", doc: "Duplicate-free copy — `_.uniq`." },
   uniqBy: { recv: "Array", sig: `(${ITER}): T[]`, doc: "Duplicate-free by iteratee — `_.uniqBy`." },
@@ -777,6 +793,7 @@ const VALUE_METHOD_INTERFACES = {
   String: "interface String",
   Number: "interface Number",
   Date: "interface Date",
+  Boolean: "interface Boolean",
 };
 
 // Emit the `interface Array<T> { … } interface String { … } interface Number { … }`

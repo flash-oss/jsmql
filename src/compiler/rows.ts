@@ -18,7 +18,7 @@ import type {
   Kind,
   SlotForm,
 } from "../registry/vocabulary.ts";
-import { FIELD_FAMILY_TYPES, isSlotLayout } from "../registry/vocabulary.ts";
+import { FIELD_FAMILY_TYPES, isDate, isSlotLayout } from "../registry/vocabulary.ts";
 import { NAMES } from "../registry/names.ts";
 
 /** Every row, by name. Null-prototype: `toString` and `valueOf` are real rows. */
@@ -546,8 +546,8 @@ export function productionPassesNullOf(key: string): boolean {
 }
 
 /** The safe value a row states for a null or missing receiver (`.log()` reads 1, `.toString()` reads ""). */
-function nullReceiverAsOf(name: string): 1 | "" | undefined {
-  return (row(name) as { nullReceiverAs?: 1 | "" } | undefined)?.nullReceiverAs;
+function nullReceiverAsOf(name: string): 0 | 1 | "" | false | Date | undefined {
+  return (row(name) as { nullReceiverAs?: 0 | 1 | "" | false | Date } | undefined)?.nullReceiverAs;
 }
 
 /**
@@ -560,8 +560,10 @@ function nullReceiverAsOf(name: string): 1 | "" | undefined {
 export function emptyValueOf(
   name: string,
   family: string | null,
-): [] | Record<string, never> | "" | 0 | 1 | Date | null {
+): [] | Record<string, never> | "" | 0 | 1 | false | Date | null {
   const stated = nullReceiverAsOf(name);
+  // a fresh date each time: an emitted document never shares the row's own value
+  if (isDate(stated)) return new Date(stated.getTime());
   if (stated !== undefined) return stated;
   const own = families(row(name)?.on);
   const fams: readonly string[] =

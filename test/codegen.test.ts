@@ -6049,6 +6049,14 @@ describe("every method declares the receiver family it needs", () => {
     toLocaleString: "universal in JS — Number, Date and Array all have it",
     exec: "regex receiver, matched before the family check",
     test: "regex receiver, matched before the family check",
+    toDouble: "a MongoDB conversion: the server judges the value",
+    toInt: "a MongoDB conversion: the server judges the value",
+    toLong: "a MongoDB conversion: the server judges the value",
+    toDecimal: "a MongoDB conversion: the server judges the value",
+    toBool: "a MongoDB conversion: the server judges the value",
+    toDate: "a MongoDB conversion: the server judges the value",
+    toObjectId: "a MongoDB conversion: the server judges the value",
+    toUUID: "a MongoDB conversion: the server judges the value",
   };
   it("only the genuinely universal methods opt out of the receiver check", () => {
     const optedOut = [...new Set([...valueMethodNames(), ...streamMethodNames()])].filter(acceptsAnyReceiver).sort();

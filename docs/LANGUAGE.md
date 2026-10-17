@@ -2684,6 +2684,26 @@ The `$range(…)` escape hatch stays raw MQL: `$range(5)` is `{ $range: 5 }`.
 
 > `round` uses MongoDB's `$round`, which rounds half-to-even. This **differs from lodash**, where `_.round(2.5) === 3`. JSMQL emits the native operator on purpose, instead of an emulation.
 
+### Type conversion methods
+
+Each conversion is a method with the name of MongoDB's own `$to…` operator. It works on every kind of value, and the server judges the conversion:
+
+```js
+$.price.toDouble()                 // { $toDouble: { $ifNull: ["$price", 0] } }
+$.qty.toInt()                      // { $toInt: { $ifNull: ["$qty", 0] } }
+$.big.toLong()                     // { $toLong: { $ifNull: ["$big", 0] } }
+$.amount.toDecimal()               // { $toDecimal: { $ifNull: ["$amount", 0] } }
+$.flag.toBool()                    // { $toBool: { $ifNull: ["$flag", false] } }
+$.ts.toDate()                      // { $toDate: { $ifNull: ["$ts", new Date("1970-01-01T00:00:00.000Z")] } }
+$.idString.toObjectId()            // { $toObjectId: "$idString" }
+$.uuidString.toUUID()              // { $toUUID: "$uuidString" }
+$.price?.toDouble()                // { $toDouble: "$price" }   — null for a missing price
+```
+
+Under a dot, a missing or `null` value reads as the safe value of the kind that the method gives: `0`, `false` or the epoch. See [HR5](LANG_RULES.md). An ObjectId and a UUID have no safe value, so `.toObjectId()` and `.toUUID()` give `null`, and the dot and `?.` emit one document. Write `?.` to get `null` for a missing value.
+
+**`.toBool()` is MongoDB's `$toBool`, not JavaScript's truthiness.** `$toBool` reads every string as `true`, the empty string too. JavaScript's `Boolean("")` is `false`. For JavaScript's truthiness, write `!!$.x`.
+
 ### MongoDB Type Conversion Utilities
 
 ```js

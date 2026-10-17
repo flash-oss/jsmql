@@ -207,11 +207,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * Under a dot (HR5), the row reads a null or missing receiver as this value. A row
    * states it only where it differs from the safe value of the row's family. The
    * logarithm of 0 stops the command, so `.log()` reads 1, as lodash's `_.divide()`
-   * reads a missing divisor as 1. `.toString()` works on every kind, and answers a
-   * string, so it reads `""`. MEASURED: `{ $ln: 0 }` stops the command, and
-   * `$.nope.log()` is 0, as `(1).log()` is. test/compiler-methods.test.ts measures each row.
+   * reads a missing divisor as 1. A method that works on every kind reads the safe
+   * value of the kind that it answers: `.toString()` reads `""`, `.toBool()` reads
+   * false. MEASURED: `{ $ln: 0 }` stops the command, and `$.nope.log()` is 0, as
+   * `(1).log()` is. test/compiler-methods.test.ts measures each row.
    */
-  nullReceiverAs?: 1 | "";
+  nullReceiverAs?: 0 | 1 | "" | false | Date;
   /**
    * The operator answers null for a null or missing receiver, on its own. So a `?.`
    * before the call needs no `$cond` null test: the bare call gives the answer the
@@ -731,6 +732,40 @@ const mongo = <
   e: MongoSpec<W, F, I> & ListedCells<W>,
 ): MongoEntry<W, F, I> => ({ ...e, kind: "mongo" });
 const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalEntry<W> => ({ ...e, kind: "global" });
+
+/**
+ * A conversion method: MongoDB's own `$to…` operator over the receiver. It works on every
+ * kind of value, and the server judges the conversion. Under a dot (HR5), a missing
+ * receiver reads as the safe value of the kind that the method answers, which the call
+ * states. A kind with no safe value, an ObjectId or a UUID, gives null, so the dot and
+ * `?.` emit one document. See docs/LANGUAGE.md § Type conversion methods.
+ */
+const conversion = (e: { method: string; operator: string; returns: TypeExpr; safe?: 0 | false | Date }) =>
+  name({
+    doc: `'.${e.method}()' — emits ${e.operator}. See docs/LANGUAGE.md.`,
+    call: true,
+    on: "any",
+    returns: e.returns,
+    neverNull: true,
+    // MEASURED: each `$to…` operator gives null for null
+    passesNull: true,
+    nullReceiverAs: e.safe,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "", none: true },
+      // an array literal goes one level deeper, so the server reads it as one argument
+      emit: ({ recv }) => ({ [e.operator]: singleArrayArg(recv) }),
+    },
+    stream: unsupported(`'.${e.method}()' has no stream form: it produces a value, not a stream of documents.`),
+    statement: unsupported(
+      `'.${e.method}()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.${e.method}();'`,
+    ),
+    group: unsupported(`'.${e.method}()' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+    window: unsupported(
+      `'.${e.method}()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+    ),
+  });
 
 /**
  * One BSON value constructor, and its mongosh spelling where it has one.
@@ -5885,6 +5920,17 @@ export const NAMES = {
       "'.toString()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
     ),
   }),
+
+  // the conversions: one method per MongoDB `$to…` operator, named as the operator is
+  toDouble: conversion({ method: "toDouble", operator: "$toDouble", returns: "number", safe: 0 }),
+  toInt: conversion({ method: "toInt", operator: "$toInt", returns: "number", safe: 0 }),
+  toLong: conversion({ method: "toLong", operator: "$toLong", returns: "number", safe: 0 }),
+  toDecimal: conversion({ method: "toDecimal", operator: "$toDecimal", returns: "number", safe: 0 }),
+  // MongoDB's `$toBool`, not JavaScript's truthiness: `$toBool("")` is true
+  toBool: conversion({ method: "toBool", operator: "$toBool", returns: "bool", safe: false }),
+  toDate: conversion({ method: "toDate", operator: "$toDate", returns: "date", safe: new Date(0) }),
+  toObjectId: conversion({ method: "toObjectId", operator: "$toObjectId", returns: "objectId" }),
+  toUUID: conversion({ method: "toUUID", operator: "$toUUID", returns: "binData" }),
 
   sort: name({
     doc: "'.sort()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",

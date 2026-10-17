@@ -408,6 +408,31 @@ var root = (e) => ({ ...e, kind: "root" });
 var name = (e) => ({ ...e, kind: "name" });
 var mongo = (e) => ({ ...e, kind: "mongo" });
 var global_ = (e) => ({ ...e, kind: "global" });
+var conversion = (e) => name({
+  doc: `'.${e.method}()' \u2014 emits ${e.operator}. See docs/LANGUAGE.md.`,
+  call: true,
+  on: "any",
+  returns: e.returns,
+  neverNull: true,
+  // MEASURED: each `$to…` operator gives null for null
+  passesNull: true,
+  nullReceiverAs: e.safe,
+  where: ["value"],
+  filter: viaFallback,
+  expr: {
+    args: { sig: "", none: true },
+    // an array literal goes one level deeper, so the server reads it as one argument
+    emit: ({ recv }) => ({ [e.operator]: singleArrayArg(recv) })
+  },
+  stream: unsupported(`'.${e.method}()' has no stream form: it produces a value, not a stream of documents.`),
+  statement: unsupported(
+    `'.${e.method}()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.${e.method}();'`
+  ),
+  group: unsupported(`'.${e.method}()' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+  window: unsupported(
+    `'.${e.method}()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`
+  )
+});
 var dateRow = (spelling) => global_({
   doc: `A date. \`new ${spelling}()\` is now; \`new ${spelling}(x)\` converts x.`,
   token: "Ident",
@@ -4861,6 +4886,16 @@ var NAMES = {
       "'.toString()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
+  // the conversions: one method per MongoDB `$to…` operator, named as the operator is
+  toDouble: conversion({ method: "toDouble", operator: "$toDouble", returns: "number", safe: 0 }),
+  toInt: conversion({ method: "toInt", operator: "$toInt", returns: "number", safe: 0 }),
+  toLong: conversion({ method: "toLong", operator: "$toLong", returns: "number", safe: 0 }),
+  toDecimal: conversion({ method: "toDecimal", operator: "$toDecimal", returns: "number", safe: 0 }),
+  // MongoDB's `$toBool`, not JavaScript's truthiness: `$toBool("")` is true
+  toBool: conversion({ method: "toBool", operator: "$toBool", returns: "bool", safe: false }),
+  toDate: conversion({ method: "toDate", operator: "$toDate", returns: "date", safe: /* @__PURE__ */ new Date(0) }),
+  toObjectId: conversion({ method: "toObjectId", operator: "$toObjectId", returns: "objectId" }),
+  toUUID: conversion({ method: "toUUID", operator: "$toUUID", returns: "binData" }),
   sort: name({
     doc: "'.sort()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
@@ -12017,6 +12052,7 @@ function nullReceiverAsOf(name2) {
 }
 function emptyValueOf(name2, family) {
   const stated = nullReceiverAsOf(name2);
+  if (isDate(stated)) return new Date(stated.getTime());
   if (stated !== void 0) return stated;
   const own = families(row(name2)?.on);
   const fams = family !== null ? [family] : own === void 0 || own === "any" ? [] : own.filter((f) => FIELD_FAMILIES.includes(f));

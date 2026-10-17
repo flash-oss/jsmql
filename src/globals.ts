@@ -3638,6 +3638,22 @@ declare global {
     snakeCase(): string;
     /** `Start Case` the string — `_.startCase`. */
     startCase(): string;
+    /** The value as a boolean — MongoDB's `$toBool`, which reads every string as true. */
+    toBool(): boolean;
+    /** The value as a date — `$toDate`. */
+    toDate(): Date;
+    /** The value as a Decimal128 — `$toDecimal`. */
+    toDecimal(): number;
+    /** The value as a double — `$toDouble`. */
+    toDouble(): number;
+    /** The value as a 32-bit integer — `$toInt`. */
+    toInt(): number;
+    /** The value as a 64-bit integer — `$toLong`. */
+    toLong(): number;
+    /** A 24-hex string as an ObjectId — `$toObjectId`. */
+    toObjectId(): any;
+    /** A UUID string as a UUID — `$toUUID`. */
+    toUUID(): any;
     /** Truncate to a length with an omission — `_.truncate`. */
     truncate(options?: { length?: number; omission?: string; separator?: string | RegExp }): string;
     /** `UPPER CASE` the string: the words, upper-cased and joined by a space — `_.upperCase`. */
@@ -3708,6 +3724,18 @@ declare global {
     tan(): number;
     /** The hyperbolic tangent, in radians — `Math.tanh`. */
     tanh(): number;
+    /** The value as a boolean — MongoDB's `$toBool`, which reads every string as true. */
+    toBool(): boolean;
+    /** The value as a date — `$toDate`. */
+    toDate(): Date;
+    /** The value as a Decimal128 — `$toDecimal`. */
+    toDecimal(): number;
+    /** The value as a double — `$toDouble`. */
+    toDouble(): number;
+    /** The value as a 32-bit integer — `$toInt`. */
+    toInt(): number;
+    /** The value as a 64-bit integer — `$toLong`. */
+    toLong(): number;
     /** Drop the digits after `precision` decimals — `Math.trunc`. */
     trunc(precision?: number): number;
   }
@@ -3797,8 +3825,32 @@ declare global {
       unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
       timezone?: string,
     ): Date;
+    /** The value as a boolean — MongoDB's `$toBool`, which reads every string as true. */
+    toBool(): boolean;
+    /** The value as a date — `$toDate`. */
+    toDate(): Date;
+    /** The value as a Decimal128 — `$toDecimal`. */
+    toDecimal(): number;
+    /** The value as a double — `$toDouble`. */
+    toDouble(): number;
+    /** The value as a 32-bit integer — `$toInt`. */
+    toInt(): number;
+    /** The value as a 64-bit integer — `$toLong`. */
+    toLong(): number;
     /** Week of the year, Sunday-based — `$week`. */
     week(timezone?: string): number;
+  }
+  interface Boolean {
+    /** The value as a boolean — MongoDB's `$toBool`, which reads every string as true. */
+    toBool(): boolean;
+    /** The value as a Decimal128 — `$toDecimal`. */
+    toDecimal(): number;
+    /** The value as a double — `$toDouble`. */
+    toDouble(): number;
+    /** The value as a 32-bit integer — `$toInt`. */
+    toInt(): number;
+    /** The value as a 64-bit integer — `$toLong`. */
+    toLong(): number;
   }
 }
 

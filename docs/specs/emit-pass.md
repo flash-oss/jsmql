@@ -980,6 +980,13 @@ HR5 reads a missing receiver as 0 for the same reason. So the presence proof cou
 the receiver as there under a dot, and a chain after the call adds no guard.
 `.rangeRight()` is the same document inside `$reverseArray`.
 
+A conversion method, for example `.toDouble()` or `.toBool()`, is MongoDB's `$to…`
+operator over the receiver. `conversion` in `src/registry/names.ts` builds each row. A
+conversion works on every kind (`on: "any"`), so its row states the safe value of the
+kind that it gives (`nullReceiverAs`). Each row also states `passesNull`, because each
+`$to…` operator gives null for null. `.toObjectId()` and `.toUUID()` state no safe value,
+so the dot and `?.` emit one document.
+
 ```
 (5).range(1)          → {"$range":[5,1,-1]}
 (1).range($.w + 1)    → {"$let":{"vars":{"jsmqlEnd":{"$ifNull":[{"$add":["$w",1]},0]}},

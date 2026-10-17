@@ -2043,6 +2043,35 @@ describe("compiler/emit — number ranges", () => {
 });
 
 describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
+  it("lowers each conversion to its MongoDB operator, and a dot reads a missing value as the safe value", () => {
+    const epoch = new Date("1970-01-01T00:00:00.000Z");
+    expect(compiled("$.n.toDouble()", (d) => d.n)).toEqual({ $toDouble: { $ifNull: ["$n", 0] } });
+    // `$toInt` of a double drops the fraction
+    expect(compiled("$.n.toInt()", (d) => Math.trunc(d.n))).toEqual({ $toInt: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.neg.toLong()", (d) => d.neg)).toEqual({ $toLong: { $ifNull: ["$neg", 0] } });
+    expect(expr("$.n.toDecimal()")).toEqual({ $toDecimal: { $ifNull: ["$n", 0] } });
+    expect(compiled("$.n.toBool()", () => true)).toEqual({ $toBool: { $ifNull: ["$n", false] } });
+    expect(compiled("$.mo.c.toBool()", () => false)).toEqual({ $toBool: { $ifNull: ["$mo.c", false] } });
+    // MongoDB's `$toBool` reads every string as true, where JavaScript's `Boolean("")` is false
+    expect(compiled("$.mo.a.toBool()", () => true, "$toBool of a string")).toEqual({
+      $toBool: { $ifNull: ["$mo.a", false] },
+    });
+    expect(compiled("$.d.toDate()", (d) => d.d)).toEqual({ $toDate: { $ifNull: ["$d", epoch] } });
+    // HR5: a missing value reads as the safe value of the kind that the method answers
+    expect(compiled("$.nope.toDouble()", () => 0)).toEqual({ $toDouble: { $ifNull: ["$nope", 0] } });
+    expect(compiled("$.nope.toBool()", () => false)).toEqual({ $toBool: { $ifNull: ["$nope", false] } });
+    expect(compiled("$.nope.toDate()", () => epoch)).toEqual({ $toDate: { $ifNull: ["$nope", epoch] } });
+    // after a `?.` the operator gives null, and no `$cond` tests the receiver
+    expect(compiled("$.nope?.toDouble()", () => null)).toEqual({ $toDouble: "$nope" });
+    // an ObjectId and a UUID have no safe value, so the dot and `?.` emit one document
+    expect(compiled("$.nope.toObjectId()", () => null)).toEqual({ $toObjectId: "$nope" });
+    expect(expr("$.nope?.toObjectId()")).toEqual({ $toObjectId: "$nope" });
+    expect(expr("$.id.toUUID()")).toEqual({ $toUUID: "$id" });
+    // DELIBERATELY invalid: the server refuses to convert an array. The literal goes one
+    // level deeper, so the server reads it as one argument and gives that conversion error.
+    expect(expr("[1, 2].toDouble()")).toEqual({ $toDouble: [[1, 2]] });
+  });
+
   it("lowers each number method to its operator, the receiver first", () => {
     expect(compiled("$.neg.abs()", () => Math.abs(DOC.neg))).toEqual({ $abs: { $ifNull: ["$neg", 0] } });
     expect(compiled("$.n.sqrt()", () => Math.sqrt(DOC.n))).toEqual({ $sqrt: { $ifNull: ["$n", 0] } });
@@ -2877,6 +2906,14 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   lastIndexOf: ["$.a.lastIndexOf(9)"],
   length: ["$.csv.length()"],
   toString: ["$.n.toString()"],
+  toDouble: ['"3.5".toDouble()'],
+  toInt: ["$.n.toInt()"],
+  toLong: ["$.n.toLong()"],
+  toDecimal: ["$.n.toDecimal()"],
+  toBool: ["$.n.toBool()"],
+  toDate: ["$.d.toDate()"],
+  toObjectId: ['"507f1f77bcf86cd799439011".toObjectId()'],
+  toUUID: ['"6ac24965-7917-4323-8d44-920ad1d69b94".toUUID()'],
   capitalize: ["$.w.capitalize()"],
   upperFirst: ["$.w.upperFirst()"],
   lowerFirst: ["$.w.lowerFirst()"],
@@ -3079,6 +3116,12 @@ const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   log10: ["$.nope.log10()", "(1).log10()"],
   acosh: ["$.nope.acosh()", "(1).acosh()"],
   toString: ["$.nope.toString()", '""'],
+  toDouble: ["$.nope.toDouble()", "(0).toDouble()"],
+  toInt: ["$.nope.toInt()", "(0).toInt()"],
+  toLong: ["$.nope.toLong()", "(0).toLong()"],
+  toDecimal: ["$.nope.toDecimal()", "(0).toDecimal()"],
+  toBool: ["$.nope.toBool()", "(false).toBool()"],
+  toDate: ["$.nope.toDate()", "new Date(0).toDate()"],
 };
 
 /**
@@ -3211,6 +3254,14 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   atanh: ["$.nope?.atanh()", "$.mo.d?.atanh()"],
   atan2: ["$.nope?.atan2($.n)", "$.mo.d?.atan2($.n)"],
   hypot: ["$.nope?.hypot(1)", "$.mo.d?.hypot(1)"],
+  toDouble: ["$.nope?.toDouble()", "$.mo.d?.toDouble()"],
+  toInt: ["$.nope?.toInt()", "$.mo.d?.toInt()"],
+  toLong: ["$.nope?.toLong()", "$.mo.d?.toLong()"],
+  toDecimal: ["$.nope?.toDecimal()", "$.mo.d?.toDecimal()"],
+  toBool: ["$.nope?.toBool()", "$.mo.d?.toBool()"],
+  toDate: ["$.nope?.toDate()", "$.mo.d?.toDate()"],
+  toObjectId: ["$.nope?.toObjectId()", "$.mo.d?.toObjectId()"],
+  toUUID: ["$.nope?.toUUID()", "$.mo.d?.toUUID()"],
 };
 
 describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a measurement", () => {
