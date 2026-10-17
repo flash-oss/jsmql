@@ -1911,6 +1911,26 @@ describe("compiler/emit — array methods", () => {
       "For the position of a value in an array, write '.indexOf(value)'.",
     );
     expect(() => expr("$.s.indexOfSubstring(1)")).toThrow("'indexOfSubstring' expects a string, but got a number.");
+    // Each argument of a string method takes one kind (HR7). The server refuses a fractional
+    // index or count, and a number where it reads a string.
+    expect(() => expr("$.s.substring(1.5)")).toThrow("'substring' expects an integer, but got a number.");
+    expect(() => expr("$.s.substring(0, 2.5)")).toThrow("'substring' expects an integer, but got a number.");
+    expect(() => expr("$.s.substr(1.5)")).toThrow("'substr' expects an integer, but got a number.");
+    expect(() => expr('$.s.charAt("1")')).toThrow("'charAt' expects an integer, but got a string.");
+    expect(() => expr("$.s.repeat(2.5)")).toThrow("'repeat' expects an integer, but got a number.");
+    expect(() => expr('$.s.padStart("3")')).toThrow("'padStart' expects an integer, but got a string.");
+    expect(() => expr("$.s.padEnd(3, 0)")).toThrow("'padEnd' expects a string, but got a number.");
+    expect(() => expr("$.s.split(1)")).toThrow("'split' expects a string, but got a number.");
+    expect(() => expr("$.s.startsWith(1)")).toThrow("'startsWith' expects a string, but got a number.");
+    expect(() => expr("$.s.endsWith(1)")).toThrow("'endsWith' expects a string, but got a number.");
+    expect(() => expr("$.s.includes(1)")).toThrow("'includes' expects a string, but got a number.");
+    expect(() => expr('$.s.replace(1, "x")')).toThrow("'replace' expects a string, but got a number.");
+    expect(() => expr('$.s.replaceAll(",", 1)')).toThrow("'replaceAll' expects a string, but got a number.");
+    expect(() => expr("$.s.includes($.s.length())")).toThrow(
+      "'.includes()' takes a string, but this value is a number.",
+    );
+    // The query road falls back to the value cell. Both cells state the kind.
+    expect(() => jsmql("$.s.startsWith(1)")).toThrow("'startsWith' expects a string, but got a number.");
     // the position is an integer: `$indexOfCP` refuses a fractional start (HR7)
     expect(() => expr('$.s.indexOfSubstring("b", 1.9)')).toThrow(
       "'indexOfSubstring' expects an integer, but got a number.",

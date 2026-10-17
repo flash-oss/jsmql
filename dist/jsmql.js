@@ -3425,7 +3425,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, count]", allowed: [1, 2] },
+      args: { sig: "start[, count]", allowed: [1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => {
         const start = normaliseSliceIndex(args[0], value(args[0]), r, true);
         const count = args.length === 1 ? strLenOf(r, true) : clampNonNegativeIndex(args[1], value(args[1]));
@@ -3448,7 +3448,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, end]", allowed: [0, 1, 2] },
+      args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => {
         if (args.length === 0) return recv;
         return nullOr(recv, present2, bind, (r) => {
@@ -3476,7 +3476,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value, present: present2, bind }) => {
         const lit = literalIndexValue(args[0]);
         if (lit !== null && lit < 0) return "";
@@ -3507,6 +3507,7 @@ var NAMES = {
       args: {
         sig: "separator",
         exact: 1,
+        slotType: { 0: "string" },
         // MEASURED: the server refuses `{ $split: ["$s", ""] }`, and MongoDB has no
         // operator that splits into characters. So this row refuses the empty separator
         // and emits nothing.
@@ -3536,7 +3537,7 @@ var NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3545,7 +3546,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] }))
     },
     stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
@@ -3567,7 +3568,7 @@ var NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3576,7 +3577,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
@@ -3615,7 +3616,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceOne: { input: recv, find: value(args[0]), replacement: value(args[1]) }
       })
@@ -3637,7 +3638,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceAll: { input: recv, find: value(args[0]), replacement: value(args[1]) }
       })
@@ -3745,7 +3746,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("start", r, args, value, bind))
     },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
@@ -3767,7 +3768,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present: present2 }) => nullOr(recv, present2, bind, (r) => padded("end", r, args, value, bind))
     },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
@@ -3787,7 +3788,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "count", exact: 1 },
+      args: { sig: "count", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({
         $reduce: { input: { $range: [0, value(args[0])] }, initialValue: "", in: { $concat: ["$$value", recv] } }
       })
@@ -3866,7 +3867,7 @@ var NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
@@ -3878,6 +3879,7 @@ var NAMES = {
       args: {
         sig: "searchString",
         exact: 1,
+        slotType: { 0: "string" },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => \u2026)'."
         }

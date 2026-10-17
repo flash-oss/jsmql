@@ -1699,6 +1699,18 @@ from the end. `.substring()` clamps to 0. `.charAt()` returns `""`; JSMQL never 
 that would return the *first* character instead. A start or length past the end of the string is safe.
 It yields `""`, as in JS.
 
+Each argument of a string method takes one kind (HR7). An index, a count and a length take an
+integer. A search string, a separator, a replacement and a pad string take a string. The compiler
+refuses a literal or a proven value of another kind. JavaScript converts such a value, so
+`"abc".substring(1.5)` and `"5".padStart(3, 0)` run there. MongoDB refuses a fractional index, and a
+number where it reads a string.
+
+```js
+$.s.substring(1.5)                 // ✗ start takes an integer
+$.s.padStart(3, 0)                 // ✗ the pad string takes a string: write "0"
+$.s.includes($.s.length())         // ✗ the search string takes a string, and .length() gives a number
+```
+
 **`.indexOfSubstring(searchString[, position])`** has the API of JavaScript's
 `String.prototype.indexOf`. JavaScript has no other name for it, so JSMQL gives it a name of
 its own (SR3). It lowers to `$indexOfCP`, so the index counts code points. `"😀a".indexOfSubstring("a")`

@@ -4317,7 +4317,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, count]", allowed: [1, 2] },
+      args: { sig: "start[, count]", allowed: [1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => {
           // `r` is there in the body of the null test, so its length takes no guard
@@ -4343,7 +4343,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "start[, end]", allowed: [0, 1, 2] },
+      args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
       emit: ({ recv, args, value, present, bind }) => {
         if (args.length === 0) return recv;
         return nullOr(recv, present, bind, (r) => {
@@ -4372,7 +4372,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "index", exact: 1 },
+      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value, present, bind }) => {
         // a literal index folds; a negative one is "" as in JavaScript
         const lit = literalIndexValue(args[0]);
@@ -4405,6 +4405,7 @@ export const NAMES = {
       args: {
         sig: "separator",
         exact: 1,
+        slotType: { 0: "string" },
         // MEASURED: the server refuses `{ $split: ["$s", ""] }`, and MongoDB has no
         // operator that splits into characters. So this row refuses the empty separator
         // and emits nothing.
@@ -4436,7 +4437,7 @@ export const NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
@@ -4445,7 +4446,7 @@ export const NAMES = {
       },
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({ $eq: [{ $indexOfCP: [r, value(args[0])] }, 0] })),
     },
@@ -4469,7 +4470,7 @@ export const NAMES = {
     // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
     // non-string value. A literal needle only: a run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
@@ -4481,7 +4482,7 @@ export const NAMES = {
       },
     },
     expr: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value, bind, present }) => {
         const needle = value(args[0]);
         const needleLen = strLenOf(needle);
@@ -4522,7 +4523,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceOne: { input: recv, find: value(args[0]), replacement: value(args[1]) },
       }),
@@ -4545,7 +4546,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "find, replacement", exact: 2 },
+      args: { sig: "find, replacement", exact: 2, slotType: { 0: "string", 1: "string" } },
       emit: ({ recv, args, value }) => ({
         $replaceAll: { input: recv, find: value(args[0]), replacement: value(args[1]) },
       }),
@@ -4662,7 +4663,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("start", r, args, value, bind)),
     },
@@ -4686,7 +4687,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      args: { sig: "targetLength[, padString]", allowed: [1, 2], slotType: { 0: "int", 1: "string" } },
       emit: ({ recv, args, value, bind, present }) =>
         nullOr(recv, present, bind, (r) => padded("end", r, args, value, bind)),
     },
@@ -4708,7 +4709,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "count", exact: 1 },
+      args: { sig: "count", exact: 1, slotType: { 0: "int" } },
       emit: ({ recv, args, value }) => ({
         $reduce: { input: { $range: [0, value(args[0])] }, initialValue: "", in: { $concat: ["$$value", recv] } },
       }),
@@ -4790,7 +4791,7 @@ export const NAMES = {
     // `$indexOfCP` it does not abort on a non-string value. A literal needle only: a
     // run-time needle cannot go into a pattern.
     filter: {
-      args: { sig: "searchString", exact: 1 },
+      args: { sig: "searchString", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, pathOf }) => {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
@@ -4802,6 +4803,7 @@ export const NAMES = {
       args: {
         sig: "searchString",
         exact: 1,
+        slotType: { 0: "string" },
         noCallback: {
           0: "'.includes()' searches for a STRING, not by a function. To test the elements of an array against a predicate write '.some(x => …)'.",
         },
