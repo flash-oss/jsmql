@@ -692,6 +692,7 @@ function randomOf({ recv, args, value, bind, present: present2 }) {
 var RANGE_ARGS = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
+  slotType: { 0: "int", 1: "int" },
   integer: [-1, 0, 1],
   zeroRefused: { 1: "For the start value n times, write 'n.range().map(() => start)'." }
 };
@@ -3673,7 +3674,7 @@ var NAMES = {
     // there) — no regex reaches: a regex literal is only an argument to `.match` and its
     // siblings, never an element of a written list.
     filter: {
-      args: { sig: "regexp", exact: 1 },
+      args: { sig: "regexp", exact: 1, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, pathOf: pathOf3, literal: literal2 }) => {
         const path = recv === null ? null : pathOf3(recv);
         const re = args[0];
@@ -3682,7 +3683,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "regex", exact: 1 },
+      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
@@ -3701,7 +3702,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" } },
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: "regex" } },
       emit: ({ recv, args, value, present: present2, bind }) => nullOr(recv, present2, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) }))
     },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
@@ -5524,7 +5525,7 @@ var NAMES = {
         sig: "amount, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "int-or-long", 2: ["string", "object"] },
+        slotType: { 0: "int-or-long", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -5559,7 +5560,7 @@ var NAMES = {
         sig: "amount, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "int-or-long", 2: ["string", "object"] },
+        slotType: { 0: "int-or-long", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -5599,7 +5600,7 @@ var NAMES = {
         sig: "other, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -5646,7 +5647,7 @@ var NAMES = {
             caseInsensitiveKeys: ["startOfWeek"]
           }
         },
-        slotType: { 1: ["string", "object"] }
+        slotType: { 0: "string", 1: ["string", "object"] }
       },
       emit: ({ recv, args, value }) => ({
         $dateTrunc: { date: recv, unit: value(args[0]), ...dateOptions(args[1], value) }
@@ -5927,7 +5928,7 @@ var NAMES = {
           1: `.isSame(other) without a unit is just '===' \u2014 write 'a === b'. Pass a unit to compare at that granularity: .isSame(other, "day").`
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -5969,7 +5970,7 @@ var NAMES = {
           1: `.isBefore(other) without a unit is just '<' \u2014 write 'a < b'. Pass a unit to compare at that granularity: .isBefore(other, "day").`
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -6013,7 +6014,7 @@ var NAMES = {
           1: `.isAfter(other) without a unit is just '>' \u2014 write 'a > b'. Pass a unit to compare at that granularity: .isAfter(other, "day").`
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -6145,7 +6146,7 @@ var NAMES = {
             caseInsensitiveKeys: ["startOfWeek"]
           }
         },
-        slotType: { 1: ["string", "object"] }
+        slotType: { 0: "string", 1: ["string", "object"] }
       },
       emit: ({ recv, args, value }) => {
         const opts = dateOptions(args[1], value);
@@ -8566,7 +8567,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "str", exact: 1 },
+      args: { sig: "str", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value }) => ({
         $regexMatch: regexBody(value(args[0]), recv, () => value(recv))
       })
@@ -9106,6 +9107,7 @@ var NAMES = {
       args: {
         sig: "stages | (o) => { \u2026stages }",
         exact: 1,
+        slotType: { 0: "array" },
         nonEmpty: {
           0: {
             noun: "stage",

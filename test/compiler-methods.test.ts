@@ -1904,6 +1904,35 @@ describe("compiler/emit — array methods", () => {
     expect(expr("$.a.has(null)")).toEqual({ $in: [null, { $ifNull: ["$a", []] }] });
     expect(expr("$.a.indexOf(null)")).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, null] });
   });
+
+  it("refuses a value of the wrong kind in each slot whose other rule implies a kind (HR7)", () => {
+    expect(() => expr('$.n.range("x")')).toThrow("'.range()' argument 1 takes an integer, but got a string.");
+    expect(() => expr('(0).range(5, "x")')).toThrow("'.range()' argument 2 takes an integer, but got a string.");
+    expect(() => expr('$.n.rangeRight("x")')).toThrow("'.rangeRight()' argument 1 takes an integer, but got a string.");
+    // the unit of a date method
+    expect(() => expr("$.d.plus(1, 5)")).toThrow("'.plus()' argument 2 takes a string, but got a number.");
+    expect(() => expr("$.d.minus(1, 5)")).toThrow("'.minus()' argument 2 takes a string, but got a number.");
+    expect(() => expr("$.d.diff($.e, 5)")).toThrow("'.diff()' argument 2 takes a string, but got a number.");
+    expect(() => expr("$.d.isSame($.e, 5)")).toThrow("'.isSame()' argument 2 takes a string, but got a number.");
+    expect(() => expr("$.d.isBefore($.e, 5)")).toThrow("'.isBefore()' argument 2 takes a string, but got a number.");
+    expect(() => expr("$.d.isAfter($.e, 5)")).toThrow("'.isAfter()' argument 2 takes a string, but got a number.");
+    expect(() => expr("$.d.startOf(5)")).toThrow("'.startOf()' argument 1 takes a string, but got a number.");
+    expect(() => expr("$.d.endOf(null)")).toThrow("'.endOf()' argument 1 takes a string, but got null.");
+    // the pattern of the regex methods, and the input of `/re/.test(s)`
+    expect(() => expr('$.s.matchAll("x")')).toThrow(
+      "'.matchAll()' argument 1 takes a regular expression, but got a string.",
+    );
+    expect(() => expr("$.s.match(5)")).toThrow(
+      "'.match()' argument 1 takes a string or a regular expression, but got a number.",
+    );
+    expect(() => jsmql("$.s.match(null)")).toThrow(
+      "'.match()' argument 1 takes a string or a regular expression, but got null.",
+    );
+    expect(() => expr("/a/.test(null)")).toThrow("'.test()' argument 1 takes a string, but got null.");
+    expect(expr('$.s.match("x")')).toEqual({
+      $cond: [{ $lte: ["$s", null] }, null, { $regexMatch: { input: "$s", regex: "x" } }],
+    });
+  });
 });
 
 // ── the server ───────────────────────────────────────────────────────────────

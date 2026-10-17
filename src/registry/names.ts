@@ -1316,6 +1316,7 @@ function randomOf({ recv, args, value, bind, present }: ExprIn): unknown {
 const RANGE_ARGS: Arity = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
+  slotType: { 0: "int", 1: "int" },
   integer: [-1, 0, 1],
   zeroRefused: { 1: "For the start value n times, write 'n.range().map(() => start)'." },
 };
@@ -4578,7 +4579,7 @@ export const NAMES = {
     // there) — no regex reaches: a regex literal is only an argument to `.match` and its
     // siblings, never an element of a written list.
     filter: {
-      args: { sig: "regexp", exact: 1 },
+      args: { sig: "regexp", exact: 1, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, pathOf, literal }) => {
         const path = recv === null ? null : pathOf(recv);
         const re = args[0];
@@ -4589,7 +4590,7 @@ export const NAMES = {
       },
     },
     expr: {
-      args: { sig: "regex", exact: 1 },
+      args: { sig: "regex", exact: 1, slotType: { 0: ["string", "regex"] } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({ $regexMatch: regexBody(r, args[0], () => value(args[0])) })),
     },
@@ -4610,7 +4611,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" } },
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" }, slotType: { 0: "regex" } },
       emit: ({ recv, args, value, present, bind }) =>
         nullOr(recv, present, bind, (r) => ({ $regexFindAll: regexBody(r, args[0], () => value(args[0])) })),
     },
@@ -6547,7 +6548,7 @@ export const NAMES = {
         sig: "amount, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "int-or-long", 2: ["string", "object"] },
+        slotType: { 0: "int-or-long", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -6583,7 +6584,7 @@ export const NAMES = {
         sig: "amount, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "int-or-long", 2: ["string", "object"] },
+        slotType: { 0: "int-or-long", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -6624,7 +6625,7 @@ export const NAMES = {
         sig: "other, unit[, timezone]",
         allowed: [2, 3],
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -6672,7 +6673,7 @@ export const NAMES = {
             caseInsensitiveKeys: ["startOfWeek"],
           },
         },
-        slotType: { 1: ["string", "object"] },
+        slotType: { 0: "string", 1: ["string", "object"] },
       },
       emit: ({ recv, args, value }) => ({
         $dateTrunc: { date: recv, unit: value(args[0]), ...dateOptions(args[1], value) },
@@ -6961,7 +6962,7 @@ export const NAMES = {
           1: ".isSame(other) without a unit is just '===' — write 'a === b'. Pass a unit to compare at that granularity: .isSame(other, \"day\").",
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -7004,7 +7005,7 @@ export const NAMES = {
           1: ".isBefore(other) without a unit is just '<' — write 'a < b'. Pass a unit to compare at that granularity: .isBefore(other, \"day\").",
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -7049,7 +7050,7 @@ export const NAMES = {
           1: ".isAfter(other) without a unit is just '>' — write 'a > b'. Pass a unit to compare at that granularity: .isAfter(other, \"day\").",
         },
         slotEnums: { 1: TIME_UNIT },
-        slotType: { 0: "date", 2: ["string", "object"] },
+        slotType: { 0: "date", 1: "string", 2: ["string", "object"] },
         body: {
           2: {
             required: [],
@@ -7184,7 +7185,7 @@ export const NAMES = {
             caseInsensitiveKeys: ["startOfWeek"],
           },
         },
-        slotType: { 1: ["string", "object"] },
+        slotType: { 0: "string", 1: ["string", "object"] },
       },
       emit: ({ recv, args, value }) => {
         // the start of the NEXT bucket, one millisecond back
@@ -9706,7 +9707,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "str", exact: 1 },
+      args: { sig: "str", exact: 1, slotType: { 0: "string" } },
       emit: ({ recv, args, value }) => ({
         $regexMatch: regexBody(value(args[0]), recv as Expr, () => value(recv as Expr)),
       }),
@@ -10301,6 +10302,7 @@ export const NAMES = {
       args: {
         sig: "stages | (o) => { …stages }",
         exact: 1,
+        slotType: { 0: "array" },
         nonEmpty: {
           0: {
             noun: "stage",
