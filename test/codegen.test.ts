@@ -7487,13 +7487,8 @@ describe("set operations on arrays", () => {
     });
   });
   it("works with array literals", () => {
-    expect(jsmql.expr("[1, 2, 3].intersection([2, 3, 4])")).toEqual({
-      $setIntersection: [
-        [1, 2, 3],
-        [2, 3, 4],
-      ],
-    });
-    expect(jsmql.expr("[1, 2, 3].difference([2])")).toEqual({ $setDifference: [[1, 2, 3], [2]] });
+    expect(jsmql.expr("[1, 2, 3].intersection([2, 3, 4])")).toEqual([2, 3]);
+    expect(jsmql.expr("[1, 2, 3].difference([2])")).toEqual([1, 3]);
   });
   it("symmetricDifference composes $setDifference of the union and the intersection", () => {
     expect(jsmql.expr("$.a.symmetricDifference($.b)")).toEqual({
@@ -7958,9 +7953,10 @@ describe("Array.from is not part of jsmql", () => {
     }
   });
   it("the way out it names is the leaner MQL", () => {
-    expect(jsmql.expr("(5).range()")).toEqual({ $range: [0, 5] });
-    expect(jsmql.expr("(3).range().map(i => i * 2)")).toEqual({
-      $map: { input: { $range: [0, 3] }, as: "i", in: { $multiply: ["$$i", 2] } },
+    expect(jsmql.expr("(5).range()")).toEqual([0, 1, 2, 3, 4]);
+    expect(jsmql.expr("(3).range().map(i => i * 2)")).toEqual([0, 2, 4]);
+    expect(jsmql.expr("$.n.range()")).toEqual({
+      $range: [0, { $ifNull: ["$n", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$n", 0] }] }, 1, -1] }],
     });
   });
 });
@@ -8322,7 +8318,7 @@ describe("the string forms of a slice: .substring and .substr", () => {
     });
   });
   it("substr(-n) reads the last n characters: the start is strLen - n, floored", () => {
-    expect(jsmql.expr('"hello".substr(-3)')).toEqual({ $substrCP: ["hello", 2, 5] });
+    expect(jsmql.expr('"hello".substr(-3)')).toEqual("llo");
     expect(jsmql.expr("String($.s).substr(-3)")).toEqual({
       $let: {
         vars: { jsmqlRecv: { $toString: "$s" } },

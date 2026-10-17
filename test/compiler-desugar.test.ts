@@ -7,7 +7,10 @@
 
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/compiler/parse/parser.ts";
-import { desugar, desugarVerbose, RULES } from "../src/compiler/passes/desugar.ts";
+import { desugar, desugarVerbose } from "../src/compiler/passes/desugar.ts";
+import { RULES } from "../src/compiler/passes/desugar-rules.ts";
+// The fold asks the emitter for the lowering of a constant, which the emitter lends at load.
+import "../src/compiler/emit/lower.ts";
 import { edge, STATEMENT } from "../src/compiler/passes/position.ts";
 import { mapTreeIn } from "../src/compiler/passes/walk.ts";
 

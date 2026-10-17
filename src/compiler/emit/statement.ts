@@ -20,7 +20,7 @@ import type { BodyPath } from "../rows.ts";
 import type { Family } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
-import { evaluate } from "../passes/evaluate.ts";
+import { constantOf } from "../passes/evaluate.ts";
 import {
   bansNestedOf,
   diagnosticOf,
@@ -1179,7 +1179,7 @@ function elementWiseOnDocument(value: Expr, env: Env): readonly Link[] | null {
     // A stage reads its field list before any document, so the stream cell takes a list
     // the SOURCE spells. `$ = $.pick($.keys)` names a list only the server knows, and
     // the value cell reads it at query time — under `$replaceWith`, as any root value.
-    if (!link.args.every((a) => a.type !== "SpreadElement" && evaluate(a, new Map()).ok)) return null;
+    if (!link.args.every((a) => a.type !== "SpreadElement" && constantOf(a).ok)) return null;
   }
   return links;
 }

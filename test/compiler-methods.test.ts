@@ -1929,13 +1929,14 @@ const lodashRange = (start: number, end?: number, step?: number): number[] => {
 
 describe("compiler/emit — number ranges", () => {
   it("folds the direction when both bounds are constants", () => {
-    expect(compiled("(0).range(4)", () => lodashRange(0, 4))).toEqual({ $range: [0, 4] });
-    expect(compiled("(0).range(-4)", () => lodashRange(0, -4))).toEqual({ $range: [0, -4, -1] });
-    expect(compiled("(1).range(5)", () => lodashRange(1, 5))).toEqual({ $range: [1, 5] });
-    expect(compiled("(5).range(1)", () => lodashRange(5, 1))).toEqual({ $range: [5, 1, -1] });
-    expect(compiled("(3).range(3)", () => lodashRange(3, 3))).toEqual({ $range: [3, 3] });
-    expect(compiled("(4).range()", () => lodashRange(4))).toEqual({ $range: [0, 4] });
-    expect(compiled("(0).range(20, 5)", () => lodashRange(0, 20, 5))).toEqual({ $range: [0, 20, 5] });
+    // a closed range is a constant, so the fold writes the list itself
+    expect(compiled("(0).range(4)", () => lodashRange(0, 4))).toEqual([0, 1, 2, 3]);
+    expect(compiled("(0).range(-4)", () => lodashRange(0, -4))).toEqual([0, -1, -2, -3]);
+    expect(compiled("(1).range(5)", () => lodashRange(1, 5))).toEqual([1, 2, 3, 4]);
+    expect(compiled("(5).range(1)", () => lodashRange(5, 1))).toEqual([5, 4, 3, 2]);
+    expect(compiled("(3).range(3)", () => lodashRange(3, 3))).toEqual([]);
+    expect(compiled("(4).range()", () => lodashRange(4))).toEqual([0, 1, 2, 3]);
+    expect(compiled("(0).range(20, 5)", () => lodashRange(0, 20, 5))).toEqual([0, 5, 10, 15]);
   });
 
   it("reads the receiver as lodash's end alone, and as its start with more arguments", () => {
@@ -1976,9 +1977,7 @@ describe("compiler/emit — number ranges", () => {
   });
 
   it("gives .rangeRight() as the same range, reversed", () => {
-    expect(compiled("(1).rangeRight(5)", () => lodashRange(1, 5).reverse())).toEqual({
-      $reverseArray: { $range: [1, 5] },
-    });
+    expect(compiled("(1).rangeRight(5)", () => lodashRange(1, 5).reverse())).toEqual([4, 3, 2, 1]);
     expect(compiled("$._id.rangeRight($.neg, -2)", (d) => lodashRange(d._id, d.neg, -2).reverse())).toEqual({
       $reverseArray: { $range: [{ $ifNull: ["$_id", 0] }, { $ifNull: ["$neg", 0] }, -2] },
     });

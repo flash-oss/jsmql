@@ -12,12 +12,11 @@
 import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
-import { objectIdTypo } from "../objectid-guard.ts";
+import { bigIntToLong, ObjectId, regexValue } from "../../bson.ts";
 import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
-import { evaluate } from "../passes/evaluate.ts";
+import { constantOf, provideLowering } from "../passes/evaluate.ts";
 import {
   bindsOf,
   callbackParamsOf,
@@ -46,7 +45,7 @@ import {
 import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlots } from "./check.ts";
 import { operandShapeOf } from "../rows.ts";
-import type { Env } from "./env.ts";
+import { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
 import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
@@ -61,7 +60,7 @@ import { injectedPlacement } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
 const NAMESPACES = namespaceNames();
-const READ: Reader = { value: lowerValue, truth: lowerTruth };
+const READ: Reader = { value: lowerValue, truth: lowerTruth, boolean: lowerBoolean };
 
 /** The position the Env stands in, or `value` when phase 4 named a waypoint (a raw `{ $op: … }` in a value slot is a document). */
 const positionIn = (env: Env): Position => positionOf(env.site.where) ?? "value";
@@ -77,35 +76,6 @@ const NOT_EXPR: ReadonlySet<Exclude<CallArg | ArrayElement, Expr>["type"]> = new
 const isExpr = (a: CallArg | ArrayElement): a is Expr => !(NOT_EXPR as ReadonlySet<string>).has(a.type);
 
 // ── the value reading ────────────────────────────────────────────────────────
-
-/**
- * The node types whose VALUE is not their document: a BigInt spells `$toLong`.
- * `undefined` and a regex have no value position. A lambda is not a value, and a
- * string literal is itself already. Each has its own case below.
- */
-const OWN_CASE: ReadonlySet<Expr["type"]> = new Set<Expr["type"]>([
-  "StringLiteral",
-  "BigIntLiteral",
-  "UndefinedLiteral",
-  "RegexLiteral",
-  "Lambda",
-  // A literal's own case lowers its parts and holds the list-operand rule for a
-  // raw `{ $op: … }`. Settling the whole literal would skip both.
-  "ObjectLiteral",
-  "ArrayLiteral",
-]);
-const hasOwnCase = (type: Expr["type"]): boolean => OWN_CASE.has(type);
-
-/**
- * A settled value with every BigInt inside it as a `Long`, or the refusal for the
- * first that does not fit 64 bits. A BigInt literal IS an int64 in MQL. This function
- * builds the value here, so the server never parses it from a string per document.
- */
-function settledValue(value: unknown, pos: number): unknown {
-  const converted = longsWithin(value);
-  if (!converted.ok) throw E.bigIntTooLarge(converted.tooBig.toString(), pos);
-  return converted.value;
-}
 
 /**
  * The join road, lent by statement.ts at load: a chain on another collection in a
@@ -125,23 +95,6 @@ export function lowerValue(node: Expr, env: Env): unknown {
   ) {
     if (joinRoad === null) internalError("statement.ts did not lend the join road before lower.ts read it");
     return joinRoad(node, env);
-  }
-  // A constant is its VALUE, before any row is read. The fold writes back what has
-  // a source spelling. A Date or an ObjectId has none and stays a node, so
-  // the evaluator is asked here — with its own exclusions (an operator call is the
-  // developer's MQL and is never evaluated).
-  if (node.type !== "OperatorCall" && !hasOwnCase(node.type)) {
-    const settled = evaluate(node, new Map());
-    if (settled.ok) {
-      // `ObjectId("…")` settles to a live id: the same plausibility rule the
-      // literal has, because the same typo is possible.
-      if (isObjectId(settled.value)) {
-        const hex = objectIdHex(settled.value);
-        const typo = hex === null ? null : objectIdTypo(hex);
-        if (typo !== null) throw new E.CodegenError(typo, node.pos);
-      }
-      return settledValue(settled.value, node.pos);
-    }
   }
   const stopped = stoppedChain(node);
   // a `?.` on a receiver that is certainly there — the document, a `$lookup`'s array — asks nothing
@@ -236,6 +189,15 @@ export function lowerValue(node: Expr, env: Env): unknown {
 }
 
 // ── the truth reading ────────────────────────────────────────────────────────
+
+/** The JavaScript boolean of `node` as a VALUE: `Boolean(x)` and `!!x`. See `truthOf`. */
+export function lowerBoolean(node: Expr, env: Env): Truth {
+  const joins = node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||");
+  if (joins || node.type === "UnaryExpr" || node.type === "TernaryExpr" || node.type === "ExprBlock") {
+    return lowerTruth(node, env);
+  }
+  return truthOf(lowerValue(nullPassing(node), env), typeOf(node, env), true);
+}
 
 export function lowerTruth(node: Expr, env: Env): Truth {
   if (node.type === "BinaryExpr" && (node.op === "&&" || node.op === "||")) {
@@ -750,7 +712,7 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
   // JavaScript's `arr["p"]` is `undefined`.
   if (keyKind === "string") return { $getField: { field: named, input: orEmpty({}) } };
   const isString = (o: unknown) => boolTruth({ $eq: [{ $type: o }, "string"] });
-  const literal = evaluate(node.index, new Map());
+  const literal = constantOf(node.index);
   if (literal.ok && typeof literal.value === "number" && Number.isInteger(literal.value)) {
     const i = literal.value;
     if (i < 0) throw E.negativeIndex(i, node.pos);
@@ -870,7 +832,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
     }
-    checkSlots(name, sel.rule.args, exprArgs, true, recvNode);
+    checkSlots(name, sel.rule.args, exprArgs, true, recvNode, env.site.settling);
     // HR5: under a dot, a method on a receiver that may be null or missing runs on
     // the EMPTY value of its family — `[]` for an array method, `{}` for an object
     // method — so the operator answers what it answers there, and the cell sees a
@@ -968,7 +930,7 @@ function runDispatch(
   const ref = bound === null ? lowered : bound.ref;
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule: Extract<Selected, { kind: "dispatch" }>["branches"][number]["rule"]) => {
-    checkSlots(name, rule.args, args);
+    checkSlots(name, rule.args, args, true, undefined, env.site.settling);
     // The branch's `$type` test proved the receiver's family — and that it is there,
     // unless the branch admits a null or a missing value too (`alsoTypes`).
     const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
@@ -1247,7 +1209,7 @@ function production(node: Expr, key: string, operands: readonly Expr[], env: Env
     if (sel.kind === "wrongKind") operandsFirst(operands, env);
     throw E.refusalFor(sel, `'${spelled}'`, "", positionIn(env), node.pos, [], undefined, { args: operands });
   }
-  checkSlots(spelled, sel.rule.args, operands);
+  checkSlots(spelled, sel.rule.args, operands, true, undefined, env.site.settling);
   const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
   return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
 }
@@ -1268,7 +1230,7 @@ function chainOf(node: Expr, op: string): Expr[] {
 function unary(node: Extract<Expr, { type: "UnaryExpr" }>, env: Env): unknown {
   // `!!x` is `Boolean(x)`: the truth of x, as a value.
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return asValue(lowerTruth(node.argument.argument, childEnv(env, node, "argument")));
+    return lowerBoolean(node.argument.argument, childEnv(env, node, "argument"));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === undefined) internalError(`no production builds a unary '${node.op}'`);
@@ -1439,3 +1401,24 @@ function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e
 
 /** The callback parameter kinds a row states, for a caller binding them. Unused parameters bind as "unknown". */
 export { callbackParamsOf };
+
+// ── the lowering that the constant engine asks for ───────────────────────────
+
+/**
+ * A closed expression as MQL, so the interpreter can give its value. The declared functions
+ * are bound as a declaration binds them (statement.ts), and each call inlines its body. The
+ * lowering only asks for a value, so `settling` is set: see `Site.settling`. The engine
+ * reads a throw as "not constant", and the real emit pass reports the error at the real site.
+ */
+provideLowering((node, functions) => {
+  let env = Env.root({ node, functions: [...functions.values()] }, "value", undefined, true);
+  for (const [name, lambda] of functions) {
+    env = env.bind(name, {
+      ref: { kind: "function", lambda, expanding: lambda.body === undefined },
+      type: ANY,
+      mutable: false,
+      pos: lambda.pos,
+    });
+  }
+  return lowerValue(node, env);
+});

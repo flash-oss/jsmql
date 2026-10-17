@@ -7,7 +7,8 @@
 // type, and there is exactly one constructor, so a renderer cannot be handed a
 // record with a service missing.
 
-import { regexValue } from "../../bson.ts";
+import { bsonConstant, bsonNullary, regexValue } from "../../bson.ts";
+import { constantOf, settled } from "../passes/evaluate.ts";
 import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth, Type } from "../../registry/vocabulary.ts";
 import type { Pipeline } from "../../registry/ast.ts";
 import { orderBySpec, sortSpecOf, streamSortAsk, type SortAsk } from "./sort-spec.ts";
@@ -64,7 +65,11 @@ function readableSort<A extends SortAsk>(ask: A, t: Type, holder: string, pos: n
 }
 
 /** The two readings of an expression, supplied by lower.ts. */
-export type Reader = { value: (node: Expr, env: Env) => unknown; truth: (node: Expr, env: Env) => Truth };
+export type Reader = {
+  value: (node: Expr, env: Env) => unknown;
+  truth: (node: Expr, env: Env) => Truth;
+  boolean: (node: Expr, env: Env) => Truth;
+};
 
 /** The Env a child at property `key` of `node` is lowered under — phase 4's answer, applied. */
 export const childEnv = (env: Env, node: object, key: string): Env => {
@@ -292,7 +297,9 @@ export function exprInputs(
   present = false,
 ): ExprIn {
   const argEnv = childEnv(env, node, "args");
-  const value = (e: Expr): unknown => (overrides.has(e) ? overrides.get(e) : read.value(e, argEnv));
+  // The fold does not visit a node that the cell BUILT (`list.map(key)` from its arguments), so this code settles it.
+  const value = (e: Expr): unknown =>
+    overrides.has(e) ? overrides.get(e) : read.value(env.site.settling ? e : settled(e), argEnv);
   // What one element of the receiver is, for a sort by name.
   const elementOfRecv = (): Type => (recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env)));
   // An argument that is no arrow, where an iteratee or a predicate stands. An earlier pass
@@ -309,6 +316,7 @@ export function exprInputs(
     kind: (e) => kindOf(e, argEnv),
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
+    boolean: (e) => read.boolean(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value, () => notArrow(cb, "a key")),
     predicate: (cb) =>
       callback(cb, argEnv, read.truth, () => notArrow(cb, "a predicate")) as { as: string; ref: string; in: Truth },
@@ -368,6 +376,17 @@ export function exprInputs(
       );
     },
     slot: () => env.chain.slot().path,
+    construct: (spelling, refusal, arg) => {
+      const given = arg === undefined ? null : constantOf(arg);
+      const built =
+        arg === undefined
+          ? bsonNullary(spelling)
+          : given !== null && given.ok
+            ? bsonConstant(spelling, given.value)
+            : null;
+      if (built === null) throw new CodegenError(refusal, (node as { pos: number }).pos);
+      return built;
+    },
   };
 }
 
@@ -616,7 +635,7 @@ export function stageInputs(
     name,
     args,
     keys,
-    value: (e) => read.value(e, argEnv),
+    value: (e) => read.value(env.site.settling ? e : settled(e), argEnv),
     truth: (e) => read.truth(e, argEnv),
     predicate: (cb) => {
       const b = body(cb, "a predicate");

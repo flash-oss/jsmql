@@ -22,7 +22,7 @@ import { queryOwnValue } from "../../registry/vocabulary.ts";
 import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
-import { evaluate } from "../passes/evaluate.ts";
+import { constantOf } from "../passes/evaluate.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 import { bsonTagOf, isDate, isPlainObject, isRegExp, longsWithin, ObjectId, regexValue } from "../../bson.ts";
 import { consult, listedIn } from "./consult.ts";
@@ -346,7 +346,7 @@ function rawValue(e: Expr, env: Env): unknown {
   // nothing. This is the silent kind of wrong answer. A constant that happens
   // to be written as an expression (`-1`) has already settled to a value, so
   // it passes.
-  if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !evaluate(e, new Map()).ok) {
+  if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !constantOf(e).ok) {
     throw E.expressionInQueryValue(e.pos);
   }
   const value = lowerValue(e, env);
@@ -436,7 +436,7 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, []);
   }
   if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
-  if (!escape) checkSlots(name, sel.rule.args, args);
+  if (!escape) checkSlots(name, sel.rule.args, args, true, undefined, env.site.settling);
   const inputs = filterInputs(name, recv, args, positionalKeysOf(name), env, node, {
     lowerValue,
     lowerFilter,
@@ -612,7 +612,7 @@ export function constantIn(e: Expr): { value: unknown } | null {
   // constant to compare a field with.
   if (e.type === "RegexLiteral") return e.injected !== undefined ? { value: e.injected } : null;
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
-  const v = evaluate(e, new Map());
+  const v = constantOf(e);
   if (!v.ok) return null;
   // A BigInt IS an int64 in MQL. The compiler converts it here, so `$.n === 5n`
   // stays a query the index serves. Left unconverted, it would fall through to

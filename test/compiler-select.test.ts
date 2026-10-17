@@ -34,7 +34,8 @@ describe("compiler/emit/select — the argument partition", () => {
     expect(shapeOf(argsOf("f({ length: 3 })"))).toEqual({ kind: "object", keys: ["length"] });
     expect(shapeOf(argsOf("f({ [k]: 3, n: 1 })"))).toEqual({ kind: "object", keys: ["n"] });
     expect(shapeOf(argsOf('f("abc")'))).toEqual({ kind: "constant", value: "abc" });
-    expect(shapeOf(argsOf("f(1 + 2)"))).toEqual({ kind: "constant", value: 3 });
+    // the fold writes a settled constant back as a literal, so an expression it did not settle is read at run time
+    expect(shapeOf(argsOf("f(1 + 2)"))).toEqual({ kind: "dynamic" });
     expect(shapeOf(argsOf("f($.id)"))).toEqual({ kind: "dynamic" });
   });
 });

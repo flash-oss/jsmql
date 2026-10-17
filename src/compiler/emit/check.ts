@@ -15,7 +15,7 @@ import { CodegenError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
 import { computedKeyInOperatorBody, spreadInOperatorBody } from "./errors.ts";
-import { evaluate } from "../passes/evaluate.ts";
+import { constantOf } from "../passes/evaluate.ts";
 import { isFieldPathString } from "../../registry/ast.ts";
 
 type Lit = { kind: "number" | "string" | "bool" | "null" | "array" | "object" | "regex" | "bigint"; value: Expr };
@@ -284,7 +284,7 @@ export function checkBody(
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf(k);
     // A run-time value is a constant too: the call supplies it before the compile.
-    if (v !== undefined && v.type !== "Injected" && !evaluate(v, new Map()).ok) {
+    if (v !== undefined && v.type !== "Injected" && !constantOf(v).ok) {
       throw new CodegenError(
         `'${name}' ${k} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         v.pos,
@@ -319,6 +319,8 @@ export function checkSlots(
   hasObjectForm = true,
   /** The receiver of a method call, for a rule that states slot `-1`. */
   receiver?: Expr,
+  /** Does the lowering only ask for a value? See `Site.settling`. */
+  settling = false,
 ): void {
   for (const i of args.integer ?? []) {
     const e = i === -1 ? receiver : operands[i];
@@ -402,7 +404,7 @@ export function checkSlots(
   }
   for (const i of args.nonZero ?? []) {
     const e = operands[i];
-    if (e !== undefined && numberOf(e) === 0) {
+    if (!settling && e !== undefined && numberOf(e) === 0) {
       throw new CodegenError(
         `'${name}' cannot divide by zero. The server refuses a zero divisor. JavaScript's NaN has no MongoDB value.`,
         e.pos,
@@ -416,7 +418,7 @@ export function checkSlots(
     // of those keys hold expressions. `$unionWith("c")` must be constant;
     // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
     // A run-time value is a constant too: the call supplies it before the compile.
-    if (e !== undefined && e.type !== "ObjectLiteral" && e.type !== "Injected" && !evaluate(e, new Map()).ok) {
+    if (e !== undefined && e.type !== "ObjectLiteral" && e.type !== "Injected" && !constantOf(e).ok) {
       throw new CodegenError(
         `'${name}' argument ${i + 1} must be a compile-time constant. The server reads it before any document. It got an expression.`,
         e.pos,

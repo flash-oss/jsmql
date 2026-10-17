@@ -19,8 +19,8 @@
 //   1. It replaces a name that means something else here. A binder of the same
 //      name — a lambda parameter, or a declaration in a nested scope — makes a
 //      DIFFERENT variable. Substitution through that binder answers with the
-//      constant, where the source meant the other variable. `shadowedIn`
-//      collects every binder in the tree. `substitute` refuses to cross one.
+//      constant, where the source meant the other variable. `substitute`
+//      (substitute.ts) refuses to cross one.
 //   2. It replaces a name whose value changes. A write, a mutation, or a second
 //      declaration means the first value is not the only one. `unfoldable`
 //      collects those names, and they keep their runtime binding.
@@ -28,14 +28,13 @@
 import type { Expr, PipelineStmt, Program } from "../../registry/ast.ts";
 import type { NodeName } from "../../registry/vocabulary.ts";
 import { ParseError } from "../parse/cursor.ts";
-import { asLiteral } from "./literal.ts";
 import type { Constants } from "./evaluate.ts";
-import { asDeclaredFunction, evaluate } from "./evaluate.ts";
-import { bindsFor, declaredIn, namesSomething } from "./naming.ts";
+import { asDeclaredFunction, evaluate, writeBack } from "./evaluate.ts";
+import { bindsFor, declaredIn } from "./naming.ts";
 import type { Where } from "./position.ts";
 import { edge, STATEMENT } from "./position.ts";
+import { substitute } from "./substitute.ts";
 import { mapTree, mapTreeIn } from "./walk.ts";
-import { isPlainObject } from "../../bson.ts";
 
 type Any = { type: string } & Record<string, unknown>;
 
@@ -144,52 +143,6 @@ function everyNodeWithPosition(stmt: Any): readonly (readonly [Any, Where])[] {
   return out;
 }
 
-// ── substitution ─────────────────────────────────────────────────────────────
-
-/** What travels down the tree while substituting. */
-type Scope = { shadowed: ReadonlySet<string>; naming: boolean };
-
-/** Every name a node binds for the subtree under `key` — stated once, in naming.ts. */
-const shadowedIn = (node: Any, key: string): readonly string[] => bindsFor(node, key);
-
-/**
- * Replace every free reference to a folded name with the value it holds.
- *
- * Two things it must never do. It must not cross a binder of the same name — see
- * `shadowedIn`. It must also not touch an identifier that NAMES something
- * rather than valuing it: `a.p = 9` names a place, and `g(1)` names a function.
- * Replacing either with its value produces `1 = 9` or `3(1)`, and neither is a
- * program.
- */
-function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Program {
-  const start: Scope = { shadowed: new Set(), naming: false };
-
-  // An identifier that NAMES something is never substituted — the same test
-  // position.ts uses to keep those slots out of value position. See naming.ts.
-  const step = (node: object, key: string, here: Scope): Scope => {
-    const n = node as Any;
-    const naming = namesSomething(n, key);
-    const names = shadowedIn(n, key);
-    if (names.length === 0) {
-      return naming === here.naming ? here : { shadowed: here.shadowed, naming };
-    }
-    const shadowed = new Set(here.shadowed);
-    for (const name of names) shadowed.add(name);
-    return { shadowed, naming: naming || here.naming };
-  };
-
-  return mapTreeIn(program, start, step, (node, scope) => {
-    const n = node as Any;
-    if (n.type !== "Ident" || typeof n.name !== "string") return node;
-    if (scope.naming || scope.shadowed.has(n.name)) return node;
-    if (!folded.has(n.name)) return node;
-    // Every folded value has a literal. `fold` only records the ones that do. So
-    // there is no fallback here, and no un-substituted source to capture with.
-    // A `const` value is a whole value that JSMQL owns, so its strings are text (HR6).
-    return asLiteral(folded.get(n.name), n.pos as number, true) as object;
-  });
-}
-
 // ── constant subexpressions ──────────────────────────────────────────────────
 
 /**
@@ -201,9 +154,7 @@ function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Pro
  *     with it       → {"x": 1}
  * The second can use an index; the first cannot.
  *
- * A value with no MongoDB literal stays as it is. Unlike a declaration, which
- * must produce a value or stay a binding, a subexpression can still compute at
- * run time.
+ * A constant that the engine cannot settle stays as it is, and computes at run time.
  */
 function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY): T {
   // The environment travels down and SHRINKS at every binder. A lambda
@@ -211,7 +162,7 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
   // entirely. Folding `f(1)` against the outer `f` inside `map(f => f(1))`
   // would answer about the wrong one.
   const step = (n: object, key: string, here: Constants): Constants => {
-    const names = shadowedIn(n as Any, key);
+    const names = bindsFor(n, key);
     if (names.length === 0) return here;
     const next = new Map(here);
     for (const name of names) next.delete(name);
@@ -238,10 +189,8 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
       if (result.unspellable !== undefined) throw noLiteralFor(result.unspellable, n.pos as number);
       return inner;
     }
-    const nonFinite = nonFiniteIn(result.value);
-    if (nonFinite !== null) throw noLiteralFor(nonFinite, n.pos as number);
     // Every EVALUABLE node is JSMQL, so each string it computes is text (HR6).
-    return (asLiteral(result.value, n.pos as number, true) ?? inner) as object;
+    return writeBack(result.value, n.pos as number) as object;
   });
 }
 
@@ -250,7 +199,7 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
  *
  * ONE STATEMENT at a time, never the list around it. A scope's own declarations
  * are exactly what its statements should see. Descending through the
- * `Pipeline` node would make `shadowedIn` hide them along with the nested ones.
+ * `Pipeline` node would make `bindsFor` hide them along with the nested ones.
  */
 function foldPartsIn(stmts: readonly PipelineStmt[], known: Constants): readonly PipelineStmt[] {
   const out = stmts.map((stmt) => foldConstantParts(stmt as unknown as object, known) as unknown as PipelineStmt);
@@ -409,27 +358,17 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
     if (resolved.type === "LetDecl" && !excluded.has(resolved.name)) {
       const result = evaluate(resolved.value, env);
       // A constant MongoDB cannot write down is worth saying out loud. The
-      // evaluator names it and propagates it, so an `Infinity` buried three
+      // engine names it and propagates it, so an `Infinity` buried three
       // operators deep reports the same way one at the top does.
-      if (result.ok && nonFiniteIn(result.value) !== null)
-        throw noLiteralFor(nonFiniteIn(result.value) as string, resolved.pos);
-      if (!result.ok && result.unspellable !== undefined) {
-        throw new ParseError(
-          `This constant expression evaluates to ${result.unspellable}, which has no MongoDB literal. Check the arithmetic — a division by zero, or an exponent out of range.`,
-          resolved.pos,
-        );
-      }
+      if (!result.ok && result.unspellable !== undefined) throw noLiteralFor(result.unspellable, resolved.pos);
       if (result.ok) {
-        // Only a value with a literal spelling. Anything else keeps its binding:
-        // inlining the source expression instead would carry that expression's
-        // own free names to every use site, where they can be captured by a
-        // lambda parameter or left with no binder at all.
-        if (asLiteral(result.value, 0) !== null) {
-          folded.set(resolved.name, result.value);
-          env.set(resolved.name, result.value);
-          changed = true;
-          continue; // the declaration itself emits nothing
-        }
+        // Every computed value has a node that carries it, so the declaration emits nothing.
+        const at = (resolved.value as { pos: number }).pos;
+        writeBack(result.value, at);
+        folded.set(resolved.name, result.value);
+        env.set(resolved.name, result.value);
+        changed = true;
+        continue;
       }
     }
     // A name that did not fold must not be read as one further down either.
@@ -449,23 +388,4 @@ function noLiteralFor(what: string, pos: number): ParseError {
     `This constant expression evaluates to ${what}, which has no MongoDB literal. Check the arithmetic — a division by zero, or an exponent out of range — or guard it with a condition.`,
     pos,
   );
-}
-
-/** The first non-finite number inside a folded value, spelled as JavaScript spells it, or null. */
-function nonFiniteIn(value: unknown): string | null {
-  if (typeof value === "number") return Number.isFinite(value) ? null : String(value);
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const found = nonFiniteIn(v);
-      if (found !== null) return found;
-    }
-    return null;
-  }
-  if (isPlainObject(value)) {
-    for (const v of Object.values(value)) {
-      const found = nonFiniteIn(v);
-      if (found !== null) return found;
-    }
-  }
-  return null;
 }

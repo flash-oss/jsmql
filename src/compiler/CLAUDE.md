@@ -62,13 +62,17 @@ parse/         the Pratt loop that precedence, associativity and fixity drive,
 passes/        naming.ts answers "which row does this node name", "what is the
                chain's base" and "what does this node bind" ONCE for every pass;
                walk.ts is the one tree walk they all use. fold.ts and its family
-               (fold-dates, fold-methods, evaluate, literal) settle a constant
-               expression to its value; desugar rewrites source to source;
+               (evaluate, date-literal, substitute, literal) settle a constant
+               expression to its value, by the emitter's lowering and the interpreter;
+               desugar-rules.ts holds the rewrites and desugar.ts repeats them;
                inject carries a runtime value in; fresh mints a parameter name;
                position and shape decide which document the program becomes;
                raw-mql checks HR6 on the tree as parsed, before inject.
-               See docs/specs/desugar-pass.md, docs/specs/position-pass.md and
-               docs/specs/raw-mql-boundary.md.
+               See docs/specs/desugar-pass.md, docs/specs/constant-engine.md,
+               docs/specs/position-pass.md and docs/specs/raw-mql-boundary.md.
+interpret/     the interpreter for MQL expressions: `interpret(mql)` gives the value of a
+               constant expression, with one rule for each MongoDB operator. It reads MQL,
+               never the tree, and nothing in `emit/` or `passes/`. See interpret/CLAUDE.md.
 emit/          the lowerings, and the dispatcher that checks a row, then runs one.
   consult.ts   what a row says about one name in one position — a pure read.
   select.ts    which rule runs: the receiver's proof (a closed Receiver), the

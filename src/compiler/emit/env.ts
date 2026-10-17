@@ -69,6 +69,13 @@ export type Site = {
    * literal is in the developer's own MQL (HR1).
    */
   readonly inside: string | null;
+  /**
+   * Does this lowering only ASK for a value? The constant engine lowers a closed subtree to
+   * learn its value, and it emits none of the nodes that it lowers. A check that refuses MQL
+   * that the server rejects (a literal zero divisor) does no work there. The interpreter
+   * answers the value. A value with no literal is the engine's own error.
+   */
+  readonly settling: boolean;
 };
 
 /**
@@ -316,8 +323,8 @@ export class Env {
    * introduces anywhere for the whole of it, so a compiler mint never shadows a
    * parameter bound deeper in.
    */
-  static root(program: object, root: Position, chain: Chain = new Chain(root === "statement")): Env {
-    const site: Site = { where: { at: root }, root, envelope: "none", boundaries: [], inside: null };
+  static root(program: object, root: Position, chain: Chain = new Chain(root === "statement"), settling = false): Env {
+    const site: Site = { where: { at: root }, root, envelope: "none", boundaries: [], inside: null, settling };
     return new Env(Scope.root(namesIn(program)), site, chain);
   }
 

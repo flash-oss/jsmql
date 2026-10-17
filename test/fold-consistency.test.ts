@@ -1,12 +1,12 @@
 // test/fold-consistency.test.ts — the HR3 gate for constant folding.
 //
-// A folded method (src/compiler/passes/fold-methods.ts) has TWO implementations of the same
+// A folded method (the constant engine, src/compiler/passes/evaluate.ts) has TWO readings of the same
 // semantics: the compile-time JS fold, and the server-side MQL lowering that a
 // runtime receiver would take. If they disagree, folding would emit a value the
 // server never would. This suite proves they agree: for each foldable method ×
 // a battery of inputs it compares the compile-time fold to the MQL lowering run
 // on a real mongod (through `$documents`, so no collection write). Any method/shape
-// that cannot be proven equal must be removed from fold-methods.ts (→ runtime
+// that cannot be proven equal must be refused by the interpreter (→ runtime
 // fallback), never shipped.
 //
 // It connects to the project's mongod on :27018 (see test/fixtures/config.ts) and
@@ -16,6 +16,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
+import { CodegenError } from "../src/errors.ts";
 import { announceSkip, liveClient } from "./fixtures/live.ts";
 import { answersSet, inAnyOrder } from "./support/set-answer.ts";
 
@@ -345,7 +346,14 @@ const NOT_FOLDED = Symbol("not-folded");
 
 /** The compile-time folded value of `<lit><call>`, or NOT_FOLDED if it stayed runtime. */
 function foldedValue(lit: string, call: string): unknown {
-  const stages = jsmql.pipeline(`const __k = ${lit}${call}; $project({ v: __k })`) as Record<string, unknown>[];
+  let stages: Record<string, unknown>[];
+  try {
+    stages = jsmql.pipeline(`const __k = ${lit}${call}; $project({ v: __k })`) as Record<string, unknown>[];
+  } catch (e) {
+    // An input that the emitter refuses (HR7) has no value to compare.
+    if (e instanceof CodegenError) return NOT_FOLDED;
+    throw e;
+  }
   // A fold produces exactly one `$project` stage; a runtime binding produces a
   // leading `$set` on `__jsmql.var.__k` (and a trailing `$unset`).
   const only = stages.length === 1 ? (stages[0].$project as { v: unknown } | undefined) : undefined;
@@ -369,12 +377,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
   // be skipped. Eight `.concat("!", "?")` cases hid behind that skip for exactly as long
   // as it was silent. Each refusal is therefore named here, with the reason it is
   // allowed to stand, and a shape that is not on this list turns the suite red.
-  const SERVER_REFUSES: Readonly<Record<string, string>> = {
-    // lodash pads the shorter list with `undefined`; `$arrayToObject` refuses the pair
-    // that has no value, because each pair must be an array of two items. The same
-    // unequal-length reading the `zipWith` fold is withheld for.
-    "[1,2,3,4,5].zipObject([10, 20, 30, 40])": "unequal lengths — the missing pair has no value",
-  };
+  const SERVER_REFUSES: Readonly<Record<string, string>> = {};
   const SERVER_ERROR = Symbol("server-error");
   /**
    * The MQL of `$.s<call>`, and the value that the server gives for it.

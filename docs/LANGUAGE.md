@@ -2295,7 +2295,7 @@ $.a.isDisjointFrom($.b)       // → { $eq: [{ $size: { $setIntersection: [{ $if
 
 Three facts differ from a JavaScript `Set`:
 
-- **The order is MongoDB's.** A JavaScript `Set` keeps the order of insertion. MongoDB's manual states that the order of a set operator's output is unspecified. So above, `$.a.uniq()` gave `[1, 2, 3]` and `$.a.difference($.b)` gave `[3, 1]`. When the order matters, sort the answer: `$.a.uniq().toSorted()`.
+- **The order is MongoDB's.** A JavaScript `Set` keeps the order of insertion. MongoDB's manual states that the order of a set operator's output is unspecified. So above, `$.a.uniq()` gave `[1, 2, 3]` and `$.a.difference($.b)` gave `[3, 1]`. When the order matters, sort the answer: `$.a.uniq().toSorted()`. A set answer that is a constant folds at compile time, in the order of first occurrence. A value that JSMQL builds from such an answer, one element at a time, has the same unspecified order, for example the object of `.groupBy()`.
 - **`.difference()` is the set difference, not lodash's.** It gives each value once, as `Set.prototype.difference` does. lodash's `_.difference` keeps the duplicates of the receiver, and gives `[3, 1, 3, 1]` here.
 - **A missing field is the empty list.** A dot runs the method on `[]`, and a missing list argument also reads as `[]`. So each relation gives a real boolean, and each operation gives an array (see [Type-aware dispatch](#type-aware-dispatch)).
 
@@ -4478,7 +4478,7 @@ $$.push(...$$$.archive.aggregate(() => { let x = 1; $match({ y: x }); }));      
 
 ### Compile-time constants (folding)
 
-When the right side of a `const` / `let` is a **compile-time constant** — a value that does not depend on the document or the environment — JSMQL evaluates it once at compile time and **inlines the value** everywhere it names it. There is no `$set` stage, no `__jsmql` namespace, and no `$unset`. Because the declaration emits no stage, a preamble of constants does not force Pipeline mode. So a constant plus a predicate compiles to a clean, indexable **Filter**:
+A **constant** is an expression that reads nothing from the document, the clock or the random generator. When the right side of a `const` or `let` is a constant, JSMQL computes it once at compile time, the way the server would. It **inlines the value** everywhere the name appears. There is no `$set` stage, no `__jsmql` namespace, and no `$unset`. Because the declaration emits no stage, a preamble of constants does not force Pipeline mode. So a constant plus a predicate compiles to a clean, indexable **Filter**:
 
 ```js
 jsmql("const userId = 0x507f1f77bcf86cd799439011; $.userId === userId");
@@ -4488,7 +4488,17 @@ jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
 // → { elapsedMs: { $gt: 86400000 } }
 ```
 
-A "compile-time constant" is any pure, deterministic expression over literals and earlier constants: arithmetic, `new Date("2020-01-01")` and the date methods on it, an ObjectId literal and its `.toString()`, an array or object literal, a constant computed key (`{ [k]: 1 }`), and (see the method sections) a string or array transform. A binding whose right side reads the document (`$.x`), the clock (`new Date()`), or the RNG (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. So a constant folds the same way in every entry point — a Filter, a pipeline stage, an expression — including per call in [`jsmql.compile`](#parameterised-queries-jsmqlcompile), where a constant built from a parameter folds against each call's arguments.
+The rule has no list of methods. Any method or operator that JSMQL has folds when its inputs are constants. The compiler lowers the expression to MQL, as it does for a runtime expression, and then runs that MQL itself. So a chain such as `.range().map().filter().sum()` folds, and a method that JSMQL gains folds at once. Arithmetic, `new Date("2020-01-01")` and its date methods, an ObjectId literal, an array or object literal, and a constant computed key (`{ [k]: 1 }`) are constants too. A binding whose right side reads the document (`$.x`), the clock (`new Date()`), or the random generator (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. A constant folds the same way in a Filter, a pipeline stage and an expression. In [`jsmql.compile`](#parameterised-queries-jsmqlcompile), a constant built from a parameter folds against each call's arguments.
+
+```js
+jsmql("const a = (3).range().map(() => 7); $.x = a;");
+// → [{ $set: { x: [7, 7, 7] } }]
+
+jsmql("const xs = (5).range().map(i => i * i).filter(x => x % 2 === 0); $.total = xs.sum() + xs.size();");
+// → [{ $set: { total: 23 } }]
+```
+
+In the second example `xs` is `[0, 4, 16]`, so `xs.sum() + xs.size()` is `20 + 3`.
 
 An escape-hatch call `$op(…)` is your own MQL, so JSMQL does not fold it. The JavaScript spelling folds: `[1, 2, 3].size()` is `3`. `.size()` of an array literal counts its entries even when they read the document, because each entry is one element: `[$.a, $.b].size()` is `2`. The escape hatch `$size([[1, 2, 3]])` stays as you wrote it.
 
@@ -4515,7 +4525,15 @@ jsmql('const monthStart = new Date("2026-09-15").startOf("month"); $match({ day:
 // → [{ $match: { day: "2026-09-01" } }]
 ```
 
-JSMQL does **not** fold a date method called with a `timezone` or another option (`.plus(1, "month", "Europe/Kyiv")`, `.startOf("week", { startOfWeek: "monday" })`). A named zone shifts with daylight saving, and that table belongs to the server, so it stays the aggregation operator. `String(n)` and a `${n}` template slot fold for an integer, because both sides write `"42"`. A fraction or a number of sixteen or more digits stays `$toString`, because the two spell an exponent differently. `Number("42")` never folds: `$toDouble` yields a double on the server, where a written `42` is an int.
+A constant stays a runtime expression when the server does not specify its answer exactly, because JSMQL then cannot know the value. This covers five cases:
+
+- an operator whose answer the server leaves open, for example transcendental math
+- a date in a zone other than UTC, because the zone table belongs to the server
+- a read of the clock or of the random generator
+- a conversion that changes the BSON numeric type
+- a statistical accumulator
+
+An `$op(…)` call never folds, so `$stdDevPop([1, 2, 3])` stays as you wrote it. A date method that names UTC, or that gives an option which UTC decides (`.startOf("week", { startOfWeek: "monday" })`), folds. A call with a named zone such as `.plus(1, "month", "Europe/Kyiv")` stays the aggregation operator. `String(n)` and a `${n}` template slot fold for an integer, because both sides write `"42"`. A fraction or a number with sixteen or more digits stays `$toString`, because the two spell an exponent differently. `Number("42")` stays `$toDouble`: the server gives a double, where a written `42` is an int. The full rule, and the operators that the compiler refuses to compute, are in [specs/constant-engine.md](specs/constant-engine.md).
 
 > A constant expression that JSMQL cannot represent as a MongoDB literal — for example, one that evaluates to `Infinity` or `NaN` (`1 / 0`) — is a compile-time error, not silently broken MQL.
 

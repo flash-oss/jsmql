@@ -1014,6 +1014,11 @@ export type ExprIn = {
   present: boolean;
   /** Lower an expression as a CONDITION, with the JavaScript truth rules. See `Truth`. */
   truth: (e: Expr) => Truth;
+  /**
+   * The JavaScript boolean of an expression as a VALUE. `truth` reads a condition, and a
+   * condition takes a number as it stands. A value must be `true` or `false`: `Boolean(1)`.
+   */
+  boolean: (e: Expr) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`. The parameter binds as `$$as` (`ref`). */
   iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
   /**
@@ -1067,6 +1072,14 @@ export type ExprIn = {
   hoist: (stages: readonly Stage[], reads: string) => string;
   /** A new `__jsmql.tmp.<n>` scratch field path. */
   slot: () => string;
+  /**
+   * The live value that a constructor builds from a CONSTANT argument: a date, a BSON number,
+   * an ObjectId, or (with no argument) a sentinel such as `MinKey()`. The server has no
+   * expression that builds some of these values, so the value goes into the MQL as itself.
+   * `refusal` is the message for a constant that the type cannot hold. The compiler throws
+   * it at the call, and the cell never sees a null.
+   */
+  construct: (spelling: string, refusal: string, arg?: Expr) => unknown;
 };
 
 /**

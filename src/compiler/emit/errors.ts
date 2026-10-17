@@ -16,7 +16,7 @@ import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
 import type { KindFault, Proven } from "../kinds.ts";
-import { evaluate } from "../passes/evaluate.ts";
+import { constantOf } from "../passes/evaluate.ts";
 import type { Unreadable } from "./type.ts";
 import {
   callbackParamsOf,
@@ -762,7 +762,7 @@ const pluralKind = (k: Proven): string => ELEMENT_NOUN[k] ?? `${k}s`;
 function spellOperand(e: { readonly pos: number } | undefined): string {
   if (e === undefined) return "this value";
   try {
-    const v = evaluate(e as Expr, new Map());
+    const v = constantOf(e as Expr);
     if (!v.ok || v.value === null || v.value === undefined) return "this value";
     const text = stringify(v.value);
     return text.length > 24 ? "this value" : text;

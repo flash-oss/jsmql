@@ -748,9 +748,9 @@ const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalE
  *
  * `spelling` is the name the row answers to, so every message names what the user
  * actually typed. `convert` is the `$to…` operator the dynamic form lowers to.
- * `refuseConstant` is the message for a constant the type cannot hold. The fold
- * builds every constant it CAN (src/compiler/passes/fold-methods.ts), so only a
- * constant it could not build reaches this cell. The message names the type that fits.
+ * `refuseConstant` is the message for a constant the type cannot hold. The `constant` cell
+ * builds the value (`construct` of the cell input), and throws this message when the type
+ * cannot hold the constant. The message names the type that fits.
  */
 const dateRow = (spelling: string) =>
   global_({
@@ -771,9 +771,9 @@ const dateRow = (spelling: string) =>
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
-        // A valid date spelling never reaches this row — the fold makes it a Date value first.
-        // A constant the fold could evaluate never reaches this row; one that stays
-        // is a string `Date.parse` refuses.
+        // A date that the source spells never reaches this row: the constant engine reads it
+        // first (src/compiler/passes/date-literal.ts). One that stays is a string that no
+        // date parser reads.
         constant: unsupported(
           `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
         ),
@@ -825,7 +825,10 @@ const bsonValue = (e: {
     ),
     expr: {
       byArgs: {
-        constant: unsupported(e.refuseConstant),
+        constant: {
+          args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
+          emit: ({ args, construct }: ExprIn) => construct(e.spelling, e.refuseConstant, args[0]),
+        },
         dynamic: {
           args: { sig: "value", exact: 1, slotType: { 0: e.takes ?? ["string", "number"] } },
           emit: ({ args, value }: ExprIn) => ({ [e.convert]: value(args[0]) }),
@@ -846,7 +849,7 @@ const bsonValue = (e: {
  * and computes with none — MEASURED, the server refuses `$add: [MinKey, 1]`, because
  * `$add` takes only numbers and dates. There is no MQL expression that produces one
  * either (the server has no `$minKey` expression), so the value can only be the live
- * one the fold builds.
+ * one that the cell builds.
  */
 const bsonSentinel = (spelling: string, doc: string, compare: string) =>
   global_({
@@ -857,9 +860,17 @@ const bsonSentinel = (spelling: string, doc: string, compare: string) =>
     neverNull: true,
     where: ["value"],
     filter: because(`${spelling}() is a value, not a test. Compare it: '${compare}'.`),
-    // The fold builds the value — there is no MQL expression that produces one, so
-    // no rule here could. MEASURED: the server refuses `{ $minKey: 1 }`.
-    expr: inCode("src/compiler/passes/fold-methods.ts"),
+    // There is no MQL expression that produces the value, so the value goes into the MQL as
+    // itself. MEASURED: the server refuses `{ $minKey: 1 }`.
+    expr: {
+      byArgs: {
+        none: {
+          args: { sig: "", none: true },
+          emit: ({ construct }: ExprIn) => construct(spelling, `'${spelling}()' builds the sentinel value.`),
+        },
+        otherwise: unsupported(`'${spelling}()' takes no argument.`),
+      },
+    },
     stream: unsupported(`'${spelling}' produces a value, not a stream of documents.`),
     statement: unsupported(`'${spelling}' produces a value. Use it inside a reshape or a '$set'.`),
     group: unsupported(`'${spelling}' is not an accumulator. Inside '$group' write the MongoDB operator.`),
@@ -10671,7 +10682,7 @@ export const NAMES = {
     neverNull: "always",
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1, slotType: { 0: "any" } }, emit: ({ args, truth }) => truth(args[0]) },
+    expr: { args: { sig: "value", exact: 1, slotType: { 0: "any" } }, emit: ({ args, boolean }) => boolean(args[0]) },
     stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Boolean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Boolean(…);'",
@@ -11538,10 +11549,17 @@ export const NAMES = {
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
-        // A 24-hex constant never reaches this row — the fold makes it a live ObjectId first.
-        constant: unsupported(
-          "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
-        ),
+        // A 24-hex constant is the live ObjectId. The value goes into the MQL as itself, so the
+        // constant engine reads it and a query compares it as written.
+        constant: {
+          args: { sig: "value", exact: 1, slotType: { 0: "string" } },
+          emit: ({ args, construct }) =>
+            construct(
+              "ObjectId",
+              "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
+              args[0],
+            ),
+        },
         dynamic: {
           args: { sig: "value", exact: 1, slotType: { 0: "string" } },
           emit: ({ args, value }) => ({ $toObjectId: value(args[0]) }),
@@ -11561,11 +11579,10 @@ export const NAMES = {
   // ── the BSON value constructors ────────────────────────────────────────────
   //
   // One factory, because the nine differ in three cells and agree on every other.
-  // Each has the SAME three-way meaning `ObjectId` has: no argument mints where
-  // MongoDB has something to mint, a constant is a live BSON value the fold builds
-  // (so only a constant the type CANNOT hold reaches the `constant` cell below),
-  // and anything else converts on the server through its `$to…`
-  // operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
+  // Each has the SAME three-way meaning `ObjectId` has. No argument mints a value where
+  // MongoDB has one to mint. A constant is a live BSON value that the `constant` cell
+  // builds, and the cell refuses a value that the type CANNOT hold. Anything else
+  // converts on the server through its `$to…` operator. jsmql accepts both `new X(…)` and `X(…)`; jsmql.stringify writes
   // `new X(…)`. See docs/specs/bson-types.md.
 
   Decimal128: bsonValue({

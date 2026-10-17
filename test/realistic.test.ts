@@ -832,6 +832,31 @@ $.weekStarts = $.weeks.range().map(w => $.start.plus(w, "week"));
   });
 });
 
+describe("price bulk orders from a tier table that the compiler computes", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
+    // The tier table is a constant: it reads nothing from the document, the clock or the
+    // random generator. So the compiler computes `tiers` (200, 300, 400), its size, its
+    // minimum and its mean, and each use below is a literal in the MQL. No `$map`, `$filter`
+    // or `$avg` reaches the server, and the stages hold no trace of the table.
+    expect(
+      jsmql`
+const tiers = (4).range().map(i => (i + 1) * 100).filter(qty => qty > 100);
+const maxDiscount = tiers.size() * 5;
+const averageTier = tiers.mean();
+$$.filter({ status: "open" });
+$.bulkQty = tiers.min();
+$.discountPct = $.qty >= tiers.min() ? maxDiscount : 0;
+$.tierGap = $.qty - averageTier;
+      `,
+    ).toEqual([
+      { $match: { status: "open" } },
+      { $set: { bulkQty: 200 } },
+      { $set: { discountPct: { $cond: [{ $gte: ["$qty", 200] }, 15, 0] } } },
+      { $set: { tierGap: { $subtract: ["$qty", 300] } } },
+    ]);
+  });
+});
+
 describe("monthly revenue rollup per store (`.startOf` as a `$group` key)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // The canonical time-series rollup: bucket paid orders by calendar month and

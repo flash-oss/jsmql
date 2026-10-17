@@ -69,12 +69,17 @@ export const mongoTruthy = (value: unknown): Truth => mint(value);
  *   $.o ? 1 : 2      o: object, present → true — and the `$cond` folds to its `then`
  *
  * `$gt: [v, null]` is false for missing and for null, so one comparison covers both.
+ *
+ * `asValue` reads the truth as a VALUE (`Boolean(x)`, `!!x`). A condition takes a number or a
+ * boolean as it stands, but a value must be `true` or `false`: `Boolean(1)` is `true`.
  */
-export function truthOf(value: unknown, type: Type): Truth {
+export function truthOf(value: unknown, type: Type, asValue = false): Truth {
   if (isNothing(type)) return FALSE;
   const kinds = type.kinds;
   // A boolean or a number is its own truth on the server, whether or not it is there.
-  if (kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number")) return mint(value);
+  // As a value, only a boolean is its own truth.
+  const own = kinds !== "any" && [...kinds].every((k) => k === "bool" || k === "number");
+  if (own && (!asValue || [...kinds].every((k) => k === "bool"))) return mint(value);
   const tests: unknown[] = [];
   if (type.absent) tests.push(isNotNullish(value));
   if (mayBe(type, "bool")) tests.push({ $ne: [value, false] });

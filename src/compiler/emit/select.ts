@@ -37,7 +37,7 @@ import { familiesFor } from "./consult.ts";
 import { isMutator } from "../rows.ts";
 import { faultOf } from "../kinds.ts";
 import type { KindFault, Proofs } from "../kinds.ts";
-import { evaluate, type Constants } from "../passes/evaluate.ts";
+import { constantOf } from "../passes/evaluate.ts";
 import { staticKey } from "../passes/naming.ts";
 import { internalError } from "../../errors.ts";
 
@@ -93,10 +93,10 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 /**
  * The class a call's arguments fall in, decided in one order so no two classes
  * can claim one call: a spread anywhere → none → more than one → one object
- * literal → one constant → one dynamic. `constants` is what the fold left bound
+ * literal → one constant → one dynamic. A constant is a literal that the fold left
  * (a `jsmql.compile` parameter is a runtime value, so it lands in `dynamic`).
  */
-export function shapeOf(args: readonly Expr[], constants: Constants = new Map()): Shaped {
+export function shapeOf(args: readonly Expr[]): Shaped {
   if (args.some((a) => (a as { type: string }).type === "SpreadElement")) return { kind: "spread" };
   if (args.length === 0) return { kind: "none" };
   if (args.length > 1) return { kind: "multiple" };
@@ -105,7 +105,7 @@ export function shapeOf(args: readonly Expr[], constants: Constants = new Map())
     const keys = (only.entries ?? []).map(staticKey).filter((k): k is string => k !== null);
     return { kind: "object", keys };
   }
-  const v = evaluate(args[0], constants);
+  const v = constantOf(args[0]);
   return v.ok ? { kind: "constant", value: v.value } : { kind: "dynamic" };
 }
 

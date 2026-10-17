@@ -135,8 +135,18 @@ export function asLiteral(value: unknown, pos: number, text = false): Expr | nul
   // A Date has no spelling, and rides as the value it is. The query road compares
   // it as written, and the value road passes it through, the same as a `${date}` slot.
   if (isDate(value)) return { type: "Injected", value, pos };
-  // A Binary, or a Decimal128, has no spelling, and no fold produces one.
+  // A Binary, a Decimal128 or a Long has no spelling here. `nodeOf` carries it as a value.
   return null;
+}
+
+/**
+ * The node that carries a computed `value`, with no exception: the literal that spells
+ * it, or an `Injected` node that holds it. The fold writes back every value it computes
+ * through this function, so a Date, an ObjectId, a Decimal128 or a Long goes back into
+ * the tree as itself.
+ */
+export function nodeOf(value: unknown, pos: number, text = false): Expr {
+  return asLiteral(value, pos, text) ?? { type: "Injected", value, pos };
 }
 
 /**
