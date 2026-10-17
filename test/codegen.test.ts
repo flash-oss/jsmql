@@ -3089,6 +3089,14 @@ describe("bare built-in callbacks", () => {
     expect(jsmql.expr("$.items.compact()")).toEqual({
       $filter: { input: { $ifNull: ["$items", []] }, as: "jsmqlItem", cond: truthy },
     });
+    // the proof of the element leaves out each test it cannot fail: a part of a split is a string
+    expect(jsmql.expr('$.s.split(",").compact()')).toEqual({
+      $filter: {
+        input: { $split: [{ $ifNull: ["$s", ""] }, ","] },
+        as: "jsmqlItem",
+        cond: { $ne: ["$$jsmqlItem", ""] },
+      },
+    });
     expect(jsmql.expr('$.parts.compact().join(" ")')).toEqual({
       $ifNull: [
         {

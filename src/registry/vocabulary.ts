@@ -998,6 +998,12 @@ export type ExprIn = {
   present: boolean;
   /** Lower an expression as a CONDITION, with the JavaScript truth rules. See `Truth`. */
   truth: (e: Expr) => Truth;
+  /**
+   * JavaScript's truthiness of one element of the receiver, read at `ref`. The proof of
+   * the element leaves out each test that the element cannot fail: an element that is an
+   * object or null takes the null test alone.
+   */
+  elementTruth: (ref: string) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`. The parameter binds as `$$as` (`ref`). */
   iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
   /**

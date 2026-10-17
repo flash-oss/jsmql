@@ -981,14 +981,7 @@ $$ = ["sender", "recipient"].map(party => {
                 },
               },
               as: "jsmqlItem",
-              cond: {
-                $and: [
-                  { $gt: ["$$jsmqlItem", null] },
-                  { $ne: ["$$jsmqlItem", false] },
-                  { $ne: ["$$jsmqlItem", ""] },
-                  { $ne: ["$$jsmqlItem", 0] },
-                ],
-              },
+              cond: { $gt: ["$$jsmqlItem", null] },
             },
           },
         },

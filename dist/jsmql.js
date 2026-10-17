@@ -243,9 +243,6 @@ var firstOf = (a) => ({ $first: singleArrayArg(a) });
 var lastOf = (a) => ({ $last: singleArrayArg(a) });
 var reverseArrayOf = (a) => ({ $reverseArray: singleArrayArg(a) });
 var slotAggregate = (op, recv, perDocument) => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
-var jsTruth = (value) => ({
-  $and: [isNotNullish(value), { $ne: [value, false] }, { $ne: [value, ""] }, { $ne: [value, 0] }]
-});
 var negate = (n2) => typeof n2 === "number" ? -n2 : { $subtract: [0, n2] };
 var stringKeyExpr = (value) => ({ $ifNull: [{ $toString: value }, "null"] });
 var distinctKeysExpr = (arr, it) => ({
@@ -6805,9 +6802,10 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      // the truth that `.filter(x => x)` reads, with the tests the element's proof leaves
+      emit: ({ recv, bind, elementTruth }) => {
         const item = bind("item");
-        return { $filter: { input: recv, as: item.as, cond: jsTruth(item.ref) } };
+        return { $filter: { input: recv, as: item.as, cond: elementTruth(item.ref) } };
       }
     },
     stream: {
@@ -24191,6 +24189,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     kind: (e) => kindOf3(e, argEnv),
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
+    elementTruth: (ref) => truthOf(ref, elementOfRecv()),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth),
     callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2, present2),

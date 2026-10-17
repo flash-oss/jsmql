@@ -41,7 +41,6 @@ import {
   iterateeKeys,
   joinWords,
   joinedWith,
-  jsTruth,
   lastOf,
   literalIndexValue,
   negate,
@@ -7923,9 +7922,10 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
+      // the truth that `.filter(x => x)` reads, with the tests the element's proof leaves
+      emit: ({ recv, bind, elementTruth }) => {
         const item = bind("item");
-        return { $filter: { input: recv, as: item.as, cond: jsTruth(item.ref) } };
+        return { $filter: { input: recv, as: item.as, cond: elementTruth(item.ref) } };
       },
     },
     stream: {

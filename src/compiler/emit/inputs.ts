@@ -43,6 +43,7 @@ import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, cannotBe, flattenOnce, maybeAbsent, of, unreadableAt } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
+import { truthOf } from "./mode.ts";
 import { indexedPairs, mongoRegexOptions, sizeOf } from "../../registry/mql.ts";
 import { edge } from "../passes/position.ts";
 
@@ -302,6 +303,7 @@ export function exprInputs(
     kind: (e) => kindOf(e, argEnv),
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
+    elementTruth: (ref) => truthOf(ref, elementOfRecv()),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
     callback: (cb, mode) =>

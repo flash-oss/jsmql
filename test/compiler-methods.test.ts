@@ -2043,6 +2043,16 @@ describe("compiler/emit — number ranges", () => {
 });
 
 describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
+  it("drops the falsy elements with `.compact()`, through the proof of the element", () => {
+    expect(compiled('$.csv.split(",").compact()', (d) => d.csv.split(",").filter((x) => x))).toEqual({
+      $filter: {
+        input: { $split: [{ $ifNull: ["$csv", ""] }, ","] },
+        as: "jsmqlItem",
+        cond: { $ne: ["$$jsmqlItem", ""] },
+      },
+    });
+  });
+
   it("gives true or false for `!!` over a number, as JavaScript does", () => {
     expect(compiled("!!$.a.size()", (d) => !!d.a.length)).toEqual({
       $cond: [{ $size: { $ifNull: ["$a", []] } }, true, false],

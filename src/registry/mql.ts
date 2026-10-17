@@ -321,11 +321,6 @@ export const slotAggregate = (
   perDocument: (a: unknown) => unknown,
 ): Record<string, unknown> => ({ [op]: Array.isArray(recv) ? perDocument(recv) : recv });
 
-/** The JavaScript truth of a lowered value: not missing, and not null, false, "" or 0. */
-export const jsTruth = (value: unknown): unknown => ({
-  $and: [isNotNullish(value), { $ne: [value, false] }, { $ne: [value, ""] }, { $ne: [value, 0] }],
-});
-
 /** `0 - n`. It folds for a constant. */
 export const negate = (n: unknown): unknown => (typeof n === "number" ? -n : { $subtract: [0, n] });
 
