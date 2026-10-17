@@ -1458,7 +1458,7 @@ JSMQL checks two things at compile time:
 - **Where each stage is in the pipeline.** A source stage, for example `$collStats`, `$geoNear` or `$changeStream`, must be the first stage. `$out` and `$merge` must be the last stage. A sub-pipeline of `$facet`, `$lookup` or `$unionWith` can hold only the stages that the server allows in it. `$text` must be in the first `$match` of the pipeline, at any depth of its body. An aggregation `$match` cannot hold `$near`, `$nearSphere` or `$where`. Use these operators in a `find()` filter.
 - **A method on the wrong type of value.** See [A method chained on the wrong type](#a-method-chained-on-the-wrong-type) below.
 
-JSMQL checks the place of each stage, and your own stages are included:
+JSMQL checks the place of each stage, also of each stage that you write yourself:
 
 ```js
 jsmql("[ { $merge: 'archive' }, $sort({ date: -1 }) ]")               // ✗ a stage after $merge; $merge must be the last stage
@@ -1488,7 +1488,7 @@ Call `jsmql.validate(...)` to get the compile-time errors as a list of `{ messag
 
 ### A method chained on the wrong type
 
-When JSMQL knows what a value *is*, it also knows which methods can follow it — so a chain that would be a `TypeError` in JavaScript is a compile error here, with the conversion you actually wanted named in the message:
+When JSMQL knows what a value *is*, it also knows which methods can follow it. So a chain that would be a `TypeError` in JavaScript is a compile error here. The message names the conversion that you probably wanted:
 
 ```js
 jsmql.expr('$.createdAt.startOf("month").map(x => x)')   // ✗ .map() on a date
@@ -1497,13 +1497,34 @@ jsmql.expr('$.items.every(x => x.ok).filter(y => y)')    // ✗ .filter() on a b
 jsmql.expr('$.tags.split(",").toUpperCase()')            // ✗ .toUpperCase() on an array; map first: .map(x => x.toUpperCase())
 ```
 
-Every method that applies to only one type takes part, in both directions. JSMQL refuses an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) on a string, number, date or document receiver, and it does the same for the string-only, number-only, date-only and document-only methods. JSMQL never refuses a method that genuinely accepts more than one type: `.size` works on an array or a document, `.clamp` and `.inRange` work on a number or a date, and `.toString` / `.getTime` work on anything.
+The check covers every method that applies to only one type. JSMQL refuses an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) on a string, number, date or document receiver. It does the same for the string-only, number-only, date-only and document-only methods. JSMQL never refuses a method that really accepts more than one type:
 
-JSMQL knows a receiver's type whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number), from `new Date(…)`, from a literal or a template string, or from a written field (see [Type-aware dispatch](#type-aware-dispatch)).
+- `.size` works on an array or a document.
+- `.clamp` and `.inRange` work on a number or a date.
+- `.toString` and `.getTime` work on anything.
 
-Where JSMQL does not know the type, it rejects nothing and emits the MQL: a field path (`$.whatever`), an element plucked with `.find()` / `.at()`, a `.reduce()` result, a `.clamp()` that could be numeric or a date, and any operator whose result type follows its arguments — `$add` / `$subtract` (number or date), `$min` / `$max` / `$first` (an element of the array), `$ifNull` / `$cond` / `$switch` / `$getField` (whatever value they receive). `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
+JSMQL knows the type of a receiver when the receiver comes from one of these:
 
-**This check follows JavaScript, not MongoDB's coercions.** MongoDB would happily run `$toUpper` on a date and hand back the stringified date; JavaScript throws on `date.toUpperCase()`, and so does JSMQL, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it still passes through untouched — raw MQL is yours. The rule is [HR7](LANG_RULES.md). It also covers an operator and an argument slot.
+- a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number)
+- an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number)
+- `new Date(…)`
+- a literal or a template string
+- a written field (see [Type-aware dispatch](#type-aware-dispatch))
+
+When JSMQL does not know the type, it rejects nothing and emits the MQL. These values have no known type:
+
+- a field path (`$.whatever`)
+- an element that `.find()` or `.at()` takes from an array
+- a `.reduce()` result
+- a `.clamp()` that can be a number or a date
+- an operator whose result type follows its arguments:
+  - `$add` and `$subtract` (a number or a date)
+  - `$min`, `$max` and `$first` (an element of the array)
+  - `$ifNull`, `$cond`, `$switch` and `$getField` (the value that they receive)
+
+`.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
+
+**This check follows JavaScript, not the coercions of MongoDB.** MongoDB runs `$toUpper` on a date with no error, and gives back the date as a string. JavaScript throws on `date.toUpperCase()`, and so does JSMQL, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it passes through with no change, because raw MQL is yours. The rule is [HR7](LANG_RULES.md). It also covers an operator and an argument slot.
 
 JSMQL leaves each constraint that depends on your deployment to the server, for example
 sharding, transactions, memory limits and Atlas availability.
@@ -1523,9 +1544,9 @@ jsmql('$.a = "x"; $unset("a"); $.n = $.a.length();')                         // 
 
 - **A field of an array, a string, a number or a date.** JSMQL refuses the read when it proves the kind of the value. The message names the method that you probably mean, or `.map(e => e.<field>)` for the field of each element. **This is a surprise for a JavaScript developer.** `"abc".length` is `3` in JavaScript, and a compile error in JSMQL. In JSMQL, a count is always a method call: `.length()`.
 - **A field that a closed object does not hold.** After `$group`, an inclusion `$project` or `$ = { … }`, the document holds only the fields that the stage names. An object from `.pick([...])` or from an object literal holds only its keys. The message lists the fields that are there. The same check applies to a sort key (`$$.sortBy("total")`) and to a callback's parameter.
-- **A value that is always null or missing.** A field that `$unset`, `delete` or an exclusion `$project` removed, or that you set to `null`, has nothing to read. A method call on it is refused too.
+- **A value that is always null or missing.** A field that `$unset`, `delete` or an exclusion `$project` removed, or that you set to `null`, has nothing to read. JSMQL refuses a method call on it too.
 - **Where JSMQL cannot prove the kind, the read compiles.** `$.a.length` reads the field `length` of `a`, and the server judges the value.
-- **A query keeps MongoDB's path through an array.** After `$.orders = $$$.orders.filter(o => o.uid === $._id)`, the filter `$match($.orders.status === "open")` is `{ "orders.status": "open" }`, and it matches a document with an open order. In an expression, the same read of a known array is a compile error that names `.map(e => e.status)`. A query path through an array whose elements cannot hold the field matches no document, so it is a compile error too: after `$.tags = $.csv.split(",")`, `$match($.tags.length > 0)` names `.size()`.
+- **A query keeps MongoDB's path through an array.** After `$.orders = $$$.orders.filter(o => o.uid === $._id)`, the filter `$match($.orders.status === "open")` is `{ "orders.status": "open" }`, and it matches a document with an open order. In an expression, the same read of a known array is a compile error that names `.map(e => e.status)`. A query path through an array whose elements cannot hold the field matches no document. So it is a compile error too: after `$.tags = $.csv.split(",")`, `$match($.tags.length > 0)` names `.size()`.
 
 ---
 
@@ -1543,7 +1564,7 @@ jsmql('$.a = "x"; $unset("a"); $.n = $.a.length();')                         // 
 | `**` | `$pow` | `$.base ** 2` |
 | `-x` | `$multiply` by -1 | `-$.amount` |
 
-**Operator flattening:** The compiler flattens chained `&&`, `||`, `+`, `*`, and `??` operators into one MongoDB array. It does not nest them:
+**Flat operator chains:** The compiler flattens chained `&&`, `||`, `+`, `*`, and `??` operators into one MongoDB array. It does not nest them:
 ```js
 $.a + $.b + $.c                // → { $add: ["$a", "$b", "$c"] }
 $.a > 1 && $.b > 2 && $.c > 3  // → { $and: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }   (a Filter merges them into one query document)
@@ -1552,7 +1573,7 @@ $.a ?? $.b ?? $.c              // → { $ifNull: ["$a", "$b", "$c"] }
 ```
 Between plain values (`$.x && $.y`), the operators keep JavaScript's meaning. The result is the operand that decided, after the JavaScript truthiness test. See [Truthy and falsy](#truthy-and-falsy).
 
-**Context-sensitive `+`:** If any operand is a string literal or string-producing method, the entire chain becomes `$concat`:
+**Context-sensitive `+`:** If any operand is a string literal or a method that gives a string, the entire chain becomes `$concat`:
 ```js
 $.a + $.b           // → { $add: ["$a", "$b"] }
 $.a + " " + $.b     // → { $concat: ["$a", " ", "$b"] }
@@ -1582,15 +1603,15 @@ $.status in ["active", "pending"]   // { $in: ["$status", ["active", "pending"]]
 
 #### `===` / `!==` vs `==` / `!=` — null and missing fields
 
-JSMQL tracks the JS distinction between strict and loose equality. It maps each to a natural MongoDB semantics around `null` / missing fields:
+JSMQL keeps the JS difference between strict and loose equality. It maps each one to a natural MongoDB semantics for `null` and missing fields:
 
-- **`===` / `!==`** are JS-like strict equality. Use them for every comparison except null-vs-missing checks.
-- **`==` / `!=`** apply only to comparisons against `null`. This is the one JS idiom where `==` has one clear, useful meaning: it matches null or missing. Any other use is a compile error that points you at `===`. This removes the usual JS `==` trap of silent type coercion, a common source of bugs in plain JavaScript.
+- **`===` and `!==`** are JS-like strict equality. Use them for every comparison except a test for null or missing.
+- **`==` and `!=`** apply only to comparisons against `null`. This is the one JS idiom where `==` has one clear, useful meaning: it matches null or missing. Any other use is a compile error that points you at `===`. This removes the usual problem of `==` in JS, the silent type coercion, which is a common cause of bugs in plain JavaScript.
 
 | JSMQL              | Matches                              | MQL (expression context)                                              | MQL (`$match` body)                          |
 | ------------------ | ------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
 | `$.x === null`     | only real `null` (excludes missing)  | `{ $eq: ["$x", null] }`                                               | `{"x":{"$type":"null"}}` |
-| `$.x !== null`     | anything except real `null` (incl. missing) | `{ $ne: ["$x", null] }`                                        | `{"x":{"$not":{"$type":"null"}}}` |
+| `$.x !== null`     | anything except real `null` (including missing) | `{ $ne: ["$x", null] }`                                    | `{"x":{"$not":{"$type":"null"}}}` |
 | `$.x == null`      | null OR missing                      | `{ $lte: ["$x", null] }`                     | `{"x":null}` |
 | `$.x != null`      | neither null nor missing             | `{ $gt: ["$x", null] }`         | `{"x":{"$ne":null}}` |
 | `$.x === 5`        | `5`                                  | `{ $eq: ["$x", 5] }`                                                  | `{"x":5}` |
@@ -1598,11 +1619,11 @@ JSMQL tracks the JS distinction between strict and loose equality. It maps each 
 
 The error for a non-null `==` names two forms: `===` for strict equality, and `$.x == null` to match null or missing.
 
-`null` may appear on either side: `null == $.x` is identical to `$.x == null`.
+`null` can be on either side: `null == $.x` is identical to `$.x == null`.
 
-The `$match` column reads the field's **own** value (see [No semicolons → Filter](#no-semicolons--filter)). An equality excludes an array field. A negation (`!==`, `!= null`) is a two-branch `$or`, because an array field is *not equal* to the literal in JavaScript and must match.
+The `$match` column reads the **own** value of the field (see [No semicolons → Filter](#no-semicolons--filter)). An equality excludes an array field. A negation (`!==`, `!= null`) is a two-branch `$or`, because an array field is *not equal* to the literal in JavaScript and must match.
 
-**`in` operator semantics.** `x in [ … ]` is MongoDB's own `$in`: it is true when `x` equals an element of the list. The right side must be a list spelled in the source. A `const` that holds a list, a `jsmql.compile` parameter, and a `${…}` interpolation each count as one: the compiler puts the value in as the list.
+**`in` operator semantics.** `x in [ … ]` is MongoDB's own `$in`: it is true when `x` equals an element of the list. The right side must be a list that the source spells out. A `const` that holds a list, a `jsmql.compile` parameter, and a `${…}` interpolation each count as one. The compiler puts the value in as the list.
 
 ```js
 $.x in [1, 2, 3]                     // { $in: ["$x", [1, 2, 3]] }; in a filter { x: { $in: [1, 2, 3] } }
@@ -1610,7 +1631,7 @@ const allowed = ["a", "b"];
 $.status in allowed                  // { status: { $in: ["a", "b"] } }
 ```
 
-Any other right side is a compile error, and the message names the spelling that does the job. JavaScript's `in` tests a key, and JSMQL gives that test its own spelling, so the two never mix:
+Any other right side is a compile error, and the message names the spelling that works. JavaScript's `in` tests a key, and JSMQL gives that test its own spelling, so the two tests never mix:
 
 | You want | Write | Not |
 | --- | --- | --- |
@@ -1631,7 +1652,7 @@ $.building && $.building + ","      // includes the suffix only when $.building 
 !$.active                           // logical NOT, JS truthy/falsy semantics
 ```
 
-`&&` and `||` follow JavaScript. They return the operand, not a coerced boolean. When every operand in a chain is already a boolean comparison, the compiler emits the plain `$and` / `$or` form. A mixed chain compiles to `$cond`, so the operand value flows through. See [Truthy and falsy](#truthy-and-falsy) for the rule.
+`&&` and `||` follow JavaScript. They return the operand, not a coerced boolean. When every operand in a chain is already a boolean comparison, the compiler emits the plain `$and` or `$or` form. A mixed chain compiles to `$cond`, so the result is the value of an operand. See [Truthy and falsy](#truthy-and-falsy) for the rule.
 
 ### Conditional
 
@@ -1654,7 +1675,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 | `NaN` | **no** — see limitation below |
 | everything else (`[]`, `{}`, `"0"`, `-1`, dates, …) | truthy |
 
-MongoDB's raw `$toBool` and bare `$cond` use a different rule; for example, `""` is truthy in MQL. To get raw MongoDB semantics — for example, to match an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes keep their own meaning. A `$op(…)` call that stands alone as a predicate keeps MongoDB's rule too, because it is your own MQL: `jsmql("$foo($.a)")` → `{ $expr: { $foo: "$a" } }`. JSMQL refuses such a call as an operand of `&&`, `||` or `!` ([HR6](LANG_RULES.md)).
+MongoDB's raw `$toBool` and a bare `$cond` use a different rule: for example, `""` is truthy in MQL. To get the raw semantics of MongoDB, call the operator directly: `$toBool($.x)`, `$op($and, …)`. You can do this, for example, to match an aggregation that exists. Those escape hatches keep their own meaning. A `$op(…)` call that stands alone as a predicate also keeps MongoDB's rule, because it is your own MQL: `jsmql("$foo($.a)")` → `{ $expr: { $foo: "$a" } }`. JSMQL refuses such a call as an operand of `&&`, `||` or `!` ([HR6](LANG_RULES.md)).
 
 One rule for every spelling and every position keeps matching pairs equal. `.compact()` is `.filter(Boolean)`. `.reject(p)` is the exact complement of `.filter(p)`. `.partition(p)` is `[filter(p), reject(p)]`, so no element can fall out of both halves. A stream `$$.filter(p)` keeps exactly the documents that the value-mode `.filter(p)` keeps.
 
@@ -1664,7 +1685,11 @@ $match($.active)                    // the same check, as a stage
 $$.filter(o => o.active)            // and again, on a stream
 ```
 
-**The check shrinks to what the value can be.** Each of the four tests belongs to one kind of value, so a value the compiler has a type for — a field the pipeline wrote, a `let`, a literal, a method result — keeps only the tests that value can fail. A field written as a string keeps the `""` test, and the null test while it may be missing. A field written as an array, an object or a date keeps only the null test, and none at all when it is certainly there, so `$.arr ? a : b` becomes `a`. A boolean or a number is its own truth, because MongoDB already reads `0`, `false`, null and missing as false: `$.n ? 1 : 2` is `{ $cond: ["$n", 1, 2] }`. In a Filter or a `$match`, a bare field with a known type takes the query form — `{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that may be missing — unless the field may hold an array, which the query language reads element by element. See [docs/specs/types.md](specs/types.md).
+**The check has only the tests that the value can fail.** Each of the four tests belongs to one kind of value. The compiler can have a type for a value: a field that the pipeline wrote, a `let`, a literal, or a method result. Such a value keeps only the tests that it can fail.
+
+A field written as a string keeps the `""` test, and the null test when it can be missing. A field written as an array, an object or a date keeps only the null test. It keeps no test when it is certainly there, so `$.arr ? a : b` becomes `a`. A boolean or a number is its own truth, because MongoDB already reads `0`, `false`, null and missing as false: `$.n ? 1 : 2` is `{ $cond: ["$n", 1, 2] }`.
+
+In a Filter or a `$match`, a bare field with a known type takes the query form. For a boolean the form is `{ active: true }`, and for a number that can be missing it is `{ n: { $nin: [null, 0] } }`. The exception is a field that can hold an array, because the query language reads an array element by element. See [docs/specs/types.md](specs/types.md).
 
 ```js
 $.s = $.a.trim(); $.t = $.s ? 1 : 2;
@@ -1675,7 +1700,9 @@ $.b = $.n > 1; $match($.b);
 
 Only the index-friendly half of a `$match` is an exception, because it needs no coercion. A comparison is already a boolean, so `$.age > 18` still emits the plain query form `{ age: { $gt: 18 } }`. To get MongoDB's own truthiness in a `$match`, write the object-literal escape hatch: `$match({ $expr: $.active })` passes through as written.
 
-**Known limitation: JSMQL treats `NaN` as truthy.** It is the one JS-falsy value the rule above does not catch, so `$.xs.compact()` keeps a `NaN` value that `_.compact` would drop. Detecting `NaN` needs a per-value `$convert`. MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work. The `$convert` check costs about +40% on a `$match` and +20% on a `$filter`, and every predicate in the language would pay it. `NaN` values are rare in MongoDB data, so this document states the gap instead of paying that cost. When you need the check, compare explicitly: `$ne($.x, $toDouble("NaN"))` → `{ "$ne": ["$x", { "$toDouble": "NaN" }] }`. This is true for every value except a `NaN` of either the `double` or `decimal` type.
+**Known limitation: JSMQL treats `NaN` as truthy.** It is the one JS-falsy value that the rule above does not catch. So `$.xs.compact()` keeps a `NaN` value that `_.compact` would drop. A test for `NaN` needs a `$convert` for each value. MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work.
+
+The `$convert` check costs about +40% on a `$match` and +20% on a `$filter`, and every predicate in the language would pay it. `NaN` values are rare in MongoDB data. So this document states the gap, and JSMQL does not pay that cost. When you need the check, compare explicitly: `$ne($.x, $toDouble("NaN"))` → `{ "$ne": ["$x", { "$toDouble": "NaN" }] }`. This is true for every value except a `NaN` of the `double` or the `decimal` type.
 
 ### Bitwise
 
@@ -1694,7 +1721,7 @@ $.a ^ $.b                           // { $bitXor: ["$a", "$b"] }
 ~$.flags                            // { $bitNot: "$flags" }
 ```
 
-**Precedence** matches JS: `===` / `!==` (and the null-restricted `==` / `!=`) bind tighter than `&` / `^` / `|`, which bind tighter than `&&` / `||`. So `$.a === $.b & $.c` parses as `($.a === $.b) & $.c`, just like in JavaScript.
+**Precedence** matches JS. `===` and `!==` (and the null-restricted `==` and `!=`) bind tighter than `&`, `^` and `|`. These bind tighter than `&&` and `||`. So `$.a === $.b & $.c` parses as `($.a === $.b) & $.c`, as in JavaScript.
 
 **No shift operators.** MongoDB has no `<<`, `>>`, or `>>>`. JSMQL does not accept those tokens.
 
