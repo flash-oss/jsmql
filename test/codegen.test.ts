@@ -4087,6 +4087,17 @@ describe("type casts", () => {
   it("!! on a provably-bool value elides the wrap", () => {
     expect(jsmql.expr("!!($.x > 0)")).toEqual({ $gt: ["$x", 0] });
   });
+  it("!! gives true or false for a number, which a condition reads as its own truth", () => {
+    expect(jsmql.expr("!!$.a.size()")).toEqual({ $cond: [{ $size: { $ifNull: ["$a", []] } }, true, false] });
+    expect(jsmql.pipeline("$.n = $.a.size(); $.b = !!$.n;")).toEqual([
+      { $set: { n: { $size: { $ifNull: ["$a", []] } } } },
+      { $set: { b: { $cond: ["$n", true, false] } } },
+    ]);
+    // a constant folds
+    expect(jsmql.expr("!!0")).toBe(false);
+    expect(jsmql.expr("!!5")).toBe(true);
+    expect(jsmql.expr("!!null")).toBe(false);
+  });
   it("$toBool() direct operator escape preserves raw MongoDB semantics", () => {
     expect(jsmql.expr("$toBool($.x)")).toEqual({ $toBool: "$x" });
   });

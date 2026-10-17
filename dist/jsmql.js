@@ -25236,9 +25236,19 @@ function chainOf2(node, op) {
   walk2(node);
   return out;
 }
+function booleanOf(truth, type) {
+  if (typeof truth === "boolean") return truth;
+  if (typeof truth === "number") return truth !== 0;
+  if (type.kinds !== "any" && !type.absent && [...type.kinds].every((k) => k === "bool")) return truth;
+  const keys = isPlainObject(truth) ? Object.keys(truth) : [];
+  if (keys.length === 1 && returnsOf(keys[0]) === "bool" && neverNullAlwaysOf(keys[0])) return truth;
+  return { $cond: [truth, true, false] };
+}
 function unary2(node, env) {
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return asValue(lowerTruth(node.argument.argument, childEnv(env, node, "argument")));
+    const x = node.argument.argument;
+    const xEnv = childEnv(env, node, "argument");
+    return booleanOf(asValue(lowerTruth(x, xEnv)), typeOf(x, xEnv));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === void 0) internalError(`no production builds a unary '${node.op}'`);

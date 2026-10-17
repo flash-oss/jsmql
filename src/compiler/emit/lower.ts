@@ -9,10 +9,10 @@
 // Those neighbour-reading cases are the ones whose production row says
 // `inCode`, and this file is the file it names.
 
-import type { Expr, FieldFamily, Position, Truth } from "../../registry/vocabulary.ts";
+import type { Expr, FieldFamily, Position, Truth, Type } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
-import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
+import { bigIntToLong, isObjectId, isPlainObject, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
@@ -45,7 +45,7 @@ import {
 } from "../rows.ts";
 import { consult, everyMethodName, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlotKinds, checkSlots } from "./check.ts";
-import { operandShapeOf } from "../rows.ts";
+import { neverNullAlwaysOf, operandShapeOf, returnsOf } from "../rows.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
@@ -1228,10 +1228,28 @@ function chainOf(node: Expr, op: string): Expr[] {
   return out;
 }
 
+/**
+ * The truth of `x` as a value: true or false. A condition reads a number, and a boolean
+ * that may be missing, as its own truth (`truthOf`), so such a truth takes a `$cond`. A
+ * constant folds. A boolean that is there is its own value, and so is the answer of an
+ * operator whose row states a boolean for every operand (`returns: "bool"` and
+ * `neverNull: "always"`, as `$gt` and `$and` do).
+ */
+function booleanOf(truth: unknown, type: Type): unknown {
+  if (typeof truth === "boolean") return truth;
+  if (typeof truth === "number") return truth !== 0;
+  if (type.kinds !== "any" && !type.absent && [...type.kinds].every((k) => k === "bool")) return truth;
+  const keys = isPlainObject(truth) ? Object.keys(truth) : [];
+  if (keys.length === 1 && returnsOf(keys[0]) === "bool" && neverNullAlwaysOf(keys[0])) return truth;
+  return { $cond: [truth, true, false] };
+}
+
 function unary(node: Extract<Expr, { type: "UnaryExpr" }>, env: Env): unknown {
-  // `!!x` is `Boolean(x)`: the truth of x, as a value.
+  // `!!x` is the truth of x, as a value
   if (node.op === "!" && node.argument.type === "UnaryExpr" && node.argument.op === "!") {
-    return asValue(lowerTruth(node.argument.argument, childEnv(env, node, "argument")));
+    const x = node.argument.argument;
+    const xEnv = childEnv(env, node, "argument");
+    return booleanOf(asValue(lowerTruth(x, xEnv)), typeOf(x, xEnv));
   }
   const key = productionForOperator("UnaryExpr", node.op);
   if (key === undefined) internalError(`no production builds a unary '${node.op}'`);

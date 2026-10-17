@@ -464,7 +464,7 @@ When any operand of a `+` chain is **string-producing**, the whole chain emits `
 
 | Construct | Output |
 |---|---|
-| `!x` | `{$not: <truth of x>}`; `!!x` → the truth test of `x` — the bare value when `x` is already boolean |
+| `!x` | `{$not: <truth of x>}`; `!!x` → the truth test of `x`, as true or false: the bare value when `x` is already boolean, and a `$cond` where the truth of `x` is a number |
 | `a ? b : c` | `{$cond: [<truth of a>, b, c]}` |
 | `a && b` (all-bool chain) | `{$and: [...operands]}` (cheap form) |
 | `a && b` (mixed chain, pure-ref or bool LHS) | `{$cond: [<truth of a>, b, a]}` (operand-preserving) |

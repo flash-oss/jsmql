@@ -2043,6 +2043,18 @@ describe("compiler/emit — number ranges", () => {
 });
 
 describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
+  it("gives true or false for `!!` over a number, as JavaScript does", () => {
+    expect(compiled("!!$.a.size()", (d) => !!d.a.length)).toEqual({
+      $cond: [{ $size: { $ifNull: ["$a", []] } }, true, false],
+    });
+    expect(compiled("!!$.csv.length()", (d) => !!d.csv.length)).toEqual({
+      $cond: [{ $strLenCP: { $ifNull: ["$csv", ""] } }, true, false],
+    });
+    expect(compiled("!!$.nope.size()", () => false)).toEqual({
+      $cond: [{ $size: { $ifNull: ["$nope", []] } }, true, false],
+    });
+  });
+
   it("lowers each conversion to its MongoDB operator, and a dot reads a missing value as the safe value", () => {
     const epoch = new Date("1970-01-01T00:00:00.000Z");
     expect(compiled("$.n.toDouble()", (d) => d.n)).toEqual({ $toDouble: { $ifNull: ["$n", 0] } });
