@@ -4171,6 +4171,7 @@ export const NAMES = {
   trim: name({
     doc: "'.trim()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4188,6 +4189,7 @@ export const NAMES = {
   trimStart: name({
     doc: "'.trimStart()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4207,6 +4209,7 @@ export const NAMES = {
   trimLeft: name({
     doc: "'.trimLeft()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4226,6 +4229,7 @@ export const NAMES = {
   trimEnd: name({
     doc: "'.trimEnd()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4243,6 +4247,7 @@ export const NAMES = {
   trimRight: name({
     doc: "'.trimRight()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4390,6 +4395,7 @@ export const NAMES = {
   split: name({
     doc: "'.split()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: { arrayOf: "string" },
     neverNull: true,
@@ -4509,6 +4515,7 @@ export const NAMES = {
   replace: name({
     doc: "'.replace()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4531,6 +4538,7 @@ export const NAMES = {
   replaceAll: name({
     doc: "'.replaceAll()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4671,6 +4679,7 @@ export const NAMES = {
   padEnd: name({
     doc: "'.padEnd()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4692,6 +4701,7 @@ export const NAMES = {
   repeat: name({
     doc: "'.repeat()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -5002,6 +5012,7 @@ export const NAMES = {
   toReversed: name({
     doc: "'.toReversed()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -5023,6 +5034,7 @@ export const NAMES = {
   toSorted: name({
     doc: "'.toSorted()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     elementOnly: {
       when: "bare",
       why: "a stream of documents has no natural order, so a key is required: '.toSorted(\"<field>\")'. After '.flatMap(\"<field>\")' the bare call sorts by the unwound values.",
@@ -5085,6 +5097,7 @@ export const NAMES = {
   sortBy: name({
     doc: "'.sortBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     elementOnly: {
       when: "bare",
       why: "a stream of documents has no natural order, so a key is required: '.sortBy(\"<field>\")'. After '.flatMap(\"<field>\")' the bare call sorts by the unwound values.",
@@ -5146,6 +5159,7 @@ export const NAMES = {
   orderBy: name({
     doc: "'.orderBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -5198,6 +5212,7 @@ export const NAMES = {
   toSpliced: name({
     doc: "'.toSpliced()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -5265,6 +5280,7 @@ export const NAMES = {
   with: name({
     doc: "'.with()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -5308,6 +5324,7 @@ export const NAMES = {
   flat: name({
     doc: "'.flat()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: { arrayOf: { elementOf: "element" } }, stream: "stream" },
     neverNull: true,
@@ -5338,6 +5355,7 @@ export const NAMES = {
   flatMap: name({
     doc: "'.flatMap()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value", "index", "receiver"],
     iterateeSlots: {
@@ -5386,6 +5404,7 @@ export const NAMES = {
     streamBody: "document",
     doc: "'.map()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value", "index", "receiver"],
     iterateeSlots: {
@@ -5418,6 +5437,7 @@ export const NAMES = {
   filter: name({
     doc: "'.filter()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     // MEASURED: three parameters as a value, exactly one as a chain link — the
     // compiler refuses a read of `i` in `$$ = $$.filter((d, i) => …)`.
@@ -6141,6 +6161,7 @@ export const NAMES = {
   getFullYear: name({
     doc: "'.getFullYear()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6160,6 +6181,7 @@ export const NAMES = {
   getMonth: name({
     doc: "'.getMonth()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6183,6 +6205,7 @@ export const NAMES = {
   getDate: name({
     doc: "'.getDate()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6200,6 +6223,7 @@ export const NAMES = {
   getDay: name({
     doc: "'.getDay()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6221,6 +6245,7 @@ export const NAMES = {
   getHours: name({
     doc: "'.getHours()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6240,6 +6265,7 @@ export const NAMES = {
   getMinutes: name({
     doc: "'.getMinutes()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6259,6 +6285,7 @@ export const NAMES = {
   getSeconds: name({
     doc: "'.getSeconds()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6278,6 +6305,7 @@ export const NAMES = {
   getMilliseconds: name({
     doc: "'.getMilliseconds()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6297,6 +6325,7 @@ export const NAMES = {
   getUTCFullYear: name({
     doc: "'.getUTCFullYear()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6316,6 +6345,7 @@ export const NAMES = {
   getUTCMonth: name({
     doc: "'.getUTCMonth()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6339,6 +6369,7 @@ export const NAMES = {
   getUTCDate: name({
     doc: "'.getUTCDate()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6358,6 +6389,7 @@ export const NAMES = {
   getUTCDay: name({
     doc: "'.getUTCDay()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6381,6 +6413,7 @@ export const NAMES = {
   getUTCHours: name({
     doc: "'.getUTCHours()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6400,6 +6433,7 @@ export const NAMES = {
   getUTCMinutes: name({
     doc: "'.getUTCMinutes()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6419,6 +6453,7 @@ export const NAMES = {
   getUTCSeconds: name({
     doc: "'.getUTCSeconds()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6438,6 +6473,7 @@ export const NAMES = {
   getUTCMilliseconds: name({
     doc: "'.getUTCMilliseconds()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6457,6 +6493,7 @@ export const NAMES = {
   getTime: name({
     doc: "'.getTime()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6474,6 +6511,7 @@ export const NAMES = {
   toISOString: name({
     doc: "'.toISOString()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "string",
     neverNull: true,
@@ -6493,6 +6531,7 @@ export const NAMES = {
   plus: name({
     doc: "'.plus()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -6528,6 +6567,7 @@ export const NAMES = {
   minus: name({
     doc: "'.minus()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -6568,6 +6608,7 @@ export const NAMES = {
   diff: name({
     doc: "'.diff()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6605,6 +6646,7 @@ export const NAMES = {
   startOf: name({
     doc: "'.startOf()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -6642,6 +6684,7 @@ export const NAMES = {
   format: name({
     doc: "'.format()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "string",
     neverNull: true,
@@ -6677,6 +6720,7 @@ export const NAMES = {
   week: name({
     doc: "'.week()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6712,6 +6756,7 @@ export const NAMES = {
   isoWeek: name({
     doc: "'.isoWeek()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6747,6 +6792,7 @@ export const NAMES = {
   isoWeekYear: name({
     doc: "'.isoWeekYear()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6784,6 +6830,7 @@ export const NAMES = {
   isoWeekday: name({
     doc: "'.isoWeekday()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6821,6 +6868,7 @@ export const NAMES = {
   dayOfYear: name({
     doc: "'.dayOfYear()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6858,6 +6906,7 @@ export const NAMES = {
   quarter: name({
     doc: "'.quarter()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -7025,6 +7074,7 @@ export const NAMES = {
   set: name({
     doc: "'.set()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -7108,6 +7158,7 @@ export const NAMES = {
   endOf: name({
     doc: "'.endOf()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -7383,6 +7434,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.uniq()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7405,6 +7457,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.uniqBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7436,6 +7489,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.sortedUniq()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7456,6 +7510,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.sortedUniqBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7484,6 +7539,7 @@ export const NAMES = {
   without: name({
     doc: "'.without()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -7521,6 +7577,7 @@ export const NAMES = {
   xor: name({
     doc: "'.xor()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",
@@ -7544,6 +7601,7 @@ export const NAMES = {
   differenceBy: name({
     doc: "'.differenceBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7595,6 +7653,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.intersectionBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7645,6 +7704,7 @@ export const NAMES = {
   unionBy: name({
     doc: "'.unionBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -7668,6 +7728,7 @@ export const NAMES = {
   xorBy: name({
     doc: "'.xorBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -7710,6 +7771,7 @@ export const NAMES = {
   compact: name({
     doc: "'.compact()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7741,6 +7803,7 @@ export const NAMES = {
   flatten: name({
     doc: "'.flatten()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { arrayOf: { elementOf: "element" } },
     neverNull: true,
@@ -7796,6 +7859,7 @@ export const NAMES = {
   take: name({
     doc: "'.take()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7829,6 +7893,7 @@ export const NAMES = {
   drop: name({
     doc: "'.drop()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7866,6 +7931,7 @@ export const NAMES = {
   takeRight: name({
     doc: "'.takeRight()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -7917,6 +7983,7 @@ export const NAMES = {
   tail: name({
     doc: "'.tail()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -8080,6 +8147,7 @@ export const NAMES = {
   takeWhile: name({
     doc: "'.takeWhile()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8134,6 +8202,7 @@ export const NAMES = {
   dropWhile: name({
     doc: "'.dropWhile()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8188,6 +8257,7 @@ export const NAMES = {
   takeRightWhile: name({
     doc: "'.takeRightWhile()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -8215,6 +8285,7 @@ export const NAMES = {
   dropRightWhile: name({
     doc: "'.dropRightWhile()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -8285,6 +8356,7 @@ export const NAMES = {
   sampleSize: name({
     doc: "'.sampleSize()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -8367,6 +8439,7 @@ export const NAMES = {
   zip: name({
     doc: "'.zip()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { arrayOf: "array" },
     neverNull: true,
@@ -8427,6 +8500,7 @@ export const NAMES = {
   zipWith: name({
     doc: "'.zipWith()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: {
@@ -8482,6 +8556,7 @@ export const NAMES = {
     collapses: true,
     doc: "'.keyBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8516,6 +8591,7 @@ export const NAMES = {
     collapses: true,
     doc: "'.groupBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream", "Object"],
     params: ["value"],
     iterateeSlots: {
@@ -8559,6 +8635,7 @@ export const NAMES = {
     collapses: true,
     doc: "'.countBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8627,6 +8704,7 @@ export const NAMES = {
   reject: name({
     doc: "'.reject()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8660,6 +8738,7 @@ export const NAMES = {
   mapValues: name({
     doc: "'.mapValues()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -8695,6 +8774,7 @@ export const NAMES = {
   mapKeys: name({
     doc: "'.mapKeys()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -8797,6 +8877,7 @@ export const NAMES = {
   omit: name({
     doc: "'.omit()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["object", "stream"],
     // The value form builds a document literal, so the result IS an object.
     returns: { object: "omitted", stream: "stream" },
@@ -8844,6 +8925,7 @@ export const NAMES = {
   pickBy: name({
     doc: "'.pickBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -8873,6 +8955,7 @@ export const NAMES = {
   omitBy: name({
     doc: "'.omitBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -8904,6 +8987,7 @@ export const NAMES = {
   invert: name({
     doc: "'.invert()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     returns: "object",
     neverNull: true,
@@ -8935,6 +9019,7 @@ export const NAMES = {
   toPairs: name({
     doc: "'.toPairs()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     returns: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
     neverNull: true,
@@ -8958,6 +9043,7 @@ export const NAMES = {
   fromPairs: name({
     doc: "'.fromPairs()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { recordOf: { itemOf: ["element", 1] } },
     neverNull: true,
@@ -9191,6 +9277,7 @@ export const NAMES = {
   escape: name({
     doc: "'.escape()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -9461,6 +9548,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.intersection()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -9498,6 +9586,7 @@ export const NAMES = {
   union: name({
     doc: "'.union()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",
@@ -9518,6 +9607,7 @@ export const NAMES = {
   difference: name({
     doc: "'.difference()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -10399,6 +10489,7 @@ export const NAMES = {
   symmetricDifference: name({
     doc: "'.symmetricDifference()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",

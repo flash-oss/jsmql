@@ -8714,18 +8714,13 @@ describe("optional chaining (?.)", () => {
     });
   });
 
-  // A string method is a call, so the same rule applies. `$.name.trim()` on a missing
-  // `name` answers "" — `$trim` reads the `$ifNull` the cell puts on its receiver — and
-  // `$.name?.trim()` answers null, because the developer said the field may be absent.
-  it(".trim on an optional receiver stops the chain", () => {
-    expect(jsmql.expr("$.name?.trim()")).toEqual({
-      $cond: [{ $lte: ["$name", null] }, null, { $trim: { input: "$name" } }],
-    });
+  // A string method is a call, so the same rule applies. `$trim` gives null for a null
+  // input on its own, so `$.name?.trim()` takes no null test: the bare call is the answer.
+  it(".trim on an optional receiver needs no test", () => {
+    expect(jsmql.expr("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
   });
-  it(".trim on a chained optional receiver stops the chain", () => {
-    expect(jsmql.expr("$.user?.name?.trim()")).toEqual({
-      $cond: [{ $lte: ["$user.name", null] }, null, { $trim: { input: "$user.name" } }],
-    });
+  it(".trim on a chained optional receiver needs no test", () => {
+    expect(jsmql.expr("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
   });
   it(".toUpperCase on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.name.toUpperCase()")).toEqual({

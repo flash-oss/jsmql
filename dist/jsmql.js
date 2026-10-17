@@ -3286,6 +3286,7 @@ var NAMES = {
   trim: name({
     doc: "'.trim()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -3302,6 +3303,7 @@ var NAMES = {
   trimStart: name({
     doc: "'.trimStart()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -3320,6 +3322,7 @@ var NAMES = {
   trimLeft: name({
     doc: "'.trimLeft()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -3338,6 +3341,7 @@ var NAMES = {
   trimEnd: name({
     doc: "'.trimEnd()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -3354,6 +3358,7 @@ var NAMES = {
   trimRight: name({
     doc: "'.trimRight()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -3492,6 +3497,7 @@ var NAMES = {
   split: name({
     doc: "'.split()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: { arrayOf: "string" },
     neverNull: true,
@@ -3602,6 +3608,7 @@ var NAMES = {
   replace: name({
     doc: "'.replace()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -3623,6 +3630,7 @@ var NAMES = {
   replaceAll: name({
     doc: "'.replaceAll()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -3752,6 +3760,7 @@ var NAMES = {
   padEnd: name({
     doc: "'.padEnd()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -3771,6 +3780,7 @@ var NAMES = {
   repeat: name({
     doc: "'.repeat()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4056,6 +4066,7 @@ var NAMES = {
   toReversed: name({
     doc: "'.toReversed()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -4076,6 +4087,7 @@ var NAMES = {
   toSorted: name({
     doc: "'.toSorted()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     elementOnly: {
       when: "bare",
       why: `a stream of documents has no natural order, so a key is required: '.toSorted("<field>")'. After '.flatMap("<field>")' the bare call sorts by the unwound values.`
@@ -4133,6 +4145,7 @@ var NAMES = {
   sortBy: name({
     doc: "'.sortBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     elementOnly: {
       when: "bare",
       why: `a stream of documents has no natural order, so a key is required: '.sortBy("<field>")'. After '.flatMap("<field>")' the bare call sorts by the unwound values.`
@@ -4189,6 +4202,7 @@ var NAMES = {
   orderBy: name({
     doc: "'.orderBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -4238,6 +4252,7 @@ var NAMES = {
   toSpliced: name({
     doc: "'.toSpliced()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -4302,6 +4317,7 @@ var NAMES = {
   with: name({
     doc: "'.with()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -4344,6 +4360,7 @@ var NAMES = {
   flat: name({
     doc: "'.flat()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: { arrayOf: { elementOf: "element" } }, stream: "stream" },
     neverNull: true,
@@ -4373,6 +4390,7 @@ var NAMES = {
   flatMap: name({
     doc: "'.flatMap()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value", "index", "receiver"],
     iterateeSlots: {
@@ -4420,6 +4438,7 @@ var NAMES = {
     streamBody: "document",
     doc: "'.map()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value", "index", "receiver"],
     iterateeSlots: {
@@ -4451,6 +4470,7 @@ var NAMES = {
   filter: name({
     doc: "'.filter()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     // MEASURED: three parameters as a value, exactly one as a chain link — the
     // compiler refuses a read of `i` in `$$ = $$.filter((d, i) => …)`.
@@ -5133,6 +5153,7 @@ var NAMES = {
   getFullYear: name({
     doc: "'.getFullYear()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5151,6 +5172,7 @@ var NAMES = {
   getMonth: name({
     doc: "'.getMonth()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5173,6 +5195,7 @@ var NAMES = {
   getDate: name({
     doc: "'.getDate()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5189,6 +5212,7 @@ var NAMES = {
   getDay: name({
     doc: "'.getDay()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5209,6 +5233,7 @@ var NAMES = {
   getHours: name({
     doc: "'.getHours()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5227,6 +5252,7 @@ var NAMES = {
   getMinutes: name({
     doc: "'.getMinutes()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5245,6 +5271,7 @@ var NAMES = {
   getSeconds: name({
     doc: "'.getSeconds()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5263,6 +5290,7 @@ var NAMES = {
   getMilliseconds: name({
     doc: "'.getMilliseconds()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5281,6 +5309,7 @@ var NAMES = {
   getUTCFullYear: name({
     doc: "'.getUTCFullYear()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5299,6 +5328,7 @@ var NAMES = {
   getUTCMonth: name({
     doc: "'.getUTCMonth()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5321,6 +5351,7 @@ var NAMES = {
   getUTCDate: name({
     doc: "'.getUTCDate()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5339,6 +5370,7 @@ var NAMES = {
   getUTCDay: name({
     doc: "'.getUTCDay()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5361,6 +5393,7 @@ var NAMES = {
   getUTCHours: name({
     doc: "'.getUTCHours()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5379,6 +5412,7 @@ var NAMES = {
   getUTCMinutes: name({
     doc: "'.getUTCMinutes()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5397,6 +5431,7 @@ var NAMES = {
   getUTCSeconds: name({
     doc: "'.getUTCSeconds()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5415,6 +5450,7 @@ var NAMES = {
   getUTCMilliseconds: name({
     doc: "'.getUTCMilliseconds()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5433,6 +5469,7 @@ var NAMES = {
   getTime: name({
     doc: "'.getTime()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5449,6 +5486,7 @@ var NAMES = {
   toISOString: name({
     doc: "'.toISOString()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "string",
     neverNull: true,
@@ -5467,6 +5505,7 @@ var NAMES = {
   plus: name({
     doc: "'.plus()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -5501,6 +5540,7 @@ var NAMES = {
   minus: name({
     doc: "'.minus()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -5540,6 +5580,7 @@ var NAMES = {
   diff: name({
     doc: "'.diff()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5576,6 +5617,7 @@ var NAMES = {
   startOf: name({
     doc: "'.startOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -5612,6 +5654,7 @@ var NAMES = {
   format: name({
     doc: "'.format()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "string",
     neverNull: true,
@@ -5646,6 +5689,7 @@ var NAMES = {
   week: name({
     doc: "'.week()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5680,6 +5724,7 @@ var NAMES = {
   isoWeek: name({
     doc: "'.isoWeek()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5714,6 +5759,7 @@ var NAMES = {
   isoWeekYear: name({
     doc: "'.isoWeekYear()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5750,6 +5796,7 @@ var NAMES = {
   isoWeekday: name({
     doc: "'.isoWeekday()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5786,6 +5833,7 @@ var NAMES = {
   dayOfYear: name({
     doc: "'.dayOfYear()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5822,6 +5870,7 @@ var NAMES = {
   quarter: name({
     doc: "'.quarter()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -5985,6 +6034,7 @@ var NAMES = {
   set: name({
     doc: "'.set()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -6066,6 +6116,7 @@ var NAMES = {
   endOf: name({
     doc: "'.endOf()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -6331,6 +6382,7 @@ var NAMES = {
     restoresDocuments: true,
     doc: "'.uniq()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -6352,6 +6404,7 @@ var NAMES = {
     restoresDocuments: true,
     doc: "'.uniqBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -6382,6 +6435,7 @@ var NAMES = {
     restoresDocuments: true,
     doc: "'.sortedUniq()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -6401,6 +6455,7 @@ var NAMES = {
     restoresDocuments: true,
     doc: "'.sortedUniqBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -6428,6 +6483,7 @@ var NAMES = {
   without: name({
     doc: "'.without()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -6464,6 +6520,7 @@ var NAMES = {
   xor: name({
     doc: "'.xor()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",
@@ -6486,6 +6543,7 @@ var NAMES = {
   differenceBy: name({
     doc: "'.differenceBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -6536,6 +6594,7 @@ var NAMES = {
     restoresDocuments: true,
     doc: "'.intersectionBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -6585,6 +6644,7 @@ var NAMES = {
   unionBy: name({
     doc: "'.unionBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -6606,6 +6666,7 @@ var NAMES = {
   xorBy: name({
     doc: "'.xorBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -6647,6 +6708,7 @@ var NAMES = {
   compact: name({
     doc: "'.compact()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -6677,6 +6739,7 @@ var NAMES = {
   flatten: name({
     doc: "'.flatten()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { arrayOf: { elementOf: "element" } },
     neverNull: true,
@@ -6730,6 +6793,7 @@ var NAMES = {
   take: name({
     doc: "'.take()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -6762,6 +6826,7 @@ var NAMES = {
   drop: name({
     doc: "'.drop()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -6798,6 +6863,7 @@ var NAMES = {
   takeRight: name({
     doc: "'.takeRight()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -6847,6 +6913,7 @@ var NAMES = {
   tail: name({
     doc: "'.tail()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7003,6 +7070,7 @@ var NAMES = {
   takeWhile: name({
     doc: "'.takeWhile()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7056,6 +7124,7 @@ var NAMES = {
   dropWhile: name({
     doc: "'.dropWhile()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7109,6 +7178,7 @@ var NAMES = {
   takeRightWhile: name({
     doc: "'.takeRightWhile()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -7135,6 +7205,7 @@ var NAMES = {
   dropRightWhile: name({
     doc: "'.dropRightWhile()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -7203,6 +7274,7 @@ var NAMES = {
   sampleSize: name({
     doc: "'.sampleSize()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7283,6 +7355,7 @@ var NAMES = {
   zip: name({
     doc: "'.zip()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { arrayOf: "array" },
     neverNull: true,
@@ -7341,6 +7414,7 @@ var NAMES = {
   zipWith: name({
     doc: "'.zipWith()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: {
@@ -7394,6 +7468,7 @@ var NAMES = {
     collapses: true,
     doc: "'.keyBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7427,6 +7502,7 @@ var NAMES = {
     collapses: true,
     doc: "'.groupBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream", "Object"],
     params: ["value"],
     iterateeSlots: {
@@ -7468,6 +7544,7 @@ var NAMES = {
     collapses: true,
     doc: "'.countBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7534,6 +7611,7 @@ var NAMES = {
   reject: name({
     doc: "'.reject()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7566,6 +7644,7 @@ var NAMES = {
   mapValues: name({
     doc: "'.mapValues()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -7600,6 +7679,7 @@ var NAMES = {
   mapKeys: name({
     doc: "'.mapKeys()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -7694,6 +7774,7 @@ var NAMES = {
   omit: name({
     doc: "'.omit()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["object", "stream"],
     // The value form builds a document literal, so the result IS an object.
     returns: { object: "omitted", stream: "stream" },
@@ -7737,6 +7818,7 @@ var NAMES = {
   pickBy: name({
     doc: "'.pickBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -7765,6 +7847,7 @@ var NAMES = {
   omitBy: name({
     doc: "'.omitBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -7795,6 +7878,7 @@ var NAMES = {
   invert: name({
     doc: "'.invert()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     returns: "object",
     neverNull: true,
@@ -7825,6 +7909,7 @@ var NAMES = {
   toPairs: name({
     doc: "'.toPairs()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     returns: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
     neverNull: true,
@@ -7846,6 +7931,7 @@ var NAMES = {
   fromPairs: name({
     doc: "'.fromPairs()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { recordOf: { itemOf: ["element", 1] } },
     neverNull: true,
@@ -8068,6 +8154,7 @@ var NAMES = {
   escape: name({
     doc: "'.escape()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -8325,6 +8412,7 @@ var NAMES = {
     restoresDocuments: true,
     doc: "'.intersection()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -8361,6 +8449,7 @@ var NAMES = {
   union: name({
     doc: "'.union()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",
@@ -8380,6 +8469,7 @@ var NAMES = {
   difference: name({
     doc: "'.difference()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -9188,6 +9278,7 @@ var NAMES = {
   symmetricDifference: name({
     doc: "'.symmetricDifference()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",

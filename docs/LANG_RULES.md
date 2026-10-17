@@ -126,11 +126,12 @@ A number method gives the safe value, as lodash does. On a missing or `null` num
 $.a.uniq()          // → { $setUnion: { $ifNull: ["$a", []] } }        → []
 $.a.has("red")      // → { $in: ["red", { $ifNull: ["$a", []] }] }     → false
 $.a.sum()           // → { $sum: "$a" }                                → 0
-$.a?.uniq()         // → { $cond: [{ $lte: ["$a", null] }, null, { $setUnion: "$a" }] }   → null
+$.a?.size()         // → { $cond: [{ $lte: ["$a", null] }, null, { $size: "$a" }] }   → null
+$.a?.uniq()         // → { $setUnion: "$a" }                           → null: $setUnion gives null for null
 
 // The document is { a: ["x", "x"] }.
 $.a.uniq()          // → the same MQL as above                          → ["x"]
-$.a?.uniq()         // → the same MQL as above                          → ["x"]
+$.a?.size()         // → the same MQL as above                          → 2
 
 // The document is {}. It has no field `s`.
 $.s.length()        // → { $cond: [{ $lte: ["$s", null] }, null, { $strLenCP: "$s" }] }   → null
@@ -146,7 +147,7 @@ $.n.clamp(0, 9)     // → { $min: [{ $max: ["$n", 0] }, 9] }             → 0
 $.n.round(2)        // → { $round: ["$n", 2] }                          → null
 ```
 
-When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`.
+When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`. In the same way, the compiler adds no `?.` test when each call after the `?.` gives `null` for `null` on its own: `$.a?.uniq()` is `{ $setUnion: "$a" }`.
 
 Two more facts belong to this rule:
 
