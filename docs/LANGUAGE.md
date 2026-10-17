@@ -3015,7 +3015,9 @@ Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y",
 
 **Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
 
-**Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment (`new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month), and code pasted from a JavaScript file means what it meant there. An out-of-range part rolls over exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you reach them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` untouched.
+**Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month. Code that you paste from a JavaScript file means what it meant there.
+
+A part out of range goes into the next unit, exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you call them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` with no change.
 
 ```js
 new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
@@ -3024,11 +3026,11 @@ $.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1]
 $month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```
 
-**Note:** JavaScript's multi-argument `new Date(y, m, d, …)` reads in the runtime's *local time*. JSMQL reads it as **UTC** (MQL's `$dateFromParts` default, or `Date.UTC` for the constant fold), because "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when you need the UTC behaviour explicitly.
+**Note:** JavaScript's multi-argument `new Date(y, m, d, …)` reads in the *local time* of the runtime. JSMQL reads it as **UTC**: the default of MQL's `$dateFromParts`, or `Date.UTC` for the constant fold. The reason is that "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when you need the UTC behaviour explicitly.
 
 ### Date Getter Methods
 
-Call on any expression that produces a date:
+Call these methods on any expression that gives a date:
 
 ```js
 $.createdAt.getFullYear()          // { $year: "$createdAt" }
@@ -3080,7 +3082,11 @@ $.t.plus(2, "hour", "America/New_York")
 // { $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" } }
 ```
 
-On a constant date the call folds to the instant the server would compute. See [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below). JSMQL rejects a literal typo with a suggestion (for `.plus(30, "days")`, the suggestion is `"day"`). A literal `amount` must be an integer, and a literal `timezone` must be a string. A field path or parameter in either slot passes through unchecked. The `$dateAdd(…)` operator form is your own MQL, so JSMQL does not check it, and the server gives the error. The method name follows Temporal and Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)`: `amount` first, `unit` second.
+On a constant date, the call folds to the instant that the server would compute. See [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (see [Date Operator Calls](#date-operator-calls) below). JSMQL rejects a literal typo with a suggestion (for `.plus(30, "days")`, the suggestion is `"day"`).
+
+A literal `amount` must be an integer, and a literal `timezone` must be a string. A field path or a parameter in either slot passes through with no check. The `$dateAdd(…)` operator form is your own MQL, so JSMQL does not check it, and the server gives the error.
+
+The method name follows Temporal and Luxon (`.plus`, `.minus`). The `(amount, unit)` argument order follows Moment's `.add(amount, unit)`: `amount` first, `unit` second.
 
 **Date difference.** `.diff(other, unit)` gives the whole number of `unit`s between two dates:
 
@@ -3092,11 +3098,13 @@ new Date().diff($._id, "day")      // how old is this document?
 // { $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" } }
 ```
 
-**The receiver is the later date**, so the result is `receiver − other`. This is the same direction that Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all use. `other` may be a date, a BSON timestamp, or an ObjectId (MongoDB reads the creation time out of the id), and so may the receiver.
+**The receiver is the later date**, so the result is `receiver − other`. This is the same direction that Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all use. `other` can be a date, a BSON timestamp, or an ObjectId (MongoDB reads the creation time from the id). The receiver can be any of these too.
 
-**Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` behaviour, and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates. So 23:00 to 01:00 the next morning is **1 day** (one midnight crossed), and 00:30 to 23:30 the same day is **0 days**. Moment's elapsed-time subtraction reports the opposite result in both cases. For raw elapsed milliseconds, subtract the dates instead: `$.end - $.start` → `{ $subtract: ["$end", "$start"] }`.
+**Note — `.diff` counts boundaries, not elapsed time.** This is MongoDB's `$dateDiff` behaviour, and it is *not* what Moment or Luxon do. For a unit of `"day"` or larger, MQL counts how many unit boundaries lie between the two dates. So 23:00 to 01:00 the next morning is **1 day** (it crosses one midnight), and 00:30 to 23:30 the same day is **0 days**.
 
-**Truncate to a unit.** `.startOf(unit)` rounds a date down to the start of its year, quarter, month, week, day, hour, minute or second. It is the bucket key that a time-series `$group` wants:
+Moment's subtraction of elapsed time reports the opposite result in both cases. For raw elapsed milliseconds, subtract the dates instead: `$.end - $.start` → `{ $subtract: ["$end", "$start"] }`.
+
+**Truncate to a unit.** `.startOf(unit)` rounds a date down to the start of its year, quarter, month, week, day, hour, minute or second. It is the bucket key that a time-series `$group` needs:
 
 ```js
 $.createdAt.startOf("month")
@@ -3106,9 +3114,9 @@ $group({ _id: $.createdAt.startOf("month"), revenue: $sum($.total) });
 // { $group: { _id: { $dateTrunc: { date: "$createdAt", unit: "month" } }, revenue: { $sum: "$total" } } }
 ```
 
-Because the result is a date, it sorts, compares and chains like one: `$.createdAt.startOf("month").plus(1, "month")` is the exclusive end of the same bucket. `"quarter"` is available here even though no getter returns a quarter number.
+The result is a date, so it sorts, compares and chains like one: `$.createdAt.startOf("month").plus(1, "month")` is the exclusive end of the same bucket. `"quarter"` is available here, but no getter returns a quarter number.
 
-Two options refine it. `binSize` groups several units into one bucket, and `startOfWeek` moves the week boundary:
+Two options refine it. `binSize` groups more than one unit into one bucket, and `startOfWeek` moves the week boundary:
 
 ```js
 $.createdAt.startOf("minute", { binSize: 15 })    // 15-minute buckets
@@ -3139,9 +3147,11 @@ $.createdAt.format("%H:%M", "America/New_York")
 | `%H` hour (24) | `%M` minute | `%S` second | `%L` millisecond |
 | `%z` UTC offset | `%Z` offset in minutes | `%%` a literal `%` | |
 
-**The specifiers are MongoDB's, not Moment's.** `.format` borrows Moment's method *name*, but JSMQL rejects a Moment token string at compile time and gives the translation. For `"YYYY-MM-DD"`, the suggestion is `"%Y-%m-%d"`. This matters because such a string is valid MQL on its own: `$dateToString` formats it as literal text, so every document would come back reading `"YYYY-MM-DD"` with no sign of the mistake. JSMQL also rejects a wrong specifier (`%y` for `%Y`) and fixes the case in the suggestion. JSMQL does not translate Moment tokens fully, because MongoDB has no month-name, weekday-name, 12-hour or 2-digit-year output at all, so a translator could not handle `dddd` or `MMM`. Derive those values from the numeric parts instead: `["Jan", "Feb", …][$.t.getMonth() - 1]` → `{ $arrayElemAt: [["Jan", "Feb", …], { $subtract: [{ $month: "$t" }, 1] }] }`.
+**The specifiers are MongoDB's, not Moment's.** `.format` takes the method *name* of Moment, but JSMQL rejects a Moment token string at compile time and gives the translation. For `"YYYY-MM-DD"`, the suggestion is `"%Y-%m-%d"`. This is important, because such a string is valid MQL on its own. `$dateToString` formats it as literal text, so every document would come back with `"YYYY-MM-DD"` and no sign of the mistake. JSMQL also rejects a wrong specifier (`%y` for `%Y`), and the suggestion has the correct case.
 
-`$dateToString`'s `onNull` is not an option here. The method's result is always a string, which is what lets `$.t.format("%Y") + "-x"` compile to `$concat`. Use `$dateToString({ date: …, format: …, onNull: … })` when you need `onNull`.
+JSMQL does not translate Moment tokens fully. MongoDB has no output for a month name, a weekday name, a 12-hour clock or a 2-digit year. So a translator could not handle `dddd` or `MMM`. Derive those values from the numeric parts instead: `["Jan", "Feb", …][$.t.getMonth() - 1]` → `{ $arrayElemAt: [["Jan", "Feb", …], { $subtract: [{ $month: "$t" }, 1] }] }`.
+
+The `onNull` field of `$dateToString` is not an option here. The result of the method is always a string, so `$.t.format("%Y") + "-x"` can compile to `$concat`. Use `$dateToString({ date: …, format: …, onNull: … })` when you need `onNull`.
 
 **The inclusive end of the bucket.** `.endOf(unit)` gives the last instant that still belongs to the same bucket, Moment's `23:59:59.999`:
 
@@ -3153,9 +3163,9 @@ $.createdAt.endOf("month")
 //                                        → 2026-08-31T23:59:59.999Z for any August date
 ```
 
-MongoDB has no ceiling operator, so this needs three operators: truncate, add one unit, and step back a millisecond. `.endOf` takes the same options as `.startOf`. With `binSize`, the step is the whole bin, so `.endOf("minute", { binSize: 15 })` on `15:47` gives `15:59:59.999`. A `timezone` also carries to the addition, so the step stays aware of daylight saving time.
+MongoDB has no ceiling operator, so this needs three operators: truncate, add one unit, and step back a millisecond. `.endOf` takes the same options as `.startOf`. With `binSize`, the step is the whole bin, so `.endOf("minute", { binSize: 15 })` on `15:47` gives `15:59:59.999`. A `timezone` also applies to the addition, so the step takes daylight saving time into account.
 
-**Prefer a half-open range for date filtering.** `.endOf` is the right answer when you need the last instant itself. But a range test reads better as a half-open interval, and it emits two operators instead of four:
+**Prefer a half-open range for a date filter.** `.endOf` is correct when you need the last instant itself. But a range test reads better as a half-open interval, and it emits two operators instead of four:
 
 ```js
 // Recommended: half-open, no millisecond edge to reason about
@@ -3165,9 +3175,9 @@ $.createdAt >= $.t.startOf("month") && $.createdAt < $.t.startOf("month").plus(1
 $.createdAt >= $.t.startOf("month") && $.createdAt <= $.t.endOf("month")
 ```
 
-**Note — the week starts on Sunday.** That is MongoDB's default, and Moment's default in an English locale, so `.startOf("week")` on a Wednesday goes back to the preceding Sunday. Luxon's `startOf('week')` uses the ISO Monday instead. Pass `{ startOfWeek: "monday" }` when you want that. The weekday name is not case-sensitive, and JSMQL rejects a typo with a suggestion.
+**Note — the week starts on Sunday.** That is MongoDB's default, and Moment's default in an English locale. So `.startOf("week")` on a Wednesday goes back to the Sunday before it. Luxon's `startOf('week')` uses the ISO Monday instead. Pass `{ startOfWeek: "monday" }` when you want that. The weekday name is not case-sensitive, and JSMQL rejects a typo with a suggestion.
 
-**Replace parts of a date.** `.set({ … })` reads the date's parts, overrides the ones you name, and rebuilds the date (Luxon's `.set`, Temporal's `.with`). Like every JSMQL method, it returns a new value and mutates nothing:
+**Replace parts of a date.** `.set({ … })` reads the parts of the date, replaces the parts that you name, and builds the date again (Luxon's `.set`, Temporal's `.with`). Like every JSMQL method, it returns a new value and mutates nothing:
 
 ```js
 $.t.set({ year: 2030 })
@@ -3182,11 +3192,11 @@ $.t.set({ year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, milliseco
 // { $dateFromParts: { year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 } }
 ```
 
-**`.set` counts months from 1.** `{ month: 1 }` is January, as in Luxon's `.set` and MongoDB's `$dateFromParts`, whose vocabulary this method borrows. It is the one date API here that is not a JavaScript spelling, so it does not share `.getMonth()`'s zero base (`$.t.set({ month: $.t.getMonth() + 1 })` round-trips). Every part must be an integer. JSMQL rejects a literal that is not an integer at compile time, exactly as the `$dateFromParts` operator would reject it at run time.
+**`.set` counts months from 1.** `{ month: 1 }` is January, as in Luxon's `.set` and in `$dateFromParts`, whose vocabulary this method uses. It is the one date API here that is not a JavaScript spelling. So it does not share the zero base of `.getMonth()`: `$.t.set({ month: $.t.getMonth() + 1 })` gives back the same date. Every part must be an integer. JSMQL rejects a literal that is not an integer at compile time, exactly as the `$dateFromParts` operator would reject it at run time.
 
-The parts come in two families, and `.set` follows whichever family you name: `year` / `month` / `day`, or the ISO-week family `isoWeekYear` / `isoWeek` / `isoDayOfWeek`. Either family may combine with `hour` / `minute` / `second` / `millisecond`, but the two families cannot mix. MongoDB builds a date from one family or the other, and JSMQL rejects a mix and names both offending keys.
+The parts come in two families, and `.set` follows the family that you name. One family is `year`, `month` and `day`. The ISO-week family is `isoWeekYear`, `isoWeek` and `isoDayOfWeek`. Each family can combine with `hour`, `minute`, `second` and `millisecond`, but the two families cannot mix. MongoDB builds a date from one family or the other. JSMQL rejects a mix, and the error names both keys that conflict.
 
-Write the parts out as an object literal, because MongoDB reads them by name. Their values may be field paths or parameters. The timezone is the *second* argument, not a part: `.set({ year: 2030 }, "America/New_York")`. It applies to both the read and the rebuild, so the parts read in that zone.
+Write the parts out as an object literal, because MongoDB reads them by name. Their values can be field paths or parameters. The timezone is the *second* argument, not a part: `.set({ year: 2030 }, "America/New_York")`. It applies to the read and to the rebuild, so JSMQL reads the parts in that zone.
 
 **Compare at a granularity.** `.isSame(other, unit)`, `.isBefore(other, unit)` and `.isAfter(other, unit)` truncate both sides to `unit` and then compare, so "same day" ignores the time of day:
 
@@ -3200,11 +3210,11 @@ $.a.isBefore($.b, "month")           // strictly an earlier calendar month
 //         { $dateTrunc: { date: "$b", unit: "month" } }] }
 ```
 
-**The unit is required.** Without one, these three methods are exactly `===`, `<` and `>`, which JSMQL already has. So JSMQL rejects a call with no unit and points at the operator: for `$.a.isSame($.b)`, write `$.a === $.b`. Options apply to both sides, because a one-sided timezone would compare two different calendars.
+**The unit is required.** Without one, these three methods are exactly `===`, `<` and `>`, which JSMQL already has. So JSMQL rejects a call with no unit and points at the operator: for `$.a.isSame($.b)`, write `$.a === $.b`. Options apply to both sides, because a timezone on one side only would compare two different calendars.
 
-#### The trailing `timezone` / options argument
+#### The trailing `timezone` or options argument
 
-Every date method takes the same optional last argument: a **timezone string**, or an **object literal** whose keys are the underlying operator's remaining fields.
+Every date method takes the same optional last argument. It is a **timezone string**, or an **object literal** whose keys are the remaining fields of the underlying operator.
 
 ```js
 $.end.diff($.start, "week", "UTC")
@@ -3215,17 +3225,17 @@ $.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })
 //                timezone: "Europe/Kyiv", startOfWeek: "monday" } }
 ```
 
-The options a method accepts are exactly the fields its operator has left over. `.diff` takes `timezone` and `startOfWeek`; `.plus` and `.minus` take `timezone` alone. JSMQL rejects an unknown key at compile time and gives a suggestion and the valid set. It emits keys in the operator's own field order, not the order you wrote them, so the output reads like the MongoDB manual.
+The options that a method accepts are exactly the remaining fields of its operator. `.diff` takes `timezone` and `startOfWeek`, and `.plus` and `.minus` take `timezone` alone. JSMQL rejects an unknown key at compile time, and gives a suggestion and the valid set. It emits the keys in the field order of the operator, not in the order that you wrote them. So the output reads like the MongoDB manual.
 
-Write the options form out as an object literal, because MongoDB reads these fields by name from the operator document, so the key names must exist in your source. Their *values* may be field paths or `jsmql.compile` parameters (`{ timezone: $.tz }`). Any non-object argument in this slot is the timezone shorthand.
+Write the options form out as an object literal. MongoDB reads these fields by name from the operator document, so the key names must be in your source. Their *values* can be field paths or `jsmql.compile` parameters (`{ timezone: $.tz }`). Any argument in this slot that is not an object is the timezone shorthand.
 
-**Every date number is JavaScript's.** `getMonth()` and `getUTCMonth()` count January as `0` (`{ $subtract: [{ $month: "$t" }, 1] }`). `getDay()` and `getUTCDay()` count Sunday as `0` (`{ $subtract: [{ $dayOfWeek: "$t" }, 1] }`). The constructors and `Date.UTC` read their month the same way, so a getter round trip needs no adjustment, and code pasted from a JavaScript file means what it meant there. MongoDB's own numbering is one `$op(…)` away: `$month($.t)` is 1-based, `$dayOfWeek($.t)` is 1 for Sunday, and the compiler leaves both untouched.
+**Every date number is JavaScript's.** `getMonth()` and `getUTCMonth()` count January as `0` (`{ $subtract: [{ $month: "$t" }, 1] }`). `getDay()` and `getUTCDay()` count Sunday as `0` (`{ $subtract: [{ $dayOfWeek: "$t" }, 1] }`). The constructors and `Date.UTC` read their month the same way, so a getter round trip needs no adjustment. Code that you paste from a JavaScript file means what it meant there. MongoDB's own numbering is available through `$op(…)`, and the compiler leaves it with no change: `$month($.t)` is 1-based, and `$dayOfWeek($.t)` is 1 for Sunday.
 
-Week numbering needs no adjustment at all: `week()` is `$week` (0–53, weeks begin Sunday), `isoWeek()` is `$isoWeek` (1–53), and `isoWeekday()` is `$isoDayOfWeek` (1 for Monday). The `startOfWeek` option and the `%U` / `%V` / `%u` / `%w` format specifiers are MongoDB's own.
+The week numbers need no adjustment. `week()` is `$week` (0–53, weeks begin Sunday), `isoWeek()` is `$isoWeek` (1–53), and `isoWeekday()` is `$isoDayOfWeek` (1 for Monday). The `startOfWeek` option and the `%U`, `%V`, `%u` and `%w` format specifiers are MongoDB's own.
 
-**Note:** the constructors use the same base, so a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the receiver's own month. See [the constructor note](#date-constructor-and-datenow).
+**Note:** the constructors use the same base, so a getter round trip needs no adjustment. `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first day of the month of the receiver. See [the constructor note](#date-constructor-and-datenow).
 
-**Note:** these methods require a date receiver, so JSMQL rejects a literal non-date at compile time (`"2020-01-01".getFullYear()` is an error). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings or numbers.
+**Note:** these methods require a date receiver, so JSMQL rejects a literal that is not a date at compile time (`"2020-01-01".getFullYear()` is an error). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong`, so it also accepts a numeric string or a number.
 
 ### Date Operator Calls
 
@@ -3252,13 +3262,15 @@ $dateFromString($.dateString)
 // { $dateFromString: { dateString: "$dateString" } }
 ```
 
-Valid `$dateAdd` / `$dateDiff` units: `"year"`, `"quarter"`, `"week"`, `"month"`, `"day"`, `"hour"`, `"minute"`, `"second"`, `"millisecond"`.
+The valid units of `$dateAdd` and `$dateDiff`: `"year"`, `"quarter"`, `"week"`, `"month"`, `"day"`, `"hour"`, `"minute"`, `"second"`, `"millisecond"`.
 
 ---
 
 ## Escape Hatch (Direct Operator Form)
 
-For a MongoDB operator with no JavaScript equivalent, use the `$opName()` escape hatch: a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way. JSMQL passes an unknown operator or stage through automatically, with no suggestion, which keeps it compatible with new MongoDB releases. The position gives an unknown name its role: a stage in a statement, an expression in a value, and `{ $expr: { $foo: … } }` in a filter. The call is your own MQL, so JSMQL does not check it. The server checks it, and gives the error for a wrong shape. See [Mistakes caught at compile time](#mistakes-caught-at-compile-time).
+For a MongoDB operator with no JavaScript equivalent, use the `$opName()` escape hatch: a direct call to the underlying MQL operator. Every MongoDB aggregation operator is available this way. JSMQL passes an unknown operator or stage through automatically, with no suggestion. So JSMQL stays compatible with later MongoDB releases. The position gives an unknown name its role: a stage in a statement, an expression in a value, and `{ $expr: { $foo: … } }` in a filter.
+
+The call is your own MQL, so JSMQL does not check it. The server checks it, and gives the error for a wrong shape. See [Mistakes caught at compile time](#mistakes-caught-at-compile-time).
 
 ### Examples:
 
@@ -3303,11 +3315,11 @@ $stdDevPop($.m) > 2                // ✗ '$stdDevPop(…)' is raw MQL, and raw 
 $gt($stdDevPop($.m), 2)            // jsmql.expr → { $gt: [{ $stdDevPop: "$m" }, 2] }
 ```
 
-A whole value is not an operand: the right side of `=`, a `let` value, an entry of a literal in
-such a place, and a callback body. So `$.sd = $stdDevPop($.m)` and `$.tags.map(t => $toUpper(t))`
-compile. In a Filter, a plain object in `&&`, `||` or `!` is a query document, which is raw MQL
-too: write `{ status: "A", qty: { $gt: 5 } }` or `$.status === "A" && $.qty > 5`, not
-`{ status: "A" } && $.qty > 5`.
+A whole value is not an operand. The whole-value positions are the right side of `=`, a `let`
+value, an entry of a literal in such a place, and a callback body. So `$.sd = $stdDevPop($.m)`
+and `$.tags.map(t => $toUpper(t))` compile. In a Filter, a plain object in `&&`, `||` or `!` is a
+query document, which is raw MQL too. So write `{ status: "A", qty: { $gt: 5 } }` or
+`$.status === "A" && $.qty > 5`, not `{ status: "A" } && $.qty > 5`.
 
 ### String
 
@@ -3327,7 +3339,7 @@ $trunc($.value, 1)                 // { $trunc: ["$value", 1] }
 
 ### Accumulators (also valid as expressions)
 
-Some operators are commonly used as accumulators in `$group`, where they take a single field expression, but they also work as expression operators in `$project`, where they take multiple expressions to compare. JSMQL accepts both shapes: pass one argument for the accumulator form, or multiple for the expression form:
+Some operators are often accumulators in `$group`, where they take a single field expression. They also work as expression operators in `$project`, where they take more than one expression to compare. JSMQL accepts both shapes. Pass one argument for the accumulator form, or more than one for the expression form:
 
 ```js
 $min($.scores)                     // { $min: "$scores" }              (single — accumulator-style)
@@ -3353,7 +3365,7 @@ $last($.items)                     // { $last: "$items" }   (last array element)
 
 ### Set Operations
 
-These treat arrays as sets (order ignored, duplicates removed):
+These operators treat arrays as sets: they ignore the order, and they remove duplicates:
 
 ```js
 $setUnion($.a, $.b)                // { $setUnion: ["$a", "$b"] }
@@ -3365,12 +3377,14 @@ $setIsSubset($.a, $.b)             // { $setIsSubset: ["$a", "$b"] }
 $setEquals($.a, $.b)               // { $setEquals: ["$a", "$b"] }
 ```
 
-**Operand rules for list operators.** An operator whose operand is a list (the
-set operators, arithmetic `$add` / `$divide` / …, `$and` / `$or`, the bitwise
-operators) takes two or more arguments, or one array literal. Both forms give
-the same `{ $op: […] }`. One argument that is not an array literal is one
-operand, as written: `$setUnion($.a)` gives `{ $setUnion: "$a" }`. The server
-reads it as one operand, and it refuses a count that the operator does not take.
+**Operand rules for list operators.** An operator whose operand is a list takes
+two or more arguments, or one array literal. Examples are the set operators, the
+arithmetic operators such as `$add` and `$divide`, `$and` and `$or`, and the
+bitwise operators. Both forms give the same `{ $op: […] }`. One argument that is
+not an array literal is one operand, as written: `$setUnion($.a)` gives
+`{ $setUnion: "$a" }`. The server reads it as one operand, and it refuses a count
+that the operator does not take.
+
 `$op(...)` does not accept the JS spread, because MQL has no spread. Pass one
 array instead, or use the JS-method form where it applies (`$.scores.max()`).
 
@@ -3393,9 +3407,9 @@ $setField("fieldName", $.doc, val) // { $setField: { field: "fieldName", input: 
 $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input: "$doc" } }
 ```
 
-A spread argument of `.assign()` is a list of sources, and a plain argument is one source. So `$.a.assign($.docs)` merges `docs` as one object, and the server refuses it when `docs` is an array. The target is a new object, so `({}).assign(...$.docs)` writes nothing into `docs[0]`, where JavaScript's `Object.assign(...docs)` changes it. A bare `.assign()` statement writes nothing. See [A merge writes back through the object spread](#a-merge-writes-back-through-the-object-spread).
+A spread argument of `.assign()` is a list of sources, and a plain argument is one source. So `$.a.assign($.docs)` merges `docs` as one object, and the server refuses it when `docs` is an array. The target is a new object, so `({}).assign(...$.docs)` writes nothing into `docs[0]`. JavaScript's `Object.assign(...docs)` changes `docs[0]` there. A bare `.assign()` statement writes nothing. See [A merge writes back through the object spread](#a-merge-writes-back-through-the-object-spread).
 
-The `Object` statics are not JSMQL names. Each one says the same thing as the method of its receiver, and one capability gets one spelling. The name still parses, so the error names the form that works:
+The `Object` statics are not JSMQL names. Each one says the same thing as the method of its receiver, and one capability gets one spelling. The name parses, so the error names the form that works:
 
 ```js
 Object.keys($.doc)                 // ✗ not a JSMQL name; write $.doc.keys()
@@ -3406,7 +3420,7 @@ Object.assign($.f, $.x);           // ✗ not a JSMQL name; write $.f = { ...$.f
 
 ### Spread in Variadic Calls
 
-`.assign()` takes `...arr`, and passes the whole array through as the operator's value:
+`.assign()` takes `...arr`, and passes the whole array through as the value of the operator:
 
 ```js
 ({}).assign(...$.docs)             // { $mergeObjects: "$docs" }
@@ -3418,13 +3432,13 @@ An array literal joins spread and non-spread elements with `$concatArrays`, so a
 [$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
 
-**The `$op(…)` escape hatch takes no spread.** `$op(value)` is `{ $op: value }` and `$op(a, b)` is `{ $op: [a, b] }` ([HR2](LANG_RULES.md)); a spread has no MQL of its own. JSMQL refuses `$concatArrays(...$.arrs)` and `$foo(...$.arr)` alike, and the message names the forms that work: the operands one by one, the single array (`$concatArrays($.arrs)`), or the JavaScript spelling (`arr.max()`, `({}).assign(...arr)`, `[...a, ...b]`, `.concat()`).
+**The `$op(…)` escape hatch takes no spread.** `$op(value)` is `{ $op: value }`, and `$op(a, b)` is `{ $op: [a, b] }` ([HR2](LANG_RULES.md)). A spread has no MQL of its own. JSMQL refuses `$concatArrays(...$.arrs)` and `$foo(...$.arr)` alike. The message names the forms that work: the operands one by one, the single array (`$concatArrays($.arrs)`), or the JavaScript spelling (`arr.max()`, `({}).assign(...arr)`, `[...a, ...b]`, `.concat()`).
 
 `$getField` and `$setField` are useful when a field name is dynamic or contains special characters.
 
 ### Variable Binding with `$let`
 
-`$let` binds named variables scoped to a single expression. This avoids repeated sub-expressions:
+`$let` binds named variables in the scope of a single expression. So you do not repeat a sub-expression:
 
 ```js
 $let({ discount: $.price * 0.1 }, (discount) => $.price - discount)
@@ -3445,7 +3459,7 @@ $bitNot($.flags)                   // { $bitNot: "$flags" }
 
 ### `$literal` — bypass MongoDB's runtime expression evaluation
 
-In raw MQL, a `"$..."` string that you write in the source is MongoDB's own spelling of a field path, and it passes through as written. JSMQL is a strict superset of MQL ([HR1](LANG_RULES.md)), so `{ a: "$b" }` at the program root means what it means in raw MQL. In JSMQL the same string is text (see [`$`-prefixed strings](#-prefixed-strings-a-field-ref-in-raw-mql-text-in-jsmql)). To store or compare the *string* `"$foo"` inside raw MQL, mark it with `$literal`:
+In raw MQL, a `"$..."` string in the source is MongoDB's own spelling of a field path, and it passes through as written. JSMQL is a strict superset of MQL ([HR1](LANG_RULES.md)), so `{ a: "$b" }` at the program root means what it means in raw MQL. In JSMQL the same string is text (see [`$`-prefixed strings](#-prefixed-strings-a-field-ref-in-raw-mql-text-in-jsmql)). To store or compare the *string* `"$foo"` inside raw MQL, mark it with `$literal`:
 
 ```js
 ({ a: "$b" })                      // { a: "$b" }              — the field b, as in MQL
@@ -3455,11 +3469,11 @@ $literal(42)                       // { $literal: 42 }         — equivalent to
 $literal({ x: "$foo" })            // { $literal: { x: "$foo" } }
 ```
 
-A value that arrives at **run time** — a template-tag `${…}` interpolation, or a `jsmql.compile()` parameter — is a value, never syntax. Such a value reads as MQL when it is a `"$..."` string or a document with a `$` key. JSMQL then places it by the slot that it fills:
+A value that arrives at **run time** is a value, never syntax. Such a value is a template-tag `${…}` interpolation or a `jsmql.compile()` parameter. It reads as MQL when it is a `"$..."` string or a document with a `$` key. JSMQL then places it by the slot that it fills:
 
 - A slot that the server evaluates takes the value inside `$literal`, so user input cannot become a field reference. Such a slot is an expression, a `$set` value, or `$group`'s `_id`, for example.
 - A query compares the value as written (`$.a === ${s}`), and an update document (`jsmql.update`) stores it as written.
-- Every other slot refuses the value, because there it becomes part of the MQL. This is a stage option that the server reads as written (`$unwind`'s path, `$lookup`'s `from`), an accumulator, or a whole query. The message names the spelling to write in the source.
+- Every other slot refuses the value, because there it becomes part of the MQL. Such a slot is a stage option that the server reads as written (`$unwind`'s path, `$lookup`'s `from`), an accumulator, or a whole query. The message names the spelling to write in the source.
 
 The two forms give the same answer. See [Template-Tag Form](#template-tag-form--jsmql-) and [Parameterised Queries](#parameterised-queries-jsmqlcompile).
 
@@ -3474,7 +3488,7 @@ jsmql`$match(${{ a: { $gt: 1 } }});`  // ✗ an interpolated object cannot be th
 
 ### `$meta` — per-document aggregation metadata
 
-⚠️ **Watch out:** `$meta` takes a **keyword string**, for example `"textScore"`, `"indexKey"` or `"searchScore"`, not an arbitrary expression. JSMQL does not check the keyword.
+⚠️ **Caution:** Give `$meta` a **keyword string**, for example `"textScore"`, `"indexKey"` or `"searchScore"`, not an arbitrary expression. JSMQL does not check the keyword.
 
 ```js
 $meta("textScore")                 // { $meta: "textScore" }
@@ -3482,7 +3496,7 @@ $meta("textScore")                 // { $meta: "textScore" }
 
 ### Custom Aggregation: `$function` and `$accumulator`
 
-⚠️ **Watch out:** the `body`, `init`, `accumulate`, `merge` and `finalize` fields are **JavaScript source code as a string**. MongoDB's V8 engine executes them on the server. They are NOT JSMQL expressions: JSMQL does not substitute `$.field` references, so you must pass field values through the `args` / `accumulateArgs` arrays.
+⚠️ **Caution:** Pass field values through the `args` and `accumulateArgs` arrays. The `body`, `init`, `accumulate`, `merge` and `finalize` fields are **JavaScript source code as a string**, and MongoDB's V8 engine executes them on the server. They are NOT JSMQL expressions, so JSMQL does not substitute `$.field` references in them.
 
 ```js
 $function({
@@ -3503,7 +3517,7 @@ $accumulator({
 
 ### Window Operators
 
-These operators are valid only in a `$setWindowFields` **output** slot. A `$op(…)` call is your own MQL, so JSMQL passes one written anywhere else through, and the server refuses it:
+These operators are valid only in a `$setWindowFields` **output** slot. A `$op(…)` call is your own MQL, so JSMQL passes such a call through in any other place, and the server refuses it there:
 
 ```js
 $project({ r: $rank() });
@@ -3536,7 +3550,7 @@ $covarianceSamp($.x, $.y)          // { $covarianceSamp: ["$x", "$y"] }
 
 ### Encrypted String (Queryable Encryption)
 
-These operate on encrypted fields created with MongoDB's Queryable Encryption feature.
+These operators work on encrypted fields that MongoDB's Queryable Encryption feature creates.
 
 ```js
 $encStrContains($.encField, "secret")
@@ -3560,7 +3574,7 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 
 ### Deprecated: `$substr`
 
-`$substr` is deprecated in MongoDB. Prefer `$substrBytes` (byte-indexed) or `$substrCP` (code-point-indexed) for new code.
+MongoDB deprecates `$substr`. For new code, prefer `$substrBytes` (indexed by bytes) or `$substrCP` (indexed by code points).
 
 ---
 
