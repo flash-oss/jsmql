@@ -3688,6 +3688,8 @@ declare global {
     log10(): number;
     /** The base-2 logarithm — `Math.log2`. */
     log2(): number;
+    /** Gives a random number between two bounds, as lodash's `_.random` does. Two whole bounds give a whole number. */
+    random(upper?: number): number;
     /** The integers from the start up to, but not including, the end — `_.range`. */
     range(end?: number, step?: number): number[];
     /** The `.range()` array in reverse order — `_.rangeRight`. */

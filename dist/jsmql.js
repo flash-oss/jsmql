@@ -668,6 +668,30 @@ function groupedByKey(input, it, bind) {
   };
 }
 var orZero = (v, there) => v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
+function randomOf({ recv, args, value, bind, present: present2 }) {
+  const self = orZero(recv, present2);
+  const [a, b] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
+  const from = (lo2, step) => lo2 === 0 ? step : { $add: [lo2, step] };
+  const whole = (lo2, span2) => from(lo2, { $floor: { $multiply: [{ $rand: {} }, span2] } });
+  const fraction = (lo2, span2) => from(lo2, { $multiply: [{ $rand: {} }, span2] });
+  if (typeof a === "number" && typeof b === "number") {
+    const [lo2, hi2] = a <= b ? [a, b] : [b, a];
+    return Number.isInteger(lo2) && Number.isInteger(hi2) ? whole(lo2, hi2 - lo2 + 1) : fraction(lo2, hi2 - lo2);
+  }
+  const lo = bind("lo");
+  const hi = bind("hi");
+  const span = { $subtract: [hi.ref, lo.ref] };
+  const isWhole = (ref) => ({ $eq: [ref, { $trunc: ref }] });
+  const fixed = [a, b].some((v) => typeof v === "number" && !Number.isInteger(v));
+  const body = fixed ? fraction(lo.ref, span) : {
+    $cond: {
+      if: { $and: [isWhole(lo.ref), isWhole(hi.ref)] },
+      then: whole(lo.ref, { $add: [span, 1] }),
+      else: fraction(lo.ref, span)
+    }
+  };
+  return { $let: { vars: { [lo.as]: { $min: [a, b] }, [hi.as]: { $max: [a, b] } }, in: body } };
+}
 var RANGE_ARGS = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
@@ -9926,22 +9950,26 @@ var NAMES = {
     window: unsupported("'.hypot()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   random: name({
-    doc: "'Math.random()' \u2014 emits $rand.",
+    doc: "'.random([upper])' \u2014 lodash's _.random with the receiver as a bound; 'Math.random()' \u2014 emits $rand.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
-    neverNull: true,
+    neverNull: "always",
+    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
-    stream: unsupported("'Math.random()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "[upper]", allowed: [0, 1] }, emit: (input) => randomOf(input) },
+        Math: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) }
+      }
+    },
+    stream: unsupported("'.random()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.random()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.random(\u2026);'"
+      "'.random()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.random();'"
     ),
-    group: unsupported("'Math.random()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.random()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
-    )
+    group: unsupported("'.random()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.random()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   PI: name({
     doc: "'Math.PI' \u2014 the literal 3.141592653589793. Read, never called.",

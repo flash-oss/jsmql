@@ -2641,9 +2641,22 @@ $.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))   // a date reads th
 $.n.round()            // { $round: "$n" }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
 $.n.round(2)           // { $round: ["$n", 2] }
 $.n.ceil()             // { $ceil: "$n" }
-$.n.ceil(2)            // scale by 10² via $pow, $ceil, scale back
+$.n.ceil(2)            // { $divide: [{ $ceil: { $multiply: ["$n", 100] } }, 100] }
 $.n.floor(1)           // as ceil, with $floor
 ```
+
+#### `.random()`
+
+`.random()` is lodash's `_.random`, and the receiver is lodash's first argument. With no argument, the number is between 0 and the receiver. With one argument, it is between the receiver and the argument. The bounds swap when the first one is larger. Two whole bounds give a whole number, both ends included. Any other pair gives a fractional number. A missing bound reads as `0`, as lodash reads it.
+
+```js
+(1).random(6)            // { $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] }   → 1 … 6, whole
+(1.5).random(2)          // { $add: [1.5, { $multiply: [{ $rand: {} }, 0.5] }] }          → 1.5 … 2
+$.a.random($.b)          // a $let of the two ends, then a $cond: whole when both ends are whole
+Math.random()            // { $rand: {} }   → 0 … 1
+```
+
+Two constant bounds decide the form at compile time. For a bound from a document, the server runs the test. The MQL is therefore larger.
 
 #### `.range()` and `.rangeRight()`
 

@@ -673,6 +673,11 @@ const VALUE_METHOD_SIGNATURES = {
   asinh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic sine, in radians — `Math.asinh`." },
   acosh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic cosine, in radians — `Math.acosh`." },
   atanh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic tangent, in radians — `Math.atanh`." },
+  random: {
+    recv: "Number",
+    sig: "(upper?: number): number",
+    doc: "Gives a random number between two bounds, as lodash's `_.random` does. Two whole bounds give a whole number.",
+  },
   // The receiver is lodash's `end` alone, and its `start` with more arguments.
   range: {
     recv: "Number",

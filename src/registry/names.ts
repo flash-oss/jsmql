@@ -1276,6 +1276,44 @@ const orZero = (v: unknown, there: boolean): unknown =>
   v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
 
 /**
+ * lodash's `_.random(lower, upper)`. The receiver is `lower`. With no argument, the
+ * receiver is `upper`, and `lower` is 0. The bounds swap when `lower` is the larger one. Two whole bounds give a whole
+ * number, both ends included, and any other pair gives a fractional number. A constant
+ * pair decides the form here. The server tests a pair that is known only at run time.
+ * A missing bound reads as 0, as lodash reads it.
+ *
+ *   (1).random(6)     → { $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] }
+ *   $.a.random($.b)   → a `$let` of the two ends, and a `$cond` on whether both are whole
+ */
+function randomOf({ recv, args, value, bind, present }: ExprIn): unknown {
+  const self = orZero(recv, present);
+  const [a, b] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
+  const from = (lo: unknown, step: unknown): unknown => (lo === 0 ? step : { $add: [lo, step] });
+  const whole = (lo: unknown, span: unknown): unknown => from(lo, { $floor: { $multiply: [{ $rand: {} }, span] } });
+  const fraction = (lo: unknown, span: unknown): unknown => from(lo, { $multiply: [{ $rand: {} }, span] });
+  if (typeof a === "number" && typeof b === "number") {
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    return Number.isInteger(lo) && Number.isInteger(hi) ? whole(lo, hi - lo + 1) : fraction(lo, hi - lo);
+  }
+  const lo = bind("lo");
+  const hi = bind("hi");
+  const span = { $subtract: [hi.ref, lo.ref] };
+  const isWhole = (ref: string): unknown => ({ $eq: [ref, { $trunc: ref }] });
+  // a constant fraction decides the form, and the server tests any other pair
+  const fixed = [a, b].some((v) => typeof v === "number" && !Number.isInteger(v));
+  const body = fixed
+    ? fraction(lo.ref, span)
+    : {
+        $cond: {
+          if: { $and: [isWhole(lo.ref), isWhole(hi.ref)] },
+          then: whole(lo.ref, { $add: [span, 1] }),
+          else: fraction(lo.ref, span),
+        },
+      };
+  return { $let: { vars: { [lo.as]: { $min: [a, b] }, [hi.as]: { $max: [a, b] } }, in: body } };
+}
+
+/**
  * The arguments of `.range()` and `.rangeRight()`: lodash's `end`, or `start` on the
  * receiver with `end[, step]`. `$range` refuses a zero step and a fractional bound.
  */
@@ -11156,22 +11194,26 @@ export const NAMES = {
   }),
 
   random: name({
-    doc: "'Math.random()' — emits $rand.",
+    doc: "'.random([upper])' — lodash's _.random with the receiver as a bound; 'Math.random()' — emits $rand.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
-    neverNull: true,
+    neverNull: "always",
+    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
-    stream: unsupported("'Math.random()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "[upper]", allowed: [0, 1] }, emit: (input) => randomOf(input) },
+        Math: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
+      },
+    },
+    stream: unsupported("'.random()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.random()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.random(…);'",
+      "'.random()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.random();'",
     ),
-    group: unsupported("'Math.random()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.random()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
-    ),
+    group: unsupported("'.random()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.random()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   PI: name({

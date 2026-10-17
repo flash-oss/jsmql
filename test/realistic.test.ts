@@ -3754,3 +3754,24 @@ $group({ _id: null, lastGood: { $max: "$readAt" }, readings: { $sum: 1 } });
     ]);
   });
 });
+
+// Put each user into a staged-rollout bucket: a whole number from 1 to 100,
+// compared with the rollout percentage the document holds.
+// The MQL ran on a live mongod.
+describe("staged rollout bucket through .random()", { features: ["Arithmetic and Math"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
+    expect(jsmql(`$.variant = (1).random(100) <= $.rolloutPercent ? "B" : "A";`)).toEqual([
+      {
+        $set: {
+          variant: {
+            $cond: {
+              if: { $lte: [{ $add: [1, { $floor: { $multiply: [{ $rand: {} }, 100] } }] }, "$rolloutPercent"] },
+              then: "B",
+              else: "A",
+            },
+          },
+        },
+      },
+    ]);
+  });
+});

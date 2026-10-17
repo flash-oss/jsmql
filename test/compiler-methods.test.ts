@@ -3004,7 +3004,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   atanh: ["(0.5).atanh()"],
   atan2: ["$.n.atan2(1)"],
   hypot: ["$.n.hypot(1)"],
-  random: ["Math.random()"],
+  random: ["(1).random(6)", "$.nope.random($.nope)"],
   PI: ["Math.PI"],
   E: ["Math.E"],
   isInteger: ["Number.isInteger($.n)", "Number.isInteger($.nope)"],
@@ -3083,6 +3083,7 @@ const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   range: ["$.nope.range($.neg)", "(0).range($.neg)"],
   rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
   sign: ["$.nope.sign()", "(0).sign()"],
+  random: ["$.nope.random(0)", "(0).random(0)"],
 };
 
 /**
@@ -3223,6 +3224,37 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
     for (const [row, [onMissing, onStated]] of Object.entries(NULL_RECEIVER_AS)) {
       const [a, b] = [await answer(onMissing), await answer(onStated)];
       if (a !== b) wrong.push(`${row}: ${onMissing} → ${a}, ${onStated} → ${b}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+/**
+ * This test checks `.random()` against lodash's `_.random`. It checks the range, both ends
+ * for two whole bounds, and the form of the answer. Each source runs 400 times on the server.
+ */
+const RANDOMS: readonly (readonly [src: string, lo: number, hi: number, whole: boolean])[] = [
+  ["(1).random(6)", 1, 6, true],
+  ["(6).random(1)", 1, 6, true],
+  ["(5).random()", 0, 5, true],
+  ["(1.5).random(2)", 1.5, 2, false],
+  ["$.neg.random(3)", -3, 3, true],
+  ["$.neg.random($.n)", -3, 7.256, false],
+  ["$.nope.random(4)", 0, 4, true],
+  ["$.n.random()", 0, 7.256, false],
+];
+
+describe.skipIf(!up)("compiler/emit — `.random()` gives lodash's range on the server", () => {
+  it("stays in range, reaches each whole end, and is whole only for two whole bounds", async () => {
+    const wrong: string[] = [];
+    for (const [src, lo, hi, whole] of RANDOMS) {
+      const [d] = await coll!
+        .aggregate([{ $project: { _id: 0, v: { $map: { input: { $range: [0, 400] }, in: expr(src) } } } }])
+        .toArray();
+      const v = d.v as number[];
+      if (v.some((x) => x < lo || x > hi)) wrong.push(`${src}: a value is out of [${lo}, ${hi}]`);
+      if (v.every(Number.isInteger) !== whole) wrong.push(`${src}: whole is ${!whole}`);
+      if (whole && (!v.includes(lo) || !v.includes(hi))) wrong.push(`${src}: an end never appears`);
     }
     expect(wrong).toEqual([]);
   });

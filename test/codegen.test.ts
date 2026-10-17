@@ -9698,6 +9698,45 @@ describe("date .getTime / .toISOString", () => {
   });
 });
 
+describe(".random() — lodash's _.random with the receiver as a bound", () => {
+  it("decides the form for two constant bounds, and drops a lower bound of 0", () => {
+    expect(jsmql.expr("(1).random(6)")).toEqual({ $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] });
+    expect(jsmql.expr("(6).random(1)")).toEqual({ $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] });
+    expect(jsmql.expr("(5).random()")).toEqual({ $floor: { $multiply: [{ $rand: {} }, 6] } });
+    expect(jsmql.expr("(1.5).random(2)")).toEqual({ $add: [1.5, { $multiply: [{ $rand: {} }, 0.5] }] });
+  });
+  it("lets the server test bounds from a document; a constant fraction decides the form", () => {
+    const span = { $subtract: ["$$jsmqlHi", "$$jsmqlLo"] };
+    expect(jsmql.expr("$.a.random($.b)")).toEqual({
+      $let: {
+        vars: {
+          jsmqlLo: { $min: [{ $ifNull: ["$a", 0] }, { $ifNull: ["$b", 0] }] },
+          jsmqlHi: { $max: [{ $ifNull: ["$a", 0] }, { $ifNull: ["$b", 0] }] },
+        },
+        in: {
+          $cond: {
+            if: {
+              $and: [{ $eq: ["$$jsmqlLo", { $trunc: "$$jsmqlLo" }] }, { $eq: ["$$jsmqlHi", { $trunc: "$$jsmqlHi" }] }],
+            },
+            then: { $add: ["$$jsmqlLo", { $floor: { $multiply: [{ $rand: {} }, { $add: [span, 1] }] } }] },
+            else: { $add: ["$$jsmqlLo", { $multiply: [{ $rand: {} }, span] }] },
+          },
+        },
+      },
+    });
+    expect(jsmql.expr("$.n.random(1.5)")).toEqual({
+      $let: {
+        vars: { jsmqlLo: { $min: [{ $ifNull: ["$n", 0] }, 1.5] }, jsmqlHi: { $max: [{ $ifNull: ["$n", 0] }, 1.5] } },
+        in: { $add: ["$$jsmqlLo", { $multiply: [{ $rand: {} }, span] }] },
+      },
+    });
+  });
+  it("keeps Math.random() as $rand, with no argument", () => {
+    expect(jsmql.expr("Math.random()")).toEqual({ $rand: {} });
+    expect(() => jsmql.expr("Math.random(1)")).toThrow("'Math.random()' takes no arguments, got 1");
+  });
+});
+
 describe(".sign() / .log2() / .log10() / .hypot() / .cbrt() / Math.random() / constants", () => {
   it(".sign() reads a missing number as 0, the safe value", () => {
     expect(jsmql.expr("$.x.sign()")).toEqual({ $cmp: [{ $ifNull: ["$x", 0] }, 0] });
