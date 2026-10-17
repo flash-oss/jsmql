@@ -393,6 +393,26 @@ $.v = $.flag ? "abc" : [1, 2];  $.len = $.v.length();   // the value can be a st
 $.v = $.flag ? 5 : [1, 2];  $.len = $.v.length();       // ✗ no possible kind is a string
 ```
 
+### The slot check
+
+`checkSlots` in [check.ts](../../src/compiler/emit/check.ts) reads the proof of each
+operand through `kindOf` in [prove.ts](../../src/compiler/emit/prove.ts). `kindOf`
+answers one kind, `"null"` for a proof with no kind (`isNothing`), or `"unknown"`.
+A slot that states a kind refuses an operand of another proven kind (HR7). A value
+that the proof shows is absent is `null`, and `null` is not the kind of any slot.
+So the check refuses it, as it refuses a written `null`. An unproven value passes,
+and the server judges it.
+
+```js
+let x = null; $.r = $.a.slice(x);          // ✗ x is null, and the slot takes an integer
+$.o = {}; $.r = $.a.slice($.o?.b);         // ✗ no stage wrote o.b, so the value is absent
+$.r = $.a.slice($.n);                      // unknown: the server decides
+// → [{ $set: { r: { $let: { vars: { jsmqlArr: { $ifNull: ["$a", []] } }, in: { $slice: ["$$jsmqlArr", "$n", { $max: [1, { $size: "$$jsmqlArr" }] }] } } } } }]
+```
+
+A reader of `kindOf` that asks for a family reads `"null"` as no family, as it reads
+`"unknown"`.
+
 ### The truthiness rule
 
 `truthOf(value, type)` in [mode.ts](../../src/compiler/emit/mode.ts) reads a

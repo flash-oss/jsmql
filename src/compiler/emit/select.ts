@@ -200,11 +200,13 @@ function fromByArgs(name: string, byArgs: Record<string, unknown>, shaped: Shape
 
 /**
  * Can a value PROVEN to be `kind` fill a slot that takes `expected`? An unproven
- * value can fill any slot, and the server judges it. A `fieldName` or a `fieldPath`
- * slot reads a string, and a date slot takes a date alone.
+ * value can fill any slot, and the server judges it. A value proven null or missing
+ * fills no slot, because `null` is not the kind a slot states (HR7). A `fieldName` or
+ * a `fieldPath` slot reads a string, and a date slot takes a date alone.
  */
-export function kindFits(kind: Kind | "unknown", expected: ArgType | readonly ArgType[]): boolean {
+export function kindFits(kind: Kind | "null" | "unknown", expected: ArgType | readonly ArgType[]): boolean {
   if (kind === "unknown") return true;
+  if (kind === "null") return false;
   if (Array.isArray(expected)) return (expected as readonly ArgType[]).some((t) => kindFits(kind, t));
   switch (expected as ArgType) {
     case "number":

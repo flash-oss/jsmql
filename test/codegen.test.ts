@@ -9598,6 +9598,30 @@ describe("window operators ($setWindowFields-only)", () => {
 });
 
 describe("jsmql.compile()", () => {
+  it("refuses an injected null where the slot states a kind, at call time (HR7)", () => {
+    const sliced = jsmql.expr.compile(({ start }: { start: number | null }, { $ }) => $.a.slice(start));
+    expect(sliced({ start: 1 })).toEqual({
+      $let: {
+        vars: { jsmqlArr: { $ifNull: ["$a", []] } },
+        in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+      },
+    });
+    expect(() => sliced({ start: null })).toThrow("'.slice()' argument 1 takes an integer, but got null.");
+    // The template form refuses it too. A template has no single source offset, so `.pos` is 0.
+    expect(() => jsmql.expr`$.a.slice(${null})`).toThrow("'.slice()' argument 1 takes an integer, but got null.");
+    const result = jsmql.validate`$.a.slice(${null})`;
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatchObject({ code: "CODEGEN_ERROR", pos: 0 });
+  });
+
+  it("validates a parameterised arrow with a parameter in a slot that states a kind", () => {
+    // The call can pass a value of that kind, so `validate()` reads the parameter as a value of no known kind.
+    expect(jsmql.validate(({ start }: { start: number }, { $ }) => $.a.slice(start))).toEqual({
+      valid: true,
+      errors: [],
+    });
+  });
+
   describe("basic binding", () => {
     it("scalar binding inlines as a literal", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age > minAge);

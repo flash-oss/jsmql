@@ -54,6 +54,7 @@ import {
   maybeAbsent,
   objectOf,
   of,
+  isNothing,
   present,
   propOf,
   removed,
@@ -64,7 +65,8 @@ import {
 import type { Site } from "./type.ts";
 import { staticKey } from "../passes/naming.ts";
 
-export type Known = Kind | "unknown";
+/** One kind a value provably has: a `Kind`, `"null"` for a value proven null or missing, or "unknown". */
+export type Known = Kind | "null" | "unknown";
 
 const NAMESPACES = namespaceNames();
 
@@ -223,8 +225,15 @@ export function sourceFamily(node: Expr): FieldFamily | "regexp" | string | null
   return null;
 }
 
-/** The one kind `node` provably has under `env`, or "unknown". A reader of `typeOf` for a consumer that asks for one kind. */
-export const kindOf = (node: Expr, env: Env): Known => single(typeOf(node, env));
+/**
+ * The one kind that `node` provably has under `env`. It is "null" when the value is
+ * always null or missing, and "unknown" when the proof shows no single kind. A reader
+ * of `typeOf` for a consumer that asks for one kind.
+ */
+export const kindOf = (node: Expr, env: Env): Known => {
+  const t = typeOf(node, env);
+  return isNothing(t) ? "null" : single(t);
+};
 
 /** The one kind of ONE element of the array `node` reads, or "unknown". */
 export const elementKindOf = (node: Expr, env: Env): Known => single(elementOf(typeOf(node, env)));

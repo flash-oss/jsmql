@@ -298,7 +298,11 @@ export function exprInputs(
     keys,
     value,
     present,
-    kind: (e) => kindOf(e, argEnv),
+    // A cell asks for a kind to pick a lowering, and a proven null picks none.
+    kind: (e) => {
+      const k = kindOf(e, argEnv);
+      return k === "null" ? "unknown" : k;
+    },
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),

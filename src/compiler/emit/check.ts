@@ -135,7 +135,8 @@ const hint = (expected: ArgType): string => {
 };
 
 /** The kind of a PROVEN value, as a noun with its article. */
-const KIND_NOUN: Readonly<Partial<Record<Kind, string>>> = {
+const KIND_NOUN: Readonly<Partial<Record<Kind | "null", string>>> = {
+  null: "null",
   string: "a string",
   number: "a number",
   bool: "a boolean",
@@ -148,6 +149,9 @@ const KIND_NOUN: Readonly<Partial<Record<Kind, string>>> = {
 
 /** A literal of a type the slot can never take. `slot` names the key or the argument. */
 export function checkType(name: string, slot: string, e: Expr, expected: ArgType): void {
+  // `null` is not the kind any slot states (HR7). The fix depends on what the developer
+  // meant, so the message names no alternative.
+  if (e.type === "NullLiteral") throw new CodegenError(wrongKind(name, slot, TAKES[expected], "null"), e.pos);
   // A field NAME is the one slot where a string that starts with `$` is the ERROR,
   // not a runtime value. The check reads it from the source, not through the
   // literal gate. The server refuses `{ $count: "$n" }`, and it also refuses a
@@ -165,7 +169,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
   if (expected === "fieldName") {
     if (e.type !== "StringLiteral") {
       const other = literal(e);
-      if (other === null || other.kind === "null") return;
+      if (other === null) return;
       throw new CodegenError(
         `'${spell(name)}' ${slot} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos,
@@ -186,8 +190,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
     );
   }
   const lit = literal(e);
-  if (lit === null || lit.kind === "null") return;
-  if (matches(lit, expected)) return;
+  if (lit === null || matches(lit, expected)) return;
   // A number in an integer slot is a fraction: the kind fits, and the value does not.
   const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
@@ -332,7 +335,7 @@ export function checkSlots(
   args: Arity,
   operands: readonly Expr[],
   /** What each operand PROVABLY is, aligned with `operands`. */
-  kinds: readonly (Kind | "unknown")[],
+  kinds: readonly (Kind | "null" | "unknown")[],
   /**
    * Does the row state an OBJECT form for this body? When it does, an object
    * literal is exempt from `slotType` — the date accessors take a date OR the

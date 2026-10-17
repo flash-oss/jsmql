@@ -200,7 +200,9 @@ makes sure that every stated rule field has a reader.
 operand as a required parameter, so no site can skip the proof. A slot that
 states a kind refuses an operand that the proof shows is another kind. The
 refusal names the slot: `argument N` for a positional operand, the key for a
-body key, and `element N` for an element of a list.
+body key, and `element N` for an element of a list. A slot that states a kind
+refuses `null`: a written `null`, an injected `null`, and a value that the
+proof shows is absent. See [types.md § The slot check](types.md#the-slot-check).
 
 ## Truthiness
 

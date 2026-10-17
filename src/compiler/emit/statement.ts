@@ -11,7 +11,7 @@
 //
 // See docs/specs/emit-pass.md § the statement target.
 
-import type { Expr, Kind, QueryDoc, Stage, Type } from "../../registry/vocabulary.ts";
+import type { Expr, QueryDoc, Stage, Type } from "../../registry/vocabulary.ts";
 import type { FuncDecl, LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
 import { isFieldPathString } from "../../registry/ast.ts";
 import { readsRef } from "./mql.ts";
@@ -53,7 +53,7 @@ import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
-import { documentAfter, kindOf, typeOf } from "./prove.ts";
+import { documentAfter, kindOf, typeOf, type Known } from "./prove.ts";
 import { ANY, DOCUMENT, arrayOf, cannotBe, elementOf, isOnly, maybeAbsent, of } from "./type.ts";
 import { isPlainObject } from "../../bson.ts";
 import {
@@ -1142,7 +1142,7 @@ function refuseUnbuiltSugar(value: Expr): void {
 // ── the stream road ──────────────────────────────────────────────────────────
 
 /** What each argument of a stage call or a stream link PROVABLY is, for the slot check. */
-const kindsOf = (args: readonly Expr[], env: Env, node: object): readonly (Kind | "unknown")[] => {
+const kindsOf = (args: readonly Expr[], env: Env, node: object): readonly Known[] => {
   const argEnv = childEnv(env, node, "args");
   return args.map((a) => kindOf(a, argEnv));
 };

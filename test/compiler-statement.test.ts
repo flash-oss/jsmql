@@ -712,6 +712,11 @@ describe("compiler/emit/statement — bindings between stages", () => {
 });
 
 describe("compiler/emit/statement — the stream road", () => {
+  it("refuses a null count in a stream link (HR7)", () => {
+    expect(() => pipeline("$$.take(null);")).toThrow("'.take()' argument 1 takes an integer, but got null.");
+    expect(() => pipeline("$$.drop(null);")).toThrow("'.drop()' argument 1 takes an integer, but got null.");
+  });
+
   it("lowers a chain on the stream one link at a time, and the bare spelling the same way", () => {
     expect(compiled("$$ = $$.filter(d => d.x > 1);")).toEqual([{ $match: { x: { $gt: 1 } } }]);
     expect(compiled("$$.filter(d => d.x > 1);")).toEqual([{ $match: { x: { $gt: 1 } } }]);

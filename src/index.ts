@@ -501,16 +501,25 @@ function validateInput(
     } else {
       const src = typeof input === "function" ? fnSource(input as (...args: never[]) => unknown) : (input as string);
       const parsed = parseInput(src);
-      // This checks the entry form with every parameter bound to null: the shape of
-      // the program does not depend on the values; only the document does.
-      const nulls = new Map(parsed.params.map((b) => [b.name, null] as const));
-      lowerMode("auto", "jsmql", parsed.program, nulls);
+      // This checks the entry form with every parameter bound to a value of no known
+      // kind. The shape of the program does not depend on the values. Only the
+      // document does. A `null` fails this check, because a slot that states a kind
+      // refuses `null` (HR7). The call can pass a value of that kind.
+      const unknown = new Map(parsed.params.map((b) => [b.name, new ParameterValue()] as const));
+      lowerMode("auto", "jsmql", parsed.program, unknown);
     }
     return { valid: true, errors: [] };
   } catch (err) {
     return errorToValidationResult(err);
   }
 }
+
+/**
+ * A parameter's value while `validate()` checks a parameterised arrow. No literal writes
+ * this value, so the inject pass gives it an `Injected` node. The proof shows no kind for
+ * it, and no literal check or constant check reads it.
+ */
+class ParameterValue {}
 
 function errorToValidationResult(err: unknown): ValidationResult {
   if (err instanceof ParseError || err instanceof LexError) {

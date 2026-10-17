@@ -1882,6 +1882,28 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
   });
+
+  it("refuses a null argument where the slot states a kind (HR7)", () => {
+    // `null` is not the kind a slot states, whatever the server answers for it.
+    expect(() => expr("$.a.slice(null)")).toThrow("'.slice()' argument 1 takes an integer, but got null.");
+    expect(() => expr("$.s.split(null)")).toThrow("'.split()' argument 1 takes a string, but got null.");
+    expect(() => expr("$.o.pick(null)")).toThrow("'.pick()' argument 1 takes an array, but got null.");
+    expect(() => expr("$.s.truncate(null)")).toThrow("'.truncate()' argument 1 takes a document, but got null.");
+    expect(() => expr('$.d.diff(null, "day")')).toThrow("'.diff()' argument 1 takes a date, but got null.");
+    // a body key and an element of a list
+    expect(() => expr("$.d.set({ year: null })")).toThrow("'.set()' year takes an integer, but got null.");
+    expect(() => expr("$.o.pick([null])")).toThrow(/'\.pick\(\)' element 1 takes a field NAME .*, but got null\./);
+    // a value the proof shows is null: a binding, and a `?.` read of a key that no stage wrote
+    expect(() => jsmql("let x = null; $.r = $.a.slice(x);")).toThrow(
+      "'.slice()' argument 1 takes an integer, but got null.",
+    );
+    expect(() => jsmql("$.o = {}; $.r = $.a.slice($.o?.b);")).toThrow(
+      "'.slice()' argument 1 takes an integer, but got null.",
+    );
+    // a slot that states no kind takes `null` as a value
+    expect(expr("$.a.has(null)")).toEqual({ $in: [null, { $ifNull: ["$a", []] }] });
+    expect(expr("$.a.indexOf(null)")).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, null] });
+  });
 });
 
 // ── the server ───────────────────────────────────────────────────────────────

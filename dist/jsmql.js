@@ -22010,6 +22010,7 @@ function fromByArgs(name2, byArgs, shaped, count) {
 }
 function kindFits(kind, expected) {
   if (kind === "unknown") return true;
+  if (kind === "null") return false;
   if (Array.isArray(expected)) return expected.some((t) => kindFits(kind, t));
   switch (expected) {
     case "number":
@@ -22171,6 +22172,7 @@ var hint = (expected) => {
   return "";
 };
 var KIND_NOUN2 = {
+  null: "null",
   string: "a string",
   number: "a number",
   bool: "a boolean",
@@ -22181,6 +22183,7 @@ var KIND_NOUN2 = {
   binData: "binary data"
 };
 function checkType(name2, slot, e, expected) {
+  if (e.type === "NullLiteral") throw new CodegenError(wrongKind(name2, slot, TAKES[expected], "null"), e.pos);
   if (expected === "fieldPath") {
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
@@ -22194,7 +22197,7 @@ function checkType(name2, slot, e, expected) {
   if (expected === "fieldName") {
     if (e.type !== "StringLiteral") {
       const other = literal(e);
-      if (other === null || other.kind === "null") return;
+      if (other === null) return;
       throw new CodegenError(
         `'${spell2(name2)}' ${slot} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos
@@ -22208,8 +22211,7 @@ function checkType(name2, slot, e, expected) {
     );
   }
   const lit = literal(e);
-  if (lit === null || lit.kind === "null") return;
-  if (matches(lit, expected)) return;
+  if (lit === null || matches(lit, expected)) return;
   const fraction = lit.kind === "number" && (expected === "int" || expected === "int-or-long");
   throw new CodegenError(
     wrongKind(name2, slot, TAKES[expected], fraction ? "a fraction" : NOUN[lit.kind], fraction ? ROUND : hint(expected)),
@@ -22563,7 +22565,10 @@ function sourceFamily(node) {
   if (node.type === "RegexLiteral") return "regexp";
   return null;
 }
-var kindOf3 = (node, env) => single2(typeOf(node, env));
+var kindOf3 = (node, env) => {
+  const t = typeOf(node, env);
+  return isNothing(t) ? "null" : single2(t);
+};
 function receiverFamilyOf(node, env) {
   const src = sourceFamily(node);
   if (src !== null) return src;
@@ -24098,7 +24103,11 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     keys,
     value,
     present: present2,
-    kind: (e) => kindOf3(e, argEnv),
+    // A cell asks for a kind to pick a lowering, and a proven null picks none.
+    kind: (e) => {
+      const k = kindOf3(e, argEnv);
+      return k === "null" ? "unknown" : k;
+    },
     type: (e) => typeOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
@@ -26846,14 +26855,16 @@ function validateInput(input, ...values) {
     } else {
       const src = typeof input === "function" ? fnSource(input) : input;
       const parsed = parseInput(src);
-      const nulls = new Map(parsed.params.map((b) => [b.name, null]));
-      lowerMode("auto", "jsmql", parsed.program, nulls);
+      const unknown = new Map(parsed.params.map((b) => [b.name, new ParameterValue()]));
+      lowerMode("auto", "jsmql", parsed.program, unknown);
     }
     return { valid: true, errors: [] };
   } catch (err) {
     return errorToValidationResult(err);
   }
 }
+var ParameterValue = class {
+};
 function errorToValidationResult(err) {
   if (err instanceof ParseError || err instanceof LexError) {
     return { valid: false, errors: [{ message: err.message, pos: err.pos, code: "SYNTAX_ERROR" }] };
