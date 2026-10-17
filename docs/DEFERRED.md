@@ -196,6 +196,10 @@ The developer rejected this. One capability gets one spelling, and the shorter s
 
 Reconsider a name only if its static becomes the shorter spelling.
 
+### lodash's `floating` argument of `.random()` (`x.random(y, true)`)
+
+The developer rejected this. `.random()` follows lodash's own rule for the form of its answer. Two whole bounds give a whole number. Any other pair gives a fractional number. A flag that forces a fractional answer adds a second rule beside the rule of the bounds. The compiler refuses a second argument with the argument-count error of the row.
+
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 
 The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`[…].max()`, `({}).assign(...arr)`, the object spread `{ ...a, ...b }`, `[...a, ...b]`, `.concat()`).

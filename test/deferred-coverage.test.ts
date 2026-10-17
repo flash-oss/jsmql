@@ -204,7 +204,7 @@ describe("deferred-tracking drift protection", () => {
     const { idsInOrder } = parseDeferred();
     const text = readFileSync(resolve(ROOT, "docs/DEFERRED.md"), "utf8");
     const decisions = text.substring(text.indexOf("## §B.")).match(/^### /gm) ?? [];
-    expect({ open: idsInOrder.length, decided: decisions.length }).toEqual({ open: 9, decided: 17 });
+    expect({ open: idsInOrder.length, decided: decisions.length }).toEqual({ open: 9, decided: 18 });
   });
 
   it("ID ORDER GATE: §A rows are in ascending id order, as the header states", () => {
