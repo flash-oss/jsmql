@@ -2110,11 +2110,11 @@ describe("normalise a string-or-number field with typeof", { features: ["Type ch
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.items.aggregate([{ $addFields: { trimmed: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : \`\${$.value}\``)).toEqual({
+      expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : $.value?.toString()`)).toEqual({
         $cond: [
           { $eq: [{ $type: "$value" }, "string"] },
           { $trim: { input: { $ifNull: ["$value", ""] } } },
-          { $concat: [{ $toString: "$value" }] },
+          { $toString: "$value" },
         ],
       });
     },
