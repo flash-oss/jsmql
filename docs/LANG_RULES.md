@@ -119,6 +119,8 @@ A string method is the exception. On a missing or `null` string, a string method
 
 A number method gives the safe value, as lodash does. On a missing or `null` number, a dot gives the safe value of the method where one exists. For example, `.clamp()` gives its lower bound. A method with no safe value gives `null`. Most arithmetic methods, for example `.round()`, have no safe value.
 
+`.toString()` takes a value of any kind, and it also gives the safe value of lodash. On a missing or `null` value, a dot gives `""`, as `_.toString()` does.
+
 **You wrote `?.`.** The compiler tests the value before the `?.`. When that value is missing or `null`, the whole chain gives `null`, and nothing after the `?.` runs. This is what `?.` does in JavaScript, with `null` in place of `undefined`. Each `?.` tests only the value before it. A dot after a `?.` obeys the dot rule.
 
 ```js
@@ -145,6 +147,8 @@ $.a?.b.uniq()       // → the same MQL as above                          → nu
 // The document is {}. It has no field `n`.
 $.n.clamp(0, 9)     // → { $min: [{ $max: ["$n", 0] }, 9] }             → 0
 $.n.round(2)        // → { $round: ["$n", 2] }                          → null
+$.n.toString()      // → { $toString: { $ifNull: ["$n", ""] } }         → ""
+$.n?.toString()     // → { $toString: "$n" }                            → null: $toString gives null for null
 ```
 
 When the compiler can prove that the receiver is there, it adds no check, for example no `$ifNull`. On such a receiver, `?.` gives the same MQL as a dot. The compiler also adds no `$ifNull` when the operator gives the same answer for `null` as for the empty array or object. `{ $sum: null }` is 0, and `{ $sum: [] }` is also 0, so `$.a.sum()` is `{ $sum: "$a" }`. In the same way, the compiler adds no `?.` test when each call after the `?.` gives `null` for `null` on its own: `$.a?.uniq()` is `{ $setUnion: "$a" }`.

@@ -4811,20 +4811,24 @@ var NAMES = {
   toString: name({
     doc: "'.toString()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
+    nullReceiverAs: "",
     on: "any",
-    elements: "scalar",
     returns: "unknown",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      // JavaScript joins an array with "," and stringifies the rest; `$toString` of an array fails on the server
-      emit: ({ recv, bind }) => {
-        const v = bind("v");
-        return {
-          $let: { vars: { [v.as]: recv }, in: cond({ $isArray: v.ref }, joinedWith(v.ref, ","), { $toString: v.ref }) }
-        };
+      // A regex literal has no value of its own (see `regexBody`). The cell writes the
+      // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
+      // Under a dot, lodash's `_.toString` reads null as "". After a `?.`, the proof shows
+      // the receiver there, and `$toString` gives null for null by itself.
+      emit: ({ recv, present: present2 }) => {
+        const re = recv;
+        if (re.type === "RegexLiteral")
+          return `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`;
+        return { $toString: present2 ? singleArrayArg(recv) : { $ifNull: [recv, ""] } };
       }
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
@@ -24884,7 +24888,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
     checkSlotKinds(name2, sel.rule.args, exprArgs, kinds);
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
-    const empty = emptyValueOf(name2, family);
+    const empty = readsNullReceiverOf(name2) ? null : emptyValueOf(name2, family);
     const inExpression = position === "value" || position === "filter";
     const needsEmpty = inExpression && !proven && empty !== null && (receiver.kind === "value" || receiver.kind === "opaque");
     const nullIsEmpty = needsEmpty && readsNullAsEmptyOf(name2);

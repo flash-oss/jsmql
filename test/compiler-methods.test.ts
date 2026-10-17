@@ -1546,76 +1546,11 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.o.keys().size()", (d) => Object.keys(d.o).length)).toEqual({
       $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } },
     });
-    expect(compiled("$.a.toString()", (d) => d.a.toString())).toEqual({
-      $let: {
-        vars: { jsmqlV: "$a" },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-            { $toString: "$$jsmqlV" },
-          ],
-        },
-      },
-    });
-    expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({
-      $let: {
-        vars: { jsmqlV: "$n" },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-            { $toString: "$$jsmqlV" },
-          ],
-        },
-      },
-    });
+    // `.toString()` is the bare `$toString`. On an array it gives MongoDB's text ("[3,1,2]"),
+    // and `.join()` gives JavaScript's text ("3,1,2").
+    expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({ $toString: { $ifNull: ["$n", ""] } });
+    expect(expr("$.a.toString()")).toEqual({ $toString: { $ifNull: ["$a", ""] } });
+    expect(compiled("$.a.join()", (d) => d.a.toString())).toEqual(expr("$.a.join()"));
     // `$ifNull` wraps the reduce so an EMPTY array answers "" rather than the reduce's own
     // `null` seed; that guard also reads a missing receiver as "", so HR5 adds no `$ifNull` to it.
     // The seed is `null` so a leading "" element keeps its separator.
@@ -3013,6 +2948,7 @@ const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   range: ["$.nope.range($.neg)", "(0).range($.neg)"],
   rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
   sign: ["$.nope.sign()", "(0).sign()"],
+  toString: ["$.nope.toString()", '"".toString()'],
   random: ["$.nope.random(0)", "(0).random(0)"],
 };
 
@@ -3033,6 +2969,7 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   floor: ["$.nope?.floor(1)", "$.mo.d?.floor()"],
   slice: ["$.nope?.slice(1)", "$.mo.d?.slice(1, 2)"],
   concat: ["$.nope?.concat($.b)", "$.mo.d?.concat([1])"],
+  toString: ["$.nope?.toString()", "$.mo.d?.toString()"],
   trim: ["$.nope?.trim()", "$.mo.d?.trim()"],
   trimStart: ["$.nope?.trimStart()", "$.mo.d?.trimStart()"],
   trimLeft: ["$.nope?.trimLeft()", "$.mo.d?.trimLeft()"],
@@ -3154,7 +3091,7 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
     kind?: string;
     neverNull?: true | "always";
     readsNullAsEmpty?: true;
-    nullReceiverAs?: 0;
+    nullReceiverAs?: 0 | "";
     passesNull?: true;
   };
   const rows = Object.entries(NAMES) as [string, Row][];

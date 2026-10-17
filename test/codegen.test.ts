@@ -2888,41 +2888,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
       sl: { $slice: ["$__jsmql.var.a", 2] },
       cc: { $concatArrays: ["$__jsmql.var.a", ["z"]] },
       sz: { $size: "$__jsmql.var.a" },
-      str: {
-        $let: {
-          vars: { jsmqlV: "$__jsmql.var.a" },
-          in: {
-            $cond: [
-              { $isArray: "$$jsmqlV" },
-              {
-                $ifNull: [
-                  {
-                    $reduce: {
-                      input: "$$jsmqlV",
-                      initialValue: null,
-                      in: {
-                        $cond: [
-                          { $eq: ["$$value", null] },
-                          { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          {
-                            $concat: [
-                              "$$value",
-                              ",",
-                              { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                            ],
-                          },
-                        ],
-                      },
-                    },
-                  },
-                  "",
-                ],
-              },
-              { $toString: "$$jsmqlV" },
-            ],
-          },
-        },
-      },
+      str: { $toString: "$__jsmql.var.a" },
     });
   });
 
@@ -4475,16 +4441,13 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
   });
 
   // JS stringifies nested arrays recursively (`[[1,2],[3]].join(",") === "1,2,3"`).
-  // MQL expressions cannot recurse, so the emitted `$toString` of an inner array is
-  // an execution-time failure. Reject where the shape is provable rather than emit
-  // it (HR3) or silently flatten one level (a different answer than was asked for).
+  // MQL expressions cannot recurse. `$toString` of an inner array gives MongoDB's text
+  // ("[1,2]"), not JavaScript's. Reject where the shape is provable rather than emit it
+  // or silently flatten one level (a different answer than the source asks for).
   describe("rejects stringifying an array of arrays, instead of mis-emitting it", () => {
-    it(".join() and .toString() reject a literal of literals", () => {
+    it(".join() rejects a literal of literals", () => {
       expect(() => jsmql.expr('[[1, 2], [3]].join(",")')).toThrow(
         /\.join\(\) cannot stringify an array of arrays\. this array literal holds arrays/,
-      );
-      expect(() => jsmql.expr("[[1, 2], [3]].toString()")).toThrow(
-        /\.toString\(\) cannot stringify an array of arrays/,
       );
     });
 
@@ -4900,116 +4863,36 @@ describe("array method additions", () => {
   it("enforces .with arity (exactly 2)", () => {
     expect(() => jsmql.expr("$.xs.with(0)")).toThrow(/exactly 2 arguments/);
   });
-  it(".toString() on a known array lowers to join-with-comma", () => {
+  it(".toString() on a known array is the bare $toString", () => {
     expect(jsmql.expr("$.xs.map(x => x + 1).toString()")).toEqual({
-      $let: {
-        vars: { jsmqlV: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $add: ["$$x", 1] } } } },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-            { $toString: "$$jsmqlV" },
-          ],
-        },
-      },
+      $toString: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $add: ["$$x", 1] } } },
     });
+    // `$toString` takes one operand, so an array literal goes in a one-element list.
+    expect(jsmql.expr("[1, 2].toString()")).toEqual({ $toString: [[1, 2]] });
   });
-  it(".toString() on a known string is a no-op", () => {
+  it('.toString() on a string that can be null reads null as ""', () => {
     expect(jsmql.expr("$.name.toLowerCase().toString()")).toEqual({
-      $let: {
-        vars: { jsmqlV: { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] } },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-            { $toString: "$$jsmqlV" },
-          ],
-        },
-      },
+      $toString: { $ifNull: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, ""] },
     });
   });
-  it(".toString() on unknown type lowers to $toString", () => {
-    expect(jsmql.expr("$.n.toString()")).toEqual({
-      $let: {
-        vars: { jsmqlV: "$n" },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-            { $toString: "$$jsmqlV" },
-          ],
-        },
-      },
-    });
+  it('.toString() under a dot reads a missing receiver as "", as lodash\'s _.toString does', () => {
+    expect(jsmql.expr("$.n.toString()")).toEqual({ $toString: { $ifNull: ["$n", ""] } });
+    // A receiver of the array family also reads as "", not as the text of `[]`.
+    expect(jsmql.expr('$.s.split(",").toString()')).toEqual({ $toString: { $ifNull: [{ $split: ["$s", ","] }, ""] } });
+  });
+  it(".toString() after a ?. gives null for a missing receiver, with no null check", () => {
+    expect(jsmql.expr("$.n?.toString()")).toEqual({ $toString: "$n" });
+    expect(jsmql.expr("$.n?.toString().trim()")).toEqual({ $trim: { input: { $toString: "$n" } } });
+  });
+  it(".toString() on a receiver that is there adds no $ifNull", () => {
+    expect(jsmql.expr("(5).toString()")).toEqual({ $toString: 5 });
+    expect(jsmql.expr("$.a.size().toString()")).toEqual({ $toString: { $size: { $ifNull: ["$a", []] } } });
+    // The result is there too, so the string method after it takes no null test.
+    expect(jsmql.expr("$.n.toString().trim()")).toEqual({ $trim: { input: { $toString: { $ifNull: ["$n", ""] } } } });
+  });
+  it(".toString() on a regex literal is the text $toString gives for the BSON regex", () => {
+    expect(jsmql.expr("/a+/si.toString()")).toEqual("/a+/is");
+    expect(jsmql.expr("/a+/g.toString()")).toEqual("/a+/");
   });
 });
 
@@ -5878,54 +5761,20 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
     // …but the two universal methods still compile on a boolean.
     expect(jsmql.expr("$.items.every(x => x.ok).toString()")).toEqual({
-      $let: {
-        vars: {
-          jsmqlV: {
-            $allElementsTrue: {
-              $map: {
-                input: { $ifNull: ["$items", []] },
-                as: "x",
-                in: {
-                  $and: [
-                    { $gt: ["$$x.ok", null] },
-                    { $ne: ["$$x.ok", false] },
-                    { $ne: ["$$x.ok", ""] },
-                    { $ne: ["$$x.ok", 0] },
-                  ],
-                },
-              },
-            },
-          },
-        },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
+      $toString: {
+        $allElementsTrue: {
+          $map: {
+            input: { $ifNull: ["$items", []] },
+            as: "x",
+            in: {
+              $and: [
+                { $gt: ["$$x.ok", null] },
+                { $ne: ["$$x.ok", false] },
+                { $ne: ["$$x.ok", ""] },
+                { $ne: ["$$x.ok", 0] },
               ],
             },
-            { $toString: "$$jsmqlV" },
-          ],
+          },
         },
       },
     });
@@ -6097,39 +5946,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // The universal pair is exempt on every receiver type.
     expect(jsmql.expr('$.t.plus(1, "day").getTime()')).toEqual({ $toLong: plusDay });
     expect(jsmql.expr('$.t.plus(1, "day").toString()')).toEqual({
-      $let: {
-        vars: { jsmqlV: plusDay },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-            { $toString: "$$jsmqlV" },
-          ],
-        },
-      },
+      $toString: { $ifNull: [{ $dateAdd: { startDate: "$t", unit: "day", amount: 1 } }, ""] },
     });
     // .clamp is number-OR-date, so it is never gated in either direction.
     expect(jsmql.expr('$.t.plus(1, "day").clamp($.a, $.b)')).toEqual({ $min: [{ $max: [plusDay, "$a"] }, "$b"] });

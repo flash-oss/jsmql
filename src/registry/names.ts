@@ -48,6 +48,7 @@ import {
   pairsToObject,
   normaliseSliceIndex,
   regexBody,
+  mongoRegexOptions,
   resolveSliceIndex,
   reverseArrayOf,
   setKey,
@@ -152,10 +153,11 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /** Probed in declaration order, so precedence is visible. */
   on: O;
   /**
-   * What the method needs of its receiver's ELEMENTS. `"scalar"`: the server refuses
-   * an element that is an array (`$toString` of an array). So the compiler refuses a
-   * receiver that provably holds arrays — a literal of literals, `.partition(…)` — at
-   * compile time, and it names the flatten / map-each rewrite.
+   * What the method needs of its receiver's ELEMENTS. `"scalar"`: an element that is
+   * an array gives MongoDB's text (`$toString` of `[1, 2]` is `"[1,2]"`), not
+   * JavaScript's (`"1,2"`). So the compiler refuses a receiver that provably holds
+   * arrays, for example a literal of literals or `.partition(…)`. The refusal names
+   * two rewrites: flatten the array, or map each inner array to a string.
    */
   elements?: "scalar";
   /**
@@ -203,12 +205,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   readsNullAsEmpty?: true;
   /**
-   * The value the cell reads a null or missing receiver as, so its answer is there
-   * whatever the receiver is. lodash's `_.range` reads a missing bound as 0.
-   * MEASURED: `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
+   * The value the cell reads a null or missing receiver as under a dot, so its answer
+   * is there whatever the receiver is. lodash's `_.range` reads a missing bound as 0,
+   * and `_.toString` reads null as "". The cell reads it only where the receiver can be
+   * absent, and HR5 adds no empty array or object of its own. MEASURED:
+   * `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
    * test/compiler-methods.test.ts measures each row.
    */
-  nullReceiverAs?: 0;
+  nullReceiverAs?: 0 | "";
   /**
    * The operator answers null for a null or missing receiver, on its own. So a `?.`
    * before the call needs no `$cond` null test: the bare call gives the answer the
@@ -699,14 +703,6 @@ type GlobalSpec<W extends readonly Position[]> = {
   updateDoc?: Cell<Lists<W, "updateDoc">, Family, ExprIn, OutOf["updateDoc"]>;
 };
 
-/**
- * A cell answers null for a missing receiver (`passesNull`), or it reads that receiver
- * as a value of its own (`nullReceiverAs`). One row cannot state both.
- */
-export type NullAnswer =
-  | { passesNull?: true; nullReceiverAs?: undefined }
-  | { passesNull?: undefined; nullReceiverAs?: 0 };
-
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
 export type NameEntry<W extends readonly Position[], O extends On, T extends string = never> = NameSpec<W, O, T> & {
   kind: "name";
@@ -726,7 +722,7 @@ const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W>
 // file. On the spec alone it widens to `string`. The audit then reads `string`
 // from every row, and it can never name the row at fault.
 const name = <const W extends readonly Position[], const O extends On, const T extends string = never>(
-  e: NameSpec<W, O, T> & NullAnswer,
+  e: NameSpec<W, O, T>,
 ): NameEntry<W, O, T> => ({ ...e, kind: "name" });
 const mongo = <
   const W extends readonly Position[],
@@ -5803,20 +5799,24 @@ export const NAMES = {
   toString: name({
     doc: "'.toString()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
+    nullReceiverAs: "",
     on: "any",
-    elements: "scalar",
     returns: "unknown",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      // JavaScript joins an array with "," and stringifies the rest; `$toString` of an array fails on the server
-      emit: ({ recv, bind }) => {
-        const v = bind("v");
-        return {
-          $let: { vars: { [v.as]: recv }, in: cond({ $isArray: v.ref }, joinedWith(v.ref, ","), { $toString: v.ref }) },
-        };
+      // A regex literal has no value of its own (see `regexBody`). The cell writes the
+      // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
+      // Under a dot, lodash's `_.toString` reads null as "". After a `?.`, the proof shows
+      // the receiver there, and `$toString` gives null for null by itself.
+      emit: ({ recv, present }) => {
+        const re = recv as { type?: string; pattern?: string; flags?: string };
+        if (re.type === "RegexLiteral")
+          return `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`;
+        return { $toString: present ? singleArrayArg(recv) : { $ifNull: [recv, ""] } };
       },
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
