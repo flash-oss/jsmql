@@ -1271,6 +1271,10 @@ function groupedByKey(
   };
 }
 
+/** A number that reads a null or missing value as 0, as lodash does. `there` says the proof shows it present. */
+const orZero = (v: unknown, there: boolean): unknown =>
+  v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
+
 /**
  * The arguments of `.range()` and `.rangeRight()`: lodash's `end`, or `start` on the
  * receiver with `end[, step]`. `$range` refuses a zero step and a fractional bound.
@@ -1290,10 +1294,8 @@ const RANGE_ARGS: Arity = {
  */
 function rangeOf({ recv, args, value, bind, present }: ExprIn): unknown {
   // lodash reads a missing bound as 0; `$range` stops the command on null
-  const bound = (v: unknown, there: boolean): unknown =>
-    v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
-  const self = bound(recv, present);
-  const [start, end] = args.length === 0 ? [0, self] : [self, bound(value(args[0]), false)];
+  const self = orZero(recv, present);
+  const [start, end] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
   if (args.length === 2) return { $range: [start, end, value(args[1])] };
   if (typeof start === "number" && typeof end === "number") {
     return start > end ? { $range: [start, end, -1] } : { $range: [start, end] };
@@ -10713,19 +10715,16 @@ export const NAMES = {
   sign: name({
     doc: "'.sign()' — see docs/LANGUAGE.md.",
     call: true,
-    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
-    neverNull: true,
+    neverNull: "always",
+    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        // `$cmp` alone gives -1 for a missing value. `$pow: [x, 0]` is 1 for a number and null for nothing, so the product is null there — shorter than a `$cond`.
-        number: {
-          args: { sig: "", none: true },
-          emit: ({ recv }) => ({ $multiply: [{ $cmp: [recv, 0] }, { $pow: [recv, 0] }] }),
-        },
+        // HR5: a missing or null number reads as 0, the safe value, so the sign is 0 there
+        number: { args: { sig: "", none: true }, emit: ({ recv, present }) => ({ $cmp: [orZero(recv, present), 0] }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.sign(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'.",

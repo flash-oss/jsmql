@@ -2094,13 +2094,9 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("$.neg.cbrt()", () => Math.cbrt(DOC.neg))).toEqual({
       $multiply: [{ $cmp: ["$neg", 0] }, { $pow: [{ $abs: "$neg" }, 0.3333333333333333] }],
     });
-    expect(compiled("$.neg.sign()", () => Math.sign(DOC.neg))).toEqual({
-      $multiply: [{ $cmp: ["$neg", 0] }, { $pow: ["$neg", 0] }],
-    });
-    // `$cmp` alone gives -1 for a missing value; the `$pow` factor makes the answer null
-    expect(compiled("$.nope.sign()", () => null)).toEqual({
-      $multiply: [{ $cmp: ["$nope", 0] }, { $pow: ["$nope", 0] }],
-    });
+    expect(compiled("$.neg.sign()", () => Math.sign(DOC.neg))).toEqual({ $cmp: [{ $ifNull: ["$neg", 0] }, 0] });
+    // HR5: a missing number reads as 0, the safe value, so its sign is 0
+    expect(compiled("$.nope.sign()", () => 0)).toEqual({ $cmp: [{ $ifNull: ["$nope", 0] }, 0] });
     expect(compiled("$.n.trunc()", () => Math.trunc(DOC.n))).toEqual({ $trunc: "$n" });
     expect(compiled("$.n.trunc(2)", () => Math.trunc(DOC.n * 100) / 100)).toEqual({ $trunc: ["$n", 2] });
     expect(compiled("$.n.round()", () => Math.round(DOC.n))).toEqual({ $round: "$n" });
@@ -2992,7 +2988,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   log2: ["$.n.log2()"],
   log10: ["$.n.log10()"],
   trunc: ["$.n.trunc()"],
-  sign: ["$.neg.sign()"],
+  sign: ["$.neg.sign()", "$.nope.sign()"],
   cbrt: ["$.neg.cbrt()"],
   sin: ["$.n.sin()"],
   cos: ["$.n.cos()"],
@@ -3086,6 +3082,7 @@ const NULL_AS_EMPTY: Readonly<Record<string, readonly [string, string]>> = {
 const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   range: ["$.nope.range($.neg)", "(0).range($.neg)"],
   rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
+  sign: ["$.nope.sign()", "(0).sign()"],
 };
 
 /**
@@ -3110,7 +3107,6 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   log2: ["$.nope?.log2()", "$.mo.d?.log2()"],
   log10: ["$.nope?.log10()", "$.mo.d?.log10()"],
   trunc: ["$.nope?.trunc()", "$.mo.d?.trunc()"],
-  sign: ["$.nope?.sign()", "$.mo.d?.sign()"],
   cbrt: ["$.nope?.cbrt()", "$.mo.d?.cbrt()"],
   sin: ["$.nope?.sin()", "$.mo.d?.sin()"],
   cos: ["$.nope?.cos()", "$.mo.d?.cos()"],

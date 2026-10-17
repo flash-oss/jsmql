@@ -2535,7 +2535,7 @@ $.value.log($.base)                // { $log: ["$value", "$base"] }
 $.value.log(10)                    // { $log10: "$value" }
 $.value.log2()                     // { $log: ["$value", 2] }
 $.value.log10()                    // { $log10: "$value" }
-$.delta.sign()                     // { $multiply: [{ $cmp: ["$delta", 0] }, { $pow: ["$delta", 0] }] }   (-1 / 0 / 1)
+$.delta.sign()                     // { $cmp: [{ $ifNull: ["$delta", 0] }, 0] }   (-1 / 0 / 1)
 $.a.hypot($.b)                     // { $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } }
 
 [$.a, $.b, $.c].min()              // { $min: ["$a", "$b", "$c"] }
@@ -2543,7 +2543,7 @@ $.scores.max()                     // { $max: "$scores" }
 [$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
 
-A number method on a missing or `null` number gives `null`, under a dot and under `?.`. The `$pow` factor of `.sign()` is `1` for a number and `null` for a missing value, so the product is `null` there. See [HR5](LANG_RULES.md). `.clamp()`, `.inRange()` and `.range()` give a safe value under a dot instead; see [lodash number methods](#lodash-number-methods).
+A number method on a missing or `null` number gives `null`, under a dot and under `?.`. See [HR5](LANG_RULES.md). Some methods have a safe value, and a dot gives it instead: `.sign()` gives `0`, because a missing number reads as `0`. `.clamp()`, `.inRange()` and `.range()` give a safe value too; see [lodash number methods](#lodash-number-methods).
 
 ### Trigonometry
 

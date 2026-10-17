@@ -9699,8 +9699,11 @@ describe("date .getTime / .toISOString", () => {
 });
 
 describe(".sign() / .log2() / .log10() / .hypot() / .cbrt() / Math.random() / constants", () => {
-  it(".sign() is the $cmp times a factor that is null for a missing value", () => {
-    expect(jsmql.expr("$.x.sign()")).toEqual({ $multiply: [{ $cmp: ["$x", 0] }, { $pow: ["$x", 0] }] });
+  it(".sign() reads a missing number as 0, the safe value", () => {
+    expect(jsmql.expr("$.x.sign()")).toEqual({ $cmp: [{ $ifNull: ["$x", 0] }, 0] });
+    expect(jsmql.expr("$.x?.sign()")).toEqual({
+      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $cmp: ["$x", 0] } },
+    });
   });
   it(".log2()", () => {
     expect(jsmql.expr("$.x.log2()")).toEqual({ $log: ["$x", 2] });

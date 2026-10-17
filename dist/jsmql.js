@@ -667,6 +667,7 @@ function groupedByKey(input, it, bind) {
     $arrayToObject: { $map: { input: distinctKeysExpr(input, it), as: key.as, in: { k: key.ref, v: filtered } } }
   };
 }
+var orZero = (v, there) => v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
 var RANGE_ARGS = {
   sig: "[end[, step]]",
   allowed: [0, 1, 2],
@@ -674,9 +675,8 @@ var RANGE_ARGS = {
   zeroRefused: { 1: "For the start value n times, write 'n.range().map(() => start)'." }
 };
 function rangeOf({ recv, args, value, bind, present: present2 }) {
-  const bound = (v, there) => v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
-  const self = bound(recv, present2);
-  const [start, end] = args.length === 0 ? [0, self] : [self, bound(value(args[0]), false)];
+  const self = orZero(recv, present2);
+  const [start, end] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
   if (args.length === 2) return { $range: [start, end, value(args[1])] };
   if (typeof start === "number" && typeof end === "number") {
     return start > end ? { $range: [start, end, -1] } : { $range: [start, end] };
@@ -9502,19 +9502,16 @@ var NAMES = {
   sign: name({
     doc: "'.sign()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
-    neverNull: true,
+    neverNull: "always",
+    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        // `$cmp` alone gives -1 for a missing value. `$pow: [x, 0]` is 1 for a number and null for nothing, so the product is null there — shorter than a `$cond`.
-        number: {
-          args: { sig: "", none: true },
-          emit: ({ recv }) => ({ $multiply: [{ $cmp: [recv, 0] }, { $pow: [recv, 0] }] })
-        },
+        // HR5: a missing or null number reads as 0, the safe value, so the sign is 0 there
+        number: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => ({ $cmp: [orZero(recv, present2), 0] }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
           "'Math.sign(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'."

@@ -1536,7 +1536,7 @@ describe("scientific projection (hypot, log2/log10, sign, cbrt, PI, E)", { featu
         decibels: { $multiply: [{ $log10: "$amplitude" }, 20] },
         fovRad: { $divide: [{ $multiply: ["$fovDeg", 3.141592653589793] }, 180] },
         growthFactor: { $pow: [2.718281828459045, "$rate"] },
-        trend: { $multiply: [{ $cmp: ["$delta", 0] }, { $pow: ["$delta", 0] }] },
+        trend: { $cmp: [{ $ifNull: ["$delta", 0] }, 0] },
         cubeSide: { $multiply: [{ $cmp: ["$volume", 0] }, { $pow: [{ $abs: "$volume" }, 0.3333333333333333] }] },
       });
     },
