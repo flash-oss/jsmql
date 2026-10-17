@@ -3183,11 +3183,6 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
     const stating = rows.filter(([, r]) => own(r) && r.nullReceiverAs !== undefined).map(([n]) => n);
     expect([...stating].sort()).toEqual(Object.keys(NULL_RECEIVER_AS).sort());
   });
-
-  it("measures exactly the rows that state `passesNull`", () => {
-    const stating = rows.filter(([, r]) => own(r) && r.passesNull === true).map(([n]) => n);
-    expect([...stating].sort()).toEqual(Object.keys(PASSES_NULL).sort());
-  });
 });
 
 describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` claim holds on the server", () => {

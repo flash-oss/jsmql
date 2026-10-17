@@ -18218,16 +18218,6 @@ function sliceOf(items, start, end, done) {
 function numberMethod(n2, name2, args) {
   const [a, b] = args.map(valueOf);
   switch (name2) {
-    case "abs":
-      return ok2(Math.abs(n2));
-    case "sign":
-      return ok2(Math.sign(n2));
-    // IEEE-754 requires a correctly rounded square root, so this one is safe.
-    case "sqrt":
-      return ok2(Math.sqrt(n2));
-    // A precision is MongoDB's own `$trunc` place count, which JavaScript has no twin for.
-    case "trunc":
-      return a === void 0 ? ok2(Math.trunc(n2)) : NO2;
     case "round":
     case "ceil":
     case "floor": {

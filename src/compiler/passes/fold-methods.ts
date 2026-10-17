@@ -453,16 +453,6 @@ function sliceOf<T>(items: T[], start: unknown, end: unknown, done: (parts: T[])
 function numberMethod(n: number, name: string, args: readonly Arg[]): Evaluation {
   const [a, b] = args.map(valueOf);
   switch (name) {
-    case "abs":
-      return ok(Math.abs(n));
-    case "sign":
-      return ok(Math.sign(n));
-    // IEEE-754 requires a correctly rounded square root, so this one is safe.
-    case "sqrt":
-      return ok(Math.sqrt(n));
-    // A precision is MongoDB's own `$trunc` place count, which JavaScript has no twin for.
-    case "trunc":
-      return a === undefined ? ok(Math.trunc(n)) : NO;
     case "round":
     case "ceil":
     case "floor": {
