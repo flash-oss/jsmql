@@ -1955,9 +1955,9 @@ $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 
 **`.concat()` reads each argument as JavaScript does.** An array argument adds its elements, and
 any other argument adds itself as one element. A spread `...x` passes each element of `x` as an
-argument of its own. `$concatArrays` takes arrays only, so the compiler's proof of each argument
-picks the shape: a proven array stays as written, a proven scalar becomes `[x]`, and any other
-argument tests `$isArray` when the query runs. Over `$.a = [1]`:
+argument of its own. `$concatArrays` takes arrays only, so the proof of each argument picks the
+shape. A proven array stays as written, a proven scalar becomes `[x]`, and any other argument
+tests `$isArray` when the query runs. Over `$.a = [1]`:
 
 ```js
 $.a.concat($.b, 1)     // b: [2] → [1, 2, 1]    b: 5 → [1, 5, 1]    b: "xy" → [1, "xy", 1]
@@ -1965,12 +1965,14 @@ $.a.concat($.b, 1)     // b: [2] → [1, 2, 1]    b: 5 → [1, 5, 1]    b: "xy" 
 $.a.concat(...$.b, 1)  // b: [[2], 3] → [1, 2, 3, 1]    no b → [1, 1]
 ```
 
-MongoDB has no `undefined`, so a missing argument adds `null`, where JavaScript adds `undefined`.
-A spread of a missing field adds nothing, as `[...$.b]` does; JavaScript throws there.
+MongoDB has no `undefined`, so a missing argument adds `null`. JavaScript adds `undefined` there.
+A spread of a missing field adds nothing, as `[...$.b]` does. JavaScript throws there.
 
 #### Type-aware dispatch
 
-**Each method reads one kind of value, and its name says which.** `.length()` counts the characters of a string, `.size()` the elements of an array. `.includes(x)` tests a substring of a string, `.has(x)` membership in an array. `.slice()`, `.at()`, `.nth()` and `.concat()` read an array; a string has `.substring()`, `.substr()`, `.charAt()` and `+`. On a bare field JSMQL emits the method's own operator, and the server judges the value. On a field the compiler has proven, a method of the other kind is a compile-time error, and the message names the method to write:
+**Each method reads one kind of value, and its name says which.** `.length()` counts the characters of a string, and `.size()` counts the elements of an array. `.includes(x)` tests a substring of a string, and `.has(x)` tests membership in an array. `.slice()`, `.at()`, `.nth()` and `.concat()` read an array. A string has `.substring()`, `.substr()`, `.charAt()` and `+`.
+
+On a bare field, JSMQL emits the operator of the method, and the server judges the value. On a field that the compiler has proven, a method of the other kind is a compile-time error. The message names the method to write:
 
 ```js
 $.arr = $.tags.uniq(); $.n = $.arr.length();   // ✗ .length() is for a string; for an array write .size()
@@ -1986,7 +1988,28 @@ $.s.trim().indexOf("x")        // ✗ .indexOf() is for an array; for a substrin
 $.s.trim().lastIndexOf("x")    // ✗ a string has no search from the end; for the first match write .indexOfSubstring("x")
 ```
 
-**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();` the compiler knows `arr` is an array, or null when `tags` is missing, so `$.arr.has("red")` takes the array form with only the null guard. After `$.bool = $.arr.has("red");` it knows `bool` is a boolean, so `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows a method's result too: `$.tags.map(t => t.trim())` is an array of strings, `{ ...$.address, done: true }` and `$.address.assign({ done: true })` are objects whose `done` is a boolean, `$.o.pick(["a"])` holds `a` and nothing else, and `.filter(p).head()` is one element that may be missing. It follows every write — a whole field, a dotted path such as `$.address.full = …`, a `let` and each value it is assigned again — and every stage: after `$group({ _id: $.k, total: $sum($.amount) })` the compiler knows `total` is a number, after `$ = $.p` it knows the shape it recorded for `p`, after `.flatMap("items")` it knows `items` is one element, and after `$ = $.pick([...])` it knows exactly which fields remain. A join carries the shape its body made: after `const ids = $$$.orders.filter(p).map("pid").uniq()` the compiler knows `ids` is an array that is there, so `ids.has(x)` takes the array form with no guard, and after `$.p = $$$.products.filter(p).pick(["_id", "name"])` it knows each element holds exactly those two fields. A `$match` narrows too: after `$match($.tags != null)` the field is present and needs no null guard, after `$match(typeof $.b === "string")` or `$$.filter({ status: "a" })` the field has that kind, and after `$match($.n > 5)` it is a number, because the query language compares inside one type. A query clause reads an array field element by element, so each of these also allows an array; an `||` proves nothing. A method on a field proven to hold a kind it has no form for is a compile-time error that names what the method takes, so `$.bool.trim()` fails before it runs. A method on a value that can be one of several kinds (`c ? "abc" : [1, 2]`) runs its own form when one of those kinds fits it, and the server judges the value. See [docs/specs/types.md](specs/types.md).
+**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();`, the compiler knows that `arr` is an array, or null when `tags` is missing. So `$.arr.has("red")` takes the array form with only the null guard. After `$.bool = $.arr.has("red");`, the compiler knows that `bool` is a boolean. So `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows every write: a whole field, a dotted path such as `$.address.full = …`, and a `let` with each of its later values.
+
+The proof also follows the result of a method. `$.tags.map(t => t.trim())` is an array of strings. `{ ...$.address, done: true }` and `$.address.assign({ done: true })` are objects whose `done` is a boolean. `$.o.pick(["a"])` holds `a` and nothing else, and `.filter(p).head()` is one element that can be missing. The proof follows every stage too:
+
+- after `$group({ _id: $.k, total: $sum($.amount) })`, `total` is a number
+- after `$ = $.p`, the document has the shape that the compiler recorded for `p`
+- after `.flatMap("items")`, `items` is one element
+- after `$ = $.pick([...])`, the compiler knows exactly which fields remain
+
+A join carries the shape that its body made. After `const ids = $$$.orders.filter(p).map("pid").uniq()`, the compiler knows that `ids` is an array that is there. So `ids.has(x)` takes the array form with no guard. After `$.p = $$$.products.filter(p).pick(["_id", "name"])`, the compiler knows that each element holds exactly those two fields.
+
+A `$match` narrows the type too:
+
+- after `$match($.tags != null)`, the field is present and needs no null guard
+- after `$match(typeof $.b === "string")` or `$$.filter({ status: "a" })`, the field has that kind
+- after `$match($.n > 5)`, the field is a number, because the query language compares inside one type
+
+A query clause reads an array field element by element, so each of these also allows an array. An `||` proves nothing.
+
+When the compiler proves that a field holds a kind that the method has no form for, the call is a compile-time error. The error names what the method takes, so `$.bool.trim()` fails before it runs.
+
+A method on a value of more than one possible kind (`c ? "abc" : [1, 2]`) runs its own form when one of those kinds fits it. The server then judges the value. See [docs/specs/types.md](specs/types.md).
 
 ```js
 $.arr = $.tags.uniq();
@@ -2021,7 +2044,7 @@ $.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).size();   // a $loo
 against a second list guards that list, as HR5 guards the receiver. So a missing list means
 "the empty list", which is the reading lodash gives a missing list. Without the guard, `$in`
 and `$setIsSubset` abort the command on a null list, and a set operator such as
-`$setDifference` answers null. JSMQL hands a list spelled in the source straight through,
+`$setDifference` answers null. JSMQL passes a list that the source spells out with no guard,
 because it is already an array:
 
 ```js
@@ -2035,13 +2058,13 @@ $.a.isSubsetOf($.b)               // a missing list, on either side, is the empt
 // → { $setIsSubset: [{ $ifNull: ["$a", []] }, { $ifNull: ["$b", []] }] }
 ```
 
-So the three set PREDICATES — `.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()` —
-read a missing operand as the **empty set** and answer a real boolean: `true`, `true` and
+So the three set PREDICATES (`.isSubsetOf()`, `.isSupersetOf()`, `.isDisjointFrom()`)
+read a missing operand as the **empty set**. They answer a real boolean: `true`, `true` and
 `true` over a document that holds neither field. A set operation that answers an array,
 for example `.union()`, answers the other list, or `[]`.
 
 **A value that is there takes no guard.** A set operation reads a missing list as `[]`,
-so its answer is always an array, and a method after it adds no `$ifNull`. A list argument
+so its answer is always an array. A method after it adds no `$ifNull`. A list argument
 that is there takes no guard either. A field that the pipeline wrote from such a value takes
 no guard. An operator that answers `null` as it answers the empty value needs no wrap, for
 example `$sum`:
@@ -2063,7 +2086,7 @@ $.a.sum()                         // `{ $sum: null }` is 0, as `{ $sum: [] }` is
 
 **A query document takes the indexable reading.** An index is read through a query document, so in a filter or a `$match` a boolean method emits the query clause its row states. `$.tags.has("vip")` becomes `{ tags: "vip" }`: "equals, or is an array that contains", which is what `.has` asks of an array. `$.name.includes("vip")` becomes `{ name: { $regex: /vip/ } }`, the substring test. `jsmql.expr` gives the expression forms, `$in` and `$indexOfCP`.
 
-**A `const` carries its type.** A `const` whose initialiser is statically an array or a string counts as "statically known" everywhere the binding is read. This includes inside a `$lookup` predicate, where JSMQL threads the binding in as a correlation variable:
+**A `const` carries its type.** A `const` whose initialiser is statically an array or a string counts as "statically known" everywhere that you read the binding. This is also true inside a `$lookup` predicate, where JSMQL passes the binding in as a correlation variable:
 
 ```js
 const ids = $.tags.uniq();          // provably an array
@@ -2078,15 +2101,15 @@ const hits = $$$.orders.filter(o => ids.has(o.pid));
 //   ]
 ```
 
-Knowing the type also turns a genuine mistake into a compile-time error instead of a server error. `const s = $.name.trim(); s.map(f)` reports that `.map()` needs an array receiver.
+When JSMQL knows the type, a real mistake is a compile-time error, not a server error. `const s = $.name.trim(); s.map(f)` reports that `.map()` needs an array receiver.
 
-A `let` does **not** carry its type. A `let` can be reassigned, so its type could change between the declaration and the read, and JSMQL keeps the runtime `$cond`. Use `const` when the value never changes — which is also what you would write in JavaScript.
+A `let` does **not** carry its type. You can assign a `let` again, so its type can change between the declaration and the read. So JSMQL keeps the runtime `$cond`. Use `const` when the value never changes. That is also what you would write in JavaScript.
 
-**`.at(i)` is the from-the-end reader of an array.** It is the only spelling that accepts a
-negative index; brackets reject one. It lowers to `$arrayElemAt`, which takes a negative
-index natively. An index past either end answers *missing*, not `null`, so `.at()` on an
-absent element stays absent, and `$.aliases.at(0) ?? "anonymous"` reaches its fallback. A
-string reads one character with `.charAt(i)`, and its last characters with `.substr(-n)`:
+**`.at(i)` is the array reader that counts from the end.** It is the only spelling that accepts
+a negative index, and brackets reject one. It lowers to `$arrayElemAt`, which takes a negative
+index natively. An index past either end answers *missing*, not `null`. So `.at()` on an absent
+element stays absent, and `$.aliases.at(0) ?? "anonymous"` reaches its fallback. A string
+reads one character with `.charAt(i)`, and its last characters with `.substr(-n)`:
 
 ```js
 $.tags.uniq().at(-1)                // → { $arrayElemAt: [{ $setUnion: { $ifNull: ["$tags", []] } }, -1] }
@@ -2141,11 +2164,13 @@ $.numbers.reduceRight((acc, x) => acc + x, 0)
 // → same as .reduce but input is wrapped in { $reverseArray: ... }
 ```
 
-**Note:** In `reduce` and `reduceRight`, JSMQL maps the accumulator name to MongoDB's `$$value`. With a 2-parameter callback, the element rides through `$$this`. With a 3-parameter callback `(acc, x, i)`, JSMQL zips the input with `$range` and binds both `x` and `i` through a `$let` wrapper.
+**Note:** In `reduce` and `reduceRight`, JSMQL maps the accumulator name to MongoDB's `$$value`. With a 2-parameter callback, JSMQL reads the element from `$$this`. With a 3-parameter callback `(acc, x, i)`, JSMQL zips the input with `$range` and binds both `x` and `i` through a `$let` wrapper.
 
 ### Callback parameters `(element, index, array)`
 
-JavaScript array-method callbacks receive `(element, index, array)`, and JSMQL accepts all three. The third parameter binds the method's own input through a `$let`, so `arr.size()` inside the callback gives the receiver's size. Naming the index changes what is iterated, because JSMQL then zips the input with `$range`; it emits this machinery only where a parameter is actually read. `.reduce` and `.reduceRight` take a leading `acc` parameter and allow at most three parameters. See [Optional Chaining](#optional-chaining) for the fuller treatment.
+The callback of a JavaScript array method receives `(element, index, array)`, and JSMQL accepts all three parameters. The third parameter binds the input of the method itself through a `$let`. So `arr.size()` inside the callback gives the size of the receiver.
+
+When you name the index, the iteration changes, because JSMQL then zips the input with `$range`. JSMQL emits these operators only where the callback reads a parameter. `.reduce` and `.reduceRight` take a leading `acc` parameter, and allow at most three parameters. See [Optional Chaining](#optional-chaining) for more detail.
 
 ```js
 // Index-aware map: pair each element with its position
@@ -2161,7 +2186,7 @@ $.scores.reduce((acc, x, i) => acc + x * i, 0)
 
 ### Mutators: at statement position, they mutate the field
 
-JavaScript's array mutators (`.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()`) modify the receiver in place. In JSMQL they work the same way **when you call them at statement position on a `$.<field>` receiver**: the call lowers to a `$set` stage that re-assigns the field. JSMQL keeps JS semantics: `.toSorted()` returns a new array and leaves the field unchanged, but `.sort()` mutates the field.
+JavaScript's array mutators (`.sort()`, `.reverse()`, `.push()`, `.pop()`, `.shift()`, `.unshift()`, `.splice()`, `.fill()`) modify the receiver in place. In JSMQL they work the same way **when you call them at statement position on a `$.<field>` receiver**. The call lowers to a `$set` stage that assigns the field again. JSMQL keeps JS semantics: `.toSorted()` returns a new array and leaves the field unchanged, but `.sort()` mutates the field.
 
 ```js
 // At statement position — each line desugars to a $set stage.
@@ -2178,7 +2203,7 @@ $.events.reverse();
 // → { $set: { events: { $reverseArray: { $ifNull: ["$events", []] } } } }
 ```
 
-Chained mutators on the same field interact with the `$set` coalescer exactly the same way an explicit `$.events = …` assignment does: a read-after-write splits into separate stages:
+Chained mutators on the same field interact with the `$set` coalescer exactly as an explicit `$.events = …` assignment does. A read after a write splits into separate stages:
 
 ```js
 jsmql`
@@ -2189,7 +2214,7 @@ jsmql`
 // → three $set stages, in order
 ```
 
-**In expression position, mutators throw.** Calling `.sort()`, or any other mutator, inside an expression — chained, in a `$match` body, or as a `$project` value — raises a tailored error. It names both the immutable variant and the statement-position option:
+**In expression position, mutators throw.** A call of `.sort()`, or of any other mutator, inside an expression gives a specific error. This includes a chained call, a call in a `$match` body, and a call as a `$project` value. The error names both the immutable variant and the statement-position option:
 
 | You wrote in expression position | Use instead |
 |---|---|
@@ -2200,12 +2225,12 @@ jsmql`
 | `.pop()` | `.at(-1)` to read, or `.slice(0, -1)` for everything-but-last |
 | `.shift()` | `.at(0)` to read, or `.slice(1)` for everything-but-first |
 | `.unshift(x)` | `.concat()` with the new items first, or spread `[...newItems, ...arr]` |
-| `.fill(v[, s[, e]])` | No direct immutable replacement — call at statement position, or build via `.map` and `$range` |
+| `.fill(v[, s[, e]])` | No direct immutable replacement — call at statement position, or build with `.map` and `$range` |
 | `.copyWithin(...)` | No direct immutable replacement — compose `.slice()` calls with `$concatArrays` |
 
-`.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw tailored errors. Each explains why it has no MQL form — the iterator protocol, a void return, or locale dependence — and what to use instead.
+`.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw specific errors. Each error explains why the method has no MQL form, and what to use instead. The reason is the iterator protocol, a void return, or a dependence on the locale.
 
-**A mutator at the end of a chain is expression position too.** This surprises a JavaScript developer: `[...].filter(p).sort()` reads fine in JS, because `.filter` makes a throw-away array, and sorting it in place is invisible. JSMQL has no throw-away array to mutate, so it asks for the immutable spelling instead:
+**A mutator at the end of a chain is expression position too.** This is a surprise for a JavaScript developer. `[...].filter(p).sort()` is correct in JS, because `.filter` makes a temporary array, and a sort of that array in place has no visible effect. JSMQL has no temporary array to mutate, so it asks for the immutable spelling instead:
 
 ```js
 jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().sort()");
@@ -2220,7 +2245,7 @@ jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().toSorted()");
 
 #### A merge writes back through the object spread
 
-`.assign()` answers a new object, and it writes nothing in place. lodash's `_.assign` writes its target, so a bare `.assign()` statement is refused, and the error names the write. To merge into a field or a `let` binding, write the merge back:
+`.assign()` answers a new object, and it writes nothing in place. lodash's `_.assign` writes its target, so JSMQL refuses a bare `.assign()` statement, and the error names the write. To merge into a field or a `let` binding, write the merge back:
 
 ```js
 $.profile = { ...$.profile, verified: true };
@@ -2248,34 +2273,38 @@ $.events.toSorted(e => -e.user.name)      // descending, via unary -
 $.events.sort({ distance: -1 });          // statement position → $set with $sortArray
 ```
 
-A **comparator** is a supported spelling. `(a, b) => a.x - b.x` sorts ascending on `x`; `(a, b) => b.x - a.x` sorts descending. `||` joins keys, and each becomes one `sortBy` key.
+A **comparator** is a supported spelling. `(a, b) => a.x - b.x` sorts ascending on `x`, and `(a, b) => b.x - a.x` sorts descending. `||` joins keys, and each becomes one `sortBy` key.
 
 ```js
 $.items.toSorted((a, b) => a.x - b.x || b.y - a.y)
 // → { $sortArray: { input: "$items", sortBy: { x: 1, y: -1 } } }
 ```
 
-A **key function** may name a deep path: `x => x.a.b.c` → `sortBy: { "a.b.c": 1 }`. JSMQL refuses a comparator body that does not subtract one field from each side. The error message names the two forms and the `{ field: dir }` spec.
+A **key function** can name a deep path: `x => x.a.b.c` → `sortBy: { "a.b.c": 1 }`. JSMQL refuses a comparator body that does not subtract one field from each side. The error message names the two forms and the `{ field: dir }` spec.
 
-#### lodash iteratee / predicate shorthands
+#### lodash iteratee and predicate shorthands
 
-Every higher-order value method accepts the same lodash iteratee/predicate vocabulary. This includes the native JS methods (`.map` / `.filter` / `.find` / `.findIndex` / `.findLast` / `.some` / `.every` / `.flatMap`) and the lodash methods (`.sumBy` / `.uniqBy` / `.groupBy` / `.reject` / `.takeWhile` / `.differenceBy` / …). Each shorthand desugars to exactly what the equivalent one-parameter arrow would emit:
+Every higher-order value method accepts the same lodash vocabulary of iteratees and predicates. This includes the native JS methods (`.map`, `.filter`, `.find`, `.findIndex`, `.findLast`, `.some`, `.every`, `.flatMap`) and the lodash methods (`.sumBy`, `.uniqBy`, `.groupBy`, `.reject`, `.takeWhile`, `.differenceBy`, …). Each shorthand desugars to exactly what the equivalent one-parameter arrow emits:
 
 | shorthand | example | equivalent arrow |
 |---|---|---|
-| property string (dotted paths ok) | `.map("addr.city")` | `x => x.addr.city` |
+| property string (dotted paths are allowed) | `.map("addr.city")` | `x => x.addr.city` |
 | `_.matches` object | `.filter({ role: "admin", active: true })` | `x => x.role === "admin" && x.active === true` |
-| `_.matches` object, nested | `.filter({ a: { b: { c: 3 } } })` | `x => x.a.b.c === 3` — a partial match, like lodash's: `x.a.b.d` may be anything |
+| `_.matches` object, nested | `.filter({ a: { b: { c: 3 } } })` | `x => x.a.b.c === 3` — a partial match, like lodash's: `x.a.b.d` can be anything |
 | `_.matches` object, array value | `.filter({ tags: ["a", "b"] })` | `x => x.tags.has("a") && x.tags.has("b")` — a subset, like lodash's |
 | `_.matchesProperty` pair | `.find(["status.code", 200])` | `x => x.status.code === 200` |
 | single-parameter arrow | `.map(x => x.total * 1.1)` | — |
 | omitted (identity) | `.uniq()` | `x => x` |
 
-An iteratee context reads the result as a value: `.map("name")` plucks the field. A predicate context reads it as a boolean: `.filter("active")` keeps the truthy ones. The `_.matches` object is lodash's **partial deep match**. Every key is a path. A nested object narrows the path further — `{ a: { b: { c: 3 } } }` says nothing about `a.b.d`. An array of constants is a subset test. An empty object or array matches anything. A key is a field name, whatever it looks like: `{ qty: { $gt: 5 } }` matches a document whose `qty.$gt` field equals `5`, exactly as `_.filter(docs, { qty: { $gt: 5 } })` does. To compare with an operator, write the predicate instead: `x => x.qty > 5`. A value that is not a plain object or an array of constants compares with `===`.
+An iteratee context reads the result as a value: `.map("name")` takes the field. A predicate context reads the result as a boolean: `.filter("active")` keeps the truthy elements.
+
+The `_.matches` object is lodash's **partial deep match**. Every key is a path. A nested object narrows the path further: `{ a: { b: { c: 3 } } }` says nothing about `a.b.d`. An array of constants is a subset test. An empty object or array matches anything. A value that is not a plain object or an array of constants compares with `===`.
+
+A key is a field name, whatever it looks like. `{ qty: { $gt: 5 } }` matches a document whose `qty.$gt` field equals `5`, exactly as `_.filter(docs, { qty: { $gt: 5 } })` does. To compare with an operator, write the predicate instead: `x => x.qty > 5`.
 
 #### lodash array methods
 
-These are value-mode methods on an array field. Their iteratee/predicate arguments take any of the shorthands above.
+These are value-mode methods on an array field. Their iteratee and predicate arguments take any of the shorthands above.
 
 ```js
 $.nums.sum()  / .mean() / .max() / .min()   // $sum / $avg / $max / $min of the array
@@ -2312,17 +2341,24 @@ $.a.sample()                                // one random element ($rand)
 $.a.sampleSize(3)                           // 3 random elements, without replacement
 ```
 
-> A predicate-run method takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element the predicate rejects, using JS truthiness, as `.filter` does — see [Truthy and falsy](#truthy-and-falsy). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so each run gives a **different result** — non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement** and returns the whole shuffled array when `n` exceeds the length.
+> A method that runs a predicate takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element that the predicate rejects, with JS truthiness, as `.filter` does (see [Truthy and falsy](#truthy-and-falsy)). The `*RightWhile` pair scans the reversed array, and reverses the result back. `sample` and `sampleSize` use `$rand`, so each run gives a **different result**. They are non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement**, and returns the whole shuffled array when `n` is more than the length.
 
 > **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
 
 > **`.difference` is the set difference, not lodash's.** lodash's `_.difference([3, 1, 3, 2, 1], [2])` keeps the duplicates and gives `[3, 1, 3, 1]`. JSMQL gives each value once, as a JavaScript `Set` does, so the answer is `[3, 1]` in some order. `.differenceBy` and the stream form `$$.flatMap(…).difference(…)` keep each duplicate.
 
-> **JSMQL rejects chaining that cannot type-check.** When a method is chained on a receiver whose type is provably wrong for it, JSMQL throws at compile time, instead of emitting MQL the server would reject. Examples: `.every(p).map(f)` — a boolean has no methods; `s.toUpperCase().map(f)` — a string is not an array; `a.countBy("t").take(3)` — an object is not an array; and, over a lookup, `$$$.orders.find(p).take(5)` — `.find` returns one document. This check fires only when the receiver type is **fully certain**. An element of unknown type still compiles, for example `arr.find(p).map(f)`, because the element could itself be an array. A result whose type depends on its arguments, such as `n.clamp(a, b)`, still compiles too.
+> **JSMQL rejects a chain that cannot type-check.** When you chain a method on a receiver whose type is provably wrong for it, JSMQL throws at compile time. It does not emit MQL that the server would reject. Examples:
+>
+> - `.every(p).map(f)`: a boolean has no methods
+> - `s.toUpperCase().map(f)`: a string is not an array
+> - `a.countBy("t").take(3)`: an object is not an array
+> - over a lookup, `$$$.orders.find(p).take(5)`: `.find` returns one document
+>
+> This check applies only when the type of the receiver is **fully certain**. An element of unknown type still compiles, for example `arr.find(p).map(f)`, because the element could itself be an array. A result whose type depends on its arguments, such as `n.clamp(a, b)`, also compiles.
 
-#### lodash positional / slicing methods
+#### lodash positional and slicing methods
 
-Element and sub-array accessors on an array field:
+These methods read elements and sub-arrays of an array field:
 
 ```js
 $.xs.take(3)      / .drop(3)                 // first 3 / all but the first 3   (n defaults to 1)
@@ -2334,7 +2370,7 @@ $.xs.nth(2)  / .nth(-1)                       // lodash spelling of `.at(i)` (n 
 $.xs.size()                                  // the element count — a string has `.length()`, an object `.keys().size()`
 ```
 
-> `take`/`drop`/`takeRight`/`dropRight` reject a **negative** count; the error message points at the opposite-end method. An `n` past the array length is fine: you get the whole array or an empty one, matching lodash. `head`/`first`/`last` on an empty array yield `null`, MongoDB's missing-value marker.
+> `take`, `drop`, `takeRight` and `dropRight` reject a **negative** count, and the error message points at the method for the other end. An `n` past the array length is fine: you get the whole array or an empty one, as in lodash. `head`, `first` and `last` on an empty array give `null`, which is MongoDB's marker for a missing value.
 
 ### Bare built-in callbacks
 
@@ -2419,16 +2455,16 @@ Three facts differ from a JavaScript `Set`:
 
 For `$allElementsTrue` / `$anyElementTrue`, use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
 
-### Grouping: `<array>.groupBy()`
+### `<array>.groupBy()`: group the elements
 
 ```js
 $.items.groupBy(x => x.category)
 // → an object keyed by the discriminator, each key holding the matching elements
 ```
 
-The discriminator is a single-parameter arrow, a field name (`"category"`), or omitted for the element itself. JSMQL wraps a non-string key in `$toString`, matching JavaScript, which coerces an object key to a string.
+The discriminator is a single-parameter arrow or a field name (`"category"`). With no discriminator, the key is the element itself. JSMQL wraps a key that is not a string in `$toString`, as JavaScript does when it coerces an object key to a string.
 
-**`Object.groupBy(items, discriminator)` is not a JSMQL name.** It said the same thing as the receiver form and emitted identical MQL, and one capability gets one spelling. The name still parses, so JSMQL's error names the form that works:
+**`Object.groupBy(items, discriminator)` is not a JSMQL name.** It would say the same thing as the receiver form, with identical MQL, and one capability gets one spelling. The name parses, so the error of JSMQL names the form that works:
 
 ```js
 Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.items.groupBy(x => x.category)
@@ -2436,7 +2472,7 @@ Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.item
 
 ### lodash object methods
 
-These are value-mode methods on an object field, built over `$objectToArray` / `$arrayToObject`. The `mapValues` / `mapKeys` / `pickBy` / `omitBy` iteratee is a `(value[, key]) => …` arrow.
+These are value-mode methods on an object field. JSMQL builds them over `$objectToArray` and `$arrayToObject`. The iteratee of `mapValues`, `mapKeys`, `pickBy` and `omitBy` is a `(value[, key]) => …` arrow.
 
 A reader of an object is a method of the object:
 
@@ -2462,11 +2498,11 @@ $.pairs.fromEntries()                 // the same MQL as $.pairs.fromPairs()
 $.user?.profile?.keys()               // `?.` stops the chain: null when `user.profile` is missing (see Optional Chaining)
 ```
 
-> `.keys()` / `.values()` / `.entries()` read the object when the receiver's type is not known at compile time. JSMQL refuses them on a receiver it can PROVE is an array, because JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. `$.xs.map(x => x).keys()` names `$op($range, 0, $op($size, arr))` instead.
+> `.keys()`, `.values()` and `.entries()` read the object when JSMQL does not know the type of the receiver at compile time. JSMQL refuses them on a receiver that it can PROVE is an array. JavaScript's `Array.prototype.keys()` returns an iterator, and MongoDB has no such value. For `$.xs.map(x => x).keys()`, the error names `$op($range, 0, $op($size, arr))` instead.
 
-> `pick` uses flat field names only; a deep path such as `"a.b"` has no support here — use `$op($getField, …)` instead. `mapKeys`/`invert` **stringify** the produced key, using `$toString`, and the last one wins on a collision, like lodash. A live mongod verified every shape here.
+> `pick` uses flat field names only. A deep path such as `"a.b"` has no support here, so use `$op($getField, …)` instead. `mapKeys` and `invert` **stringify** the key that they make, with `$toString`. When two keys have the same name, the last one wins, as in lodash. A live mongod verified every shape here.
 
-> **A missing object is `{}` under a dot, and `null` under `?.`** — [HR5](LANG_RULES.md). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on, so the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`: `_.pick(undefined, …)` is `{}`, `({}).keys()` is `[]`, and that is what each method answers. Write `?.` and the chain stops instead, with `null`:
+> **A missing object is `{}` under a dot, and `null` under `?.`** ([HR5](LANG_RULES.md)). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on. So the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`. `_.pick(undefined, …)` is `{}` and `({}).keys()` is `[]`, and each method gives that answer. Write `?.`, and the chain stops with `null` instead:
 >
 > ```js
 > $.o.keys()             // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } }
@@ -2476,7 +2512,7 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 >
 > `$.keys()` reads the root document, which is always there, so it needs no neutral answer either way.
 
-> **JSMQL reads a `pick` / `omit` key list at query time when the source does not spell it out** — for example, a field path, or a list holding an element read at run time. JSMQL walks the object's own keys and matches each against the list. A key list that is missing or null picks nothing and omits nothing, as lodash does. The `$$.pick(…)` / `$$.omit(…)` STREAM forms still need a spelled-out list, because they lower to `$project`, and the server reads a stage's field list before it reads any document.
+> **JSMQL reads a `pick` or `omit` key list at query time when the source does not spell it out.** An example is a field path, or a list that holds an element read at run time. JSMQL reads each own key of the object, and matches it against the list. A key list that is missing or null picks nothing and omits nothing, as in lodash. The `$$.pick(…)` and `$$.omit(…)` STREAM forms still need a list that the source spells out. They lower to `$project`, and the server reads the field list of a stage before it reads any document.
 
 ---
 
