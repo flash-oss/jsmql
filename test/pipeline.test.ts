@@ -437,24 +437,21 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
   });
 
   it("refuses a fan-out whose elements the registry proves are not documents", () => {
-    // JavaScript's `Object.entries` gives `[key, value]` PAIRS, and a stream holds
+    // `.entries()` gives `[key, value]` PAIRS, as JavaScript does, and a stream holds
     // documents — MEASURED, the server refuses `$replaceWith` of an array, because the
     // new root must be an object. The row states the element kind, so the refusal is
     // at compile time and names the two spellings that do work.
-    expect(() => jsmql("[ $$ = Object.entries($.scores) ]")).toThrow(
+    expect(() => jsmql("[ $$ = $.scores.entries() ]")).toThrow(
       /makes documents from the array's ELEMENTS, one each, and these elements are arrays/,
     );
     // The way out the message names, taken:
-    expect(jsmql("[ $$ = Object.entries($.scores).map((v) => ({ value: v })) ]")).toEqual([
+    expect(jsmql("[ $$ = $.scores.entries().map((v) => ({ value: v })) ]")).toEqual([
       {
         $set: {
           "__jsmql.tmp.0": {
             $map: {
               input: {
-                $ifNull: [
-                  { $map: { input: { $objectToArray: "$scores" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
-                  [],
-                ],
+                $map: { input: { $objectToArray: { $ifNull: ["$scores", {}] } }, in: ["$$this.k", "$$this.v"] },
               },
               as: "v",
               in: { value: "$$v" },

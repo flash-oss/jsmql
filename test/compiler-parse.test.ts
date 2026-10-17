@@ -541,11 +541,10 @@ describe("compiler/parse — a run of writes is ONE element, and keeps every op"
 
 describe("compiler/parse — a top-level `;` is kept, because it says PIPELINE", () => {
   it("wraps a lone statement the source ended with `;`", () => {
-    // `Object.assign($.a, $.b)` merges two objects and
-    // `Object.assign($.a, $.b);` writes the document. Collapsing the single
-    // statement threw that `;` away and the two parsed to the same tree.
-    expect(parse("Object.assign($.a, $.b)").type).toBe("MethodCall");
-    expect(parse("Object.assign($.a, $.b);").type).toBe("Pipeline");
+    // `$.a.assign($.b)` is a value, and `$.a.assign($.b);` is a statement. Collapsing
+    // the single statement threw that `;` away and the two parsed to the same tree.
+    expect(parse("$.a.assign($.b)").type).toBe("MethodCall");
+    expect(parse("$.a.assign($.b);").type).toBe("Pipeline");
   });
 
   it("leaves a statement with no `;` standing on its own", () => {

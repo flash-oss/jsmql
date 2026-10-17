@@ -221,18 +221,17 @@ the pipeline form. A row without that cell gets the position's general sentence 
 lowering also refuses two writes to one path, and anything that is not a write or an
 update operator, such as a stage, `assert`, or a stream chain.
 
-### Mutators and `Object.assign`
+### Mutators
 
 A mutating method at statement position — `$.tags.push(x)`, `$.items.sort()`,
 `$.s.trimStart()` — is the write it means. The desugar pass
 ([desugar-pass.md](desugar-pass.md)) rewrites a call whose row states a `mutatorForm`
 to the `AssignExpr` of its value form (`$.tags = $.tags.concat([x])`), and the roads
-above lower that. `Object.assign(target, …sources)` standing alone is JavaScript's
-mutating merge, and JSMQL reads it the same way: on a field (`$.p` →
-`{ $set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }`) and on a `let` binding
-(`Object.assign(p, …)` → a `$set` of the binding's slot). With a fresh object as the
-target (`Object.assign({}, $.a)`), it is a value. In an expression it is
-`$mergeObjects` throughout.
+above lower that. `.assign()` is not a mutator: it answers a new object. A bare
+`$.p.assign(…);` statement is refused, and the error names the write
+`$.p = { ...$.p, … };`, which lowers to
+`{ $set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }`. In an expression,
+`.assign()` is `$mergeObjects`.
 
 ## Error message conventions
 

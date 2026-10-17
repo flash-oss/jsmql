@@ -86,12 +86,12 @@ const EXPRESSIONS: readonly string[] = [
   // statics
   "Number.isInteger(4)",
   "Number.isInteger(4.5)",
-  "Object.keys({ a: 1, b: 2 })",
-  "Object.values({ a: 1, b: 2 })",
-  "Object.entries({ a: 1 })",
-  'Object.entries({ a: 1, b: "x" })',
-  'Object.fromEntries([["a", 1], ["b", 2]])',
-  "Object.assign({ a: 1 }, { b: 2 })",
+  "({ a: 1, b: 2 }).keys()",
+  "({ a: 1, b: 2 }).values()",
+  "({ a: 1 }).entries()",
+  '({ a: 1, b: "x" }).entries()',
+  '[["a", 1], ["b", 2]].fromEntries()',
+  "({ a: 1 }).assign({ b: 2 })",
   // string methods
   '"aBc".toUpperCase()',
   '"AbC".toLowerCase()',
@@ -253,7 +253,7 @@ const EXPRESSIONS: readonly string[] = [
   'new Date("2019-12-30").isoWeekYear()',
   'new Date("2020-12-31").dayOfYear()',
   // object methods
-  "Object.keys({ a: 1, b: 2 }).size()",
+  "({ a: 1, b: 2 }).keys().size()",
   "({ a: 1, b: 2 }).pick(['a'])",
   "({ a: 1, b: 2 }).omit(['a'])",
   "({ a: 1, b: 2 }).mapValues(v => v * 10)",

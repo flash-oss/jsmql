@@ -38,6 +38,7 @@ import {
   constructibleNames,
   positionsOf,
   readsNullAsEmptyOf,
+  lowersOn,
   passesNullOf,
   takesNoReceiver,
 } from "../rows.ts";
@@ -894,7 +895,7 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     receiver.kind === "namespace"
       ? JS_NAMES.filter((n) => {
           const on = familiesFor(n);
-          return on !== undefined && on !== "any" && on.includes(receiver.name);
+          return on !== undefined && on !== "any" && on.includes(receiver.name) && lowersOn(n, receiver.name);
         })
       : JS_NAMES;
   throw E.refusalFor(sel, spelled, container, position, node.pos, near, format);

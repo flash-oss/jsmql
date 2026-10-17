@@ -71,7 +71,7 @@ const NAMESPACES = namespaceNames();
 /**
  * Is the value `node` reads certainly THERE — never null, never missing?
  *
- * A literal is. The root document is (`Object.keys($)`). A binding states
+ * A literal is. The root document is present (`$.keys()`). A binding states
  * whether it is (a `$lookup`'s array, a `let` of a present value). A call
  * is, when its row states `neverNull` and its receiver and every value
  * argument are also present — `$map` over an array that is there gives an
@@ -109,7 +109,7 @@ function statedPresence(node: Expr, env: Env): boolean | null {
     case "MethodCall": {
       const name = namedRow(node) ?? node.name;
       if (!neverNullOf(name)) return false;
-      // A namespace (`Object.keys(o)`) is not a value; its arguments carry the answer.
+      // A namespace (`Number.isInteger(n)`) is not a value; its arguments carry the answer.
       // HR5: under a dot, an array or object method runs on `[]` or `{}` when
       // its receiver is null or missing (`lower.ts` wraps it), so its receiver counts as
       // there. A `?.` anywhere on the spine below stops the chain instead, and the value

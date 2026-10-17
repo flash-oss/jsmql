@@ -363,7 +363,7 @@ function valueTerminalMembers() {
 // `Number` interfaces with these methods. Each carries a concrete return type so chains stay typed
 // (`items.uniq().chunk(2)` → `T[][]`). This activates only on a concretely typed receiver. A bare
 // `$.field` is `any`, and `any.uniq()` stays `any` (no completion, but no error either). Operators
-// like `$.age > 18` stay untouched. The win is for annotated documents, typed statics (`Object.values(o)`),
+// like `$.age > 18` stay untouched. The win is for annotated documents,
 // literals, and mid-chain results. See docs/specs/globals-generation.md.
 //
 // Object-*receiver* methods (`.mapValues`, `.pick`, `.omit`, `.invert`) are deliberately NOT augmented.

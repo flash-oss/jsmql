@@ -109,7 +109,7 @@ A missing or null grouping field then coerces to the string `"null"` (matching
 `String(null)`), instead of giving `$arrayToObject` a null key, which the server
 rejects. The value-mode forms use the identical helper, so both modes agree.
 `$toString` still errors on an object or array key — a separate, documented pitfall.
-Because the key is a string, code that reads it back (`Object.keys(...)`) and joins
+Because the key is a string, code that reads it back (`.keys()`) and joins
 on it must first cast it to the field's own type — see the `keyBy`/`groupBy`/`countBy`
 pitfall in [LANGUAGE.md](../LANGUAGE.md#lodash-array-methods) for the `ObjectId` case.
 

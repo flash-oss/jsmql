@@ -178,20 +178,6 @@ export function namespaceNames(): ReadonlySet<string> {
 }
 
 /**
- * The index of the argument this name MUTATES in place, or undefined when it
- * mutates none. `Object.assign(target, …)` writes its first argument, so a
- * binding passed there is no longer the constant it was declared as.
- *
- * The fact belongs to the STATIC spelling: `o.assign(p)` writes nothing and
- * answers a new object, so a caller passes the receiver and gets undefined for
- * the method form.
- */
-export function mutatedArgumentOf(name: string, receiver?: string | null): number | undefined {
-  if (receiver !== undefined && (receiver === null || !namespaceNames().has(receiver))) return undefined;
-  return (row(name) as { mutatesArgumentAt?: number } | undefined)?.mutatesArgumentAt;
-}
-
-/**
  * The name that means the same as this mutator without mutating, or undefined.
  * `.sort()` → `"toSorted"`. See `immutableTwin` for what qualifies as a twin.
  */
@@ -770,6 +756,17 @@ export function packsSpreadOf(name: string): boolean {
     return Object.values(o).some(states);
   };
   return states((row(name) as { expr?: unknown } | undefined)?.expr);
+}
+
+/**
+ * Does the value cell of this row LOWER a call on the family — a rule, not a refusal?
+ * `Object.groupBy` parses so that its cell can refuse it, and a suggestion never names it.
+ */
+export function lowersOn(name: string, family: string): boolean {
+  const cell = (row(name) as { expr?: unknown } | undefined)?.expr;
+  if (cell === null || typeof cell !== "object") return false;
+  const own = (cell as { perFamily?: Record<string, unknown> }).perFamily;
+  return isRuleCell(own === undefined ? cell : own[family]);
 }
 
 /** A mutator's write form by argument count — `.pop()` → `_r.slice(0, -1)` — or undefined when the row states none. */

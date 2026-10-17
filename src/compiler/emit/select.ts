@@ -42,7 +42,7 @@ export type AnyEmit = Emit<unknown, unknown>;
 export type Receiver =
   /** A bare call — `Number(x)`, `$abs(x)`, `assert(…)`. */
   | { readonly kind: "none" }
-  /** A static namespace — `Math.max(…)`, `Object.keys(…)`. */
+  /** A static namespace — `Number.isInteger(…)`, `Date.now()`. */
   | { readonly kind: "namespace"; readonly name: Family }
   /** The `$$` stream. */
   | { readonly kind: "stream" }

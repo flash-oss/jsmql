@@ -973,17 +973,6 @@ export type ExprIn = {
    * every array operator answers null for a missing field.
    */
   present: boolean;
-  /**
-   * Does this ARGUMENT carry a `?.` on the way to its base? A `?.` is the developer
-   * who says that the value can be absent.
-   *
-   * The compiler answers that for a RECEIVER on its own. It puts the empty value of
-   * the family around the receiver before a cell sees it. A NAMESPACE call has no
-   * such receiver: `Object.keys(o)` describes `Object`, and `o` is the value that
-   * the call reads. So the row asks, and `Object.keys($.user?.profile)` takes the
-   * same neutral value as `$.user?.profile?.keys()`.
-   */
-  optionalArg: (e: Expr) => boolean;
   /** Lower an expression as a CONDITION, with the JavaScript truth rules. See `Truth`. */
   truth: (e: Expr) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`. The parameter binds as `$$as` (`ref`). */

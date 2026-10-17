@@ -39,9 +39,9 @@ function statementShaped(node: Any): boolean {
   if (readsAContextRef(node)) return true;
   const name = namedRow(node);
   if (name === null) return false;
-  // `Object.assign($.a, $.b)` standing alone WRITES `$.a`, the same as the mutators do.
-  // A merged object is truthy, so as a filter it would keep every document.
-  if (name === "assign" && writesItsTarget(node)) return true;
+  // `$.a.assign($.b)` standing alone reads as lodash's `_.assign`, which WRITES `a`.
+  // JSMQL's `.assign()` writes nothing, so the statement cell refuses it and names the write.
+  if (name === "assign" && writesItsReceiver(node)) return true;
   // The `;` decides a row with a VALUE form, not this check. `.filter()`
   // lists one, so `$.items.filter(p)` standing alone is an expression.
   if (lists(name, "value")) return false;
@@ -53,20 +53,19 @@ function statementShaped(node: Any): boolean {
 }
 
 /**
- * Is this program a lone `Object.assign(<field or binding>, …)`? The shape rule
- * treats it as a statement, because standing alone it writes its target. It is
- * a value where a value is asked for (`jsmql.expr`), because `$mergeObjects` is
- * what it means there.
+ * Is this program a lone `.assign(…)` on a field or a binding? The shape rule reads it
+ * as a statement, because lodash's `_.assign` writes its target. It is a value where a
+ * value is asked for (`jsmql.expr`), because `$mergeObjects` is what it means there.
  */
-export function isBareAssignWrite(program: Program): boolean {
+export function isBareAssign(program: Program): boolean {
   const node = program as Any;
-  return namedRow(node) === "assign" && writesItsTarget(node);
+  return namedRow(node) === "assign" && writesItsReceiver(node);
 }
 
-/** Is the first argument a place a write can land — a field of the document, or a binding? */
-function writesItsTarget(node: Any): boolean {
-  const target = (node as { args?: readonly Any[] }).args?.[0];
-  return target !== undefined && (target.type === "FieldRef" || target.type === "Ident");
+/** Is the receiver a place a write can land — a field of the document, or a binding? */
+function writesItsReceiver(node: Any): boolean {
+  const target = (node as { object?: Any }).object;
+  return node.type === "MethodCall" && target !== undefined && (target.type === "FieldRef" || target.type === "Ident");
 }
 
 /**

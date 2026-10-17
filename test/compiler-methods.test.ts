@@ -661,9 +661,7 @@ describe("compiler/emit — object methods", () => {
         ["b", 2],
         ["_c", 3],
       ]),
-    ).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
-    });
+    ).toEqual({ $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: ["$$this.k", "$$this.v"] } });
     expect(compiled('$.o.pick(["a", "b"])', () => ({ a: 1, b: 2 }))).toEqual({
       $let: {
         vars: { jsmqlObj: { $ifNull: ["$o", {}] } },
@@ -964,8 +962,7 @@ describe("compiler/emit — array methods", () => {
       $arrayToObject: {
         $map: {
           input: { $ifNull: ["$pairs", []] },
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
@@ -1582,7 +1579,7 @@ describe("compiler/emit — array methods", () => {
     // number of fields of an object is the size of its keys.
     expect(compiled("$.a.size()", (d) => d.a.length)).toEqual({ $size: { $ifNull: ["$a", []] } });
     expect(compiled("$.o.keys().size()", (d) => Object.keys(d.o).length)).toEqual({
-      $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+      $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } },
     });
     expect(compiled("$.a.toString()", (d) => d.a.toString())).toEqual({
       $let: {
@@ -2153,24 +2150,35 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
     expect(compiled("Array.isArray($.a)", () => Array.isArray(DOC.a))).toEqual({ $isArray: ["$a"] });
     expect(compiled("Array.isArray($.n)", () => Array.isArray(DOC.n))).toEqual({ $isArray: ["$n"] });
-    expect(compiled("Object.assign($.o, { z: 1 })", () => Object.assign({}, DOC.o, { z: 1 }))).toEqual({
+    expect(compiled("$.o.assign({ z: 1 })", () => Object.assign({}, DOC.o, { z: 1 }))).toEqual({
       $mergeObjects: ["$o", { z: 1 }],
     });
-    expect(compiled("Object.assign({}, ...$.docs)", () => Object.assign({}, ...DOC.docs))).toEqual({
-      $mergeObjects: { $concatArrays: [[{}], "$docs"] },
+    // A spread argument is a list of sources, a plain argument is one source, and an
+    // empty receiver adds nothing to the merge.
+    expect(compiled("({}).assign(...$.docs)", () => Object.assign({}, ...DOC.docs))).toEqual({
+      $mergeObjects: "$docs",
     });
-    expect(compiled("Object.fromEntries($.pairs)", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
+    expect(compiled("({}).assign($.o)", () => Object.assign({}, DOC.o))).toEqual({ $mergeObjects: ["$o"] });
+    expect(compiled("({}).assign($.o, { z: 1 })", () => Object.assign({}, DOC.o, { z: 1 }))).toEqual({
+      $mergeObjects: ["$o", { z: 1 }],
+    });
+    expect(compiled("$.o.assign(...$.docs)", () => Object.assign({}, DOC.o, ...DOC.docs))).toEqual({
+      $mergeObjects: { $concatArrays: [["$o"], { $ifNull: ["$docs", []] }] },
+    });
+    // One plain argument is one source. The server refuses an array there, so this
+    // shape stays out of the server run.
+    expect(expr("$.o.assign($.docs)")).toEqual({ $mergeObjects: ["$o", "$docs"] });
+    expect(compiled("$.pairs.fromEntries()", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
       $arrayToObject: {
         $map: {
-          input: "$pairs",
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          input: { $ifNull: ["$pairs", []] },
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
     // A list of pairs written in the source is the `$map` input itself, with no extra array level.
     expect(
-      compiled('Object.fromEntries([["a", 1], ["b", $.n]])', (d) =>
+      compiled('[["a", 1], ["b", $.n]].fromEntries()', (d) =>
         Object.fromEntries([
           ["a", 1],
           ["b", d.n],
@@ -2183,14 +2191,13 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
             ["a", 1],
             ["b", "$n"],
           ],
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
     // A number key becomes a string key, as in JavaScript.
     expect(
-      compiled('Object.fromEntries([[7, $.neg], ["b", 1]])', (d) =>
+      compiled('[[7, $.neg], ["b", 1]].fromEntries()', (d) =>
         Object.fromEntries([
           [7, d.neg],
           ["b", 1],
@@ -2203,8 +2210,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
             [7, "$neg"],
             ["b", 1],
           ],
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
@@ -2606,9 +2612,7 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
  * null on. HR5 decides the answer by the accessor the source spells:
  *
  *   - a method under a DOT runs on `{}`, so it answers `{}`, or `[]` where it answers an
- *     array — `_.pick(undefined, …)` is `{}`, `Object.keys({})` is `[]`.
- *   - an `Object` static has no receiver to wrap, and `Object.keys(undefined)` is a
- *     TypeError in JavaScript, so it answers null, the nearest thing MongoDB has.
+ *     array — `_.pick(undefined, …)` is `{}`, `({}).keys()` is `[]`.
  *   - a `?.` with a call after it STOPS the chain, so the chain answers null.
  *
  * Each row: the source, and what it answers when the receiver is missing.
@@ -2624,13 +2628,10 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o.omitBy(v => v == null)", {}],
   ["$.o.invert()", {}],
   ["$.o.toPairs()", []],
-  // an object method under a dot runs on `{}` (HR5); the `Object` statics have no receiver to wrap
+  // an object method under a dot runs on `{}` (HR5)
   ["$.o.keys()", []],
   ["$.o.values()", []],
   ["$.o.entries()", []],
-  ["Object.keys($.o)", null],
-  ["Object.values($.o)", null],
-  ["Object.entries($.o)", null],
   // a `?.` with a call after it stops the chain, so the chain answers null
   ["$.o?.keys()", null],
   ["$.o?.values()", null],
@@ -2638,13 +2639,12 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o?.keys().size()", null],
   ["$.s?.trim().length()", null],
   ["$.a?.map(x => x).size()", null],
-  // a NAMESPACE call has no receiver to carry the `?.`, so the row reads it off the
-  // argument — and there is no call AFTER the `?.` to stop, so `{}` still applies
-  ["Object.keys($.o?.sub)", []],
+  // the `?.` tests `o`, and a call after it stops the chain
+  ["$.o?.sub.keys()", null],
   // nothing runs after this `?.`, so the document and the answer are what they were
   ['$.first + " " + $.user?.last', "An "],
   // the root document is there, so it takes no neutral
-  ["Object.keys($).size()", 2],
+  ["$.keys().size()", 2],
 ];
 
 describe.skipIf(!up)("compiler/emit — a missing list is the empty list, never an aborted command", () => {
@@ -3224,7 +3224,7 @@ const GUARD_FREE: readonly string[] = [
   '$.a.sumBy("v")',
   "$.o.mapValues(v => v).keys()",
   "$.o.assign({ z: 1 }).keys()",
-  "Object.assign({}, $.o).keys()",
+  "({}).assign($.o).keys()",
   "$.s.substring(1)",
   "$.s.substr(-3)",
   "$.x = $.a.intersection($.b); $.y = $.x.size();",

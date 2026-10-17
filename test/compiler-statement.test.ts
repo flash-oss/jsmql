@@ -878,9 +878,9 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(refusal("$.tags.popp();")).toBe("Unknown method '.popp()' at position 6. Did you mean '.pop()'?");
     expect(refusal("$.tags.pushh(1);")).toBe("Unknown method '.pushh()' at position 6. Did you mean '.push()'?");
     // A static on a namespace, and a global.
-    expect(refusal("Object.assignn($.a, { b: 1 });")).toBe(
-      "Unknown method 'Object.assignn()' at position 6. Did you mean 'Object.assign'?",
-    );
+    expect(refusal("Date.noww();")).toBe("Unknown method 'Date.noww()' at position 4. Did you mean 'Date.now'?");
+    // A refused static is never a suggestion: `Object.assign` parses only so that it can refuse.
+    expect(refusal("Object.assignn($.a, { b: 1 });")).toBe("Unknown method 'Object.assignn()' at position 6.");
     expect(refusal("assertt($.a > 1);")).toBe(
       "Unknown function 'assertt(...)'. Did you mean 'assert(...)'? Declare it first with `const assertt = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$assertt(...)`; for a method, `receiver.assertt(...)`.",
     );

@@ -622,7 +622,7 @@ is ordinary data, so the coercion is what keeps `$.doc[$.k]` from killing the qu
 missing key reads as missing, as `obj[undefined]` does in JavaScript. Stringifying also
 matches JS, where `obj[0]` *is* `obj["0"]`.
 
-The same element-type inference applies across `.filter`/`.find`/`.some`/`.every`/`.flatMap`/`.reduce`, and the element type is also read from `String.split(",")` and `Object.keys(o)` (both yield string arrays) and from object/array-literal element arrays (so `[{…}, {…}].map(o => o[k])` treats `o` as an object). It only ever *removes* a redundant guard: a numeric or unknown-typed element keeps the runtime `$isArray` dispatch.
+The same element-type inference applies across `.filter`/`.find`/`.some`/`.every`/`.flatMap`/`.reduce`, and the element type is also read from `.split(",")` and `.keys()` (both yield string arrays) and from object/array-literal element arrays (so `[{…}, {…}].map(o => o[k])` treats `o` as an object). It only ever *removes* a redundant guard: a numeric or unknown-typed element keeps the runtime `$isArray` dispatch.
 
 If you want compact output for a *numeric* index, pin the type — bind the value to a `const` with a type-revealing initialiser, or chain a type-fixing method (`.map(x => x)`, `.toReversed()`, …).
 
@@ -675,7 +675,7 @@ Some operators give `null` for a `null` operand. When each call after the `?.` u
 | Index access (`obj?.[k]`, or a `?.` earlier in the chain) | `null` for a missing value, as a bare read | `$.scoresByLevel?.[$.level]` → `{ $ifNull: [<the index read>, null] }` |
 | A field read after a value | `null` for a missing value, as a bare read | `$.items[0]?.label` → `{ $ifNull: [{ $let: { vars: { jsmqlV: <the read of $.items[0]> }, in: "$$jsmqlV.label" } }, null] }` |
 
-A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so it answers `null`: `$objectToArray` gives `null` for `null`, so the MQL holds no test. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument: `Object.keys($.user?.profile)` takes `{}` for a missing profile.
+A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so it answers `null`: `$objectToArray` gives `null` for `null`, so the MQL holds no test.
 
 These cases produce the same MQL whether you use `.` or `?.`:
 
@@ -1876,8 +1876,8 @@ $.a.map(x => x + 1).size()        // an ARRAY method: a missing `a` is [], so th
 $.a.uniq().sortBy("k")            // one wrap at the head of the chain: `.uniq()` under a dot never answers null
 // → { $sortArray: { input: { $setUnion: { $ifNull: ["$a", []] } }, sortBy: { k: 1 } } }
 
-Object.keys($).size()             // the root document is always there
-// → { $size: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } }
+$.keys().size()                   // the root document is always there
+// → { $size: { $map: { input: { $objectToArray: "$$ROOT" }, in: "$$this.k" } } }
 
 $.a?.map(x => x + 1).size()       // `?.` with a call after it stops the chain — see Optional Chaining
 // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } } } }
@@ -2088,23 +2088,21 @@ jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().toSorted()");
 //       as: "i", in: "$$i.sku" } } }, sortBy: 1 } }
 ```
 
-#### `Object.assign(target, ...sources)` mutates `target`
+#### A merge writes back through the object spread
 
-`Object.assign` is JavaScript's *mutating* merge: it writes the merged object back into its first argument. At statement position, JSMQL honours this. The target may be a document field **or** an in-scope `let`/`const` binding:
+`.assign()` answers a new object, and it writes nothing in place. lodash's `_.assign` writes its target, so a bare `.assign()` statement is refused, and the error names the write. To merge into a field or a `let` binding, write the merge back:
 
 ```js
-// Merge into a document field — one $set:
-Object.assign($.profile, { verified: true });
+$.profile = { ...$.profile, verified: true };
 // → { $set: { profile: { $mergeObjects: ["$profile", { verified: true }] } } }
 
-// Build up a scratch object across statements:
-const result = {};
-Object.assign(result, { a: $.foo });
+let result = {};
+result = { ...result, a: $.foo };
 // → { $set: { "__jsmql.var.result": {} } }
 //   { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } }
-```
 
-`Object.assign(result, …)` works even when `result` is `const`, because mutating a `const`-bound object is legal JavaScript; only *rebinding* it with `result = …` is not. It is the mutating twin of the value form `result = { ...result, ... }`. In **expression** position, `Object.assign(a, b)` keeps its own meaning: it lowers to `$mergeObjects` (see [Object Operations](#object-operations)). The first argument must be a writable target — a `$.field` or an in-scope binding. Anything else, such as `Object.assign({}, …)` or an undeclared name, throws an actionable error.
+$.profile.assign({ verified: true });   // ✗ .assign() writes nothing; write $.profile = { ...$.profile, verified: true };
+```
 
 #### Array sort: `.toSorted(<sort>)` and `.sort(<sort>)`
 
@@ -2186,7 +2184,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > A predicate-run method takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element the predicate rejects, using JS truthiness, as `.filter` does — see [Truthy and falsy](#truthy-and-falsy). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so each run gives a **different result** — non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement** and returns the whole shuffled array when `n` exceeds the length.
 
-> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `Object.keys(<a countBy result>)` hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `Object.keys(counts).map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
+> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
 
 > **`.difference` is the set difference, not lodash's.** lodash's `_.difference([3, 1, 3, 2, 1], [2])` keeps the duplicates and gives `[3, 1, 3, 1]`. JSMQL gives each value once, as a JavaScript `Set` does, so the answer is `[3, 1]` in some order. `.differenceBy` and the stream form `$$.flatMap(…).difference(…)` keep each duplicate.
 
@@ -2220,7 +2218,7 @@ $.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, mis
 $.scores.map(Number)            // coerce strings to numbers
 // → { $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $toDouble: "$$x" } } }
 
-Object.keys($.counts).map(ObjectId)   // object keys are strings — cast them back
+$.counts.keys().map(ObjectId)         // object keys are strings — cast them back
 // → { $map: { input: { … }, as: "v", in: { $toObjectId: "$$v" } } }
 
 $.scores.map(Math.floor)        // round each element down
@@ -2240,7 +2238,7 @@ The bare form is for **arrays of values**. A pipeline stream carries documents, 
 
 **`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Math.trunc(Number(<value>))` for the whole number `parseInt` would give.
 
-**`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `Object.fromEntries(pairs)`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
+**`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `pairs.fromEntries()`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
 
 `new` on a name that JSMQL does not know names the nearest class it can construct: for `new Dat()`, the suggestion is `new Date(…)`. `new` on a function (`new Number(5)`) names the call without `new`.
 
@@ -2310,7 +2308,7 @@ Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.item
 
 These are value-mode methods on an object field, built over `$objectToArray` / `$arrayToObject`. The `mapValues` / `mapKeys` / `pickBy` / `omitBy` iteratee is a `(value[, key]) => …` arrow.
 
-A reader of an object has two spellings, the JavaScript static and the lodash method, and both emit the same MQL:
+A reader of an object is a method of the object:
 
 ```js
 $.scores.mapValues(v => v * 2)        // { <k>: v*2 }
@@ -2326,11 +2324,11 @@ $.o.invert()                          // swap keys/values (new keys stringified,
 $.o.toPairs()                         // [[k, v], …]
 $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receiver is a [[k,v]] array)
 
-$.o.keys()                            // same MQL as Object.keys($.o)
-$.o.values()                          // same MQL as Object.values($.o)
-$.o.entries()                         // same MQL as Object.entries($.o)
+$.o.keys()                            // the keys
+$.o.values()                          // the values
+$.o.entries()                         // [[k, v], …] — the same MQL as $.o.toPairs()
 $.o.assign($.p, $.q)                  // { $mergeObjects: ["$o", "$p", "$q"] } — a NEW object, like .pick()
-$.pairs.fromEntries()                 // same MQL as Object.fromEntries($.pairs) — and as $.pairs.fromPairs()
+$.pairs.fromEntries()                 // the same MQL as $.pairs.fromPairs()
 $.user?.profile?.keys()               // `?.` stops the chain: null when `user.profile` is missing (see Optional Chaining)
 ```
 
@@ -2338,15 +2336,15 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 
 > `pick` uses flat field names only; a deep path such as `"a.b"` has no support here — use `$op($getField, …)` instead. `mapKeys`/`invert` **stringify** the produced key, using `$toString`, and the last one wins on a collision, like lodash. A live mongod verified every shape here.
 
-> **A missing object is `{}` under a dot, and `null` under `?.`** — [HR5](LANG_RULES.md). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on, so the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`: `_.pick(undefined, …)` is `{}`, `Object.keys({})` is `[]`, and that is what each method answers. Write `?.` and the chain stops instead, with `null`:
+> **A missing object is `{}` under a dot, and `null` under `?.`** — [HR5](LANG_RULES.md). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on, so the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`: `_.pick(undefined, …)` is `{}`, `({}).keys()` is `[]`, and that is what each method answers. Write `?.` and the chain stops instead, with `null`:
 >
 > ```js
-> $.o.keys()             // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
-> $.o?.keys()            // → { $cond: { if: { $eq: [{ $ifNull: ["$o", null] }, null] }, then: null, else: { $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } } }
-> $.o.toPairs()          // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
+> $.o.keys()             // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } }
+> $.o?.keys()            // → { $map: { input: { $objectToArray: "$o" }, in: "$$this.k" } }   ($objectToArray gives null for null)
+> $.o.toPairs()          // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: ["$$this.k", "$$this.v"] } }
 > ```
 >
-> That is the one place `.toPairs()` and `.entries()` differ: one is lodash's spelling of the reading, and the other is JavaScript's. `Object.keys($)` reads the root document, which is always there, so it needs no neutral answer either way.
+> `$.keys()` reads the root document, which is always there, so it needs no neutral answer either way.
 
 > **JSMQL reads a `pick` / `omit` key list at query time when the source does not spell it out** — for example, a field path, or a list holding an element read at run time. JSMQL walks the object's own keys and matches each against the list. A key list that is missing or null picks nothing and omits nothing, as lodash does. The `$$.pick(…)` / `$$.omit(…)` STREAM forms still need a spelled-out list, because they lower to `$project`, and the server reads a stage's field list before it reads any document.
 
@@ -2375,7 +2373,7 @@ A parameter may be an array or object pattern of plain names, as in JavaScript. 
 
 ```js
 $.tally.entries().sortBy(([id, count]) => -count)       // ≡ .sortBy(e => -e[1]) — count descending
-// → { $map: { input: { $sortArray: { input: { $map: { input: { $map: { input: { $objectToArray: "$tally" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
+// → { $map: { input: { $sortArray: { input: { $map: { input: { $map: { input: { $objectToArray: "$tally" }, in: ["$$this.k", "$$this.v"] } },
 //                                                       as: "x", in: { k: { $arrayElemAt: ["$$x", 1] }, v: "$$x" } } }, sortBy: { k: -1 } } },
 //             as: "jsmqlP", in: "$$jsmqlP.v" } }
 
@@ -3160,13 +3158,14 @@ array instead, or use the JS-method form where it applies (`Math.max(...$.scores
 ### Object Operations
 
 ```js
-Object.keys($.obj)                 // { $map: { input: { $objectToArray: "$obj" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
-Object.values($.obj)               // { $map: { input: { $objectToArray: "$obj" }, as: "jsmqlKv", in: "$$jsmqlKv.v" } }
-Object.entries($.obj)              // { $map: { input: { $objectToArray: "$obj" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } }
-Object.fromEntries($.pairs)        // { $arrayToObject: "$pairs" }
-Object.assign($.a, $.b)            // { $mergeObjects: ["$a", "$b"] }
-Object.assign($.a, $.b, $.c)       // { $mergeObjects: ["$a", "$b", "$c"] }
-Object.assign(...$.docs)           // { $mergeObjects: "$docs" }   (spread)
+$.obj.keys()                       // { $map: { input: { $objectToArray: { $ifNull: ["$obj", {}] } }, in: "$$this.k" } }
+$.obj.values()                     // { $map: { input: { $objectToArray: { $ifNull: ["$obj", {}] } }, in: "$$this.v" } }
+$.obj.entries()                    // { $map: { input: { $objectToArray: { $ifNull: ["$obj", {}] } }, in: ["$$this.k", "$$this.v"] } }
+$.pairs.fromEntries()              // { $arrayToObject: { $map: { input: { $ifNull: ["$pairs", []] }, in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] } } }
+$.a.assign($.b)                    // { $mergeObjects: ["$a", "$b"] }
+$.a.assign($.b, $.c)               // { $mergeObjects: ["$a", "$b", "$c"] }
+({}).assign(...$.docs)             // { $mergeObjects: "$docs" }   — merge an array of objects
+$.a.assign(...$.docs)              // { $mergeObjects: { $concatArrays: [["$a"], { $ifNull: ["$docs", []] }] } }
 
 Array.isArray($.items)             // { $isArray: "$items" }
 
@@ -3175,15 +3174,24 @@ $setField("fieldName", $.doc, val) // { $setField: { field: "fieldName", input: 
 $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input: "$doc" } }
 ```
 
-`Object.assign` shown here is the **expression** form (→ `$mergeObjects`). Called as a bare **statement**, it mutates its first argument instead. See [Mutators](#objectassigntarget-sources-mutates-target).
+A spread argument of `.assign()` is a list of sources, and a plain argument is one source. So `$.a.assign($.docs)` merges `docs` as one object, and the server refuses it when `docs` is an array. The target is a new object, so `({}).assign(...$.docs)` writes nothing into `docs[0]`, where JavaScript's `Object.assign(...docs)` changes it. A bare `.assign()` statement writes nothing. See [A merge writes back through the object spread](#a-merge-writes-back-through-the-object-spread).
+
+The `Object` statics are not JSMQL names. Each one says the same thing as the method of its receiver, and one capability gets one spelling. The name still parses, so the error names the form that works:
+
+```js
+Object.keys($.doc)                 // ✗ not a JSMQL name; write $.doc.keys()
+Object.fromEntries($.pairs)        // ✗ not a JSMQL name; write $.pairs.fromEntries()
+Object.assign(...$.docs)           // ✗ not a JSMQL name; write ({}).assign(...$.docs)
+Object.assign($.f, $.x);           // ✗ not a JSMQL name; write $.f = { ...$.f, ...$.x };
+```
 
 ### Spread in Variadic Calls
 
-A JavaScript static that takes a list (`Math.min` / `Math.max`, `Object.assign`) takes `...arr`, and passes the whole array through as the operator's value:
+A JavaScript static that takes a list (`Math.min` / `Math.max`) takes `...arr`, and passes the whole array through as the operator's value. `.assign()` reads a spread the same way:
 
 ```js
 Math.max(...$.scores)              // { $max: "$scores" }
-Object.assign(...$.docs)           // { $mergeObjects: "$docs" }
+({}).assign(...$.docs)             // { $mergeObjects: "$docs" }
 ```
 
 When you mix spread with non-spread arguments, JSMQL wraps each non-spread value in a single-element array and joins them with `$concatArrays`:
@@ -3569,8 +3577,8 @@ jsmql("$$ = $objectToArray($.scores);")
 // → $set the $objectToArray into a slot, then $unwind + $replaceWith
 
 // A stream holds DOCUMENTS, and where a row states what ONE element is, an element
-// that is not one is refused. JavaScript's Object.entries gives [key, value] PAIRS:
-jsmql("$$ = Object.entries($.scores);")
+// that is not one is refused. .entries() gives [key, value] PAIRS, as JavaScript does:
+jsmql("$$ = $.scores.entries();")
 // ✗ each element is an array, not a document. Put each under a field,
 //   $$ = <array>.map((v) => ({ value: v })), or write the array to a field, $.<field> = <array>.
 
@@ -3581,7 +3589,7 @@ jsmql("$ = $.lineItems.map(li => ({ sku: li.sku }));")
 
 A **bare field reference is not** provably an array, because a field path carries no compile-time type. So `$ = $.items` stays a single-document `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` and `$$ = [...$.items]` are the same three stages.
 
-A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there, and the server decides. The refusal above fires only where a row *states* the element kind: `.split()` gives strings, `Object.keys()` gives strings, `Object.entries()` and `.chunk()` give arrays, and `$objectToArray` gives documents. Where nothing is stated, the fan-out stands.
+A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there, and the server decides. The refusal above fires only where a row *states* the element kind. `.split()` and `.keys()` give strings, `.entries()` and `.chunk()` give arrays, and `$objectToArray` gives documents. Where nothing is stated, the fan-out stands.
 
 An array LITERAL of documents on the stream is a different operation. `$$ = [{ … }, { … }]` names the stream's documents outright, wherever it stands in the program: it drops every document and unions in the new ones. The fan-out reading belongs to an array that the data decides, with one answer per input document.
 
@@ -5043,7 +5051,7 @@ jsmql.expr(({ $ }: { $: { placedAt: Date } }) =>
 );
 ```
 
-Completion flows from any value with a **concrete type**: an annotated `$` (above), a typed static (`Object.values(o)`, `Object.keys(o)`), a literal, or the result of a known-return method earlier in the chain. A **bare, un-annotated `$.field` is `any`**, and `any.uniq()` stays `any`, so a method on it neither autocompletes nor errors. This is a deliberate trade. `$.field` must stay `any` so the operator forms JSMQL relies on — `$.age > 18`, `$.price * 1.1` — keep type-checking. In TypeScript, one value cannot be both an operator operand and a rich method receiver. Type your document to light up completion.
+Completion flows from any value with a **concrete type**: an annotated `$` (above), a literal, or the result of a known-return method earlier in the chain. A **bare, un-annotated `$.field` is `any`**, and `any.uniq()` stays `any`, so a method on it neither autocompletes nor errors. This is a deliberate trade. `$.field` must stay `any` so the operator forms JSMQL relies on — `$.age > 18`, `$.price * 1.1` — keep type-checking. In TypeScript, one value cannot be both an operator operand and a rich method receiver. Type your document to light up completion.
 
 Two points on scope:
 

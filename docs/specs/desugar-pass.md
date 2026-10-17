@@ -39,7 +39,6 @@ One row per rule, in `RULES` order
 | `mutatorTwin` | `$.items.sort();` | `$.items = $.items.toSorted();` — the row's `immutableTwin` |
 | `mutatorSpread` | `$.items.push(9);` | `$.items = [...$.items, 9];` — the row's `asArrayLiteral` |
 | `mutatorForm` | `$.items.pop();` | `$.items = $.items.slice(0, -1);` — the row's `mutatorForm`, JSMQL by argument count |
-| `mutatedArgument` | `Object.assign($.o, x);` | `$.o = Object.assign($.o, x);` — the row's `mutatesArgumentAt` |
 | `packSpread` | `Math.max(...$.a, 1)` | `Math.max([...$.a, 1])` — one list, for a rule that reads one (`args.spread`) |
 | `iterateeShorthand` | `$.items.filter({ a: 1 })` | `$.items.filter(x => x.a === 1)` |
 
@@ -124,9 +123,6 @@ $.a.fill(0);        → $.a = $.a.map(() => 0);
 $.a.fill(9, 1, 2);  → $.a = [...$.a.slice(0, 1), ...$.a.slice(1, 2).map(() => 9), ...$.a.slice($.a.slice(0, 1).size() + $.a.slice(1, 2).size())];
 ```
 
-**A name that writes one of its arguments in place** (`mutatesArgumentAt`) is, as
-a statement, a write of that argument with the call as the value:
-`Object.assign($.o, x);` → `$.o = Object.assign($.o, x);`.
 
 ## The iteratee shorthands
 
@@ -238,7 +234,7 @@ January gives the last day of February (`$dateAdd` clamps). That is why
 `.startOf("week")` gives the Sunday (`$dateTrunc`'s default). That is why
 `.diff` counts the boundaries crossed (`$dateDiff`). That is why
 `Math.round(0.5)` gives 0. The server's answer is the answer of JSMQL's own
-lowering, not of the nearest raw operator. So `Object.entries({ a: 1 })` folds
+lowering, not of the nearest raw operator. So `({ a: 1 }).entries()` folds
 to `[["a", 1]]`, which its `$map` over `$objectToArray` gives. Only a raw
 `$objectToArray(…)` gives `{ k, v }` documents.
 
@@ -308,9 +304,8 @@ $.a.indexOf(...$.b)
   not packed (the rule reads one argument) → ✗ refused: the spread
 ```
 
-The four mutator rules cannot collide with each other: a row carries an
-`immutableTwin`, an `asArrayLiteral`, a `mutatorForm` or a `mutatesArgumentAt`,
-never two.
+The three mutator rules cannot collide with each other: a row carries an
+`immutableTwin`, an `asArrayLiteral` or a `mutatorForm`, never two.
 
 ## Adding a sugar form
 

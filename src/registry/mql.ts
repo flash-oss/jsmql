@@ -521,12 +521,14 @@ export const isFiniteNumber = (v: unknown): Record<string, unknown> => ({
 
 /**
  * A list of `[key, value]` pairs as a document. `$toString` renders the key,
- * because the JavaScript `Object.fromEntries([[7, 1]])` answers `{ "7": 1 }`, and
- * `$arrayToObject` refuses a non-string key outright.
+ * because JavaScript reads `[[7, 1]]` as the object `{ "7": 1 }`, and
+ * `$arrayToObject` refuses a non-string key outright. The `in` body reads `$$this`, the
+ * default name of `$map`, because the body is this fixed text and holds no expression of
+ * the developer's.
  * MEASURED: the server refuses a pair whose key is not a string.
  */
-export const pairsToObject = (pairs: unknown, p: { as: string; ref: string }): unknown => ({
+export const pairsToObject = (pairs: unknown): unknown => ({
   $arrayToObject: {
-    $map: { input: pairs, as: p.as, in: [{ $toString: { $arrayElemAt: [p.ref, 0] } }, { $arrayElemAt: [p.ref, 1] }] },
+    $map: { input: pairs, in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] },
   },
 });

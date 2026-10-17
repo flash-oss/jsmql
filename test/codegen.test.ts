@@ -2700,15 +2700,13 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
       $reduce: { input: { $ifNull: ["$a", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
   });
-  it("static-call families (Math./Object./regex.) use the same formatter", () => {
+  it("static-call families (Math./regex.) and the object methods use the same formatter", () => {
     expect(() => jsmql.expr("Math.pow(2)")).toThrow("'Math.pow(base, exponent)' requires exactly 2 arguments, got 1");
     expect(() => jsmql.expr("Math.hypot()")).toThrow("'Math.hypot(...values)' requires at least 1 argument, got 0");
     expect(() => jsmql.expr("Math.random(1)")).toThrow("'Math.random()' takes no arguments, got 1");
     expect(() => jsmql.expr("Math.floor()")).toThrow("'Math.floor(value)' requires exactly 1 argument, got 0");
-    expect(() => jsmql.expr("Object.keys()")).toThrow("'Object.keys(obj)' requires exactly 1 argument, got 0");
-    expect(() => jsmql.expr("Object.assign()")).toThrow(
-      "'Object.assign(...sources)' requires at least 1 argument, got 0",
-    );
+    expect(() => jsmql.expr("$.o.keys(1)")).toThrow("'.keys()' takes no arguments, got 1");
+    expect(() => jsmql.expr("$.o.assign()")).toThrow("'.assign(...sources)' requires at least 1 argument, got 0");
     expect(() => jsmql.expr("/x/.test()")).toThrow("'.test(str)' requires exactly 1 argument, got 0");
   });
   it("statement-position array mutators use the same formatter", () => {
@@ -3208,7 +3206,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     // A COLLAPSING terminal overwrites the slot with the single object it unwrapped,
     // so the registry records "object", and `.keys().size()` counts its fields.
     expect(setOfLast(`$.k = ${lk}.countBy("tier").keys().size();`)).toEqual({
-      k: { $size: { $map: { input: { $objectToArray: "$__jsmql.tmp.0" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } },
+      k: { $size: { $map: { input: { $objectToArray: "$__jsmql.tmp.0" }, in: "$$this.k" } } },
     });
   });
 
@@ -3274,7 +3272,7 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
   it("a SUB-PATH capture stays untyped — the binding's type says nothing about a member of it", () => {
     // `.indexOf` reads both families, so an untyped receiver keeps the runtime dispatch.
     const p = jsmql.pipeline(
-      `const cfg = Object.assign({}, $.cfg); const r = $$$.orders.filter(o => cfg.ids.indexOf(o.pid) >= 0);`,
+      `const cfg = ({}).assign($.cfg); const r = $$$.orders.filter(o => cfg.ids.indexOf(o.pid) >= 0);`,
     );
     expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline).toEqual([
       {
@@ -3854,7 +3852,7 @@ describe("replacing date parts (.set)", () => {
       "'set' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
     expect(() => jsmql.expr("$.t.set({ ...$.p })")).toThrow(
-      "MQL has no spread in an object. Write Object.assign(a, b) instead.",
+      "MQL has no spread in an object. Write a.assign(b) instead.",
     );
   });
   it("rejects a part that is not an integer, as mongod does", () => {
@@ -4184,7 +4182,7 @@ describe("date-method trailing options argument", () => {
   });
   it("rejects a spread or computed key — MongoDB needs the field names written out", () => {
     expect(() => jsmql.expr('$.end.diff($.start, "day", { ...$.o })')).toThrow(
-      "MQL has no spread in an object. Write Object.assign(a, b) instead.",
+      "MQL has no spread in an object. Write a.assign(b) instead.",
     );
   });
   it("gates option value types the same way the operator form does", () => {
@@ -4567,27 +4565,23 @@ describe("bitwise infix operators", () => {
   });
 });
 
-describe("Object.*", () => {
-  it("Object.keys", () => {
-    expect(jsmql.expr("Object.keys($.doc)")).toEqual({
-      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
+describe("object methods", () => {
+  it(".keys()", () => {
+    expect(jsmql.expr("$.doc?.keys()")).toEqual({ $map: { input: { $objectToArray: "$doc" }, in: "$$this.k" } });
+  });
+  it(".values()", () => {
+    expect(jsmql.expr("$.doc?.values()")).toEqual({ $map: { input: { $objectToArray: "$doc" }, in: "$$this.v" } });
+  });
+  it(".entries()", () => {
+    expect(jsmql.expr("$.doc?.entries()")).toEqual({
+      $map: { input: { $objectToArray: "$doc" }, in: ["$$this.k", "$$this.v"] },
     });
   });
-  it("Object.values", () => {
-    expect(jsmql.expr("Object.values($.doc)")).toEqual({
-      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: "$$jsmqlKv.v" },
-    });
+  it(".assign() (1 source)", () => {
+    expect(jsmql.expr("$.a.assign($.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
   });
-  it("Object.entries", () => {
-    expect(jsmql.expr("Object.entries($.doc)")).toEqual({
-      $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
-    });
-  });
-  it("Object.assign (2 args)", () => {
-    expect(jsmql.expr("Object.assign($.a, $.b)")).toEqual({ $mergeObjects: ["$a", "$b"] });
-  });
-  it("Object.assign (3 args)", () => {
-    expect(jsmql.expr("Object.assign($.a, $.b, $.c)")).toEqual({ $mergeObjects: ["$a", "$b", "$c"] });
+  it(".assign() (2 sources)", () => {
+    expect(jsmql.expr("$.a.assign($.b, $.c)")).toEqual({ $mergeObjects: ["$a", "$b", "$c"] });
   });
 });
 
@@ -5733,11 +5727,7 @@ describe("toSorted / sort key function", () => {
             input: {
               $map: {
                 input: {
-                  $map: {
-                    input: { $objectToArray: { $ifNull: ["$tally", {}] } },
-                    as: "jsmqlKv",
-                    in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
-                  },
+                  $map: { input: { $objectToArray: { $ifNull: ["$tally", {}] } }, in: ["$$this.k", "$$this.v"] },
                 },
                 as: "e",
                 in: { k: { $arrayElemAt: ["$$e", 1] }, v: "$$e" },
@@ -5860,14 +5850,13 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
   });
   it(".toPairs() → [[k, v], …]; .fromPairs() inverts it", () => {
     expect(jsmql.expr("$.o.toPairs()")).toEqual({
-      $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+      $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: ["$$this.k", "$$this.v"] },
     });
     expect(jsmql.expr("$.p.fromPairs()")).toEqual({
       $arrayToObject: {
         $map: {
           input: { $ifNull: ["$p", []] },
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
@@ -6660,8 +6649,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
               },
             },
           },
-          as: "jsmqlKv",
-          in: "$$jsmqlKv.k",
+          in: "$$this.k",
         },
       },
     });
@@ -7826,38 +7814,35 @@ describe("statement-position mutators", () => {
   });
 });
 
-describe("statement-position Object.assign — mutating merge on a field path", () => {
+describe("statement-position merge — the object spread writes the field back", () => {
   it("merges sources into the target field through $set + $mergeObjects", () => {
-    expect(jsmql("Object.assign($.profile, { verified: true });")).toEqual([
+    expect(jsmql("$.profile = { ...$.profile, verified: true };")).toEqual([
       { $set: { profile: { $mergeObjects: ["$profile", { verified: true }] } } },
     ]);
   });
   it("multiple sources keep the target as the first $mergeObjects operand", () => {
-    expect(jsmql("Object.assign($.a, $.b, { c: 1 });")).toEqual([
+    expect(jsmql("$.a = { ...$.a, ...$.b, c: 1 };")).toEqual([
       { $set: { a: { $mergeObjects: ["$a", "$b", { c: 1 }] } } },
     ]);
   });
   it("nested receiver $.user.profile emits a dotted $set key", () => {
-    expect(jsmql("Object.assign($.user.profile, { x: 1 });")).toEqual([
+    expect(jsmql("$.user.profile = { ...$.user.profile, x: 1 };")).toEqual([
       { $set: { "user.profile": { $mergeObjects: ["$user.profile", { x: 1 }] } } },
     ]);
   });
-  it("coalesces with adjacent field assignments inside a [...] pipeline literal", () => {
-    expect(jsmql("[ $.x = 1, Object.assign($.profile, { a: $.foo }), $.y = 2 ]")).toEqual([
-      { $set: { x: 1 } },
-      { $set: { profile: { $mergeObjects: ["$profile", { a: "$foo" }] } } },
-      { $set: { y: 2 } },
-    ]);
-  });
-  it("expression position is unaffected — still lowers to $mergeObjects", () => {
-    expect(jsmql("$addFields({ merged: Object.assign($.a, $.b) });")).toEqual([
+  it("expression position lowers .assign() to $mergeObjects", () => {
+    expect(jsmql("$addFields({ merged: $.a.assign($.b) });")).toEqual([
       { $addFields: { merged: { $mergeObjects: ["$a", "$b"] } } },
     ]);
   });
-  it("an object-literal target (discarded result) throws an actionable error", () => {
-    expect(() => jsmql("Object.assign({}, { a: 1 });")).toThrow(
-      "A pipeline statement writes something: a field ('$.total = …;'), the document ('$ = { … };'), a deletion ('delete $.x;'), or a stage ('$match(…);'). This expression only computes a value — assign it to a field, or wrap a predicate as '$match(…)'.",
+  it("a bare .assign() statement writes nothing, and the refusal names the write", () => {
+    expect(() => jsmql("$.profile.assign({ verified: true });")).toThrow(
+      "'.assign()' computes a new object, and a statement writes one. Write the merge back: '$.f = { ...$.f, ...x };', or 'r = { ...r, ...x };' for a 'let' binding.",
     );
+  });
+  it("refuses Object.assign(…) and names the one spelling", () => {
+    expect(() => jsmql("Object.assign($.profile, { verified: true });")).toThrow("Write the merge back");
+    expect(() => jsmql.expr("Object.assign(...$.docs)")).toThrow("({}).assign(...$.docs)");
   });
 });
 
@@ -8566,8 +8551,9 @@ describe("error cases", () => {
   it("near-miss Number static method gets a suggestion", () => {
     expect(() => jsmql.expr("Number.isItneger($.x)")).toThrow(/Did you mean 'Number\.isInteger'/);
   });
-  it("near-miss Object method gets a suggestion", () => {
-    expect(() => jsmql.expr("Object.keyz($.o)")).toThrow(/Did you mean 'Object\.keys'/);
+  it("near-miss static gets a suggestion, and never a refused static", () => {
+    expect(() => jsmql.expr("Date.noww()")).toThrow(/Did you mean 'Date\.now'/);
+    expect(() => jsmql.expr("Object.keyz($.o)")).toThrow(/^Unknown method 'Object\.keyz\(\)' at position 6\.$/);
   });
   it("lambda in non-method context throws", () => {
     expect(() => jsmql.expr("$abs(x => x)")).toThrow(
@@ -8631,7 +8617,7 @@ describe("constructors — 'new' as JavaScript reads it, and the way forward", (
 
   it("refuses 'Map' and 'RegExp' in both spellings, and names the JSMQL form", () => {
     const map =
-      "'new Map(…)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('Object.fromEntries(pairs)').";
+      "'new Map(…)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('<pairs>.fromEntries()').";
     expect(() => jsmql.expr("new Map([['a', 1]])")).toThrow(map);
     expect(() => jsmql.expr("Map([['a', 1]])")).toThrow(map);
     const regExp =
@@ -8639,13 +8625,9 @@ describe("constructors — 'new' as JavaScript reads it, and the way forward", (
     expect(() => jsmql.expr('new RegExp("^ab")')).toThrow(regExp);
     expect(() => jsmql.expr('RegExp("^ab")')).toThrow(regExp);
     // The two forms each refusal names compile.
-    expect(jsmql.expr("Object.fromEntries($.pairs)")).toEqual({
+    expect(jsmql.expr("$.pairs?.fromEntries()")).toEqual({
       $arrayToObject: {
-        $map: {
-          input: "$pairs",
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
-        },
+        $map: { input: "$pairs", in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] },
       },
     });
     expect(jsmql.expr("$regexMatch({ input: $.s, regex: $.p })")).toEqual({
@@ -9065,23 +9047,22 @@ describe("Date.now()", () => {
   });
 });
 
-describe("Object.fromEntries", () => {
+describe(".fromEntries()", () => {
   it("from $objectToArray result", () => {
     // The key goes in through $toString, because JavaScript's own
     // Object.fromEntries([[7, 1]]) answers { "7": 1 } and $arrayToObject refuses a
     // non-string key outright. Same lowering as '.fromPairs()' and '.fromEntries()'.
-    expect(jsmql.expr("Object.fromEntries(Object.entries($.doc))")).toEqual({
+    expect(jsmql.expr("$.doc?.entries().fromEntries()")).toEqual({
       $arrayToObject: {
         $map: {
-          input: { $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
-          as: "jsmqlP",
-          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          input: { $map: { input: { $objectToArray: "$doc" }, in: ["$$this.k", "$$this.v"] } },
+          in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }],
         },
       },
     });
   });
   it("from array literal of pairs", () => {
-    expect(jsmql.expr('Object.fromEntries([["a", 1], ["b", 2]])')).toEqual({ a: 1, b: 2 });
+    expect(jsmql.expr('[["a", 1], ["b", 2]].fromEntries()')).toEqual({ a: 1, b: 2 });
   });
 });
 
@@ -9272,22 +9253,22 @@ describe("optional chaining (?.)", () => {
     });
   });
 
-  // Object.keys / values / entries / fromEntries — `$objectToArray(null)` errors.
-  it("Object.keys on optional wraps argument with {}", () => {
-    expect(jsmql.expr("Object.keys($.user?.profile)")).toEqual({
-      $map: {
-        input: { $objectToArray: { $ifNull: [{ $ifNull: ["$user.profile", null] }, {}] } },
-        as: "jsmqlKv",
-        in: "$$jsmqlKv.k",
+  // `.keys()` / `.entries()` under a dot after a `?.` path read run on {} (HR5).
+  it(".keys() after a ?. path read runs on {}", () => {
+    expect(jsmql.expr("$.user?.profile.keys()")).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
+        then: null,
+        else: { $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, in: "$$this.k" } },
       },
     });
   });
-  it("Object.entries on optional wraps argument with {}", () => {
-    expect(jsmql.expr("Object.entries($.user?.profile)")).toEqual({
-      $map: {
-        input: { $objectToArray: { $ifNull: [{ $ifNull: ["$user.profile", null] }, {}] } },
-        as: "jsmqlKv",
-        in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
+  it(".entries() after a ?. path read runs on {}", () => {
+    expect(jsmql.expr("$.user?.profile.entries()")).toEqual({
+      $cond: {
+        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
+        then: null,
+        else: { $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, in: ["$$this.k", "$$this.v"] } },
       },
     });
   });
@@ -9610,19 +9591,20 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
     expect(jsmql.expr("const r = $range(0, $.n); r.size()")).toEqual({
       $size: { $ifNull: [{ $range: [0, "$n"] }, []] },
     });
-    expect(jsmql.expr("Object.keys($.o).size()")).toEqual({
-      $size: { $ifNull: [{ $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }, []] },
+    // under a dot, `.keys()` runs on {} for a missing `o`, so its answer is there
+    expect(jsmql.expr("$.o.keys().size()")).toEqual({
+      $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } },
     });
   });
 
   it("counts, searches and iterates a value that is certainly there, as it is", () => {
-    expect(jsmql.expr("Object.keys($).size()")).toEqual({
-      $size: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+    expect(jsmql.expr("$.keys().size()")).toEqual({
+      $size: { $map: { input: { $objectToArray: "$$ROOT" }, in: "$$this.k" } },
     });
-    expect(jsmql.expr("Object.keys($).some(k => k === 'a')")).toEqual({
+    expect(jsmql.expr("$.keys().some(k => k === 'a')")).toEqual({
       $anyElementTrue: {
         $map: {
-          input: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+          input: { $map: { input: { $objectToArray: "$$ROOT" }, in: "$$this.k" } },
           as: "k",
           in: { $eq: ["$$k", "a"] },
         },
@@ -9639,10 +9621,8 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
       },
     });
     // a `let` of a present value is present; of a field's chain it is not
-    expect(jsmql("const ks = Object.keys($); $.n = ks.size();")).toEqual([
-      {
-        $set: { "__jsmql.var.ks": { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } },
-      },
+    expect(jsmql("const ks = $.keys(); $.n = ks.size();")).toEqual([
+      { $set: { "__jsmql.var.ks": { $map: { input: { $objectToArray: "$$ROOT" }, in: "$$this.k" } } } },
       { $set: { n: { $size: "$__jsmql.var.ks" } } },
       { $unset: "__jsmql" },
     ]);
@@ -9882,18 +9862,18 @@ describe("computed object keys", () => {
 });
 
 describe("spread in operator args", () => {
-  // The JS spread is idiomatic in JS-method position (Math.max/min, Object.assign)
+  // The JS spread is idiomatic in JS-method position (Math.max/min, .assign())
   // and stays supported there. It is NOT supported in the `$op(...)` escape hatch
   // — an MQL operator takes its operands directly (HR2). The split is by surface:
   // a JS builtin you already know vs. the raw direct-operator form.
   it("Object.assign with spread (JS-method form — supported)", () => {
-    expect(jsmql.expr("Object.assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
+    expect(jsmql.expr("({}).assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
   });
   it("$op(...) escape hatch rejects spread, pointing at the JS alternative", () => {
     expect(() => jsmql.expr("$concatArrays(...$.arrs)")).toThrow(
       /Spread \(\.\.\.\) is not supported in \$concatArrays\(\.\.\.\).*array spread.*\.concat\(\)/,
     );
-    expect(() => jsmql.expr("$mergeObjects(...$.docs)")).toThrow(/object spread.*Object\.assign/);
+    expect(() => jsmql.expr("$mergeObjects(...$.docs)")).toThrow(/object spread.*\(\{\}\)\.assign/);
   });
 });
 
@@ -11072,9 +11052,7 @@ describe("trailing commas (JS syntax)", () => {
   });
 
   it("Object method args", () => {
-    expect(jsmql.expr("Object.keys($.a,)")).toEqual({
-      $map: { input: { $objectToArray: "$a" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
-    });
+    expect(jsmql.expr("$.a.assign($.b,)")).toEqual({ $mergeObjects: ["$a", "$b"] });
   });
 
   it("new Date args", () => {
@@ -11086,9 +11064,7 @@ describe("trailing commas (JS syntax)", () => {
   });
 
   it("static-call args (both shapes)", () => {
-    expect(jsmql.expr("Object.keys($.o,)")).toEqual({
-      $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
-    });
+    expect(jsmql.expr("Date.UTC(2020, 1,)")).toEqual(1580515200000);
     expect(jsmql.expr("Math.max($.a, $.b,)")).toEqual({ $max: ["$a", "$b"] });
   });
 

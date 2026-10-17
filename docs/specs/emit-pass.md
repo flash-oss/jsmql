@@ -91,7 +91,7 @@ row over present operands, a written field whose value was present, a path a
 at run time by the `$type` test of the dispatch branch the cell runs under. A
 row that dispatches on the receiver's type (`.indexOf`) lets null and missing
 fall to its `uncertain` default, which answers `-1`. The `neverNull` fact is
-stated per row: `.map`, `.filter`, `.slice` and `Object.keys` answer null only
+stated per row: `.map`, `.filter`, `.slice` and `.keys` answer null only
 for a null input. `.find` (a missing element), `.max` (of an empty array) and
 `.match` (`$regexFind` with no match) do not state it.
 
@@ -135,11 +135,7 @@ can be, because a receiver of that family is not a program that compiles. So
 refused branches return only when nothing else is left, so that the refusal is
 what answers.
 
-A cell has to know two more things about the proof. First, a value the row
-guards may arrive as an ARGUMENT rather than as the receiver — a namespace
-call (`Object.keys(o)`) has a receiver that is the namespace, so nothing about
-it describes `o` — and `ExprIn.optionalArg` answers whether that argument
-carries a `?.`. Second, a cell that reads `present` answers a DIFFERENT
+A cell has to know one more thing about the proof. A cell that reads `present` answers a DIFFERENT
 document inside a dispatch branch, whose `$type` test proves the receiver,
 from the one it answers outside the branch. When a row's family cell and its
 `uncertain` are meant to be one answer, that difference makes the compiler
@@ -845,8 +841,10 @@ A rule that reads its arguments as ONE list states `spread: true` on its
 `args`, and the desugar pass packs a spread call's arguments into one array
 literal for it (see [desugar-pass.md](desugar-pass.md)): `Math.max(...$.a, 1)`
 reaches its cell as one operand, `{ $max: { $concatArrays: ["$a", [1]] } }`,
-and `Object.assign({}, ...$.docs)` reaches it as `{ $mergeObjects: <one list> }`
-— the server reads a single array operand for both (measured). The fold reads a
+and `({}).assign(...$.docs)` reaches it as `{ $mergeObjects: "$docs" }`
+— the server reads a single array operand for both (measured). The `.assign()`
+cell tells a packed list from one plain argument: a spread is a list of sources,
+and a plain argument is one source. The fold reads a
 packed list as the call's own arguments, one per element, as JavaScript passes
 them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`, and `Math.max(...[1, 5], 7)`
 to `7`.

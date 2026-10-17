@@ -761,7 +761,7 @@ $ = { lines };`,
 
   // The collaborative-filtering shape from test/realistic.test.ts, on fixture data.
   // The value here is the ROUND TRIP through an object key: `.countBy()` tallies
-  // into a MongoDB object, whose keys are STRINGS, so `Object.keys()` hands back
+  // into a MongoDB object, whose keys are STRINGS, so `.keys()` hands back
   // hex — and `ObjectId(id)` ($toObjectId) casts each one back before it meets an
   // ObjectId `_id`. Both joins below depend on that cast. Without it the server
   // still runs the pipeline and still returns rows, but `_id` never equals a
@@ -793,7 +793,7 @@ const candidateProductIdCounts = $$$.orders
   .map("productId")
   .filter(p => !myProductIds.has(p))
   .countBy();
-const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
+const candidateProductIds = candidateProductIdCounts.keys().map(ObjectId);
 
 const candidateProducts = $$$.products
   .filter({ _id: candidateProductIds })
@@ -837,7 +837,7 @@ $$ = candidateProductIds
       `$match($._id === 0x6500000000000000000000a1);
 $ = { s: $.noSuchField.map(x => x).size(),
       has: $.noSuchField.map(x => x).has(1), any: $.noSuchField.filter(x => x).some(x => x),
-      keys: Object.keys($).size() > 3 };`,
+      keys: $.keys().size() > 3 };`,
     );
     expect(rows).toEqual([{ s: 0, has: false, any: false, keys: true }]);
   });
@@ -914,7 +914,7 @@ const candidateProductIdCounts = $$$.orders
   .sortBy(([id, count]) => -count)
   .take(10) // top 10
   .fromEntries();
-const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
+const candidateProductIds = candidateProductIdCounts.keys().map(ObjectId);
 
 const candidateProducts = $$$.products
   .filter(pr => candidateProductIds.has(pr._id))

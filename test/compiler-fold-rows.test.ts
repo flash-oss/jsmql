@@ -62,7 +62,7 @@ describe("compiler/passes/fold — every case label is a callable row on that fa
   }
 
   it("folds a namespace call only for a name the registry lists on that namespace", () => {
-    // `Math.max`, `Object.keys` — `foldNamespaceCall` opens one `if (namespace === "X")`
+    // `Math.max`, `Number.isInteger` — `foldNamespaceCall` opens one `if (namespace === "X")`
     // block per namespace. A block reads its names from `case` labels, from a
     // `name === "…"` test, or (for `Math`) from the MATH table.
     const src = source("fold-methods.ts");
@@ -84,7 +84,7 @@ describe("compiler/passes/fold — every case label is a callable row on that fa
       expect(names.length, `the ${ns} block folds some name`).toBeGreaterThan(0);
       for (const name of names) pairs.push([ns, name]);
     }
-    expect([...new Set(pairs.map(([ns]) => ns))].sort()).toEqual(["Date", "Math", "Number", "Object"]);
+    expect([...new Set(pairs.map(([ns]) => ns))].sort()).toEqual(["Date", "Math", "Number"]);
 
     const wrong: string[] = [];
     for (const [ns, name] of pairs) {

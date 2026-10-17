@@ -1224,7 +1224,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
     ]);
     expect(
       compiled(
-        "const r = { p: 1 }; Object.assign(r, { q: 2 }); $.r = r;",
+        "let r = { p: 1 }; r = { ...r, q: 2 }; $.r = r;",
         MAIN.map((d) => ({ _id: d._id, r: { p: 1, q: 2 } })),
       ),
     ).toEqual([
@@ -1233,7 +1233,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
       { $set: { r: "$__jsmql.var.r" } },
       { $unset: "__jsmql" },
     ]);
-    expect(() => pipeline("Object.assign(zzz, { a: 1 });")).toThrow(/zzz/);
+    expect(() => pipeline("zzz = { ...zzz, a: 1 };")).toThrow(/zzz/);
     expect(() => pipeline("$.s.trim().sort();")).toThrow(/needs a field or a binding to write/);
     expect(() => pipeline("[1, 2].reverse();")).toThrow(/needs a field or a binding to write/);
   });
@@ -1265,9 +1265,9 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
     ]);
   });
 
-  it("Object.assign at statement position writes its target", () => {
+  it("an object spread at statement position writes its target", () => {
     expect(
-      compiled("$.o = { p: 1 }; Object.assign($.o, { q: 2 });", [
+      compiled("$.o = { p: 1 }; $.o = { ...$.o, q: 2 };", [
         { _id: 1, o: { p: 1, q: 2 } },
         { _id: 2, o: { p: 1, q: 2 } },
         { _id: 3, o: { p: 1, q: 2 } },

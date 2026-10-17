@@ -108,6 +108,7 @@ import {
   escapeForRegex,
   GROUP_SLOT,
   isDate,
+  isPlainObject,
   SIZE_SLOT,
   objectBody,
   queryOwnValue,
@@ -178,7 +179,7 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /**
    * The value cell answers null ONLY when its receiver or an argument is null or
    * missing — never for an input that is there. `.map`, `.filter`, `.slice`,
-   * `Object.keys` state it: `$map` over an array is an array. `.find` (the element
+   * `.keys` state it: `$map` over an array is an array. `.find` (the element
    * may be missing), `.max` (of an empty array, null) and `.match` (`$regexFind`
    * answers null for no match) do not. `isPresent` reads this fact
    * (src/compiler/emit/prove.ts), so a `$size` / `$in` over such a chain needs no
@@ -316,14 +317,6 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    *   $$ = $$.aggregate(o => { $sort({a:1}); });  → [{ "$sort": { "a": 1 } }]
    */
   blockBody?: "javascript" | "stages";
-  /**
-   * The index of the argument this name writes IN PLACE, when it does. The fold
-   * pass reads it: a binding that goes to `Object.assign(target, …)` stops being
-   * the constant its declaration made it, wherever the call stands. The row states
-   * the fact, and the pass does not match the name. This keeps the pass free of a
-   * list that must grow with the language.
-   */
-  mutatesArgumentAt?: number;
   returns: TypeExpr;
   where: W;
   only?: readonly Only[];
@@ -1153,7 +1146,7 @@ const lastIndexOfArray = ({ recv, args, value, bind }: ExprIn): unknown => {
  *
  * A reader over a missing field answers null — MEASURED, `$objectToArray` does — and
  * `$arrayToObject` passes that null on. HR5 reads a missing object as `{}` under a dot,
- * so `_.pick(undefined, …)`, `_.mapValues(undefined, …)` and `Object.keys({})` answer
+ * so `_.pick(undefined, …)`, `_.mapValues(undefined, …)` and `({}).keys()` answer
  * what they answer on the empty object. The compiler wraps the receiver (`dispatchOn`
  * in src/compiler/emit/lower.ts) and hands the cell `present`; the guard here covers a
  * cell that reads the object as an ARGUMENT.
@@ -1163,30 +1156,43 @@ const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
 });
 
 /**
- * `.keys()` / `.values()` / `.entries()` and the `Object` statics they share a row
- * with: an object's `{ k, v }` pairs, one projection per row.
+ * `.assign()` as one `$mergeObjects`. A spread argument is a LIST of sources, and a plain
+ * argument is ONE source. The desugar packs spread arguments into one array literal
+ * (`packed`), so the cell sees which form the developer wrote.
  *
- * ONE body for all three cells of a row — the object family, the `Object` namespace and
- * a receiver of unproven family must answer the SAME MQL, and three copies of it drift.
- *
- * A RECEIVER takes HR5's `{}` from the compiler, which wraps it before this cell sees it
- * (`dispatchOn` in src/compiler/emit/lower.ts), so `$.o.keys()` answers `[]` for a
- * missing `o`. The `Object` statics have no receiver to wrap — theirs is the namespace —
- * and `Object.keys(undefined)` is a TypeError in JavaScript, so `Object.keys($.o)`
- * answers null for a missing `o`, and takes the `{}` only where the argument carries a
- * `?.`: `Object.keys($.user?.profile)`.
+ * An empty object receiver adds nothing to the merge, so it is dropped:
+ * `({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, the one-operand form that
+ * merges an array. MEASURED: `{ $mergeObjects: null }` is `{}`, so that list takes no
+ * guard. A list after a real receiver takes the HR5 guard of the array literal.
+ * `$concatArrays` answers null for a missing operand, and without the guard the merge
+ * loses the receiver. MEASURED: `{ $mergeObjects: { $concatArrays: [["$o"], "$nope"] } }` is `{}`.
  */
-const pairsRead = (
-  obj: unknown,
-  bind: ExprIn["bind"],
-  project: (ref: string) => unknown,
-  optional = false,
-): unknown => {
-  const kv = bind("kv");
-  return {
-    $map: { input: { $objectToArray: optional ? { $ifNull: [obj, {}] } : obj }, as: kv.as, in: project(kv.ref) },
-  };
-};
+function merged(recv: unknown, args: readonly Expr[], value: (e: Expr) => unknown): unknown {
+  const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
+  const empty = isPlainObject(recv) && Object.keys(recv).length === 0;
+  if (list === null) return { $mergeObjects: empty ? args.map(value) : [recv, ...args.map(value)] };
+  if (empty && list.elements.length === 1 && list.elements[0].type === "SpreadElement") {
+    return { $mergeObjects: value(list) };
+  }
+  const { packed: _packed, ...plain } = list;
+  const sources = value(plain);
+  return { $mergeObjects: empty ? sources : { $concatArrays: [[recv], sources] } };
+}
+
+/**
+ * `.keys()` / `.values()` / `.entries()`: an object's `{ k, v }` pairs, one projection per row.
+ *
+ * ONE body for both cells of a row — the object family and a receiver of unproven
+ * family must answer the SAME MQL, and two copies of it drift. The receiver takes HR5's
+ * `{}` from the compiler, which wraps it before this cell sees it (`dispatchOn` in
+ * src/compiler/emit/lower.ts), so `$.o.keys()` answers `[]` for a missing `o`.
+ *
+ * The `in` body reads `$$this`, the default name of `$map`. The body is this fixed
+ * text and never holds an expression of the developer's, so no name can collide.
+ */
+const pairsRead = (obj: unknown, project: (ref: string) => unknown): unknown => ({
+  $map: { input: { $objectToArray: obj }, in: project("$$this") },
+});
 
 /**
  * A STRING method on a receiver that is null or missing answers null (HR5).
@@ -1326,7 +1332,7 @@ const setIsNotJsmql = unsupported(
 
 /** `new Map(…)` in every position. MongoDB has no map type, and an object holds keys and values. */
 const mapIsNotJsmql = unsupported(
-  "'new Map(…)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('Object.fromEntries(pairs)').",
+  "'new Map(…)' is not part of JSMQL, because MongoDB has no map type. For keys and values write an object ('{ a: 1 }'), or build one from pairs ('<pairs>.fromEntries()').",
 );
 
 /** `new RegExp(…)` in every position. The literal is the JSMQL spelling of a regular expression. */
@@ -2595,7 +2601,7 @@ export const NAMES = {
     returns: "object",
     neverNull: "always",
     where: ["value", "group"],
-    spreadAlternative: "use object spread ({ ...a, ...b }) or Object.assign(...docs)",
+    spreadAlternative: "use object spread ({ ...a, ...b }) or ({}).assign(...docs)",
     shape: "flex",
     filter: viaFallback,
     expr: {
@@ -5971,14 +5977,13 @@ export const NAMES = {
   }),
 
   entries: name({
-    doc: "'Object.entries(obj)' / '.entries()' — the object as [key, value] pairs. The array form is refused.",
+    doc: "'.entries()' — the object as [key, value] pairs. The array form is refused.",
     call: true,
     passesNull: true,
     on: ["array", "object", "Object"],
     returns: {
       array: { arrayOf: { tuple: ["number", "element"] } },
       object: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
-      Object: { arrayOf: { tuple: ["string", { elementOf: { arg: 0 } }] } },
     },
     neverNull: true,
     where: ["value"],
@@ -5988,28 +5993,24 @@ export const NAMES = {
         array: unsupported(
           ".entries() returns an iterator in JavaScript and has no MongoDB equivalent. Use '.map((v, i) => [i, v])' if you want [index, value] pairs as an array.",
         ),
-        object: {
-          args: { sig: "", none: true },
-          emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => [`${r}.k`, `${r}.v`]),
-        },
-        Object: {
-          args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, optionalArg }) =>
-            pairsRead(value(args[0]), bind, (r) => [`${r}.k`, `${r}.v`], optionalArg(args[0])),
-        },
+        object: { args: { sig: "", none: true }, emit: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`]) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Object: unsupported(
+          "'Object.entries(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()'.",
+        ),
       },
-      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => [`${r}.k`, `${r}.v`]),
+      uncertain: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`]),
     },
-    stream: unsupported("'Object.entries()' produces a value, not a stream of documents."),
+    stream: unsupported("'.entries()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Object.entries()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Object.entries(…);'",
+      "'.entries()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <object>.entries();'",
     ),
     group: unsupported("'.entries()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.entries()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   keys: name({
-    doc: "'Object.keys(obj)' / '.keys()' — an array of the object's keys. The array form is refused.",
+    doc: "'.keys()' — an array of the object's keys. The array form is refused.",
     call: true,
     passesNull: true,
     on: ["array", "object", "Object"],
@@ -6022,33 +6023,28 @@ export const NAMES = {
         array: unsupported(
           ".keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array.",
         ),
-        object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`) },
-        Object: {
-          args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, optionalArg }) =>
-            pairsRead(value(args[0]), bind, (r) => `${r}.k`, optionalArg(args[0])),
-        },
+        object: { args: { sig: "", none: true }, emit: ({ recv }) => pairsRead(recv, (r) => `${r}.k`) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Object: unsupported(
+          "'Object.keys(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()'.",
+        ),
       },
-      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.k`),
+      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.k`),
     },
-    stream: unsupported("'Object.keys()' produces a value, not a stream of documents."),
+    stream: unsupported("'.keys()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Object.keys()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Object.keys(…);'",
+      "'.keys()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <object>.keys();'",
     ),
     group: unsupported("'.keys()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.keys()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   values: name({
-    doc: "'Object.values(obj)' / '.values()' — an array of the object's values. The array form is refused.",
+    doc: "'.values()' — an array of the object's values. The array form is refused.",
     call: true,
     passesNull: true,
     on: ["array", "object", "Object"],
-    returns: {
-      array: "same",
-      object: { arrayOf: { elementOf: "same" } },
-      Object: { arrayOf: { elementOf: { arg: 0 } } },
-    },
+    returns: { array: "same", object: { arrayOf: { elementOf: "same" } } },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
@@ -6057,18 +6053,17 @@ export const NAMES = {
         array: unsupported(
           ".values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence — use it directly.",
         ),
-        object: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`) },
-        Object: {
-          args: { sig: "obj", exact: 1 },
-          emit: ({ args, value, bind, optionalArg }) =>
-            pairsRead(value(args[0]), bind, (r) => `${r}.v`, optionalArg(args[0])),
-        },
+        object: { args: { sig: "", none: true }, emit: ({ recv }) => pairsRead(recv, (r) => `${r}.v`) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Object: unsupported(
+          "'Object.values(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()'.",
+        ),
       },
-      uncertain: ({ recv, bind }) => pairsRead(recv, bind, (r) => `${r}.v`),
+      uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.v`),
     },
-    stream: unsupported("'Object.values()' produces a value, not a stream of documents."),
+    stream: unsupported("'.values()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Object.values()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Object.values(…);'",
+      "'.values()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <object>.values();'",
     ),
     group: unsupported("'.values()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.values()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -8904,9 +8899,9 @@ export const NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      emit: ({ recv, bind, present }) => {
-        const kv = bind("kv");
-        return { $map: { input: pairsOfObject(recv, present), as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
+      emit: ({ recv, present }) => {
+        // `$$this`, as '.entries()' reads it: the body is fixed text, so no name can collide
+        return { $map: { input: pairsOfObject(recv, present), in: ["$$this.k", "$$this.v"] } };
       },
     },
     stream: unsupported("'.toPairs()' has no stream form: it produces a value, not a stream of documents."),
@@ -8925,7 +8920,7 @@ export const NAMES = {
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => pairsToObject(recv) },
     stream: because("builds ONE object from pairs, so the result is a value rather than a stream."),
     statement: unsupported(
       "'.fromPairs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.fromPairs();'",
@@ -10203,16 +10198,13 @@ export const NAMES = {
 
   // ── the other namespaces, their members, and the bare callables ──
   assign: name({
-    doc: "'Object.assign(target, ...sources)' / '.assign(...sources)' — emits $mergeObjects. At statement position the static form writes the target.",
+    doc: "'.assign(...sources)' — emits $mergeObjects. A spread argument is a list of sources; a plain argument is one source.",
     call: true,
     on: ["object", "Object"],
-    mutatesArgumentAt: 0,
-    returns: { object: { merge: ["same", { args: 0 }] }, Object: { merge: [{ args: 0 }] } },
-    // MEASURED: `$.o.assign({ z: 1 })` answers `{ a: 1, b: 2, z: 1 }` for `o: { a: 1, b: 2 }` and `{ z: 1 }` for a missing or null `o`; `Object.assign({}, $.o)` answers `{}` there — an object every time
+    returns: { object: { merge: ["same", { args: 0 }] } },
+    // MEASURED: `$.o.assign({ z: 1 })` answers `{ a: 1, b: 2, z: 1 }` for `o: { a: 1, b: 2 }` and `{ z: 1 }` for a missing or null `o`; `({}).assign($.o)` answers `{}` there — an object every time
     neverNull: "always",
     readsNullAsEmpty: true,
-    // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
-    // before the compiler reads any statement cell — so the row states only the value.
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10221,55 +10213,48 @@ export const NAMES = {
         // the receiver is the first source, and the call writes nothing in place.
         object: {
           args: { sig: "...sources", atLeast: 1, spread: true },
-          emit: ({ recv, args, value }) => ({ $mergeObjects: [recv, ...args.map(value)] }),
+          emit: ({ recv, args, value }) => merged(recv, args, value),
         },
-        Object: {
-          args: { sig: "...sources", atLeast: 1, spread: true },
-          emit: ({ args, value }) => ({ $mergeObjects: args.length === 1 ? value(args[0]) : args.map(value) }),
-        },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Object: unsupported(
+          "'Object.assign(target, ...sources)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.assign(...sources)' or the object spread '{ ...a, ...b }'. To merge an array of objects, write '({}).assign(...$.docs)'. To write a field, write '$.f = { ...$.f, ...x };'.",
+        ),
       },
     },
-    stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
-    // The desugar rewrites 'Object.assign(t, …);' into the write it means before this
-    // cell runs. The method form answers a value, so a bare statement of it writes nothing.
+    stream: unsupported("'.assign()' produces a value, not a stream of documents."),
+    // The method form answers a new object, so a bare statement of it writes nothing.
     statement: unsupported(
-      "'.assign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.assign(…);'",
+      "'.assign()' computes a new object, and a statement writes one. Write the merge back: '$.f = { ...$.f, ...x };', or 'r = { ...r, ...x };' for a 'let' binding.",
     ),
-    group: unsupported("'Object.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Object.assign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
-    ),
+    group: unsupported("'.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.assign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   fromEntries: name({
-    doc: "'Object.fromEntries(entries)' / '.fromEntries()' — emits $arrayToObject. Same lowering as '.fromPairs()'.",
+    doc: "'.fromEntries()' — emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
     passesNull: true,
     on: ["array", "Object"],
-    returns: {
-      array: { recordOf: { itemOf: ["element", 1] } },
-      Object: { recordOf: { itemOf: [{ elementOf: { arg: 0 } }, 1] } },
-    },
+    returns: { array: { recordOf: { itemOf: ["element", 1] } } },
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        array: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
-        Object: {
-          args: { sig: "entries", exact: 1 },
-          // `$map.input` is an expression slot, where a literal array is the list itself.
-          emit: ({ args, value, bind }) => pairsToObject(value(args[0]), bind("p")),
-        },
+        array: { args: { sig: "", none: true }, emit: ({ recv }) => pairsToObject(recv) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Object: unsupported(
+          "'Object.fromEntries(entries)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<pairs>.fromEntries()': '$.pairs.fromEntries()'.",
+        ),
       },
     },
-    stream: unsupported("'Object.fromEntries()' produces a value, not a stream of documents."),
+    stream: unsupported("'.fromEntries()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Object.fromEntries()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Object.fromEntries(…);'",
+      "'.fromEntries()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <pairs>.fromEntries();'",
     ),
-    group: unsupported("'Object.fromEntries()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    group: unsupported("'.fromEntries()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
-      "'Object.fromEntries()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+      "'.fromEntries()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
     ),
   }),
 
@@ -10418,8 +10403,8 @@ export const NAMES = {
     token: "Ident",
     provides: "namespace",
     where: [],
-    filter: unsupported("'Object' is a namespace, not a test. Compare a member: 'Object.keys($.d).length > 0'."),
-    expr: unsupported("'Object' is a namespace, not a value. Write a member: 'Object.keys($.doc)'."),
+    filter: unsupported("'Object' is a namespace, not a test. Call the object's own method: '$.d.keys().size() > 0'."),
+    expr: unsupported("'Object' is a namespace, not a value. Call the object's own method: '$.doc.keys()'."),
     stream: unsupported("'Object' is a namespace, not a stage."),
     statement: unsupported("'Object' is a namespace, not a statement."),
     group: unsupported("'Object' is a namespace, not an accumulator."),

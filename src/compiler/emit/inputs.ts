@@ -38,7 +38,7 @@ import {
   unreadableField,
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
-import { chainHasOptional, isPresent, kindOf, typeOf } from "./prove.ts";
+import { isPresent, kindOf, typeOf } from "./prove.ts";
 import { ANY, DOCUMENT, cannotBe, flattenOnce, maybeAbsent, of, unreadableAt } from "./type.ts";
 import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
@@ -128,7 +128,7 @@ function arrayCallback(
   // string key read as `$.m[k]` would take the runtime array/object dispatch, whose
   // array arm hands `$arrayElemAt` a string — MEASURED, the server refuses that.
   // The element's own presence holds, not the array's: `$map` over null never runs
-  // the body, and an element the row proves present (`Object.keys`, `.split()`) is never null.
+  // the body, and an element the row proves present (`.keys()`, `.split()`) is never null.
   const element = recvNode === undefined ? ANY : flattenOnce(typeOf(recvNode, env));
   const usesIndex = index !== undefined && readsParam(cb.body, index);
   if (!usesIndex) {
@@ -300,7 +300,6 @@ export function exprInputs(
     present,
     kind: (e) => kindOf(e, argEnv),
     type: (e) => typeOf(e, argEnv),
-    optionalArg: (e) => chainHasOptional(e),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },

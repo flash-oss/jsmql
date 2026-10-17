@@ -464,7 +464,7 @@ export const needsPipeline = (name: string, pos: number): CodegenError =>
   );
 
 export const spreadInOperatorBody = (pos: number): CodegenError =>
-  new CodegenError("MQL has no spread in an object. Write Object.assign(a, b) instead.", pos);
+  new CodegenError("MQL has no spread in an object. Write a.assign(b) instead.", pos);
 
 export const computedKeyInOperatorBody = (pos: number): CodegenError =>
   new CodegenError("Computed object keys are not allowed here. An operator argument key must be a literal name.", pos);
