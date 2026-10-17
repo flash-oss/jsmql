@@ -15,8 +15,8 @@ neighbours. A row says what the language has (see `src/compiler/CLAUDE.md`).
   other fields, but the registry still writes it down, so a reader sees it and
   a test can check it. `bodyPositions`, `evaluates`, `returns`, `document`, `binds` and
   `alsoTypes` are all measured on a running `mongod`, and the `// MEASURED:` comment beside
-  each one shows the command and the answer. `neverNull` and `readsNullAsEmpty`
-  are measured by a table in test/compiler-methods.test.ts (and, for an
+  each one shows the command and the answer. `neverNull`, `readsNullAsEmpty`
+  and `passesNull` are measured by a table in test/compiler-methods.test.ts (and, for an
   operator, by test/compiler-returns-agrees.test.ts). The test fails when a row
   states one of them and has no measurement.
 - **One fact, one field.** Two features with different names never share an

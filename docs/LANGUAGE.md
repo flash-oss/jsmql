@@ -656,7 +656,11 @@ $.a?.b.uniq()        // the ?. tests `a` alone; `a.b` inside follows the dot rul
 // → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setUnion: { $ifNull: ["$a.b", []] } } } }
 $.a.uniq()           // no ?. — an array method on a field that may be missing runs on []
 // → { $setUnion: { $ifNull: ["$a", []] } }
+$.a?.max()           // `$max` gives null for null, so the chain needs no test
+// → { $max: "$a" }
 ```
+
+Some operators give `null` for a `null` operand. When each call after the `?.` uses such an operator, the MQL holds no test, because the calls give the same answer.
 
 **A `?.` with no call after it answers null.** There is nothing to stop. The chain reads as it does with a dot. Where the value is missing, it answers `null`: JavaScript's `undefined`, which a written document holds as `null`. A bracket read is a read too, so `$.o?.[$.k]` answers as `$.o?.p` does. A consumer that takes an empty value supplies its own, as the table below shows.
 
@@ -671,7 +675,7 @@ $.a.uniq()           // no ?. — an array method on a field that may be missing
 | Index access (`obj?.[k]`, or a `?.` earlier in the chain) | `null` for a missing value, as a bare read | `$.scoresByLevel?.[$.level]` → `{ $ifNull: [<the index read>, null] }` |
 | A field read after a value | `null` for a missing value, as a bare read | `$.items[0]?.label` → `{ $ifNull: [{ $let: { vars: { jsmqlV: <the read of $.items[0]> }, in: "$$jsmqlV.label" } }, null] }` |
 
-A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so the chain stops and answers `null`. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument: `Object.keys($.user?.profile)` takes `{}` for a missing profile.
+A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so it answers `null`: `$objectToArray` gives `null` for `null`, so the MQL holds no test. `Object.keys(o)` is a namespace call with no receiver to carry the `?.`, so it reads the `?.` off its argument: `Object.keys($.user?.profile)` takes `{}` for a missing profile.
 
 These cases produce the same MQL whether you use `.` or `?.`:
 

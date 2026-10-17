@@ -551,6 +551,11 @@ export function readsNullAsEmptyOf(name: string): boolean {
   return (row(name) as { readsNullAsEmpty?: true } | undefined)?.readsNullAsEmpty === true;
 }
 
+/** Does the operator answer null for a null receiver, so a `?.` before the call needs no null test? */
+export function passesNullOf(name: string): boolean {
+  return (row(name) as { passesNull?: true } | undefined)?.passesNull === true;
+}
+
 /** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0)? */
 export function readsNullReceiverOf(name: string): boolean {
   return (row(name) as { nullReceiverAs?: 0 } | undefined)?.nullReceiverAs !== undefined;

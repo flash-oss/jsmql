@@ -10,7 +10,7 @@
 import type { Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
 import { unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
-import type { MongoRow, StageFacts } from "../../src/registry/names.ts";
+import type { MongoRow, NullAnswer, StageFacts } from "../../src/registry/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
 import { ANY } from "../../src/compiler/emit/type.ts";
 import { Chain, Env, type Site } from "../../src/compiler/emit/env.ts";
@@ -49,6 +49,13 @@ export const constantLowered: Value<"array"> = { byArgs: { constant: R, otherwis
 export const noLeftover: Value<"array"> = { byArgs: { dynamic: R } };
 // @ts-expect-error — an ordered list is not a partition
 export const ordered: Value<"array"> = { byArgs: [{ when: "dynamic", ...R }], otherwise: unsupported("no") };
+
+// ── a missing receiver: answered as null, or read as a value — never both ─────
+
+export const passesNull: NullAnswer = { passesNull: true };
+export const readsAsZero: NullAnswer = { nullReceiverAs: 0 };
+// @ts-expect-error — a cell that reads a missing receiver as 0 never answers null for it
+export const both: NullAnswer = { passesNull: true, nullReceiverAs: 0 };
 
 // ── filter: null only where a value form exists to fall back on ──────────────
 

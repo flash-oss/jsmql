@@ -3079,8 +3079,31 @@ const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
 };
 
+/**
+ * Each row that states `passesNull` has two cases: a call after a `?.` on a receiver the
+ * document lacks, and the same call on a receiver that holds null. Each answers null with
+ * no `$cond` test.
+ */
+const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
+  keys: ["$.nope?.keys()", "$.mo.d?.keys()"],
+  values: ["$.nope?.values()", "$.mo.d?.values()"],
+  entries: ["$.nope?.entries()", "$.mo.d?.entries()"],
+  fromEntries: ["$.nope?.fromEntries()", "$.mo.d?.fromEntries()"],
+  max: ["$.nope?.max()", "$.mo.d?.max()"],
+  min: ["$.nope?.min()", "$.mo.d?.min()"],
+  round: ["$.nope?.round(2)", "$.mo.d?.round()"],
+  ceil: ["$.nope?.ceil(1)", "$.mo.d?.ceil()"],
+  floor: ["$.nope?.floor(1)", "$.mo.d?.floor()"],
+};
+
 describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a measurement", () => {
-  type Row = { kind?: string; neverNull?: true | "always"; readsNullAsEmpty?: true; nullReceiverAs?: 0 };
+  type Row = {
+    kind?: string;
+    neverNull?: true | "always";
+    readsNullAsEmpty?: true;
+    nullReceiverAs?: 0;
+    passesNull?: true;
+  };
   const rows = Object.entries(NAMES) as [string, Row][];
   const own = (r: Row) => r.kind === "name" || r.kind === "global";
 
@@ -3097,6 +3120,11 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
   it("measures exactly the rows that state `readsNullAsEmpty`", () => {
     const stating = rows.filter(([, r]) => own(r) && r.readsNullAsEmpty === true).map(([n]) => n);
     expect([...stating].sort()).toEqual(Object.keys(NULL_AS_EMPTY).sort());
+  });
+
+  it("measures exactly the rows that state `passesNull`", () => {
+    const stating = rows.filter(([, r]) => own(r) && r.passesNull === true).map(([n]) => n);
+    expect([...stating].sort()).toEqual(Object.keys(PASSES_NULL).sort());
   });
 
   it("measures exactly the rows that state `nullReceiverAs`", () => {
@@ -3140,6 +3168,20 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
       // and the compiler leaves the `$ifNull` out, which is the reason for the fact
       if (JSON.stringify(expr(onMissing)).includes('"$ifNull":["$nope"'))
         wrong.push(`${row}: ${onMissing} still wraps its receiver`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("answers null after a `?.` with no null test, for each row that states `passesNull`", async () => {
+    const wrong: string[] = [];
+    for (const [row, sources] of Object.entries(PASSES_NULL)) {
+      for (const src of sources) {
+        if (JSON.stringify(expr(src)).includes('"$cond"')) wrong.push(`${row}: ${src} still tests its receiver`);
+        const docs = await coll!
+          .aggregate([{ $addFields: { __v: expr(src) } }, { $project: { _id: 0, v: "$__v" } }])
+          .toArray();
+        if (docs[0].v !== null && docs[0].v !== undefined) wrong.push(`${row}: ${src} → ${canonical(docs[0])}`);
+      }
     }
     expect(wrong).toEqual([]);
   });

@@ -38,6 +38,7 @@ import {
   constructibleNames,
   positionsOf,
   readsNullAsEmptyOf,
+  passesNullOf,
   takesNoReceiver,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
@@ -145,9 +146,11 @@ export function lowerValue(node: Expr, env: Env): unknown {
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     // `?.` stops the chain: the links after it do not run, and the chain answers null.
     const base = withoutOptional(stopped);
-    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
     // the second branch runs only when the test passed, so the path IS there inside it
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
+    // each call after the `?.` answers null for null on its own, so the test adds nothing
+    if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
+    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
   // A `?.` read with no call after it is JavaScript's `undefined` where the value is not
@@ -314,6 +317,22 @@ function stoppedChain(node: Expr): Expr | null {
   // guards: `user` for `$.user?.name`, so that `name` is read as any other path inside.
   if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
   return cursor.optionalAt === undefined ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
+}
+
+/**
+ * Does every link after the `?.` that `stoppedChain` found answer null for a null
+ * receiver? Each must be a call whose row states `passesNull`, with the `?.` right
+ * before the first call. A plain read between them makes the next call run under a dot.
+ * HR5 then gives that call an empty value, not null: `$.o?.a.keys()` is `[]` for `o: {}`.
+ */
+function passesNullAfter(node: Expr): boolean {
+  let cursor: Expr = node;
+  while (cursor.type === "MethodCall") {
+    if (!passesNullOf(cursor.name)) return false;
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true && cursor.optionalAt === undefined && cursor !== node;
 }
 
 /** A plain read: a field `.p` or an index `[k]`, never a call or a property row such as `Math.PI`. */

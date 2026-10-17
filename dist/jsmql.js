@@ -4987,6 +4987,7 @@ var NAMES = {
   entries: name({
     doc: "'Object.entries(obj)' / '.entries()' \u2014 the object as [key, value] pairs. The array form is refused.",
     call: true,
+    passesNull: true,
     on: ["array", "object", "Object"],
     returns: {
       array: { arrayOf: { tuple: ["number", "element"] } },
@@ -5022,6 +5023,7 @@ var NAMES = {
   keys: name({
     doc: "'Object.keys(obj)' / '.keys()' \u2014 an array of the object's keys. The array form is refused.",
     call: true,
+    passesNull: true,
     on: ["array", "object", "Object"],
     returns: { arrayOf: "string" },
     neverNull: true,
@@ -5050,6 +5052,7 @@ var NAMES = {
   values: name({
     doc: "'Object.values(obj)' / '.values()' \u2014 an array of the object's values. The array form is refused.",
     call: true,
+    passesNull: true,
     on: ["array", "object", "Object"],
     returns: {
       array: "same",
@@ -6116,6 +6119,7 @@ var NAMES = {
   max: name({
     doc: "'.max()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
     readsNullAsEmpty: true,
@@ -6141,6 +6145,7 @@ var NAMES = {
   min: name({
     doc: "'.min()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
     readsNullAsEmpty: true,
@@ -8209,6 +8214,7 @@ var NAMES = {
   round: name({
     doc: "'.round()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -8234,6 +8240,7 @@ var NAMES = {
   ceil: name({
     doc: "'.ceil()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -8259,6 +8266,7 @@ var NAMES = {
   floor: name({
     doc: "'.floor()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9047,6 +9055,7 @@ var NAMES = {
   fromEntries: name({
     doc: "'Object.fromEntries(entries)' / '.fromEntries()' \u2014 emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
+    passesNull: true,
     on: ["array", "Object"],
     returns: {
       array: { recordOf: { itemOf: ["element", 1] } },
@@ -11640,6 +11649,9 @@ function neverNullAlwaysOf(name2) {
 }
 function readsNullAsEmptyOf(name2) {
   return row(name2)?.readsNullAsEmpty === true;
+}
+function passesNullOf(name2) {
+  return row(name2)?.passesNull === true;
 }
 function readsNullReceiverOf(name2) {
   return row(name2)?.nullReceiverAs !== void 0;
@@ -24119,8 +24131,9 @@ function lowerValue(node, env) {
   const stopped = stoppedChain(node);
   if (stopped !== null && !isPresent(withoutOptional(stopped), env)) {
     const base = withoutOptional(stopped);
-    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
+    if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
+    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
     return cond2(gone, null, lowerValue(withoutOptional(node), proved));
   }
   if (isRead(node) && readsHaveOptional(node)) return ifNull(lowerValue(withoutReadOptional(node), env), null);
@@ -24244,6 +24257,15 @@ function stoppedChain(node) {
   }
   if (cursor.type !== "FieldRef" || cursor.optional !== true || !called) return null;
   return cursor.optionalAt === void 0 ? cursor : { type: "FieldRef", path: cursor.optionalAt, pos: cursor.pos };
+}
+function passesNullAfter(node) {
+  let cursor = node;
+  while (cursor.type === "MethodCall") {
+    if (!passesNullOf(cursor.name)) return false;
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true && cursor.optionalAt === void 0 && cursor !== node;
 }
 function isRead(e) {
   return e.type === "IndexAccess" || e.type === "MemberAccess" && !isPropertyRow(e);

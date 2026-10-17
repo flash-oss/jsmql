@@ -208,6 +208,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   nullReceiverAs?: 0;
   /**
+   * The operator answers null for a null or missing receiver, on its own. So a `?.`
+   * before the call needs no `$cond` null test: the bare call gives the answer the
+   * test would give. MEASURED: `{ $max: null }` and `{ $objectToArray: null }` are
+   * null, so `$.o?.keys()` is the `$map` alone. test/compiler-methods.test.ts measures
+   * each row.
+   */
+  passesNull?: true;
+  /**
    * The way forward when the receiver is PROVEN to be a family this row does not
    * take, one sentence per such family. `.length()` reads a string, so on an array
    * the sentence names `.size()`. The refusal (src/compiler/emit/errors.ts) puts the
@@ -697,6 +705,14 @@ type GlobalSpec<W extends readonly Position[]> = {
   updateDoc?: Cell<Lists<W, "updateDoc">, Family, ExprIn, OutOf["updateDoc"]>;
 };
 
+/**
+ * A cell answers null for a missing receiver (`passesNull`), or it reads that receiver
+ * as a value of its own (`nullReceiverAs`). One row cannot state both.
+ */
+export type NullAnswer =
+  | { passesNull?: true; nullReceiverAs?: undefined }
+  | { passesNull?: undefined; nullReceiverAs?: 0 };
+
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
 export type NameEntry<W extends readonly Position[], O extends On, T extends string = never> = NameSpec<W, O, T> & {
   kind: "name";
@@ -716,7 +732,7 @@ const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W>
 // file. On the spec alone it widens to `string`. The audit then reads `string`
 // from every row, and it can never name the row at fault.
 const name = <const W extends readonly Position[], const O extends On, const T extends string = never>(
-  e: NameSpec<W, O, T>,
+  e: NameSpec<W, O, T> & NullAnswer,
 ): NameEntry<W, O, T> => ({ ...e, kind: "name" });
 const mongo = <
   const W extends readonly Position[],
@@ -5957,6 +5973,7 @@ export const NAMES = {
   entries: name({
     doc: "'Object.entries(obj)' / '.entries()' — the object as [key, value] pairs. The array form is refused.",
     call: true,
+    passesNull: true,
     on: ["array", "object", "Object"],
     returns: {
       array: { arrayOf: { tuple: ["number", "element"] } },
@@ -5994,6 +6011,7 @@ export const NAMES = {
   keys: name({
     doc: "'Object.keys(obj)' / '.keys()' — an array of the object's keys. The array form is refused.",
     call: true,
+    passesNull: true,
     on: ["array", "object", "Object"],
     returns: { arrayOf: "string" },
     neverNull: true,
@@ -6024,6 +6042,7 @@ export const NAMES = {
   values: name({
     doc: "'Object.values(obj)' / '.values()' — an array of the object's values. The array form is refused.",
     call: true,
+    passesNull: true,
     on: ["array", "object", "Object"],
     returns: {
       array: "same",
@@ -7131,6 +7150,7 @@ export const NAMES = {
   max: name({
     doc: "'.max()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
     readsNullAsEmpty: true,
@@ -7157,6 +7177,7 @@ export const NAMES = {
   min: name({
     doc: "'.min()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "Math"],
     returns: { array: "element", Math: "number" },
     readsNullAsEmpty: true,
@@ -9307,6 +9328,7 @@ export const NAMES = {
   round: name({
     doc: "'.round()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9333,6 +9355,7 @@ export const NAMES = {
   ceil: name({
     doc: "'.ceil()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -9360,6 +9383,7 @@ export const NAMES = {
   floor: name({
     doc: "'.floor()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
@@ -10220,6 +10244,7 @@ export const NAMES = {
   fromEntries: name({
     doc: "'Object.fromEntries(entries)' / '.fromEntries()' — emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
+    passesNull: true,
     on: ["array", "Object"],
     returns: {
       array: { recordOf: { itemOf: ["element", 1] } },

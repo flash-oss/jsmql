@@ -219,13 +219,24 @@ that states `nullReceiverAs` reads a missing receiver as that value in its own c
 so it is present under a dot too: `$.n.range().size()` adds no `$ifNull`. A `?.` on
 the spine takes the presence away: the chain stops, and the value may be null.
 
+A row that states `passesNull` answers null for a null receiver through its own
+operator. A `?.` stops a chain with a `$cond` null test (`stoppedChain` in
+[lower.ts](../../src/compiler/emit/lower.ts)). That test adds nothing when each call
+after the `?.` states the fact and the `?.` tests a field path. So the compiler emits the
+calls alone, with the path proved present. Then the compiler adds no dot wrap: `$.o?.keys()` is
+`{ $map: { input: { $objectToArray: "$o" }, … } }`. A plain read between the `?.` and a
+call keeps the test, because the call after the read runs under a dot. `$.o?.a.keys()` is
+`[]` for `o: {}`. A row that reads a missing receiver as a value (`nullReceiverAs`)
+cannot state the fact. `NullAnswer` in [names.ts](../../src/registry/names.ts) refuses
+the pair.
+
 A cell guards with `$ifNull` exactly where the proof says `absent`. MEASURED:
 `{ $size: null }` and `{ $in: [x, null] }` abort the command. The same rule holds for
 an argument: a list argument that the proof shows present takes no guard
 (`listArgument` in [names.ts](../../src/registry/names.ts)). Inside the body of a null
 test, the receiver is present, so its length takes no `""` guard.
 [test/compiler-methods.test.ts](../../test/compiler-methods.test.ts) measures each
-`neverNull` and `readsNullAsEmpty` claim of a JavaScript row on mongod, and
+`neverNull`, `readsNullAsEmpty` and `passesNull` claim of a JavaScript row on mongod, and
 [test/compiler-returns-agrees.test.ts](../../test/compiler-returns-agrees.test.ts)
 measures each claim of an operator. The same suite drops each guard of a set of cases,
 one at a time, and fails when no answer changes.
