@@ -205,12 +205,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   readsNullAsEmpty?: true;
   /**
-   * The value the cell reads a null or missing receiver as, so its answer is there
-   * whatever the receiver is. lodash's `_.range` reads a missing bound as 0.
-   * MEASURED: `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
+   * The value the cell reads a null or missing receiver as under a dot, so its answer
+   * is there whatever the receiver is. lodash's `_.range` reads a missing bound as 0,
+   * and `_.toString` reads null as "". The cell reads it only where the receiver can be
+   * absent, and HR5 adds no empty array or object of its own. MEASURED:
+   * `$.nope.range($.neg)` is `[0, -1, -2]`, as `(0).range($.neg)` is.
    * test/compiler-methods.test.ts measures each row.
    */
-  nullReceiverAs?: 0;
+  nullReceiverAs?: 0 | "";
   /**
    * The operator answers null for a null or missing receiver, on its own. So a `?.`
    * before the call needs no `$cond` null test: the bare call gives the answer the
@@ -701,14 +703,6 @@ type GlobalSpec<W extends readonly Position[]> = {
   updateDoc?: Cell<Lists<W, "updateDoc">, Family, ExprIn, OutOf["updateDoc"]>;
 };
 
-/**
- * A cell answers null for a missing receiver (`passesNull`), or it reads that receiver
- * as a value of its own (`nullReceiverAs`). One row cannot state both.
- */
-export type NullAnswer =
-  | { passesNull?: true; nullReceiverAs?: undefined }
-  | { passesNull?: undefined; nullReceiverAs?: 0 };
-
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
 export type NameEntry<W extends readonly Position[], O extends On, T extends string = never> = NameSpec<W, O, T> & {
   kind: "name";
@@ -728,7 +722,7 @@ const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W>
 // file. On the spec alone it widens to `string`. The audit then reads `string`
 // from every row, and it can never name the row at fault.
 const name = <const W extends readonly Position[], const O extends On, const T extends string = never>(
-  e: NameSpec<W, O, T> & NullAnswer,
+  e: NameSpec<W, O, T>,
 ): NameEntry<W, O, T> => ({ ...e, kind: "name" });
 const mongo = <
   const W extends readonly Position[],
@@ -5800,6 +5794,7 @@ export const NAMES = {
     doc: "'.toString()' — see docs/LANGUAGE.md.",
     call: true,
     passesNull: true,
+    nullReceiverAs: "",
     on: "any",
     returns: "unknown",
     neverNull: true,
@@ -5809,11 +5804,13 @@ export const NAMES = {
       args: { sig: "", none: true },
       // A regex literal has no value of its own (see `regexBody`). The cell writes the
       // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
-      emit: ({ recv }) => {
+      // Under a dot, lodash's `_.toString` reads null as "". After a `?.`, the proof shows
+      // the receiver there, and `$toString` gives null for null by itself.
+      emit: ({ recv, present }) => {
         const re = recv as { type?: string; pattern?: string; flags?: string };
-        return re.type === "RegexLiteral"
-          ? `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`
-          : { $toString: singleArrayArg(recv) };
+        if (re.type === "RegexLiteral")
+          return `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`;
+        return { $toString: present ? singleArrayArg(recv) : { $ifNull: [recv, ""] } };
       },
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),

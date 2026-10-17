@@ -1557,8 +1557,8 @@ describe("compiler/emit — array methods", () => {
     });
     // `.toString()` is the bare `$toString`. On an array it gives MongoDB's text ("[3,1,2]"),
     // and `.join()` gives JavaScript's text ("3,1,2").
-    expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({ $toString: "$n" });
-    expect(expr("$.a.toString()")).toEqual({ $toString: "$a" });
+    expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({ $toString: { $ifNull: ["$n", ""] } });
+    expect(expr("$.a.toString()")).toEqual({ $toString: { $ifNull: ["$a", ""] } });
     expect(compiled("$.a.join()", (d) => d.a.toString())).toEqual(expr("$.a.join()"));
     // `$ifNull` wraps the reduce so an EMPTY array answers "" rather than the reduce's own
     // `null` seed; that guard also reads a missing receiver as "", so HR5 adds no `$ifNull` to it.
@@ -2916,6 +2916,7 @@ const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   range: ["$.nope.range($.neg)", "(0).range($.neg)"],
   rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
   sign: ["$.nope.sign()", "(0).sign()"],
+  toString: ["$.nope.toString()", '"".toString()'],
   random: ["$.nope.random(0)", "(0).random(0)"],
 };
 
@@ -3057,7 +3058,7 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
     kind?: string;
     neverNull?: true | "always";
     readsNullAsEmpty?: true;
-    nullReceiverAs?: 0;
+    nullReceiverAs?: 0 | "";
     passesNull?: true;
   };
   const rows = Object.entries(NAMES) as [string, Row][];

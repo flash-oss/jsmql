@@ -4892,13 +4892,25 @@ describe("array method additions", () => {
     // `$toString` takes one operand, so an array literal goes in a one-element list.
     expect(jsmql.expr("[1, 2].toString()")).toEqual({ $toString: [[1, 2]] });
   });
-  it(".toString() on a known string is the bare $toString", () => {
+  it('.toString() on a string that can be null reads null as ""', () => {
     expect(jsmql.expr("$.name.toLowerCase().toString()")).toEqual({
-      $toString: { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] },
+      $toString: { $ifNull: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, ""] },
     });
   });
-  it(".toString() on unknown type lowers to $toString", () => {
-    expect(jsmql.expr("$.n.toString()")).toEqual({ $toString: "$n" });
+  it('.toString() under a dot reads a missing receiver as "", as lodash\'s _.toString does', () => {
+    expect(jsmql.expr("$.n.toString()")).toEqual({ $toString: { $ifNull: ["$n", ""] } });
+    // A receiver of the array family also reads as "", not as the text of `[]`.
+    expect(jsmql.expr('$.s.split(",").toString()')).toEqual({ $toString: { $ifNull: [{ $split: ["$s", ","] }, ""] } });
+  });
+  it(".toString() after a ?. gives null for a missing receiver, with no null check", () => {
+    expect(jsmql.expr("$.n?.toString()")).toEqual({ $toString: "$n" });
+    expect(jsmql.expr("$.n?.toString().trim()")).toEqual({ $trim: { input: { $toString: "$n" } } });
+  });
+  it(".toString() on a receiver that is there adds no $ifNull", () => {
+    expect(jsmql.expr("(5).toString()")).toEqual({ $toString: 5 });
+    expect(jsmql.expr("$.a.size().toString()")).toEqual({ $toString: { $size: { $ifNull: ["$a", []] } } });
+    // The result is there too, so the string method after it takes no null test.
+    expect(jsmql.expr("$.n.toString().trim()")).toEqual({ $trim: { input: { $toString: { $ifNull: ["$n", ""] } } } });
   });
   it(".toString() on a regex literal is the text $toString gives for the BSON regex", () => {
     expect(jsmql.expr("/a+/si.toString()")).toEqual("/a+/is");
@@ -5956,7 +5968,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // The universal pair is exempt on every receiver type.
     expect(jsmql.expr('$.t.plus(1, "day").getTime()')).toEqual({ $toLong: plusDay });
     expect(jsmql.expr('$.t.plus(1, "day").toString()')).toEqual({
-      $toString: { $dateAdd: { startDate: "$t", unit: "day", amount: 1 } },
+      $toString: { $ifNull: [{ $dateAdd: { startDate: "$t", unit: "day", amount: 1 } }, ""] },
     });
     // .clamp is number-OR-date, so it is never gated in either direction.
     expect(jsmql.expr('$.t.plus(1, "day").clamp($.a, $.b)')).toEqual({ $min: [{ $max: [plusDay, "$a"] }, "$b"] });

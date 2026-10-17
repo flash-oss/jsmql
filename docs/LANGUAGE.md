@@ -1814,7 +1814,8 @@ $.tags.join(", ")          // builds a separated string via $reduce/$concat, rea
                            //   written as "" rather than dropped (`[1, null, 2].join(",")`
                            //   is "1,,2"), an empty array is "", and a leading "" element
                            //   keeps its separator (`["", "a"].join(",")` is ",a")
-$.items.toString()         // { $toString: "$items" } — MongoDB's text, "[1,2]"; .join() gives JavaScript's "1,2"
+$.items.toString()         // { $toString: { $ifNull: ["$items", ""] } } — MongoDB's text, "[1,2]";
+                           //   .join() gives JavaScript's "1,2"
 // an array that provably holds arrays — [[1, 2], [3]], .partition(…) — is refused by .join():
 // MongoDB writes an inner array as "[1,2]", where JavaScript writes "1,2";
 // flatten first, or map each inner array to a string
@@ -2606,10 +2607,11 @@ Number($.stringField).trunc()      // { $trunc: { $toDouble: "$stringField" } } 
 ### `.toString()`
 
 ```js
-$.n.toString()               // { $toString: "$n" }
-$.x?.toString()              // { $toString: "$x" }   — $toString gives null for a missing value
-$._id.toString()             // { $toString: "$_id" } — an ObjectId gives its 24 hex digits
-$.tags.toString()            // { $toString: "$tags" } — MongoDB's text: '["a","b"]'
+$.n.toString()               // { $toString: { $ifNull: ["$n", ""] } }    — "" for a missing or null n
+$.n?.toString()              // { $toString: "$n" }                       — null for a missing or null n
+(5).toString()               // { $toString: 5 }                          — a value that is there takes no $ifNull
+$._id.toString()             // { $toString: { $ifNull: ["$_id", ""] } }  — an ObjectId gives its 24 hex digits
+$.tags.toString()            // { $toString: { $ifNull: ["$tags", ""] } } — MongoDB's text: '["a","b"]'
 $.tags.join()                // the text JavaScript gives for an array: "a,b"
 ```
 
@@ -2619,7 +2621,7 @@ $.tags.join()                // the text JavaScript gives for an array: "a,b"
 - A document gives its JSON text (`'{"a":1}'`). JavaScript gives `"[object Object]"`.
 - An array gives its JSON text (`"[1,[2,3]]"`). JavaScript gives `"1,2,3"`. Write `.join()` to get JavaScript's text.
 - A regex literal gives MongoDB's text of the regex, which keeps only the flags that MongoDB knows: `/a/g.toString()` is `"/a/"`.
-- A missing or `null` value gives `null`. JavaScript throws.
+- Under a dot, a missing or `null` value gives `""`, as lodash's `_.toString()` does. After a `?.`, it gives `null`. JavaScript throws for the dot, and gives `undefined` for the `?.`. The compiler adds the `$ifNull` only when the value can be missing or `null`. See [HR5](LANG_RULES.md).
 
 `.toString()` takes no argument, so the compiler refuses a radix such as `(255).toString(16)`.
 

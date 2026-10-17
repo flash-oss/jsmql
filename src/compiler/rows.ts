@@ -539,9 +539,9 @@ export function productionPassesNullOf(key: string): boolean {
   return ((PRODUCTIONS as Record<string, unknown>)[key] as { passesNull?: true } | undefined)?.passesNull === true;
 }
 
-/** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0)? */
+/** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0, `.toString()` as "")? */
 export function readsNullReceiverOf(name: string): boolean {
-  return (row(name) as { nullReceiverAs?: 0 } | undefined)?.nullReceiverAs !== undefined;
+  return (row(name) as { nullReceiverAs?: 0 | "" } | undefined)?.nullReceiverAs !== undefined;
 }
 
 /**

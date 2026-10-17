@@ -38,6 +38,7 @@ import {
   constructibleNames,
   positionsOf,
   readsNullAsEmptyOf,
+  readsNullReceiverOf,
   lowersOn,
   productionPassesNullOf,
   passesNullOf,
@@ -879,7 +880,9 @@ function dispatchOn(node: Expr, name: string, recvNode: Expr, args: readonly Cal
     // proved the path. A string method keeps its receiver, and answers null itself.
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : (sel.family ?? soleFieldFamilyOf(name));
-    const empty = emptyValueOf(name, family);
+    // A row that reads a missing receiver as a value of its own takes no empty array or
+    // object: `$.s.split(",").toString()` is "" for a missing `s`, not the text of `[]`.
+    const empty = readsNullReceiverOf(name) ? null : emptyValueOf(name, family);
     // Only where the receiver is a VALUE of the document: inside `$group` or a window
     // the receiver is the accumulator's per-document operand, and `$sum: "$a"` reads
     // each document's `a` as it is.
