@@ -700,7 +700,7 @@ describe("compiler/emit/statement — bindings between stages", () => {
     expect(compiled("$.b = 1; $$ = [{ a: 1 }];")).toEqual([{ $set: { b: 1 } }, ...fanOut([{ a: 1 }])]);
     // the row's element rule judges the sugar, under the name the source wrote
     expect(() => pipeline("$$ = [{ a: 1 }, 5];")).toThrow(
-      /'\$\$ = \[ … \]' element 2 expects a document, but got a number/,
+      /'\$\$ = \[ … \]' element 2 takes a document, but this value is a number/,
     );
     // the reducer wrap is a different road, not built yet
     // a list holding a fold of the stream is the reducer wrap: one `$group`

@@ -98,6 +98,7 @@ function statedPresence(node: Expr, env: Env): boolean | null {
     case "TemplateLiteral":
     case "BooleanLiteral":
     case "ObjectIdLiteral":
+    case "RegexLiteral":
     case "ArrayLiteral":
       return true;
     case "ObjectLiteral":

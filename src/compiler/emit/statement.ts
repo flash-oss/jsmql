@@ -1278,7 +1278,6 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
         : { kind: "none" };
   const sel = select(consult(name, "statement"), receiver, { kind: "multiple" }, node.args.length);
   const spelled = ref === "StreamRef" ? "'$$'" : ref === "DatabaseRef" ? "'$$$'" : "'$$$$'";
-  if (sel.kind === "dispatch") internalError(`statement '${name}' selected a receiver dispatch`);
   const args = node.args as readonly Expr[];
   // A `$`-named stage on a reference is the developer's own MQL, as the bare stage
   // call is: no body is checked, and its place stays checked.
@@ -1345,7 +1344,6 @@ function streamLink(
     );
   }
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-  if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
   const args = link.args as readonly Expr[];
   let stages: Stage[];
   if (escape) {
@@ -1534,7 +1532,6 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
   if (node.type === "MethodCall" && takesNoReceiver(name)) throw E.noReceiver(name, node.pos);
   const verdict = consult(name, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
-  if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
   if (escape) {
     if (sel.kind === "spreadRefused") throw E.refusalFor(sel, name, "", "statement", node.pos, []);
     // A name that no row knows is a stage of a newer server, or a typo: the server

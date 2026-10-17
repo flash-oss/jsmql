@@ -113,7 +113,7 @@ describe(".slice — rejection branches", () => {
   });
 
   it("fractional start → non-negative integer error", () => {
-    expect(() => jsmql("$$ = $$.slice(1.5, 5);")).toThrow("'slice' expects an integer, but got a number.");
+    expect(() => jsmql("$$ = $$.slice(1.5, 5);")).toThrow("'.slice()' takes an integer, but this value is a fraction.");
   });
 
   it("end < start → ordered-bounds error", () => {
@@ -151,9 +151,9 @@ describe(".take(n) → $limit — lodash first-n", () => {
   });
 
   it("rejects a non-integer / negative / computed / extra-arg / spread", () => {
-    expect(() => jsmql("$$ = $$.take(1.5);")).toThrow("'take' expects an integer, but got a number.");
+    expect(() => jsmql("$$ = $$.take(1.5);")).toThrow("'.take()' takes an integer, but this value is a fraction.");
     expect(() => jsmql("$$ = $$.take(-1);")).toThrow("'take' argument 1 must be a number of 0 or more. It got -1.");
-    expect(() => jsmql('$$ = $$.take("x");')).toThrow("'take' expects an integer, but got a string.");
+    expect(() => jsmql('$$ = $$.take("x");')).toThrow("'.take()' takes an integer, but this value is a string.");
     expect(() => jsmql("$$ = $$.take($.n);")).toThrow(
       "'take' argument 1 must be a compile-time constant. The server reads it before any document. It got an expression.",
     );
@@ -702,9 +702,9 @@ describe(".pick([fields]) / .omit([fields]) → $project (per-document field sel
     ]);
   });
   it("reject a non-array arg / non-string entries", () => {
-    expect(() => jsmql('$$.pick("name");')).toThrow("'pick' expects an array, but got a string.");
+    expect(() => jsmql('$$.pick("name");')).toThrow("'.pick()' takes an array, but this value is a string.");
     expect(() => jsmql("$$.omit([1, 2]);")).toThrow(
-      "'omit' element 1 names a field to WRITE. a number is not a name. Use a plain field name, for example 'total'.",
+      "'.omit()' element 1 names a field to WRITE. a number is not a name. Use a plain field name, for example 'total'.",
     );
   });
 });

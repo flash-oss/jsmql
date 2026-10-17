@@ -47,8 +47,7 @@ const liveBranches = (
  * `{ $switch: { branches: [{ case, then }…], default } }`.
  *
  * A test whose every answer is the SAME document decides nothing. So the
- * answer stands on its own: `$.o.keys()` reads an object either way, and a
- * `$type` test around it would only cost bytes.
+ * answer needs no test. A test around it would only cost bytes.
  */
 export const switchOn = (
   candidates: readonly { readonly case: Truth; readonly then: unknown }[],
@@ -59,19 +58,6 @@ export const switchOn = (
   const one = JSON.stringify(fallback);
   if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
-};
-
-/**
- * A `$switch` whose branches cover every value that can reach it, so it states no
- * default. Never a `$cond`: MEASURED, the server optimises a `$cond`'s branches
- * BEFORE it reads the test, so `{ $cond: [<is array>, { $size: v }, { $strLenCP: v }] }`
- * over a constant `v` — a `$let` variable, a `$literal` — fails before the pipeline
- * runs. The same branches under `$switch` run on every receiver.
- */
-export const switchOver = (candidates: readonly { readonly case: Truth; readonly then: unknown }[]): unknown => {
-  const { kept: branches, decided } = liveBranches(candidates);
-  if (decided !== undefined) return switchOn(branches, decided);
-  return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })) } };
 };
 
 /** A condition as a query document: `{ $expr: <truth> }`. */

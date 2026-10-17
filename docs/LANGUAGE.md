@@ -1434,13 +1434,13 @@ jsmql.expr('$.items.every(x => x.ok).filter(y => y)')    // ✗ .filter() on a b
 jsmql.expr('$.tags.split(",").toUpperCase()')            // ✗ .toUpperCase() on an array; map first: .map(x => x.toUpperCase())
 ```
 
-Every method that applies to only one type takes part, in both directions. JSMQL refuses an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) on a string, number, date or document receiver, and it does the same for the string-only, number-only, date-only and document-only methods. JSMQL never refuses a method that genuinely accepts more than one type: `.slice`, `.concat`, `.indexOf`, `.includes` and `.lastIndexOf` work on a string or an array, `.size` works on an array or a document, `.clamp` and `.inRange` work on a number or a date, and `.toString` / `.getTime` work on anything.
+Every method that applies to only one type takes part, in both directions. JSMQL refuses an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) on a string, number, date or document receiver, and it does the same for the string-only, number-only, date-only and document-only methods. JSMQL never refuses a method that genuinely accepts more than one type: `.size` works on an array or a document, `.clamp` and `.inRange` work on a number or a date, and `.toString` / `.getTime` work on anything.
 
 JSMQL knows a receiver's type whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number), from `new Date(…)`, from a literal or a template string, or from a written field (see [Type-aware dispatch](#type-aware-dispatch)).
 
 Where JSMQL does not know the type, it rejects nothing and emits the MQL: a field path (`$.whatever`), an element plucked with `.find()` / `.at()`, a `.reduce()` result, a `.clamp()` that could be numeric or a date, and any operator whose result type follows its arguments — `$add` / `$subtract` (number or date), `$min` / `$max` / `$first` (an element of the array), `$ifNull` / `$cond` / `$switch` / `$getField` (whatever value they receive). `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
 
-**This check follows JavaScript, not MongoDB's coercions.** MongoDB would happily run `$toUpper` on a date and hand back the stringified date; JavaScript throws on `date.toUpperCase()`, and so does JSMQL, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it still passes through untouched — raw MQL is yours.
+**This check follows JavaScript, not MongoDB's coercions.** MongoDB would happily run `$toUpper` on a date and hand back the stringified date; JavaScript throws on `date.toUpperCase()`, and so does JSMQL, because you almost certainly meant `.format(…)`. If you write the operator by hand (`$toUpper($.createdAt)`), it still passes through untouched — raw MQL is yours. The rule is [HR7](LANG_RULES.md). It also covers an operator and an argument slot.
 
 JSMQL leaves each constraint that depends on your deployment to the server, for example
 sharding, transactions, memory limits and Atlas availability.
@@ -1656,7 +1656,8 @@ $.csv.split(",")                   // { $split: [{ $ifNull: ["$csv", ""] }, ","]
 $.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
                                    // has no split-into-characters form. For one character per element
                                    // write `$.csv.length().range().map(i => $.csv.charAt(i))`.
-$.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }
+$.email.indexOfSubstring("@")      // { $indexOfCP: [{ $ifNull: ["$email", ""] }, "@"] }   — the index of the first "@", or -1
+$.path.indexOfSubstring("/", 1)    // { $indexOfCP: [{ $ifNull: ["$path", ""] }, "/", 1] }   — the search starts at index 1
 $.text.replace("old", "new")       // { $replaceOne: { input: { $ifNull: ["$text", ""] }, find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: { $ifNull: ["$text", ""] }, find: " ", replacement: "_" } }
 $.email.toLowerCase().includes("@")// { $gte: [{ $indexOfCP: [{ $toLower: { $ifNull: ["$email", ""] } }, "@"] }, 0] }
@@ -1697,6 +1698,39 @@ Each method keeps its own JavaScript meaning for a negative index. `.substr()` c
 from the end. `.substring()` clamps to 0. `.charAt()` returns `""`; JSMQL never floors it, because
 that would return the *first* character instead. A start or length past the end of the string is safe.
 It yields `""`, as in JS.
+
+Each argument of a string method takes one kind (HR7). An index, a count and a length take an
+integer. A search string, a separator, a replacement and a pad string take a string. The compiler
+refuses a literal or a proven value of another kind. JavaScript converts such a value, so
+`"abc".substring(1.5)` and `"5".padStart(3, 0)` run there. MongoDB refuses a fractional index, and a
+number where it reads a string.
+
+```js
+$.s.substring(1.5)                 // ✗ start takes an integer
+$.s.padStart(3, 0)                 // ✗ the pad string takes a string: write "0"
+$.s.includes($.s.length())         // ✗ the search string takes a string, and .length() gives a number
+```
+
+**`.indexOfSubstring(searchString[, position])`** has the API of JavaScript's
+`String.prototype.indexOf`. JavaScript has no other name for it, so JSMQL gives it a name of
+its own (SR3). It lowers to `$indexOfCP`, so the index counts code points. `"😀a".indexOfSubstring("a")`
+is 1, and JavaScript's `.indexOf` gives 2 there.
+
+`position` takes an integer: a fractional or a string constant is a compile-time error (HR7). A
+negative `position` reads as 0, as in JavaScript. `$indexOfCP` refuses a negative start, so a
+run-time `position` takes `{ $max: [0, …] }`. A missing or `null` value also reads as 0. A fractional
+run-time value makes the server stop the query.
+
+On a missing or `null` receiver the method gives `null`, with a dot or with `?.`. One case
+differs from JavaScript: an empty `searchString` at a `position` at or past the end gives -1.
+JavaScript gives the length of the string.
+
+```js
+$.s.indexOfSubstring("b", -3)      // { $indexOfCP: ["$s", "b"] }      — a negative start reads as 0
+$.s.indexOfSubstring("b", 1.7)     // ✗ position takes an integer
+$.s.indexOfSubstring("b", $.from)  // { $indexOfCP: ["$s", "b", { $max: [0, "$from"] }] }
+"abc".indexOfSubstring("", 3)      // -1   — JavaScript gives 3
+```
 
 **A missing field never aborts a query.** MongoDB's `$strLenCP` aborts the query when its input is
 missing or null, and every derived length needs `$strLenCP`. So JSMQL coerces the receiver of every
@@ -1814,9 +1848,11 @@ $.tags.join(", ")          // builds a separated string via $reduce/$concat, rea
                            //   written as "" rather than dropped (`[1, null, 2].join(",")`
                            //   is "1,,2"), an empty array is "", and a leading "" element
                            //   keeps its separator (`["", "a"].join(",")` is ",a")
-$.items.toString()         // same as .join(",") for arrays; no-op for strings; $toString otherwise
-// an array that provably holds arrays — [[1, 2], [3]], .partition(…) — is refused by both:
-// the server cannot stringify an array element; flatten first, or map each inner array to a string
+$.items.toString()         // { $toString: { $ifNull: ["$items", ""] } } — MongoDB's text, "[1,2]";
+                           //   .join() gives JavaScript's "1,2"
+// an array that provably holds arrays — [[1, 2], [3]], .partition(…) — is refused by .join():
+// MongoDB writes an inner array as "[1,2]", where JavaScript writes "1,2";
+// flatten first, or map each inner array to a string
 $.nested.flat()            // flatten one level via $reduce + $concatArrays
 $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```
@@ -1845,16 +1881,16 @@ $.arr = $.tags.uniq(); $.n = $.arr.length();   // ✗ .length() is for a string;
 $.s = $.name.trim(); $.b = $.s.has("re");      // ✗ .has() is for an array; for a substring write .includes("re")
 ```
 
-`.indexOf()` and `.lastIndexOf()` are the one pair that reads a string and an array, because JavaScript gives a string no other spelling for "the position of". The receiver's proof picks the operator; then the argument's proof does — `$indexOfCP` takes a string, so an argument proven not to be one picks the array form; a receiver and an argument that prove nothing take a runtime `$switch` on the value's own `$type`:
+`.indexOf()` and `.lastIndexOf()` read an array. A string takes `.indexOfSubstring()` for the position of a substring. JavaScript spells both `.indexOf()`, so JSMQL gives the string form a name of its own (SR3). The compiler never picks the operator from the argument, and the MQL never tests the type when it runs. `$indexOfCP` searches forward only, so a string has no `.lastIndexOf()`:
 
 ```js
-$.a.indexOf(1)
-// → { $indexOfArray: [{ $ifNull: ["$a", []] }, 1] }
-$.a.indexOf("x")
-// → { $switch: { branches: [ { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $indexOfArray: ["$a", "x"] } }, { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $indexOfCP: ["$a", "x"] } } ], default: -1 } }
+$.a.indexOf("x")               // { $indexOfArray: [{ $ifNull: ["$a", []] }, "x"] }
+$.s.indexOfSubstring("x")      // { $indexOfCP: ["$s", "x"] }
+$.s.trim().indexOf("x")        // ✗ .indexOf() is for an array; for a substring write .indexOfSubstring("x")
+$.s.trim().lastIndexOf("x")    // ✗ a string has no search from the end; for the first match write .indexOfSubstring("x")
 ```
 
-**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();` the compiler knows `arr` is an array, or null when `tags` is missing, so `$.arr.has("red")` takes the array form with only the null guard. After `$.bool = $.arr.has("red");` it knows `bool` is a boolean, so `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows a method's result too: `$.tags.map(t => t.trim())` is an array of strings, `{ ...$.address, done: true }` and `$.address.assign({ done: true })` are objects whose `done` is a boolean, `$.o.pick(["a"])` holds `a` and nothing else, and `.filter(p).head()` is one element that may be missing. It follows every write — a whole field, a dotted path such as `$.address.full = …`, a `let` and each value it is assigned again — and every stage: after `$group({ _id: $.k, total: $sum($.amount) })` the compiler knows `total` is a number, after `$ = $.p` it knows the shape it recorded for `p`, after `.flatMap("items")` it knows `items` is one element, and after `$ = $.pick([...])` it knows exactly which fields remain. A join carries the shape its body made: after `const ids = $$$.orders.filter(p).map("pid").uniq()` the compiler knows `ids` is an array that is there, so `ids.has(x)` takes the array form with no guard, and after `$.p = $$$.products.filter(p).pick(["_id", "name"])` it knows each element holds exactly those two fields. A `$match` narrows too: after `$match($.tags != null)` the field is present and needs no null guard, after `$match(typeof $.b === "string")` or `$$.filter({ status: "a" })` the field has that kind, and after `$match($.n > 5)` it is a number, because the query language compares inside one type. A query clause reads an array field element by element, so each of these also allows an array; an `||` proves nothing. A method on a field proven to hold a kind it has no form for is a compile-time error that names what the method takes, so `$.bool.trim()` fails before it runs. A value that can be one of several kinds (`c ? "abc" : [1, 2]`) dispatches over those kinds alone, and drops the `default` when every kind has a branch and the value is there. See [docs/specs/types.md](specs/types.md).
+**A field the pipeline wrote carries the type of its value.** After `$.arr = $.tags.uniq();` the compiler knows `arr` is an array, or null when `tags` is missing, so `$.arr.has("red")` takes the array form with only the null guard. After `$.bool = $.arr.has("red");` it knows `bool` is a boolean, so `$.bool ? "R" : "OTHER"` reads it as its own truth. The proof follows a method's result too: `$.tags.map(t => t.trim())` is an array of strings, `{ ...$.address, done: true }` and `$.address.assign({ done: true })` are objects whose `done` is a boolean, `$.o.pick(["a"])` holds `a` and nothing else, and `.filter(p).head()` is one element that may be missing. It follows every write — a whole field, a dotted path such as `$.address.full = …`, a `let` and each value it is assigned again — and every stage: after `$group({ _id: $.k, total: $sum($.amount) })` the compiler knows `total` is a number, after `$ = $.p` it knows the shape it recorded for `p`, after `.flatMap("items")` it knows `items` is one element, and after `$ = $.pick([...])` it knows exactly which fields remain. A join carries the shape its body made: after `const ids = $$$.orders.filter(p).map("pid").uniq()` the compiler knows `ids` is an array that is there, so `ids.has(x)` takes the array form with no guard, and after `$.p = $$$.products.filter(p).pick(["_id", "name"])` it knows each element holds exactly those two fields. A `$match` narrows too: after `$match($.tags != null)` the field is present and needs no null guard, after `$match(typeof $.b === "string")` or `$$.filter({ status: "a" })` the field has that kind, and after `$match($.n > 5)` it is a number, because the query language compares inside one type. A query clause reads an array field element by element, so each of these also allows an array; an `||` proves nothing. A method on a field proven to hold a kind it has no form for is a compile-time error that names what the method takes, so `$.bool.trim()` fails before it runs. A method on a value that can be one of several kinds (`c ? "abc" : [1, 2]`) runs its own form when one of those kinds fits it, and the server judges the value. See [docs/specs/types.md](specs/types.md).
 
 ```js
 $.arr = $.tags.uniq();
@@ -1930,7 +1966,6 @@ $.a.sum()                         // `{ $sum: null }` is 0, as `{ $sum: [] }` is
 // → { $sum: "$a" }
 ```
 
-If you know the type of an `.indexOf()` receiver at design time and want compact output, you have three options. Bind the value to a `const` with a type-revealing initialiser. Or chain a type-fixing method first — `$.tags.toLowerCase().indexOf(...)` pins a string. Or use the explicit `$indexOfArray` / `$indexOfCP` operator forms.
 
 **A query document takes the indexable reading.** The server can use an index for a query document, so in a filter or a `$match` a boolean method emits the query clause its row states. `$.tags.has("vip")` becomes `{ tags: "vip" }`: "equals, or is an array that contains", which is what `.has` asks of an array. `$.tags.has(null)` becomes `{ tags: { $elemMatch: { $eq: null } } }`, because `{ tags: null }` also matches a document with no `tags`, and a dot reads that field as `[]`. `$.name.includes("vip")` becomes `{ name: { $regex: /vip/ } }`, the substring test. `jsmql.expr` gives the expression forms, `$in` and `$indexOfCP`.
 
@@ -2595,7 +2630,7 @@ A type name is not a conversion function in JSMQL. JSMQL refuses `Number(x)`, `S
 
 ```js
 $.stringField?.toDouble()          // { $toDouble: "$stringField" }   — not Number($.stringField)
-$.numField?.toString()             // the JavaScript string of the value — not String($.numField)
+$.numField?.toString()             // { $toString: "$numField" }   — not String($.numField)
 !!$.value                          // the JS-truthy check, see "Truthy and falsy" — not Boolean($.value)
 $.stringField.toDouble().trunc()   // { $trunc: { $toDouble: { $ifNull: ["$stringField", 0] } } } — the whole number
 $.scores.map(x => x.toDouble())    // not .map(Number)
@@ -2605,6 +2640,27 @@ $.items.compact()                  // not .filter(Boolean)
 JSMQL refuses a BSON type name over a value of the document in the same way, and the error names the method: `Long($.x)` names `$.x.toLong()`, and `new Date($.x)` names `$.x.toDate()`. A constant stays a literal: `Long(5)`, `Decimal128("9.99")`, `new Date("2026-01-01")`. See [Type conversion methods](#type-conversion-methods).
 
 `!!x` follows JavaScript's truthy and falsy rules. `!!""` is `false`, `!!0` is `false`, and `!![]` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
+
+### `.toString()`
+
+```js
+$.n.toString()               // { $toString: { $ifNull: ["$n", ""] } }    — "" for a missing or null n
+$.n?.toString()              // { $toString: "$n" }                       — null for a missing or null n
+(5).toString()               // { $toString: 5 }                          — a value that is there takes no $ifNull
+$._id.toString()             // { $toString: { $ifNull: ["$_id", ""] } }  — an ObjectId gives its 24 hex digits
+$.tags.toString()            // { $toString: { $ifNull: ["$tags", ""] } } — MongoDB's text: '["a","b"]'
+$.tags.join()                // the text JavaScript gives for an array: "a,b"
+```
+
+`.toString()` is always MongoDB's `$toString`, so its text can differ from the text JavaScript gives:
+
+- A date gives its ISO text in UTC (`"2026-03-15T13:45:30.250Z"`). JavaScript gives a text in local time. For a date text of your choice, write `.format(…)`.
+- A document gives its JSON text (`'{"a":1}'`). JavaScript gives `"[object Object]"`.
+- An array gives its JSON text (`"[1,[2,3]]"`). JavaScript gives `"1,2,3"`. Write `.join()` to get JavaScript's text.
+- A regex literal gives MongoDB's text of the regex, which keeps only the flags that MongoDB knows: `/a/g.toString()` is `"/a/"`.
+- Under a dot, a missing or `null` value gives `""`, as lodash's `_.toString()` does. After a `?.`, it gives `null`. JavaScript throws for the dot, and gives `undefined` for the `?.`. The compiler adds the `$ifNull` only when the value can be missing or `null`. See [HR5](LANG_RULES.md).
+
+`.toString()` takes no argument, so the compiler refuses a radix such as `(255).toString(16)`.
 
 ### `typeof` Operator
 
@@ -5240,10 +5296,9 @@ jsmql.expr("$.email.toLowerCase().trim()")
 // → { $trim: { input: { $cond: [{ $lte: ["$email", null] }, null, { $toLower: "$email" }] } } }
 
 // Check domain
-jsmql.expr('$.email.substr($.email.indexOf("@") + 1)')
+jsmql.expr('$.email.substr($.email.indexOfSubstring("@") + 1)')
 // → { $substrCP: ["$email", <the index after "@">, <the rest of the string>] }
-//   — the index is a $switch on the receiver's own type, because `.indexOf` reads an
-//     array and a string alike; see "Type-aware dispatch" above
+//   — the index is { $indexOfCP: ["$email", "@"] } plus 1
 ```
 
 ### Conditional Logic

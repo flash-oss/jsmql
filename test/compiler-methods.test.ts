@@ -150,6 +150,20 @@ describe("compiler/emit — string methods", () => {
     });
     expect(compiled("$.csv.substr(2, 2)", (d) => d.csv.substr(2, 2))).toEqual({ $substrCP: ["$csv", 2, 2] });
     expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({ $substrCP: ["$csv", 1, 2] });
+    // `.indexOfSubstring()` is JavaScript's `String.prototype.indexOf`. A negative position
+    // reads as 0, as in JavaScript, because `$indexOfCP` refuses a negative start.
+    expect(compiled('$.csv.indexOfSubstring("b")', (d) => d.csv.indexOf("b"))).toEqual({
+      $indexOfCP: [{ $ifNull: ["$csv", ""] }, "b"],
+    });
+    expect(compiled('$.csv.indexOfSubstring(",", 2)', (d) => d.csv.indexOf(",", 2))).toEqual({
+      $indexOfCP: [{ $ifNull: ["$csv", ""] }, ",", 2],
+    });
+    expect(compiled('$.csv.indexOfSubstring("a", -2)', (d) => d.csv.indexOf("a", -2))).toEqual({
+      $indexOfCP: [{ $ifNull: ["$csv", ""] }, "a"],
+    });
+    expect(compiled('$.csv.indexOfSubstring("a", $.neg)', (d) => d.csv.indexOf("a", d.neg))).toEqual({
+      $indexOfCP: [{ $ifNull: ["$csv", ""] }, "a", { $max: [0, "$neg"] }],
+    });
     expect(compiled('$.csv.replace(",", ";")', (d) => d.csv.replace(",", ";"))).toEqual({
       $replaceOne: { input: { $ifNull: ["$csv", ""] }, find: ",", replacement: ";" },
     });
@@ -574,7 +588,7 @@ describe("compiler/emit — date methods", () => {
 
   it("refuses a unit, a format or a part the server refuses", () => {
     expect(() => expr('$.d.plus(1, "fortnight")')).toThrow(/must be one of/);
-    expect(() => expr('$.d.plus(1.5, "day")')).toThrow(/expects an integer/);
+    expect(() => expr('$.d.plus(1.5, "day")')).toThrow(/takes an integer, but this value is a fraction/);
     expect(() => expr("$.d.isAfter($.e)")).toThrow(/without a unit is just '>'/);
     expect(() => expr('$.d.format("YYYY-MM-DD")')).toThrow(/Moment or Luxon/);
     expect(() => expr('$.d.format("%Q")')).toThrow(/invalid specifier '%Q'/);
@@ -1510,34 +1524,13 @@ describe("compiler/emit — array methods", () => {
     });
   });
 
-  it("dispatches `.indexOf` on the receiver's type at run time, unless the argument settles it", () => {
-    // `.indexOf` is the one method of two families. A string argument leaves both open, so
-    // a bare receiver takes a `$switch`; an argument proven not to be a string picks the
-    // array form alone, and a receiver the row proves runs its one family with no test.
-    expect(compiled('$.csv.indexOf("b")', (d) => d.csv.indexOf("b"))).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$csv" }, ["array"]] }, then: { $indexOfArray: ["$csv", "b"] } },
-          { case: { $in: [{ $type: "$csv" }, ["string"]] }, then: { $indexOfCP: ["$csv", "b"] } },
-        ],
-        default: -1,
-      },
-    });
-    expect(compiled('$.a.indexOf("x")', (d) => d.a.indexOf("x"))).toEqual({
-      $switch: {
-        branches: [
-          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $indexOfArray: ["$a", "x"] } },
-          { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $indexOfCP: ["$a", "x"] } },
-        ],
-        default: -1,
-      },
-    });
+  it("lowers `.indexOf` and `.lastIndexOf` to the array form on a bare receiver", () => {
+    // Both are array methods: the receiver is an array by the row's claim, and the
+    // server judges any other value. A string takes `.indexOfSubstring`.
     expect(compiled("$.a.indexOf(1)", (d) => d.a.indexOf(1))).toEqual({ $indexOfArray: [{ $ifNull: ["$a", []] }, 1] });
     expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({
       $indexOfArray: [{ $split: [{ $ifNull: ["$csv", ""] }, ","] }, "b"],
     });
-    // `.lastIndexOf` states one emitting family — the string form is refused — so it
-    // answers the array reading outright rather than testing the receiver's type.
     expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toEqual({
       $let: {
         vars: { jsmqlArr: { $ifNull: ["$a", []] } },
@@ -1600,76 +1593,11 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.o.keys().size()", (d) => Object.keys(d.o).length)).toEqual({
       $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } },
     });
-    expect(compiled("$.a.toString()", (d) => d.a.toString())).toEqual({
-      $let: {
-        vars: { jsmqlV: { $ifNull: ["$a", ""] } },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-            { $toString: "$$jsmqlV" },
-          ],
-        },
-      },
-    });
-    expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({
-      $let: {
-        vars: { jsmqlV: { $ifNull: ["$n", ""] } },
-        in: {
-          $cond: [
-            { $isArray: "$$jsmqlV" },
-            {
-              $ifNull: [
-                {
-                  $reduce: {
-                    input: "$$jsmqlV",
-                    initialValue: null,
-                    in: {
-                      $cond: [
-                        { $eq: ["$$value", null] },
-                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                        {
-                          $concat: [
-                            "$$value",
-                            ",",
-                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                },
-                "",
-              ],
-            },
-            { $toString: "$$jsmqlV" },
-          ],
-        },
-      },
-    });
+    // `.toString()` is the bare `$toString`. On an array it gives MongoDB's text ("[3,1,2]"),
+    // and `.join()` gives JavaScript's text ("3,1,2").
+    expect(compiled("$.n.toString()", (d) => d.n.toString())).toEqual({ $toString: { $ifNull: ["$n", ""] } });
+    expect(expr("$.a.toString()")).toEqual({ $toString: { $ifNull: ["$a", ""] } });
+    expect(compiled("$.a.join()", (d) => d.a.toString())).toEqual(expr("$.a.join()"));
     // `$ifNull` wraps the reduce so an EMPTY array answers "" rather than the reduce's own
     // `null` seed; that guard also reads a missing receiver as "", so HR5 adds no `$ifNull` to it.
     // The seed is `null` so a leading "" element keeps its separator.
@@ -1955,7 +1883,47 @@ describe("compiler/emit — array methods", () => {
     expect(() => expr("$.s.trim().at(0)")).toThrow("For one character, write '.charAt(index)'.");
     expect(() => expr("$.s.trim().slice(1)")).toThrow("For a part of a string, write '.substring(start, end)'.");
     expect(() => expr('$.s.trim().concat("x")')).toThrow("To join strings, write '+' between them: 'a + b'.");
-    expect(() => expr("$.s.trim().indexOf(1)")).toThrow("'indexOf' expects a string, but got a number.");
+    expect(() => expr('$.s.trim().indexOf("b")')).toThrow(
+      "For the position of a substring, write '.indexOfSubstring(searchString)'.",
+    );
+    expect(() => expr('$.s.trim().lastIndexOf("b")')).toThrow(
+      "For the first match, write '.indexOfSubstring(searchString)'.",
+    );
+    expect(() => expr('$.a.uniq().indexOfSubstring("b")')).toThrow(
+      "For the position of a value in an array, write '.indexOf(value)'.",
+    );
+    expect(() => expr("$.s.indexOfSubstring(1)")).toThrow(
+      "'.indexOfSubstring()' takes a string, but this value is a number.",
+    );
+    // Each argument of a string method takes one kind (HR7). The server refuses a fractional
+    // index or count, and a number where it reads a string.
+    expect(() => expr("$.s.substring(1.5)")).toThrow("'.substring()' takes an integer, but this value is a fraction.");
+    expect(() => expr("$.s.substring(0, 2.5)")).toThrow(
+      "'.substring()' takes an integer, but this value is a fraction.",
+    );
+    expect(() => expr("$.s.substr(1.5)")).toThrow("'.substr()' takes an integer, but this value is a fraction.");
+    expect(() => expr('$.s.charAt("1")')).toThrow("'.charAt()' takes an integer, but this value is a string.");
+    expect(() => expr("$.s.repeat(2.5)")).toThrow("'.repeat()' takes an integer, but this value is a fraction.");
+    expect(() => expr('$.s.padStart("3")')).toThrow("'.padStart()' takes an integer, but this value is a string.");
+    expect(() => expr("$.s.padEnd(3, 0)")).toThrow("'.padEnd()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.split(1)")).toThrow("'.split()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.startsWith(1)")).toThrow("'.startsWith()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.endsWith(1)")).toThrow("'.endsWith()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.includes(1)")).toThrow("'.includes()' takes a string, but this value is a number.");
+    expect(() => expr('$.s.replace(1, "x")')).toThrow("'.replace()' takes a string, but this value is a number.");
+    expect(() => expr('$.s.replaceAll(",", 1)')).toThrow("'.replaceAll()' takes a string, but this value is a number.");
+    expect(() => expr("$.s.includes($.s.length())")).toThrow(
+      "'.includes()' takes a string, but this value is a number.",
+    );
+    // The query road falls back to the value cell. Both cells state the kind.
+    expect(() => jsmql("$.s.startsWith(1)")).toThrow("'.startsWith()' takes a string, but this value is a number.");
+    // the position is an integer: `$indexOfCP` refuses a fractional start (HR7)
+    expect(() => expr('$.s.indexOfSubstring("b", 1.9)')).toThrow(
+      "'.indexOfSubstring()' takes an integer, but this value is a fraction.",
+    );
+    expect(() => expr('$.s.indexOfSubstring("b", "2")')).toThrow(
+      "'.indexOfSubstring()' takes an integer, but this value is a string.",
+    );
     expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
   });
@@ -2031,9 +1999,9 @@ describe("compiler/emit — number ranges", () => {
 
   it("refuses a zero step and a fractional bound, and names the alternative", () => {
     expect(() => expr("(0).range(5, 0)")).toThrow(/cannot be 0.*n\.range\(\)\.map/);
-    expect(() => expr("(0.5).range(3)")).toThrow(/receiver must be an integer.*<number>\.ceil\(\)/);
-    expect(() => expr("(0).range(2.5)")).toThrow(/argument 1 must be an integer/);
-    expect(() => expr("$.n.rangeRight($.m, 1.5)")).toThrow(/argument 2 must be an integer/);
+    expect(() => expr("(0.5).range(3)")).toThrow(/receiver takes an integer, but this value is a fraction.*\.ceil\(\)/);
+    expect(() => expr("(0).range(2.5)")).toThrow(/argument 1 takes an integer/);
+    expect(() => expr("$.n.rangeRight($.m, 1.5)")).toThrow(/argument 2 takes an integer/);
     expect(() => expr("$.n.range(1, 2, 3)")).toThrow(/\.range\(\[end\[, step\]\]\)/);
   });
 
@@ -2928,6 +2896,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   padEnd: ["$.csv.padEnd(9)"],
   repeat: ["$.csv.repeat(2)"],
   indexOf: ["$.a.indexOf(9)"],
+  indexOfSubstring: ['$.csv.indexOfSubstring("b")'],
   includes: ['$.csv.includes("b")'],
   lastIndexOf: ["$.a.lastIndexOf(9)"],
   length: ["$.csv.length()"],
@@ -3165,12 +3134,14 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   floor: ["$.nope?.floor(1)", "$.mo.d?.floor()"],
   slice: ["$.nope?.slice(1)", "$.mo.d?.slice(1, 2)"],
   concat: ["$.nope?.concat($.b)", "$.mo.d?.concat([1])"],
+  toString: ["$.nope?.toString()", "$.mo.d?.toString()"],
   trim: ["$.nope?.trim()", "$.mo.d?.trim()"],
   trimStart: ["$.nope?.trimStart()", "$.mo.d?.trimStart()"],
   trimLeft: ["$.nope?.trimLeft()", "$.mo.d?.trimLeft()"],
   trimEnd: ["$.nope?.trimEnd()", "$.mo.d?.trimEnd()"],
   trimRight: ["$.nope?.trimRight()", "$.mo.d?.trimRight()"],
   split: ['$.nope?.split(",")', '$.mo.d?.split(",")'],
+  indexOfSubstring: ['$.nope?.indexOfSubstring("b")', '$.mo.d?.indexOfSubstring("b")'],
   replace: ['$.nope?.replace("a", "x")', '$.mo.d?.replace("a", "x")'],
   replaceAll: ['$.nope?.replaceAll(",", ";")', '$.mo.d?.replaceAll(",", ";")'],
   padEnd: ["$.nope?.padEnd(9)", "$.mo.d?.padEnd(9)"],
@@ -3293,7 +3264,7 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
     kind?: string;
     neverNull?: true | "always";
     readsNullAsEmpty?: true;
-    nullReceiverAs?: 1 | "";
+    nullReceiverAs?: 0 | 1 | "" | false | Date;
     passesNull?: true;
   };
   const rows = Object.entries(NAMES) as [string, Row][];

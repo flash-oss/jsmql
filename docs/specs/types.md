@@ -214,19 +214,27 @@ A method under a dot is present whatever its receiver, when its kind has a safe
 value. Under a dot, a missing receiver reads as `[]`, `{}`, `""`, `0`, or the value the
 row states in `nullReceiverAs` (`dispatchOn` in [lower.ts](../../src/compiler/emit/lower.ts)
 wraps it). So `$.a.uniq().size()` guards `a` once, and `$.n.range().size()` adds no
-`$ifNull`. A row that states `readsNullAsEmpty` takes no wrap at all, because its
-operator gives the same answer for null: `$.a.sum()` is `{ $sum: "$a" }`. A `?.` on
+`$ifNull`. The value that a row states comes first, also on a receiver of the array
+family: `.toString()` reads a missing array as `""`, not as `[]`. A row that states
+`readsNullAsEmpty` takes no wrap at all, because its operator gives the same answer for
+null: `$.a.sum()` is `{ $sum: "$a" }`. A `?.` on
 the spine takes the presence away: the chain stops, and the value may be null.
 
 A row that states `passesNull` answers null for a null receiver through its own
 operator. A `?.` stops a chain with a `$cond` null test (`stoppedChain` in
 [lower.ts](../../src/compiler/emit/lower.ts)). That test adds nothing when each call
 after the `?.` states the fact and the `?.` tests a field path. So the compiler emits the
-calls alone, with the path proved present. Then the compiler adds no dot wrap: `$.o?.keys()` is
+calls alone, with the path proved present.
+
+Then the compiler adds no dot wrap: `$.o?.keys()` is
 `{ $map: { input: { $objectToArray: "$o" }, … } }`. A plain read between the `?.` and a
 call keeps the test, because the call after the read runs under a dot. `$.o?.a.keys()` is
-`[]` for `o: {}`. A row can state both `passesNull` and `nullReceiverAs`: `$.n.log()`
-reads a missing `n` as 1, and `$.n?.log()` is `{ $ln: "$n" }`.
+`[]` for `o: {}`.
+
+A row can state `passesNull` and `nullReceiverAs` together, because the two facts apply
+to different accessors. `$.n.log()` reads a missing `n` as 1, and `$.n?.log()` is
+`{ $ln: "$n" }`. In the same way, `$.n.toString()` reads a missing `n` as `""`, and
+`$.n?.toString()` is `{ $toString: "$n" }`.
 
 A production states `passesNull` too, when its operator answers a missing operand as it
 answers `null`: the arithmetic operators and `??`. A `?.` read as its operand then runs as
@@ -355,41 +363,33 @@ $match($.n > 5);  $.x = $.n ? 1 : 2;     // n: a number or an array, present →
 
 ## The consumers
 
-### The dispatch
+### The receiver
 
 `receiverOf` in [lower.ts](../../src/compiler/emit/lower.ts) hands `select.ts`
 the receiver's proof as a closed `Receiver`:
 
-- one field family → `value`: the row's cell for that family runs, with no test;
-- several kinds → `opaque` with `possible` (the field families among them),
-  `exact` (does `possible` name every kind?) and `present`;
+- one field family → `value`: the row's cell for that family runs;
+- two or more kinds → `opaque` with `possible` (the field families among them);
 - a kind no family covers (`bool`, `objectId`) → `opaque` with `proved`, and every
   field-family row refuses it, naming what it takes;
-- nothing proven → `opaque`, today's full runtime dispatch.
+- nothing proven → `opaque`.
 
-`fromPerFamily` in [select.ts](../../src/compiler/emit/select.ts) then applies four rules:
+`fromPerFamily` in [select.ts](../../src/compiler/emit/select.ts) then applies two
+rules. Nothing tests the receiver's type when the query runs (HR5).
 
-1. **Branches for the possible families only.** The dispatch runs over the row's
-   families that the receiver can be, in the row's order.
-2. **The default only when it can fire.** A dispatch is `complete` when the value
-   is present and every kind it can be has a branch. A complete dispatch is a
-   `$switch` with **no `default`**. It is never a `$cond`: MEASURED, the server
-   optimises a `$cond`'s branches before it reads the test, so
-   `{ $cond: [<is array>, { $size: v }, { $strLenCP: v }] }` over a constant `v`
-   (a `$let` variable, a `$literal`) fails. The same branches under `$switch` run
-   on every receiver (`switchOver` in [mql.ts](../../src/compiler/emit/mql.ts)).
-3. **Refuse at compile time only when no possible kind is accepted.** `$.b.trim()`
+1. **Refuse at compile time only when the row accepts none of the possible kinds.** `$.b.trim()`
    after `$.b = $.arr.has("x")` is a compile error. A partial overlap is not:
-   `{string, number}` under `.trim()` runs the string branch and the number falls
-   to the null default, because "possible" is not "proven".
-4. **`ANY` on a one-family row is that family**, by the row's claim, as before.
+   `{string, number}` under `.trim()` runs the string form, and the server judges
+   a number, because "possible" is not "proven".
+2. **An unproven receiver is the row's one lowering family**, by the row's claim.
+   A row lowers on one field family at most. test/compiler-select.test.ts audits
+   this.
 
 ```js
-$.v = $.flag ? "abc" : [1, 2];  $.i = $.v.indexOf("x");
-// → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }, { case: { $in: [{ $type: "$v" }, ["string"]] }, then: { $indexOfCP: ["$v", "x"] } }] } } } }
+$.v = $.flag ? "abc" : [1, 2];  $.len = $.v.length();   // the value can be a string → the string form runs
+// → …, { $set: { len: { $strLenCP: "$v" } } }
 
-$.v = $.flag ? 5 : [1, 2];  $.i = $.v.indexOf("x");   // a number has no `.indexOf` form → the default stays
-// → …, { $set: { i: { $switch: { branches: [{ case: { $in: [{ $type: "$v" }, ["array"]] }, then: { $indexOfArray: ["$v", "x"] } }], default: null } } } }
+$.v = $.flag ? 5 : [1, 2];  $.len = $.v.length();       // ✗ no possible kind is a string
 ```
 
 ### The truthiness rule
@@ -409,11 +409,10 @@ can fail.
 
 An array, an object, a date, an ObjectId or binData owes no test: JavaScript
 reads each one as true. Three shape rules follow. One test left is emitted bare,
-with no `$and`. No test left is the constant `TRUE`, and the slot that reads it
-folds: `cond`, `filter`, `switchOn` and `switchOver` in
-[mql.ts](../../src/compiler/emit/mql.ts) and the registry's own `cond` builder
-pick their branch at compile time, and `and`, `or` and `not` fold a constant
-operand. A value whose only possible kinds are `bool` or `number` is its own
+with no `$and`. No test left is the constant `TRUE`. The slot that reads it
+folds. `cond`, `filter` and `switchOn` in [mql.ts](../../src/compiler/emit/mql.ts)
+and the registry's own `cond` builder pick their branch at compile time. `and`,
+`or` and `not` fold a constant operand. A value whose only possible kinds are `bool` or `number` is its own
 truth, whatever its `absent`: MEASURED, MongoDB reads `0`, a `Long` zero, a
 `Decimal128` zero, negative zero, `false`, null and missing as false, so
 `{ $cond: ["$n", …] }` agrees with JavaScript on every number.
