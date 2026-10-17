@@ -3384,7 +3384,7 @@ describe.skipIf(!up)("compiler/emit — no `$ifNull` guards a value that is ther
       }
     }
     expect(dead).toEqual([]);
-    // a null test is `$lte` / `$gt`, not an `$ifNull`, so a source can hold no guard at all
+    // a null test is `$lte` or `$gt`, not an `$ifNull`, so a source can hold no guard at all
     expect(guardsChecked).toBeGreaterThan(GUARD_FREE.length / 2);
   });
 });
