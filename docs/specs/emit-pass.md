@@ -48,7 +48,7 @@ refuses. The refusal (`errors.ts`) puts that sentence after its head. For exampl
 `.length()` on an array, the message names `string` as the family that has the
 method. It also suggests `.size()` to count the elements.
 
-`checkSlotKinds` (`check.ts`) refuses a rule whose slot cannot take the proven kind.
+`checkSlots` (`check.ts`) refuses a rule whose slot cannot take the proven kind of its argument.
 
 ```js
 $.x.indexOf("a")
@@ -195,6 +195,12 @@ refuses a receiver that provably holds arrays (a literal of literals,
 field path, an expression or a spread. The checks run on every rule of a
 method, a global and a production, and `test/registry-fields-read.test.ts`
 makes sure that every stated rule field has a reader.
+
+`checkSlots` is the one slot check. Each site gives it the proof of each
+operand as a required parameter, so no site can skip the proof. A slot that
+states a kind refuses an operand that the proof shows is another kind. The
+refusal names the slot: `argument N` for a positional operand, the key for a
+body key, and `element N` for an element of a list.
 
 ## Truthiness
 

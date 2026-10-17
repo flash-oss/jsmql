@@ -17082,10 +17082,10 @@ var Parser = class _Parser {
     if (rule !== void 0 && rule.prec > 0) {
       const op = this.c.next();
       const placeStart = this.c.peek().pos;
-      const argument = this.pratt(rule.prec);
+      const argument2 = this.pratt(rule.prec);
       if (rule.asStatement !== null) {
         const place2 = this.src.slice(placeStart, this.c.lastEnd());
-        this.requireWriteTarget(argument, op.pos, op.text, place2);
+        this.requireWriteTarget(argument2, op.pos, op.text, place2);
         throw writeInValue(
           this.src.slice(op.pos, this.c.lastEnd()),
           `${place2} ${rule.asStatement}`,
@@ -17094,15 +17094,15 @@ var Parser = class _Parser {
           op.pos
         );
       }
-      if (mixingRefused(rule, argument.rule, "right")) {
+      if (mixingRefused(rule, argument2.rule, "right")) {
         throw new ParseError(
-          `You cannot combine '${op.text}' with '${spelled(argument.rule)}' without parentheses. JavaScript rejects it.`,
+          `You cannot combine '${op.text}' with '${spelled(argument2.rule)}' without parentheses. JavaScript rejects it.`,
           op.pos
         );
       }
       return {
         // The token's own text is the operator: `!`, `-`, `~`, `typeof`.
-        expr: { type: "UnaryExpr", op: op.text, argument: argument.expr, pos: op.pos },
+        expr: { type: "UnaryExpr", op: op.text, argument: argument2.expr, pos: op.pos },
         rule: rule.rules[0]
       };
     }
@@ -22158,22 +22158,18 @@ var TAKES = {
   date: "a date",
   timestamp: "a timestamp"
 };
-var takesOf = (t) => Array.isArray(t) ? t.map((x) => TAKES[x]).join(" or ") : TAKES[t];
+var takesOf = (t) => {
+  const nouns = Array.isArray(t) ? t.map((x) => TAKES[x]) : [TAKES[t]];
+  return nouns.length === 1 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
+};
 var ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
-var wrongKind = (name2, slot, takes, got, hint2 = "") => `'${spell2(name2)}'${slot ? ` ${slot}` : ""} takes ${takes}, but this value is ${got}.${hint2}`;
+var wrongKind = (name2, slot, takes, got, hint2 = "") => `'${spell2(name2)}' ${slot} takes ${takes}, but got ${got}.${hint2}`;
+var argument = (i) => `argument ${Number(i) + 1}`;
 var hint = (expected) => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
 };
-function checkSlotKinds(name2, args, operands, kinds) {
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    const k = kinds[Number(i)];
-    if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
-    throw new CodegenError(wrongKind(name2, "", takesOf(t), KIND_NOUN2[k] ?? `a ${k}`), e.pos);
-  }
-}
 var KIND_NOUN2 = {
   string: "a string",
   number: "a number",
@@ -22189,7 +22185,7 @@ function checkType(name2, slot, e, expected) {
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
       throw new CodegenError(
-        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        `'${spell2(name2)}' ${slot} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
         e.pos
       );
     }
@@ -22200,14 +22196,14 @@ function checkType(name2, slot, e, expected) {
       const other = literal(e);
       if (other === null || other.kind === "null") return;
       throw new CodegenError(
-        `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
+        `'${spell2(name2)}' ${slot} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos
       );
     }
     const bad = e.value === "" ? "is empty" : e.value.startsWith("$") ? "starts with '$'" : e.value.includes(".") ? "holds a dot" : null;
     if (bad === null) return;
     throw new CodegenError(
-      `'${spell2(name2)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      `'${spell2(name2)}' ${slot} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
       e.pos
     );
   }
@@ -22295,13 +22291,13 @@ function checkBody(name2, rule, args, keys, pos) {
     }
   }
 }
-var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
-function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
+var spell2 = (name2) => /^[A-Za-z_]\w*$/.test(name2) ? `.${name2}()` : name2;
+function checkSlots(name2, args, operands, kinds, hasObjectForm = true, receiver) {
   for (const i of args.integer ?? []) {
     const e = i === -1 ? receiver : operands[i];
     const n2 = e === void 0 ? null : numberOf(e);
     if (n2 !== null && !Number.isInteger(n2)) {
-      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
+      const what = i === -1 ? "receiver" : argument(i);
       throw new CodegenError(wrongKind(name2, what, "an integer", "a fraction", ROUND), e.pos);
     }
   }
@@ -22349,17 +22345,17 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
     const e = operands[Number(i)];
     if (e === void 0 || hasObjectForm && e.type === "ObjectLiteral") continue;
     if (!Array.isArray(t)) {
-      checkType(name2, "", e, t);
+      checkType(name2, argument(i), e, t);
       continue;
     }
     const types = t;
     if (e.type === "StringLiteral" && types.includes("fieldPath")) {
-      checkType(name2, "", e, "fieldPath");
+      checkType(name2, argument(i), e, "fieldPath");
       continue;
     }
     const lit = literal(e);
     if (lit === null || types.some((one) => matches(lit, one))) continue;
-    throw new CodegenError(wrongKind(name2, "", takesOf(types), NOUN[lit.kind]), e.pos);
+    throw new CodegenError(wrongKind(name2, argument(i), takesOf(types), NOUN[lit.kind]), e.pos);
   }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
@@ -22397,7 +22393,13 @@ function checkSlots(name2, args, operands, hasObjectForm = true, receiver) {
   }
   for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
     const e = operands[Number(i)];
-    if (e !== void 0) checkEnum(name2, `argument ${Number(i) + 1}`, e, allowed, false);
+    if (e !== void 0) checkEnum(name2, argument(i), e, allowed, false);
+  }
+  for (const [i, t] of Object.entries(args.slotType ?? {})) {
+    const e = operands[Number(i)];
+    const k = kinds[Number(i)];
+    if (e === void 0 || k === void 0 || k === "unknown" || kindFits(k, t)) continue;
+    throw new CodegenError(wrongKind(name2, argument(i), takesOf(t), KIND_NOUN2[k] ?? `a ${k}`), e.pos);
   }
 }
 var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
@@ -23725,7 +23727,15 @@ function leaf(node, env) {
     throw refusalFor(sel, spelled2(node, name2), "", "filter", node.pos, []);
   }
   if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
-  if (!escape) checkSlots(name2, sel.rule.args, args);
+  if (!escape) {
+    const argEnv = childEnv(env, node, "args");
+    checkSlots(
+      name2,
+      sel.rule.args,
+      args,
+      args.map((a) => kindOf3(a, argEnv))
+    );
+  }
   const inputs = filterInputs(name2, recv, args, positionalKeysOf(name2), env, node, {
     lowerValue,
     lowerFilter,
@@ -24874,7 +24884,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
   }
   const exprArgs = args.filter(isExpr2);
   const argEnv = childEnv(env, node, "args");
-  const kinds = args.map((a) => isExpr2(a) ? kindOf3(a, argEnv) : "unknown");
+  const kinds = exprArgs.map((a) => kindOf3(a, argEnv));
   const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
@@ -24884,8 +24894,7 @@ function dispatchOn(node, name2, recvNode, args, env) {
       const holder = arraysHolder(recvNode);
       if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
     }
-    checkSlots(name2, sel.rule.args, exprArgs, true, recvNode);
-    checkSlotKinds(name2, sel.rule.args, exprArgs, kinds);
+    checkSlots(name2, sel.rule.args, exprArgs, kinds, true, recvNode);
     const proven = isPresent(recvNode, recvEnv);
     const family = receiver.kind === "value" ? receiver.family : sel.family ?? soleFieldFamilyOf(name2);
     const empty = readsNullReceiverOf(name2) ? null : emptyValueOf(name2, family);
@@ -25063,7 +25072,13 @@ function production2(node, key, operands, env) {
   if (sel.kind !== "rule") {
     throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, []);
   }
-  checkSlots(spelled3, sel.rule.args, operands);
+  const argEnv = childEnv(env, node, "args");
+  checkSlots(
+    spelled3,
+    sel.rule.args,
+    operands,
+    operands.map((e) => kindOf3(e, argEnv))
+  );
   const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
   return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
 }
@@ -25737,7 +25752,7 @@ function documentsStages(list, env, written2 = "$$ = [ \u2026 ]") {
   if (list.elements.length === 0) return [dropAll];
   const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
-  checkSlots(written2, sel.rule.args, [list], false);
+  checkSlots(written2, sel.rule.args, [list], [kindOf3(list, env)], false);
   const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
   const documents = lowerValue(list, childEnv(body, list, "elements").at({ at: "value" }));
   noStageInDocuments(body.chain, written2, list.pos);
@@ -26089,6 +26104,10 @@ function refuseUnbuiltSugar(value) {
     if (!direct) throw streamAsValue(value.pos);
   }
 }
+var kindsOf3 = (args, env, node) => {
+  const argEnv = childEnv(env, node, "args");
+  return args.map((a) => kindOf3(a, argEnv));
+};
 function elementWiseOnDocument(value, env) {
   const links = [];
   let cur = value;
@@ -26164,7 +26183,7 @@ function refStatement(node, ref, env, first) {
     stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2)) : [plainStage(name2, node, args, env)];
   } else {
     if (sel.kind !== "rule") throw refusalFor(sel, `.${node.name}`, spelled3, "statement", node.pos, []);
-    checkSlots(node.name, sel.rule.args, args, false);
+    checkSlots(node.name, sel.rule.args, args, kindsOf3(args, env, node), false);
     stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   }
   const out = [];
@@ -26200,7 +26219,7 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
     stages = sel.kind === "rule" ? sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)) : [plainStage(name2, link, args, env)];
   } else {
     if (sel.kind !== "rule") throw refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-    checkSlots(link.name, sel.rule.args, args, false);
+    checkSlots(link.name, sel.rule.args, args, kindsOf3(args, env, link), false);
     stages = sel.rule.emit(
       stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
     );
@@ -26312,7 +26331,7 @@ function stageStatement(node, env, first) {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
     throw refusalFor(sel, name2, "", "statement", node.pos, [], (s) => s);
   }
-  checkSlots(name2, sel.rule.args, args, false);
+  checkSlots(name2, sel.rule.args, args, kindsOf3(args, env, node), false);
   const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, node, READ2));
   return landed(
     stages.flatMap((st) => place(Object.keys(st)[0] ?? name2, st, env, first, node.pos)),

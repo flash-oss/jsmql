@@ -11,7 +11,7 @@
 //
 // See docs/specs/emit-pass.md § the statement target.
 
-import type { Expr, QueryDoc, Stage, Type } from "../../registry/vocabulary.ts";
+import type { Expr, Kind, QueryDoc, Stage, Type } from "../../registry/vocabulary.ts";
 import type { FuncDecl, LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
 import { isFieldPathString } from "../../registry/ast.ts";
 import { readsRef } from "./mql.ts";
@@ -481,7 +481,7 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
   // meets the same element rule `$documents([{ a: 1 }, 5])` meets.
   const sel = select(consult(DOCUMENTS, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS}' has no statement rule`);
-  checkSlots(written, sel.rule.args, [list], false);
+  checkSlots(written, sel.rule.args, [list], [kindOf(list, env)], false);
   // The documents run inside the `$unionWith`, with NO input document.
   // So the compiler lowers the list under that boundary — the same one
   // `unionStages` enters. Lowered outside it, `$$ = [{ n: $.a }]` read
@@ -1141,6 +1141,12 @@ function refuseUnbuiltSugar(value: Expr): void {
 
 // ── the stream road ──────────────────────────────────────────────────────────
 
+/** What each argument of a stage call or a stream link PROVABLY is, for the slot check. */
+const kindsOf = (args: readonly Expr[], env: Env, node: object): readonly (Kind | "unknown")[] => {
+  const argEnv = childEnv(env, node, "args");
+  return args.map((a) => kindOf(a, argEnv));
+};
+
 /**
  * `$.pick(…).omit(…)` — a chain on the whole DOCUMENT whose every link is
  * a row spelled on BOTH the object and the stream. This function returns
@@ -1293,7 +1299,7 @@ function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, 
         : [plainStage(name, node, args, env)];
   } else {
     if (sel.kind !== "rule") throw E.refusalFor(sel, `.${node.name}`, spelled, "statement", node.pos, []);
-    checkSlots(node.name, sel.rule.args, args, false);
+    checkSlots(node.name, sel.rule.args, args, kindsOf(args, env, node), false);
     stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   }
   const out: Stage[] = [];
@@ -1356,7 +1362,7 @@ function streamLink(
         : [plainStage(name, link, args, env)];
   } else {
     if (sel.kind !== "rule") throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-    checkSlots(link.name, sel.rule.args, args, false);
+    checkSlots(link.name, sel.rule.args, args, kindsOf(args, env, link), false);
     // `name` is the row that runs; `link.name` is what the developer typed. A message
     // that swaps them tells the reader about a method they did not write.
     stages = sel.rule.emit(
@@ -1554,7 +1560,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Step {
     if (sel.kind === "unknown") throw unknownCall(sel, node, env);
     throw E.refusalFor(sel, name, "", "statement", node.pos, [], (s) => s);
   }
-  checkSlots(name, sel.rule.args, args, false);
+  checkSlots(name, sel.rule.args, args, kindsOf(args, env, node), false);
   const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   // A cell answers with the stages its name means. Where they may
   // STAND is the row's other fact, and the compiler applies that fact

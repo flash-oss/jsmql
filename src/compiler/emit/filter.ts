@@ -33,7 +33,7 @@ import { childEnv, filterInputs, onOwnStream } from "./inputs.ts";
 import { holderOf, lowerTruth, lowerValue, readablePath } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { FALSE, mongoTruthy, or } from "./mode.ts";
-import { typeOf } from "./prove.ts";
+import { kindOf, typeOf } from "./prove.ts";
 import { isNothing, unreadable } from "./type.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import {
@@ -424,7 +424,15 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     throw E.refusalFor(sel, spelled(node, name), "", "filter", node.pos, []);
   }
   if (sel.kind !== "rule") return node.type === "OperatorCall" ? plainQuery(node, env) : null;
-  if (!escape) checkSlots(name, sel.rule.args, args);
+  if (!escape) {
+    const argEnv = childEnv(env, node, "args");
+    checkSlots(
+      name,
+      sel.rule.args,
+      args,
+      args.map((a) => kindOf(a, argEnv)),
+    );
+  }
   const inputs = filterInputs(name, recv, args, positionalKeysOf(name), env, node, {
     lowerValue,
     lowerFilter,

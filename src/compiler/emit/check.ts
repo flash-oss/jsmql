@@ -108,43 +108,31 @@ const TAKES: Record<ArgType, string> = {
   timestamp: "a timestamp",
 };
 
-const takesOf = (t: ArgType | readonly ArgType[]): string =>
-  Array.isArray(t) ? (t as readonly ArgType[]).map((x) => TAKES[x]).join(" or ") : TAKES[t as ArgType];
+/** The kinds a slot takes, as one list: "a number", "a number or a date", "a number, a string or a date". */
+const takesOf = (t: ArgType | readonly ArgType[]): string => {
+  const nouns = Array.isArray(t) ? (t as readonly ArgType[]).map((x) => TAKES[x]) : [TAKES[t as ArgType]];
+  return nouns.length === 1 ? nouns[0] : `${nouns.slice(0, -1).join(", ")} or ${nouns[nouns.length - 1]}`;
+};
 
 /** The hint for a fraction where the server takes a whole number. */
 const ROUND = " Write an integer, or round the value with '.ceil()' or '.floor()'.";
 
 /**
  * The one refusal of a value of the wrong kind. The literal checks and the proof check
- * all build it, so each one reads the same. `slot` names a key or an argument, or is "".
+ * all build it, so each one reads the same. `slot` names the slot: a key, `argument N`,
+ * `element N` or `receiver`.
  */
 const wrongKind = (name: string, slot: string, takes: string, got: string, hint = ""): string =>
-  `'${spell(name)}'${slot ? ` ${slot}` : ""} takes ${takes}, but this value is ${got}.${hint}`;
+  `'${spell(name)}' ${slot} takes ${takes}, but got ${got}.${hint}`;
+
+/** How a message names a positional slot. */
+const argument = (i: number | string): string => `argument ${Number(i) + 1}`;
 
 const hint = (expected: ArgType): string => {
   if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
   if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
   return "";
 };
-
-/**
- * A positional operand PROVEN to be a kind the slot can never take: `$.s.indexOf(n)`
- * with `n` a number the program wrote. The literal check above reads the source; this
- * one reads the proof, so a value computed three statements earlier is refused too.
- */
-export function checkSlotKinds(
-  name: string,
-  args: Arity,
-  operands: readonly Expr[],
-  kinds: readonly (Kind | "unknown")[],
-): void {
-  for (const [i, t] of Object.entries(args.slotType ?? {})) {
-    const e = operands[Number(i)];
-    const k = kinds[Number(i)];
-    if (e === undefined || k === undefined || k === "unknown" || kindFits(k, t)) continue;
-    throw new CodegenError(wrongKind(name, "", takesOf(t), KIND_NOUN[k] ?? `a ${k}`), e.pos);
-  }
-}
 
 /** The kind of a PROVEN value, as a noun with its article. */
 const KIND_NOUN: Readonly<Partial<Record<Kind, string>>> = {
@@ -158,7 +146,7 @@ const KIND_NOUN: Readonly<Partial<Record<Kind, string>>> = {
   binData: "binary data",
 };
 
-/** A literal of a type the slot can never take. `slot` is the key, or "" for a positional operand. */
+/** A literal of a type the slot can never take. `slot` names the key or the argument. */
 export function checkType(name: string, slot: string, e: Expr, expected: ArgType): void {
   // A field NAME is the one slot where a string that starts with `$` is the ERROR,
   // not a runtime value. The check reads it from the source, not through the
@@ -168,7 +156,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
     if (e.type !== "StringLiteral") return;
     if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
       throw new CodegenError(
-        `'${spell(name)}'${slot ? ` ${slot}` : ""} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
+        `'${spell(name)}' ${slot} reads a field PATH. The path must start with '$'. Write '$${e.value.replace(/^\$+/, "")}'.`,
         e.pos,
       );
     }
@@ -179,7 +167,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
       const other = literal(e);
       if (other === null || other.kind === "null") return;
       throw new CodegenError(
-        `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
+        `'${spell(name)}' ${slot} names a field to WRITE. ${NOUN[other.kind]} is not a name. Use a plain field name, for example 'total'.`,
         e.pos,
       );
     }
@@ -193,7 +181,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
             : null;
     if (bad === null) return;
     throw new CodegenError(
-      `'${spell(name)}'${slot ? ` ${slot}` : ""} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
+      `'${spell(name)}' ${slot} names a field to WRITE. '${e.value}' ${bad}. The server refuses it. Use a plain field name, for example 'total'.`,
       e.pos,
     );
   }
@@ -328,14 +316,23 @@ export function checkBody(
   }
 }
 
-/** The per-slot literal checks an `Arity` states — `slotType`, `slotEnums` — over positional operands. */
-/** How the source spells a name: a stage or an operator keeps its '$', a method gets its dot and parentheses. */
-const spell = (name: string): string => (name.startsWith("$") ? name : `.${name}()`);
+/**
+ * How the source spells a name. A method gets its dot and parentheses. A stage, an
+ * operator and an operator token (`+`) stay as written.
+ */
+const spell = (name: string): string => (/^[A-Za-z_]\w*$/.test(name) ? `.${name}()` : name);
 
+/**
+ * The per-slot checks an `Arity` states, over positional operands. The literal checks
+ * read the source. The kind check reads the proof (`kinds`, one per operand), so it
+ * also covers a value that an earlier statement computes.
+ */
 export function checkSlots(
   name: string,
   args: Arity,
   operands: readonly Expr[],
+  /** What each operand PROVABLY is, aligned with `operands`. */
+  kinds: readonly (Kind | "unknown")[],
   /**
    * Does the row state an OBJECT form for this body? When it does, an object
    * literal is exempt from `slotType` — the date accessors take a date OR the
@@ -352,7 +349,7 @@ export function checkSlots(
     const e = i === -1 ? receiver : operands[i];
     const n = e === undefined ? null : numberOf(e);
     if (n !== null && !Number.isInteger(n)) {
-      const what = i === -1 ? "receiver" : `argument ${i + 1}`;
+      const what = i === -1 ? "receiver" : argument(i);
       throw new CodegenError(wrongKind(name, what, "an integer", "a fraction", ROUND), e!.pos);
     }
   }
@@ -400,7 +397,7 @@ export function checkSlots(
     const e = operands[Number(i)];
     if (e === undefined || (hasObjectForm && e.type === "ObjectLiteral")) continue;
     if (!Array.isArray(t)) {
-      checkType(name, "", e, t as ArgType);
+      checkType(name, argument(i), e, t as ArgType);
       continue;
     }
     // A slot that takes more than one shape: the literal must match one of them,
@@ -409,12 +406,12 @@ export function checkSlots(
     // A type with a message of its own answers for itself, so the reason names the
     // one shape the value nearly was: `$unwind("items")` is a path missing its '$'.
     if (e.type === "StringLiteral" && types.includes("fieldPath")) {
-      checkType(name, "", e, "fieldPath");
+      checkType(name, argument(i), e, "fieldPath");
       continue;
     }
     const lit = literal(e);
     if (lit === null || types.some((one) => matches(lit, one))) continue;
-    throw new CodegenError(wrongKind(name, "", takesOf(types), NOUN[lit.kind]), e.pos);
+    throw new CodegenError(wrongKind(name, argument(i), takesOf(types), NOUN[lit.kind]), e.pos);
   }
   for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
     const e = operands[Number(i)];
@@ -458,7 +455,15 @@ export function checkSlots(
   }
   for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
     const e = operands[Number(i)];
-    if (e !== undefined) checkEnum(name, `argument ${Number(i) + 1}`, e, allowed, false);
+    if (e !== undefined) checkEnum(name, argument(i), e, allowed, false);
+  }
+  // A positional operand PROVEN to be a kind the slot can never take: `$.s.indexOf(n)`
+  // with `n` a number the program wrote.
+  for (const [i, t] of Object.entries(args.slotType ?? {})) {
+    const e = operands[Number(i)];
+    const k = kinds[Number(i)];
+    if (e === undefined || k === undefined || k === "unknown" || kindFits(k, t)) continue;
+    throw new CodegenError(wrongKind(name, argument(i), takesOf(t), KIND_NOUN[k] ?? `a ${k}`), e.pos);
   }
 }
 

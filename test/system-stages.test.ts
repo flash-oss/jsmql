@@ -160,7 +160,7 @@ describe("system stages — error messages", () => {
   });
 
   it("option-bearing stage given a non-object argument is rejected", () => {
-    expect(() => jsmql("$$.collStats(true)")).toThrow("'.collStats()' takes a document, but this value is a boolean.");
+    expect(() => jsmql("$$.collStats(true)")).toThrow("'.collStats()' argument 1 takes a document, but got a boolean.");
   });
 
   it("more than one argument is rejected", () => {
