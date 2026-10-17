@@ -2238,7 +2238,7 @@ $.counts.keys().map(ObjectId)         // object keys are strings — cast them b
 $.scores.map(x => x.floor())    // round each element down
 
 $.stamps.map(Date)              // convert each element to a date
-// → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
+// → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: { $cond: [{ $isNumber: "$$x" }, { $toLong: "$$x" }, "$$x"] } } } }
 
 [$.first, $.middle, $.last].filter(Boolean).join(" ")
 // composed display name, skipping missing parts
@@ -2819,8 +2819,10 @@ new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 // Runtime arguments → the aggregation form (value isn't known until query time):
 new Date()                         // "$$NOW"  (current date/time)
 Date()                             // "$$NOW"  — the same as `new Date()`; JavaScript's `Date()` gives a string
-new Date($.dateString)             // { $toDate: "$dateString" }
-Date($.dateString)                 // { $toDate: "$dateString" }  — the same as `new Date($.dateString)`
+new Date($.value)                  // { $toDate: { $cond: [{ $isNumber: "$value" }, { $toLong: "$value" }, "$value"] } }
+Date($.value)                      // the same as `new Date($.value)`
+new Date($.ms * 1)                 // { $toDate: { $toLong: { $multiply: ["$ms", 1] } } }  — a proven number
+new Date($.text.trim())            // { $toDate: { $trim: { input: "$text" } } }  — a proven string
 new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
@@ -2829,6 +2831,10 @@ Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y",
 ```
 
 **Constant folding.** When every argument to `new Date(...)` is a compile-time literal, JSMQL evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` or `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document. `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter or `$match`, because MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument and never matches anything. Only truly runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments do not form a valid date (`new Date("not-a-date")`), JSMQL rejects it at compile time instead of emitting MQL that the server would refuse.
+
+**A number converts through a long.** MongoDB's `$toDate` reads a long, a double, a string, a date and an ObjectId. It refuses an int. A driver sends every whole number below 2^31 as an int. So `new Date(x)` converts a number with `$toLong` first. `$toLong` cuts a fraction toward zero, as `new Date(1.7)` does in JavaScript, so the instant is the same.
+
+The compiler writes the shorter form when the operand proves its kind. A proven string or date needs no `$toLong`. A proven number needs no `$isNumber` test.
 
 **Months count from 0, as in JavaScript. `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`. So a getter round trip needs no adjustment (`new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month), and code pasted from a JavaScript file means what it meant there. An out-of-range part rolls over exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you reach them through the escape hatch: `$month($.t)` is 1-based, and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January. The compiler leaves a `$op(…)` untouched.
 

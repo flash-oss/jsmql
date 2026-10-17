@@ -664,6 +664,8 @@ describe("compiler/passes/evaluate — a constant is what its lowered MQL says",
     expect(pipeline("$.x = new Date(Date.UTC(2026, 1, 1));")).toEqual([
       { $set: { x: new Date("2026-02-01T00:00:00.000Z") } },
     ]);
-    expect(pipeline("$.x = new Date($.n);")).toEqual([{ $set: { x: { $toDate: "$n" } } }]);
+    expect(pipeline("$.x = new Date($.n);")).toEqual([
+      { $set: { x: { $toDate: { $cond: [{ $isNumber: "$n" }, { $toLong: "$n" }, "$n"] } } } },
+    ]);
   });
 });

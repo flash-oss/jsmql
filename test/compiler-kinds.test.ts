@@ -435,8 +435,8 @@ describe("kinds — a precision is an integer", () => {
 describe("kinds — the BSON constructors take what their $to operator reads", () => {
   it("a value of unknown kind converts, and the server decides", () => {
     expect(jsmql.expr("ObjectId($.s)")).toEqual({ $toObjectId: "$s" });
-    expect(jsmql.expr("new Date($.t)")).toEqual({ $toDate: "$t" });
-    expect(jsmql.expr("ISODate($.t)")).toEqual({ $toDate: "$t" });
+    expect(jsmql.expr("new Date($.t)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$t" }, { $toLong: "$t" }, "$t"] } });
+    expect(jsmql.expr("ISODate($.t)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$t" }, { $toLong: "$t" }, "$t"] } });
     expect(jsmql.expr("UUID($.s)")).toEqual({ $toUUID: "$s" });
     expect(jsmql.expr("Long($.n)")).toEqual({ $toLong: "$n" });
     expect(jsmql.expr("Int32($.s)")).toEqual({ $toInt: "$s" });

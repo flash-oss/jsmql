@@ -424,7 +424,25 @@ var dateRow = (spelling) => global_({
       ),
       dynamic: {
         args: { sig: "value", exact: 1, slotType: { 0: ["string", "number", "date"] } },
-        emit: ({ args, value }) => ({ $toDate: value(args[0]) })
+        // MEASURED: `$toDate` refuses an int, and reads a long, a double (a fraction cuts toward zero),
+        // a Decimal128, a string, a date and an ObjectId. A driver sends a whole JavaScript number
+        // below 2^31 as an int, so a number goes through `$toLong` first. `$toLong` cuts a fraction the
+        // same way, so the instant is the one that `$toDate` of the plain number gives. The emitter
+        // tests `$isNumber` for a value of unknown kind, because `$toLong` refuses a string and a date.
+        emit: ({ args, value, type: type2, bind }) => {
+          const x = value(args[0]);
+          const kinds = type2(args[0]).kinds;
+          if (kinds !== "any" && !kinds.has("number")) return { $toDate: x };
+          if (kinds !== "any" && kinds.size === 1) {
+            const long = typeof x === "object" && x !== null && Object.keys(x).join() === "$toLong";
+            return { $toDate: long ? x : { $toLong: x } };
+          }
+          const cheap = typeof x === "string" && x.startsWith("$");
+          const v = cheap ? null : bind("n");
+          const ref = v === null ? x : v.ref;
+          const doc = { $toDate: { $cond: [{ $isNumber: ref }, { $toLong: ref }, ref] } };
+          return v === null ? doc : { $let: { vars: { [v.as]: x }, in: doc } };
+        }
       },
       // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and the compiler refuses
       // an eighth argument. Months are 1-BASED here, unlike JavaScript. Each part is an

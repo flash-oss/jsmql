@@ -11,7 +11,7 @@
 // guard: a suite that quietly degrades to compile-only looks exactly like one that passed.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MongoClient, type Collection } from "mongodb";
+import { Decimal128, Long, MongoClient, ObjectId, type Collection } from "mongodb";
 import { expr } from "../src/compiler/index.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { NAMES } from "../src/registry/names.ts";
@@ -3291,6 +3291,90 @@ describe.skipIf(!up)("compiler/emit — `.random()` gives lodash's range on the 
       if (whole && (!v.includes(lo) || !v.includes(hi))) wrong.push(`${src}: an end never appears`);
     }
     expect(wrong).toEqual([]);
+  });
+});
+
+/**
+ * `new Date(x)` runs for every kind of value that the row accepts.
+ *
+ * MEASURED: `$toDate` refuses an int, and reads a long, a double, a Decimal128, a string, a date and an
+ * ObjectId. The driver sends a whole JavaScript number below 2^31 as an int, so a number goes through
+ * `$toLong` first. Each case gives the value of the field and the instant that JavaScript's own
+ * `new Date(x)` gives, or null where HR5 says so: JavaScript reads `null` as 0.
+ */
+const DATE_VALUES: readonly (readonly [string, unknown, Date | null])[] = [
+  ["an int", 0, new Date(0)],
+  ["a large int", 1700000000, new Date(1700000000)],
+  ["a negative int", -5, new Date(-5)],
+  ["a long", Long.fromNumber(1700000000000), new Date(1700000000000)],
+  ["a double with a fraction", 1700000000000.7, new Date(1700000000000)],
+  ["a negative fraction", -1.7, new Date(-1)],
+  ["a Decimal128", Decimal128.fromString("5.9"), new Date(5)],
+  ["an ISO string", "2026-01-01T00:00:00Z", new Date("2026-01-01T00:00:00Z")],
+  ["a date", new Date(5000), new Date(5000)],
+  ["an ObjectId", new ObjectId("507f1f77bcf86cd799439011"), new Date("2012-10-17T21:13:27.000Z")],
+  ["null", null, null],
+];
+
+describe("compiler/emit — new Date(x) converts a number through a long", () => {
+  it("states the conversion by what the operand proves", () => {
+    // for an operand of unknown kind, the compiler tests for a number, because $toLong refuses a string and a date
+    expect(expr("new Date($.v)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$v" }, { $toLong: "$v" }, "$v"] } });
+    // a proven number converts through a long, and a proven string or date needs no conversion
+    expect(expr("new Date($.v * 1)")).toEqual({ $toDate: { $toLong: { $multiply: ["$v", 1] } } });
+    expect(expr("new Date($.d.getTime())")).toEqual({ $toDate: { $toLong: "$d" } });
+    expect(expr("new Date($.s.trim())")).toEqual({ $toDate: { $trim: { input: "$s" } } });
+    expect(expr("new Date($.d)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$d" }, { $toLong: "$d" }, "$d"] } });
+    // the compiler binds an operand that is no path once
+    expect(expr("new Date($.v ?? 0)")).toEqual({
+      $let: {
+        vars: { jsmqlN: { $ifNull: ["$v", 0] } },
+        in: { $toDate: { $cond: [{ $isNumber: "$$jsmqlN" }, { $toLong: "$$jsmqlN" }, "$$jsmqlN"] } },
+      },
+    });
+  });
+
+  describe.skipIf(!up)("on the server", () => {
+    let dates: Collection;
+    beforeAll(async () => {
+      dates = client!.db("jsmql_compiler_methods").collection("dates");
+      await dates.deleteMany({});
+      await dates.insertMany(DATE_VALUES.map(([, v], i) => ({ _id: i, v })));
+      await dates.insertOne({ _id: 100 });
+    });
+
+    const run = async (src: string): Promise<unknown[]> => {
+      const rows = await dates.aggregate([{ $sort: { _id: 1 } }, { $project: { x: expr(src) } }]).toArray();
+      return rows.map((r) => (r.x === undefined ? undefined : r.x));
+    };
+
+    it("gives JavaScript's instant for each kind of value, and null for null", async () => {
+      const got = await run("new Date($.v)");
+      expect(got.slice(0, DATE_VALUES.length).map((x) => canonical(x))).toEqual(
+        DATE_VALUES.map(([, , want]) => canonical(want)),
+      );
+      // a missing field is null, as a null field is
+      expect(got[DATE_VALUES.length]).toBeNull();
+    });
+
+    it("gives the same instant for an operand that a proof reads as a number", async () => {
+      const numbers = DATE_VALUES.filter(([, v]) => typeof v === "number" || v instanceof Long);
+      const rows = await dates
+        .aggregate([
+          { $match: { _id: { $in: numbers.map(([name]) => DATE_VALUES.findIndex(([n]) => n === name)) } } },
+          { $sort: { _id: 1 } },
+          { $project: { x: expr("new Date($.v * 1)") } },
+        ])
+        .toArray();
+      expect(rows.map((r) => canonical(r.x))).toEqual(numbers.map(([, , want]) => canonical(want)));
+    });
+
+    it("runs an operand that is no path", async () => {
+      const got = await run("new Date($.v ?? 0)");
+      expect(got.slice(0, DATE_VALUES.length).map((x) => canonical(x))).toEqual(
+        DATE_VALUES.map(([, , want]) => canonical(want ?? new Date(0))),
+      );
+    });
   });
 });
 

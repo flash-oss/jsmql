@@ -212,7 +212,7 @@ describe("compiler/emit/lower — calls", () => {
 
   it("lowers the globals by their argument class", () => {
     expect(expr("Number($.s)")).toEqual({ $toDouble: "$s" });
-    expect(expr("new Date($.ms)")).toEqual({ $toDate: "$ms" });
+    expect(expr("new Date($.ms)")).toEqual({ $toDate: { $cond: [{ $isNumber: "$ms" }, { $toLong: "$ms" }, "$ms"] } });
     expect(expr("ObjectId($.id)")).toEqual({ $toObjectId: "$id" });
     // never folded: `$toDouble("3")` is a double; the server judges a string it cannot parse
     expect(expr('Number("3")')).toEqual({ $toDouble: "3" });

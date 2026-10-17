@@ -3230,7 +3230,11 @@ describe("bare built-in callbacks", () => {
   // would ignore the argument and answer a string.
   it("applies a BSON constructor point-free", () => {
     expect(jsmql.expr("$.xs.map(Date)")).toEqual({
-      $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDate: "$$x" } },
+      $map: {
+        input: { $ifNull: ["$xs", []] },
+        as: "x",
+        in: { $toDate: { $cond: [{ $isNumber: "$$x" }, { $toLong: "$$x" }, "$$x"] } },
+      },
     });
     expect(jsmql.expr("$.xs.map(Decimal128)")).toEqual({
       $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $toDecimal: "$$x" } },
@@ -3958,7 +3962,9 @@ describe("date-method receiver type-check", () => {
   });
   it("no-ops on a field ref or new Date(…) (literal-gating)", () => {
     expect(jsmql.expr("$.ts.getFullYear()")).toEqual({ $year: "$ts" });
-    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
+    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({
+      $subtract: [{ $month: { $toDate: { $cond: [{ $isNumber: "$x" }, { $toLong: "$x" }, "$x"] } } }, 1],
+    });
     // a `"$ts"` receiver in JSMQL is text (HR6), and a string has no date method
     expect(() => jsmql.expr('"$ts".getHours()')).toThrow("'.getHours()' is not available on a 'string'");
   });
@@ -4008,7 +4014,9 @@ describe("new Date()", () => {
     expect(jsmql.expr("new Date()")).toEqual("$$NOW");
   });
   it("with field arg", () => {
-    expect(jsmql.expr("new Date($.ts)")).toEqual({ $toDate: "$ts" });
+    expect(jsmql.expr("new Date($.ts)")).toEqual({
+      $toDate: { $cond: [{ $isNumber: "$ts" }, { $toLong: "$ts" }, "$ts"] },
+    });
   });
   it("with constant string literal folds to a real Date (not $toDate)", () => {
     // A compile-time-constant `new Date(...)` denotes a constant Date, so it
@@ -6113,7 +6121,9 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
         { $dateTrunc: { date: "$b", unit: "day" } },
       ],
     });
-    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({ $subtract: [{ $month: { $toDate: "$x" } }, 1] });
+    expect(jsmql.expr("new Date($.x).getMonth()")).toEqual({
+      $subtract: [{ $month: { $toDate: { $cond: [{ $isNumber: "$x" }, { $toLong: "$x" }, "$x"] } } }, 1],
+    });
     // The universal pair is exempt on every receiver type.
     expect(jsmql.expr('$.t.plus(1, "day").getTime()')).toEqual({ $toLong: plusDay });
     expect(jsmql.expr('$.t.plus(1, "day").toString()')).toEqual({

@@ -285,7 +285,16 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
 
   it("falls back to $expr when an argument is a field ref", () => {
     expect(jsmql("[$match($.createdAt >= new Date($.cutoffStr))]")).toEqual([
-      { $match: { $expr: { $gte: ["$createdAt", { $toDate: "$cutoffStr" }] } } },
+      {
+        $match: {
+          $expr: {
+            $gte: [
+              "$createdAt",
+              { $toDate: { $cond: [{ $isNumber: "$cutoffStr" }, { $toLong: "$cutoffStr" }, "$cutoffStr"] } },
+            ],
+          },
+        },
+      },
     ]);
   });
 
