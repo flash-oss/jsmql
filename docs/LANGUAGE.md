@@ -1718,8 +1718,8 @@ $.s.length().range().map(i => $.s.charAt(i))
 // { s: "abc" } → ["a", "b", "c"]     { s: "" } → []     { s: null } → []     no `s` → []
 ```
 
-`.length()` answers `null` for a missing or a null field. The `?? 0` gives the end value `0` to the range,
-so a missing or a null field gives `[]`. JavaScript throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
+Under a dot, `.length()` answers `0` for a missing or a null field, so the range is empty, and the
+answer is `[]`. JavaScript throws there. The spelling reads one code point per element, as `[..."a😀"]` does in JavaScript: it
 gives `["a", "😀"]`, where JavaScript's `"a😀".split("")` gives three UTF-16 units.
 
 **Regex flags.** MongoDB's `$regex*` operators accept only the options `i`, `m`, `s`, `x`. JavaScript-only flags — `g` (global), `u`/`v` (unicode), `y` (sticky), `d` (indices) — have no MongoDB equivalent. So JSMQL drops them from the emitted `options` and keeps only `i`/`m`/`s`. Dropping `g` causes no problem: `$regexFindAll` is always global, and `g` has no effect on `$regexMatch`/`$regexFind`. `.matchAll()` still *requires* a `/g` regex, matching JS, which throws without one. But `g` itself does not appear in the output.
