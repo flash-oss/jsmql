@@ -8542,6 +8542,15 @@ describe("error cases", () => {
     // and a near-miss resolves to it.
     expect(() => jsmql.expr("$.name.substing(1)")).toThrow(/Did you mean '\.substring\(\)'/);
   });
+  it("names a working form for a namespace value, a refused callback and a spread into a JS call", () => {
+    expect(() => jsmql.expr("Math + 1")).toThrow(
+      "'Math' is a namespace, not a value. Write a member: 'Math.random()', or a number method: '$.n.abs()'.",
+    );
+    expect(() => jsmql.expr("$.a.map(Math.floor)")).toThrow("In a callback, write 'x => x.floor()'.");
+    expect(() => jsmql.expr("Number.isInteger(...$.a)")).toThrow(
+      "Spread (...) is not supported in Number.isInteger(...) — pass each argument on its own: 'Number.isInteger(value)'.",
+    );
+  });
   it("near-miss Math member gets a suggestion", () => {
     expect(() => jsmql.expr("Math.randon()")).toThrow(/Did you mean 'Math\.random'/);
   });

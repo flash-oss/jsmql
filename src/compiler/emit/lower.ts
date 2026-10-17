@@ -42,7 +42,7 @@ import {
   passesNullOf,
   takesNoReceiver,
 } from "../rows.ts";
-import { consult, everyName, familiesFor } from "./consult.ts";
+import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlotKinds, checkSlots } from "./check.ts";
 import { operandShapeOf } from "../rows.ts";
 import type { Env } from "./env.ts";
@@ -522,7 +522,12 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
         throw E.droppedBinding(b.ref, node.pos);
     }
   }
-  // A global read without a call — `Number`, `Math` — is a callable used as a value.
+  // A namespace read on its own — `Math`, `Object` — answers with its row's refusal, which names a member.
+  if (NAMESPACES.has(node.name)) {
+    const verdict = consult(node.name, positionIn(env));
+    if (verdict.kind === "refused") throw new E.CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
+  }
+  // A global read without a call — `Number` — is a callable used as a value.
   if (isGlobalName(node.name) || NAMESPACES.has(node.name)) throw E.callableAsValue(node.name, node.pos);
   throw new E.UnknownIdentifierError(node.name, node.pos);
 }

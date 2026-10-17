@@ -208,7 +208,7 @@ describe("assert — rejections", () => {
 
   it("rejects a spread argument", () => {
     expect(() => jsmql("assert(...$.flags)")).toThrow(
-      "Spread (...) is not supported in assert(...) — pass operands directly (assert(a, b)) or as a single array (assert([a, b])).",
+      "Spread (...) is not supported in assert(...) — pass each argument on its own: 'assert(condition[, message])'.",
     );
   });
 

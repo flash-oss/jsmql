@@ -8255,7 +8255,7 @@ var NAMES = {
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.round(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.round()': '$.n.round()'."
+          "'Math.round(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.round()': '$.n.round()'. In a callback, write 'x => x.round()'."
         )
       }
     },
@@ -8284,7 +8284,7 @@ var NAMES = {
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.ceil(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.ceil()': '$.n.ceil()'."
+          "'Math.ceil(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.ceil()': '$.n.ceil()'. In a callback, write 'x => x.ceil()'."
         )
       }
     },
@@ -8313,7 +8313,7 @@ var NAMES = {
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.floor(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.floor()': '$.n.floor()'."
+          "'Math.floor(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.floor()': '$.n.floor()'. In a callback, write 'x => x.floor()'."
         )
       }
     },
@@ -9352,7 +9352,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $abs: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.abs(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.abs()': '$.n.abs()'."
+          "'Math.abs(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.abs()': '$.n.abs()'. In a callback, write 'x => x.abs()'."
         )
       }
     },
@@ -9377,7 +9377,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sqrt: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.sqrt(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sqrt()': '$.n.sqrt()'."
+          "'Math.sqrt(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sqrt()': '$.n.sqrt()'. In a callback, write 'x => x.sqrt()'."
         )
       }
     },
@@ -9402,7 +9402,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $exp: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.exp(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.exp()': '$.n.exp()'."
+          "'Math.exp(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.exp()': '$.n.exp()'. In a callback, write 'x => x.exp()'."
         )
       }
     },
@@ -9459,7 +9459,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $log: [recv, 2] }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.log2(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.log2()': '$.n.log2()'."
+          "'Math.log2(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.log2()': '$.n.log2()'. In a callback, write 'x => x.log2()'."
         )
       }
     },
@@ -9484,7 +9484,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $log10: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.log10(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.log10()': '$.n.log10()'."
+          "'Math.log10(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.log10()': '$.n.log10()'. In a callback, write 'x => x.log10()'."
         )
       }
     },
@@ -9512,7 +9512,7 @@ var NAMES = {
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.trunc(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.trunc()': '$.n.trunc()'."
+          "'Math.trunc(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.trunc()': '$.n.trunc()'. In a callback, write 'x => x.trunc()'."
         )
       }
     },
@@ -9538,7 +9538,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv, present: present2 }) => ({ $cmp: [orZero(recv, present2), 0] }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.sign(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'."
+          "'Math.sign(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'. In a callback, write 'x => x.sign()'."
         )
       }
     },
@@ -9563,7 +9563,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => cbrt(recv) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.cbrt(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cbrt()': '$.n.cbrt()'."
+          "'Math.cbrt(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cbrt()': '$.n.cbrt()'. In a callback, write 'x => x.cbrt()'."
         )
       }
     },
@@ -9588,7 +9588,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sin: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.sin(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sin()': '$.n.sin()'."
+          "'Math.sin(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sin()': '$.n.sin()'. In a callback, write 'x => x.sin()'."
         )
       }
     },
@@ -9613,7 +9613,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cos: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.cos(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cos()': '$.n.cos()'."
+          "'Math.cos(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cos()': '$.n.cos()'. In a callback, write 'x => x.cos()'."
         )
       }
     },
@@ -9638,7 +9638,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $tan: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.tan(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.tan()': '$.n.tan()'."
+          "'Math.tan(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.tan()': '$.n.tan()'. In a callback, write 'x => x.tan()'."
         )
       }
     },
@@ -9663,7 +9663,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $asin: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.asin(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.asin()': '$.n.asin()'."
+          "'Math.asin(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.asin()': '$.n.asin()'. In a callback, write 'x => x.asin()'."
         )
       }
     },
@@ -9688,7 +9688,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $acos: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.acos(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.acos()': '$.n.acos()'."
+          "'Math.acos(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.acos()': '$.n.acos()'. In a callback, write 'x => x.acos()'."
         )
       }
     },
@@ -9713,7 +9713,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $atan: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.atan(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.atan()': '$.n.atan()'."
+          "'Math.atan(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.atan()': '$.n.atan()'. In a callback, write 'x => x.atan()'."
         )
       }
     },
@@ -9738,7 +9738,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sinh: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.sinh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sinh()': '$.n.sinh()'."
+          "'Math.sinh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sinh()': '$.n.sinh()'. In a callback, write 'x => x.sinh()'."
         )
       }
     },
@@ -9763,7 +9763,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cosh: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.cosh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cosh()': '$.n.cosh()'."
+          "'Math.cosh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cosh()': '$.n.cosh()'. In a callback, write 'x => x.cosh()'."
         )
       }
     },
@@ -9788,7 +9788,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $tanh: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.tanh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.tanh()': '$.n.tanh()'."
+          "'Math.tanh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.tanh()': '$.n.tanh()'. In a callback, write 'x => x.tanh()'."
         )
       }
     },
@@ -9813,7 +9813,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $asinh: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.asinh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.asinh()': '$.n.asinh()'."
+          "'Math.asinh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.asinh()': '$.n.asinh()'. In a callback, write 'x => x.asinh()'."
         )
       }
     },
@@ -9838,7 +9838,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $acosh: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.acosh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.acosh()': '$.n.acosh()'."
+          "'Math.acosh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.acosh()': '$.n.acosh()'. In a callback, write 'x => x.acosh()'."
         )
       }
     },
@@ -9863,7 +9863,7 @@ var NAMES = {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $atanh: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.atanh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.atanh()': '$.n.atanh()'."
+          "'Math.atanh(x)' is not part of JSMQL \u2014 the number's own method says the same thing, and one capability gets one spelling. Write '<number>.atanh()': '$.n.atanh()'. In a callback, write 'x => x.atanh()'."
         )
       }
     },
@@ -20773,7 +20773,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       return new CodegenError(sel.message, pos);
     case "spreadRefused": {
       const alt = spreadAlternativeOf(sel.name);
-      const fix = alt === void 0 ? `pass operands directly (${spelled3}(a, b)) or as a single array (${spelled3}([a, b]))` : `${alt}, or pass a single array (${spelled3}([a, b]))`;
+      const fix = alt !== void 0 ? `${alt}, or pass a single array (${spelled3}([a, b]))` : bare.startsWith("$") ? `pass operands directly (${spelled3}(a, b)) or as a single array (${spelled3}([a, b]))` : `pass each argument on its own: '${spelled3}(${sel.sig})'`;
       return new CodegenError(`Spread (...) is not supported in ${spelled3}(...) \u2014 ${fix}.`, pos);
     }
     case "fallback":
@@ -24594,6 +24594,10 @@ function identifier(node, env) {
       case "dropped":
         throw droppedBinding(b.ref, node.pos);
     }
+  }
+  if (NAMESPACES3.has(node.name)) {
+    const verdict = consult(node.name, positionIn(env));
+    if (verdict.kind === "refused") throw new CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
   }
   if (isGlobalName(node.name) || NAMESPACES3.has(node.name)) throw callableAsValue(node.name, node.pos);
   throw new UnknownIdentifierError(node.name, node.pos);

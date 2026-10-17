@@ -177,10 +177,13 @@ export function refusalFor(
       return new CodegenError(sel.message, pos);
     case "spreadRefused": {
       const alt = spreadAlternativeOf(sel.name);
+      // A JavaScript call reads each argument on its own. Its own signature shows the correct form.
       const fix =
-        alt === undefined
-          ? `pass operands directly (${spelled}(a, b)) or as a single array (${spelled}([a, b]))`
-          : `${alt}, or pass a single array (${spelled}([a, b]))`;
+        alt !== undefined
+          ? `${alt}, or pass a single array (${spelled}([a, b]))`
+          : bare.startsWith("$")
+            ? `pass operands directly (${spelled}(a, b)) or as a single array (${spelled}([a, b]))`
+            : `pass each argument on its own: '${spelled}(${sel.sig})'`;
       return new CodegenError(`Spread (...) is not supported in ${spelled}(...) — ${fix}.`, pos);
     }
     case "fallback":
