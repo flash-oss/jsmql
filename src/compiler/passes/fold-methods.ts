@@ -398,6 +398,22 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       }
       return ok(-1);
     }
+    case "indexOfSubstring": {
+      // The fold gives `$indexOfCP`'s answer for the start the lowering writes: a
+      // constant reads as its integer part, at least 0. MEASURED: a start at or past
+      // the end gives -1, also for the empty string, unless the start is 0.
+      if (typeof a !== "string") return NO;
+      if (b !== undefined && (typeof b !== "number" || !Number.isFinite(b))) return NO;
+      const start = b === undefined ? 0 : Math.max(0, Math.trunc(b));
+      if (!isInt32(start)) return NO;
+      const cps = points(s);
+      if (start > 0 && start >= cps.length) return ok(-1);
+      const needle = points(a);
+      for (let i = start; i <= cps.length - needle.length; i++) {
+        if (cps.slice(i, i + needle.length).join("") === a) return ok(i);
+      }
+      return ok(-1);
+    }
     // No `lastIndexOf`: the language refuses it on a string, because `$indexOfCP`
     // only searches forward. Folding it would ADD a method to the language.
     case "charAt":

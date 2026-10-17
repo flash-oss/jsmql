@@ -48,6 +48,8 @@ for (const v of STRING_SAMPLES) {
     '.startsWith("f")',
     '.endsWith("r")',
     '.indexOf("o")',
+    '.indexOfSubstring("o")',
+    '.indexOfSubstring("o", 2)',
     ".repeat(2)",
     ".padStart(10)",
     '.padStart(10, "*")',

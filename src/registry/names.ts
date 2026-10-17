@@ -4765,6 +4765,41 @@ export const NAMES = {
     window: unsupported("'.indexOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
+  indexOfSubstring: name({
+    doc: "'.indexOfSubstring()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "string",
+    sibling: { array: "For the position of a value in an array, write '.indexOf(value)'." },
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "searchString[, position]", allowed: [1, 2], slotType: { 0: "string" } },
+      // MEASURED: `$indexOfCP` refuses a negative, a fractional and a null start. JavaScript
+      // reads a constant as its integer part, at least 0. The lowering drops a start of 0, the default.
+      emit: ({ recv, args, value }) => {
+        if (args.length === 1) return { $indexOfCP: [recv, value(args[0])] };
+        const start = args[1];
+        const lit =
+          start.type === "NumberLiteral" && Number.isFinite(start.value)
+            ? Math.max(0, Math.trunc(start.value))
+            : literalIndexValue(start);
+        if (lit !== null && lit <= 0) return { $indexOfCP: [recv, value(args[0])] };
+        return { $indexOfCP: [recv, value(args[0]), lit ?? clampNonNegativeIndex(start, value(start))] };
+      },
+    },
+    stream: unsupported("'.indexOfSubstring()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.indexOfSubstring()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.indexOfSubstring();'",
+    ),
+    group: unsupported("'.indexOfSubstring()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.indexOfSubstring()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
   includes: name({
     doc: "'.includes()' — see docs/LANGUAGE.md.",
     call: true,

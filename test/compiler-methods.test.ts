@@ -182,6 +182,21 @@ describe("compiler/emit — string methods", () => {
     expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({
       $cond: [{ $lte: ["$csv", null] }, null, { $substrCP: ["$csv", 1, 2] }],
     });
+    // `.indexOfSubstring()` is JavaScript's `String.prototype.indexOf`. A constant start reads
+    // as its integer part, at least 0, because `$indexOfCP` refuses a negative or fractional one.
+    expect(compiled('$.csv.indexOfSubstring("b")', (d) => d.csv.indexOf("b"))).toEqual({ $indexOfCP: ["$csv", "b"] });
+    expect(compiled('$.csv.indexOfSubstring(",", 2)', (d) => d.csv.indexOf(",", 2))).toEqual({
+      $indexOfCP: ["$csv", ",", 2],
+    });
+    expect(compiled('$.csv.indexOfSubstring(",", 1.9)', (d) => d.csv.indexOf(",", 1.9))).toEqual({
+      $indexOfCP: ["$csv", ",", 1],
+    });
+    expect(compiled('$.csv.indexOfSubstring("a", -2)', (d) => d.csv.indexOf("a", -2))).toEqual({
+      $indexOfCP: ["$csv", "a"],
+    });
+    expect(compiled('$.csv.indexOfSubstring("a", $.neg)', (d) => d.csv.indexOf("a", d.neg))).toEqual({
+      $indexOfCP: ["$csv", "a", { $max: [0, "$neg"] }],
+    });
     expect(compiled('$.csv.replace(",", ";")', (d) => d.csv.replace(",", ";"))).toEqual({
       $replaceOne: { input: "$csv", find: ",", replacement: ";" },
     });
@@ -2777,6 +2792,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   padEnd: ["$.csv.padEnd(9)"],
   repeat: ["$.csv.repeat(2)"],
   indexOf: ["$.a.indexOf(9)"],
+  indexOfSubstring: ['$.csv.indexOfSubstring("b")'],
   includes: ['$.csv.includes("b")'],
   lastIndexOf: ["$.a.lastIndexOf(9)"],
   length: ["$.csv.length()"],
@@ -3007,6 +3023,7 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   trimEnd: ["$.nope?.trimEnd()", "$.mo.d?.trimEnd()"],
   trimRight: ["$.nope?.trimRight()", "$.mo.d?.trimRight()"],
   split: ['$.nope?.split(",")', '$.mo.d?.split(",")'],
+  indexOfSubstring: ['$.nope?.indexOfSubstring("b")', '$.mo.d?.indexOfSubstring("b")'],
   replace: ['$.nope?.replace("a", "x")', '$.mo.d?.replace("a", "x")'],
   replaceAll: ['$.nope?.replaceAll(",", ";")', '$.mo.d?.replaceAll(",", ";")'],
   padEnd: ["$.nope?.padEnd(9)", "$.mo.d?.padEnd(9)"],

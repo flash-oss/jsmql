@@ -3842,6 +3842,37 @@ var NAMES = {
     group: unsupported("'.indexOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.indexOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
+  indexOfSubstring: name({
+    doc: "'.indexOfSubstring()' \u2014 see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: "string",
+    sibling: { array: "For the position of a value in an array, write '.indexOf(value)'." },
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      args: { sig: "searchString[, position]", allowed: [1, 2], slotType: { 0: "string" } },
+      // MEASURED: `$indexOfCP` refuses a negative, a fractional and a null start. JavaScript
+      // reads a constant as its integer part, at least 0. The lowering drops a start of 0, the default.
+      emit: ({ recv, args, value }) => {
+        if (args.length === 1) return { $indexOfCP: [recv, value(args[0])] };
+        const start = args[1];
+        const lit = start.type === "NumberLiteral" && Number.isFinite(start.value) ? Math.max(0, Math.trunc(start.value)) : literalIndexValue(start);
+        if (lit !== null && lit <= 0) return { $indexOfCP: [recv, value(args[0])] };
+        return { $indexOfCP: [recv, value(args[0]), lit ?? clampNonNegativeIndex(start, value(start))] };
+      }
+    },
+    stream: unsupported("'.indexOfSubstring()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.indexOfSubstring()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.indexOfSubstring();'"
+    ),
+    group: unsupported("'.indexOfSubstring()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'.indexOfSubstring()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+    )
+  }),
   includes: name({
     doc: "'.includes()' \u2014 see docs/LANGUAGE.md.",
     call: true,
@@ -18150,6 +18181,19 @@ function stringMethod(s, name2, args) {
       const cps = points(s);
       const needle = points(a);
       for (let i = Math.max(0, typeof b === "number" ? b : 0); i <= cps.length - needle.length; i++) {
+        if (cps.slice(i, i + needle.length).join("") === a) return ok2(i);
+      }
+      return ok2(-1);
+    }
+    case "indexOfSubstring": {
+      if (typeof a !== "string") return NO2;
+      if (b !== void 0 && (typeof b !== "number" || !Number.isFinite(b))) return NO2;
+      const start = b === void 0 ? 0 : Math.max(0, Math.trunc(b));
+      if (!isInt32(start)) return NO2;
+      const cps = points(s);
+      if (start > 0 && start >= cps.length) return ok2(-1);
+      const needle = points(a);
+      for (let i = start; i <= cps.length - needle.length; i++) {
         if (cps.slice(i, i + needle.length).join("") === a) return ok2(i);
       }
       return ok2(-1);

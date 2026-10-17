@@ -610,6 +610,11 @@ const VALUE_METHOD_SIGNATURES = {
     sig: "(options?: { length?: number; omission?: string; separator?: string | RegExp }): string",
     doc: "Truncate to a length with an omission — `_.truncate`.",
   },
+  indexOfSubstring: {
+    recv: "String",
+    sig: "(searchString: string, position?: number): number",
+    doc: "The index of the first `searchString` at or after `position`, in code points, or -1 — `String.prototype.indexOf`.",
+  },
   words: {
     recv: "String",
     sig: "(pattern?: string | RegExp): string[]",
