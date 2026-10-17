@@ -3955,6 +3955,7 @@ var NAMES = {
   slice: name({
     doc: "'.slice()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     sibling: { string: "For a part of a string, write '.substring(start, end)'." },
     returns: { array: "same", stream: "stream" },
@@ -4001,6 +4002,7 @@ var NAMES = {
     mergesInto: true,
     doc: "'.concat()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     sibling: { string: "To join strings, write '+' between them: 'a + b'." },
     returns: { array: "array", stream: "stream" },

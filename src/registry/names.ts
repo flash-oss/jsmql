@@ -4890,6 +4890,7 @@ export const NAMES = {
   slice: name({
     doc: "'.slice()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     sibling: { string: "For a part of a string, write '.substring(start, end)'." },
     returns: { array: "same", stream: "stream" },
@@ -4938,6 +4939,7 @@ export const NAMES = {
     mergesInto: true,
     doc: "'.concat()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     sibling: { string: "To join strings, write '+' between them: 'a + b'." },
     returns: { array: "array", stream: "stream" },

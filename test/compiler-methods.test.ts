@@ -2999,6 +2999,8 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   round: ["$.nope?.round(2)", "$.mo.d?.round()"],
   ceil: ["$.nope?.ceil(1)", "$.mo.d?.ceil()"],
   floor: ["$.nope?.floor(1)", "$.mo.d?.floor()"],
+  slice: ["$.nope?.slice(1)", "$.mo.d?.slice(1, 2)"],
+  concat: ["$.nope?.concat($.b)", "$.mo.d?.concat([1])"],
   trim: ["$.nope?.trim()", "$.mo.d?.trim()"],
   trimStart: ["$.nope?.trimStart()", "$.mo.d?.trimStart()"],
   trimLeft: ["$.nope?.trimLeft()", "$.mo.d?.trimLeft()"],
