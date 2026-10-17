@@ -4806,20 +4806,19 @@ var NAMES = {
   toString: name({
     doc: "'.toString()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "any",
-    elements: "scalar",
     returns: "unknown",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      // JavaScript joins an array with "," and stringifies the rest; `$toString` of an array fails on the server
-      emit: ({ recv, bind }) => {
-        const v = bind("v");
-        return {
-          $let: { vars: { [v.as]: recv }, in: cond({ $isArray: v.ref }, joinedWith(v.ref, ","), { $toString: v.ref }) }
-        };
+      // A regex literal has no value of its own (see `regexBody`). The cell writes the
+      // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
+      emit: ({ recv }) => {
+        const re = recv;
+        return re.type === "RegexLiteral" ? `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}` : { $toString: singleArrayArg(recv) };
       }
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),

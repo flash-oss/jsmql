@@ -256,7 +256,7 @@ export function receiverFamiliesOf(name: string): readonly Family[] | "any" | un
 
 type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
 
-/** What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an array makes the server refuse. */
+/** What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an array gives MongoDB's text, not JavaScript's. */
 export function elementsOf(name: string): "scalar" | undefined {
   return (row(name) as { elements?: "scalar" } | undefined)?.elements;
 }

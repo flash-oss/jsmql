@@ -1814,9 +1814,10 @@ $.tags.join(", ")          // builds a separated string via $reduce/$concat, rea
                            //   written as "" rather than dropped (`[1, null, 2].join(",")`
                            //   is "1,,2"), an empty array is "", and a leading "" element
                            //   keeps its separator (`["", "a"].join(",")` is ",a")
-$.items.toString()         // same as .join(",") for arrays; no-op for strings; $toString otherwise
-// an array that provably holds arrays — [[1, 2], [3]], .partition(…) — is refused by both:
-// the server cannot stringify an array element; flatten first, or map each inner array to a string
+$.items.toString()         // { $toString: "$items" } — MongoDB's text, "[1,2]"; .join() gives JavaScript's "1,2"
+// an array that provably holds arrays — [[1, 2], [3]], .partition(…) — is refused by .join():
+// MongoDB writes an inner array as "[1,2]", where JavaScript writes "1,2";
+// flatten first, or map each inner array to a string
 $.nested.flat()            // flatten one level via $reduce + $concatArrays
 $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```
@@ -2601,6 +2602,26 @@ String($.numField)                 // { $toString: "$numField" }
 Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
 Number($.stringField).trunc()      // { $trunc: { $toDouble: "$stringField" } } — the whole number
 ```
+
+### `.toString()`
+
+```js
+$.n.toString()               // { $toString: "$n" }
+$.x?.toString()              // { $toString: "$x" }   — $toString gives null for a missing value
+$._id.toString()             // { $toString: "$_id" } — an ObjectId gives its 24 hex digits
+$.tags.toString()            // { $toString: "$tags" } — MongoDB's text: '["a","b"]'
+$.tags.join()                // the text JavaScript gives for an array: "a,b"
+```
+
+`.toString()` is always MongoDB's `$toString`, so its text can differ from the text JavaScript gives:
+
+- A date gives its ISO text in UTC (`"2026-03-15T13:45:30.250Z"`). JavaScript gives a text in local time. For a date text of your choice, write `.format(…)`.
+- A document gives its JSON text (`'{"a":1}'`). JavaScript gives `"[object Object]"`.
+- An array gives its JSON text (`"[1,[2,3]]"`). JavaScript gives `"1,2,3"`. Write `.join()` to get JavaScript's text.
+- A regex literal gives MongoDB's text of the regex, which keeps only the flags that MongoDB knows: `/a/g.toString()` is `"/a/"`.
+- A missing or `null` value gives `null`. JavaScript throws.
+
+`.toString()` takes no argument, so the compiler refuses a radix such as `(255).toString(16)`.
 
 `Boolean(x)` follows JavaScript's truthy and falsy rules. `Boolean("")` is `false`, `Boolean(0)` is `false`, and `Boolean([])` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
 

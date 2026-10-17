@@ -48,6 +48,7 @@ import {
   pairsToObject,
   normaliseSliceIndex,
   regexBody,
+  mongoRegexOptions,
   resolveSliceIndex,
   reverseArrayOf,
   setKey,
@@ -152,10 +153,11 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /** Probed in declaration order, so precedence is visible. */
   on: O;
   /**
-   * What the method needs of its receiver's ELEMENTS. `"scalar"`: the server refuses
-   * an element that is an array (`$toString` of an array). So the compiler refuses a
-   * receiver that provably holds arrays — a literal of literals, `.partition(…)` — at
-   * compile time, and it names the flatten / map-each rewrite.
+   * What the method needs of its receiver's ELEMENTS. `"scalar"`: an element that is
+   * an array gives MongoDB's text (`$toString` of `[1, 2]` is `"[1,2]"`), not
+   * JavaScript's (`"1,2"`). So the compiler refuses a receiver that provably holds
+   * arrays, for example a literal of literals or `.partition(…)`. The refusal names
+   * two rewrites: flatten the array, or map each inner array to a string.
    */
   elements?: "scalar";
   /**
@@ -5797,20 +5799,21 @@ export const NAMES = {
   toString: name({
     doc: "'.toString()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "any",
-    elements: "scalar",
     returns: "unknown",
     neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      // JavaScript joins an array with "," and stringifies the rest; `$toString` of an array fails on the server
-      emit: ({ recv, bind }) => {
-        const v = bind("v");
-        return {
-          $let: { vars: { [v.as]: recv }, in: cond({ $isArray: v.ref }, joinedWith(v.ref, ","), { $toString: v.ref }) },
-        };
+      // A regex literal has no value of its own (see `regexBody`). The cell writes the
+      // text that `$toString` gives for the BSON regex. MEASURED: `$toString` of /a+/is is "/a+/is".
+      emit: ({ recv }) => {
+        const re = recv as { type?: string; pattern?: string; flags?: string };
+        return re.type === "RegexLiteral"
+          ? `/${re.pattern}/${[...mongoRegexOptions(re.flags ?? "")].sort().join("")}`
+          : { $toString: singleArrayArg(recv) };
       },
     },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
