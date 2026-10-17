@@ -674,19 +674,18 @@ Some operators give `null` for a `null` operand. When each call after the `?.` u
 | `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $size: { $ifNull: ["$user.tags", []] } }] }` |
 | Index access (`obj?.[k]`, or a `?.` earlier in the chain) | `null` for a missing value, as a bare read | `$.scoresByLevel?.[$.level]` → `{ $ifNull: [<the index read>, null] }` |
 | A field read after a value | `null` for a missing value, as a bare read | `$.items[0]?.label` → `{ $ifNull: [{ $let: { vars: { jsmqlV: <the read of $.items[0]> }, in: "$$jsmqlV.label" } }, null] }` |
+| Comparison operand (`===`, `!==`, `<`, `<=`, `>`, `>=`) | `null` for a missing value, as a bare read: `{ $eq: ["$nope", null] }` is false, so the wrap changes the answer | `$.x?.y === 1` → `{ $eq: [{ $ifNull: ["$x.y", null] }, 1] }` |
 
 A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so it answers `null`: `$objectToArray` gives `null` for `null`, so the MQL holds no test.
 
-These cases produce the same MQL whether you use `.` or `?.`:
+In these cases the read takes no wrap, because the consumer answers a missing value as it answers `null`. The MQL is the same as for a dot:
 
-| Consumer | Why no wrap |
+| Consumer | Example |
 |---|---|
-| Object spread (`{...x?.y}`) | `$mergeObjects` silently ignores null operands and returns `{}` when all operands are null. |
-| Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`, `===`, `!==`) | `$eq` / `$ne` / `$lt` / `$gt` accept null cleanly. |
-| Loose-equality null check (`$.x?.y == null`) | The `==`/`!=` form already lowers to a `$type` check that catches "null" and "missing". |
-| `$cond` / `&&` / `\|\|` condition | Null is falsy; the chain naturally short-circuits to the alternate branch. |
-| `$in` first argument (`arr.has($.x?.y)`) | Searching for null in an array is a defined, non-erroring operation. |
-| Numeric arithmetic operand (`$.a + $.b?.c` in numeric mode, `-`, `*`, `/`, `%`, `**`) | MQL's `$add` etc. return null on null operand — matches JS's `1 + undefined === NaN` closely. Forcing a `0` fallback would silently produce different numbers than JS, which is worse DX than honest null. |
+| Numeric arithmetic (`+` on numbers, `-`, `*`, `/`, `%`, `**`, `-x`) — the answer is `null`, as `1 + undefined` is `NaN` in JavaScript | `$.a + $.b?.c` → `{ $add: ["$a", "$b.c"] }` |
+| `??` | `$.b?.c ?? 0` → `{ $ifNull: ["$b.c", 0] }` |
+| The null check `== null` / `!= null` | `$.b?.c == null` → `{ $lte: ["$b.c", null] }` |
+| A condition (`? :`, `if`, `&&` and `\|\|` tests, a `.filter()` predicate) | `$.b?.c ? 1 : 2` → `{ $cond: [{ $and: [{ $gt: ["$b.c", null] }, …] }, 1, 2] }` |
 
 **Scope of the wrap.** `?.` only wraps the chain it appears in. A `?.` that sits
 inside a lambda body, a method argument, an `IndexAccess.index`, or a binary
@@ -1529,8 +1528,8 @@ JSMQL tracks the JS distinction between strict and loose equality. It maps each 
 | ------------------ | ------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
 | `$.x === null`     | only real `null` (excludes missing)  | `{ $eq: ["$x", null] }`                                               | `{"x":{"$type":"null"}}` |
 | `$.x !== null`     | anything except real `null` (incl. missing) | `{ $ne: ["$x", null] }`                                        | `{"x":{"$not":{"$type":"null"}}}` |
-| `$.x == null`      | null OR missing                      | `{ $in: [{ $type: "$x" }, ["null", "missing"]] }`                     | `{"x":null}` |
-| `$.x != null`      | neither null nor missing             | `{ $not: [{ $in: [{ $type: "$x" }, ["null", "missing"]] }] }`         | `{"x":{"$ne":null}}` |
+| `$.x == null`      | null OR missing                      | `{ $lte: ["$x", null] }`                     | `{"x":null}` |
+| `$.x != null`      | neither null nor missing             | `{ $gt: ["$x", null] }`         | `{"x":{"$ne":null}}` |
 | `$.x === 5`        | `5`                                  | `{ $eq: ["$x", 5] }`                                                  | `{"x":5}` |
 | `$.x == 5`         | **compile error**                    | —                                                                     | —                                            |
 

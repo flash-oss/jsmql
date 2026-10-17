@@ -534,6 +534,11 @@ export function passesNullOf(name: string): boolean {
   return (row(name) as { passesNull?: true } | undefined)?.passesNull === true;
 }
 
+/** Does the production's operator answer a missing operand as it answers null? */
+export function productionPassesNullOf(key: string): boolean {
+  return ((PRODUCTIONS as Record<string, unknown>)[key] as { passesNull?: true } | undefined)?.passesNull === true;
+}
+
 /** Does the value cell read a null or missing receiver as a value of its own (`.range()` reads it as 0)? */
 export function readsNullReceiverOf(name: string): boolean {
   return (row(name) as { nullReceiverAs?: 0 } | undefined)?.nullReceiverAs !== undefined;

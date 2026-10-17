@@ -14,7 +14,7 @@ import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
 import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
-import { isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
+import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -39,6 +39,7 @@ import {
   positionsOf,
   readsNullAsEmptyOf,
   lowersOn,
+  productionPassesNullOf,
   passesNullOf,
   takesNoReceiver,
 } from "../rows.ts";
@@ -253,7 +254,8 @@ export function lowerTruth(node: Expr, env: Env): Truth {
     return boolTruth(cond(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)));
   }
   if (node.type === "ExprBlock") return boolTruth(exprBlock(node, env, (ret, e) => lowerTruth(ret, e)));
-  return truthOf(lowerValue(node, env), typeOf(node, env));
+  // each truth test answers a missing value as it answers null, so a `?.` read needs no `$ifNull`
+  return truthOf(lowerValue(nullPassing(node), env), typeOf(node, env));
 }
 
 // ── literals with structure ──────────────────────────────────────────────────
@@ -334,6 +336,14 @@ function passesNullAfter(node: Expr): boolean {
     cursor = cursor.object;
   }
   return cursor.type === "FieldRef" && cursor.optional === true && cursor.optionalAt === undefined && cursor !== node;
+}
+
+/**
+ * A `?.` read whose consumer answers missing as it answers null needs no `$ifNull: [x, null]`:
+ * the read runs as a plain read. Any other operand stays as it is.
+ */
+function nullPassing(e: Expr): Expr {
+  return readsHaveOptional(e) ? withoutReadOptional(e) : e;
 }
 
 /** A plain read: a field `.p` or an index `[k]`, never a call or a property row such as `Math.PI`. */
@@ -1196,7 +1206,8 @@ function production(node: Expr, key: string, operands: readonly Expr[], env: Env
     throw E.refusalFor(sel, `'${spelled}'`, "", positionIn(env), node.pos, []);
   }
   checkSlots(spelled, sel.rule.args, operands);
-  return sel.rule.emit(exprInputs(key, null, operands, [], env, node, READ));
+  const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
+  return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
 }
 
 /** Every operand of a left-nested chain of `op`, outermost-left first. */
@@ -1232,7 +1243,7 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
           $concat: operands.map((e) => (chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))),
         };
       }
-      return { $add: operands.map((e) => lowerValue(e, inner)) };
+      return { $add: operands.map((e) => lowerValue(productionPassesNullOf("addition") ? nullPassing(e) : e, inner)) };
     }
     case "&&":
     case "||":
@@ -1241,9 +1252,9 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
     case "!=": {
       const leftNull = node.left.type === "NullLiteral";
       if (!leftNull && node.right.type !== "NullLiteral") throw E.looseEqualityNotNull(node.op, node.pos);
-      const operand = lowerValue(leftNull ? node.right : node.left, inner);
-      const test = { $in: [{ $type: operand }, ["null", "missing"]] };
-      return node.op === "==" ? test : { $not: [test] };
+      // `x == null` is the null test: one comparison covers missing and null
+      const operand = lowerValue(nullPassing(leftNull ? node.right : node.left), inner);
+      return node.op === "==" ? isNullish(operand) : isNotNullish(operand);
     }
     case "in":
       return membership(node, inner);

@@ -1623,7 +1623,7 @@ describe("invoice line greeting with ?., ??, and .startsWith", { features: ["Tem
       ).toEqual({
         $concat: [
           "Hi ",
-          { $toString: { $ifNull: [{ $ifNull: ["$customer.firstName", null] }, "there"] } },
+          { $toString: { $ifNull: ["$customer.firstName", "there"] } },
           " — your ",
           {
             $cond: [
@@ -1739,14 +1739,8 @@ describe("full display name through .filter(Boolean).join", { features: ["Array 
               in: {
                 $cond: [
                   { $eq: ["$$value", null] },
-                  { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  {
-                    $concat: [
-                      "$$value",
-                      " ",
-                      { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                    ],
-                  },
+                  { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                  { $concat: ["$$value", " ", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
                 ],
               },
             },
@@ -1807,14 +1801,8 @@ describe("full address with conditional inclusion + filter + join", { features: 
               in: {
                 $cond: [
                   { $eq: ["$$value", null] },
-                  { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  {
-                    $concat: [
-                      "$$value",
-                      " ",
-                      { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                    ],
-                  },
+                  { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                  { $concat: ["$$value", " ", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
                 ],
               },
             },
@@ -1846,14 +1834,8 @@ describe("tag aggregation through .map.flat.join", { features: ["Array methods"]
               in: {
                 $cond: [
                   { $eq: ["$$value", null] },
-                  { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  {
-                    $concat: [
-                      "$$value",
-                      ", ",
-                      { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                    ],
-                  },
+                  { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                  { $concat: ["$$value", ", ", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
                 ],
               },
             },

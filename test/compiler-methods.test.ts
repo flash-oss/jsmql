@@ -13,6 +13,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { expr } from "../src/compiler/index.ts";
+import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { jsmql } from "../src/index.ts";
 import { liveClient, liveUp } from "./fixtures/live.ts";
@@ -1569,14 +1570,12 @@ describe("compiler/emit — array methods", () => {
                     in: {
                       $cond: [
                         { $eq: ["$$value", null] },
-                        { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                         {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }],
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
                       ],
@@ -1606,14 +1605,12 @@ describe("compiler/emit — array methods", () => {
                     in: {
                       $cond: [
                         { $eq: ["$$value", null] },
-                        { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                         {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }],
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
                       ],
@@ -1640,14 +1637,8 @@ describe("compiler/emit — array methods", () => {
             in: {
               $cond: [
                 { $eq: ["$$value", null] },
-                { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                {
-                  $concat: [
-                    "$$value",
-                    "-",
-                    { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  ],
-                },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", "-", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
               ],
             },
           },
@@ -1664,14 +1655,8 @@ describe("compiler/emit — array methods", () => {
             in: {
               $cond: [
                 { $eq: ["$$value", null] },
-                { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                {
-                  $concat: [
-                    "$$value",
-                    ",",
-                    { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  ],
-                },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", ",", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
               ],
             },
           },
@@ -3137,6 +3122,48 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
     for (const [row, [onMissing, onStated]] of Object.entries(NULL_RECEIVER_AS)) {
       const [a, b] = [await answer(onMissing), await answer(onStated)];
       if (a !== b) wrong.push(`${row}: ${onMissing} → ${a}, ${onStated} → ${b}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+/**
+ * Each production that states `passesNull`: an expression with a `?.` read as its operand,
+ * over a document that has no `b`. The read takes no `$ifNull`, and the answer is the one
+ * the wrapped read gives.
+ */
+const PRODUCTION_PASSES_NULL: Readonly<Record<string, readonly [src: string, wrapped: unknown]>> = {
+  addition: ["$.nob?.c + 1", { $add: [{ $ifNull: ["$nob.c", null] }, 1] }],
+  subtraction: ["$.nob?.c - 1", { $subtract: [{ $ifNull: ["$nob.c", null] }, 1] }],
+  multiplication: ["$.nob?.c * 2", { $multiply: [{ $ifNull: ["$nob.c", null] }, 2] }],
+  division: ["$.nob?.c / 2", { $divide: [{ $ifNull: ["$nob.c", null] }, 2] }],
+  remainder: ["$.nob?.c % 2", { $mod: [{ $ifNull: ["$nob.c", null] }, 2] }],
+  exponentiation: ["$.nob?.c ** 2", { $pow: [{ $ifNull: ["$nob.c", null] }, 2] }],
+  negation: ["-$.nob?.c", { $multiply: [{ $ifNull: ["$nob.c", null] }, -1] }],
+  nullishCoalescing: ["$.nob?.c ?? 0", { $ifNull: [{ $ifNull: ["$nob.c", null] }, 0] }],
+};
+
+describe("registry — every production that states `passesNull` has a measurement", () => {
+  it("measures exactly the productions that state it", () => {
+    const stating = Object.entries(PRODUCTIONS)
+      .filter(([, p]) => (p as { passesNull?: true }).passesNull === true)
+      .map(([k]) => k);
+    expect([...stating].sort()).toEqual(Object.keys(PRODUCTION_PASSES_NULL).sort());
+  });
+});
+
+describe.skipIf(!up)("registry — a production that states `passesNull` answers as the wrapped read", () => {
+  it("emits no `$ifNull` for the `?.` read, and the server gives the same answer", async () => {
+    const wrong: string[] = [];
+    const answer = async (e: unknown) =>
+      canonical(
+        (await coll!.aggregate([{ $addFields: { __v: e } }, { $project: { _id: 0, v: "$__v" } }]).toArray())[0],
+      );
+    for (const [key, [src, wrapped]] of Object.entries(PRODUCTION_PASSES_NULL)) {
+      const got = expr(src);
+      if (JSON.stringify(got).includes('"$ifNull":["$nob.c",null]')) wrong.push(`${key}: ${src} still wraps the read`);
+      const [a, b] = [await answer(got), await answer(wrapped)];
+      if (a !== b) wrong.push(`${key}: ${src} → ${a}, wrapped → ${b}`);
     }
     expect(wrong).toEqual([]);
   });

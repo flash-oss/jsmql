@@ -344,7 +344,7 @@ function sliceArray(recv, args, value, mint2) {
   };
 }
 var joinedWith = (recv, separator) => {
-  const piece = cond({ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" });
+  const piece = cond(isNullish("$$this"), "", { $toString: "$$this" });
   return {
     $ifNull: [
       {
@@ -10497,6 +10497,7 @@ var PRODUCTIONS = {
     noMixWith: ["logicalOr", "logicalAnd"],
     on: "any",
     flattensChain: true,
+    passesNull: true,
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -10765,6 +10766,7 @@ var PRODUCTIONS = {
     // This row states the `$add` road. A string operand makes it `$concat`, which
     // src/compiler/emit/prove.ts proves a string. MEASURED: `$add` over each pair of
     // operand kinds gives a number, a date, null or an error.
+    passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
@@ -10783,6 +10785,7 @@ var PRODUCTIONS = {
     on: "any",
     // MEASURED: `$subtract` over each pair of operand kinds gives a number, a date, null or
     // an error. A date minus a date is a long, and a date minus a number is a date.
+    passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
@@ -10804,6 +10807,7 @@ var PRODUCTIONS = {
     on: "any",
     flattensChain: true,
     // MEASURED: `$multiply` over each pair of operand kinds gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -10821,6 +10825,7 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // MEASURED: `$divide` over each pair of operand kinds gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -10841,6 +10846,7 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // MEASURED: `$mod` over each pair of operand kinds gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
@@ -10862,6 +10868,7 @@ var PRODUCTIONS = {
     leftOperandNot: ["logicalNot", "bitwiseNot", "typeCheck", "negation"],
     on: "any",
     // MEASURED: `$pow` over each pair of operand kinds gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -10898,6 +10905,7 @@ var PRODUCTIONS = {
     fixity: "prefix",
     on: "any",
     // MEASURED: `{ $multiply: [x, -1] }` over each operand kind gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -11860,6 +11868,9 @@ function readsNullAsEmptyOf(name2) {
 }
 function passesNullOf(name2) {
   return row(name2)?.passesNull === true;
+}
+function productionPassesNullOf(key) {
+  return PRODUCTIONS[key]?.passesNull === true;
 }
 function readsNullReceiverOf(name2) {
   return row(name2)?.nullReceiverAs !== void 0;
@@ -24399,7 +24410,7 @@ function lowerTruth(node, env) {
     return boolTruth(cond2(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)));
   }
   if (node.type === "ExprBlock") return boolTruth(exprBlock(node, env, (ret, e) => lowerTruth(ret, e)));
-  return truthOf(lowerValue(node, env), typeOf(node, env));
+  return truthOf(lowerValue(nullPassing(node), env), typeOf(node, env));
 }
 function templateLiteral(node, env) {
   if (node.exprs.length === 0) return node.quasis[0] ?? "";
@@ -24444,6 +24455,9 @@ function passesNullAfter(node) {
     cursor = cursor.object;
   }
   return cursor.type === "FieldRef" && cursor.optional === true && cursor.optionalAt === void 0 && cursor !== node;
+}
+function nullPassing(e) {
+  return readsHaveOptional(e) ? withoutReadOptional(e) : e;
 }
 function isRead(e) {
   return e.type === "IndexAccess" || e.type === "MemberAccess" && !isPropertyRow(e);
@@ -25040,7 +25054,8 @@ function production2(node, key, operands, env) {
     throw refusalFor(sel, `'${spelled3}'`, "", positionIn(env), node.pos, []);
   }
   checkSlots(spelled3, sel.rule.args, operands);
-  return sel.rule.emit(exprInputs(key, null, operands, [], env, node, READ));
+  const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
+  return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
 }
 function chainOf2(node, op) {
   const out = [];
@@ -25071,7 +25086,7 @@ function binary2(node, env) {
           $concat: operands.map((e) => chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))
         };
       }
-      return { $add: operands.map((e) => lowerValue(e, inner)) };
+      return { $add: operands.map((e) => lowerValue(productionPassesNullOf("addition") ? nullPassing(e) : e, inner)) };
     }
     case "&&":
     case "||":
@@ -25080,9 +25095,8 @@ function binary2(node, env) {
     case "!=": {
       const leftNull = node.left.type === "NullLiteral";
       if (!leftNull && node.right.type !== "NullLiteral") throw looseEqualityNotNull(node.op, node.pos);
-      const operand = lowerValue(leftNull ? node.right : node.left, inner);
-      const test = { $in: [{ $type: operand }, ["null", "missing"]] };
-      return node.op === "==" ? test : { $not: [test] };
+      const operand = lowerValue(nullPassing(leftNull ? node.right : node.left), inner);
+      return node.op === "==" ? isNullish(operand) : isNotNullish(operand);
     }
     case "in":
       return membership2(node, inner);

@@ -227,7 +227,14 @@ calls alone, with the path proved present. Then the compiler adds no dot wrap: `
 `{ $map: { input: { $objectToArray: "$o" }, … } }`. A plain read between the `?.` and a
 call keeps the test, because the call after the read runs under a dot. `$.o?.a.keys()` is
 `[]` for `o: {}`. A row that reads a missing receiver as a value (`nullReceiverAs`)
-cannot state the fact. `NullAnswer` in [names.ts](../../src/registry/names.ts) refuses
+cannot state the fact.
+
+A production states `passesNull` too, when its operator answers a missing operand as it
+answers `null`: the arithmetic operators and `??`. A `?.` read as its operand then runs as
+a plain read, with no `$ifNull: [x, null]` (`nullPassing` in
+[lower.ts](../../src/compiler/emit/lower.ts)). `== null` and a truth test read the operand
+the same way. A comparison does not state the fact, because `{ $eq: ["$nope", null] }` is
+false where `{ $eq: [null, null] }` is true. `NullAnswer` in [names.ts](../../src/registry/names.ts) refuses
 the pair.
 
 A cell guards with `$ifNull` exactly where the proof says `absent`. MEASURED:

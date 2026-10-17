@@ -464,7 +464,7 @@ export function sliceArray(
  * empty-array neutral that the rest of the language uses.
  */
 export const joinedWith = (recv: unknown, separator: unknown): unknown => {
-  const piece = cond({ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" });
+  const piece = cond(isNullish("$$this"), "", { $toString: "$$this" });
   return {
     $ifNull: [
       {

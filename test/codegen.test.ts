@@ -1370,7 +1370,7 @@ describe("arithmetic operators", () => {
 
 describe("comparison operators", () => {
   it("== null (loose: matches null OR missing through $type check)", () => {
-    expect(jsmql.expr("$.status == null")).toEqual({ $in: [{ $type: "$status" }, ["null", "missing"]] });
+    expect(jsmql.expr("$.status == null")).toEqual({ $lte: ["$status", null] });
   });
   it("=== (strict equality against any value)", () => {
     expect(jsmql.expr("$.status === 'active'")).toEqual({ $eq: ["$status", "active"] });
@@ -1379,7 +1379,7 @@ describe("comparison operators", () => {
     expect(jsmql.expr("$.status === null")).toEqual({ $eq: ["$status", null] });
   });
   it("!= null (loose: excludes both null AND missing)", () => {
-    expect(jsmql.expr("$.status != null")).toEqual({ $not: [{ $in: [{ $type: "$status" }, ["null", "missing"]] }] });
+    expect(jsmql.expr("$.status != null")).toEqual({ $gt: ["$status", null] });
   });
   it("!== null (strict: missing fields still pass)", () => {
     expect(jsmql.expr("$.status !== null")).toEqual({ $ne: ["$status", null] });
@@ -1394,7 +1394,7 @@ describe("comparison operators", () => {
     expect(() => jsmql.expr("$.x == 5")).toThrow(/'=='.*only allowed against null/);
   });
   it("accepts `null` on either side of `==`", () => {
-    expect(jsmql.expr("null == $.status")).toEqual({ $in: [{ $type: "$status" }, ["null", "missing"]] });
+    expect(jsmql.expr("null == $.status")).toEqual({ $lte: ["$status", null] });
   });
   it(">", () => {
     expect(jsmql.expr("$.age > 18")).toEqual({ $gt: ["$age", 18] });
@@ -2912,18 +2912,12 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
                       in: {
                         $cond: [
                           { $eq: ["$$value", null] },
-                          { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                          { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           {
                             $concat: [
                               "$$value",
                               ",",
-                              {
-                                $cond: [
-                                  { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                  "",
-                                  { $toString: "$$this" },
-                                ],
-                              },
+                              { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                             ],
                           },
                         ],
@@ -3340,14 +3334,8 @@ describe("bare built-in callbacks", () => {
             in: {
               $cond: [
                 { $eq: ["$$value", null] },
-                { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                {
-                  $concat: [
-                    "$$value",
-                    " ",
-                    { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  ],
-                },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", " ", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
               ],
             },
           },
@@ -4546,14 +4534,8 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
               in: {
                 $cond: [
                   { $eq: ["$$value", null] },
-                  { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  {
-                    $concat: [
-                      "$$value",
-                      ",",
-                      { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                    ],
-                  },
+                  { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                  { $concat: ["$$value", ",", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
                 ],
               },
             },
@@ -4956,14 +4938,12 @@ describe("array method additions", () => {
                     in: {
                       $cond: [
                         { $eq: ["$$value", null] },
-                        { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                         {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }],
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
                       ],
@@ -4995,14 +4975,12 @@ describe("array method additions", () => {
                     in: {
                       $cond: [
                         { $eq: ["$$value", null] },
-                        { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                         {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }],
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
                       ],
@@ -5034,14 +5012,12 @@ describe("array method additions", () => {
                     in: {
                       $cond: [
                         { $eq: ["$$value", null] },
-                        { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                         {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }],
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
                       ],
@@ -5955,14 +5931,12 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
                     in: {
                       $cond: [
                         { $eq: ["$$value", null] },
-                        { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                         {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }],
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
                       ],
@@ -6159,14 +6133,12 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
                     in: {
                       $cond: [
                         { $eq: ["$$value", null] },
-                        { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                         {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }],
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
                       ],
@@ -8860,12 +8832,10 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("$.user?.role === 'admin'")).toEqual({ $eq: [{ $ifNull: ["$user.role", null] }, "admin"] });
   });
   it("`==` null check against optional is NOT wrapped", () => {
-    expect(jsmql.expr("$.user?.role == null")).toEqual({
-      $in: [{ $type: { $ifNull: ["$user.role", null] } }, ["null", "missing"]],
-    });
+    expect(jsmql.expr("$.user?.role == null")).toEqual({ $lte: ["$user.role", null] });
   });
   it("numeric arithmetic against optional is NOT wrapped (honest null > 0)", () => {
-    expect(jsmql.expr("$.base + $.user?.bonus")).toEqual({ $add: ["$base", { $ifNull: ["$user.bonus", null] }] });
+    expect(jsmql.expr("$.base + $.user?.bonus")).toEqual({ $add: ["$base", "$user.bonus"] });
   });
 
   // `?.` buried inside a lambda body belongs to the lambda's chain, not the
@@ -9027,14 +8997,8 @@ describe(".join", () => {
             in: {
               $cond: [
                 { $eq: ["$$value", null] },
-                { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                {
-                  $concat: [
-                    "$$value",
-                    ",",
-                    { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  ],
-                },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", ",", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
               ],
             },
           },
@@ -9053,14 +9017,8 @@ describe(".join", () => {
             in: {
               $cond: [
                 { $eq: ["$$value", null] },
-                { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                {
-                  $concat: [
-                    "$$value",
-                    " | ",
-                    { $cond: [{ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" }] },
-                  ],
-                },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", " | ", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
               ],
             },
           },

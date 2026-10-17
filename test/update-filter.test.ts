@@ -551,7 +551,7 @@ describe("update filters: lex regression checks", () => {
   // Filter dispatch does not add a wrapping layer the lex test does not care
   // about.
   it("== null still parses (loose null check)", () => {
-    expect(jsmql.expr("$.a == null")).toEqual({ $in: [{ $type: "$a" }, ["null", "missing"]] });
+    expect(jsmql.expr("$.a == null")).toEqual({ $lte: ["$a", null] });
   });
 
   it("=== still parses as strict equality", () => {
@@ -570,7 +570,7 @@ describe("update filters: lex regression checks", () => {
   });
 
   it("!= null and !== still parse", () => {
-    expect(jsmql.expr("$.a != null")).toEqual({ $not: [{ $in: [{ $type: "$a" }, ["null", "missing"]] }] });
+    expect(jsmql.expr("$.a != null")).toEqual({ $gt: ["$a", null] });
     expect(jsmql.expr("$.a !== 1")).toEqual({ $ne: ["$a", 1] });
   });
 
