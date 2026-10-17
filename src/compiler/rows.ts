@@ -535,9 +535,14 @@ export function readsNullAsEmptyOf(name: string): boolean {
   return (row(name) as { readsNullAsEmpty?: true } | undefined)?.readsNullAsEmpty === true;
 }
 
-/** Does the bare value cell answer null for a null or missing receiver, so a `?.` before it needs no `$cond`? */
+/** Does the operator answer null for a null receiver, so a `?.` before the call needs no null test? */
 export function passesNullOf(name: string): boolean {
   return (row(name) as { passesNull?: true } | undefined)?.passesNull === true;
+}
+
+/** Does the production's operator answer a missing operand as it answers null? */
+export function productionPassesNullOf(key: string): boolean {
+  return ((PRODUCTIONS as Record<string, unknown>)[key] as { passesNull?: true } | undefined)?.passesNull === true;
 }
 
 /** The safe value a row states for a null or missing receiver (`.range()` reads 0, `.toString()` reads ""). */
@@ -765,6 +770,17 @@ export function packsSpreadOf(name: string): boolean {
   return states((row(name) as { expr?: unknown } | undefined)?.expr);
 }
 
+/**
+ * Does the value cell of this row LOWER a call on the family — a rule, not a refusal?
+ * `Object.groupBy` parses so that its cell can refuse it, and a suggestion never names it.
+ */
+export function lowersOn(name: string, family: string): boolean {
+  const cell = (row(name) as { expr?: unknown } | undefined)?.expr;
+  if (cell === null || typeof cell !== "object") return false;
+  const own = (cell as { perFamily?: Record<string, unknown> }).perFamily;
+  return isRuleCell(own === undefined ? cell : own[family]);
+}
+
 /** A mutator's write form by argument count — `.pop()` → `_r.slice(0, -1)` — or undefined when the row states none. */
 export function mutatorFormOf(name: string): MutatorForm | undefined {
   return (row(name) as { mutatorForm?: MutatorForm } | undefined)?.mutatorForm;
@@ -775,17 +791,6 @@ export function mutatorFormOf(name: string): MutatorForm | undefined {
 // `scripts/generate-globals.mjs` types the ambient `$$` / `$$$` chains and the
 // value methods from these, so the generated `src/globals.ts` cannot drift from
 // the registry: what a row states here is what the editor completes.
-
-/**
- * Does the row LOWER this name on this family as a value, rather than refuse it there?
- * `Object.keys` parses, and its `Object` cell only refuses, so a suggestion never names it.
- */
-export function lowersOn(name: string, family: string): boolean {
-  const expr = (row(name) as { expr?: unknown } | undefined)?.expr;
-  if (expr === null || typeof expr !== "object") return false;
-  const per = (expr as { perFamily?: Record<string, unknown> }).perFamily;
-  return isRuleCell(per === undefined ? expr : per[family]);
-}
 
 /** Is this cell a RULE — something that lowers — rather than a refusal or an in-code marker? */
 function isRuleCell(cell: unknown): boolean {

@@ -82,6 +82,10 @@ describe("compiler/passes/fold — a name that cannot be folded keeps its bindin
     );
   });
 
+  it("keeps a binding that a merge writes back", () => {
+    expect(stillDeclared("let o = { a: 1 }; o = { ...o, b: 2 }; $.x === o.a")).toBe(true);
+  });
+
   it("does not substitute where a lambda parameter shadows the name", () => {
     // `x` inside is the ELEMENT. Substituting the constant there would answer
     // with 100 where the source meant each item.
@@ -346,6 +350,7 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
       "let a = { p: 1 }; a.p = 9; $.x === a.p",
       "let a = [1, 2]; a[0] = 9; $.x === a",
       "let a = { p: 1 }; delete a.p; $.x === a",
+      "let a = { p: { q: 1 } }; a.p = { ...a.p, q: 2 }; $.x === a.p.q",
     ]) {
       expect(keepsABinding(src), src).toBe(true);
     }

@@ -235,8 +235,8 @@ export type NodeName = AstNode["type"];
 /**
  * What can carry a name. The first group holds the JavaScript value types.
  * `stream` is the `$$` document stream. The second group holds the namespace
- * receivers. The parser folds `Math.max(a, b)` into one node whose name is
- * `max` and whose receiver is `Math`, the same shape as `$.rows.max()`.
+ * receivers. The parser folds `Math.round(x)` into one node whose name is
+ * `round` and whose receiver is `Math`, the same shape as `$.n.round()`.
  */
 export type Family =
   | "string"
@@ -1000,7 +1000,7 @@ export type ExprIn = {
    * it:
    * `{ as: "kv", ref: "$$kv", body: { $let: { vars: { v: "$$kv.v", k: "$$kv.k" }, in: … } } }`.
    * `mode` reads the body as a value, or as a condition with the JavaScript truth rules:
-   *   $.o.pickBy(v => v)   in: { $and: [{ $ne: [{ $ifNull: ["$$v", null] }, null] }, …, { $ne: ["$$v", ""] }, …] }
+   *   $.o.pickBy(v => v)   in: { $and: [{ $gt: ["$$v", null] }, …, { $ne: ["$$v", ""] }, …] }
    */
   objIteratee: (cb: Expr, mode: "value" | "truth") => { as: string; ref: string; body: unknown };
   /**
@@ -1330,9 +1330,9 @@ type ByArgs<In, Out> = {
 };
 
 /**
- * A renderer. It holds one rule for every family, or one rule PER family. The rule
- * can differ by receiver as well as by position: `$.rows.max()` takes no argument,
- * and the `Math` family of the same `max` entry holds a refusal. Every
+ * A renderer. It holds one rule for every family, or one rule PER family. The
+ * count of arguments can differ by receiver as well as by position: `$.n.round(2)`
+ * takes a precision, the compiler refuses `Math.round(x)`, and both are the `round` entry. Every
  * family that `on` lists must appear, with a rule or with a refusal that says why.
  * No family that `on` omits can appear. `uncertain` answers a receiver whose family
  * the compiler cannot prove. See `Uncertain` for when a row must state it.

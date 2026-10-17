@@ -6,9 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { filter } from "../src/compiler/index.ts";
 
-const TRUTHY = (v: unknown) => ({
-  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
-});
+const TRUTHY = (v: unknown) => ({ $and: [{ $gt: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }] });
 
 describe("compiler/emit/filter — comparisons", () => {
   // Every comparison reads the field's OWN value: MongoDB would satisfy `{ a: 1 }`
@@ -309,7 +307,7 @@ describe("compiler/emit/filter — methods and operators", () => {
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
     // The query cell answers null, and the fallback asks the VALUE lowering, which
     // arrives under `$expr`.
-    // A receiver PROVEN to be no string is refused before either: `Math.abs` returns a number.
+    // A receiver PROVEN to be no string is refused before either: `.abs()` returns a number.
     expect(() => filter('$.n.abs().startsWith("A")')).toThrow(/not available on a 'number'/);
     /** The `.some` / `.every` value lowering over `input`; a missing array reads as empty (HR5). */
     const overItems = (input: string, op: "$anyElementTrue" | "$allElementsTrue", as: string, body: unknown) => ({

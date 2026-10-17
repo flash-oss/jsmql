@@ -36,7 +36,7 @@ describe(".slice(start, end?) — on $$ (top-level stream)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -332,12 +332,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
               $max: {
                 $cond: [
                   {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$ok", null] }, null] },
-                      { $ne: ["$ok", false] },
-                      { $ne: ["$ok", ""] },
-                      { $ne: ["$ok", 0] },
-                    ],
+                    $and: [{ $gt: ["$ok", null] }, { $ne: ["$ok", false] }, { $ne: ["$ok", ""] }, { $ne: ["$ok", 0] }],
                   },
                   0,
                   1,
@@ -361,12 +356,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
               $max: {
                 $cond: [
                   {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$ok", null] }, null] },
-                      { $ne: ["$ok", false] },
-                      { $ne: ["$ok", ""] },
-                      { $ne: ["$ok", 0] },
-                    ],
+                    $and: [{ $gt: ["$ok", null] }, { $ne: ["$ok", false] }, { $ne: ["$ok", ""] }, { $ne: ["$ok", 0] }],
                   },
                   0,
                   1,
@@ -451,12 +441,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
               $max: {
                 $cond: [
                   {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$ok", null] }, null] },
-                      { $ne: ["$ok", false] },
-                      { $ne: ["$ok", ""] },
-                      { $ne: ["$ok", 0] },
-                    ],
+                    $and: [{ $gt: ["$ok", null] }, { $ne: ["$ok", false] }, { $ne: ["$ok", ""] }, { $ne: ["$ok", 0] }],
                   },
                   0,
                   1,
@@ -492,7 +477,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
                               $cond: [
                                 {
                                   $and: [
-                                    { $ne: [{ $ifNull: ["$$o.ok", null] }, null] },
+                                    { $gt: ["$$o.ok", null] },
                                     { $ne: ["$$o.ok", false] },
                                     { $ne: ["$$o.ok", ""] },
                                     { $ne: ["$$o.ok", 0] },
@@ -535,7 +520,7 @@ describe("stream .takeWhile / .dropWhile → $setWindowFields running flag", () 
                               $cond: [
                                 {
                                   $and: [
-                                    { $ne: [{ $ifNull: ["$$o.ok", null] }, null] },
+                                    { $gt: ["$$o.ok", null] },
                                     { $ne: ["$$o.ok", false] },
                                     { $ne: ["$$o.ok", ""] },
                                     { $ne: ["$$o.ok", 0] },
@@ -894,18 +879,18 @@ describe("lodash iteratee shorthands on stream methods", () => {
     expect(jsmql("$$.map(d => d.flag ? d.sub : d.a * 2);")).toEqual([
       {
         $replaceWith: {
-          $cond: {
-            if: {
+          $cond: [
+            {
               $and: [
-                { $ne: [{ $ifNull: ["$flag", null] }, null] },
+                { $gt: ["$flag", null] },
                 { $ne: ["$flag", false] },
                 { $ne: ["$flag", ""] },
                 { $ne: ["$flag", 0] },
               ],
             },
-            then: "$sub",
-            else: { $multiply: ["$a", 2] },
-          },
+            "$sub",
+            { $multiply: ["$a", 2] },
+          ],
         },
       },
     ]);
@@ -933,7 +918,7 @@ describe("lodash iteratee shorthands on stream methods", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -1733,14 +1718,14 @@ describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary th
     ]);
   });
 
-  it("Math.max → $max accumulator", () => {
+  it("[acc, d.x].max() → $max accumulator", () => {
     expect(jsmql("$$ = [{ best: $$.reduce((acc, d) => [acc, d.score].max(), 0) }];")).toEqual([
       { $group: { _id: null, best: { $max: "$score" } } },
       { $replaceWith: { best: { $max: [0, "$best"] } } },
     ]);
   });
 
-  it("Math.min → $min accumulator", () => {
+  it("[acc, d.x].min() → $min accumulator", () => {
     expect(jsmql("$$ = [{ worst: $$.reduce((acc, d) => [acc, d.score].min(), 0) }];")).toEqual([
       { $group: { _id: null, worst: { $min: "$score" } } },
       { $replaceWith: { worst: { $min: [0, "$worst"] } } },
@@ -1783,7 +1768,7 @@ describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary th
 
   it("unrecognised reducer body inside the wrap is rejected with the supported-shapes list", () => {
     expect(() => jsmql("$$ = [{ total: $$.reduce((acc, d) => acc * d.x, 1) }];")).toThrow(
-      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc + d.<field>' ($sum), 'acc + 1' ($sum: 1), '[acc, d.<field>].max()' / '….min()' ($max / $min), 'acc ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc, d.<field>]' or 'acc.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
+      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc + d.<field>' ($sum), 'acc + 1' ($sum: 1), '[acc, d.<field>].max()' / '.min()' ($max / $min), 'acc ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc, d.<field>]' or 'acc.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
     );
   });
 });
@@ -1814,7 +1799,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
     ]);
   });
 
-  it("Math.min on a keyed accumulator → $min", () => {
+  it(".min() on a keyed accumulator → $min", () => {
     expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, low: [acc.low, d.score].min() }), { low: 0 })];")).toEqual([
       { $group: { _id: null, low: { $min: "$score" } } },
       { $replaceWith: { low: { $min: [0, "$low"] } } },
@@ -1869,13 +1854,13 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
         "$$ = [$$.reduce((acc, d) => ({ count: acc.count + 1, total: acc.count + d.amount }), { count: 0, total: 0 })];",
       ),
     ).toThrow(
-      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc.total + d.<field>' ($sum), 'acc.total + 1' ($sum: 1), '[acc.total, d.<field>].max()' / '….min()' ($max / $min), 'acc.total ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc.total, d.<field>]' or 'acc.total.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
+      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc.total + d.<field>' ($sum), 'acc.total + 1' ($sum: 1), '[acc.total, d.<field>].max()' / '.min()' ($max / $min), 'acc.total ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc.total, d.<field>]' or 'acc.total.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
     );
   });
 
   it("unrecognised body-entry shape is rejected with the supported-shapes list", () => {
     expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ total: acc.total * d.x }), { total: 1 })];")).toThrow(
-      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc.total + d.<field>' ($sum), 'acc.total + 1' ($sum: 1), '[acc.total, d.<field>].max()' / '….min()' ($max / $min), 'acc.total ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc.total, d.<field>]' or 'acc.total.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
+      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc.total + d.<field>' ($sum), 'acc.total + 1' ($sum: 1), '[acc.total, d.<field>].max()' / '.min()' ($max / $min), 'acc.total ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc.total, d.<field>]' or 'acc.total.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
     );
   });
 });
@@ -2011,11 +1996,11 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
-              { $ne: [{ $ifNull: ["$contactDetails.email", null] }, null] },
+              { $gt: ["$contactDetails.email", null] },
               { $ne: ["$contactDetails.email", false] },
               { $ne: ["$contactDetails.email", ""] },
               { $ne: ["$contactDetails.email", 0] },
@@ -2087,7 +2072,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },

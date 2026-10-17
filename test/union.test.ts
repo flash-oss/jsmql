@@ -31,7 +31,7 @@ describe("$$.push — .filter spread (pipeline-form $unionWith)", () => {
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },

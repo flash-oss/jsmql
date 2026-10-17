@@ -45,15 +45,25 @@ export function setKey<T>(out: Record<string, T>, name: string, value: T): Recor
 }
 
 /**
- * `{ $cond: { if, then, else } }` — the one spelling of a condition. A test the
- * compiler settled to a constant picks its branch here, so a `? :` whose test
- * cannot fail emits the branch alone.
+ * `{ $cond: [if, then, else] }` — the one spelling of a condition, in the short array
+ * form. A test the compiler settled to a constant picks its branch here, so a `? :`
+ * whose test cannot fail emits the branch alone.
  */
 export const cond = (ifExpr: unknown, thenExpr: unknown, elseExpr: unknown): unknown => {
   if (ifExpr === true) return thenExpr;
   if (ifExpr === false) return elseExpr;
-  return { $cond: { if: ifExpr, then: thenExpr, else: elseExpr } };
+  return { $cond: [ifExpr, thenExpr, elseExpr] };
 };
+
+/**
+ * Is the value missing or null? Null sorts below every other value but `MinKey`, so one
+ * comparison covers both. MEASURED: `{ $lte: [v, null] }` is true for a missing `v` and for
+ * `null`, and false for `0`, `""`, `false`, `[]` and `{}`.
+ */
+export const isNullish = (value: unknown): Record<string, unknown> => ({ $lte: [value, null] });
+
+/** Is the value there and not null? The negation of `isNullish`, measured on the same values. */
+export const isNotNullish = (value: unknown): Record<string, unknown> => ({ $gt: [value, null] });
 
 /** Is `value` already `{ $ifNull: [ … ] }`? A second wrap says nothing more. */
 export const isIfNullWrapped = (value: unknown): boolean =>
@@ -313,12 +323,7 @@ export const slotAggregate = (
 
 /** The JavaScript truth of a lowered value: not missing, and not null, false, "" or 0. */
 export const jsTruth = (value: unknown): unknown => ({
-  $and: [
-    { $ne: [{ $ifNull: [value, null] }, null] },
-    { $ne: [value, false] },
-    { $ne: [value, ""] },
-    { $ne: [value, 0] },
-  ],
+  $and: [isNotNullish(value), { $ne: [value, false] }, { $ne: [value, ""] }, { $ne: [value, 0] }],
 });
 
 /** `0 - n`. It folds for a constant. */
@@ -473,7 +478,7 @@ export function sliceArray(
  * empty-array neutral that the rest of the language uses.
  */
 export const joinedWith = (recv: unknown, separator: unknown): unknown => {
-  const piece = cond({ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" });
+  const piece = cond(isNullish("$$this"), "", { $toString: "$$this" });
   return {
     $ifNull: [
       {
@@ -519,31 +524,12 @@ export const indexedPairs = (arr: unknown): Record<string, unknown> => ({
  * ceil(2) of -1.234 → -1.23. Each one is the answer of JavaScript.
  */
 export const atPrecision = (op: "$ceil" | "$floor", value: unknown, precision: unknown): unknown => {
-  // A constant integer precision folds: MEASURED, `10 ** p` is the double `$pow: [10, p]` gives.
-  const scale = Number.isInteger(precision) ? 10 ** (precision as number) : { $pow: [10, precision] };
+  // A constant precision folds: MEASURED, `{ $pow: [10, p] }` is `10 ** p` for -7 ≤ p ≤ 15.
+  const scale = typeof precision === "number" ? 10 ** precision : { $pow: [10, precision] };
   return { $divide: [{ [op]: { $multiply: [value, scale] } }, scale] };
 };
 
-/**
- * An operand of an operator that answers null for a missing operand. A `?.` read with
- * nothing after it lowers to `{ $ifNull: [<read>, null] }`, so that a missing value
- * reads as null. Such an operator gives that null on its own, so the wrap is spare.
- */
-export const nullPassing = (v: unknown): unknown => {
-  const operands =
-    typeof v === "object" && v !== null && !Array.isArray(v) ? (v as { $ifNull?: unknown }).$ifNull : undefined;
-  return Array.isArray(operands) &&
-    operands.length === 2 &&
-    operands[1] === null &&
-    Object.keys(v as object).length === 1
-    ? operands[0]
-    : v;
-};
-
-/**
- * `.cbrt()` keeps the sign, because `$pow` of a negative base to a fractional exponent
- * is NaN on the server. MEASURED: the constant `1 / 3` is the double `$divide: [1, 3]` gives.
- */
+/** `.cbrt()` keeps the sign, because `$pow` of a negative base to a fractional exponent is NaN on the server. */
 export const cbrt = (v: unknown): Record<string, unknown> => ({
   $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, 1 / 3] }],
 });
@@ -555,12 +541,13 @@ export const isFiniteNumber = (v: unknown): Record<string, unknown> => ({
 
 /**
  * A list of `[key, value]` pairs as a document. `$toString` renders the key,
- * because JavaScript's `Object.fromEntries([[7, 1]])` answers `{ "7": 1 }`, and
- * `$arrayToObject` refuses a non-string key outright.
+ * because JavaScript reads `[[7, 1]]` as the object `{ "7": 1 }`, and
+ * `$arrayToObject` refuses a non-string key outright. The `in` body reads `$$this`, the
+ * default name of `$map`, because the body is this fixed text and holds no expression of
+ * the developer's.
  * MEASURED: the server refuses a pair whose key is not a string.
  */
 export const pairsToObject = (pairs: unknown): unknown => ({
-  // `$$this` is safe: the `in` body is fixed compiler text, never a user expression
   $arrayToObject: {
     $map: { input: pairs, in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] },
   },

@@ -337,7 +337,7 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
                 $expr: {
                   $and: [
                     { $or: [{ $eq: ["$refId", "$$jsmql_f0__id"] }, { $eq: ["$altId", "$$jsmql_f0__id"] }] },
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },

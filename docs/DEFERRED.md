@@ -190,15 +190,19 @@ The array methods do each set operation, with the lodash name where lodash has o
 
 Reconsider only if MongoDB gains a set type.
 
-### Two spellings of one capability (`Object.keys(o)` and `o.keys()`, `Math.abs(x)` and `x.abs()`)
+### A second spelling for one capability (`Object.keys(o)` beside `o.keys()`, `Math.abs(x)` beside `x.abs()`)
 
-The developer decided the rule: one capability gets one spelling, and the shorter spelling wins. A JavaScript static and a method after a dot often say the same thing and emit the identical MQL. Two spellings make each codebase choose one, and a reader must know both. So JSMQL keeps the shorter one. Where the method is shorter, the compiler refuses the static: it keeps `o.keys()` and refuses `Object.keys(o)`, keeps `x.abs()` and refuses `Math.abs(x)`, and keeps `a ** b` and refuses `Math.pow(a, b)`. Where the static is shorter, it stays, for example `Date.now()` beside `new Date().getTime()`.
+The developer rejected this. One capability gets one spelling, and the shorter spelling wins. Two spellings of one capability make each codebase pick one, and they give a reader two forms to learn. So a JavaScript static is not a JSMQL name when a method or an operator says the same thing in fewer characters. For example, write `o.keys()` for `Object.keys(o)`, and write `a ** b` for `Math.pow(a, b)`. The name still parses, and its row refuses it and names the one spelling. `Object.groupBy` and `Set` are earlier cases of the same rule. A static stays when it is the shorter spelling, for example `Date.now()`, or when it has no other spelling, for example `Number.isInteger(x)`. The rows in `src/registry/names.ts` hold the live list. See [docs/LANGUAGE.md § Object Operations](LANGUAGE.md#object-operations) and [§ Number Methods](LANGUAGE.md#number-methods).
 
-A refused static still parses, so it gets an answer, and the refusal names the spelling that emits the identical MQL. A deleted name would answer "unknown identifier", which helps nobody. `Object.groupBy(items, d)` was the first case. The `Set` decision above follows the same idea: an array method does each set operation, so `Set` is no second spelling of it.
+Reconsider a name only if its static becomes the shorter spelling.
+
+### lodash's `floating` argument of `.random()` (`x.random(y, true)`)
+
+The developer rejected this. `.random()` follows lodash's own rule for the form of its answer. Two whole bounds give a whole number. Any other pair gives a fractional number. A flag that forces a fractional answer adds a second rule beside the rule of the bounds. The compiler refuses a second argument with the argument-count error of the row.
 
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 
-The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`[...arr].max()`, `({}).assign(...arr)`, the object spread `{ ...a, ...b }`, `[...a, ...b]`, `.concat()`).
+The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`[…].max()`, `({}).assign(...arr)`, the object spread `{ ...a, ...b }`, `[...a, ...b]`, `.concat()`).
 
 ### Checks on the escape hatch (`$op(…)`, `$stage(…)`, a raw `{ $op: … }` document)
 

@@ -80,20 +80,20 @@ callback parameter binds the wrapped input, and is present with it.
 answers null for the number family and `dispatchOn` hands the cell the receiver as
 it is. A row whose operator answers null for a null operand states `passesNull`, so
 `.` and `?.` emit the same MQL (`$.n?.round()` is `{ $round: "$n" }`). A row with a
-safe answer for a missing number states it instead: `nullReceiverAs: 0` (`.range()`),
-or an operator that answers a value for null (`.clamp()`, `.inRange()`). Such a row
-keeps the `$cond` of a `?.`.
+safe answer for a missing number states it instead: `nullReceiverAs: 0` (`.range()`,
+`.sign()`), or an operator that answers a value for null (`.clamp()`, `.inRange()`).
+Such a row keeps the `$cond` of a `?.`.
 
 **A string method reads a missing string as `""`.** `emptyValueOf` answers `""` for
 the string family, so `dispatchOn` wraps the receiver in `{ $ifNull: [<recv>, ""] }`
 under a dot, as it does with `[]` and `{}`. `$.s.length()` is
 `{ $strLenCP: { $ifNull: ["$s", ""] } }`. Where the operator already reads null as
-`""`, the cell takes the bare receiver: `$substrCP` of null is `""` (measured), so
+`""`, the cell takes the bare receiver. `$substrCP` of null is `""` (measured), so
 `substrOperand` in `src/registry/mql.ts` drops the wrap there. `nullOr` in
-`src/registry/names.ts` keeps one shape for a receiver that may still be null,
-`{ $cond: [{ $eq: [{ $ifNull: [r, null] }, null] }, null, <body over r>] }`, with
-the receiver bound by `$let` unless it is a path. The body runs on a proven
-receiver, so it carries no `$ifNull` of its own. The compiler skips the
+`src/registry/names.ts` keeps one shape for a receiver that may still be null:
+`{ $cond: [{ $lte: [r, null] }, null, <body over r>] }`. A `$let` binds the receiver
+unless it is a path. The body runs on a proven receiver, so it carries no
+`$ifNull` of its own. The compiler skips the
 test when the receiver is PRESENT (`ExprIn.present`): proven from the source by
 `isPresent` (`emit/prove.ts` — a literal, the root document, a `$lookup`'s
 array, a `let` of a present value through the binding's proof, a `neverNull`
@@ -156,8 +156,8 @@ can be, because a receiver of that family is not a program that compiles. So
 refused branches return only when nothing else is left, so that the refusal is
 what answers.
 
-A cell has to know one more thing about the proof. A cell that reads `present`
-answers a DIFFERENT document inside a dispatch branch, whose `$type` test proves the receiver,
+A cell has to know one more thing about the proof. A cell that reads `present` answers a DIFFERENT
+document inside a dispatch branch, whose `$type` test proves the receiver,
 from the one it answers outside the branch. When a row's family cell and its
 `uncertain` are meant to be one answer, that difference makes the compiler
 emit a `$switch` the row does not want. So those cells share one body that
@@ -868,14 +868,15 @@ them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`.
 
 **`.assign()` puts the receiver first.** With no spread, each argument is one source:
 `$.a.assign($.b)` is `{ $mergeObjects: ["$a", "$b"] }`. A packed list is the list of
-sources, after the receiver: `$.a.assign(...$.docs)` is
-`{ $mergeObjects: { $concatArrays: [["$a"], "$docs"] } }`. An empty-object receiver
-adds nothing, so the cell leaves it out where the sources stay objects:
-`({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, and `({}).assign($.a, $.b)`
-is `{ $mergeObjects: ["$a", "$b"] }`. One source with no spread keeps the `{}`:
-`({}).assign($.o)` is `{ $mergeObjects: [{}, "$o"] }`, because the one-operand form
-would merge an array source. The server merges an array in the one-operand form, and
-refuses an array among two or more operands (measured).
+sources, after the receiver, and it takes the HR5 guard of the array literal:
+`$.a.assign(...$.docs)` is `{ $mergeObjects: { $concatArrays: [["$a"], { $ifNull: ["$docs", []] }] } }`.
+Without the guard, `$concatArrays` answers null for a missing `docs`, and the merge loses
+the receiver. An empty-object receiver adds nothing, so the cell leaves it out where the
+sources stay objects: `({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, and
+`({}).assign($.a, $.b)` is `{ $mergeObjects: ["$a", "$b"] }`. One source with no spread
+keeps the `{}`: `({}).assign($.o)` is `{ $mergeObjects: [{}, "$o"] }`, because the
+one-operand form would merge an array source. The server merges an array in the
+one-operand form, and refuses an array among two or more operands (measured).
 
 **`.concat()` reads each argument on its own.** JavaScript adds the elements
 of an array argument, and adds any other argument as one element. So the
@@ -983,7 +984,7 @@ root), and names the pipeline form as the way to compute.
 | `$.a = c` / `delete $.a` | `$set` / `$unset: { a: "" }` |
 | `$.n += c`, `-= c`, `++`, `--` | `$inc` (negated for `-=`) |
 | `$.n *= c`, `/= c` | `$mul` (`1 / c` for `/=`) |
-| `$.n = [$.n, c].min()` / `.max()` | `$min` / `$max` (the same path first in the list) |
+| `$.n = [$.n, c].min()` / `.max()` | `$min` / `$max` (the same path on both sides) |
 | `$.t = new Date()` | `$currentDate: { t: true }` |
 | `$.b = $.a; delete $.a;` (either order) | `$rename: { a: "b" }` — a copy without the delete is refused |
 | `$.tags.push(x[, y])`, `.unshift(x)` | `$push`, with `$each` for several and `$position: 0` for unshift |

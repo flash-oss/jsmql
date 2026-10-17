@@ -282,13 +282,13 @@ Outside a pipeline — a filter, `jsmql.expr`, an update document — there is
 no binding scope, so the compiler refuses a bare-identifier assignment
 there too.
 
-### A merge into a binding
+### A merge written back to a binding
 
-A merge into a binding is an assignment of a spread:
-`<name> = { ...<name>, ...sources }` →
-`{ $set: { "__jsmql.var.<name>": { $mergeObjects: ["$__jsmql.var.<name>", …sources] } } }`.
-So the binding must be a `let`. `.assign()` answers a new object and writes
-nothing in place; see [update-filter.md § Mutators](update-filter.md).
+`r = { ...r, ...sources }` writes the merge back to the binding's slot
+(`{ $set: { "__jsmql.var.r": { $mergeObjects: ["$__jsmql.var.r", …sources] } } }`).
+`.assign()` answers a new object and writes nothing, so a bare `r.assign(…);`
+statement is refused, and the error names this write. See
+[update-filter.md § Mutators](update-filter.md).
 
 ## Lowering
 

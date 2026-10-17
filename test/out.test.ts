@@ -50,7 +50,7 @@ describe("$out — RHS chain: $$.filter(<predicate>) → $match + $out", () => {
           $expr: {
             $not: {
               $and: [
-                { $ne: [{ $ifNull: ["$active", null] }, null] },
+                { $gt: ["$active", null] },
                 { $ne: ["$active", false] },
                 { $ne: ["$active", ""] },
                 { $ne: ["$active", 0] },
@@ -380,7 +380,7 @@ describe("$merge — adding to a collection", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },

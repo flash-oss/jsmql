@@ -7,9 +7,9 @@
 // writes down, never that the server agrees — and "agrees" is the entire claim a
 // fold makes. Every rule the fold has that LOOKS like an arbitrary restriction
 // was put there by a failure of this suite:
-//   Math.atanh(0.25)         JavaScript 0.25541281188299536   server …3
+//   (0.25).atanh()           JavaScript 0.25541281188299536   server …3
 //   123456789 * 987654321    JavaScript …260                  server …269
-//   Math.round(0.5)          JavaScript 1                     server 0
+//   (0.5).round()            JavaScript 1                     server 0
 //
 // It skips itself when no mongod is listening, so `npm test` stays green.
 
@@ -86,6 +86,12 @@ const EXPRESSIONS: readonly string[] = [
   // statics
   "Number.isInteger(4)",
   "Number.isInteger(4.5)",
+  "({ a: 1, b: 2 }).keys()",
+  "({ a: 1, b: 2 }).values()",
+  "({ a: 1 }).entries()",
+  '({ a: 1, b: "x" }).entries()',
+  '[["a", 1], ["b", 2]].fromEntries()',
+  "({ a: 1 }).assign({ b: 2 })",
   // string methods
   '"aBc".toUpperCase()',
   '"AbC".toLowerCase()',
@@ -247,12 +253,6 @@ const EXPRESSIONS: readonly string[] = [
   'new Date("2019-12-30").isoWeekYear()',
   'new Date("2020-12-31").dayOfYear()',
   // object methods
-  "({ a: 1, b: 2 }).keys()",
-  "({ a: 1, b: 2 }).values()",
-  "({ a: 1 }).entries()",
-  '({ a: 1, b: "x" }).entries()',
-  '[["a", 1], ["b", 2]].fromEntries()',
-  "({ a: 1 }).assign({ b: 2 })",
   "({ a: 1, b: 2 }).keys().size()",
   "({ a: 1, b: 2 }).pick(['a'])",
   "({ a: 1, b: 2 }).omit(['a'])",

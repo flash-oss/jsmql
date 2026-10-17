@@ -363,7 +363,7 @@ function valueTerminalMembers() {
 // `Number` interfaces with these methods. Each carries a concrete return type so chains stay typed
 // (`items.uniq().chunk(2)` → `T[][]`). This activates only on a concretely typed receiver. A bare
 // `$.field` is `any`, and `any.uniq()` stays `any` (no completion, but no error either). Operators
-// like `$.age > 18` stay untouched. The win is for annotated documents, typed statics (`Object.values(o)`),
+// like `$.age > 18` stay untouched. The win is for annotated documents,
 // literals, and mid-chain results. See docs/specs/globals-generation.md.
 //
 // Object-*receiver* methods (`.mapValues`, `.pick`, `.omit`, `.invert`) are deliberately NOT augmented.
@@ -637,37 +637,46 @@ const VALUE_METHOD_SIGNATURES = {
     sig: "(precision?: number): number",
     doc: "Round down to `precision` decimals — `_.floor`.",
   },
-  // The number methods that JavaScript spells as `Math` statics. The receiver is the first operand.
-  abs: { recv: "Number", sig: "(): number", doc: "The absolute value — `$abs`." },
-  sqrt: { recv: "Number", sig: "(): number", doc: "The square root — `$sqrt`." },
-  cbrt: { recv: "Number", sig: "(): number", doc: "The cube root, with the sign kept." },
-  exp: { recv: "Number", sig: "(): number", doc: "`e` raised to this power — `$exp`." },
-  log10: { recv: "Number", sig: "(): number", doc: "The base-10 logarithm — `$log10`." },
-  log2: { recv: "Number", sig: "(): number", doc: "The base-2 logarithm — `$log` with base 2." },
-  sign: { recv: "Number", sig: "(): number", doc: "-1, 0 or 1 — the sign of the number." },
-  sin: { recv: "Number", sig: "(): number", doc: "The sine, in radians — `$sin`." },
-  cos: { recv: "Number", sig: "(): number", doc: "The cosine, in radians — `$cos`." },
-  tan: { recv: "Number", sig: "(): number", doc: "The tangent, in radians — `$tan`." },
-  asin: { recv: "Number", sig: "(): number", doc: "The arcsine, in radians — `$asin`." },
-  acos: { recv: "Number", sig: "(): number", doc: "The arccosine, in radians — `$acos`." },
-  atan: { recv: "Number", sig: "(): number", doc: "The arctangent, in radians — `$atan`." },
-  sinh: { recv: "Number", sig: "(): number", doc: "The hyperbolic sine — `$sinh`." },
-  cosh: { recv: "Number", sig: "(): number", doc: "The hyperbolic cosine — `$cosh`." },
-  tanh: { recv: "Number", sig: "(): number", doc: "The hyperbolic tangent — `$tanh`." },
-  asinh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic sine — `$asinh`." },
-  acosh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic cosine — `$acosh`." },
-  atanh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic tangent — `$atanh`." },
+  // ── Number → number: the JavaScript `Math` members, on the number ─────────────
+  abs: { recv: "Number", sig: "(): number", doc: "The absolute value — `Math.abs`." },
+  sqrt: { recv: "Number", sig: "(): number", doc: "The square root — `Math.sqrt`." },
+  cbrt: { recv: "Number", sig: "(): number", doc: "The cube root — `Math.cbrt`." },
+  exp: { recv: "Number", sig: "(): number", doc: "e to the power of the value — `Math.exp`." },
   log: {
     recv: "Number",
     sig: "(base?: number): number",
-    doc: "The natural logarithm — `$ln` — or the logarithm to `base` — `$log`.",
+    doc: "The natural logarithm, or the logarithm to `base` — `Math.log`.",
   },
-  trunc: { recv: "Number", sig: "(precision?: number): number", doc: "Truncate to `precision` decimals — `$trunc`." },
-  atan2: { recv: "Number", sig: "(x: number): number", doc: "The arctangent of this / `x`, in radians — `$atan2`." },
+  log2: { recv: "Number", sig: "(): number", doc: "The base-2 logarithm — `Math.log2`." },
+  log10: { recv: "Number", sig: "(): number", doc: "The base-10 logarithm — `Math.log10`." },
+  sign: { recv: "Number", sig: "(): number", doc: "-1, 0 or 1 — `Math.sign`." },
+  trunc: {
+    recv: "Number",
+    sig: "(precision?: number): number",
+    doc: "Drop the digits after `precision` decimals — `Math.trunc`.",
+  },
+  atan2: { recv: "Number", sig: "(x: number): number", doc: "The angle of the point (x, this) — `Math.atan2`." },
   hypot: {
     recv: "Number",
     sig: "(...values: number[]): number",
-    doc: "The square root of the sum of the squares of this and `values`.",
+    doc: "The square root of the sum of squares — `Math.hypot`.",
+  },
+  sin: { recv: "Number", sig: "(): number", doc: "The sine, in radians — `Math.sin`." },
+  cos: { recv: "Number", sig: "(): number", doc: "The cosine, in radians — `Math.cos`." },
+  tan: { recv: "Number", sig: "(): number", doc: "The tangent, in radians — `Math.tan`." },
+  asin: { recv: "Number", sig: "(): number", doc: "The arcsine, in radians — `Math.asin`." },
+  acos: { recv: "Number", sig: "(): number", doc: "The arccosine, in radians — `Math.acos`." },
+  atan: { recv: "Number", sig: "(): number", doc: "The arctangent, in radians — `Math.atan`." },
+  sinh: { recv: "Number", sig: "(): number", doc: "The hyperbolic sine, in radians — `Math.sinh`." },
+  cosh: { recv: "Number", sig: "(): number", doc: "The hyperbolic cosine, in radians — `Math.cosh`." },
+  tanh: { recv: "Number", sig: "(): number", doc: "The hyperbolic tangent, in radians — `Math.tanh`." },
+  asinh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic sine, in radians — `Math.asinh`." },
+  acosh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic cosine, in radians — `Math.acosh`." },
+  atanh: { recv: "Number", sig: "(): number", doc: "The inverse hyperbolic tangent, in radians — `Math.atanh`." },
+  random: {
+    recv: "Number",
+    sig: "(upper?: number): number",
+    doc: "Gives a random number between two bounds, as lodash's `_.random` does. Two whole bounds give a whole number.",
   },
   // The receiver is lodash's `end` alone, and its `start` with more arguments.
   range: {

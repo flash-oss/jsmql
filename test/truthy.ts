@@ -9,7 +9,7 @@
 
 /** `jsTruthy(v)` — the wrap every boolean position gets when the value is not provably bool. */
 export const truthy = (v: unknown) => ({
-  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
+  $and: [{ $gt: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
 });
 
 /** `and()` of a `&&` chain: `$and` of the boolified operands, spliced flat. */

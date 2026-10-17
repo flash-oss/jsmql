@@ -398,7 +398,7 @@ describe("`function` keyword — parity with the arrow form", () => {
               $match: {
                 $expr: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$active", null] }, null] },
+                    { $gt: ["$active", null] },
                     { $ne: ["$active", false] },
                     { $ne: ["$active", ""] },
                     { $ne: ["$active", 0] },

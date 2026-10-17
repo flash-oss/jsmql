@@ -16,9 +16,7 @@ import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const up = await liveUp();
 
-const JS_TRUTHY = {
-  $and: [{ $ne: [{ $ifNull: ["$a", null] }, null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }],
-};
+const JS_TRUTHY = { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] };
 
 describe("compiler/emit/mode — the truthiness check", () => {
   it("is the four-way JavaScript check, exactly", () => {
@@ -37,11 +35,9 @@ describe("compiler/emit/mode — the truthiness check", () => {
     expect(truthOf("$a", of("number", true))).toBe("$a");
     // a string owes the "" test, and the null test while it may be absent
     expect(truthOf("$a", of("string"))).toEqual({ $ne: ["$a", ""] });
-    expect(truthOf("$a", maybeAbsent(of("string")))).toEqual({
-      $and: [{ $ne: [{ $ifNull: ["$a", null] }, null] }, { $ne: ["$a", ""] }],
-    });
+    expect(truthOf("$a", maybeAbsent(of("string")))).toEqual({ $and: [{ $gt: ["$a", null] }, { $ne: ["$a", ""] }] });
     // an array, an object or a date owes nothing but presence
-    expect(truthOf("$a", maybeAbsent(arrayOf(ANY)))).toEqual({ $ne: [{ $ifNull: ["$a", null] }, null] });
+    expect(truthOf("$a", maybeAbsent(arrayOf(ANY)))).toEqual({ $gt: ["$a", null] });
     expect(truthOf("$a", arrayOf(ANY))).toBe(TRUE);
     expect(truthOf("$a", of("date"))).toBe(TRUE);
   });
@@ -80,7 +76,7 @@ describe("compiler/emit/mql — the slots that read a condition", () => {
   const x = "x" as MongoVar;
   it("builds each shape with the Truth in its slot", () => {
     const t = boolTruth({ $gt: ["$$x.n", 1] });
-    expect(cond(t, 1, 2)).toEqual({ $cond: { if: { $gt: ["$$x.n", 1] }, then: 1, else: 2 } });
+    expect(cond(t, 1, 2)).toEqual({ $cond: [{ $gt: ["$$x.n", 1] }, 1, 2] });
     expect(filter("$items", x, t)).toEqual({ $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.n", 1] } } });
     expect(filter("$items", x, t, 3)).toEqual({
       $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.n", 1] }, limit: 3 },

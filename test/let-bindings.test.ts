@@ -543,7 +543,7 @@ describe("let bindings — RHS expression coverage", () => {
 
   it("ternary RHS", () => {
     expect(jsmql('let cat = $.age > 18 ? "adult" : "minor"; $project({ cat })')).toEqual([
-      { $set: { "__jsmql.var.cat": { $cond: { if: { $gt: ["$age", 18] }, then: "adult", else: "minor" } } } },
+      { $set: { "__jsmql.var.cat": { $cond: [{ $gt: ["$age", 18] }, "adult", "minor"] } } },
       { $project: { cat: "$__jsmql.var.cat" } },
       { $unset: "__jsmql" },
     ]);
@@ -1028,9 +1028,9 @@ describe("let bindings — reassignment", () => {
   });
 });
 
-// ── a merge into a binding — an assignment of a spread ─────────────────────────
+// ── a merge written back to a binding ────────────────────────────────────────
 
-describe("let bindings — a merge is an assignment of a spread", () => {
+describe("let bindings — a merge written back to the binding", () => {
   it("`r = { ...r, … }` re-`$set`s the binding's slot through $mergeObjects", () => {
     expect(jsmql("let result = {}; result = { ...result, a: $.foo }; $ = result;")).toEqual([
       { $set: { "__jsmql.var.result": {} } },
@@ -1039,11 +1039,11 @@ describe("let bindings — a merge is an assignment of a spread", () => {
     ]);
   });
 
-  it("refuses a statement of 'Object.assign(binding, …)' and of '.assign()', and names the spread", () => {
-    // '.assign()' answers a new object and writes nothing in place.
-    for (const src of ["const r = {}; Object.assign(r, { a: $.foo });", "let r = {}; r.assign({ a: $.foo }); $ = r;"]) {
-      expect(() => jsmql(src)).toThrow("$.f = { ...$.f, ...x };");
-    }
+  it("refuses `.assign()` as a statement, because it writes nothing, and names the write", () => {
+    // lodash's `_.assign` writes its target. JSMQL's `.assign()` answers a new object.
+    expect(() => jsmql("const result = {}; result.assign({ a: $.foo });")).toThrow(
+      "'.assign()' computes a new object, and a statement writes one. Write the merge back: '$.f = { ...$.f, ...x };', or 'r = { ...r, ...x };' for a 'let' binding.",
+    );
   });
 
   it("refuses the declaration a bracketed pipeline would need before the merge", () => {
@@ -1051,6 +1051,13 @@ describe("let bindings — a merge is an assignment of a spread", () => {
       message: NOT_AN_ELEMENT("let r = …", 2),
       pos: 2,
     });
+  });
+
+  it("a merge into an out-of-scope identifier throws an actionable error with a meaningful .pos", () => {
+    const result = jsmql.validate("$.x = { ...zzz, a: 1 };");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toMatch("Unknown identifier 'zzz'. Did you mean '$.zzz'?");
+    expect(result.errors[0].pos).toBe("$.x = { ...".length); // the `zzz` read
   });
 });
 

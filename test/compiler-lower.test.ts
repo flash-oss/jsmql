@@ -10,9 +10,7 @@ import { Long } from "../src/bson.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { operandShapeOf } from "../src/compiler/rows.ts";
 
-const TRUTHY = (v: unknown) => ({
-  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
-});
+const TRUTHY = (v: unknown) => ({ $and: [{ $gt: [v, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }] });
 
 describe("compiler/emit/lower — literals and references", () => {
   it("lowers each literal to its BSON value", () => {
@@ -87,24 +85,24 @@ describe("compiler/emit/lower — operators", () => {
   });
 
   it("checks truthiness on a value and not on a boolean", () => {
-    expect(expr("$.a ? 1 : 2")).toEqual({ $cond: { if: TRUTHY("$a"), then: 1, else: 2 } });
-    expect(expr("$.a > 1 ? 1 : 2")).toEqual({ $cond: { if: { $gt: ["$a", 1] }, then: 1, else: 2 } });
+    expect(expr("$.a ? 1 : 2")).toEqual({ $cond: [TRUTHY("$a"), 1, 2] });
+    expect(expr("$.a > 1 ? 1 : 2")).toEqual({ $cond: [{ $gt: ["$a", 1] }, 1, 2] });
     expect(expr("$.a > 1 && $.b < 2")).toEqual({ $and: [{ $gt: ["$a", 1] }, { $lt: ["$b", 2] }] });
-    expect(expr("$.a && $.b")).toEqual({ $cond: { if: TRUTHY("$a"), then: "$b", else: "$a" } });
-    expect(expr("$.a || $.b")).toEqual({ $cond: { if: TRUTHY("$a"), then: "$a", else: "$b" } });
+    expect(expr("$.a && $.b")).toEqual({ $cond: [TRUTHY("$a"), "$b", "$a"] });
+    expect(expr("$.a || $.b")).toEqual({ $cond: [TRUTHY("$a"), "$a", "$b"] });
   });
 
   it("binds a computed left side once, under a namespaced mint", () => {
     const out = expr("$.a && $.b || $.c") as { $let: { vars: Record<string, unknown>; in: unknown } };
     expect(Object.keys(out.$let.vars)).toEqual(["jsmqlV"]);
-    expect(out.$let.in).toEqual({ $cond: { if: TRUTHY("$$jsmqlV"), then: "$$jsmqlV", else: "$c" } });
+    expect(out.$let.in).toEqual({ $cond: [TRUTHY("$$jsmqlV"), "$$jsmqlV", "$c"] });
   });
 
   it("lowers the presence and type tests through the predicate vocabulary", () => {
     expect(expr("$.a !== undefined")).toEqual({ $ne: [{ $type: "$a" }, "missing"] });
     expect(expr('typeof $.a === "bool"')).toEqual({ $eq: [{ $type: "$a" }, "bool"] });
     expect(() => expr('typeof $.a === "boolean"')).toThrow(/Did you mean 'bool'\?/);
-    expect(expr("$.a == null")).toEqual({ $in: [{ $type: "$a" }, ["null", "missing"]] });
+    expect(expr("$.a == null")).toEqual({ $lte: ["$a", null] });
     expect(() => expr("$.a == 1")).toThrow(/only allowed against null/);
   });
 });
@@ -254,8 +252,8 @@ describe("compiler/emit/lower — calls", () => {
 
   it("refuses a name from a closed set with a suggestion", () => {
     expect(() => expr("$.s.trimm()")).toThrow(/Unknown method '.trimm\(\)' at position 3. Did you mean '.trim\(\)'/);
-    expect(() => expr("Math.randm()")).toThrow(
-      /Unknown method 'Math.randm\(\)' at position 4. Did you mean 'Math.random'/,
+    expect(() => expr("Math.randon()")).toThrow(
+      /Unknown method 'Math.randon\(\)' at position 4. Did you mean 'Math.random'/,
     );
   });
 });

@@ -380,17 +380,17 @@ describe("compiler/parse — precedence and associativity come from the rows", (
 
 describe("compiler/parse — name-blind", () => {
   it("reads a namespace call as a method call on a plain name", () => {
-    expect(parseExpression("Math.max($.a, $.b)")).toMatchObject({
+    expect(parseExpression("Math.round($.a)")).toMatchObject({
       type: "MethodCall",
-      name: "max",
+      name: "round",
       object: { type: "Ident", name: "Math" },
     });
   });
 
   it("reads a value-receiver call of the SAME name identically", () => {
-    expect(parseExpression("$.rows.max()")).toMatchObject({
+    expect(parseExpression("$.rows.round()")).toMatchObject({
       type: "MethodCall",
-      name: "max",
+      name: "round",
       object: { type: "FieldRef", path: "rows" },
     });
   });
@@ -541,11 +541,10 @@ describe("compiler/parse — a run of writes is ONE element, and keeps every op"
 
 describe("compiler/parse — a top-level `;` is kept, because it says PIPELINE", () => {
   it("wraps a lone statement the source ended with `;`", () => {
-    // `Object.assign($.a, $.b)` merges two objects and
-    // `Object.assign($.a, $.b);` writes the document. Collapsing the single
-    // statement threw that `;` away and the two parsed to the same tree.
-    expect(parse("Object.assign($.a, $.b)").type).toBe("MethodCall");
-    expect(parse("Object.assign($.a, $.b);").type).toBe("Pipeline");
+    // `$.a.assign($.b)` is a value, and `$.a.assign($.b);` is a statement. Collapsing
+    // the single statement threw that `;` away and the two parsed to the same tree.
+    expect(parse("$.a.assign($.b)").type).toBe("MethodCall");
+    expect(parse("$.a.assign($.b);").type).toBe("Pipeline");
   });
 
   it("leaves a statement with no `;` standing on its own", () => {

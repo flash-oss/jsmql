@@ -105,17 +105,6 @@ function fieldOf(e: Expr, param: string): string | null {
   return null;
 }
 
-/** `[a, b].max()` or `[a, b].min()`: the two operands, and the accumulator they spell. */
-function pairOf(body: Expr): { op: "$max" | "$min"; operands: readonly [Expr, Expr] } | null {
-  if (body.type !== "MethodCall" || (body.name !== "max" && body.name !== "min") || body.args.length !== 0) return null;
-  const list = body.object;
-  if (list.type !== "ArrayLiteral" || list.elements.length !== 2) return null;
-  if (list.elements.some((el) => el.type === "SpreadElement")) return null;
-  // a statement in a list literal is refused before any reading, so each element is an expression
-  const [a, b] = list.elements as readonly Expr[];
-  return { op: body.name === "max" ? "$max" : "$min", operands: [a, b] };
-}
-
 /** The accumulator a reducer body spells. `isAcc` says which node is the accumulator. */
 function accumulatorOf(body: Expr, isAcc: (e: Expr) => boolean, param: string): Accumulator | null {
   if (body.type === "BinaryExpr" && body.op === "+") {
@@ -126,12 +115,18 @@ function accumulatorOf(body: Expr, isAcc: (e: Expr) => boolean, param: string): 
       if (f !== null) return { op: "$sum", value: "$" + f };
     }
   }
-  const pair = pairOf(body);
-  if (pair !== null) {
-    const [a, b] = pair.operands;
+  if (
+    body.type === "MethodCall" &&
+    body.object.type === "ArrayLiteral" &&
+    (body.name === "max" || body.name === "min") &&
+    body.args.length === 0 &&
+    body.object.elements.length === 2 &&
+    body.object.elements.every((e) => e.type !== "SpreadElement")
+  ) {
+    const [a, b] = body.object.elements as readonly Expr[];
     const other = isAcc(a) ? b : isAcc(b) ? a : null;
     const f = other === null ? null : fieldOf(other, param);
-    if (f !== null) return { op: pair.op, value: "$" + f };
+    if (f !== null) return { op: body.name === "max" ? "$max" : "$min", value: "$" + f };
   }
   if (body.type === "BinaryExpr" && body.op === "??" && isAcc(body.left)) {
     const f = fieldOf(body.right, param);

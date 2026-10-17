@@ -63,6 +63,7 @@ import {
   uniqByReduce,
   wordsExpr,
   atPrecision,
+  isNullish,
 } from "./mql.ts";
 import type { CallArg } from "./ast.ts";
 import { isFieldPathString } from "./ast.ts";
@@ -211,11 +212,11 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   nullReceiverAs?: 0 | "";
   /**
-   * The cell, run on a receiver that it reads as there, answers null when that
-   * receiver is null or missing. So a `?.` directly before the call needs no `$cond`:
-   * the bare cell already gives the null that the `?.` promises.
-   * MEASURED: `{ $objectToArray: null }` and `{ $round: null }` are both null.
-   * test/compiler-methods.test.ts measures each row.
+   * The operator answers null for a null or missing receiver, on its own. So a `?.`
+   * before the call needs no `$cond` null test: the bare call gives the answer the
+   * test would give. MEASURED: `{ $max: null }` and `{ $objectToArray: null }` are
+   * null, so `$.o?.keys()` is the `$map` alone. test/compiler-methods.test.ts measures
+   * each row.
    */
   passesNull?: true;
   /**
@@ -700,6 +701,14 @@ type GlobalSpec<W extends readonly Position[]> = {
   updateDoc?: Cell<Lists<W, "updateDoc">, Family, ExprIn, OutOf["updateDoc"]>;
 };
 
+/**
+ * A cell answers null for a missing receiver (`passesNull`), or it reads that receiver
+ * as a value of its own (`nullReceiverAs`). One row cannot state both.
+ */
+export type NullAnswer =
+  | { passesNull?: true; nullReceiverAs?: undefined }
+  | { passesNull?: undefined; nullReceiverAs?: 0 | "" };
+
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
 export type NameEntry<W extends readonly Position[], O extends On, T extends string = never> = NameSpec<W, O, T> & {
   kind: "name";
@@ -719,7 +728,7 @@ const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W>
 // file. On the spec alone it widens to `string`. The audit then reads `string`
 // from every row, and it can never name the row at fault.
 const name = <const W extends readonly Position[], const O extends On, const T extends string = never>(
-  e: NameSpec<W, O, T>,
+  e: NameSpec<W, O, T> & NullAnswer,
 ): NameEntry<W, O, T> => ({ ...e, kind: "name" });
 const mongo = <
   const W extends readonly Position[],
@@ -988,8 +997,7 @@ function padded(
   // there ("7".padStart(null) is "7"), so the receiver stands when nothing is
   // needed. MEASURED: `$gt: [null, 0]` is false, so one test covers null, missing
   // and a target already shorter than the string. A number LITERAL needs no test.
-  const bounded =
-    args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
+  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: [{ $gt: [need, 0] }, padding, v.ref] };
   // every caller hands over a receiver that the `nullOr` test proved, so the binding takes it as it is
   return { $let: { vars: { [v.as]: recv }, in: bounded } };
 }
@@ -1150,42 +1158,50 @@ const pairsOfObject = (recv: unknown, present: boolean): unknown => ({
 });
 
 /**
- * `.keys()` / `.values()` / `.entries()`: an object's `{ k, v }` pairs, one projection
- * per row. ONE body for the object family and a receiver of unproven family, because
- * both must answer the same MQL.
+ * `.assign()` as one `$mergeObjects`. A spread argument is a LIST of sources, and a plain
+ * argument is ONE source object, as in JavaScript. The desugar pass packs spread arguments
+ * into one array literal (`packed`), so the cell sees which form the developer wrote.
  *
- * The compiler gives the receiver HR5's `{}` before this cell sees it (`dispatchOn` in
- * src/compiler/emit/lower.ts), so `$.o.keys()` answers `[]` for a missing `o`. The `in`
- * body reads `$$this`: it is fixed compiler text, never a user expression, so no inner
- * name can shadow it.
+ * An empty object receiver adds nothing, and the cell leaves it out where the sources stay
+ * objects. `({}).assign(...$.docs)` is `{ $mergeObjects: "$docs" }`, the one-operand form
+ * that merges an array, and `({}).assign($.a, $.b)` is `{ $mergeObjects: ["$a", "$b"] }`.
+ *
+ * One plain source keeps the `{}`: the one-operand form would merge an array source, and
+ * the developer reads that source as one object. MEASURED: `{ $mergeObjects: [{}, "$o"] }`
+ * answers `o`, and `{}` for a missing `o`. `{ $mergeObjects: null }` is `{}`, so a list
+ * alone takes no guard. A list after a real receiver takes the HR5 guard of the array
+ * literal. Without it, `$concatArrays` answers null for a missing operand, and the merge
+ * loses the receiver. MEASURED: `{ $mergeObjects: { $concatArrays: [["$o"], "$nope"] } }` is `{}`.
+ */
+function merged(recv: unknown, args: readonly Expr[], value: (e: Expr) => unknown): unknown {
+  const list = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true ? args[0] : null;
+  const empty = isPlainObject(recv) && Object.keys(recv).length === 0;
+  if (list === null) return { $mergeObjects: empty && args.length > 1 ? args.map(value) : [recv, ...args.map(value)] };
+  if (empty && list.elements.length === 1 && list.elements[0].type === "SpreadElement") {
+    return { $mergeObjects: value(list) };
+  }
+  const { packed: _packed, ...plain } = list;
+  const sources = value(plain);
+  if (empty) return { $mergeObjects: sources };
+  // a list the array literal already joins takes the receiver as its first operand
+  const parts = isPlainObject(sources) && Object.keys(sources).length === 1 ? sources.$concatArrays : undefined;
+  return { $mergeObjects: { $concatArrays: [[recv], ...(Array.isArray(parts) ? parts : [sources])] } };
+}
+
+/**
+ * `.keys()` / `.values()` / `.entries()`: an object's `{ k, v }` pairs, one projection per row.
+ *
+ * ONE body for both cells of a row — the object family and a receiver of unproven
+ * family must answer the SAME MQL, and two copies of it drift. The receiver takes HR5's
+ * `{}` from the compiler, which wraps it before this cell sees it (`dispatchOn` in
+ * src/compiler/emit/lower.ts), so `$.o.keys()` answers `[]` for a missing `o`.
+ *
+ * The `in` body reads `$$this`, the default name of `$map`. The body is this fixed
+ * text and never holds an expression of the developer's, so no name can collide.
  */
 const pairsRead = (obj: unknown, project: (ref: string) => unknown): unknown => ({
   $map: { input: { $objectToArray: obj }, in: project("$$this") },
 });
-
-/**
- * `.assign(...sources)` as one `$mergeObjects`, the receiver first.
- *
- * An argument with no spread is ONE source object, as in JavaScript. A spread argument
- * reaches the cell as ONE packed list (`packSpread` in the desugar pass), so the sources
- * are that list. An empty-object receiver adds nothing, so the merge leaves it out where
- * a source remains an object operand. One source with no spread keeps the `{}`: the
- * one-operand form would merge an array source, which the developer reads as an object.
- * MEASURED: `{ $mergeObjects: "$docs" }` merges the array `docs`, and
- * `{ $mergeObjects: [{}, "$o"] }` answers `o`, and `{}` for a missing `o`.
- */
-const mergedSources = (recv: unknown, args: readonly Expr[], value: ExprIn["value"]): unknown => {
-  const empty = isPlainObject(recv) && Object.keys(recv).length === 0;
-  const packed = args.length === 1 && args[0].type === "ArrayLiteral" && args[0].packed === true;
-  if (packed) {
-    const list = value(args[0]);
-    if (empty) return { $mergeObjects: list };
-    const tail = typeof list === "object" && list !== null && "$concatArrays" in list ? list.$concatArrays : [list];
-    return { $mergeObjects: { $concatArrays: [[recv], ...(tail as unknown[])] } };
-  }
-  const sources = args.map(value);
-  return { $mergeObjects: empty && sources.length > 1 ? sources : [recv, ...sources] };
-};
 
 /**
  * The body of a method over a receiver that may still be null or missing: null there,
@@ -1203,7 +1219,7 @@ const nullOr = (recv: unknown, present: boolean, bind: ExprIn["bind"], body: (r:
   const cheap = typeof recv === "string" && recv.startsWith("$");
   const bound = cheap ? null : bind("recv");
   const ref = bound === null ? recv : bound.ref;
-  const doc = cond({ $eq: [{ $ifNull: [ref, null] }, null] }, null, body(ref));
+  const doc = cond(isNullish(ref), null, body(ref));
   return bound === null ? doc : { $let: { vars: { [bound.as]: recv }, in: doc } };
 };
 
@@ -1256,6 +1272,48 @@ function groupedByKey(
   };
 }
 
+/** A number that reads a null or missing value as 0, as lodash does. `there` says the proof shows it present. */
+const orZero = (v: unknown, there: boolean): unknown =>
+  v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
+
+/**
+ * lodash's `_.random(lower, upper)`. The receiver is `lower`. With no argument, the
+ * receiver is `upper`, and `lower` is 0. The bounds swap when `lower` is the larger one. Two whole bounds give a whole
+ * number, both ends included, and any other pair gives a fractional number. A constant
+ * pair decides the form here. The server tests a pair that is known only at run time.
+ * A missing bound reads as 0, as lodash reads it.
+ *
+ *   (1).random(6)     → { $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] }
+ *   $.a.random($.b)   → a `$let` of the two ends, and a `$cond` on whether both are whole
+ */
+function randomOf({ recv, args, value, bind, present }: ExprIn): unknown {
+  const self = orZero(recv, present);
+  const [a, b] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
+  const from = (lo: unknown, step: unknown): unknown => (lo === 0 ? step : { $add: [lo, step] });
+  const whole = (lo: unknown, span: unknown): unknown => from(lo, { $floor: { $multiply: [{ $rand: {} }, span] } });
+  const fraction = (lo: unknown, span: unknown): unknown => from(lo, { $multiply: [{ $rand: {} }, span] });
+  if (typeof a === "number" && typeof b === "number") {
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    return Number.isInteger(lo) && Number.isInteger(hi) ? whole(lo, hi - lo + 1) : fraction(lo, hi - lo);
+  }
+  const lo = bind("lo");
+  const hi = bind("hi");
+  const span = { $subtract: [hi.ref, lo.ref] };
+  const isWhole = (ref: string): unknown => ({ $eq: [ref, { $trunc: ref }] });
+  // a constant fraction decides the form, and the server tests any other pair
+  const fixed = [a, b].some((v) => typeof v === "number" && !Number.isInteger(v));
+  const body = fixed
+    ? fraction(lo.ref, span)
+    : {
+        $cond: [
+          { $and: [isWhole(lo.ref), isWhole(hi.ref)] },
+          whole(lo.ref, { $add: [span, 1] }),
+          fraction(lo.ref, span),
+        ],
+      };
+  return { $let: { vars: { [lo.as]: { $min: [a, b] }, [hi.as]: { $max: [a, b] } }, in: body } };
+}
+
 /**
  * The arguments of `.range()` and `.rangeRight()`: lodash's `end`, or `start` on the
  * receiver with `end[, step]`. `$range` refuses a zero step and a fractional bound.
@@ -1275,10 +1333,8 @@ const RANGE_ARGS: Arity = {
  */
 function rangeOf({ recv, args, value, bind, present }: ExprIn): unknown {
   // lodash reads a missing bound as 0; `$range` stops the command on null
-  const bound = (v: unknown, there: boolean): unknown =>
-    v === null ? 0 : typeof v === "number" || there ? v : { $ifNull: [v, 0] };
-  const self = bound(recv, present);
-  const [start, end] = args.length === 0 ? [0, self] : [self, bound(value(args[0]), false)];
+  const self = orZero(recv, present);
+  const [start, end] = args.length === 0 ? [0, self] : [self, orZero(value(args[0]), false)];
   if (args.length === 2) return { $range: [start, end, value(args[1])] };
   if (typeof start === "number" && typeof end === "number") {
     return start > end ? { $range: [start, end, -1] } : { $range: [start, end] };
@@ -1326,20 +1382,6 @@ const mapIsNotJsmql = unsupported(
 /** `new RegExp(…)` in every position. The literal is the JSMQL spelling of a regular expression. */
 const regExpIsNotJsmql = unsupported(
   "'RegExp(…)' is not part of JSMQL. Write a regular expression literal ('/^ab/i'). For a pattern built at run time, write '$regexMatch({ input: …, regex: … })'.",
-);
-
-/**
- * A `Math` static that says what a number method says. The name still parses, so it
- * gets an answer, and the answer names the method: one capability gets one spelling.
- */
-const mathStatic = (call: string, dot: string, example: string): Refusal =>
-  unsupported(
-    `'${call}' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '${dot}': '${example}' emits the identical MQL.`,
-  );
-
-/** `Math.pow(…)` in every position. The `**` operator emits the same `$pow`. */
-const NO_MATH_POW = unsupported(
-  "'Math.pow(base, exponent)' is not part of JSMQL — the '**' operator says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.x ** 2' emits the identical MQL.",
 );
 
 /**
@@ -3246,7 +3288,7 @@ export const NAMES = {
     category: "comparison",
     returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
-    spreadAlternative: "use the JS form [...arr].max() or <array>.max()",
+    spreadAlternative: "use the JS form [...arr].max() or arr.max()",
     shape: "flex",
     filter: viaFallback,
     expr: {
@@ -3276,7 +3318,7 @@ export const NAMES = {
     category: "comparison",
     returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
-    spreadAlternative: "use the JS form [...arr].min() or <array>.min()",
+    spreadAlternative: "use the JS form [...arr].min() or arr.min()",
     shape: "flex",
     filter: viaFallback,
     expr: {
@@ -4130,6 +4172,7 @@ export const NAMES = {
   trim: name({
     doc: "'.trim()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4147,6 +4190,7 @@ export const NAMES = {
   trimStart: name({
     doc: "'.trimStart()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4166,6 +4210,7 @@ export const NAMES = {
   trimLeft: name({
     doc: "'.trimLeft()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4185,6 +4230,7 @@ export const NAMES = {
   trimEnd: name({
     doc: "'.trimEnd()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4202,6 +4248,7 @@ export const NAMES = {
   trimRight: name({
     doc: "'.trimRight()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4349,6 +4396,7 @@ export const NAMES = {
   split: name({
     doc: "'.split()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: { arrayOf: "string" },
     neverNull: true,
@@ -4468,6 +4516,7 @@ export const NAMES = {
   replace: name({
     doc: "'.replace()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4490,6 +4539,7 @@ export const NAMES = {
   replaceAll: name({
     doc: "'.replaceAll()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4630,6 +4680,7 @@ export const NAMES = {
   padEnd: name({
     doc: "'.padEnd()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4651,6 +4702,7 @@ export const NAMES = {
   repeat: name({
     doc: "'.repeat()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -4839,6 +4891,7 @@ export const NAMES = {
   slice: name({
     doc: "'.slice()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     sibling: { string: "For a part of a string, write '.substring(start, end)'." },
     returns: { array: "same", stream: "stream" },
@@ -4887,6 +4940,7 @@ export const NAMES = {
     mergesInto: true,
     doc: "'.concat()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     sibling: { string: "To join strings, write '+' between them: 'a + b'." },
     returns: { array: "array", stream: "stream" },
@@ -4961,6 +5015,7 @@ export const NAMES = {
   toReversed: name({
     doc: "'.toReversed()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -4982,6 +5037,7 @@ export const NAMES = {
   toSorted: name({
     doc: "'.toSorted()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     elementOnly: {
       when: "bare",
       why: "a stream of documents has no natural order, so a key is required: '.toSorted(\"<field>\")'. After '.flatMap(\"<field>\")' the bare call sorts by the unwound values.",
@@ -5044,6 +5100,7 @@ export const NAMES = {
   sortBy: name({
     doc: "'.sortBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     elementOnly: {
       when: "bare",
       why: "a stream of documents has no natural order, so a key is required: '.sortBy(\"<field>\")'. After '.flatMap(\"<field>\")' the bare call sorts by the unwound values.",
@@ -5105,6 +5162,7 @@ export const NAMES = {
   orderBy: name({
     doc: "'.orderBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -5157,6 +5215,7 @@ export const NAMES = {
   toSpliced: name({
     doc: "'.toSpliced()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -5224,6 +5283,7 @@ export const NAMES = {
   with: name({
     doc: "'.with()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -5267,6 +5327,7 @@ export const NAMES = {
   flat: name({
     doc: "'.flat()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: { arrayOf: { elementOf: "element" } }, stream: "stream" },
     neverNull: true,
@@ -5297,6 +5358,7 @@ export const NAMES = {
   flatMap: name({
     doc: "'.flatMap()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value", "index", "receiver"],
     iterateeSlots: {
@@ -5345,6 +5407,7 @@ export const NAMES = {
     streamBody: "document",
     doc: "'.map()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value", "index", "receiver"],
     iterateeSlots: {
@@ -5377,6 +5440,7 @@ export const NAMES = {
   filter: name({
     doc: "'.filter()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     // MEASURED: three parameters as a value, exactly one as a chain link — the
     // compiler refuses a read of `i` in `$$ = $$.filter((d, i) => …)`.
@@ -5981,16 +6045,15 @@ export const NAMES = {
   }),
 
   entries: name({
-    doc: "'.entries()' — the object as [key, value] pairs. The array form and 'Object.entries()' are refused.",
+    doc: "'.entries()' — the object as [key, value] pairs. The array form is refused.",
     call: true,
+    passesNull: true,
     on: ["array", "object", "Object"],
     returns: {
       array: { arrayOf: { tuple: ["number", "element"] } },
       object: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
-      Object: { arrayOf: { tuple: ["string", { elementOf: { arg: 0 } }] } },
     },
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6001,7 +6064,7 @@ export const NAMES = {
         object: { args: { sig: "", none: true }, emit: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`]) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Object: unsupported(
-          "'Object.entries(obj)' is not part of JSMQL — the object's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()' emits the identical MQL.",
+          "'Object.entries(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.entries()': '$.doc.entries()'.",
         ),
       },
       uncertain: ({ recv }) => pairsRead(recv, (r) => [`${r}.k`, `${r}.v`]),
@@ -6015,12 +6078,12 @@ export const NAMES = {
   }),
 
   keys: name({
-    doc: "'.keys()' — an array of the object's keys. The array form and 'Object.keys()' are refused.",
+    doc: "'.keys()' — an array of the object's keys. The array form is refused.",
     call: true,
+    passesNull: true,
     on: ["array", "object", "Object"],
     returns: { arrayOf: "string" },
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6029,8 +6092,9 @@ export const NAMES = {
           ".keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array.",
         ),
         object: { args: { sig: "", none: true }, emit: ({ recv }) => pairsRead(recv, (r) => `${r}.k`) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
         Object: unsupported(
-          "'Object.keys(obj)' is not part of JSMQL — the object's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()' emits the identical MQL.",
+          "'Object.keys(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.keys()': '$.doc.keys()'.",
         ),
       },
       uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.k`),
@@ -6044,16 +6108,12 @@ export const NAMES = {
   }),
 
   values: name({
-    doc: "'.values()' — an array of the object's values. The array form and 'Object.values()' are refused.",
+    doc: "'.values()' — an array of the object's values. The array form is refused.",
     call: true,
-    on: ["array", "object", "Object"],
-    returns: {
-      array: "same",
-      object: { arrayOf: { elementOf: "same" } },
-      Object: { arrayOf: { elementOf: { arg: 0 } } },
-    },
-    neverNull: true,
     passesNull: true,
+    on: ["array", "object", "Object"],
+    returns: { array: "same", object: { arrayOf: { elementOf: "same" } } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6062,8 +6122,9 @@ export const NAMES = {
           ".values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence — use it directly.",
         ),
         object: { args: { sig: "", none: true }, emit: ({ recv }) => pairsRead(recv, (r) => `${r}.v`) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
         Object: unsupported(
-          "'Object.values(obj)' is not part of JSMQL — the object's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()' emits the identical MQL.",
+          "'Object.values(obj)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.values()': '$.doc.values()'.",
         ),
       },
       uncertain: ({ recv }) => pairsRead(recv, (r) => `${r}.v`),
@@ -6105,6 +6166,7 @@ export const NAMES = {
   getFullYear: name({
     doc: "'.getFullYear()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6124,6 +6186,7 @@ export const NAMES = {
   getMonth: name({
     doc: "'.getMonth()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6147,6 +6210,7 @@ export const NAMES = {
   getDate: name({
     doc: "'.getDate()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6164,6 +6228,7 @@ export const NAMES = {
   getDay: name({
     doc: "'.getDay()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6185,6 +6250,7 @@ export const NAMES = {
   getHours: name({
     doc: "'.getHours()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6204,6 +6270,7 @@ export const NAMES = {
   getMinutes: name({
     doc: "'.getMinutes()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6223,6 +6290,7 @@ export const NAMES = {
   getSeconds: name({
     doc: "'.getSeconds()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6242,6 +6310,7 @@ export const NAMES = {
   getMilliseconds: name({
     doc: "'.getMilliseconds()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6261,6 +6330,7 @@ export const NAMES = {
   getUTCFullYear: name({
     doc: "'.getUTCFullYear()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6280,6 +6350,7 @@ export const NAMES = {
   getUTCMonth: name({
     doc: "'.getUTCMonth()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6303,6 +6374,7 @@ export const NAMES = {
   getUTCDate: name({
     doc: "'.getUTCDate()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6322,6 +6394,7 @@ export const NAMES = {
   getUTCDay: name({
     doc: "'.getUTCDay()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6345,6 +6418,7 @@ export const NAMES = {
   getUTCHours: name({
     doc: "'.getUTCHours()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6364,6 +6438,7 @@ export const NAMES = {
   getUTCMinutes: name({
     doc: "'.getUTCMinutes()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6383,6 +6458,7 @@ export const NAMES = {
   getUTCSeconds: name({
     doc: "'.getUTCSeconds()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6402,6 +6478,7 @@ export const NAMES = {
   getUTCMilliseconds: name({
     doc: "'.getUTCMilliseconds()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6421,6 +6498,7 @@ export const NAMES = {
   getTime: name({
     doc: "'.getTime()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6438,6 +6516,7 @@ export const NAMES = {
   toISOString: name({
     doc: "'.toISOString()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "string",
     neverNull: true,
@@ -6457,6 +6536,7 @@ export const NAMES = {
   plus: name({
     doc: "'.plus()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -6492,6 +6572,7 @@ export const NAMES = {
   minus: name({
     doc: "'.minus()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -6532,6 +6613,7 @@ export const NAMES = {
   diff: name({
     doc: "'.diff()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6569,6 +6651,7 @@ export const NAMES = {
   startOf: name({
     doc: "'.startOf()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -6606,6 +6689,7 @@ export const NAMES = {
   format: name({
     doc: "'.format()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "string",
     neverNull: true,
@@ -6641,6 +6725,7 @@ export const NAMES = {
   week: name({
     doc: "'.week()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6676,6 +6761,7 @@ export const NAMES = {
   isoWeek: name({
     doc: "'.isoWeek()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6711,6 +6797,7 @@ export const NAMES = {
   isoWeekYear: name({
     doc: "'.isoWeekYear()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6748,6 +6835,7 @@ export const NAMES = {
   isoWeekday: name({
     doc: "'.isoWeekday()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6785,6 +6873,7 @@ export const NAMES = {
   dayOfYear: name({
     doc: "'.dayOfYear()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6822,6 +6911,7 @@ export const NAMES = {
   quarter: name({
     doc: "'.quarter()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "number",
     neverNull: true,
@@ -6989,6 +7079,7 @@ export const NAMES = {
   set: name({
     doc: "'.set()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -7072,6 +7163,7 @@ export const NAMES = {
   endOf: name({
     doc: "'.endOf()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "date",
     returns: "date",
     neverNull: true,
@@ -7152,10 +7244,10 @@ export const NAMES = {
   max: name({
     doc: "'.max()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "Math"],
-    returns: { array: "element", Math: "number" },
-    readsNullAsEmpty: true,
     passesNull: true,
+    on: ["array", "Math"],
+    returns: { array: "element" },
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
@@ -7164,7 +7256,7 @@ export const NAMES = {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.max(...values)' is not part of JSMQL — the array's own method says the same thing, and one capability gets one spelling. Write '[a, b, c].max()' or '<array>.max()': '[$.a, $.b].max()' emits the identical MQL.",
+          "'Math.max(...values)' is not part of JSMQL — the array's own method says the same thing, and one capability gets one spelling. Write '[a, b].max()' or '<array>.max()': '[$.a, $.b].max()'.",
         ),
       },
     },
@@ -7179,10 +7271,10 @@ export const NAMES = {
   min: name({
     doc: "'.min()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "Math"],
-    returns: { array: "element", Math: "number" },
-    readsNullAsEmpty: true,
     passesNull: true,
+    on: ["array", "Math"],
+    returns: { array: "element" },
+    readsNullAsEmpty: true,
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: {
@@ -7191,7 +7283,7 @@ export const NAMES = {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: recv }) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Math: unsupported(
-          "'Math.min(...values)' is not part of JSMQL — the array's own method says the same thing, and one capability gets one spelling. Write '[a, b, c].min()' or '<array>.min()': '[$.a, $.b].min()' emits the identical MQL.",
+          "'Math.min(...values)' is not part of JSMQL — the array's own method says the same thing, and one capability gets one spelling. Write '[a, b].min()' or '<array>.min()': '[$.a, $.b].min()'.",
         ),
       },
     },
@@ -7347,6 +7439,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.uniq()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7369,6 +7462,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.uniqBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7400,6 +7494,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.sortedUniq()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7420,6 +7515,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.sortedUniqBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7448,6 +7544,7 @@ export const NAMES = {
   without: name({
     doc: "'.without()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -7485,6 +7582,7 @@ export const NAMES = {
   xor: name({
     doc: "'.xor()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",
@@ -7508,6 +7606,7 @@ export const NAMES = {
   differenceBy: name({
     doc: "'.differenceBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7559,6 +7658,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.intersectionBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7609,6 +7709,7 @@ export const NAMES = {
   unionBy: name({
     doc: "'.unionBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -7632,6 +7733,7 @@ export const NAMES = {
   xorBy: name({
     doc: "'.xorBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -7674,6 +7776,7 @@ export const NAMES = {
   compact: name({
     doc: "'.compact()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7705,6 +7808,7 @@ export const NAMES = {
   flatten: name({
     doc: "'.flatten()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { arrayOf: { elementOf: "element" } },
     neverNull: true,
@@ -7760,6 +7864,7 @@ export const NAMES = {
   take: name({
     doc: "'.take()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7793,6 +7898,7 @@ export const NAMES = {
   drop: name({
     doc: "'.drop()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -7830,6 +7936,7 @@ export const NAMES = {
   takeRight: name({
     doc: "'.takeRight()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: true,
@@ -7881,6 +7988,7 @@ export const NAMES = {
   tail: name({
     doc: "'.tail()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -8044,6 +8152,7 @@ export const NAMES = {
   takeWhile: name({
     doc: "'.takeWhile()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8098,6 +8207,7 @@ export const NAMES = {
   dropWhile: name({
     doc: "'.dropWhile()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8152,6 +8262,7 @@ export const NAMES = {
   takeRightWhile: name({
     doc: "'.takeRightWhile()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -8179,6 +8290,7 @@ export const NAMES = {
   dropRightWhile: name({
     doc: "'.dropRightWhile()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
@@ -8249,6 +8361,7 @@ export const NAMES = {
   sampleSize: name({
     doc: "'.sampleSize()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: true,
@@ -8331,6 +8444,7 @@ export const NAMES = {
   zip: name({
     doc: "'.zip()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { arrayOf: "array" },
     neverNull: true,
@@ -8391,6 +8505,7 @@ export const NAMES = {
   zipWith: name({
     doc: "'.zipWith()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     params: ["value"],
     iterateeSlots: {
@@ -8446,6 +8561,7 @@ export const NAMES = {
     collapses: true,
     doc: "'.keyBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8480,6 +8596,7 @@ export const NAMES = {
     collapses: true,
     doc: "'.groupBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream", "Object"],
     params: ["value"],
     iterateeSlots: {
@@ -8523,6 +8640,7 @@ export const NAMES = {
     collapses: true,
     doc: "'.countBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8591,6 +8709,7 @@ export const NAMES = {
   reject: name({
     doc: "'.reject()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -8624,6 +8743,7 @@ export const NAMES = {
   mapValues: name({
     doc: "'.mapValues()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -8659,6 +8779,7 @@ export const NAMES = {
   mapKeys: name({
     doc: "'.mapKeys()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -8761,6 +8882,7 @@ export const NAMES = {
   omit: name({
     doc: "'.omit()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["object", "stream"],
     // The value form builds a document literal, so the result IS an object.
     returns: { object: "omitted", stream: "stream" },
@@ -8808,6 +8930,7 @@ export const NAMES = {
   pickBy: name({
     doc: "'.pickBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -8837,6 +8960,7 @@ export const NAMES = {
   omitBy: name({
     doc: "'.omitBy()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     params: ["value", "key"],
     iterateeSlots: {
@@ -8868,6 +8992,7 @@ export const NAMES = {
   invert: name({
     doc: "'.invert()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     returns: "object",
     neverNull: true,
@@ -8899,16 +9024,18 @@ export const NAMES = {
   toPairs: name({
     doc: "'.toPairs()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "object",
     returns: { arrayOf: { tuple: ["string", { elementOf: "same" }] } },
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
-      // `$$this` is safe: the `in` body is fixed compiler text, never a user expression
-      emit: ({ recv, present }) => ({ $map: { input: pairsOfObject(recv, present), in: ["$$this.k", "$$this.v"] } }),
+      emit: ({ recv, present }) => {
+        // `$$this`, as '.entries()' reads it: the body is fixed text, so no name can collide
+        return { $map: { input: pairsOfObject(recv, present), in: ["$$this.k", "$$this.v"] } };
+      },
     },
     stream: unsupported("'.toPairs()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -8921,6 +9048,7 @@ export const NAMES = {
   fromPairs: name({
     doc: "'.fromPairs()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: { recordOf: { itemOf: ["element", 1] } },
     neverNull: true,
@@ -9154,6 +9282,7 @@ export const NAMES = {
   escape: name({
     doc: "'.escape()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "string",
     returns: "string",
     neverNull: true,
@@ -9329,20 +9458,26 @@ export const NAMES = {
   round: name({
     doc: "'.round()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
+      // MEASURED: $.n.round(2) takes the precision.
       perFamily: {
         // MEASURED: { $round: "$n" } is valid, and 2.5 gives 2, as { $round: ["$n", 0] } does.
         number: {
           args: { sig: "[precision]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({ $round: args.length === 0 ? recv : [recv, value(args[0])] }),
+          // MEASURED: `{ $round: "$x" }` takes one operand, and 2.5 rounds to 2.
+          emit: ({ recv, args, value }) =>
+            args[0] === undefined ? { $round: recv } : { $round: [recv, value(args[0])] },
         },
-        Math: mathStatic("Math.round(value)", "<number>.round()", "$.x.round()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.round(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.round()': '$.n.round()'. In a callback, write 'x => x.round()'.",
+        ),
       },
     },
     stream: unsupported("'.round()' has no stream form: it produces a value, not a stream of documents."),
@@ -9356,10 +9491,10 @@ export const NAMES = {
   ceil: name({
     doc: "'.ceil()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9370,7 +9505,10 @@ export const NAMES = {
           emit: ({ recv, args, value }) =>
             args.length === 0 ? { $ceil: recv } : atPrecision("$ceil", recv, value(args[0])),
         },
-        Math: mathStatic("Math.ceil(value)", "<number>.ceil()", "$.x.ceil()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.ceil(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.ceil()': '$.n.ceil()'. In a callback, write 'x => x.ceil()'.",
+        ),
       },
     },
     stream: unsupported("'.ceil()' has no stream form: it produces a value, not a stream of documents."),
@@ -9384,10 +9522,10 @@ export const NAMES = {
   floor: name({
     doc: "'.floor()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9398,7 +9536,10 @@ export const NAMES = {
           emit: ({ recv, args, value }) =>
             args.length === 0 ? { $floor: recv } : atPrecision("$floor", recv, value(args[0])),
         },
-        Math: mathStatic("Math.floor(value)", "<number>.floor()", "$.x.floor()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.floor(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.floor()': '$.n.floor()'. In a callback, write 'x => x.floor()'.",
+        ),
       },
     },
     stream: unsupported("'.floor()' has no stream form: it produces a value, not a stream of documents."),
@@ -9413,6 +9554,7 @@ export const NAMES = {
     restoresDocuments: true,
     doc: "'.intersection()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -9450,6 +9592,7 @@ export const NAMES = {
   union: name({
     doc: "'.union()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",
@@ -9470,6 +9613,7 @@ export const NAMES = {
   difference: name({
     doc: "'.difference()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["array", "stream"],
     returns: { array: "same", stream: "stream" },
     neverNull: "always",
@@ -10204,10 +10348,10 @@ export const NAMES = {
 
   // ── the other namespaces, their members, and the bare callables ──
   assign: name({
-    doc: "'.assign(...sources)' — emits $mergeObjects. A new object: the call writes nothing in place. 'Object.assign()' is refused.",
+    doc: "'.assign(...sources)' — emits $mergeObjects. A spread argument is a list of sources; a plain argument is one source.",
     call: true,
     on: ["object", "Object"],
-    returns: { object: { merge: ["same", { args: 0 }] }, Object: { merge: [{ args: 0 }] } },
+    returns: { object: { merge: ["same", { args: 0 }] } },
     // MEASURED: `$.o.assign({ z: 1 })` answers `{ a: 1, b: 2, z: 1 }` for `o: { a: 1, b: 2 }` and `{ z: 1 }` for a missing or null `o`; `({}).assign($.o)` answers `{}` there — an object every time
     neverNull: "always",
     readsNullAsEmpty: true,
@@ -10218,33 +10362,30 @@ export const NAMES = {
         // The receiver is the first source. See docs/specs/emit-pass.md § The method cells.
         object: {
           args: { sig: "...sources", atLeast: 1, spread: true },
-          emit: ({ recv, args, value }) => mergedSources(recv, args, value),
+          emit: ({ recv, args, value }) => merged(recv, args, value),
         },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Object: unsupported(
-          "'Object.assign(target, ...sources)' is not part of JSMQL — the object's own method says the same thing, and one capability gets one spelling. Write '({}).assign(...$.docs)' to merge an array of objects, or '<object>.assign(<object>, …)'. JSMQL writes nothing into the target, so to change a field write '$.f = { ...$.f, ...x };'.",
+          "'Object.assign(target, ...sources)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<object>.assign(...sources)' or the object spread '{ ...a, ...b }'. To merge an array of objects, write '({}).assign(...$.docs)'. To write a field, write '$.f = { ...$.f, ...x };'.",
         ),
       },
     },
     stream: unsupported("'.assign()' produces a value, not a stream of documents."),
-    // A statement writes a field, and '.assign()' writes nothing in place.
+    // The method form answers a new object, so a bare statement of it writes nothing.
     statement: unsupported(
-      "'.assign()' computes a new object and writes nothing in place. To merge into a field, write '$.f = { ...$.f, ...x };'.",
+      "'.assign()' computes a new object, and a statement writes one. Write the merge back: '$.f = { ...$.f, ...x };', or 'r = { ...r, ...x };' for a 'let' binding.",
     ),
     group: unsupported("'.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.assign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   fromEntries: name({
-    doc: "'.fromEntries()' — emits $arrayToObject. Same lowering as '.fromPairs()'. 'Object.fromEntries()' is refused.",
+    doc: "'.fromEntries()' — emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
-    on: ["array", "Object"],
-    returns: {
-      array: { recordOf: { itemOf: ["element", 1] } },
-      Object: { recordOf: { itemOf: [{ elementOf: { arg: 0 } }, 1] } },
-    },
-    neverNull: true,
     passesNull: true,
+    on: ["array", "Object"],
+    returns: { array: { recordOf: { itemOf: ["element", 1] } } },
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10252,7 +10393,7 @@ export const NAMES = {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => pairsToObject(recv) },
         // The parser accepts the name so it gets an answer, and this cell refuses it.
         Object: unsupported(
-          "'Object.fromEntries(entries)' is not part of JSMQL — the array's own method says the same thing, and one capability gets one spelling. Write '<pairs>.fromEntries()': '$.pairs.fromEntries()' emits the identical MQL.",
+          "'Object.fromEntries(entries)' is not part of JSMQL — the receiver's own method says the same thing, and one capability gets one spelling. Write '<pairs>.fromEntries()': '$.pairs.fromEntries()'.",
         ),
       },
     },
@@ -10353,6 +10494,7 @@ export const NAMES = {
   symmetricDifference: name({
     doc: "'.symmetricDifference()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: "array",
     returns: "array",
     neverNull: "always",
@@ -10411,8 +10553,8 @@ export const NAMES = {
     token: "Ident",
     provides: "namespace",
     where: [],
-    filter: unsupported("'Object' is a namespace, not a test. Use the object's own method: '$.d.keys().size() > 0'."),
-    expr: unsupported("'Object' is a namespace, not a value. Use the object's own method: '$.doc.keys()'."),
+    filter: unsupported("'Object' is a namespace, not a test. Call the object's own method: '$.d.keys().size() > 0'."),
+    expr: unsupported("'Object' is a namespace, not a value. Call the object's own method: '$.doc.keys()'."),
     stream: unsupported("'Object' is a namespace, not a stage."),
     statement: unsupported("'Object' is a namespace, not a statement."),
     group: unsupported("'Object' is a namespace, not an accumulator."),
@@ -10509,380 +10651,90 @@ export const NAMES = {
 
   // ── the number methods that JavaScript spells as `Math` statics ──
   abs: name({
-    doc: "'.abs()' — emits $abs. 'Math.abs()' is refused.",
+    doc: "'.abs()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $abs: recv }) },
-        Math: mathStatic("Math.abs(value)", "<number>.abs()", "$.x.abs()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.abs(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.abs()': '$.n.abs()'. In a callback, write 'x => x.abs()'.",
+        ),
       },
     },
-    stream: unsupported("'.abs()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.abs()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.abs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.abs();'",
+      "'.abs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.abs();'",
     ),
     group: unsupported("'.abs()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.abs()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   sqrt: name({
-    doc: "'.sqrt()' — emits $sqrt. 'Math.sqrt()' is refused.",
+    doc: "'.sqrt()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sqrt: recv }) },
-        Math: mathStatic("Math.sqrt(value)", "<number>.sqrt()", "$.x.sqrt()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.sqrt(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sqrt()': '$.n.sqrt()'. In a callback, write 'x => x.sqrt()'.",
+        ),
       },
     },
-    stream: unsupported("'.sqrt()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.sqrt()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.sqrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sqrt();'",
+      "'.sqrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.sqrt();'",
     ),
     group: unsupported("'.sqrt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.sqrt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   exp: name({
-    doc: "'.exp()' — emits $exp. 'Math.exp()' is refused.",
+    doc: "'.exp()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $exp: recv }) },
-        Math: mathStatic("Math.exp(value)", "<number>.exp()", "$.x.exp()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.exp(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.exp()': '$.n.exp()'. In a callback, write 'x => x.exp()'.",
+        ),
       },
     },
-    stream: unsupported("'.exp()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.exp()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.exp()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.exp();'",
+      "'.exp()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.exp();'",
     ),
     group: unsupported("'.exp()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.exp()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  log10: name({
-    doc: "'.log10()' — emits $log10. 'Math.log10()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $log10: recv }) },
-        Math: mathStatic("Math.log10(value)", "<number>.log10()", "$.x.log10()"),
-      },
-    },
-    stream: unsupported("'.log10()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.log10()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.log10();'",
-    ),
-    group: unsupported("'.log10()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.log10()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  sin: name({
-    doc: "'.sin()' — emits $sin. 'Math.sin()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sin: recv }) },
-        Math: mathStatic("Math.sin(value)", "<number>.sin()", "$.x.sin()"),
-      },
-    },
-    stream: unsupported("'.sin()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.sin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sin();'",
-    ),
-    group: unsupported("'.sin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.sin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  cos: name({
-    doc: "'.cos()' — emits $cos. 'Math.cos()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cos: recv }) },
-        Math: mathStatic("Math.cos(value)", "<number>.cos()", "$.x.cos()"),
-      },
-    },
-    stream: unsupported("'.cos()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.cos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.cos();'",
-    ),
-    group: unsupported("'.cos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.cos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  tan: name({
-    doc: "'.tan()' — emits $tan. 'Math.tan()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $tan: recv }) },
-        Math: mathStatic("Math.tan(value)", "<number>.tan()", "$.x.tan()"),
-      },
-    },
-    stream: unsupported("'.tan()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.tan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.tan();'",
-    ),
-    group: unsupported("'.tan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.tan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  asin: name({
-    doc: "'.asin()' — emits $asin. 'Math.asin()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $asin: recv }) },
-        Math: mathStatic("Math.asin(value)", "<number>.asin()", "$.x.asin()"),
-      },
-    },
-    stream: unsupported("'.asin()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.asin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.asin();'",
-    ),
-    group: unsupported("'.asin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.asin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  acos: name({
-    doc: "'.acos()' — emits $acos. 'Math.acos()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $acos: recv }) },
-        Math: mathStatic("Math.acos(value)", "<number>.acos()", "$.x.acos()"),
-      },
-    },
-    stream: unsupported("'.acos()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.acos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.acos();'",
-    ),
-    group: unsupported("'.acos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.acos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  atan: name({
-    doc: "'.atan()' — emits $atan. 'Math.atan()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $atan: recv }) },
-        Math: mathStatic("Math.atan(value)", "<number>.atan()", "$.x.atan()"),
-      },
-    },
-    stream: unsupported("'.atan()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.atan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.atan();'",
-    ),
-    group: unsupported("'.atan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.atan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  sinh: name({
-    doc: "'.sinh()' — emits $sinh. 'Math.sinh()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sinh: recv }) },
-        Math: mathStatic("Math.sinh(value)", "<number>.sinh()", "$.x.sinh()"),
-      },
-    },
-    stream: unsupported("'.sinh()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.sinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sinh();'",
-    ),
-    group: unsupported("'.sinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.sinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  cosh: name({
-    doc: "'.cosh()' — emits $cosh. 'Math.cosh()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cosh: recv }) },
-        Math: mathStatic("Math.cosh(value)", "<number>.cosh()", "$.x.cosh()"),
-      },
-    },
-    stream: unsupported("'.cosh()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.cosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.cosh();'",
-    ),
-    group: unsupported("'.cosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.cosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  tanh: name({
-    doc: "'.tanh()' — emits $tanh. 'Math.tanh()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $tanh: recv }) },
-        Math: mathStatic("Math.tanh(value)", "<number>.tanh()", "$.x.tanh()"),
-      },
-    },
-    stream: unsupported("'.tanh()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.tanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.tanh();'",
-    ),
-    group: unsupported("'.tanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.tanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  asinh: name({
-    doc: "'.asinh()' — emits $asinh. 'Math.asinh()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $asinh: recv }) },
-        Math: mathStatic("Math.asinh(value)", "<number>.asinh()", "$.x.asinh()"),
-      },
-    },
-    stream: unsupported("'.asinh()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.asinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.asinh();'",
-    ),
-    group: unsupported("'.asinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.asinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  acosh: name({
-    doc: "'.acosh()' — emits $acosh. 'Math.acosh()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $acosh: recv }) },
-        Math: mathStatic("Math.acosh(value)", "<number>.acosh()", "$.x.acosh()"),
-      },
-    },
-    stream: unsupported("'.acosh()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.acosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.acosh();'",
-    ),
-    group: unsupported("'.acosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.acosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
-  atanh: name({
-    doc: "'.atanh()' — emits $atanh. 'Math.atanh()' is refused.",
-    call: true,
-    on: ["number", "Math"],
-    returns: "number",
-    neverNull: true,
-    passesNull: true,
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      perFamily: {
-        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $atanh: recv }) },
-        Math: mathStatic("Math.atanh(value)", "<number>.atanh()", "$.x.atanh()"),
-      },
-    },
-    stream: unsupported("'.atanh()' has no stream form: it produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'.atanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.atanh();'",
-    ),
-    group: unsupported("'.atanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'.atanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
   log: name({
-    doc: "'.log([base])' — emits $ln, or $log with a base ($log10 for the constant 10). 'Math.log()' is refused.",
+    doc: "'.log()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10890,154 +10742,529 @@ export const NAMES = {
         number: {
           args: { sig: "[base]", allowed: [0, 1] },
           emit: ({ recv, args, value }) => {
-            if (args.length === 0) return { $ln: recv };
-            const base = value(args[0]);
-            return base === 10 ? { $log10: recv } : { $log: [recv, base] };
+            const base = args[0];
+            if (base === undefined) return { $ln: recv };
+            // the base 10 has an operator of its own, as `.log10()` does
+            return base.type === "NumberLiteral" && base.value === 10
+              ? { $log10: recv }
+              : { $log: [recv, value(base)] };
           },
         },
-        Math: mathStatic("Math.log(value)", "<number>.log()", "$.x.log()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.log(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.log()': '$.n.log()', or '$.n.log(base)' for another base.",
+        ),
       },
     },
-    stream: unsupported("'.log()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.log()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.log()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.log();'",
+      "'.log()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.log();'",
     ),
     group: unsupported("'.log()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.log()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   log2: name({
-    doc: "'.log2()' — emits {$log:[x,2]}. 'Math.log2()' is refused.",
+    doc: "'.log2()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $log: [recv, 2] }) },
-        Math: mathStatic("Math.log2(value)", "<number>.log2()", "$.x.log2()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.log2(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.log2()': '$.n.log2()'. In a callback, write 'x => x.log2()'.",
+        ),
       },
     },
-    stream: unsupported("'.log2()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.log2()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.log2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.log2();'",
+      "'.log2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.log2();'",
     ),
     group: unsupported("'.log2()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.log2()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  trunc: name({
-    doc: "'.trunc([precision])' — emits $trunc. 'Math.trunc()' is refused.",
+  log10: name({
+    doc: "'.log10()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        // MEASURED: { $trunc: "$x" } is valid, and 2.5 gives 2.
-        number: {
-          args: { sig: "[precision]", allowed: [0, 1] },
-          emit: ({ recv, args, value }) => ({ $trunc: args.length === 0 ? recv : [recv, value(args[0])] }),
-        },
-        Math: mathStatic("Math.trunc(value)", "<number>.trunc()", "$.x.trunc()"),
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $log10: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.log10(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.log10()': '$.n.log10()'. In a callback, write 'x => x.log10()'.",
+        ),
       },
     },
-    stream: unsupported("'.trunc()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.log10()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.trunc()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.trunc();'",
+      "'.log10()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.log10();'",
+    ),
+    group: unsupported("'.log10()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.log10()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  trunc: name({
+    doc: "'.trunc()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: {
+          args: { sig: "[precision]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) =>
+            args[0] === undefined ? { $trunc: recv } : { $trunc: [recv, value(args[0])] },
+        },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.trunc(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.trunc()': '$.n.trunc()'. In a callback, write 'x => x.trunc()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.trunc()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.trunc()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.trunc();'",
     ),
     group: unsupported("'.trunc()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.trunc()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   sign: name({
-    doc: "'.sign()' — -1, 0 or 1. 'Math.sign()' is refused.",
+    doc: "'.sign()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["number", "Math"],
     returns: "number",
-    neverNull: true,
-    passesNull: true,
+    neverNull: "always",
+    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
-        // why: `$cmp` answers -1 for a missing value, and the `$pow` factor is 1 for a
-        // number and null for nothing. So the product is null there, with no `$cond`.
-        // MEASURED: -8 → -1, 0 → 0, missing → null.
-        number: {
-          args: { sig: "", none: true },
-          emit: ({ recv }) => ({ $multiply: [{ $cmp: [recv, 0] }, { $pow: [recv, 0] }] }),
-        },
-        Math: mathStatic("Math.sign(value)", "<number>.sign()", "$.x.sign()"),
+        // HR5: a missing or null number reads as 0, the safe value, so the sign is 0 there
+        number: { args: { sig: "", none: true }, emit: ({ recv, present }) => ({ $cmp: [orZero(recv, present), 0] }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.sign(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sign()': '$.n.sign()'. In a callback, write 'x => x.sign()'.",
+        ),
       },
     },
-    stream: unsupported("'.sign()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.sign()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.sign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sign();'",
+      "'.sign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.sign();'",
     ),
     group: unsupported("'.sign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.sign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   cbrt: name({
-    doc: "'.cbrt()' — emits {$pow:[x,1/3]}, with the sign kept. 'Math.cbrt()' is refused.",
+    doc: "'.cbrt()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
         number: { args: { sig: "", none: true }, emit: ({ recv }) => cbrt(recv) },
-        Math: mathStatic("Math.cbrt(value)", "<number>.cbrt()", "$.x.cbrt()"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.cbrt(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cbrt()': '$.n.cbrt()'. In a callback, write 'x => x.cbrt()'.",
+        ),
       },
     },
-    stream: unsupported("'.cbrt()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.cbrt()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.cbrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.cbrt();'",
+      "'.cbrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.cbrt();'",
     ),
     group: unsupported("'.cbrt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.cbrt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  atan2: name({
-    doc: "'<y>.atan2(x)' — emits $atan2. 'Math.atan2()' is refused.",
+  sin: name({
+    doc: "'.sin()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sin: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.sin(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sin()': '$.n.sin()'. In a callback, write 'x => x.sin()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.sin()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.sin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.sin();'",
+    ),
+    group: unsupported("'.sin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.sin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  cos: name({
+    doc: "'.cos()' — see docs/LANGUAGE.md.",
+    call: true,
     passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cos: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.cos(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cos()': '$.n.cos()'. In a callback, write 'x => x.cos()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.cos()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.cos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.cos();'",
+    ),
+    group: unsupported("'.cos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.cos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  tan: name({
+    doc: "'.tan()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $tan: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.tan(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.tan()': '$.n.tan()'. In a callback, write 'x => x.tan()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.tan()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.tan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.tan();'",
+    ),
+    group: unsupported("'.tan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.tan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  asin: name({
+    doc: "'.asin()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $asin: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.asin(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.asin()': '$.n.asin()'. In a callback, write 'x => x.asin()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.asin()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.asin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.asin();'",
+    ),
+    group: unsupported("'.asin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.asin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  acos: name({
+    doc: "'.acos()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $acos: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.acos(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.acos()': '$.n.acos()'. In a callback, write 'x => x.acos()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.acos()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.acos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.acos();'",
+    ),
+    group: unsupported("'.acos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.acos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  atan: name({
+    doc: "'.atan()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $atan: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.atan(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.atan()': '$.n.atan()'. In a callback, write 'x => x.atan()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.atan()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.atan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.atan();'",
+    ),
+    group: unsupported("'.atan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.atan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  sinh: name({
+    doc: "'.sinh()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sinh: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.sinh(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.sinh()': '$.n.sinh()'. In a callback, write 'x => x.sinh()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.sinh()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.sinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.sinh();'",
+    ),
+    group: unsupported("'.sinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.sinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  cosh: name({
+    doc: "'.cosh()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $cosh: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.cosh(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.cosh()': '$.n.cosh()'. In a callback, write 'x => x.cosh()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.cosh()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.cosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.cosh();'",
+    ),
+    group: unsupported("'.cosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.cosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  tanh: name({
+    doc: "'.tanh()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $tanh: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.tanh(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.tanh()': '$.n.tanh()'. In a callback, write 'x => x.tanh()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.tanh()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.tanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.tanh();'",
+    ),
+    group: unsupported("'.tanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.tanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  asinh: name({
+    doc: "'.asinh()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $asinh: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.asinh(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.asinh()': '$.n.asinh()'. In a callback, write 'x => x.asinh()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.asinh()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.asinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.asinh();'",
+    ),
+    group: unsupported("'.asinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.asinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  acosh: name({
+    doc: "'.acosh()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $acosh: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.acosh(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.acosh()': '$.n.acosh()'. In a callback, write 'x => x.acosh()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.acosh()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.acosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.acosh();'",
+    ),
+    group: unsupported("'.acosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.acosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  atanh: name({
+    doc: "'.atanh()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        number: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $atanh: recv }) },
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.atanh(x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<number>.atanh()': '$.n.atanh()'. In a callback, write 'x => x.atanh()'.",
+        ),
+      },
+    },
+    stream: unsupported("'.atanh()' produces a value, not a stream of documents."),
+    statement: unsupported(
+      "'.atanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.atanh();'",
+    ),
+    group: unsupported("'.atanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.atanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  pow: name({
+    doc: "'Math.pow(base, exponent)' is not part of JSMQL — '**' says the same thing.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: {
+      perFamily: {
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.pow(base, exponent)' is not part of JSMQL — the operator '**' says the same thing, and one capability gets one spelling. Write 'base ** exponent': '$.n ** 2'.",
+        ),
+      },
+    },
+    stream: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
+    statement: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
+    group: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
+    window: unsupported("'Math.pow()' is not part of JSMQL. Write 'base ** exponent'."),
+  }),
+
+  atan2: name({
+    doc: "'.atan2()' — see docs/LANGUAGE.md.",
+    call: true,
+    passesNull: true,
+    on: ["number", "Math"],
+    returns: "number",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
       perFamily: {
         number: { args: { sig: "x", exact: 1 }, emit: ({ recv, args, value }) => ({ $atan2: [recv, value(args[0])] }) },
-        Math: mathStatic("Math.atan2(y, x)", "<y>.atan2(<x>)", "$.y.atan2($.x)"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.atan2(y, x)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<y>.atan2(<x>)': '$.y.atan2($.x)'.",
+        ),
       },
     },
-    stream: unsupported("'.atan2()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.atan2()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.atan2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.atan2();'",
+      "'.atan2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.atan2();'",
     ),
     group: unsupported("'.atan2()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.atan2()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   hypot: name({
-    doc: "'.hypot(...values)' — the square root of the sum of squares. 'Math.hypot()' is refused.",
+    doc: "'.hypot()' — see docs/LANGUAGE.md.",
     call: true,
+    passesNull: true,
     on: ["number", "Math"],
     returns: "number",
     neverNull: true,
-    passesNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -11048,49 +11275,41 @@ export const NAMES = {
             $sqrt: { $add: [recv, ...args.map(value)].map((v) => ({ $pow: [v, 2] })) },
           }),
         },
-        Math: mathStatic("Math.hypot(...values)", "<number>.hypot(<number>, …)", "$.a.hypot($.b)"),
+        // The parser accepts the name so it gets an answer, and this cell refuses it.
+        Math: unsupported(
+          "'Math.hypot(...values)' is not part of JSMQL — the number's own method says the same thing, and one capability gets one spelling. Write '<a>.hypot(<b>, …)': '$.a.hypot($.b)'.",
+        ),
       },
     },
-    stream: unsupported("'.hypot()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.hypot()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'.hypot()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.hypot();'",
+      "'.hypot()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.hypot();'",
     ),
     group: unsupported("'.hypot()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.hypot()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  pow: name({
-    doc: "'Math.pow()' — parses, then refused: the '**' operator says the same thing.",
-    call: true,
-    on: "Math",
-    returns: "number",
-    where: [],
-    // One refusal in every position: the name is legal nowhere.
-    filter: NO_MATH_POW,
-    expr: NO_MATH_POW,
-    stream: NO_MATH_POW,
-    statement: NO_MATH_POW,
-    group: NO_MATH_POW,
-    window: NO_MATH_POW,
-  }),
-
   random: name({
-    doc: "'Math.random()' — emits $rand.",
+    doc: "'.random([upper])' — lodash's _.random with the receiver as a bound; 'Math.random()' — emits $rand.",
     call: true,
-    on: "Math",
+    on: ["number", "Math"],
     returns: "number",
-    neverNull: true,
+    neverNull: "always",
+    nullReceiverAs: 0,
     where: ["value"],
     filter: viaFallback,
-    expr: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
-    stream: unsupported("'Math.random()' produces a value, not a stream of documents."),
+    expr: {
+      perFamily: {
+        number: { args: { sig: "[upper]", allowed: [0, 1] }, emit: (input) => randomOf(input) },
+        Math: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
+      },
+    },
+    stream: unsupported("'.random()' produces a value, not a stream of documents."),
     statement: unsupported(
-      "'Math.random()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.random(…);'",
+      "'.random()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <number>.random();'",
     ),
-    group: unsupported("'Math.random()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported(
-      "'Math.random()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
-    ),
+    group: unsupported("'.random()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'.random()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   PI: name({
@@ -11132,7 +11351,7 @@ export const NAMES = {
     where: [],
     filter: unsupported("'Math' is a namespace, not a test. Compare a number method: '$.n.abs() > 2'."),
     expr: unsupported(
-      "'Math' is a namespace, not a value. Write 'Math.random()', 'Math.PI' or 'Math.E', or a number method: '$.n.abs()'.",
+      "'Math' is a namespace, not a value. Write a member: 'Math.random()', or a number method: '$.n.abs()'.",
     ),
     stream: unsupported("'Math' is a namespace, not a stage."),
     statement: unsupported("'Math' is a namespace, not a statement."),

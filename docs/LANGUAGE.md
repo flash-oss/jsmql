@@ -23,7 +23,7 @@ jsmql("$.age > 18 && $.status === 'active'");
 // Method calls aren't expressible in the query language, so the whole thing
 // falls into `$expr` (still a legal Filter operator).
 jsmql("$.email.split('@').at(1).toLowerCase() === 'gmail.com'");
-// → { $expr: { $eq: [ { $let: { vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } }, in: { $cond: { if: { $eq: [{ $ifNull: ["$$jsmqlRecv", null] }, null] }, then: null, else: { $toLower: "$$jsmqlRecv" } } } } }, "gmail.com" ] } }
+// → { $expr: { $eq: [ { $let: { vars: { jsmqlRecv: { $arrayElemAt: [{ $ifNull: [{ $split: ["$email", "@"] }, []] }, 1] } }, in: { $cond: [{ $lte: ["$$jsmqlRecv", null] }, null, { $toLower: "$$jsmqlRecv" }] } } }, "gmail.com" ] } }
 
 // Any `;` flips to Pipeline mode — even one stage with a trailing `;`.
 jsmql("$match($.age > 18); $sort({ age: 1 });");
@@ -112,7 +112,7 @@ jsmql("$.status === 'active' && $.name.trim() === 'alice'");
 // A value that is not a predicate — the JavaScript truthiness test rides in $expr.
 // A sum is a number or a date, so only the null test and the zero test can fail.
 jsmql("$.a + $.b");
-// → { $expr: { $and: [{ $ne: [{ $ifNull: [{ $add: ["$a", "$b"] }, null] }, null] },
+// → { $expr: { $and: [{ $gt: [{ $add: ["$a", "$b"] }, null] },
 //                     { $ne: [{ $add: ["$a", "$b"] }, 0] }] } }
 
 // A `$op(…)` call is your own MQL, so its truth is MongoDB's own: "" and [] are true there
@@ -195,7 +195,7 @@ A JSMQL expression is a **subset of JavaScript** that compiles to MongoDB aggreg
 - Ternary operator: `? :`
 - String methods: `.trim()`, `.toLowerCase()`, `.startsWith()`, etc.
 - Array methods: `.map()`, `.filter()`, `.flat()`, `.join()`, etc.
-- Number methods and `Math` constants: `.floor()`, `[a, b].min()`, `Math.PI`, etc.
+- Number methods and the `Math` constants: `$.n.floor()`, `[$.a, $.b].min()`, `Math.PI`, etc.
 - Type casting: `Number()`, `String()`, `typeof`, etc.
 - Date operations: `new Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
@@ -338,7 +338,7 @@ a nested template literal, and so on — skips the wrap, to keep the output comp
 
 ```js
 `name=${$.name.toLowerCase()}`
-// → { $concat: ["name=", { $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toLower: "$name" } } }] }
+// → { $concat: ["name=", { $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }] }
 ```
 
 Templates with no expressions resolve to plain strings. Escape sequences support `\\`, `` \` ``, `\$`, `\n`, `\t`, `\r`. Templates nest: `` `outer ${`inner ${$.x}`}` `` works.
@@ -459,7 +459,7 @@ The behaviour matches JavaScript exactly. A line comment ends at a LineTerminato
 As in JavaScript, JSMQL allows a single trailing comma after the last item of a comma-separated list, and ignores it. This works **everywhere** a list appears: call arguments, array and object literals, and arrow / `function` parameter lists. So code your formatter has already touched — prettier and oxfmt add a trailing comma when they break a list across lines — pastes straight in.
 
 ```js
-Date.UTC(2020, 1,)                        // call args
+$.y.atan2($.x,)                           // call args
 [1, 2, 3,]                                // array
 { name: $.name, age: $.age, }             // object
 $.items.map((x, i,) => x * i)             // lambda params + call args
@@ -622,7 +622,7 @@ is ordinary data, so the coercion is what keeps `$.doc[$.k]` from killing the qu
 missing key reads as missing, as `obj[undefined]` does in JavaScript. Stringifying also
 matches JS, where `obj[0]` *is* `obj["0"]`.
 
-The same element-type inference applies across `.filter`/`.find`/`.some`/`.every`/`.flatMap`/`.reduce`, and the element type is also read from `String.split(",")` and `o.keys()` (both yield string arrays) and from object/array-literal element arrays (so `[{…}, {…}].map(o => o[k])` treats `o` as an object). It only ever *removes* a redundant guard: a numeric or unknown-typed element keeps the runtime `$isArray` dispatch.
+The same element-type inference applies across `.filter`/`.find`/`.some`/`.every`/`.flatMap`/`.reduce`, and the element type is also read from `.split(",")` and `.keys()` (both yield string arrays) and from object/array-literal element arrays (so `[{…}, {…}].map(o => o[k])` treats `o` as an object). It only ever *removes* a redundant guard: a numeric or unknown-typed element keeps the runtime `$isArray` dispatch.
 
 If you want compact output for a *numeric* index, pin the type — bind the value to a `const` with a type-revealing initialiser, or chain a type-fixing method (`.map(x => x)`, `.toReversed()`, …).
 
@@ -649,14 +649,18 @@ $[$.fieldName]                      // → { $getField: { field: { $toString: { 
 
 ```js
 $.s?.trim().length() // a call runs after the ?. — the chain stops, and answers null
-// → { $cond: { if: { $eq: [{ $ifNull: ["$s", null] }, null] }, then: null, else: { $strLenCP: { $trim: { input: "$s" } } } } }
+// → { $cond: [{ $lte: ["$s", null] }, null, { $strLenCP: { $trim: { input: "$s" } } }] }
 $.s.trim().length()  // no ?. — a missing `s` reads as "", so the length is 0
 // → { $strLenCP: { $trim: { input: { $ifNull: ["$s", ""] } } } }
 $.a?.b.uniq()        // the ?. tests `a` alone; `a.b` inside follows the dot rule
-// → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $setUnion: { $ifNull: ["$a.b", []] } } } }
+// → { $cond: [{ $lte: ["$a", null] }, null, { $setUnion: { $ifNull: ["$a.b", []] } }] }
 $.a.uniq()           // no ?. — an array method on a field that may be missing runs on []
 // → { $setUnion: { $ifNull: ["$a", []] } }
+$.a?.max()           // `$max` gives null for null, so the chain needs no test
+// → { $max: "$a" }
 ```
+
+Some operators give `null` for a `null` operand. When each call after the `?.` uses such an operator, the MQL holds no test, because the calls give the same answer.
 
 **A `?.` with no call after it answers null.** There is nothing to stop. The chain reads as it does with a dot. Where the value is missing, it answers `null`: JavaScript's `undefined`, which a written document holds as `null`. A bracket read is a read too, so `$.o?.[$.k]` answers as `$.o?.p` does. A consumer that takes an empty value supplies its own, as the table below shows.
 
@@ -664,25 +668,24 @@ $.a.uniq()           // no ?. — an array method on a field that may be missing
 |---|---|---|
 | Bare read | `null` for a missing value | `$.user?.name` → `{ $ifNull: ["$user.name", null] }` |
 | Array spread | `[]` — under `.` as well: a missing array spreads as an empty array (HR5) | `[...$.room?.mods]` → `{ $ifNull: ["$room.mods", []] }` |
-| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user", null] }, null] }, then: null, else: { $trim: { input: "$user.name" } } } }` |
+| Any method receiver — a CALL runs after the `?.` | nothing; the chain stops | `$.user?.name.trim()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $trim: { input: "$user.name" } }] }` |
 | String `+` operand (string concat) | `""` | `$.first + " " + $.user?.last` → `{ $concat: ["$first", " ", { $ifNull: ["$user.last", ""] }] }` |
 | Template literal interpolation | `""` | `` `hello ${$.user?.name}` `` → `{ $concat: ["hello ", { $toString: { $ifNull: ["$user.name", ""] } }] }` |
-| `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: { if: { $eq: [{ $ifNull: ["$user", null] }, null] }, then: null, else: { $size: { $ifNull: ["$user.tags", []] } } } }` |
+| `.size()` of optional — a call, so it stops the chain | nothing; the chain stops | `$.user?.tags.size()` → `{ $cond: [{ $lte: ["$user", null] }, null, { $size: { $ifNull: ["$user.tags", []] } }] }` |
 | Index access (`obj?.[k]`, or a `?.` earlier in the chain) | `null` for a missing value, as a bare read | `$.scoresByLevel?.[$.level]` → `{ $ifNull: [<the index read>, null] }` |
 | A field read after a value | `null` for a missing value, as a bare read | `$.items[0]?.label` → `{ $ifNull: [{ $let: { vars: { jsmqlV: <the read of $.items[0]> }, in: "$$jsmqlV.label" } }, null] }` |
+| Comparison operand (`===`, `!==`, `<`, `<=`, `>`, `>=`) | `null` for a missing value, as a bare read: `{ $eq: ["$nope", null] }` is false, so the wrap changes the answer | `$.x?.y === 1` → `{ $eq: [{ $ifNull: ["$x.y", null] }, 1] }` |
 
-A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so the chain stops and answers `null`. `$objectToArray` already answers `null` for a missing operand, so JSMQL writes no `$cond` here: `$.o?.keys()` is `{ $map: { input: { $objectToArray: "$o" }, in: "$$this.k" } }`.
+A reader of a whole object follows the same rule. `$.o.keys()` is an object method under a dot, so a missing `o` reads as `{}` and the answer is `[]`. `$.o?.keys()` has a call after the `?.`, so it answers `null`: `$objectToArray` gives `null` for `null`, so the MQL holds no test.
 
-These cases produce the same MQL whether you use `.` or `?.`:
+In these cases the read takes no wrap, because the consumer answers a missing value as it answers `null`. The MQL is the same as for a dot:
 
-| Consumer | Why no wrap |
+| Consumer | Example |
 |---|---|
-| Object spread (`{...x?.y}`) | `$mergeObjects` silently ignores null operands and returns `{}` when all operands are null. |
-| Comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`, `===`, `!==`) | `$eq` / `$ne` / `$lt` / `$gt` accept null cleanly. |
-| Loose-equality null check (`$.x?.y == null`) | The `==`/`!=` form already lowers to a `$type` check that catches "null" and "missing". |
-| `$cond` / `&&` / `\|\|` condition | Null is falsy; the chain naturally short-circuits to the alternate branch. |
-| `$in` first argument (`arr.has($.x?.y)`) | Searching for null in an array is a defined, non-erroring operation. |
-| Numeric arithmetic operand (`$.a + $.b?.c` in numeric mode, `-`, `*`, `/`, `%`, `**`) | MQL's `$add` etc. return null on null operand — matches JS's `1 + undefined === NaN` closely. Forcing a `0` fallback would silently produce different numbers than JS, which is worse DX than honest null. |
+| Numeric arithmetic (`+` on numbers, `-`, `*`, `/`, `%`, `**`, `-x`) — the answer is `null`, as `1 + undefined` is `NaN` in JavaScript | `$.a + $.b?.c` → `{ $add: ["$a", "$b.c"] }` |
+| `??` | `$.b?.c ?? 0` → `{ $ifNull: ["$b.c", 0] }` |
+| The null check `== null` / `!= null` | `$.b?.c == null` → `{ $lte: ["$b.c", null] }` |
+| A condition (`? :`, `if`, `&&` and `\|\|` tests, a `.filter()` predicate) | `$.b?.c ? 1 : 2` → `{ $cond: [{ $and: [{ $gt: ["$b.c", null] }, …] }, 1, 2] }` |
 
 **Scope of the wrap.** `?.` only wraps the chain it appears in. A `?.` that sits
 inside a lambda body, a method argument, an `IndexAccess.index`, or a binary
@@ -1525,8 +1528,8 @@ JSMQL tracks the JS distinction between strict and loose equality. It maps each 
 | ------------------ | ------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
 | `$.x === null`     | only real `null` (excludes missing)  | `{ $eq: ["$x", null] }`                                               | `{"x":{"$type":"null"}}` |
 | `$.x !== null`     | anything except real `null` (incl. missing) | `{ $ne: ["$x", null] }`                                        | `{"x":{"$not":{"$type":"null"}}}` |
-| `$.x == null`      | null OR missing                      | `{ $in: [{ $type: "$x" }, ["null", "missing"]] }`                     | `{"x":null}` |
-| `$.x != null`      | neither null nor missing             | `{ $not: [{ $in: [{ $type: "$x" }, ["null", "missing"]] }] }`         | `{"x":{"$ne":null}}` |
+| `$.x == null`      | null OR missing                      | `{ $lte: ["$x", null] }`                     | `{"x":null}` |
+| `$.x != null`      | neither null nor missing             | `{ $gt: ["$x", null] }`         | `{"x":{"$ne":null}}` |
 | `$.x === 5`        | `5`                                  | `{ $eq: ["$x", 5] }`                                                  | `{"x":5}` |
 | `$.x == 5`         | **compile error**                    | —                                                                     | —                                            |
 
@@ -1570,7 +1573,7 @@ $.building && $.building + ","      // includes the suffix only when $.building 
 ### Conditional
 
 ```js
-$.age >= 18 ? "adult" : "minor"     // { $cond: { if: { $gte: ["$age", 18] }, then: "adult", else: "minor" } }
+$.age >= 18 ? "adult" : "minor"     // { $cond: [{ $gte: ["$age", 18] }, "adult", "minor"] }
 $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 ```
 
@@ -1598,11 +1601,11 @@ $match($.active)                    // the same check, as a stage
 $$.filter(o => o.active)            // and again, on a stream
 ```
 
-**The check shrinks to what the value can be.** Each of the four tests belongs to one kind of value, so a value the compiler has a type for — a field the pipeline wrote, a `let`, a literal, a method result — keeps only the tests that value can fail. A field written as a string keeps the `""` test, and the null test while it may be missing. A field written as an array, an object or a date keeps only the null test, and none at all when it is certainly there, so `$.arr ? a : b` becomes `a`. A boolean or a number is its own truth, because MongoDB already reads `0`, `false`, null and missing as false: `$.n ? 1 : 2` is `{ $cond: { if: "$n", then: 1, else: 2 } }`. In a Filter or a `$match`, a bare field with a known type takes the query form — `{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that may be missing — unless the field may hold an array, which the query language reads element by element. See [docs/specs/types.md](specs/types.md).
+**The check shrinks to what the value can be.** Each of the four tests belongs to one kind of value, so a value the compiler has a type for — a field the pipeline wrote, a `let`, a literal, a method result — keeps only the tests that value can fail. A field written as a string keeps the `""` test, and the null test while it may be missing. A field written as an array, an object or a date keeps only the null test, and none at all when it is certainly there, so `$.arr ? a : b` becomes `a`. A boolean or a number is its own truth, because MongoDB already reads `0`, `false`, null and missing as false: `$.n ? 1 : 2` is `{ $cond: ["$n", 1, 2] }`. In a Filter or a `$match`, a bare field with a known type takes the query form — `{ active: true }` for a boolean, `{ n: { $nin: [null, 0] } }` for a number that may be missing — unless the field may hold an array, which the query language reads element by element. See [docs/specs/types.md](specs/types.md).
 
 ```js
 $.s = $.a.trim(); $.t = $.s ? 1 : 2;
-// → [{ $set: { s: { $trim: { input: "$a" } } } }, { $set: { t: { $cond: { if: { $and: [{ $ne: [{ $ifNull: ["$s", null] }, null] }, { $ne: ["$s", ""] }] }, then: 1, else: 2 } } } }]
+// → [{ $set: { s: { $trim: { input: "$a" } } } }, { $set: { t: { $cond: [{ $and: [{ $gt: ["$s", null] }, { $ne: ["$s", ""] }] }, 1, 2] } } }]
 $.b = $.n > 1; $match($.b);
 // → [{ $set: { b: { $gt: ["$n", 1] } } }, { $match: { b: true } }]
 ```
@@ -1857,7 +1860,7 @@ $.a.indexOf("x")
 $.arr = $.tags.uniq();
 $.bool = $.arr.has("red");
 $.result = $.bool ? "R" : "OTHER";
-// → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: { if: "$bool", then: "R", else: "OTHER" } } } } ]
+// → [ { $set: { arr: { $setUnion: { $ifNull: ["$tags", []] } } } }, { $set: { bool: { $in: ["red", "$arr"] } } }, { $set: { result: { $cond: ["$bool", "R", "OTHER"] } } } ]
 ```
 
 **A method on a receiver that is null or missing answers what it answers on the safe value of its kind.** This is [HR5](LANG_RULES.md). Under a dot, an array method runs on `[]`, an object method on `{}`, and a string method on `""`. The compiler wraps the receiver in `$ifNull`, and the operator gives the answer: `[]` for `.uniq()`, `0` for `.sum()`, `.size()` and `.length()`, `false` for `.has(x)` and `.includes(x)`, `true` for `.every(p)`, `""` for `.trim()`, missing for `.first()` and `.at(0)`, `{}` for `.pick([...])`. lodash answers the same way: `_.upperCase(null)` is `""`. In a Filter this reading also decides which documents match: `$.s.length() === 0` matches a document with no `s`, as `$.tags.size() === 0` does. To match only a string that is there, write `$.s?.length() === 0`. A receiver that is certainly there takes no wrap and no test: a literal, `$range(...)`, the keys of the root document, a `$lookup` result, a field a `$match` or a `?.` proved, and the result of an array or object method under a dot, which the wrap made present — so a chain pays once, at its head. Under `?.` the chain stops and answers `null` (see Optional Chaining):
@@ -1876,7 +1879,7 @@ $.keys().size()                   // the root document is always there
 // → { $size: { $map: { input: { $objectToArray: "$$ROOT" }, in: "$$this.k" } } }
 
 $.a?.map(x => x + 1).size()       // `?.` with a call after it stops the chain — see Optional Chaining
-// → { $cond: { if: { $eq: [{ $ifNull: ["$a", null] }, null] }, then: null, else: { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } } } }
+// → { $cond: [{ $lte: ["$a", null] }, null, { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } }] }
 
 $.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).size();   // a $lookup always writes its array
 // → …, { $set: { n: { $size: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } } }, …
@@ -2084,9 +2087,9 @@ jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().toSorted()");
 //       as: "i", in: "$$i.sku" } } }, sortBy: 1 } }
 ```
 
-#### A merge into a field is an assignment of a spread
+#### A merge writes back through the object spread
 
-`.assign()` answers a new object and writes nothing in place. So a statement that merges into a field or a binding is an assignment, and its value is an object spread:
+`.assign()` answers a new object, and it writes nothing in place. lodash's `_.assign` writes its target, so a bare `.assign()` statement is refused, and the error names the write. To merge into a field or a `let` binding, write the merge back:
 
 ```js
 $.profile = { ...$.profile, verified: true };
@@ -2096,9 +2099,9 @@ let result = {};
 result = { ...result, a: $.foo };
 // → { $set: { "__jsmql.var.result": {} } }
 //   { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } }
-```
 
-> **This is different from JavaScript.** `Object.assign(target, …)` writes into `target`. JSMQL refuses `Object.assign`, and a statement of `.assign()` writes nothing, so the compiler refuses that statement too. Each refusal names the spread form above.
+$.profile.assign({ verified: true });   // ✗ .assign() writes nothing; write $.profile = { ...$.profile, verified: true };
+```
 
 #### Array sort: `.toSorted(<sort>)` and `.sort(<sort>)`
 
@@ -2180,7 +2183,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > A predicate-run method takes an arrow (`x => …`) or a `_.matches` object (`{ active: true }`). It stops at the first element the predicate rejects, using JS truthiness, as `.filter` does — see [Truthy and falsy](#truthy-and-falsy). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so each run gives a **different result** — non-deterministic, like the stream `.sample()` → `$sample`. `sampleSize` draws **without replacement** and returns the whole shuffled array when `n` exceeds the length.
 
-> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `<a countBy result>.keys()` hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
+> **Pitfalls.** `keyBy`/`groupBy`/`countBy` **stringify** the key, using `$toString`, to match lodash. A missing or null key coerces to the string `"null"`, but an object or array key still *errors*. **A stringified key stays a string.** So `.keys()` of a `countBy` result hands back hex strings, and on the server a string never equals an `ObjectId`. A join on such a key then silently matches nothing. Cast the key back first: `counts.keys().map(id => ObjectId(id))` (see [ObjectId](#objectid-literals); it lowers to `$toObjectId`). Group order is unspecified, and `groupBy`/`countBy` run in O(n²) time. `.sum`/`.mean`/… ignore non-numeric elements, following MQL's `$sum`/`$avg` semantics. `.uniq`/`.union`/`.intersection`/`.difference`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** — `$setUnion` sorted one sample and `$setDifference` did not, so do not rely on either. lodash preserves input order and JSMQL does not, because nobody writes an ordering when they write `.uniq()`. A live mongod verified every shape here.
 
 > **`.difference` is the set difference, not lodash's.** lodash's `_.difference([3, 1, 3, 2, 1], [2])` keeps the duplicates and gives `[3, 1, 3, 1]`. JSMQL gives each value once, as a JavaScript `Set` does, so the answer is `[3, 1]` in some order. `.differenceBy` and the stream form `$$.flatMap(…).difference(…)` keep each duplicate.
 
@@ -2217,6 +2220,8 @@ $.scores.map(Number)            // coerce strings to numbers
 $.counts.keys().map(ObjectId)         // object keys are strings — cast them back
 // → { $map: { input: { … }, as: "v", in: { $toObjectId: "$$v" } } }
 
+$.scores.map(x => x.floor())    // round each element down
+
 $.stamps.map(Date)              // convert each element to a date
 // → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
 
@@ -2232,7 +2237,7 @@ The bare form is for **arrays of values**. A pipeline stream carries documents, 
 
 **`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Number(<value>).trunc()` for the whole number `parseInt` would give.
 
-**`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `<pairs>.fromEntries()`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
+**`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `pairs.fromEntries()`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
 
 `new` on a name that JSMQL does not know names the nearest class it can construct: for `new Dat()`, the suggestion is `new Date(…)`. `new` on a function (`new Number(5)`) names the call without `new`.
 
@@ -2302,7 +2307,7 @@ Object.groupBy($.items, x => x.category)   // ✗ not a JSMQL name; write $.item
 
 These are value-mode methods on an object field, built over `$objectToArray` / `$arrayToObject`. The `mapValues` / `mapKeys` / `pickBy` / `omitBy` iteratee is a `(value[, key]) => …` arrow.
 
-A reader of an object has two spellings, the JavaScript static and the lodash method, and both emit the same MQL:
+A reader of an object is a method of the object:
 
 ```js
 $.scores.mapValues(v => v * 2)        // { <k>: v*2 }
@@ -2318,9 +2323,9 @@ $.o.invert()                          // swap keys/values (new keys stringified,
 $.o.toPairs()                         // [[k, v], …]
 $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receiver is a [[k,v]] array)
 
-$.o.keys()                            // the keys, as JavaScript's Object.keys(o) gives them
+$.o.keys()                            // the keys
 $.o.values()                          // the values
-$.o.entries()                         // [[k, v], …], the same pairs as .toPairs()
+$.o.entries()                         // [[k, v], …] — the same MQL as $.o.toPairs()
 $.o.assign($.p, $.q)                  // { $mergeObjects: ["$o", "$p", "$q"] } — a NEW object, like .pick()
 $.pairs.fromEntries()                 // the same MQL as $.pairs.fromPairs()
 $.user?.profile?.keys()               // `?.` stops the chain: null when `user.profile` is missing (see Optional Chaining)
@@ -2330,15 +2335,15 @@ $.user?.profile?.keys()               // `?.` stops the chain: null when `user.p
 
 > `pick` uses flat field names only; a deep path such as `"a.b"` has no support here — use `$op($getField, …)` instead. `mapKeys`/`invert` **stringify** the produced key, using `$toString`, and the last one wins on a collision, like lodash. A live mongod verified every shape here.
 
-> **A missing object is `{}` under a dot, and `null` under `?.`** — [HR5](LANG_RULES.md). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on, so the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`: `_.pick(undefined, …)` is `{}`, `Object.keys({})` is `[]`, and that is what each method answers. Write `?.` and the chain stops instead, with `null`. Where the bare operator already answers `null`, as `$objectToArray` does, the `?.` form is the bare call:
+> **A missing object is `{}` under a dot, and `null` under `?.`** — [HR5](LANG_RULES.md). `$objectToArray` answers `null` for a missing field, and `$arrayToObject` passes that null on, so the compiler wraps the receiver of every object method in `{ $ifNull: [<field>, {}] }`: `_.pick(undefined, …)` is `{}`, `({}).keys()` is `[]`, and that is what each method answers. Write `?.` and the chain stops instead, with `null`:
 >
 > ```js
 > $.o.keys()             // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } }
-> $.o?.keys()            // → { $map: { input: { $objectToArray: "$o" }, in: "$$this.k" } }
+> $.o?.keys()            // → { $map: { input: { $objectToArray: "$o" }, in: "$$this.k" } }   ($objectToArray gives null for null)
 > $.o.toPairs()          // → { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: ["$$this.k", "$$this.v"] } }
 > ```
 >
-> `.toPairs()` and `.entries()` give the same pairs: one is lodash's spelling of the reading, and the other is JavaScript's. `$.keys()` reads the root document, which is always there, so it needs no neutral answer either way.
+> `$.keys()` reads the root document, which is always there, so it needs no neutral answer either way.
 
 > **JSMQL reads a `pick` / `omit` key list at query time when the source does not spell it out** — for example, a field path, or a list holding an element read at run time. JSMQL walks the object's own keys and matches each against the list. A key list that is missing or null picks nothing and omits nothing, as lodash does. The `$$.pick(…)` / `$$.omit(…)` STREAM forms still need a spelled-out list, because they lower to `$project`, and the server reads a stage's field list before it reads any document.
 
@@ -2398,7 +2403,7 @@ $.legs.map(leg => {
 })
 // → { $map: { input: "$legs", as: "leg", in:
 //      { $let: { vars: { score: "$$leg.riskScore" }, in:
-//        { $let: { vars: { band: { $cond: { if: { $gt: ["$$score", 50] }, then: "high", else: "low" } } }, in:
+//        { $let: { vars: { band: { $cond: [{ $gt: ["$$score", 50] }, "high", "low"] } }, in:
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
@@ -2507,37 +2512,37 @@ Notes:
 
 ## Number Methods
 
-A number method runs on its receiver. The receiver is the first operand of the operator:
+A number method reads the number before the dot:
 
 ```js
 $.delta.abs()                      // { $abs: "$delta" }
 $.avg.ceil()                       // { $ceil: "$avg" }
 $.avg.floor()                      // { $floor: "$avg" }
-$.avg.round()                      // { $round: "$avg" }   — half-to-EVEN, so (2.5).round() is 2
-$.avg.round(2)                     // { $round: ["$avg", 2] }
+$.avg.floor(1)                     // { $divide: [{ $floor: { $multiply: ["$avg", 10] } }, 10] }
+$.avg.round()                      // { $round: "$avg" }
+$.avg.round(2)                     // { $round: ["$avg", 2] }   (2 decimal places)
 $.avg.trunc()                      // { $trunc: "$avg" }
 $.avg.trunc(2)                     // { $trunc: ["$avg", 2] }
 $.base ** 2                        // { $pow: ["$base", 2] }
 $.variance.sqrt()                  // { $sqrt: "$variance" }
+$.x.cbrt()                         // { $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, 0.3333333333333333] }] }
+                                   // the sign is factored out: (-8).cbrt() is -2, as in JavaScript,
+                                   // and $pow of a negative base to a fractional exponent is not that
 $.rate.exp()                       // { $exp: "$rate" }
 $.value.log()                      // { $ln: "$value" }   (natural log)
-$.value.log(3)                     // { $log: ["$value", 3] }
+$.value.log($.base)                // { $log: ["$value", "$base"] }
 $.value.log(10)                    // { $log10: "$value" }
 $.value.log2()                     // { $log: ["$value", 2] }
 $.value.log10()                    // { $log10: "$value" }
-$.delta.sign()                     // { $multiply: [{ $cmp: ["$delta", 0] }, { $pow: ["$delta", 0] }] }   (-1 / 0 / 1)
-$.x.cbrt()                         // { $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, 0.3333333333333333] }] }
-                                   // the sign is factored out: Math.cbrt(-8) is -2 in JavaScript,
-                                   // and $pow of a negative base to a fractional exponent is not that
+$.delta.sign()                     // { $cmp: [{ $ifNull: ["$delta", 0] }, 0] }   (-1 / 0 / 1)
 $.a.hypot($.b)                     // { $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } }
 
 [$.a, $.b, $.c].min()              // { $min: ["$a", "$b", "$c"] }
 $.scores.max()                     // { $max: "$scores" }
+[$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
 
-> **This is different from JavaScript.** A JavaScript number has no `.abs()` or `.sqrt()` method, and JavaScript spells these as `Math.abs(x)` and `Math.sqrt(x)`. JSMQL keeps one spelling for each capability, and the method is the shorter one. `Math.abs($.x)` is refused, and the error names `$.x.abs()`. The same holds for each `Math` member that takes a value. `Math.pow(a, b)` is refused too, and the error names `a ** b`. A `Math` member is not a callback either: write the arrow, `.map(x => x.floor())`.
-
-A number method on a missing or `null` number gives `null`, in both spellings ([HR5](LANG_RULES.md)). The operator already gives that `null`, so a `?.` adds no test: `$.n?.abs()` is `{ $abs: "$n" }`. The lodash number methods below are the exception. Each of them has a safe answer for a missing number, so the dot gives that answer, and `?.` gives `null`.
+A number method on a missing or `null` number gives `null`, under a dot and under `?.`. See [HR5](LANG_RULES.md). Some methods have a safe value, and a dot gives it instead: `.sign()` gives `0`, because a missing number reads as `0`. `.clamp()`, `.inRange()` and `.range()` give a safe value too; see [lodash number methods](#lodash-number-methods).
 
 ### Trigonometry
 
@@ -2567,12 +2572,21 @@ $radiansToDegrees($.radAngle)      // { $radiansToDegrees: "$radAngle" }
 
 ### `Math`
 
-`Math` keeps the members that take no value:
+`Math` holds the members that take no value:
 
 ```js
 Math.random()                      // { $rand: {} }
 Math.PI                            // 3.141592653589793
 Math.E                             // 2.718281828459045
+```
+
+Each other `Math` member says the same thing as a number method or an operator, and one capability gets one spelling. The name still parses, so the error names the form that works:
+
+```js
+Math.abs($.delta)                  // ✗ not a JSMQL name; write $.delta.abs()
+Math.pow($.base, 2)                // ✗ not a JSMQL name; write $.base ** 2
+Math.max($.a, $.b)                 // ✗ not a JSMQL name; write [$.a, $.b].max()
+$.scores.map(Math.floor)           // ✗ not a JSMQL name; write $.scores.map(x => x.floor())
 ```
 
 ---
@@ -2623,9 +2637,25 @@ $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
 $.n.inRange(10)        // 0 <= n < 10   (checked with $min/$max so negative ranges swap)
 $.n.inRange(5, 10)     // 5 <= n < 10
 $.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))   // a date reads the same range test
-$.n.ceil(2)            // { $divide: [{ $ceil: { $multiply: ["$n", 100] } }, 100] }   — scale by 10², $ceil, scale back
-$.n.floor(1)           // { $divide: [{ $floor: { $multiply: ["$n", 10] } }, 10] }
+$.n.round()            // { $round: "$n" }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
+$.n.round(2)           // { $round: ["$n", 2] }
+$.n.ceil()             // { $ceil: "$n" }
+$.n.ceil(2)            // { $divide: [{ $ceil: { $multiply: ["$n", 100] } }, 100] }
+$.n.floor(1)           // as ceil, with $floor
 ```
+
+#### `.random()`
+
+`.random()` is lodash's `_.random`, and the receiver is lodash's first argument. With no argument, the number is between 0 and the receiver. With one argument, it is between the receiver and the argument. The bounds swap when the first one is larger. Two whole bounds give a whole number, both ends included. Any other pair gives a fractional number. A missing bound reads as `0`, as lodash reads it.
+
+```js
+(1).random(6)            // { $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] }   → 1 … 6, whole
+(1.5).random(2)          // { $add: [1.5, { $multiply: [{ $rand: {} }, 0.5] }] }          → 1.5 … 2
+$.a.random($.b)          // a $let of the two ends, then a $cond: whole when both ends are whole
+Math.random()            // { $rand: {} }   → 0 … 1
+```
+
+Two constant bounds decide the form at compile time. For a bound from a document, the server runs the test. The MQL is therefore larger.
 
 #### `.range()` and `.rangeRight()`
 
@@ -3153,9 +3183,9 @@ $.obj.entries()                    // { $map: { input: { $objectToArray: { $ifNu
 $.pairs.fromEntries()              // { $arrayToObject: { $map: { input: { $ifNull: ["$pairs", []] }, in: [{ $toString: { $first: "$$this" } }, { $arrayElemAt: ["$$this", 1] }] } } }
 $.a.assign($.b)                    // { $mergeObjects: ["$a", "$b"] }
 $.a.assign($.b, $.c)               // { $mergeObjects: ["$a", "$b", "$c"] }
-({}).assign(...$.docs)             // { $mergeObjects: "$docs" }   (merge an array of objects)
+({}).assign(...$.docs)             // { $mergeObjects: "$docs" }   — merge an array of objects
 ({}).assign($.o)                   // { $mergeObjects: [{}, "$o"] }   (a copy of one object)
-$.a.assign(...$.docs)              // { $mergeObjects: { $concatArrays: [["$a"], "$docs"] } }   (spread)
+$.a.assign(...$.docs)              // { $mergeObjects: { $concatArrays: [["$a"], { $ifNull: ["$docs", []] }] } }
 
 Array.isArray($.items)             // { $isArray: "$items" }
 
@@ -3164,32 +3194,32 @@ $setField("fieldName", $.doc, val) // { $setField: { field: "fieldName", input: 
 $unsetField("fieldName", $.doc)    // { $unsetField: { field: "fieldName", input: "$doc" } }
 ```
 
-`.assign()` answers a new object: the receiver comes first, and each argument follows. An argument with no spread is one source object, as in JavaScript. A spread argument is a list of sources, so `({}).assign(...$.docs)` merges each object of `docs`. An empty-object receiver (`({})`) adds nothing, so the merge leaves it out where the sources stay objects.
+A spread argument of `.assign()` is a list of sources, and a plain argument is one source. So `$.a.assign($.docs)` merges `docs` as one object, and the server refuses it when `docs` is an array. The target is a new object, so `({}).assign(...$.docs)` writes nothing into `docs[0]`, where JavaScript's `Object.assign(...docs)` changes it. A bare `.assign()` statement writes nothing. See [A merge writes back through the object spread](#a-merge-writes-back-through-the-object-spread).
 
-> **This is different from JavaScript.** JavaScript's `Object.assign(...$.docs)` writes into `$.docs[0]`. `({}).assign(...$.docs)` writes nothing, because its target is a new empty object. An array with no spread, as in `({}).assign($.docs)`, is one source: JavaScript copies its indexes as keys, and the server refuses it. Write the spread.
-
-**The `Object` statics are not JSMQL names.** Each one says the same thing as a method of the object, and one capability gets one spelling. The names still parse, so the error names the method that works:
+The `Object` statics are not JSMQL names. Each one says the same thing as the method of its receiver, and one capability gets one spelling. The name still parses, so the error names the form that works:
 
 ```js
-Object.keys($.doc)          // ✗ not a JSMQL name; write $.doc.keys()
-Object.assign(...$.docs)    // ✗ not a JSMQL name; write ({}).assign(...$.docs)
+Object.keys($.doc)                 // ✗ not a JSMQL name; write $.doc.keys()
+Object.fromEntries($.pairs)        // ✗ not a JSMQL name; write $.pairs.fromEntries()
+Object.assign(...$.docs)           // ✗ not a JSMQL name; write ({}).assign(...$.docs)
+Object.assign($.f, $.x);           // ✗ not a JSMQL name; write $.f = { ...$.f, ...$.x };
 ```
 
 ### Spread in Variadic Calls
 
-A JavaScript call that takes a list (`.assign()`) takes `...arr`, and passes the whole array through as the operator's value:
+`.assign()` takes `...arr`, and passes the whole array through as the operator's value:
 
 ```js
 ({}).assign(...$.docs)             // { $mergeObjects: "$docs" }
 ```
 
-When you mix spread with non-spread arguments, JSMQL wraps each non-spread value in a single-element array and joins them with `$concatArrays`:
+An array literal joins spread and non-spread elements with `$concatArrays`, so a list method takes a mixed list as its receiver:
 
 ```js
-$.a.assign(...$.docs)              // { $mergeObjects: { $concatArrays: [["$a"], "$docs"] } }
+[$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
 
-**The `$op(…)` escape hatch takes no spread.** `$op(value)` is `{ $op: value }` and `$op(a, b)` is `{ $op: [a, b] }` ([HR2](LANG_RULES.md)); a spread has no MQL of its own. JSMQL refuses `$concatArrays(...$.arrs)` and `$foo(...$.arr)` alike, and the message names the forms that work: the operands one by one, the single array (`$concatArrays($.arrs)`), or the JavaScript spelling (`[...arr].max()`, `[...a, ...b]`, `.concat()`).
+**The `$op(…)` escape hatch takes no spread.** `$op(value)` is `{ $op: value }` and `$op(a, b)` is `{ $op: [a, b] }` ([HR2](LANG_RULES.md)); a spread has no MQL of its own. JSMQL refuses `$concatArrays(...$.arrs)` and `$foo(...$.arr)` alike, and the message names the forms that work: the operands one by one, the single array (`$concatArrays($.arrs)`), or the JavaScript spelling (`arr.max()`, `({}).assign(...arr)`, `[...a, ...b]`, `.concat()`).
 
 `$getField` and `$setField` are useful when a field name is dynamic or contains special characters.
 
@@ -3470,7 +3500,7 @@ jsmql(`[
   $sort({ score: -1 })
 ]`)
 // → [
-//     { $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] },   // `$.active` is the JavaScript truthiness test
+//     { $match: { $expr: { $and: [{ $gt: ["$active", null] },   // `$.active` is the JavaScript truthiness test
 //                                 { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } },
 //     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: "$$NOW" } },
 //     { $sort: { score: -1 } }
@@ -3566,7 +3596,7 @@ jsmql("$$ = $objectToArray($.scores);")
 // → $set the $objectToArray into a slot, then $unwind + $replaceWith
 
 // A stream holds DOCUMENTS, and where a row states what ONE element is, an element
-// that is not one is refused. .entries() gives [key, value] PAIRS:
+// that is not one is refused. .entries() gives [key, value] PAIRS, as JavaScript does:
 jsmql("$$ = $.scores.entries();")
 // ✗ each element is an array, not a document. Put each under a field,
 //   $$ = <array>.map((v) => ({ value: v })), or write the array to a field, $.<field> = <array>.
@@ -3578,7 +3608,7 @@ jsmql("$ = $.lineItems.map(li => ({ sku: li.sku }));")
 
 A **bare field reference is not** provably an array, because a field path carries no compile-time type. So `$ = $.items` stays a single-document `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` and `$$ = [...$.items]` are the same three stages.
 
-A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there, and the server decides. The refusal above fires only where a row *states* the element kind: `.split()` gives strings, `.keys()` gives strings, `.entries()` and `.chunk()` give arrays, and `$objectToArray` gives documents. Where nothing is stated, the fan-out stands.
+A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there, and the server decides. The refusal above fires only where a row *states* the element kind. `.split()` and `.keys()` give strings, `.entries()` and `.chunk()` give arrays, and `$objectToArray` gives documents. Where nothing is stated, the fan-out stands.
 
 An array LITERAL of documents on the stream is a different operation. `$$ = [{ … }, { … }]` names the stream's documents outright, wherever it stands in the program: it drops every document and unions in the new ones. The fan-out reading belongs to an array that the data decides, with one answer per input document.
 
@@ -4196,7 +4226,7 @@ jsmql(`[{ $match: $.status === "active" && $.score > $.threshold }]`);
 
 // Untranslatable shape → falls back to $expr entirely
 jsmql("[{ $match: $.name.toLowerCase() === \"alice\" }]");
-// → [{ $match: { $expr: { $eq: [{ $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $toLower: "$name" } } }, "alice"] } } }]
+// → [{ $match: { $expr: { $eq: [{ $cond: [{ $lte: ["$name", null] }, null, { $toLower: "$name" }] }, "alice"] } } }]
 
 // Object-literal body is passed through unchanged (also the escape hatch)
 jsmql("[{ $match: { age: { $gt: 18 } } }]");
@@ -5040,7 +5070,7 @@ jsmql.expr(({ $ }: { $: { placedAt: Date } }) =>
 );
 ```
 
-Completion flows from any value with a **concrete type**: an annotated `$` (above), a typed method (`o.values()`, `o.keys()`), a literal, or the result of a known-return method earlier in the chain. A **bare, un-annotated `$.field` is `any`**, and `any.uniq()` stays `any`, so a method on it neither autocompletes nor errors. This is a deliberate trade. `$.field` must stay `any` so the operator forms JSMQL relies on — `$.age > 18`, `$.price * 1.1` — keep type-checking. In TypeScript, one value cannot be both an operator operand and a rich method receiver. Type your document to light up completion.
+Completion flows from any value with a **concrete type**: an annotated `$` (above), a literal, or the result of a known-return method earlier in the chain. A **bare, un-annotated `$.field` is `any`**, and `any.uniq()` stays `any`, so a method on it neither autocompletes nor errors. This is a deliberate trade. `$.field` must stay `any` so the operator forms JSMQL relies on — `$.age > 18`, `$.price * 1.1` — keep type-checking. In TypeScript, one value cannot be both an operator operand and a rich method receiver. Type your document to light up completion.
 
 Two points on scope:
 
@@ -5179,7 +5209,7 @@ jsmql.expr('$.firstName + " " + $.lastName')
 
 // Normalized email
 jsmql.expr("$.email.toLowerCase().trim()")
-// → { $trim: { input: { $cond: { if: { $eq: [{ $ifNull: ["$email", null] }, null] }, then: null, else: { $toLower: "$email" } } } } }
+// → { $trim: { input: { $cond: [{ $lte: ["$email", null] }, null, { $toLower: "$email" }] } } }
 
 // Check domain
 jsmql.expr('$.email.substr($.email.indexOf("@") + 1)')
@@ -5193,8 +5223,7 @@ jsmql.expr('$.email.substr($.email.indexOf("@") + 1)')
 ```js
 // Age category
 jsmql.expr('$.age < 13 ? "child" : $.age < 18 ? "teen" : "adult"')
-// → { $cond: { if: { $lt: ["$age", 13] }, then: "child",
-//     else: { $cond: { if: { $lt: ["$age", 18] }, then: "teen", else: "adult" } } } }
+// → { $cond: [{ $lt: ["$age", 13] }, "child", { $cond: [{ $lt: ["$age", 18] }, "teen", "adult"] }] }
 
 // Fallback value (chained ?? flattens into a single $ifNull)
 jsmql.expr("$.nickname ?? $.firstName ?? 'Unknown'")

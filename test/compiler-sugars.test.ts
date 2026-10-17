@@ -218,7 +218,7 @@ describe("compiler/emit — `$$ = [{ k: $$.reduce(…) }]` folds the stream to o
           first: { $first: "$tag" },
         },
       },
-      // the seed is folded in as JavaScript would: `Math.max` from 0 is the max with 0
+      // the seed is folded in as JavaScript would: `.max()` from 0 is the max with 0
       {
         $replaceWith: {
           total: "$total",
@@ -1222,7 +1222,18 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
       { $set: { r: "$__jsmql.var.r" } },
       { $unset: "__jsmql" },
     ]);
-    expect(() => pipeline("zzz.push(1);")).toThrow(/zzz/);
+    expect(
+      compiled(
+        "let r = { p: 1 }; r = { ...r, q: 2 }; $.r = r;",
+        MAIN.map((d) => ({ _id: d._id, r: { p: 1, q: 2 } })),
+      ),
+    ).toEqual([
+      { $set: { "__jsmql.var.r": { p: 1 } } },
+      { $set: { "__jsmql.var.r": { $mergeObjects: ["$__jsmql.var.r", { q: 2 }] } } },
+      { $set: { r: "$__jsmql.var.r" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(() => pipeline("zzz = { ...zzz, a: 1 };")).toThrow(/zzz/);
     expect(() => pipeline("$.s.trim().sort();")).toThrow(/needs a field or a binding to write/);
     expect(() => pipeline("[1, 2].reverse();")).toThrow(/needs a field or a binding to write/);
   });
@@ -1254,7 +1265,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
     ]);
   });
 
-  it("a merge into a field is an assignment of a spread", () => {
+  it("an object spread at statement position writes its target", () => {
     expect(
       compiled("$.o = { p: 1 }; $.o = { ...$.o, q: 2 };", [
         { _id: 1, o: { p: 1, q: 2 } },

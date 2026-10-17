@@ -174,12 +174,13 @@ function pathOf(target: Expr, pos: number): string {
 
 /** `$.n = [$.n, 5].min()` is `$min: { n: 5 }` — the SAME path on both sides. */
 function minMax(v: Expr, path: string): { op: "$min" | "$max"; value: Expr } | null {
-  if (v.type !== "MethodCall" || (v.name !== "min" && v.name !== "max") || v.args.length !== 0) return null;
-  if (v.object.type !== "ArrayLiteral" || v.object.elements.length !== 2) return null;
-  if (v.object.elements.some((el) => el.type === "SpreadElement")) return null;
-  // a statement in a list literal is refused before any reading, so each element is an expression
-  const [self, other] = v.object.elements as readonly Expr[];
+  if (v.type !== "MethodCall" || v.object.type !== "ArrayLiteral" || v.args.length !== 0) return null;
+  if (v.name !== "min" && v.name !== "max") return null;
+  const [self, other] = v.object.elements;
+  if (v.object.elements.length !== 2 || self === undefined || other === undefined) return null;
   if (self.type !== "FieldRef" || self.path !== path) return null;
+  if (other.type === "SpreadElement" || other.type === "FuncDecl" || other.type === "UpdateFilter") return null;
+  if (other.type === "AssignExpr" || other.type === "DeleteStmt") return null;
   return { op: v.name === "min" ? "$min" : "$max", value: other };
 }
 

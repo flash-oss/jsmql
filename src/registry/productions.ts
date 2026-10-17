@@ -21,7 +21,7 @@ import type { NodeName, On, Only, Position, TypeExpr } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
 import { bsonTagOf, isDate, isRegExp, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
-import { cond, nullPassing } from "./mql.ts";
+import { cond } from "./mql.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -69,6 +69,13 @@ export type ProductionSpec<
   fixity?: "prefix" | "infix" | "postfix" | "ternary" | "prefixOrPostfix";
   on: O;
   returns: TypeExpr;
+  /**
+   * The operator answers a missing operand as it answers `null`, so a `?.` read as an
+   * operand needs no `$ifNull: [x, null]`. MEASURED: `{ $add: ["$nope", 1] }` and
+   * `{ $add: [null, 1] }` are both null. The comparisons do not state it, because
+   * `{ $eq: ["$nope", null] }` is false. test/compiler-methods.test.ts measures each row.
+   */
+  passesNull?: true;
   where: W;
   only?: readonly Only[];
   /** Rules that the parser must try BEFORE this one, when two triggers overlap. The audit below tests them. */
@@ -363,6 +370,7 @@ export const PRODUCTIONS = {
     noMixWith: ["logicalOr", "logicalAnd"],
     on: "any",
     flattensChain: true,
+    passesNull: true,
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -646,6 +654,7 @@ export const PRODUCTIONS = {
     // This row states the `$add` road. A string operand makes it `$concat`, which
     // src/compiler/emit/prove.ts proves a string. MEASURED: `$add` over each pair of
     // operand kinds gives a number, a date, null or an error.
+    passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
@@ -665,6 +674,7 @@ export const PRODUCTIONS = {
     on: "any",
     // MEASURED: `$subtract` over each pair of operand kinds gives a number, a date, null or
     // an error. A date minus a date is a long, and a date minus a number is a date.
+    passesNull: true,
     returns: { oneOf: ["number", "date"] },
     where: ["value"],
     filter: viaFallback,
@@ -687,6 +697,7 @@ export const PRODUCTIONS = {
     on: "any",
     flattensChain: true,
     // MEASURED: `$multiply` over each pair of operand kinds gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -705,6 +716,7 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // MEASURED: `$divide` over each pair of operand kinds gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -726,6 +738,7 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     // MEASURED: `$mod` over each pair of operand kinds gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
@@ -748,13 +761,13 @@ export const PRODUCTIONS = {
     leftOperandNot: ["logicalNot", "bitwiseNot", "typeCheck", "negation"],
     on: "any",
     // MEASURED: `$pow` over each pair of operand kinds gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
     expr: {
       args: { sig: "left, right", exact: 2 },
-      // MEASURED: `{ $pow: ["$m", 2] }` and `{ $pow: [2, "$m"] }` are null for a missing `m`.
-      emit: ({ args, value }) => ({ $pow: [nullPassing(value(args[0])), nullPassing(value(args[1]))] }),
+      emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'**' produces a value, not a stage."),
     statement: unsupported("'**' is not a statement — see its 'where'."),
@@ -787,6 +800,7 @@ export const PRODUCTIONS = {
     fixity: "prefix",
     on: "any",
     // MEASURED: `{ $multiply: [x, -1] }` over each operand kind gives a number, null or an error.
+    passesNull: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -950,10 +964,10 @@ export const PRODUCTIONS = {
   }),
 
   namespacedCall: production({
-    doc: "`Math.random()`, `Number.isInteger(n)`, `Date.now()`.",
+    doc: "`Number.isInteger(n)`, `Date.now()`.",
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
-    // `Math.max(a, b)` is a MethodCall whose object is the name `Math`. `Math.PI` is a
+    // `Date.UTC(y, m)` is a MethodCall whose object is the name `Date`. `Math.PI` is a
     // MemberAccess. Every namespace shares these two node types. The parser does not
     // know which namespace it reads, and it does not need to know.
     becomes: ["MethodCall", "MemberAccess"],

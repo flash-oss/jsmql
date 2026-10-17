@@ -27,7 +27,7 @@ describe("HR6 — JSMQL refuses raw MQL as an operand", () => {
     ["`${$abs($.y)}`", refused("$abs(…)", "an operand of a template literal")],
     ["[...$ifNull($.a, [])]", refused("$ifNull(…)", "an operand of '...'")],
     ["$.items.concat($ifNull($.extra, []))", refused("$ifNull(…)", "an operand of '.concat()'")],
-    ["Math.max($.a, $abs($.b))", refused("$abs(…)", "an operand of 'Math.max()'")],
+    ["[$.a, $abs($.b)].max()", refused("$abs(…)", "the receiver of '.max()'")],
     ["new Date($toLong($.t))", refused("$toLong(…)", "an operand of 'new Date()'")],
     ["$.code === $literal('$x')", refused("$literal(…)", "an operand of '==='")],
   ];

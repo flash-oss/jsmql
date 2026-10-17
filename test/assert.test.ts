@@ -56,7 +56,7 @@ describe("assert — lowering", () => {
                 $cond: [
                   {
                     $and: [
-                      { $ne: [{ $ifNull: ["$active", null] }, null] },
+                      { $gt: ["$active", null] },
                       { $ne: ["$active", false] },
                       { $ne: ["$active", ""] },
                       { $ne: ["$active", 0] },
@@ -111,12 +111,7 @@ describe("assert — lowering", () => {
               to: {
                 $cond: [
                   {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$ok", null] }, null] },
-                      { $ne: ["$ok", false] },
-                      { $ne: ["$ok", ""] },
-                      { $ne: ["$ok", 0] },
-                    ],
+                    $and: [{ $gt: ["$ok", null] }, { $ne: ["$ok", false] }, { $ne: ["$ok", ""] }, { $ne: ["$ok", 0] }],
                   },
                   "bool",
                   "jsmql assertion failed: int",
@@ -208,7 +203,7 @@ describe("assert — rejections", () => {
 
   it("rejects a spread argument", () => {
     expect(() => jsmql("assert(...$.flags)")).toThrow(
-      "Spread (...) is not supported in assert(...) — pass operands directly (assert(a, b)) or as a single array (assert([a, b])).",
+      "Spread (...) is not supported in assert(...) — pass each argument on its own: 'assert(condition[, message])'.",
     );
   });
 

@@ -358,7 +358,7 @@ $sort({ _id: 1 });`,
     expect(violations).toEqual([]);
   });
 
-  // `.events.map(e => e.at.getTime()).reduce(Math.max)` — the most-recent-event
+  // `.events.map(e => e.at.getTime()).reduce((m, t) => [m, t].max())` — the most-recent-event
   // reduction (realistic.test.ts "most-recent event timestamp") on real dated
   // sub-documents. Shipment #1's last event is its delivery on 2026-01-15.
   it("expr: latest shipment event through map(getTime).reduce(max)", async () => {
@@ -761,7 +761,7 @@ $ = { lines };`,
 
   // The collaborative-filtering shape from test/realistic.test.ts, on fixture data.
   // The value here is the ROUND TRIP through an object key: `.countBy()` tallies
-  // into a MongoDB object, whose keys are STRINGS, so `Object.keys()` hands back
+  // into a MongoDB object, whose keys are STRINGS, so `.keys()` hands back
   // hex — and `ObjectId(id)` ($toObjectId) casts each one back before it meets an
   // ObjectId `_id`. Both joins below depend on that cast. Without it the server
   // still runs the pipeline and still returns rows, but `_id` never equals a

@@ -39,7 +39,7 @@ One row per rule, in `RULES` order
 | `mutatorTwin` | `$.items.sort();` | `$.items = $.items.toSorted();` — the row's `immutableTwin` |
 | `mutatorSpread` | `$.items.push(9);` | `$.items = [...$.items, 9];` — the row's `asArrayLiteral` |
 | `mutatorForm` | `$.items.pop();` | `$.items = $.items.slice(0, -1);` — the row's `mutatorForm`, JSMQL by argument count |
-| `packSpread` | `$.o.assign(...$.a, $.b)` | `$.o.assign([...$.a, $.b])` — one list, for a rule that reads one (`args.spread`) |
+| `packSpread` | `$.o.assign(...$.docs, x)` | `$.o.assign([...$.docs, x])` — one list, for a rule that reads one (`args.spread`) |
 | `iterateeShorthand` | `$.items.filter({ a: 1 })` | `$.items.filter(x => x.a === 1)` |
 
 ## Position, and why the pass needs it
@@ -123,6 +123,7 @@ $.a.fill(0);        → $.a = $.a.map(() => 0);
 $.a.fill(9, 1, 2);  → $.a = [...$.a.slice(0, 1), ...$.a.slice(1, 2).map(() => 9), ...$.a.slice($.a.slice(0, 1).size() + $.a.slice(1, 2).size())];
 ```
 
+
 ## The iteratee shorthands
 
 A shorthand is a shorter spelling of an arrow. So this rewrite is the plainest
@@ -175,7 +176,7 @@ field `qty.$gt` equal to 5. The value road reads a `$`-named segment through
 field path (measured).
 
 `bareCallable` is a callable GLOBAL handed over unapplied — `$.items.map(String)`,
-`$.items.filter(Boolean)`, `$.items.map(Number)`, `$.items.map(ObjectId)` — and
+`$.items.filter(Boolean)`, `$.items.map(ObjectId)` — and
 it means the arrow that applies the global to the element, `x => String(x)`.
 The row's `iterateeSlots` decides which slots take it. The rewrite only tells a
 callable global apart from a binding, and a name that needs `new` (`Date`) is
@@ -297,13 +298,13 @@ one on `$$` / `$$$`. `$$.push(...$$$.coll)` spreads a collection into the
 stream, and the union road reads that spread itself.
 
 ```
-$.o.assign(...$.a, $.b)
-  packed   → {"$mergeObjects":{"$concatArrays":[["$o"],"$a",["$b"]]}}
+$.o.assign(...$.docs, { z: 1 })
+  packed   → {"$mergeObjects":{"$concatArrays":[["$o"],{"$ifNull":["$docs",[]]},[{"z":1}]]}}
 $.a.indexOf(...$.b)
   not packed (the rule reads one argument) → ✗ refused: the spread
 ```
 
-The four mutator rules cannot collide with each other: a row carries an
+The three mutator rules cannot collide with each other: a row carries an
 `immutableTwin`, an `asArrayLiteral` or a `mutatorForm`, never two.
 
 ## Adding a sugar form

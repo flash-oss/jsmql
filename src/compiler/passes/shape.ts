@@ -39,6 +39,9 @@ function statementShaped(node: Any): boolean {
   if (readsAContextRef(node)) return true;
   const name = namedRow(node);
   if (name === null) return false;
+  // `$.a.assign($.b)` standing alone reads as lodash's `_.assign`, which WRITES `a`.
+  // JSMQL's `.assign()` writes nothing, so the statement cell refuses it and names the write.
+  if (name === "assign" && writesItsReceiver(node)) return true;
   // The `;` decides a row with a VALUE form, not this check. `.filter()`
   // lists one, so `$.items.filter(p)` standing alone is an expression.
   if (lists(name, "value")) return false;
@@ -47,6 +50,22 @@ function statementShaped(node: Any): boolean {
   // bare call: `$.items.$sort(…)` sorts no stream, so the value road refuses it by name.
   if (node.type === "MethodCall" && !isMutator(name)) return false;
   return lists(name, "statement") || lists(name, "stream");
+}
+
+/**
+ * Is this program a lone `.assign(…)` on a field or a binding? The shape rule reads it
+ * as a statement, because lodash's `_.assign` writes its target. It is a value where a
+ * value is asked for (`jsmql.expr`), because `$mergeObjects` is what it means there.
+ */
+export function isBareAssign(program: Program): boolean {
+  const node = program as Any;
+  return namedRow(node) === "assign" && writesItsReceiver(node);
+}
+
+/** Is the receiver a place a write can land — a field of the document, or a binding? */
+function writesItsReceiver(node: Any): boolean {
+  const target = (node as { object?: Any }).object;
+  return node.type === "MethodCall" && target !== undefined && (target.type === "FieldRef" || target.type === "Ident");
 }
 
 /**

@@ -71,10 +71,11 @@ describe("compiler/passes/shape — an expression makes a filter", () => {
     expect(shape("$.items.toSorted()")).toBe("filter");
   });
 
-  it("reads `.assign()` as a value: it writes nothing in place, and the `;` alone makes a statement", () => {
-    expect(shape("$.a.assign($.b)")).toBe("filter");
-    expect(shape("({}).assign($.a, $.b)")).toBe("filter");
+  it("reads a lone `.assign()` on a field as a statement, and on a fresh object as a value", () => {
+    // lodash's `_.assign` writes its target, so the statement cell answers it and names the write
+    expect(shape("$.a.assign($.b)")).toBe("pipeline");
     expect(shape("$.a.assign($.b);")).toBe("pipeline");
+    expect(shape("({}).assign($.a, $.b)")).toBe("filter");
   });
 });
 

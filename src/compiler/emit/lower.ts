@@ -14,7 +14,7 @@ import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
 import { bigIntToLong, isObjectId, longsWithin, objectIdHex, ObjectId, regexValue } from "../../bson.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
-import { mongoRegexOptions, setKey } from "../../registry/mql.ts";
+import { isNotNullish, isNullish, mongoRegexOptions, setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -37,12 +37,13 @@ import {
   bareCallableNames,
   constructibleNames,
   positionsOf,
-  lowersOn,
-  passesNullOf,
   readsNullAsEmptyOf,
+  lowersOn,
+  productionPassesNullOf,
+  passesNullOf,
   takesNoReceiver,
 } from "../rows.ts";
-import { consult, everyName, familiesFor } from "./consult.ts";
+import { consult, everyName, familiesFor, refusalSentence } from "./consult.ts";
 import { checkBodyKeys, checkSlotKinds, checkSlots } from "./check.ts";
 import { operandShapeOf } from "../rows.ts";
 import type { Env } from "./env.ts";
@@ -149,10 +150,9 @@ export function lowerValue(node: Expr, env: Env): unknown {
     const base = withoutOptional(stopped);
     // the second branch runs only when the test passed, so the path IS there inside it
     const proved = base.type === "FieldRef" ? env.proving(base.path) : env;
-    // One call on the tested path, whose bare cell answers null there itself: the
-    // `$cond` would only repeat that null. `$.n?.round()` is `{ $round: "$n" }`.
-    if (base.type === "FieldRef" && passesNullOn(node, stopped)) return lowerValue(withoutOptional(node), proved);
-    const gone = boolTruth({ $eq: [{ $ifNull: [lowerValue(base, env), null] }, null] });
+    // each call after the `?.` answers null for null on its own, so the test adds nothing
+    if (base.type === "FieldRef" && passesNullAfter(node)) return lowerValue(withoutOptional(node), proved);
+    const gone = boolTruth(isNullish(lowerValue(base, env)));
     return cond(gone, null, lowerValue(withoutOptional(node), proved));
   }
   // A `?.` read with no call after it is JavaScript's `undefined` where the value is not
@@ -254,7 +254,8 @@ export function lowerTruth(node: Expr, env: Env): Truth {
     return boolTruth(cond(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)));
   }
   if (node.type === "ExprBlock") return boolTruth(exprBlock(node, env, (ret, e) => lowerTruth(ret, e)));
-  return truthOf(lowerValue(node, env), typeOf(node, env));
+  // each truth test answers a missing value as it answers null, so a `?.` read needs no `$ifNull`
+  return truthOf(lowerValue(nullPassing(node), env), typeOf(node, env));
 }
 
 // ── literals with structure ──────────────────────────────────────────────────
@@ -322,14 +323,27 @@ function stoppedChain(node: Expr): Expr | null {
 }
 
 /**
- * Is this chain ONE call directly on the path that its `?.` tests, and does that call's
- * row state `passesNull`? A read or a second call between them could turn the missing
- * value into something else first, so either one keeps the `$cond`.
+ * Does every link after the `?.` that `stoppedChain` found answer null for a null
+ * receiver? Each must be a call whose row states `passesNull`, with the `?.` right
+ * before the first call. A plain read between them makes the next call run under a dot.
+ * HR5 then gives that call an empty value, not null: `$.o?.a.keys()` is `[]` for `o: {}`.
  */
-function passesNullOn(node: Expr, stopped: Expr): boolean {
-  if (node.type !== "MethodCall" || !passesNullOf(node.name)) return false;
-  const o = node.object;
-  return o === stopped || (o.type === "FieldRef" && o.optional === true && o.optionalAt === undefined);
+function passesNullAfter(node: Expr): boolean {
+  let cursor: Expr = node;
+  while (cursor.type === "MethodCall") {
+    if (!passesNullOf(cursor.name)) return false;
+    if (cursor.optional) return true;
+    cursor = cursor.object;
+  }
+  return cursor.type === "FieldRef" && cursor.optional === true && cursor.optionalAt === undefined && cursor !== node;
+}
+
+/**
+ * A `?.` read whose consumer answers missing as it answers null needs no `$ifNull: [x, null]`:
+ * the read runs as a plain read. Any other operand stays as it is.
+ */
+function nullPassing(e: Expr): Expr {
+  return readsHaveOptional(e) ? withoutReadOptional(e) : e;
 }
 
 /** A plain read: a field `.p` or an index `[k]`, never a call or a property row such as `Math.PI`. */
@@ -518,7 +532,12 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
         throw E.droppedBinding(b.ref, node.pos);
     }
   }
-  // A global read without a call — `Number`, `Math` — is a callable used as a value.
+  // A namespace read on its own — `Math`, `Object` — answers with its row's refusal, which names a member.
+  if (NAMESPACES.has(node.name)) {
+    const verdict = consult(node.name, positionIn(env));
+    if (verdict.kind === "refused") throw new E.CodegenError(refusalSentence(verdict, `'${node.name}'`, ""), node.pos);
+  }
+  // A global read without a call — `Number` — is a callable used as a value.
   if (isGlobalName(node.name) || NAMESPACES.has(node.name)) throw E.callableAsValue(node.name, node.pos);
   throw new E.UnknownIdentifierError(node.name, node.pos);
 }
@@ -646,10 +665,15 @@ export function holderOf(e: Expr, env: Env): string | null {
 }
 
 function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): unknown {
-  // `Math.abs` on its own names a function. Only a call or a callback slot gives it a value.
+  // `Math.random` on its own names a function. Only a call or a callback slot gives it a value.
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
-    // A member that the namespace only refuses (`Math.floor`) answers with its own refusal.
-    if (!lowersOn(node.name, node.object.name)) return dispatchOn(node, node.name, node.object, [], env);
+    // A static the row refuses (`Math.floor`) answers with that refusal, which names the one spelling.
+    if (!lowersOn(node.name, node.object.name)) {
+      return lowerValue(
+        { type: "MethodCall", object: node.object, name: node.name, args: [], optional: false, pos: node.pos },
+        env,
+      );
+    }
     throw E.unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);
@@ -1180,7 +1204,8 @@ function production(node: Expr, key: string, operands: readonly Expr[], env: Env
     throw E.refusalFor(sel, `'${spelled}'`, "", positionIn(env), node.pos, []);
   }
   checkSlots(spelled, sel.rule.args, operands);
-  return sel.rule.emit(exprInputs(key, null, operands, [], env, node, READ));
+  const read = productionPassesNullOf(key) ? operands.map(nullPassing) : operands;
+  return sel.rule.emit(exprInputs(key, null, read, [], env, node, READ));
 }
 
 /** Every operand of a left-nested chain of `op`, outermost-left first. */
@@ -1216,7 +1241,7 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
           $concat: operands.map((e) => (chainHasOptional(e) ? ifNull(lowerValue(e, inner), "") : lowerValue(e, inner))),
         };
       }
-      return { $add: operands.map((e) => lowerValue(e, inner)) };
+      return { $add: operands.map((e) => lowerValue(productionPassesNullOf("addition") ? nullPassing(e) : e, inner)) };
     }
     case "&&":
     case "||":
@@ -1225,9 +1250,9 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
     case "!=": {
       const leftNull = node.left.type === "NullLiteral";
       if (!leftNull && node.right.type !== "NullLiteral") throw E.looseEqualityNotNull(node.op, node.pos);
-      const operand = lowerValue(leftNull ? node.right : node.left, inner);
-      const test = { $in: [{ $type: operand }, ["null", "missing"]] };
-      return node.op === "==" ? test : { $not: [test] };
+      // `x == null` is the null test: one comparison covers missing and null
+      const operand = lowerValue(nullPassing(leftNull ? node.right : node.left), inner);
+      return node.op === "==" ? isNullish(operand) : isNotNullish(operand);
     }
     case "in":
       return membership(node, inner);

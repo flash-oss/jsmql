@@ -126,7 +126,7 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -153,7 +153,7 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -335,7 +335,7 @@ describe("update filters: in pipelines", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -354,7 +354,7 @@ describe("update filters: in pipelines", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -381,7 +381,7 @@ describe("update filters: in pipelines", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -419,7 +419,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -438,7 +438,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
         $match: {
           $expr: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $gt: ["$active", null] },
               { $ne: ["$active", false] },
               { $ne: ["$active", ""] },
               { $ne: ["$active", 0] },
@@ -551,7 +551,7 @@ describe("update filters: lex regression checks", () => {
   // Filter dispatch does not add a wrapping layer the lex test does not care
   // about.
   it("== null still parses (loose null check)", () => {
-    expect(jsmql.expr("$.a == null")).toEqual({ $in: [{ $type: "$a" }, ["null", "missing"]] });
+    expect(jsmql.expr("$.a == null")).toEqual({ $lte: ["$a", null] });
   });
 
   it("=== still parses as strict equality", () => {
@@ -570,7 +570,7 @@ describe("update filters: lex regression checks", () => {
   });
 
   it("!= null and !== still parse", () => {
-    expect(jsmql.expr("$.a != null")).toEqual({ $not: [{ $in: [{ $type: "$a" }, ["null", "missing"]] }] });
+    expect(jsmql.expr("$.a != null")).toEqual({ $gt: ["$a", null] });
     expect(jsmql.expr("$.a !== 1")).toEqual({ $ne: ["$a", 1] });
   });
 

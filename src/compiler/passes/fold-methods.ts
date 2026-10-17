@@ -1,7 +1,7 @@
 // What a method call computes when its receiver and arguments are constants.
 //
 // Two tables, because the language has two shapes of call. A NAMESPACE call
-// reads nothing — for example `Math.max(3, 7)`. An INSTANCE call has a receiver
+// reads nothing — for example `Number.isInteger(4)`. An INSTANCE call has a receiver
 // whose value decides which rule applies: `.slice()` cuts a string or an
 // array, and the value decides which.
 //
@@ -55,17 +55,6 @@ const isInt32 = (n: unknown): n is number =>
 
 // ── namespace calls ──────────────────────────────────────────────────────────
 
-/**
- * `Math.<name>(…)` — the ones whose result is EXACTLY specified.
- *
- * Measured against mongod: eleven of the twenty-nine differ, most by one unit in
- * the last place, and `Math.round(0.5)` differs by a whole unit. That is not a
- * defect in either implementation. IEEE-754 pins down `sqrt` and the algebraic
- * operations, and leaves every transcendental free. So `cbrt log2 cos tan asin
- * acos atan sinh cosh atanh` and similar functions run on the server, where the
- * answer is whatever the server gives. Agreement at the points one test happens
- * to check is not a guarantee. So the line follows the standard, not luck.
- */
 /**
  * MongoDB's rounding: a half goes to the EVEN neighbour, in DECIMAL.
  *
@@ -122,7 +111,7 @@ function exactDecimal(n: number): { digits: bigint; exponent: number } {
 }
 
 /**
- * A call on a static namespace: `Math.max(3, 7)`, `Number.isInteger(4)`.
+ * A call on a static namespace: `Number.isInteger(4)`, `Date.UTC(2020, 1)`.
  *
  * `Date.UTC` is here too, and its months are ONE-based — the language settled
  * that so `Date.UTC(2020, 1, 1)` reads as January and matches `new Date(…)`.
@@ -488,6 +477,18 @@ function numberMethod(n: number, name: string, args: readonly Arg[]): Evaluation
       // `(1e300).ceil(100)` overflows to Infinity on both sides, and Infinity has no MQL literal.
       return Number.isFinite(answer) ? ok(answer) : NO;
     }
+    // The ones whose result is EXACTLY specified. IEEE-754 specifies `sqrt` and the
+    // algebraic operations, and leaves every transcendental free, so `.cbrt()`, `.log2()`,
+    // `.cos()` and the other transcendentals run on the server, where the answer is
+    // whatever the server gives. MEASURED against mongod: eleven of twenty-nine differ.
+    case "abs":
+      return a === undefined ? ok(Math.abs(n)) : NO;
+    case "sign":
+      return a === undefined ? ok(Math.sign(n)) : NO;
+    case "sqrt":
+      return a === undefined ? ok(Math.sqrt(n)) : NO;
+    case "trunc":
+      return a === undefined ? ok(Math.trunc(n)) : NO;
     case "clamp":
       // A BOUND, not a place count — it may be fractional.
       if (typeof a !== "number") return NO;
@@ -518,10 +519,8 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
     case "toPairs":
       return ok(Object.entries(o));
     case "assign": {
-      const plain = (v: unknown): v is Record<string, unknown> =>
-        typeof v === "object" && v !== null && !Array.isArray(v) && !isDate(v);
       const sources = args.map(valueOf);
-      return sources.every(plain) ? ok(Object.assign({}, o, ...sources)) : NO;
+      return sources.every(isPlainObject) ? ok(Object.assign({}, o, ...sources)) : NO;
     }
     case "invert": {
       const out: Record<string, unknown> = {};
@@ -1002,15 +1001,8 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       });
       return ok(out);
     }
+    case "fromPairs":
     case "fromEntries": {
-      const out: Record<string, unknown> = {};
-      for (const pair of xs) {
-        if (!Array.isArray(pair) || pair.length !== 2 || !isKey(pair[0])) return NO;
-        setKey(out, String(pair[0]), pair[1]);
-      }
-      return ok(out);
-    }
-    case "fromPairs": {
       const out: Record<string, unknown> = {};
       for (const pair of xs) {
         if (!Array.isArray(pair) || pair.length === 0 || !isKey(pair[0])) return NO;

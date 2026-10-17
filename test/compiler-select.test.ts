@@ -79,7 +79,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     expect(r.kind).toBe("rule");
     // a receiver that is not proven `present` is tested first, and answers null when it is not there
     expect((r as { rule: { emit: (i: unknown) => unknown } }).rule.emit({ recv: "$x" })).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$x", null] }, null] }, then: null, else: { $strLenCP: "$x" } },
+      $cond: [{ $lte: ["$x", null] }, null, { $strLenCP: "$x" }],
     });
   });
 
@@ -111,6 +111,7 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
     // `ceil` is on number and Math: an unprovable receiver is a number by the row's claim,
     // and the `Math` cell refuses the static.
     expect(at("ceil", OPAQUE).kind).toBe("rule");
+    // the `Math` cell refuses the static: the receiver's own method is the one spelling
     expect(at("ceil", { kind: "namespace", name: "Math" }, 1).kind).toBe("refused");
   });
 

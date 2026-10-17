@@ -13,6 +13,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { expr } from "../src/compiler/index.ts";
+import { PRODUCTIONS } from "../src/registry/productions.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { jsmql } from "../src/index.ts";
 import { liveClient, liveUp } from "./fixtures/live.ts";
@@ -75,9 +76,7 @@ const unordered = (src: string, js: (d: typeof DOC) => unknown): unknown => {
  * JavaScript would throw. A receiver that is certainly there (a literal, a `$lookup`'s
  * array) does not need a test.
  */
-const nullOr = (recv: unknown, body: unknown): unknown => ({
-  $cond: { if: { $eq: [{ $ifNull: [recv, null] }, null] }, then: null, else: body },
-});
+const nullOr = (recv: unknown, body: unknown): unknown => ({ $cond: [{ $lte: [recv, null] }, null, body] });
 
 describe("compiler/emit — string methods", () => {
   it("lowers each string method to its operator", () => {
@@ -543,12 +542,7 @@ describe("compiler/emit — object methods", () => {
     // `""` and `[]` split the two languages: `""` is false in JavaScript and true to a
     // raw MongoDB condition. The server answer must be JavaScript's for both methods.
     const truth = {
-      $and: [
-        { $ne: [{ $ifNull: ["$$v", null] }, null] },
-        { $ne: ["$$v", false] },
-        { $ne: ["$$v", ""] },
-        { $ne: ["$$v", 0] },
-      ],
+      $and: [{ $gt: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }],
     };
     const pairs = { $objectToArray: { $ifNull: ["$mo", {}] } };
     expect(
@@ -1504,11 +1498,11 @@ describe("compiler/emit — array methods", () => {
           $let: {
             vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 2] } },
             in: {
-              $cond: {
-                if: { $eq: ["$$jsmqlRevIdx", -1] },
-                then: -1,
-                else: { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }, "$$jsmqlRevIdx"] },
-              },
+              $cond: [
+                { $eq: ["$$jsmqlRevIdx", -1] },
+                -1,
+                { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }, "$$jsmqlRevIdx"] },
+              ],
             },
           },
         },
@@ -1563,46 +1557,34 @@ describe("compiler/emit — array methods", () => {
       $let: {
         vars: { jsmqlV: { $ifNull: ["$a", ""] } },
         in: {
-          $cond: {
-            if: { $isArray: "$$jsmqlV" },
-            then: {
+          $cond: [
+            { $isArray: "$$jsmqlV" },
+            {
               $ifNull: [
                 {
                   $reduce: {
                     input: "$$jsmqlV",
                     initialValue: null,
                     in: {
-                      $cond: {
-                        if: { $eq: ["$$value", null] },
-                        then: {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                        else: {
+                      $cond: [
+                        { $eq: ["$$value", null] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                        {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: {
-                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                then: "",
-                                else: { $toString: "$$this" },
-                              },
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
-                      },
+                      ],
                     },
                   },
                 },
                 "",
               ],
             },
-            else: { $toString: "$$jsmqlV" },
-          },
+            { $toString: "$$jsmqlV" },
+          ],
         },
       },
     });
@@ -1610,46 +1592,34 @@ describe("compiler/emit — array methods", () => {
       $let: {
         vars: { jsmqlV: { $ifNull: ["$n", ""] } },
         in: {
-          $cond: {
-            if: { $isArray: "$$jsmqlV" },
-            then: {
+          $cond: [
+            { $isArray: "$$jsmqlV" },
+            {
               $ifNull: [
                 {
                   $reduce: {
                     input: "$$jsmqlV",
                     initialValue: null,
                     in: {
-                      $cond: {
-                        if: { $eq: ["$$value", null] },
-                        then: {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                        else: {
+                      $cond: [
+                        { $eq: ["$$value", null] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                        {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: {
-                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                then: "",
-                                else: { $toString: "$$this" },
-                              },
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
-                      },
+                      ],
                     },
                   },
                 },
                 "",
               ],
             },
-            else: { $toString: "$$jsmqlV" },
-          },
+            { $toString: "$$jsmqlV" },
+          ],
         },
       },
     });
@@ -1663,29 +1633,11 @@ describe("compiler/emit — array methods", () => {
             input: "$a",
             initialValue: null,
             in: {
-              $cond: {
-                if: { $eq: ["$$value", null] },
-                then: {
-                  $cond: {
-                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                    then: "",
-                    else: { $toString: "$$this" },
-                  },
-                },
-                else: {
-                  $concat: [
-                    "$$value",
-                    "-",
-                    {
-                      $cond: {
-                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                        then: "",
-                        else: { $toString: "$$this" },
-                      },
-                    },
-                  ],
-                },
-              },
+              $cond: [
+                { $eq: ["$$value", null] },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", "-", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
+              ],
             },
           },
         },
@@ -1699,29 +1651,11 @@ describe("compiler/emit — array methods", () => {
             input: "$mixed",
             initialValue: null,
             in: {
-              $cond: {
-                if: { $eq: ["$$value", null] },
-                then: {
-                  $cond: {
-                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                    then: "",
-                    else: { $toString: "$$this" },
-                  },
-                },
-                else: {
-                  $concat: [
-                    "$$value",
-                    ",",
-                    {
-                      $cond: {
-                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                        then: "",
-                        else: { $toString: "$$this" },
-                      },
-                    },
-                  ],
-                },
-              },
+              $cond: [
+                { $eq: ["$$value", null] },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", ",", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
+              ],
             },
           },
         },
@@ -1805,7 +1739,7 @@ describe("compiler/emit — array methods", () => {
         as: "jsmqlItem",
         cond: {
           $and: [
-            { $ne: [{ $ifNull: ["$$jsmqlItem", null] }, null] },
+            { $gt: ["$$jsmqlItem", null] },
             { $ne: ["$$jsmqlItem", false] },
             { $ne: ["$$jsmqlItem", ""] },
             { $ne: ["$$jsmqlItem", 0] },
@@ -2035,11 +1969,7 @@ describe("compiler/emit — number ranges", () => {
       $size: { $range: [0, { $ifNull: ["$neg", 0] }, { $cond: [{ $lt: [0, { $ifNull: ["$neg", 0] }] }, 1, -1] }] },
     });
     expect(compiled("$.nope?.range()", () => null)).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$nope", null] }, null] },
-        then: null,
-        else: { $range: [0, "$nope", { $cond: [{ $lt: [0, "$nope"] }, 1, -1] }] },
-      },
+      $cond: [{ $lte: ["$nope", null] }, null, { $range: [0, "$nope", { $cond: [{ $lt: [0, "$nope"] }, 1, -1] }] }],
     });
   });
 
@@ -2072,13 +2002,9 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("$.neg.cbrt()", () => Math.cbrt(DOC.neg))).toEqual({
       $multiply: [{ $cmp: ["$neg", 0] }, { $pow: [{ $abs: "$neg" }, 0.3333333333333333] }],
     });
-    expect(compiled("$.neg.sign()", () => Math.sign(DOC.neg))).toEqual({
-      $multiply: [{ $cmp: ["$neg", 0] }, { $pow: ["$neg", 0] }],
-    });
-    // the `$pow` factor is null for nothing, so a missing receiver gives null with no `$cond`
-    expect(compiled("$.nope.sign()", () => null)).toEqual({
-      $multiply: [{ $cmp: ["$nope", 0] }, { $pow: ["$nope", 0] }],
-    });
+    expect(compiled("$.neg.sign()", () => Math.sign(DOC.neg))).toEqual({ $cmp: [{ $ifNull: ["$neg", 0] }, 0] });
+    // HR5: a missing number reads as 0, the safe value, so its sign is 0
+    expect(compiled("$.nope.sign()", () => 0)).toEqual({ $cmp: [{ $ifNull: ["$nope", 0] }, 0] });
     expect(compiled("$.n.trunc()", () => Math.trunc(DOC.n))).toEqual({ $trunc: "$n" });
     expect(compiled("$.n.trunc(2)", () => Math.trunc(DOC.n * 100) / 100)).toEqual({ $trunc: ["$n", 2] });
     expect(compiled("$.n.round()", () => Math.round(DOC.n))).toEqual({ $round: "$n" });
@@ -2092,6 +2018,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
     expect(compiled("$.n.log()", () => Math.log(DOC.n))).toEqual({ $ln: "$n" });
     expect(compiled("$.n.log(3)", () => Math.log(DOC.n) / Math.log(3))).toEqual({ $log: ["$n", 3] });
+    expect(expr("$.n.log($.b)")).toEqual({ $log: ["$n", "$b"] });
     expect(compiled("$.n.log(10)", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
     expect(compiled("$.n.log2()", () => Math.log2(DOC.n))).toEqual({ $log: ["$n", 2] });
     expect(compiled("$.n.log10()", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
@@ -2126,7 +2053,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       ["Math.abs($.n)", "'<number>.abs()'"],
       ["Math.round($.n)", "'<number>.round()'"],
       ["Math.atan2($.y, $.x)", "'<y>.atan2(<x>)'"],
-      ["Math.max($.a, $.b)", "'[a, b, c].max()'"],
+      ["Math.max($.a, $.b)", "'[a, b].max()'"],
       ["Math.pow($.x, 2)", "'base ** exponent'"],
     ]) {
       expect(() => expr(src), src).toThrow(dot);
@@ -2136,12 +2063,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   it("lowers the global constructors and the Number, Array and Object statics", () => {
     expect(compiled("String($.n)", () => String(DOC.n))).toEqual({ $toString: "$n" });
     expect(compiled("Boolean($.neg)", () => Boolean(DOC.neg))).toEqual({
-      $and: [
-        { $ne: [{ $ifNull: ["$neg", null] }, null] },
-        { $ne: ["$neg", false] },
-        { $ne: ["$neg", ""] },
-        { $ne: ["$neg", 0] },
-      ],
+      $and: [{ $gt: ["$neg", null] }, { $ne: ["$neg", false] }, { $ne: ["$neg", ""] }, { $ne: ["$neg", 0] }],
     });
     expect(compiled("Number($.n)", () => Number(DOC.n))).toEqual({ $toDouble: "$n" });
     expect(compiled("Number.isInteger($.n)", () => Number.isInteger(DOC.n))).toEqual({
@@ -2219,16 +2141,16 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(compiled("({}).assign(...$.docs)", (d) => merged(...d.docs))).toEqual({ $mergeObjects: "$docs" });
     expect(compiled("({}).assign($.o)", (d) => merged(d.o))).toEqual({ $mergeObjects: [{}, "$o"] });
     expect(compiled("({}).assign($.o, ...$.docs)", (d) => merged(d.o, ...d.docs))).toEqual({
-      $mergeObjects: { $concatArrays: [["$o"], "$docs"] },
+      $mergeObjects: { $concatArrays: [["$o"], { $ifNull: ["$docs", []] }] },
     });
     expect(compiled("({}).assign($.o, $.mo)", (d) => merged(d.o, d.mo))).toEqual({ $mergeObjects: ["$o", "$mo"] });
     expect(compiled("$.o.assign($.mo)", (d) => merged(d.o, d.mo))).toEqual({ $mergeObjects: ["$o", "$mo"] });
     expect(compiled("$.o.assign({ z: 1 })", (d) => merged(d.o, { z: 1 }))).toEqual({ $mergeObjects: ["$o", { z: 1 }] });
     expect(compiled("$.o.assign(...$.docs)", (d) => merged(d.o, ...d.docs))).toEqual({
-      $mergeObjects: { $concatArrays: [["$o"], "$docs"] },
+      $mergeObjects: { $concatArrays: [["$o"], { $ifNull: ["$docs", []] }] },
     });
     expect(compiled("$.o.assign($.mo, ...$.docs)", (d) => merged(d.o, d.mo, ...d.docs))).toEqual({
-      $mergeObjects: { $concatArrays: [["$o"], ["$mo"], "$docs"] },
+      $mergeObjects: { $concatArrays: [["$o"], ["$mo"], { $ifNull: ["$docs", []] }] },
     });
   });
 
@@ -2240,14 +2162,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       $filter: {
         input: { $ifNull: ["$mixed", []] },
         as: "x",
-        cond: {
-          $and: [
-            { $ne: [{ $ifNull: ["$$x", null] }, null] },
-            { $ne: ["$$x", false] },
-            { $ne: ["$$x", ""] },
-            { $ne: ["$$x", 0] },
-          ],
-        },
+        cond: { $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }] },
       },
     });
     expect(compiled("[$.neg, $.n].map(x => x.abs())", () => [DOC.neg, DOC.n].map(Math.abs))).toEqual({
@@ -2628,7 +2543,7 @@ const GUARDED: readonly (readonly [string, unknown, unknown])[] = [
  * null on. HR5 decides the answer by the accessor the source spells:
  *
  *   - a method under a DOT runs on `{}`, so it answers `{}`, or `[]` where it answers an
- *     array — `_.pick(undefined, …)` is `{}`, `Object.keys({})` is `[]`.
+ *     array — `_.pick(undefined, …)` is `{}`, `({}).keys()` is `[]`.
  *   - a `?.` with a call after it STOPS the chain, so the chain answers null.
  *
  * Each row: the source, and what it answers when the receiver is missing.
@@ -2659,6 +2574,8 @@ const OBJECT_EMPTY: readonly (readonly [string, unknown])[] = [
   ["$.o?.keys().size()", null],
   ["$.s?.trim().length()", null],
   ["$.a?.map(x => x).size()", null],
+  // the `?.` tests `o`, and a call after it stops the chain
+  ["$.o?.sub.keys()", null],
   // nothing runs after this `?.`, so the document and the answer are what they were
   ['$.first + " " + $.user?.last', "An "],
   // the root document is there, so it takes no neutral
@@ -3000,7 +2917,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   log2: ["$.n.log2()"],
   log10: ["$.n.log10()"],
   trunc: ["$.n.trunc()"],
-  sign: ["$.neg.sign()"],
+  sign: ["$.neg.sign()", "$.nope.sign()"],
   cbrt: ["$.neg.cbrt()"],
   sin: ["$.n.sin()"],
   cos: ["$.n.cos()"],
@@ -3016,7 +2933,7 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   atanh: ["(0.5).atanh()"],
   atan2: ["$.n.atan2(1)"],
   hypot: ["$.n.hypot(1)"],
-  random: ["Math.random()"],
+  random: ["(1).random(6)", "$.nope.random($.nope)"],
   PI: ["Math.PI"],
   E: ["Math.E"],
   isInteger: ["Number.isInteger($.n)", "Number.isInteger($.nope)"],
@@ -3094,44 +3011,141 @@ const NULL_AS_EMPTY: Readonly<Record<string, readonly [string, string]>> = {
 const NULL_RECEIVER_AS: Readonly<Record<string, readonly [string, string]>> = {
   range: ["$.nope.range($.neg)", "(0).range($.neg)"],
   rangeRight: ["$.nope.rangeRight($.neg)", "(0).rangeRight($.neg)"],
+  sign: ["$.nope.sign()", "(0).sign()"],
+  random: ["$.nope.random(0)", "(0).random(0)"],
   toString: ["$.nope.toString()", '""'],
 };
 
-/** Each row that states `passesNull`: the call after a `?.` on a receiver the document lacks. */
-const PASSES_NULL: Readonly<Record<string, string>> = {
-  max: "$.nope?.max()",
-  min: "$.nope?.min()",
-  round: "$.nope?.round()",
-  ceil: "$.nope?.ceil()",
-  floor: "$.nope?.floor()",
-  abs: "$.nope?.abs()",
-  sqrt: "$.nope?.sqrt()",
-  cbrt: "$.nope?.cbrt()",
-  exp: "$.nope?.exp()",
-  log: "$.nope?.log()",
-  log2: "$.nope?.log2()",
-  log10: "$.nope?.log10()",
-  trunc: "$.nope?.trunc(2)",
-  sign: "$.nope?.sign()",
-  sin: "$.nope?.sin()",
-  cos: "$.nope?.cos()",
-  tan: "$.nope?.tan()",
-  asin: "$.nope?.asin()",
-  acos: "$.nope?.acos()",
-  atan: "$.nope?.atan()",
-  sinh: "$.nope?.sinh()",
-  cosh: "$.nope?.cosh()",
-  tanh: "$.nope?.tanh()",
-  asinh: "$.nope?.asinh()",
-  acosh: "$.nope?.acosh()",
-  atanh: "$.nope?.atanh()",
-  atan2: "$.nope?.atan2(1)",
-  hypot: "$.nope?.hypot(1)",
-  keys: "$.nope?.keys()",
-  values: "$.nope?.values()",
-  entries: "$.nope?.entries()",
-  toPairs: "$.nope?.toPairs()",
-  fromEntries: "$.nope?.fromEntries()",
+/**
+ * Each row that states `passesNull` has two cases: a call after a `?.` on a receiver the
+ * document lacks, and the same call on a receiver that holds null. Each answers null with
+ * no `$cond` test.
+ */
+const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
+  keys: ["$.nope?.keys()", "$.mo.d?.keys()"],
+  values: ["$.nope?.values()", "$.mo.d?.values()"],
+  entries: ["$.nope?.entries()", "$.mo.d?.entries()"],
+  fromEntries: ["$.nope?.fromEntries()", "$.mo.d?.fromEntries()"],
+  max: ["$.nope?.max()", "$.mo.d?.max()"],
+  min: ["$.nope?.min()", "$.mo.d?.min()"],
+  round: ["$.nope?.round(2)", "$.mo.d?.round()"],
+  ceil: ["$.nope?.ceil(1)", "$.mo.d?.ceil()"],
+  floor: ["$.nope?.floor(1)", "$.mo.d?.floor()"],
+  slice: ["$.nope?.slice(1)", "$.mo.d?.slice(1, 2)"],
+  concat: ["$.nope?.concat($.b)", "$.mo.d?.concat([1])"],
+  trim: ["$.nope?.trim()", "$.mo.d?.trim()"],
+  trimStart: ["$.nope?.trimStart()", "$.mo.d?.trimStart()"],
+  trimLeft: ["$.nope?.trimLeft()", "$.mo.d?.trimLeft()"],
+  trimEnd: ["$.nope?.trimEnd()", "$.mo.d?.trimEnd()"],
+  trimRight: ["$.nope?.trimRight()", "$.mo.d?.trimRight()"],
+  split: ['$.nope?.split(",")', '$.mo.d?.split(",")'],
+  replace: ['$.nope?.replace("a", "x")', '$.mo.d?.replace("a", "x")'],
+  replaceAll: ['$.nope?.replaceAll(",", ";")', '$.mo.d?.replaceAll(",", ";")'],
+  padEnd: ["$.nope?.padEnd(9)", "$.mo.d?.padEnd(9)"],
+  repeat: ["$.nope?.repeat(2)", "$.mo.d?.repeat(2)"],
+  escape: ["$.nope?.escape()", "$.mo.d?.escape()"],
+  toReversed: ["$.nope?.toReversed()", "$.mo.d?.toReversed()"],
+  toSorted: ["$.nope?.toSorted()", "$.mo.d?.toSorted()"],
+  sortBy: ["$.nope?.sortBy()", "$.mo.d?.sortBy()"],
+  orderBy: ['$.nope?.orderBy(["v"], ["desc"])', '$.mo.d?.orderBy(["v"], ["desc"])'],
+  toSpliced: ["$.nope?.toSpliced(0, 1)", "$.mo.d?.toSpliced(0, 1)"],
+  with: ["$.nope?.with(0, 9)", "$.mo.d?.with(0, 9)"],
+  flat: ["$.nope?.flat()", "$.mo.d?.flat()"],
+  flatMap: ["$.nope?.flatMap(x => [x, x])", "$.mo.d?.flatMap(x => [x, x])"],
+  map: ["$.nope?.map(x => x * 2)", "$.mo.d?.map(x => x * 2)"],
+  filter: ["$.nope?.filter(x => x > 1)", "$.mo.d?.filter(x => x > 1)"],
+  uniq: ["$.nope?.uniq()", "$.mo.d?.uniq()"],
+  uniqBy: ["$.nope?.uniqBy(x => x)", "$.mo.d?.uniqBy(x => x)"],
+  sortedUniq: ["$.nope?.sortedUniq()", "$.mo.d?.sortedUniq()"],
+  sortedUniqBy: ["$.nope?.sortedUniqBy(x => x)", "$.mo.d?.sortedUniqBy(x => x)"],
+  without: ["$.nope?.without(3)", "$.mo.d?.without(3)"],
+  xor: ["$.nope?.xor($.b)", "$.mo.d?.xor($.b)"],
+  union: ["$.nope?.union($.b)", "$.mo.d?.union($.b)"],
+  intersection: ["$.nope?.intersection($.b)", "$.mo.d?.intersection($.b)"],
+  difference: ["$.nope?.difference($.b)", "$.mo.d?.difference($.b)"],
+  symmetricDifference: ["$.nope?.symmetricDifference($.b)", "$.mo.d?.symmetricDifference($.b)"],
+  unionBy: ["$.nope?.unionBy($.b, x => x)", "$.mo.d?.unionBy($.b, x => x)"],
+  intersectionBy: ["$.nope?.intersectionBy($.b, x => x)", "$.mo.d?.intersectionBy($.b, x => x)"],
+  differenceBy: ["$.nope?.differenceBy($.b, x => x)", "$.mo.d?.differenceBy($.b, x => x)"],
+  xorBy: ["$.nope?.xorBy($.b, x => x)", "$.mo.d?.xorBy($.b, x => x)"],
+  compact: ["$.nope?.compact()", "$.mo.d?.compact()"],
+  flatten: ["$.nope?.flatten()", "$.mo.d?.flatten()"],
+  take: ["$.nope?.take(2)", "$.mo.d?.take(2)"],
+  drop: ["$.nope?.drop(1)", "$.mo.d?.drop(1)"],
+  takeRight: ["$.nope?.takeRight(2)", "$.mo.d?.takeRight(2)"],
+  tail: ["$.nope?.tail()", "$.mo.d?.tail()"],
+  takeWhile: ["$.nope?.takeWhile(x => x > 2)", "$.mo.d?.takeWhile(x => x > 2)"],
+  dropWhile: ["$.nope?.dropWhile(x => x > 2)", "$.mo.d?.dropWhile(x => x > 2)"],
+  takeRightWhile: ["$.nope?.takeRightWhile(x => x > 1)", "$.mo.d?.takeRightWhile(x => x > 1)"],
+  dropRightWhile: ["$.nope?.dropRightWhile(x => x > 1)", "$.mo.d?.dropRightWhile(x => x > 1)"],
+  sampleSize: ["$.nope?.sampleSize(2)", "$.mo.d?.sampleSize(2)"],
+  zip: ["$.nope?.zip($.b)", "$.mo.d?.zip($.b)"],
+  zipWith: ["$.nope?.zipWith($.b, (x, y) => x + y)", "$.mo.d?.zipWith($.b, (x, y) => x + y)"],
+  keyBy: ['$.nope?.keyBy("k")', '$.mo.d?.keyBy("k")'],
+  groupBy: ['$.nope?.groupBy("k")', '$.mo.d?.groupBy("k")'],
+  countBy: ['$.nope?.countBy("k")', '$.mo.d?.countBy("k")'],
+  reject: ["$.nope?.reject(x => x > 1)", "$.mo.d?.reject(x => x > 1)"],
+  fromPairs: ["$.nope?.fromPairs()", "$.mo.d?.fromPairs()"],
+  mapValues: ["$.nope?.mapValues(v => v * 2)", "$.mo.d?.mapValues(v => v * 2)"],
+  mapKeys: ["$.nope?.mapKeys((v, k) => k)", "$.mo.d?.mapKeys((v, k) => k)"],
+  omit: ['$.nope?.omit(["a"])', '$.mo.d?.omit(["a"])'],
+  pickBy: ["$.nope?.pickBy(v => v > 1)", "$.mo.d?.pickBy(v => v > 1)"],
+  omitBy: ["$.nope?.omitBy(v => v > 1)", "$.mo.d?.omitBy(v => v > 1)"],
+  invert: ["$.nope?.invert()", "$.mo.d?.invert()"],
+  toPairs: ["$.nope?.toPairs()", "$.mo.d?.toPairs()"],
+  getFullYear: ["$.nope?.getFullYear()", "$.mo.d?.getFullYear()"],
+  getMonth: ["$.nope?.getMonth()", "$.mo.d?.getMonth()"],
+  getDate: ["$.nope?.getDate()", "$.mo.d?.getDate()"],
+  getDay: ["$.nope?.getDay()", "$.mo.d?.getDay()"],
+  getHours: ["$.nope?.getHours()", "$.mo.d?.getHours()"],
+  getMinutes: ["$.nope?.getMinutes()", "$.mo.d?.getMinutes()"],
+  getSeconds: ["$.nope?.getSeconds()", "$.mo.d?.getSeconds()"],
+  getMilliseconds: ["$.nope?.getMilliseconds()", "$.mo.d?.getMilliseconds()"],
+  getUTCFullYear: ["$.nope?.getUTCFullYear()", "$.mo.d?.getUTCFullYear()"],
+  getUTCMonth: ["$.nope?.getUTCMonth()", "$.mo.d?.getUTCMonth()"],
+  getUTCDate: ["$.nope?.getUTCDate()", "$.mo.d?.getUTCDate()"],
+  getUTCDay: ["$.nope?.getUTCDay()", "$.mo.d?.getUTCDay()"],
+  getUTCHours: ["$.nope?.getUTCHours()", "$.mo.d?.getUTCHours()"],
+  getUTCMinutes: ["$.nope?.getUTCMinutes()", "$.mo.d?.getUTCMinutes()"],
+  getUTCSeconds: ["$.nope?.getUTCSeconds()", "$.mo.d?.getUTCSeconds()"],
+  getUTCMilliseconds: ["$.nope?.getUTCMilliseconds()", "$.mo.d?.getUTCMilliseconds()"],
+  getTime: ["$.nope?.getTime()", "$.mo.d?.getTime()"],
+  toISOString: ["$.nope?.toISOString()", "$.mo.d?.toISOString()"],
+  plus: ['$.nope?.plus(1, "day")', '$.mo.d?.plus(1, "day")'],
+  minus: ['$.nope?.minus(1, "day")', '$.mo.d?.minus(1, "day")'],
+  diff: ['$.nope?.diff($.e, "day")', '$.mo.d?.diff($.e, "day")'],
+  startOf: ['$.nope?.startOf("month")', '$.mo.d?.startOf("month")'],
+  endOf: ['$.nope?.endOf("month")', '$.mo.d?.endOf("month")'],
+  format: ['$.nope?.format("%Y")', '$.mo.d?.format("%Y")'],
+  week: ["$.nope?.week()", "$.mo.d?.week()"],
+  isoWeek: ["$.nope?.isoWeek()", "$.mo.d?.isoWeek()"],
+  isoWeekYear: ["$.nope?.isoWeekYear()", "$.mo.d?.isoWeekYear()"],
+  isoWeekday: ["$.nope?.isoWeekday()", "$.mo.d?.isoWeekday()"],
+  dayOfYear: ["$.nope?.dayOfYear()", "$.mo.d?.dayOfYear()"],
+  quarter: ["$.nope?.quarter()", "$.mo.d?.quarter()"],
+  set: ["$.nope?.set({ year: 2030 })", "$.mo.d?.set({ year: 2030 })"],
+  abs: ["$.nope?.abs()", "$.mo.d?.abs()"],
+  sqrt: ["$.nope?.sqrt()", "$.mo.d?.sqrt()"],
+  exp: ["$.nope?.exp()", "$.mo.d?.exp()"],
+  log: ["$.nope?.log(2)", "$.mo.d?.log(2)"],
+  log2: ["$.nope?.log2()", "$.mo.d?.log2()"],
+  log10: ["$.nope?.log10()", "$.mo.d?.log10()"],
+  trunc: ["$.nope?.trunc()", "$.mo.d?.trunc()"],
+  cbrt: ["$.nope?.cbrt()", "$.mo.d?.cbrt()"],
+  sin: ["$.nope?.sin()", "$.mo.d?.sin()"],
+  cos: ["$.nope?.cos()", "$.mo.d?.cos()"],
+  tan: ["$.nope?.tan()", "$.mo.d?.tan()"],
+  asin: ["$.nope?.asin()", "$.mo.d?.asin()"],
+  acos: ["$.nope?.acos()", "$.mo.d?.acos()"],
+  atan: ["$.nope?.atan()", "$.mo.d?.atan()"],
+  sinh: ["$.nope?.sinh()", "$.mo.d?.sinh()"],
+  cosh: ["$.nope?.cosh()", "$.mo.d?.cosh()"],
+  tanh: ["$.nope?.tanh()", "$.mo.d?.tanh()"],
+  asinh: ["$.nope?.asinh()", "$.mo.d?.asinh()"],
+  acosh: ["$.nope?.acosh()", "$.mo.d?.acosh()"],
+  atanh: ["$.nope?.atanh()", "$.mo.d?.atanh()"],
+  atan2: ["$.nope?.atan2($.n)", "$.mo.d?.atan2($.n)"],
+  hypot: ["$.nope?.hypot(1)", "$.mo.d?.hypot(1)"],
 };
 
 describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a measurement", () => {
@@ -3158,6 +3172,11 @@ describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a meas
   it("measures exactly the rows that state `readsNullAsEmpty`", () => {
     const stating = rows.filter(([, r]) => own(r) && r.readsNullAsEmpty === true).map(([n]) => n);
     expect([...stating].sort()).toEqual(Object.keys(NULL_AS_EMPTY).sort());
+  });
+
+  it("measures exactly the rows that state `passesNull`", () => {
+    const stating = rows.filter(([, r]) => own(r) && r.passesNull === true).map(([n]) => n);
+    expect([...stating].sort()).toEqual(Object.keys(PASSES_NULL).sort());
   });
 
   it("measures exactly the rows that state `nullReceiverAs`", () => {
@@ -3210,13 +3229,18 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
     expect(wrong).toEqual([]);
   });
 
-  it("answers null for a missing receiver with no `$cond`, where the row states `passesNull`", async () => {
+  it("answers null after a `?.` with no null test, for each row that states `passesNull`", async () => {
     const wrong: string[] = [];
-    for (const [row, src] of Object.entries(PASSES_NULL)) {
-      const t = await typeOf(src);
-      if (t !== "null") wrong.push(`${row}: ${src} → ${t}`);
-      // and the compiler leaves the `$cond` out, which is the reason for the fact
-      if (JSON.stringify(expr(src)).includes('"$cond"')) wrong.push(`${row}: ${src} still tests its receiver`);
+    for (const [row, sources] of Object.entries(PASSES_NULL)) {
+      for (const src of sources) {
+        // the `?.` null test stands at the top of the chain; a `$cond` inside the body is the row's own
+        if (JSON.stringify(expr(src)).startsWith('{"$cond":[{"$lte":['))
+          wrong.push(`${row}: ${src} still tests its receiver`);
+        const docs = await coll!
+          .aggregate([{ $addFields: { __v: expr(src) } }, { $project: { _id: 0, v: "$__v" } }])
+          .toArray();
+        if (docs[0].v !== null && docs[0].v !== undefined) wrong.push(`${row}: ${src} → ${canonical(docs[0])}`);
+      }
     }
     expect(wrong).toEqual([]);
   });
@@ -3230,6 +3254,79 @@ describe.skipIf(!up)("registry — every `neverNull` and `readsNullAsEmpty` clai
     for (const [row, [onMissing, onStated]] of Object.entries(NULL_RECEIVER_AS)) {
       const [a, b] = [await answer(onMissing), await answer(onStated)];
       if (a !== b) wrong.push(`${row}: ${onMissing} → ${a}, ${onStated} → ${b}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+/**
+ * Each production that states `passesNull`: an expression with a `?.` read as its operand,
+ * over a document that has no `b`. The read takes no `$ifNull`, and the answer is the one
+ * the wrapped read gives.
+ */
+const PRODUCTION_PASSES_NULL: Readonly<Record<string, readonly [src: string, wrapped: unknown]>> = {
+  addition: ["$.nob?.c + 1", { $add: [{ $ifNull: ["$nob.c", null] }, 1] }],
+  subtraction: ["$.nob?.c - 1", { $subtract: [{ $ifNull: ["$nob.c", null] }, 1] }],
+  multiplication: ["$.nob?.c * 2", { $multiply: [{ $ifNull: ["$nob.c", null] }, 2] }],
+  division: ["$.nob?.c / 2", { $divide: [{ $ifNull: ["$nob.c", null] }, 2] }],
+  remainder: ["$.nob?.c % 2", { $mod: [{ $ifNull: ["$nob.c", null] }, 2] }],
+  exponentiation: ["$.nob?.c ** 2", { $pow: [{ $ifNull: ["$nob.c", null] }, 2] }],
+  negation: ["-$.nob?.c", { $multiply: [{ $ifNull: ["$nob.c", null] }, -1] }],
+  nullishCoalescing: ["$.nob?.c ?? 0", { $ifNull: [{ $ifNull: ["$nob.c", null] }, 0] }],
+};
+
+describe("registry — every production that states `passesNull` has a measurement", () => {
+  it("measures exactly the productions that state it", () => {
+    const stating = Object.entries(PRODUCTIONS)
+      .filter(([, p]) => (p as { passesNull?: true }).passesNull === true)
+      .map(([k]) => k);
+    expect([...stating].sort()).toEqual(Object.keys(PRODUCTION_PASSES_NULL).sort());
+  });
+});
+
+describe.skipIf(!up)("registry — a production that states `passesNull` answers as the wrapped read", () => {
+  it("emits no `$ifNull` for the `?.` read, and the server gives the same answer", async () => {
+    const wrong: string[] = [];
+    const answer = async (e: unknown) =>
+      canonical(
+        (await coll!.aggregate([{ $addFields: { __v: e } }, { $project: { _id: 0, v: "$__v" } }]).toArray())[0],
+      );
+    for (const [key, [src, wrapped]] of Object.entries(PRODUCTION_PASSES_NULL)) {
+      const got = expr(src);
+      if (JSON.stringify(got).includes('"$ifNull":["$nob.c",null]')) wrong.push(`${key}: ${src} still wraps the read`);
+      const [a, b] = [await answer(got), await answer(wrapped)];
+      if (a !== b) wrong.push(`${key}: ${src} → ${a}, wrapped → ${b}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+/**
+ * This test checks `.random()` against lodash's `_.random`. It checks the range, both ends
+ * for two whole bounds, and the form of the answer. Each source runs 400 times on the server.
+ */
+const RANDOMS: readonly (readonly [src: string, lo: number, hi: number, whole: boolean])[] = [
+  ["(1).random(6)", 1, 6, true],
+  ["(6).random(1)", 1, 6, true],
+  ["(5).random()", 0, 5, true],
+  ["(1.5).random(2)", 1.5, 2, false],
+  ["$.neg.random(3)", -3, 3, true],
+  ["$.neg.random($.n)", -3, 7.256, false],
+  ["$.nope.random(4)", 0, 4, true],
+  ["$.n.random()", 0, 7.256, false],
+];
+
+describe.skipIf(!up)("compiler/emit — `.random()` gives lodash's range on the server", () => {
+  it("stays in range, reaches each whole end, and is whole only for two whole bounds", async () => {
+    const wrong: string[] = [];
+    for (const [src, lo, hi, whole] of RANDOMS) {
+      const [d] = await coll!
+        .aggregate([{ $project: { _id: 0, v: { $map: { input: { $range: [0, 400] }, in: expr(src) } } } }])
+        .toArray();
+      const v = d.v as number[];
+      if (v.some((x) => x < lo || x > hi)) wrong.push(`${src}: a value is out of [${lo}, ${hi}]`);
+      if (v.every(Number.isInteger) !== whole) wrong.push(`${src}: whole is ${!whole}`);
+      if (whole && (!v.includes(lo) || !v.includes(hi))) wrong.push(`${src}: an end never appears`);
     }
     expect(wrong).toEqual([]);
   });
@@ -3326,6 +3423,7 @@ describe.skipIf(!up)("compiler/emit — no `$ifNull` guards a value that is ther
       }
     }
     expect(dead).toEqual([]);
-    expect(guardsChecked).toBeGreaterThan(GUARD_FREE.length);
+    // a null test is `$lte` or `$gt`, not an `$ifNull`, so a source can hold no guard at all
+    expect(guardsChecked).toBeGreaterThan(GUARD_FREE.length / 2);
   });
 });

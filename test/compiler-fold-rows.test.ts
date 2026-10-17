@@ -63,7 +63,7 @@ describe("compiler/passes/fold — every case label is a callable row on that fa
 
   it("folds a namespace call only for a name the registry lists on that namespace", () => {
     // `Number.isInteger`, `Date.UTC` — `foldNamespaceCall` opens one `if (namespace === "X")`
-    // block per namespace. A block reads its names from `case` labels or from a
+    // block per namespace. A block reads its names from `case` labels, or from a
     // `name === "…"` test.
     const src = source("fold-methods.ts");
     const start = src.indexOf("function foldNamespaceCall(");

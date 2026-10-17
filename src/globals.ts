@@ -3648,65 +3648,67 @@ declare global {
     words(pattern?: string | RegExp): string[];
   }
   interface Number {
-    /** The absolute value — `$abs`. */
+    /** The absolute value — `Math.abs`. */
     abs(): number;
-    /** The arccosine, in radians — `$acos`. */
+    /** The arccosine, in radians — `Math.acos`. */
     acos(): number;
-    /** The inverse hyperbolic cosine — `$acosh`. */
+    /** The inverse hyperbolic cosine, in radians — `Math.acosh`. */
     acosh(): number;
-    /** The arcsine, in radians — `$asin`. */
+    /** The arcsine, in radians — `Math.asin`. */
     asin(): number;
-    /** The inverse hyperbolic sine — `$asinh`. */
+    /** The inverse hyperbolic sine, in radians — `Math.asinh`. */
     asinh(): number;
-    /** The arctangent, in radians — `$atan`. */
+    /** The arctangent, in radians — `Math.atan`. */
     atan(): number;
-    /** The arctangent of this / `x`, in radians — `$atan2`. */
+    /** The angle of the point (x, this) — `Math.atan2`. */
     atan2(x: number): number;
-    /** The inverse hyperbolic tangent — `$atanh`. */
+    /** The inverse hyperbolic tangent, in radians — `Math.atanh`. */
     atanh(): number;
-    /** The cube root, with the sign kept. */
+    /** The cube root — `Math.cbrt`. */
     cbrt(): number;
     /** Round up to `precision` decimals — `_.ceil`. */
     ceil(precision?: number): number;
     /** Clamp within `[lower, upper]` — `_.clamp`. */
     clamp(lower: number, upper: number): number;
-    /** The cosine, in radians — `$cos`. */
+    /** The cosine, in radians — `Math.cos`. */
     cos(): number;
-    /** The hyperbolic cosine — `$cosh`. */
+    /** The hyperbolic cosine, in radians — `Math.cosh`. */
     cosh(): number;
-    /** `e` raised to this power — `$exp`. */
+    /** e to the power of the value — `Math.exp`. */
     exp(): number;
     /** Round down to `precision` decimals — `_.floor`. */
     floor(precision?: number): number;
-    /** The square root of the sum of the squares of this and `values`. */
+    /** The square root of the sum of squares — `Math.hypot`. */
     hypot(...values: number[]): number;
     /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
     inRange(start: number, end?: number): boolean;
-    /** The natural logarithm — `$ln` — or the logarithm to `base` — `$log`. */
+    /** The natural logarithm, or the logarithm to `base` — `Math.log`. */
     log(base?: number): number;
-    /** The base-10 logarithm — `$log10`. */
+    /** The base-10 logarithm — `Math.log10`. */
     log10(): number;
-    /** The base-2 logarithm — `$log` with base 2. */
+    /** The base-2 logarithm — `Math.log2`. */
     log2(): number;
+    /** Gives a random number between two bounds, as lodash's `_.random` does. Two whole bounds give a whole number. */
+    random(upper?: number): number;
     /** The integers from the start up to, but not including, the end — `_.range`. */
     range(end?: number, step?: number): number[];
     /** The `.range()` array in reverse order — `_.rangeRight`. */
     rangeRight(end?: number, step?: number): number[];
     /** Round to `precision` decimals — `_.round`. */
     round(precision?: number): number;
-    /** -1, 0 or 1 — the sign of the number. */
+    /** -1, 0 or 1 — `Math.sign`. */
     sign(): number;
-    /** The sine, in radians — `$sin`. */
+    /** The sine, in radians — `Math.sin`. */
     sin(): number;
-    /** The hyperbolic sine — `$sinh`. */
+    /** The hyperbolic sine, in radians — `Math.sinh`. */
     sinh(): number;
-    /** The square root — `$sqrt`. */
+    /** The square root — `Math.sqrt`. */
     sqrt(): number;
-    /** The tangent, in radians — `$tan`. */
+    /** The tangent, in radians — `Math.tan`. */
     tan(): number;
-    /** The hyperbolic tangent — `$tanh`. */
+    /** The hyperbolic tangent, in radians — `Math.tanh`. */
     tanh(): number;
-    /** Truncate to `precision` decimals — `$trunc`. */
+    /** Drop the digits after `precision` decimals — `Math.trunc`. */
     trunc(precision?: number): number;
   }
   interface Date {

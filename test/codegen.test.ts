@@ -1370,7 +1370,7 @@ describe("arithmetic operators", () => {
 
 describe("comparison operators", () => {
   it("== null (loose: matches null OR missing through $type check)", () => {
-    expect(jsmql.expr("$.status == null")).toEqual({ $in: [{ $type: "$status" }, ["null", "missing"]] });
+    expect(jsmql.expr("$.status == null")).toEqual({ $lte: ["$status", null] });
   });
   it("=== (strict equality against any value)", () => {
     expect(jsmql.expr("$.status === 'active'")).toEqual({ $eq: ["$status", "active"] });
@@ -1379,7 +1379,7 @@ describe("comparison operators", () => {
     expect(jsmql.expr("$.status === null")).toEqual({ $eq: ["$status", null] });
   });
   it("!= null (loose: excludes both null AND missing)", () => {
-    expect(jsmql.expr("$.status != null")).toEqual({ $not: [{ $in: [{ $type: "$status" }, ["null", "missing"]] }] });
+    expect(jsmql.expr("$.status != null")).toEqual({ $gt: ["$status", null] });
   });
   it("!== null (strict: missing fields still pass)", () => {
     expect(jsmql.expr("$.status !== null")).toEqual({ $ne: ["$status", null] });
@@ -1394,7 +1394,7 @@ describe("comparison operators", () => {
     expect(() => jsmql.expr("$.x == 5")).toThrow(/'=='.*only allowed against null/);
   });
   it("accepts `null` on either side of `==`", () => {
-    expect(jsmql.expr("null == $.status")).toEqual({ $in: [{ $type: "$status" }, ["null", "missing"]] });
+    expect(jsmql.expr("null == $.status")).toEqual({ $lte: ["$status", null] });
   });
   it(">", () => {
     expect(jsmql.expr("$.age > 18")).toEqual({ $gt: ["$age", 18] });
@@ -1426,7 +1426,7 @@ describe("jsBool truthiness normalizes missing → null", () => {
         as: "x",
         cond: {
           $and: [
-            { $ne: [{ $ifNull: ["$$x.name", null] }, null] },
+            { $gt: ["$$x.name", null] },
             { $ne: ["$$x.name", false] },
             { $ne: ["$$x.name", ""] },
             { $ne: ["$$x.name", 0] },
@@ -1437,28 +1437,14 @@ describe("jsBool truthiness normalizes missing → null", () => {
   });
   it("&&/||/ternary share the same normalized coercion", () => {
     expect(jsmql.expr("$.a ? $.b : $.c")).toEqual({
-      $cond: {
-        if: {
-          $and: [
-            { $ne: [{ $ifNull: ["$a", null] }, null] },
-            { $ne: ["$a", false] },
-            { $ne: ["$a", ""] },
-            { $ne: ["$a", 0] },
-          ],
-        },
-        then: "$b",
-        else: "$c",
-      },
+      $cond: [
+        { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] },
+        "$b",
+        "$c",
+      ],
     });
     expect(jsmql.expr("!$.a")).toEqual({
-      $not: {
-        $and: [
-          { $ne: [{ $ifNull: ["$a", null] }, null] },
-          { $ne: ["$a", false] },
-          { $ne: ["$a", ""] },
-          { $ne: ["$a", 0] },
-        ],
-      },
+      $not: { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] },
     });
   });
 });
@@ -1466,34 +1452,20 @@ describe("jsBool truthiness normalizes missing → null", () => {
 describe("logical operators", () => {
   it("&& on field refs returns operand (JS semantics)", () => {
     expect(jsmql.expr("$.a && $.b")).toEqual({
-      $cond: {
-        if: {
-          $and: [
-            { $ne: [{ $ifNull: ["$a", null] }, null] },
-            { $ne: ["$a", false] },
-            { $ne: ["$a", ""] },
-            { $ne: ["$a", 0] },
-          ],
-        },
-        then: "$b",
-        else: "$a",
-      },
+      $cond: [
+        { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] },
+        "$b",
+        "$a",
+      ],
     });
   });
   it("|| on field refs returns operand (JS semantics)", () => {
     expect(jsmql.expr("$.a || $.b")).toEqual({
-      $cond: {
-        if: {
-          $and: [
-            { $ne: [{ $ifNull: ["$a", null] }, null] },
-            { $ne: ["$a", false] },
-            { $ne: ["$a", ""] },
-            { $ne: ["$a", 0] },
-          ],
-        },
-        then: "$a",
-        else: "$b",
-      },
+      $cond: [
+        { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] },
+        "$a",
+        "$b",
+      ],
     });
   });
   it("&& on bool comparisons stays as $and (no operand-preservation needed)", () => {
@@ -1506,7 +1478,7 @@ describe("logical operators", () => {
     expect(jsmql.expr("!$.active")).toEqual({
       $not: {
         $and: [
-          { $ne: [{ $ifNull: ["$active", null] }, null] },
+          { $gt: ["$active", null] },
           { $ne: ["$active", false] },
           { $ne: ["$active", ""] },
           { $ne: ["$active", 0] },
@@ -1517,7 +1489,7 @@ describe("logical operators", () => {
   it("!! double negation peephole → jsBool (no $not-of-$not)", () => {
     expect(jsmql.expr("!!$.active")).toEqual({
       $and: [
-        { $ne: [{ $ifNull: ["$active", null] }, null] },
+        { $gt: ["$active", null] },
         { $ne: ["$active", false] },
         { $ne: ["$active", ""] },
         { $ne: ["$active", 0] },
@@ -1532,30 +1504,24 @@ describe("logical operators", () => {
     expect(jsmql.expr("($.a + $.b) && $.c")).toEqual({
       $let: {
         vars: { jsmqlV: { $add: ["$a", "$b"] } },
-        in: {
-          $cond: {
-            if: { $and: [{ $ne: [{ $ifNull: ["$$jsmqlV", null] }, null] }, { $ne: ["$$jsmqlV", 0] }] },
-            then: "$c",
-            else: "$$jsmqlV",
-          },
-        },
+        in: { $cond: [{ $and: [{ $gt: ["$$jsmqlV", null] }, { $ne: ["$$jsmqlV", 0] }] }, "$c", "$$jsmqlV"] },
       },
     });
   });
   it("|| short-circuit chain with default (user's idiom)", () => {
     expect(jsmql.expr('$.nickname || "anonymous"')).toEqual({
-      $cond: {
-        if: {
+      $cond: [
+        {
           $and: [
-            { $ne: [{ $ifNull: ["$nickname", null] }, null] },
+            { $gt: ["$nickname", null] },
             { $ne: ["$nickname", false] },
             { $ne: ["$nickname", ""] },
             { $ne: ["$nickname", 0] },
           ],
         },
-        then: "$nickname",
-        else: "anonymous",
-      },
+        "$nickname",
+        "anonymous",
+      ],
     });
   });
 });
@@ -1563,52 +1529,31 @@ describe("logical operators", () => {
 describe("ternary", () => {
   it("basic ternary with bool condition (no jsBool wrap)", () => {
     expect(jsmql.expr("$.age >= 18 ? 'adult' : 'minor'")).toEqual({
-      $cond: { if: { $gte: ["$age", 18] }, then: "adult", else: "minor" },
+      $cond: [{ $gte: ["$age", 18] }, "adult", "minor"],
     });
   });
   it("ternary with non-bool condition wraps in jsBool", () => {
     expect(jsmql.expr('$.name ? "yes" : "no"')).toEqual({
-      $cond: {
-        if: {
-          $and: [
-            { $ne: [{ $ifNull: ["$name", null] }, null] },
-            { $ne: ["$name", false] },
-            { $ne: ["$name", ""] },
-            { $ne: ["$name", 0] },
-          ],
-        },
-        then: "yes",
-        else: "no",
-      },
+      $cond: [
+        { $and: [{ $gt: ["$name", null] }, { $ne: ["$name", false] }, { $ne: ["$name", ""] }, { $ne: ["$name", 0] }] },
+        "yes",
+        "no",
+      ],
     });
   });
   it("nested ternary (right-associative) wraps each non-bool condition", () => {
     expect(jsmql.expr("$.a ? 'x' : $.b ? 'y' : 'z'")).toEqual({
-      $cond: {
-        if: {
-          $and: [
-            { $ne: [{ $ifNull: ["$a", null] }, null] },
-            { $ne: ["$a", false] },
-            { $ne: ["$a", ""] },
-            { $ne: ["$a", 0] },
+      $cond: [
+        { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] },
+        "x",
+        {
+          $cond: [
+            { $and: [{ $gt: ["$b", null] }, { $ne: ["$b", false] }, { $ne: ["$b", ""] }, { $ne: ["$b", 0] }] },
+            "y",
+            "z",
           ],
         },
-        then: "x",
-        else: {
-          $cond: {
-            if: {
-              $and: [
-                { $ne: [{ $ifNull: ["$b", null] }, null] },
-                { $ne: ["$b", false] },
-                { $ne: ["$b", ""] },
-                { $ne: ["$b", 0] },
-              ],
-            },
-            then: "y",
-            else: "z",
-          },
-        },
-      },
+      ],
     });
   });
 });
@@ -1653,60 +1598,32 @@ describe("operator flattening", () => {
   });
   it("&& on non-bool operands folds right into nested $cond (operand-preserving)", () => {
     expect(jsmql.expr("$.a && $.b && $.c")).toEqual({
-      $cond: {
-        if: {
-          $and: [
-            { $ne: [{ $ifNull: ["$a", null] }, null] },
-            { $ne: ["$a", false] },
-            { $ne: ["$a", ""] },
-            { $ne: ["$a", 0] },
+      $cond: [
+        { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] },
+        {
+          $cond: [
+            { $and: [{ $gt: ["$b", null] }, { $ne: ["$b", false] }, { $ne: ["$b", ""] }, { $ne: ["$b", 0] }] },
+            "$c",
+            "$b",
           ],
         },
-        then: {
-          $cond: {
-            if: {
-              $and: [
-                { $ne: [{ $ifNull: ["$b", null] }, null] },
-                { $ne: ["$b", false] },
-                { $ne: ["$b", ""] },
-                { $ne: ["$b", 0] },
-              ],
-            },
-            then: "$c",
-            else: "$b",
-          },
-        },
-        else: "$a",
-      },
+        "$a",
+      ],
     });
   });
   it("|| on non-bool operands folds right (operand-preserving)", () => {
     expect(jsmql.expr("$.a || $.b || $.c")).toEqual({
-      $cond: {
-        if: {
-          $and: [
-            { $ne: [{ $ifNull: ["$a", null] }, null] },
-            { $ne: ["$a", false] },
-            { $ne: ["$a", ""] },
-            { $ne: ["$a", 0] },
+      $cond: [
+        { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] },
+        "$a",
+        {
+          $cond: [
+            { $and: [{ $gt: ["$b", null] }, { $ne: ["$b", false] }, { $ne: ["$b", ""] }, { $ne: ["$b", 0] }] },
+            "$b",
+            "$c",
           ],
         },
-        then: "$a",
-        else: {
-          $cond: {
-            if: {
-              $and: [
-                { $ne: [{ $ifNull: ["$b", null] }, null] },
-                { $ne: ["$b", false] },
-                { $ne: ["$b", ""] },
-                { $ne: ["$b", 0] },
-              ],
-            },
-            then: "$b",
-            else: "$c",
-          },
-        },
-      },
+      ],
     });
   });
   it("?? flattened to $ifNull (4 operands)", () => {
@@ -2025,7 +1942,7 @@ describe("lambda element-type inference (array-method param typed from a provabl
         as: "k",
         cond: {
           $and: [
-            { $ne: [{ $ifNull: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, null] }, null] },
+            { $gt: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, null] },
             { $ne: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, false] },
             { $ne: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, ""] },
             { $ne: [{ $getField: { field: "$$k", input: { $ifNull: ["$m", {}] } } }, 0] },
@@ -2151,63 +2068,31 @@ describe("operator precedence", () => {
   });
   it("comparison before && (mixed-bool chain folds operand-preserving)", () => {
     expect(jsmql.expr("$.age > 18 && $.active")).toEqual({
-      $cond: { if: { $gt: ["$age", 18] }, then: "$active", else: { $gt: ["$age", 18] } },
+      $cond: [{ $gt: ["$age", 18] }, "$active", { $gt: ["$age", 18] }],
     });
   });
   it("&& before ||", () => {
     expect(jsmql.expr("$.a || $.b && $.c")).toEqual({
-      $cond: {
-        if: {
-          $and: [
-            { $ne: [{ $ifNull: ["$a", null] }, null] },
-            { $ne: ["$a", false] },
-            { $ne: ["$a", ""] },
-            { $ne: ["$a", 0] },
+      $cond: [
+        { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] },
+        "$a",
+        {
+          $cond: [
+            { $and: [{ $gt: ["$b", null] }, { $ne: ["$b", false] }, { $ne: ["$b", ""] }, { $ne: ["$b", 0] }] },
+            "$c",
+            "$b",
           ],
         },
-        then: "$a",
-        else: {
-          $cond: {
-            if: {
-              $and: [
-                { $ne: [{ $ifNull: ["$b", null] }, null] },
-                { $ne: ["$b", false] },
-                { $ne: ["$b", ""] },
-                { $ne: ["$b", 0] },
-              ],
-            },
-            then: "$c",
-            else: "$b",
-          },
-        },
-      },
+      ],
     });
   });
   it("! before && (LHS is provably bool, no $let)", () => {
     expect(jsmql.expr("!$.a && $.b")).toEqual({
-      $cond: {
-        if: {
-          $not: {
-            $and: [
-              { $ne: [{ $ifNull: ["$a", null] }, null] },
-              { $ne: ["$a", false] },
-              { $ne: ["$a", ""] },
-              { $ne: ["$a", 0] },
-            ],
-          },
-        },
-        then: "$b",
-        else: {
-          $not: {
-            $and: [
-              { $ne: [{ $ifNull: ["$a", null] }, null] },
-              { $ne: ["$a", false] },
-              { $ne: ["$a", ""] },
-              { $ne: ["$a", 0] },
-            ],
-          },
-        },
-      },
+      $cond: [
+        { $not: { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] } },
+        "$b",
+        { $not: { $and: [{ $gt: ["$a", null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }] } },
+      ],
     });
   });
 });
@@ -2551,7 +2436,7 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
           },
         },
         as: "i",
-        in: { $cond: { if: { $lt: ["$$i", 0] }, then: "", else: { $substrCP: ["$s", "$$i", 1] } } },
+        in: { $cond: [{ $lt: ["$$i", 0] }, "", { $substrCP: ["$s", "$$i", 1] }] },
       },
     });
     expect(() => jsmql.expr('$.s.replace("a")')).toThrow(
@@ -2595,13 +2480,12 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
       $reduce: { input: { $ifNull: ["$a", []] }, initialValue: 0, in: { $add: ["$$value", "$$this"] } },
     });
   });
-  it("static-call families (Math./Array./regex.) use the same formatter", () => {
-    expect(() => jsmql.expr("$.x.atan2()")).toThrow("'.atan2(x)' requires exactly 1 argument, got 0");
-    expect(() => jsmql.expr("$.x.hypot()")).toThrow("'.hypot(...values)' requires at least 1 argument, got 0");
+  it("static-call families (Math./regex.) and the object methods use the same formatter", () => {
+    expect(() => jsmql.expr("$.a.hypot()")).toThrow("'.hypot(...values)' requires at least 1 argument, got 0");
     expect(() => jsmql.expr("Math.random(1)")).toThrow("'Math.random()' takes no arguments, got 1");
-    expect(() => jsmql.expr("$.x.floor(1, 2)")).toThrow("'.floor([precision])' requires 0 or 1 arguments, got 2");
-    expect(() => jsmql.expr("Array.isArray()")).toThrow("'Array.isArray(value)' requires exactly 1 argument, got 0");
-    expect(() => jsmql.expr("$.a.assign()")).toThrow("'.assign(...sources)' requires at least 1 argument, got 0");
+    expect(() => jsmql.expr("$.y.atan2()")).toThrow("'.atan2(x)' requires exactly 1 argument, got 0");
+    expect(() => jsmql.expr("$.o.keys(1)")).toThrow("'.keys()' takes no arguments, got 1");
+    expect(() => jsmql.expr("$.o.assign()")).toThrow("'.assign(...sources)' requires at least 1 argument, got 0");
     expect(() => jsmql.expr("/x/.test()")).toThrow("'.test(str)' requires exactly 1 argument, got 0");
   });
   it("statement-position array mutators use the same formatter", () => {
@@ -2974,46 +2858,34 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
         $let: {
           vars: { jsmqlV: "$__jsmql.var.a" },
           in: {
-            $cond: {
-              if: { $isArray: "$$jsmqlV" },
-              then: {
+            $cond: [
+              { $isArray: "$$jsmqlV" },
+              {
                 $ifNull: [
                   {
                     $reduce: {
                       input: "$$jsmqlV",
                       initialValue: null,
                       in: {
-                        $cond: {
-                          if: { $eq: ["$$value", null] },
-                          then: {
-                            $cond: {
-                              if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                              then: "",
-                              else: { $toString: "$$this" },
-                            },
-                          },
-                          else: {
+                        $cond: [
+                          { $eq: ["$$value", null] },
+                          { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                          {
                             $concat: [
                               "$$value",
                               ",",
-                              {
-                                $cond: {
-                                  if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                  then: "",
-                                  else: { $toString: "$$this" },
-                                },
-                              },
+                              { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                             ],
                           },
-                        },
+                        ],
                       },
                     },
                   },
                   "",
                 ],
               },
-              else: { $toString: "$$jsmqlV" },
-            },
+              { $toString: "$$jsmqlV" },
+            ],
           },
         },
       },
@@ -3207,12 +3079,7 @@ describe("bare built-in callbacks", () => {
   });
   it("the whole iteratee/predicate family accepts a bare built-in", () => {
     const truthyX = {
-      $and: [
-        { $ne: [{ $ifNull: ["$$x", null] }, null] },
-        { $ne: ["$$x", false] },
-        { $ne: ["$$x", ""] },
-        { $ne: ["$$x", 0] },
-      ],
+      $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
     };
     const stringKey = { $ifNull: [{ $toString: { $toString: "$$x" } }, "null"] };
     expect(jsmql.expr("$.xs.uniqBy(Number)")).toEqual({
@@ -3341,14 +3208,7 @@ describe("bare built-in callbacks", () => {
       $filter: {
         input: { $ifNull: ["$items", []] },
         as: "x",
-        cond: {
-          $and: [
-            { $ne: [{ $ifNull: ["$$x", null] }, null] },
-            { $ne: ["$$x", false] },
-            { $ne: ["$$x", ""] },
-            { $ne: ["$$x", 0] },
-          ],
-        },
+        cond: { $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }] },
       },
     });
   });
@@ -3370,12 +3230,7 @@ describe("bare built-in callbacks", () => {
             input: { $ifNull: ["$xs", []] },
             as: "x",
             cond: {
-              $and: [
-                { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                { $ne: ["$$x", false] },
-                { $ne: ["$$x", ""] },
-                { $ne: ["$$x", 0] },
-              ],
+              $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
             },
           },
         },
@@ -3389,14 +3244,7 @@ describe("bare built-in callbacks", () => {
         $map: {
           input: { $ifNull: ["$xs", []] },
           as: "x",
-          in: {
-            $and: [
-              { $ne: [{ $ifNull: ["$$x", null] }, null] },
-              { $ne: ["$$x", false] },
-              { $ne: ["$$x", ""] },
-              { $ne: ["$$x", 0] },
-            ],
-          },
+          in: { $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }] },
         },
       },
     });
@@ -3407,14 +3255,7 @@ describe("bare built-in callbacks", () => {
         $map: {
           input: { $ifNull: ["$xs", []] },
           as: "x",
-          in: {
-            $and: [
-              { $ne: [{ $ifNull: ["$$x", null] }, null] },
-              { $ne: ["$$x", false] },
-              { $ne: ["$$x", ""] },
-              { $ne: ["$$x", 0] },
-            ],
-          },
+          in: { $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }] },
         },
       },
     });
@@ -3438,40 +3279,17 @@ describe("bare built-in callbacks", () => {
                 input: { $ifNull: ["$parts", []] },
                 as: "x",
                 cond: {
-                  $and: [
-                    { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                    { $ne: ["$$x", false] },
-                    { $ne: ["$$x", ""] },
-                    { $ne: ["$$x", 0] },
-                  ],
+                  $and: [{ $gt: ["$$x", null] }, { $ne: ["$$x", false] }, { $ne: ["$$x", ""] }, { $ne: ["$$x", 0] }],
                 },
               },
             },
             initialValue: null,
             in: {
-              $cond: {
-                if: { $eq: ["$$value", null] },
-                then: {
-                  $cond: {
-                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                    then: "",
-                    else: { $toString: "$$this" },
-                  },
-                },
-                else: {
-                  $concat: [
-                    "$$value",
-                    " ",
-                    {
-                      $cond: {
-                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                        then: "",
-                        else: { $toString: "$$this" },
-                      },
-                    },
-                  ],
-                },
-              },
+              $cond: [
+                { $eq: ["$$value", null] },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", " ", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
+              ],
             },
           },
         },
@@ -4237,12 +4055,7 @@ describe("type casts", () => {
   });
   it("Boolean() uses JS truthy semantics (not MQL's $toBool)", () => {
     expect(jsmql.expr("Boolean($.x)")).toEqual({
-      $and: [
-        { $ne: [{ $ifNull: ["$x", null] }, null] },
-        { $ne: ["$x", false] },
-        { $ne: ["$x", ""] },
-        { $ne: ["$x", 0] },
-      ],
+      $and: [{ $gt: ["$x", null] }, { $ne: ["$x", false] }, { $ne: ["$x", ""] }, { $ne: ["$x", 0] }],
     });
   });
   it("Boolean() on a provably-bool value elides the wrap", () => {
@@ -4255,100 +4068,130 @@ describe("type casts", () => {
     expect(() => jsmql.expr("parseInt($.s)")).toThrow(/'parseInt\(\)' is not part of jsmql/);
     expect(() => jsmql.expr("parseFloat($.s)")).toThrow(/'parseFloat\(\)' is not part of jsmql/);
     expect(jsmql.expr("Number($.s)")).toEqual({ $toDouble: "$s" });
-    expect(jsmql.expr("Number($.s).trunc()")).toEqual({ $trunc: { $toDouble: "$s" } });
+    expect(jsmql.expr("(Number($.s)).trunc()")).toEqual({ $trunc: { $toDouble: "$s" } });
   });
 });
 
 describe("Math.*", () => {
-  it("Math.abs", () => {
+  it(".abs()", () => {
     expect(jsmql.expr("$.x.abs()")).toEqual({ $abs: "$x" });
   });
-  it("Math.ceil", () => {
+  it(".ceil()", () => {
     expect(jsmql.expr("$.x.ceil()")).toEqual({ $ceil: "$x" });
   });
-  it("Math.floor", () => {
+  it(".floor()", () => {
     expect(jsmql.expr("$.x.floor()")).toEqual({ $floor: "$x" });
   });
   it(".round() takes the one-operand form", () => {
     expect(jsmql.expr("$.x.round()")).toEqual({ $round: "$x" });
   });
-  it("Math.pow", () => {
+  it(".pow()", () => {
     expect(jsmql.expr("2 ** $.n")).toEqual({ $pow: [2, "$n"] });
   });
-  it("Math.sqrt", () => {
+  it(".sqrt()", () => {
     expect(jsmql.expr("$.x.sqrt()")).toEqual({ $sqrt: "$x" });
   });
-  it("Math.exp", () => {
+  it(".exp()", () => {
     expect(jsmql.expr("$.x.exp()")).toEqual({ $exp: "$x" });
   });
-  it("Math.log (natural log → $ln)", () => {
+  it(".log() (natural log → $ln)", () => {
     expect(jsmql.expr("$.x.log()")).toEqual({ $ln: "$x" });
   });
-  it("Math.trunc", () => {
+  it(".trunc()", () => {
     expect(jsmql.expr("$.x.trunc()")).toEqual({ $trunc: "$x" });
   });
 });
 
-describe("a Math member as a bare callback — refused; the arrow calls the number's own method", () => {
-  // `.map(Math.floor)` means `.map(x => Math.floor(x))`, and `Math.floor` is not a JSMQL
-  // name. The refusal names the number method. The arrow form is the one spelling.
-  it.each(["floor", "round", "abs", "ceil", "sqrt", "trunc", "pow", "min"])("$.scores.map(Math.%s)", (m) => {
-    expect(() => jsmql.expr(`$.scores.map(Math.${m})`)).toThrow("is not part of JSMQL");
-  });
-  it("the arrow that calls the number method lowers", () => {
+describe("number methods in a callback, and the refused Math members", () => {
+  // A number method in a callback reads the element as its receiver. `Math.floor`
+  // and the other members with a receiver method are refused, as bare callables too.
+  it("$.scores.map(x => x.floor())", () => {
     expect(jsmql.expr("$.scores.map(x => x.floor())")).toEqual({
       $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $floor: "$$x" } },
     });
   });
-  it("a refused Math member as a value answers with its own refusal", () => {
-    expect(() => jsmql.expr("Math.floor")).toThrow("Write '<number>.floor()'");
+  it("$.scores.map(x => x.round())", () => {
+    expect(jsmql.expr("$.scores.map(x => x.round())")).toEqual({
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $round: "$$x" } },
+    });
   });
-  it("a Math member that JSMQL keeps is a function, not a value", () => {
-    expect(() => jsmql.expr("Math.random")).toThrow("'Math.random' is a function, not a value.");
+  it("$.scores.map(x => x.abs())", () => {
+    expect(jsmql.expr("$.scores.map(x => x.abs())")).toEqual({
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $abs: "$$x" } },
+    });
+  });
+  it("$.scores.map(x => x.ceil())", () => {
+    expect(jsmql.expr("$.scores.map(x => x.ceil())")).toEqual({
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $ceil: "$$x" } },
+    });
+  });
+  it("$.scores.map(x => x.sqrt())", () => {
+    expect(jsmql.expr("$.scores.map(x => x.sqrt())")).toEqual({
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $sqrt: "$$x" } },
+    });
+  });
+  it("$.scores.map(x => x.trunc())", () => {
+    expect(jsmql.expr("$.scores.map(x => x.trunc())")).toEqual({
+      $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $trunc: "$$x" } },
+    });
+  });
+  it("refuses $.scores.map(Math.floor), and names the method", () => {
+    expect(() => jsmql.expr("$.scores.map(Math.floor)")).toThrow("Write '<number>.floor()'");
+  });
+  it("refuses a Math member that has a receiver method, as bare too (Math.pow, Math.min)", () => {
+    expect(() => jsmql.expr("$.scores.map(Math.pow)")).toThrow("Write 'base ** exponent'");
+    expect(() => jsmql.expr("$.scores.map(Math.min)")).toThrow("Write '[a, b].min()' or '<array>.min()'");
+  });
+  it("rejects bare Math reference used as a value", () => {
+    expect(() => jsmql.expr("Math.random")).toThrow(
+      "'Math.random' is a function, not a value. Call it ('Math.random(…)'), or hand it to a callback slot ('.map(Math.random)').",
+    );
+    // a refused member answers with its own refusal, which names the one spelling
+    expect(() => jsmql.expr("Math.floor")).toThrow("Write '<number>.floor()'");
   });
 });
 
-describe("Math trigonometry", () => {
-  it("Math.sin", () => {
+describe("number trigonometry", () => {
+  it(".sin()", () => {
     expect(jsmql.expr("$.angle.sin()")).toEqual({ $sin: "$angle" });
   });
-  it("Math.cos", () => {
+  it(".cos()", () => {
     expect(jsmql.expr("$.angle.cos()")).toEqual({ $cos: "$angle" });
   });
-  it("Math.tan", () => {
+  it(".tan()", () => {
     expect(jsmql.expr("$.angle.tan()")).toEqual({ $tan: "$angle" });
   });
-  it("Math.asin", () => {
+  it(".asin()", () => {
     expect(jsmql.expr("$.x.asin()")).toEqual({ $asin: "$x" });
   });
-  it("Math.acos", () => {
+  it(".acos()", () => {
     expect(jsmql.expr("$.x.acos()")).toEqual({ $acos: "$x" });
   });
-  it("Math.atan", () => {
+  it(".atan()", () => {
     expect(jsmql.expr("$.x.atan()")).toEqual({ $atan: "$x" });
   });
-  it("Math.atan2", () => {
+  it(".atan2()", () => {
     expect(jsmql.expr("$.y.atan2($.x)")).toEqual({ $atan2: ["$y", "$x"] });
   });
   it(".atan2() wrong arity", () => {
-    expect(() => jsmql.expr("$.y.atan2($.x, 1)")).toThrow(/exactly 1 argument/);
+    expect(() => jsmql.expr("$.x.atan2()")).toThrow(/exactly 1 argument/);
   });
-  it("Math.sinh", () => {
+  it(".sinh()", () => {
     expect(jsmql.expr("$.x.sinh()")).toEqual({ $sinh: "$x" });
   });
-  it("Math.cosh", () => {
+  it(".cosh()", () => {
     expect(jsmql.expr("$.x.cosh()")).toEqual({ $cosh: "$x" });
   });
-  it("Math.tanh", () => {
+  it(".tanh()", () => {
     expect(jsmql.expr("$.x.tanh()")).toEqual({ $tanh: "$x" });
   });
-  it("Math.asinh", () => {
+  it(".asinh()", () => {
     expect(jsmql.expr("$.x.asinh()")).toEqual({ $asinh: "$x" });
   });
-  it("Math.acosh", () => {
+  it(".acosh()", () => {
     expect(jsmql.expr("$.x.acosh()")).toEqual({ $acosh: "$x" });
   });
-  it("Math.atanh", () => {
+  it(".atanh()", () => {
     expect(jsmql.expr("$.x.atanh()")).toEqual({ $atanh: "$x" });
   });
 });
@@ -4388,10 +4231,7 @@ describe("bitwise infix operators", () => {
     // LHS `$.a | $.b` is non-pure-ref → $let binds it once for the cond chain.
     // `$bitOr` gives a number or null, so the value is its own truth.
     expect(jsmql.expr("$.a | $.b && $.c")).toEqual({
-      $let: {
-        vars: { jsmqlV: { $bitOr: ["$a", "$b"] } },
-        in: { $cond: { if: "$$jsmqlV", then: "$c", else: "$$jsmqlV" } },
-      },
+      $let: { vars: { jsmqlV: { $bitOr: ["$a", "$b"] } }, in: { $cond: ["$$jsmqlV", "$c", "$$jsmqlV"] } },
     });
   });
   it("=== binds tighter than & (so a === b & c → (a === b) & c)", () => {
@@ -4431,7 +4271,7 @@ describe("the Object statics — refused; the object's own method is the one spe
     ["Object.values($.doc)", "'$.doc.values()'"],
     ["Object.entries($.doc)", "'$.doc.entries()'"],
     ["Object.fromEntries($.pairs)", "'$.pairs.fromEntries()'"],
-    ["Object.assign($.a, $.b)", "'<object>.assign(<object>, …)'"],
+    ["Object.assign($.a, $.b)", "'<object>.assign(...sources)'"],
     ["Object.assign(...$.docs)", "'({}).assign(...$.docs)'"],
   ])("%s names %s", (src, dot) => {
     expect(() => jsmql.expr(src)).toThrow("is not part of JSMQL");
@@ -4498,12 +4338,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
           $let: {
             vars: { ok: "$$x.active" },
             in: {
-              $and: [
-                { $ne: [{ $ifNull: ["$$ok", null] }, null] },
-                { $ne: ["$$ok", false] },
-                { $ne: ["$$ok", ""] },
-                { $ne: ["$$ok", 0] },
-              ],
+              $and: [{ $gt: ["$$ok", null] }, { $ne: ["$$ok", false] }, { $ne: ["$$ok", ""] }, { $ne: ["$$ok", 0] }],
             },
           },
         },
@@ -4667,29 +4502,11 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
               input: "$items",
               initialValue: null,
               in: {
-                $cond: {
-                  if: { $eq: ["$$value", null] },
-                  then: {
-                    $cond: {
-                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                      then: "",
-                      else: { $toString: "$$this" },
-                    },
-                  },
-                  else: {
-                    $concat: [
-                      "$$value",
-                      ",",
-                      {
-                        $cond: {
-                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                          then: "",
-                          else: { $toString: "$$this" },
-                        },
-                      },
-                    ],
-                  },
-                },
+                $cond: [
+                  { $eq: ["$$value", null] },
+                  { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                  { $concat: ["$$value", ",", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
+                ],
               },
             },
           },
@@ -4817,7 +4634,7 @@ describe("immutable array methods", () => {
             as: "x",
             cond: {
               $and: [
-                { $ne: [{ $ifNull: ["$$x.active", null] }, null] },
+                { $gt: ["$$x.active", null] },
                 { $ne: ["$$x.active", false] },
                 { $ne: ["$$x.active", ""] },
                 { $ne: ["$$x.active", 0] },
@@ -4843,7 +4660,7 @@ describe("immutable array methods", () => {
                 vars: { x: { $arrayElemAt: ["$$this", 1] } },
                 in: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$$x.active", null] }, null] },
+                    { $gt: ["$$x.active", null] },
                     { $ne: ["$$x.active", false] },
                     { $ne: ["$$x.active", ""] },
                     { $ne: ["$$x.active", 0] },
@@ -4878,7 +4695,7 @@ describe("array method additions", () => {
                     vars: { x: { $arrayElemAt: ["$$this", 1] } },
                     in: {
                       $and: [
-                        { $ne: [{ $ifNull: ["$$x.active", null] }, null] },
+                        { $gt: ["$$x.active", null] },
                         { $ne: ["$$x.active", false] },
                         { $ne: ["$$x.active", ""] },
                         { $ne: ["$$x.active", 0] },
@@ -4905,11 +4722,11 @@ describe("array method additions", () => {
           $let: {
             vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 42] } },
             in: {
-              $cond: {
-                if: { $eq: ["$$jsmqlRevIdx", -1] },
-                then: -1,
-                else: { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }, "$$jsmqlRevIdx"] },
-              },
+              $cond: [
+                { $eq: ["$$jsmqlRevIdx", -1] },
+                -1,
+                { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }, "$$jsmqlRevIdx"] },
+              ],
             },
           },
         },
@@ -5080,46 +4897,34 @@ describe("array method additions", () => {
       $let: {
         vars: { jsmqlV: { $map: { input: { $ifNull: ["$xs", []] }, as: "x", in: { $add: ["$$x", 1] } } } },
         in: {
-          $cond: {
-            if: { $isArray: "$$jsmqlV" },
-            then: {
+          $cond: [
+            { $isArray: "$$jsmqlV" },
+            {
               $ifNull: [
                 {
                   $reduce: {
                     input: "$$jsmqlV",
                     initialValue: null,
                     in: {
-                      $cond: {
-                        if: { $eq: ["$$value", null] },
-                        then: {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                        else: {
+                      $cond: [
+                        { $eq: ["$$value", null] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                        {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: {
-                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                then: "",
-                                else: { $toString: "$$this" },
-                              },
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
-                      },
+                      ],
                     },
                   },
                 },
                 "",
               ],
             },
-            else: { $toString: "$$jsmqlV" },
-          },
+            { $toString: "$$jsmqlV" },
+          ],
         },
       },
     });
@@ -5129,46 +4934,34 @@ describe("array method additions", () => {
       $let: {
         vars: { jsmqlV: { $toLower: { $ifNull: ["$name", ""] } } },
         in: {
-          $cond: {
-            if: { $isArray: "$$jsmqlV" },
-            then: {
+          $cond: [
+            { $isArray: "$$jsmqlV" },
+            {
               $ifNull: [
                 {
                   $reduce: {
                     input: "$$jsmqlV",
                     initialValue: null,
                     in: {
-                      $cond: {
-                        if: { $eq: ["$$value", null] },
-                        then: {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                        else: {
+                      $cond: [
+                        { $eq: ["$$value", null] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                        {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: {
-                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                then: "",
-                                else: { $toString: "$$this" },
-                              },
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
-                      },
+                      ],
                     },
                   },
                 },
                 "",
               ],
             },
-            else: { $toString: "$$jsmqlV" },
-          },
+            { $toString: "$$jsmqlV" },
+          ],
         },
       },
     });
@@ -5178,46 +4971,34 @@ describe("array method additions", () => {
       $let: {
         vars: { jsmqlV: { $ifNull: ["$n", ""] } },
         in: {
-          $cond: {
-            if: { $isArray: "$$jsmqlV" },
-            then: {
+          $cond: [
+            { $isArray: "$$jsmqlV" },
+            {
               $ifNull: [
                 {
                   $reduce: {
                     input: "$$jsmqlV",
                     initialValue: null,
                     in: {
-                      $cond: {
-                        if: { $eq: ["$$value", null] },
-                        then: {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                        else: {
+                      $cond: [
+                        { $eq: ["$$value", null] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                        {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: {
-                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                then: "",
-                                else: { $toString: "$$this" },
-                              },
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
-                      },
+                      ],
                     },
                   },
                 },
                 "",
               ],
             },
-            else: { $toString: "$$jsmqlV" },
-          },
+            { $toString: "$$jsmqlV" },
+          ],
         },
       },
     });
@@ -5734,12 +5515,7 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
             $let: {
               vars: { v: "$$jsmqlKv.v" },
               in: {
-                $and: [
-                  { $ne: [{ $ifNull: ["$$v", null] }, null] },
-                  { $ne: ["$$v", false] },
-                  { $ne: ["$$v", ""] },
-                  { $ne: ["$$v", 0] },
-                ],
+                $and: [{ $gt: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }],
               },
             },
           },
@@ -5757,12 +5533,7 @@ describe("lodash object methods (per-doc value vocabulary)", () => {
                 $let: {
                   vars: { v: "$$jsmqlKv.v" },
                   in: {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$$v", null] }, null] },
-                      { $ne: ["$$v", false] },
-                      { $ne: ["$$v", ""] },
-                      { $ne: ["$$v", 0] },
-                    ],
+                    $and: [{ $gt: ["$$v", null] }, { $ne: ["$$v", false] }, { $ne: ["$$v", ""] }, { $ne: ["$$v", 0] }],
                   },
                 },
               },
@@ -5809,7 +5580,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
         as: "jsmqlItem",
         cond: {
           $and: [
-            { $ne: [{ $ifNull: ["$$jsmqlItem", null] }, null] },
+            { $gt: ["$$jsmqlItem", null] },
             { $ne: ["$$jsmqlItem", false] },
             { $ne: ["$$jsmqlItem", ""] },
             { $ne: ["$$jsmqlItem", 0] },
@@ -5864,7 +5635,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
           as: "o",
           cond: {
             $and: [
-              { $ne: [{ $ifNull: ["$$o.ok", null] }, null] },
+              { $gt: ["$$o.ok", null] },
               { $ne: ["$$o.ok", false] },
               { $ne: ["$$o.ok", ""] },
               { $ne: ["$$o.ok", 0] },
@@ -5880,7 +5651,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
             $not: [
               {
                 $and: [
-                  { $ne: [{ $ifNull: ["$$o.ok", null] }, null] },
+                  { $gt: ["$$o.ok", null] },
                   { $ne: ["$$o.ok", false] },
                   { $ne: ["$$o.ok", ""] },
                   { $ne: ["$$o.ok", 0] },
@@ -6108,7 +5879,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
                 as: "x",
                 in: {
                   $and: [
-                    { $ne: [{ $ifNull: ["$$x.ok", null] }, null] },
+                    { $gt: ["$$x.ok", null] },
                     { $ne: ["$$x.ok", false] },
                     { $ne: ["$$x.ok", ""] },
                     { $ne: ["$$x.ok", 0] },
@@ -6119,46 +5890,34 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
           },
         },
         in: {
-          $cond: {
-            if: { $isArray: "$$jsmqlV" },
-            then: {
+          $cond: [
+            { $isArray: "$$jsmqlV" },
+            {
               $ifNull: [
                 {
                   $reduce: {
                     input: "$$jsmqlV",
                     initialValue: null,
                     in: {
-                      $cond: {
-                        if: { $eq: ["$$value", null] },
-                        then: {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                        else: {
+                      $cond: [
+                        { $eq: ["$$value", null] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                        {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: {
-                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                then: "",
-                                else: { $toString: "$$this" },
-                              },
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
-                      },
+                      ],
                     },
                   },
                 },
                 "",
               ],
             },
-            else: { $toString: "$$jsmqlV" },
-          },
+            { $toString: "$$jsmqlV" },
+          ],
         },
       },
     });
@@ -6225,14 +5984,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       $filter: {
         input: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: "$$x" } },
         as: "y",
-        cond: {
-          $and: [
-            { $ne: [{ $ifNull: ["$$y", null] }, null] },
-            { $ne: ["$$y", false] },
-            { $ne: ["$$y", ""] },
-            { $ne: ["$$y", 0] },
-          ],
-        },
+        cond: { $and: [{ $gt: ["$$y", null] }, { $ne: ["$$y", false] }, { $ne: ["$$y", ""] }, { $ne: ["$$y", 0] }] },
       },
     });
     expect(jsmql.expr('$.items.countBy("t").mapValues(v => v)')).toEqual({
@@ -6336,46 +6088,34 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
       $let: {
         vars: { jsmqlV: { $ifNull: [{ $dateAdd: { startDate: "$t", unit: "day", amount: 1 } }, ""] } },
         in: {
-          $cond: {
-            if: { $isArray: "$$jsmqlV" },
-            then: {
+          $cond: [
+            { $isArray: "$$jsmqlV" },
+            {
               $ifNull: [
                 {
                   $reduce: {
                     input: "$$jsmqlV",
                     initialValue: null,
                     in: {
-                      $cond: {
-                        if: { $eq: ["$$value", null] },
-                        then: {
-                          $cond: {
-                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                            then: "",
-                            else: { $toString: "$$this" },
-                          },
-                        },
-                        else: {
+                      $cond: [
+                        { $eq: ["$$value", null] },
+                        { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                        {
                           $concat: [
                             "$$value",
                             ",",
-                            {
-                              $cond: {
-                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                                then: "",
-                                else: { $toString: "$$this" },
-                              },
-                            },
+                            { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
                           ],
                         },
-                      },
+                      ],
                     },
                   },
                 },
                 "",
               ],
             },
-            else: { $toString: "$$jsmqlV" },
-          },
+            { $toString: "$$jsmqlV" },
+          ],
         },
       },
     });
@@ -6707,7 +6447,7 @@ describe("lodash iteratee / predicate shorthands (uniform across higher-order me
         as: "x",
         cond: {
           $and: [
-            { $ne: [{ $ifNull: ["$$x.active", null] }, null] },
+            { $gt: ["$$x.active", null] },
             { $ne: ["$$x.active", false] },
             { $ne: ["$$x.active", ""] },
             { $ne: ["$$x.active", 0] },
@@ -7430,7 +7170,7 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr("$.n.floor()")).toEqual({ $floor: "$n" });
     // Only $round takes a precision on the server, so a precision scales by 10^p,
     // rounds to a whole number and scales back. MEASURED on 1.234: ceil(2) → 1.24.
-    // A constant precision folds the scale; any other keeps the `$pow`.
+    // A constant precision folds the scale; a precision read at run time takes `$pow`.
     expect(jsmql.expr("$.n.ceil(2)")).toEqual({ $divide: [{ $ceil: { $multiply: ["$n", 100] } }, 100] });
     expect(jsmql.expr("$.n.floor(2)")).toEqual({ $divide: [{ $floor: { $multiply: ["$n", 100] } }, 100] });
     expect(jsmql.expr("$.n.floor($.p)")).toEqual({
@@ -7657,7 +7397,7 @@ describe("statement-position mutators", () => {
   });
 });
 
-describe("a merge into a field is an assignment of a spread", () => {
+describe("statement-position merge — the object spread writes the field back", () => {
   it("merges sources into the target field through $set + $mergeObjects", () => {
     expect(jsmql("$.profile = { ...$.profile, verified: true };")).toEqual([
       { $set: { profile: { $mergeObjects: ["$profile", { verified: true }] } } },
@@ -7668,10 +7408,24 @@ describe("a merge into a field is an assignment of a spread", () => {
       { $set: { a: { $mergeObjects: ["$a", "$b", { c: 1 }] } } },
     ]);
   });
-  it("a statement of '.assign()' or 'Object.assign()' writes nothing, and the refusal names the spread", () => {
-    for (const src of ["$.profile.assign({ verified: true });", "Object.assign($.profile, { verified: true });"]) {
-      expect(() => jsmql(src)).toThrow("$.f = { ...$.f, ...x };");
-    }
+  it("nested receiver $.user.profile emits a dotted $set key", () => {
+    expect(jsmql("$.user.profile = { ...$.user.profile, x: 1 };")).toEqual([
+      { $set: { "user.profile": { $mergeObjects: ["$user.profile", { x: 1 }] } } },
+    ]);
+  });
+  it("expression position lowers .assign() to $mergeObjects", () => {
+    expect(jsmql("$addFields({ merged: $.a.assign($.b) });")).toEqual([
+      { $addFields: { merged: { $mergeObjects: ["$a", "$b"] } } },
+    ]);
+  });
+  it("a bare .assign() statement writes nothing, and the refusal names the write", () => {
+    expect(() => jsmql("$.profile.assign({ verified: true });")).toThrow(
+      "'.assign()' computes a new object, and a statement writes one. Write the merge back: '$.f = { ...$.f, ...x };', or 'r = { ...r, ...x };' for a 'let' binding.",
+    );
+  });
+  it("refuses Object.assign(…) and names the one spelling", () => {
+    expect(() => jsmql("Object.assign($.profile, { verified: true });")).toThrow("Write the merge back");
+    expect(() => jsmql.expr("Object.assign(...$.docs)")).toThrow("({}).assign(...$.docs)");
   });
 });
 
@@ -7855,10 +7609,10 @@ describe("string padding methods", () => {
   });
   it("a runtime pad expression is always trimmed (length unknown at compile time)", () => {
     const trimmed = {
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$code", null] }, null] },
-        then: null,
-        else: {
+      $cond: [
+        { $lte: ["$code", null] },
+        null,
+        {
           $let: {
             vars: { jsmqlPad: "$code" },
             in: {
@@ -7881,7 +7635,7 @@ describe("string padding methods", () => {
             },
           },
         },
-      },
+      ],
     };
     expect(jsmql.expr("$.code.padStart(5, $.sep)")).toEqual({
       $let: {
@@ -7958,9 +7712,9 @@ describe("string padding methods", () => {
           $let: {
             vars: { jsmqlPad: { $ifNull: ["$$s.code", ""] } },
             in: {
-              $cond: {
-                if: { $gt: [{ $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }, 0] },
-                then: {
+              $cond: [
+                { $gt: [{ $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }, 0] },
+                {
                   $concat: [
                     {
                       $substrCP: [
@@ -7978,8 +7732,8 @@ describe("string padding methods", () => {
                     "$$jsmqlPad",
                   ],
                 },
-                else: "$$jsmqlPad",
-              },
+                "$$jsmqlPad",
+              ],
             },
           },
         },
@@ -7998,9 +7752,9 @@ describe("string padding methods", () => {
           $let: {
             vars: { jsmqlPad2: { $ifNull: ["$$jsmqlPad.code", ""] } },
             in: {
-              $cond: {
-                if: { $gt: [{ $subtract: ["$$jsmqlPad.width", { $strLenCP: "$$jsmqlPad2" }] }, 0] },
-                then: {
+              $cond: [
+                { $gt: [{ $subtract: ["$$jsmqlPad.width", { $strLenCP: "$$jsmqlPad2" }] }, 0] },
+                {
                   $concat: [
                     {
                       $reduce: {
@@ -8012,8 +7766,8 @@ describe("string padding methods", () => {
                     "$$jsmqlPad2",
                   ],
                 },
-                else: "$$jsmqlPad2",
-              },
+                "$$jsmqlPad2",
+              ],
             },
           },
         },
@@ -8079,13 +7833,11 @@ describe("internal $let bindings never capture a lambda param", () => {
               $let: {
                 vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr2" }, "$$jsmqlArr.needle"] } },
                 in: {
-                  $cond: {
-                    if: { $eq: ["$$jsmqlRevIdx", -1] },
-                    then: -1,
-                    else: {
-                      $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr2", []] } }, 1] }, "$$jsmqlRevIdx"],
-                    },
-                  },
+                  $cond: [
+                    { $eq: ["$$jsmqlRevIdx", -1] },
+                    -1,
+                    { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr2", []] } }, 1] }, "$$jsmqlRevIdx"] },
+                  ],
                 },
               },
             },
@@ -8143,13 +7895,11 @@ describe("internal $let bindings never capture a lambda param", () => {
               $let: {
                 vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, "$$x.needle"] } },
                 in: {
-                  $cond: {
-                    if: { $eq: ["$$jsmqlRevIdx", -1] },
-                    then: -1,
-                    else: {
-                      $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }, "$$jsmqlRevIdx"],
-                    },
-                  },
+                  $cond: [
+                    { $eq: ["$$jsmqlRevIdx", -1] },
+                    -1,
+                    { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr", []] } }, 1] }, "$$jsmqlRevIdx"] },
+                  ],
                 },
               },
             },
@@ -8342,16 +8092,24 @@ describe("error cases", () => {
     // and a near-miss resolves to it.
     expect(() => jsmql.expr("$.name.substing(1)")).toThrow(/Did you mean '\.substring\(\)'/);
   });
+  it("names a working form for a namespace value, a refused callback and a spread into a JS call", () => {
+    expect(() => jsmql.expr("Math + 1")).toThrow(
+      "'Math' is a namespace, not a value. Write a member: 'Math.random()', or a number method: '$.n.abs()'.",
+    );
+    expect(() => jsmql.expr("$.a.map(Math.floor)")).toThrow("In a callback, write 'x => x.floor()'.");
+    expect(() => jsmql.expr("Number.isInteger(...$.a)")).toThrow(
+      "Spread (...) is not supported in Number.isInteger(...) — pass each argument on its own: 'Number.isInteger(value)'.",
+    );
+  });
   it("near-miss Math member gets a suggestion", () => {
     expect(() => jsmql.expr("Math.randon()")).toThrow(/Did you mean 'Math\.random'/);
   });
   it("near-miss Number static method gets a suggestion", () => {
     expect(() => jsmql.expr("Number.isItneger($.x)")).toThrow(/Did you mean 'Number\.isInteger'/);
   });
-  it("a near-miss static gets a suggestion, and never one that is refused", () => {
+  it("near-miss static gets a suggestion, and never a refused static", () => {
     expect(() => jsmql.expr("Date.noww()")).toThrow(/Did you mean 'Date\.now'/);
-    // `Object.keys` parses, but only to refuse it: a hint never names it.
-    expect(() => jsmql.expr("Object.keyz($.o)")).not.toThrow(/Did you mean/);
+    expect(() => jsmql.expr("Object.keyz($.o)")).toThrow(/^Unknown method 'Object\.keyz\(\)' at position 6\.$/);
   });
   it("lambda in non-method context throws", () => {
     expect(() => jsmql.expr("$abs(x => x)")).toThrow(
@@ -8467,11 +8225,11 @@ describe("1-arg substr", () => {
       $substrCP: [
         "$email",
         {
-          $cond: {
-            if: { $lt: [{ $add: ["$headerLength", 1] }, 0] },
-            then: { $max: [0, { $add: [{ $add: ["$headerLength", 1] }, { $strLenCP: { $ifNull: ["$email", ""] } }] }] },
-            else: { $add: ["$headerLength", 1] },
-          },
+          $cond: [
+            { $lt: [{ $add: ["$headerLength", 1] }, 0] },
+            { $max: [0, { $add: [{ $add: ["$headerLength", 1] }, { $strLenCP: { $ifNull: ["$email", ""] } }] }] },
+            { $add: ["$headerLength", 1] },
+          ],
         },
         { $strLenCP: { $ifNull: ["$email", ""] } },
       ],
@@ -8536,11 +8294,11 @@ describe("the string forms of a slice: .substring and .substr", () => {
       $substrCP: [
         { $toString: "$s" },
         {
-          $cond: {
-            if: { $lt: ["$i", 0] },
-            then: { $max: [0, { $add: ["$i", { $strLenCP: { $ifNull: [{ $toString: "$s" }, ""] } }] }] },
-            else: "$i",
-          },
+          $cond: [
+            { $lt: ["$i", 0] },
+            { $max: [0, { $add: ["$i", { $strLenCP: { $ifNull: [{ $toString: "$s" }, ""] } }] }] },
+            "$i",
+          ],
         },
         { $strLenCP: { $ifNull: [{ $toString: "$s" }, ""] } },
       ],
@@ -8736,20 +8494,20 @@ describe("array .has()", () => {
   });
 });
 
-describe("Math.min / Math.max", () => {
-  it("Math.min variadic", () => {
+describe(".min() / .max()", () => {
+  it(".min() variadic", () => {
     expect(jsmql.expr("[$.a, $.b, $.c].min()")).toEqual({ $min: ["$a", "$b", "$c"] });
   });
-  it("Math.max variadic", () => {
+  it(".max() variadic", () => {
     expect(jsmql.expr("[$.a, $.b].max()")).toEqual({ $max: ["$a", "$b"] });
   });
-  it("Math.max with single array arg", () => {
+  it(".max() with single array arg", () => {
     expect(jsmql.expr("$.scores.max()")).toEqual({ $max: "$scores" });
   });
-  it("Math.max with spread arg", () => {
+  it(".max() on an array", () => {
     expect(jsmql.expr("$.scores.max()")).toEqual({ $max: "$scores" });
   });
-  it("Math.min mixed spread + scalar", () => {
+  it(".min() on mixed spread + scalar", () => {
     expect(jsmql.expr("[$.a, ...$.others].min()")).toEqual({
       $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] },
     });
@@ -8823,57 +8581,45 @@ describe("optional chaining (?.)", () => {
   // the receiver inside the second branch is proven and takes no `$ifNull` of its own.
   it(".map on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.map(p => p.id)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } },
-      },
+      $cond: [
+        { $lte: ["$user", null] },
+        null,
+        { $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } },
+      ],
     });
     // and one link further the wrap is what keeps `$size` off a null
     expect(jsmql.expr("$.user?.posts.map(p => p.id).size()")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $size: { $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } } },
-      },
+      $cond: [
+        { $lte: ["$user", null] },
+        null,
+        { $size: { $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } } },
+      ],
     });
   });
   it("a `?.` with two members after it still tests the value that it guards", () => {
     // The fold runs bottom-up: `$.user?.profile` is a path before `.posts` joins it.
     expect(jsmql.expr("$.user?.profile.posts.map(p => p.id)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $map: { input: { $ifNull: ["$user.profile.posts", []] }, as: "p", in: "$$p.id" } },
-      },
+      $cond: [
+        { $lte: ["$user", null] },
+        null,
+        { $map: { input: { $ifNull: ["$user.profile.posts", []] }, as: "p", in: "$$p.id" } },
+      ],
     });
   });
   it(".at on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.at(0)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $arrayElemAt: [{ $ifNull: ["$user.posts", []] }, 0] },
-      },
+      $cond: [{ $lte: ["$user", null] }, null, { $arrayElemAt: [{ $ifNull: ["$user.posts", []] }, 0] }],
     });
   });
   it(".toReversed on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.posts.toReversed()")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $reverseArray: { $ifNull: ["$user.posts", []] } },
-      },
+      $cond: [{ $lte: ["$user", null] }, null, { $reverseArray: { $ifNull: ["$user.posts", []] } }],
     });
   });
   it(".slice on an optional receiver stops the chain", () => {
     // start 0 → the array branch is a 2-arg "first 5" $slice (JS end-exclusive).
     expect(jsmql.expr("$.user?.posts.slice(0, 5)")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $slice: [{ $ifNull: ["$user.posts", []] }, 5] },
-      },
+      $cond: [{ $lte: ["$user", null] }, null, { $slice: [{ $ifNull: ["$user.posts", []] }, 5] }],
     });
   });
 
@@ -8882,65 +8628,40 @@ describe("optional chaining (?.)", () => {
   // not add a redundant outer wrap.
   it(".has after .toReversed() of optional propagates the inner wrap, no outer wrap", () => {
     expect(jsmql.expr("$.user?.posts.toReversed().has('hello')")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $in: ["hello", { $reverseArray: { $ifNull: ["$user.posts", []] } }] },
-      },
+      $cond: [{ $lte: ["$user", null] }, null, { $in: ["hello", { $reverseArray: { $ifNull: ["$user.posts", []] } }] }],
     });
   });
   it("`?.method()` (the call itself is optional) stops the chain", () => {
     // `$.tags?.has(y)` — MethodCall.optional=true. The `$in` runs inside the second
     // branch, which runs only when `tags` is there.
     expect(jsmql.expr("$.tags?.has('vip')")).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$tags", null] }, null] }, then: null, else: { $in: ["vip", "$tags"] } },
+      $cond: [{ $lte: ["$tags", null] }, null, { $in: ["vip", "$tags"] }],
     });
   });
 
-  // A string method is a call, so the same rule applies. `$.name.trim()` on a missing
-  // `name` answers "" — `$trim` reads the `$ifNull` the cell puts on its receiver — and
-  // `$.name?.trim()` answers null, because the developer said the field may be absent.
-  it(".trim on an optional receiver stops the chain", () => {
-    expect(jsmql.expr("$.name?.trim()")).toEqual({
-      $cond: { if: { $eq: [{ $ifNull: ["$name", null] }, null] }, then: null, else: { $trim: { input: "$name" } } },
-    });
+  // A string method is a call, so the same rule applies. `$trim` gives null for a null
+  // input on its own, so `$.name?.trim()` takes no null test: the bare call is the answer.
+  it(".trim on an optional receiver needs no test", () => {
+    expect(jsmql.expr("$.name?.trim()")).toEqual({ $trim: { input: "$name" } });
   });
-  it(".trim on a chained optional receiver stops the chain", () => {
-    expect(jsmql.expr("$.user?.name?.trim()")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user.name", null] }, null] },
-        then: null,
-        else: { $trim: { input: "$user.name" } },
-      },
-    });
+  it(".trim on a chained optional receiver needs no test", () => {
+    expect(jsmql.expr("$.user?.name?.trim()")).toEqual({ $trim: { input: "$user.name" } });
   });
   it(".toUpperCase on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.name.toUpperCase()")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $toUpper: { $ifNull: ["$user.name", ""] } },
-      },
+      $cond: [{ $lte: ["$user", null] }, null, { $toUpper: { $ifNull: ["$user.name", ""] } }],
     });
   });
   it(".split on an optional receiver stops the chain", () => {
     expect(jsmql.expr("$.user?.csv.split(',')")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $split: [{ $ifNull: ["$user.csv", ""] }, ","] },
-      },
+      $cond: [{ $lte: ["$user", null] }, null, { $split: [{ $ifNull: ["$user.csv", ""] }, ","] }],
     });
   });
 
   it(".length() on an optional receiver stops the chain", () => {
     // `.length()` reads a string; the `?.` wrap keeps `$strLenCP` off a null.
     expect(jsmql.expr("$.user?.name.length()")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $strLenCP: { $ifNull: ["$user.name", ""] } },
-      },
+      $cond: [{ $lte: ["$user", null] }, null, { $strLenCP: { $ifNull: ["$user.name", ""] } }],
     });
   });
 
@@ -8960,20 +8681,23 @@ describe("optional chaining (?.)", () => {
     });
   });
 
-  // `$objectToArray` answers null for a missing operand, so a `?.` right before the
-  // call needs no `$cond`: the bare call gives the null itself.
-  it(".keys() after ?. is the bare call", () => {
-    expect(jsmql.expr("$.user?.profile?.keys()")).toEqual({
-      $map: { input: { $objectToArray: "$user.profile" }, in: "$$this.k" },
+  // `.keys()` / `.entries()` under a dot after a `?.` path read run on {} (HR5).
+  it(".keys() after a ?. path read runs on {}", () => {
+    expect(jsmql.expr("$.user?.profile.keys()")).toEqual({
+      $cond: [
+        { $lte: ["$user", null] },
+        null,
+        { $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, in: "$$this.k" } },
+      ],
     });
   });
-  it(".entries() after a dot runs on {}, under the ?. that tests the parent", () => {
+  it(".entries() after a ?. path read runs on {}", () => {
     expect(jsmql.expr("$.user?.profile.entries()")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$user", null] }, null] },
-        then: null,
-        else: { $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, in: ["$$this.k", "$$this.v"] } },
-      },
+      $cond: [
+        { $lte: ["$user", null] },
+        null,
+        { $map: { input: { $objectToArray: { $ifNull: ["$user.profile", {}] } }, in: ["$$this.k", "$$this.v"] } },
+      ],
     });
   });
 
@@ -9020,12 +8744,10 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("$.user?.role === 'admin'")).toEqual({ $eq: [{ $ifNull: ["$user.role", null] }, "admin"] });
   });
   it("`==` null check against optional is NOT wrapped", () => {
-    expect(jsmql.expr("$.user?.role == null")).toEqual({
-      $in: [{ $type: { $ifNull: ["$user.role", null] } }, ["null", "missing"]],
-    });
+    expect(jsmql.expr("$.user?.role == null")).toEqual({ $lte: ["$user.role", null] });
   });
   it("numeric arithmetic against optional is NOT wrapped (honest null > 0)", () => {
-    expect(jsmql.expr("$.base + $.user?.bonus")).toEqual({ $add: ["$base", { $ifNull: ["$user.bonus", null] }] });
+    expect(jsmql.expr("$.base + $.user?.bonus")).toEqual({ $add: ["$base", "$user.bonus"] });
   });
 
   // `?.` buried inside a lambda body belongs to the lambda's chain, not the
@@ -9101,7 +8823,7 @@ describe(".charAt", () => {
   });
   it("charAt with a runtime index guards the negative case", () => {
     expect(jsmql.expr("$.name.charAt($.i)")).toEqual({
-      $cond: { if: { $lt: ["$i", 0] }, then: "", else: { $substrCP: ["$name", "$i", 1] } },
+      $cond: [{ $lt: ["$i", 0] }, "", { $substrCP: ["$name", "$i", 1] }],
     });
   });
 });
@@ -9167,29 +8889,11 @@ describe(".join", () => {
             input: "$tags",
             initialValue: null,
             in: {
-              $cond: {
-                if: { $eq: ["$$value", null] },
-                then: {
-                  $cond: {
-                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                    then: "",
-                    else: { $toString: "$$this" },
-                  },
-                },
-                else: {
-                  $concat: [
-                    "$$value",
-                    ",",
-                    {
-                      $cond: {
-                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                        then: "",
-                        else: { $toString: "$$this" },
-                      },
-                    },
-                  ],
-                },
-              },
+              $cond: [
+                { $eq: ["$$value", null] },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", ",", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
+              ],
             },
           },
         },
@@ -9205,29 +8909,11 @@ describe(".join", () => {
             input: "$tags",
             initialValue: null,
             in: {
-              $cond: {
-                if: { $eq: ["$$value", null] },
-                then: {
-                  $cond: {
-                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                    then: "",
-                    else: { $toString: "$$this" },
-                  },
-                },
-                else: {
-                  $concat: [
-                    "$$value",
-                    " | ",
-                    {
-                      $cond: {
-                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
-                        then: "",
-                        else: { $toString: "$$this" },
-                      },
-                    },
-                  ],
-                },
-              },
+              $cond: [
+                { $eq: ["$$value", null] },
+                { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] },
+                { $concat: ["$$value", " | ", { $cond: [{ $lte: ["$$this", null] }, "", { $toString: "$$this" }] }] },
+              ],
             },
           },
         },
@@ -9266,6 +8952,7 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
     expect(jsmql.expr("const r = $range(0, $.n); r.size()")).toEqual({
       $size: { $ifNull: [{ $range: [0, "$n"] }, []] },
     });
+    // under a dot, `.keys()` runs on {} for a missing `o`, so its answer is there
     expect(jsmql.expr("$.o.keys().size()")).toEqual({
       $size: { $map: { input: { $objectToArray: { $ifNull: ["$o", {}] } }, in: "$$this.k" } },
     });
@@ -9288,11 +8975,7 @@ describe("jsmql guards a $size / $in / callback input only where the array may b
     expect(jsmql.expr("[$.a, $.b].size()")).toBe(2);
     // an optional chain reads a missing receiver as [] — which is there
     expect(jsmql.expr("$.a?.map(x => x + 1).size()")).toEqual({
-      $cond: {
-        if: { $eq: [{ $ifNull: ["$a", null] }, null] },
-        then: null,
-        else: { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } },
-      },
+      $cond: [{ $lte: ["$a", null] }, null, { $size: { $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } } }],
     });
     // a `let` of a present value is present; of a field's chain it is not
     expect(jsmql("const ks = $.keys(); $.n = ks.size();")).toEqual([
@@ -9371,22 +9054,62 @@ describe("date .getTime / .toISOString", () => {
   });
 });
 
-describe("Math.sign / log2 / log10 / hypot / cbrt / random / constants", () => {
-  it(".sign() is $cmp times a $pow that is null for a missing value", () => {
-    expect(jsmql.expr("$.x.sign()")).toEqual({ $multiply: [{ $cmp: ["$x", 0] }, { $pow: ["$x", 0] }] });
+describe(".random() — lodash's _.random with the receiver as a bound", () => {
+  it("decides the form for two constant bounds, and drops a lower bound of 0", () => {
+    expect(jsmql.expr("(1).random(6)")).toEqual({ $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] });
+    expect(jsmql.expr("(6).random(1)")).toEqual({ $add: [1, { $floor: { $multiply: [{ $rand: {} }, 6] } }] });
+    expect(jsmql.expr("(5).random()")).toEqual({ $floor: { $multiply: [{ $rand: {} }, 6] } });
+    expect(jsmql.expr("(1.5).random(2)")).toEqual({ $add: [1.5, { $multiply: [{ $rand: {} }, 0.5] }] });
   });
-  it("Math.log2", () => {
+  it("lets the server test bounds from a document; a constant fraction decides the form", () => {
+    const span = { $subtract: ["$$jsmqlHi", "$$jsmqlLo"] };
+    expect(jsmql.expr("$.a.random($.b)")).toEqual({
+      $let: {
+        vars: {
+          jsmqlLo: { $min: [{ $ifNull: ["$a", 0] }, { $ifNull: ["$b", 0] }] },
+          jsmqlHi: { $max: [{ $ifNull: ["$a", 0] }, { $ifNull: ["$b", 0] }] },
+        },
+        in: {
+          $cond: [
+            {
+              $and: [{ $eq: ["$$jsmqlLo", { $trunc: "$$jsmqlLo" }] }, { $eq: ["$$jsmqlHi", { $trunc: "$$jsmqlHi" }] }],
+            },
+            { $add: ["$$jsmqlLo", { $floor: { $multiply: [{ $rand: {} }, { $add: [span, 1] }] } }] },
+            { $add: ["$$jsmqlLo", { $multiply: [{ $rand: {} }, span] }] },
+          ],
+        },
+      },
+    });
+    expect(jsmql.expr("$.n.random(1.5)")).toEqual({
+      $let: {
+        vars: { jsmqlLo: { $min: [{ $ifNull: ["$n", 0] }, 1.5] }, jsmqlHi: { $max: [{ $ifNull: ["$n", 0] }, 1.5] } },
+        in: { $add: ["$$jsmqlLo", { $multiply: [{ $rand: {} }, span] }] },
+      },
+    });
+  });
+  it("keeps Math.random() as $rand, with no argument", () => {
+    expect(jsmql.expr("Math.random()")).toEqual({ $rand: {} });
+    expect(() => jsmql.expr("Math.random(1)")).toThrow("'Math.random()' takes no arguments, got 1");
+  });
+});
+
+describe(".sign() / .log2() / .log10() / .hypot() / .cbrt() / Math.random() / constants", () => {
+  it(".sign() reads a missing number as 0, the safe value", () => {
+    expect(jsmql.expr("$.x.sign()")).toEqual({ $cmp: [{ $ifNull: ["$x", 0] }, 0] });
+    expect(jsmql.expr("$.x?.sign()")).toEqual({ $cond: [{ $lte: ["$x", null] }, null, { $cmp: ["$x", 0] }] });
+  });
+  it(".log2()", () => {
     expect(jsmql.expr("$.x.log2()")).toEqual({ $log: ["$x", 2] });
   });
-  it("Math.log10", () => {
+  it(".log10()", () => {
     expect(jsmql.expr("$.x.log10()")).toEqual({ $log10: "$x" });
   });
-  it("Math.cbrt", () => {
+  it(".cbrt()", () => {
     expect(jsmql.expr("$.x.cbrt()")).toEqual({
       $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, 0.3333333333333333] }],
     });
   });
-  it("Math.hypot 2-arg", () => {
+  it(".hypot() 2-arg", () => {
     expect(jsmql.expr("$.a.hypot($.b)")).toEqual({ $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } });
   });
   it("Math.random", () => {
@@ -9526,13 +9249,12 @@ describe("computed object keys", () => {
 });
 
 describe("spread in operator args", () => {
-  // The JS spread is idiomatic in JS-method position (Math.max/min, .assign())
+  // The JS spread is idiomatic in JS-method position (.assign(), an array literal)
   // and stays supported there. It is NOT supported in the `$op(...)` escape hatch
   // — an MQL operator takes its operands directly (HR2). The split is by surface:
   // a JS builtin you already know vs. the raw direct-operator form.
-  it(".assign() with spread (JS-method form — supported)", () => {
+  it("Object.assign with spread (JS-method form — supported)", () => {
     expect(jsmql.expr("({}).assign(...$.docs)")).toEqual({ $mergeObjects: "$docs" });
-    expect(jsmql.expr("$.a.assign(...$.docs)")).toEqual({ $mergeObjects: { $concatArrays: [["$a"], "$docs"] } });
   });
   it("$op(...) escape hatch rejects spread, pointing at the JS alternative", () => {
     expect(() => jsmql.expr("$concatArrays(...$.arrs)")).toThrow(
@@ -9615,16 +9337,16 @@ describe("flex-shape operators", () => {
 
   // ── Spread handling ─────────────────────────────────────────────────────────
   // The `$op(...)` escape hatch rejects the JS spread (HR2 — an operator takes its
-  // operands directly). For the array-from-runtime case, write `Math.min(...arr)`
-  // (the JS-method form keeps spread) or pass the field as a single array arg.
+  // operands directly). For the array-from-runtime case, write `arr.min()`
+  // (the JS-method form) or pass the field as a single array arg.
   it("flex op rejects single spread, pointing at .min()", () => {
     expect(() => jsmql.expr("$min(...$.scores)")).toThrow(
-      /Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\).*\[\.\.\.arr\]\.min\(\)/,
+      /Spread \(\.\.\.\) is not supported in \$min\(\.\.\.\).*arr\.min\(\)/,
     );
   });
   it("flex op rejects mixed spread + scalar, pointing at .max()", () => {
     expect(() => jsmql.expr("$max($.first, ...$.rest)")).toThrow(
-      /Spread \(\.\.\.\) is not supported in \$max\(\.\.\.\).*\[\.\.\.arr\]\.max\(\)/,
+      /Spread \(\.\.\.\) is not supported in \$max\(\.\.\.\).*arr\.max\(\)/,
     );
   });
 
@@ -10731,7 +10453,7 @@ describe("trailing commas (JS syntax)", () => {
   });
 
   it("static-call args (both shapes)", () => {
-    expect(jsmql.expr("Array.isArray($.o,)")).toEqual({ $isArray: ["$o"] });
+    expect(jsmql.expr("Date.UTC(2020, 1,)")).toEqual(1580515200000);
     expect(jsmql.expr("[$.a, $.b].max()")).toEqual({ $max: ["$a", "$b"] });
   });
 
@@ -10862,9 +10584,9 @@ describe("internal expression-variable names never capture a user param", () => 
             $let: {
               vars: { jsmqlPad2: { $ifNull: ["$$jsmqlPad.c", ""] } },
               in: {
-                $cond: {
-                  if: { $gt: [{ $subtract: ["$$jsmqlPad.w", { $strLenCP: "$$jsmqlPad2" }] }, 0] },
-                  then: {
+                $cond: [
+                  { $gt: [{ $subtract: ["$$jsmqlPad.w", { $strLenCP: "$$jsmqlPad2" }] }, 0] },
+                  {
                     $concat: [
                       {
                         $reduce: {
@@ -10876,8 +10598,8 @@ describe("internal expression-variable names never capture a user param", () => 
                       "$$jsmqlPad2",
                     ],
                   },
-                  else: "$$jsmqlPad2",
-                },
+                  "$$jsmqlPad2",
+                ],
               },
             },
           },
@@ -10898,13 +10620,11 @@ describe("internal expression-variable names never capture a user param", () => 
                 $let: {
                   vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr2" }, "$$jsmqlArr.n"] } },
                   in: {
-                    $cond: {
-                      if: { $eq: ["$$jsmqlRevIdx", -1] },
-                      then: -1,
-                      else: {
-                        $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr2", []] } }, 1] }, "$$jsmqlRevIdx"],
-                      },
-                    },
+                    $cond: [
+                      { $eq: ["$$jsmqlRevIdx", -1] },
+                      -1,
+                      { $subtract: [{ $subtract: [{ $size: { $ifNull: ["$$jsmqlArr2", []] } }, 1] }, "$$jsmqlRevIdx"] },
+                    ],
                   },
                 },
               },
