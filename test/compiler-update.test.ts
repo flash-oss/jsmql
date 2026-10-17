@@ -68,7 +68,7 @@ describe("compiler/emit/update — writes become their operators", () => {
       }),
     ).toEqual({ $push: { tags: { $each: [3, 4] }, xs: { $each: [0], $position: 0 } }, $pop: { ys: 1, zs: -1 } });
     expect(
-      applied("$.n = Math.min($.n, 3); $.m = Math.max($.m, 9);", (d) => {
+      applied("$.n = [$.n, 3].min(); $.m = [$.m, 9].max();", (d) => {
         d.n = Math.min(d.n as number, 3);
         d.m = Math.max(d.m as number, 9);
       }),

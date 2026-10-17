@@ -755,7 +755,7 @@ current database (`{ db, coll }` for another), constant, not empty, and not
 document** (`emit/reduce-wrap.ts`): one `$group` with `_id: null` and one
 accumulator per key, then the `$replaceWith` that drops `_id`. The compiler
 reads each body as the accumulator it spells — `acc + d.x` is `$sum`,
-`acc + 1` counts, `Math.max`/`Math.min`, `acc ?? d.x` is `$first`, a bare
+`acc + 1` counts, `[acc, d.x].max()`/`.min()`, `acc ?? d.x` is `$first`, a bare
 `d.x` is `$last`, `[...acc, d.x]` or `acc.concat(d.x)` is `$push` — and it
 refuses a body that spells none, naming them. The object form
 `[$$.reduce((acc, d) => ({ ...acc, k: acc.k + … }), { k: init })]` names
@@ -839,15 +839,13 @@ $.a.reduceRight((acc, x) => acc.concat([x]), [])
 
 A rule that reads its arguments as ONE list states `spread: true` on its
 `args`, and the desugar pass packs a spread call's arguments into one array
-literal for it (see [desugar-pass.md](desugar-pass.md)): `Math.max(...$.a, 1)`
-reaches its cell as one operand, `{ $max: { $concatArrays: ["$a", [1]] } }`,
-and `({}).assign(...$.docs)` reaches it as `{ $mergeObjects: "$docs" }`
-— the server reads a single array operand for both (measured). The `.assign()`
+literal for it (see [desugar-pass.md](desugar-pass.md)): `({}).assign(...$.docs)`
+reaches its cell as one operand, `{ $mergeObjects: "$docs" }` — the server reads
+a single array operand there (measured). The `.assign()`
 cell tells a packed list from one plain argument: a spread is a list of sources,
 and a plain argument is one source. The fold reads a
 packed list as the call's own arguments, one per element, as JavaScript passes
-them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`, and `Math.max(...[1, 5], 7)`
-to `7`.
+them: `[1].concat(...[[2], 3])` folds to `[1, 2, 3]`.
 
 **`.concat()` reads each argument on its own.** JavaScript adds the elements
 of an array argument, and adds any other argument as one element. So the
@@ -889,7 +887,7 @@ the month from 0, like `getMonth()`, so the month moves up by one on the way
 to `$dateFromParts` (folded for a literal). `Number.isNaN` reads `$toString`,
 because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
 measured), and `Number.isInteger` excludes NaN and the infinities the same
-way. `Math.cbrt` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
+way. `.cbrt()` keeps the sign (`$pow` of a negative base to 1/3 is NaN).
 `Number` is the one numeric conversion: the compiler parses `parseInt` and
 `parseFloat` and refuses them, because a bare `parseInt` takes the element
 index as its radix, and `$toInt` refuses a fractional string.
@@ -955,7 +953,7 @@ root), and names the pipeline form as the way to compute.
 | `$.a = c` / `delete $.a` | `$set` / `$unset: { a: "" }` |
 | `$.n += c`, `-= c`, `++`, `--` | `$inc` (negated for `-=`) |
 | `$.n *= c`, `/= c` | `$mul` (`1 / c` for `/=`) |
-| `$.n = Math.min($.n, c)` / `Math.max` | `$min` / `$max` (the same path on both sides) |
+| `$.n = [$.n, c].min()` / `.max()` | `$min` / `$max` (the same path on both sides) |
 | `$.t = new Date()` | `$currentDate: { t: true }` |
 | `$.b = $.a; delete $.a;` (either order) | `$rename: { a: "b" }` — a copy without the delete is refused |
 | `$.tags.push(x[, y])`, `.unshift(x)` | `$push`, with `$each` for several and `$position: 0` for unshift |

@@ -256,14 +256,6 @@ export function receiverFamiliesOf(name: string): readonly Family[] | "any" | un
 
 type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
 
-/**
- * How many arguments a name takes in value position, on a given receiver family.
- *
- * The family is not optional in practice: `max` is `.max()` on an array and
- * `Math.max(a, b)` on the namespace, one row with two counts. If this function
- * read only the first branch and hoped for the best, it would refuse
- * `Math.max(3, 7)` for taking two arguments.
- */
 /** What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an array makes the server refuse. */
 export function elementsOf(name: string): "scalar" | undefined {
   return (row(name) as { elements?: "scalar" } | undefined)?.elements;
@@ -797,7 +789,7 @@ function methodRows(): string[] {
   return Object.keys(ROWS).filter((n) => {
     if (n.startsWith("$") || !isCallable(n) || isGlobalName(n)) return false;
     const on = families(row(n)?.on);
-    // a method on a VALUE — not a namespace static (`Math.abs`) and not a stage on the stream alone
+    // a method on a VALUE — not a namespace static (`Date.now`) and not a stage on the stream alone
     return on === "any" || (on !== undefined && on.some((f) => VALUE_FAMILIES.has(f)));
   });
 }

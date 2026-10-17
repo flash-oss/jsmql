@@ -379,7 +379,7 @@ const mutatorSpread: Rule = {
 };
 
 /**
- * `Math.max(...$.a, 1)` → `Math.max([...$.a, 1])`. A call whose rule reads its
+ * `$.o.assign(...$.a, x)` → `$.o.assign([...$.a, x])`. A call whose rule reads its
  * arguments as ONE list (`args.spread` on the row) takes them packed into one
  * array literal. This way the cell sees a single operand, and the array
  * literal's own lowering splices the spread. A rule that reads arguments one by
@@ -451,7 +451,7 @@ function writtenKey(entry: object): string | null {
  * of the spellings this slot accepts.
  *
  * `bareCallable` is a callable GLOBAL passed unapplied — `.map(String)`,
- * `.filter(Boolean)`, `.map(Math.abs)`, `.map(ObjectId)` — and means the arrow
+ * `.filter(Boolean)`, `.map(ObjectId)` — and means the arrow
  * that applies it to the element. Which slots accept it is the row's decision
  * (its `iterateeSlots`), never this rewrite's. The rewrite only tells a global
  * apart from a binding, and a name that needs `new` is not callable bare.
@@ -544,7 +544,7 @@ function matchTests(param: string, prefix: string, entries: readonly object[], p
 
 const CONSTANT_LITERALS = new Set(["NumberLiteral", "StringLiteral", "BooleanLiteral", "NullLiteral", "BigIntLiteral"]);
 
-/** `String` → `String(x)`; `Math.abs` → `Math.abs(x)`. Anything that is not a callable global maps to undefined. */
+/** `String` → `String(x)`; `Math.random` → `Math.random(x)`. Anything that is not a callable global maps to undefined. */
 function bareCall(callee: Node, param: string, pos: number): object | undefined {
   const arg = { type: "Ident", name: param, pos, minted: true };
   if (callee.type === "Ident" && typeof callee.name === "string") {

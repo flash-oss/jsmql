@@ -358,11 +358,11 @@ $sort({ _id: 1 });`,
     expect(violations).toEqual([]);
   });
 
-  // `.events.map(e => e.at.getTime()).reduce(Math.max)` — the most-recent-event
+  // `.events.map(e => e.at.getTime()).reduce((m, t) => [m, t].max())` — the most-recent-event
   // reduction (realistic.test.ts "most-recent event timestamp") on real dated
   // sub-documents. Shipment #1's last event is its delivery on 2026-01-15.
   it("expr: latest shipment event through map(getTime).reduce(max)", async () => {
-    const latestExpr = jsmql.expr(`$.events.map(e => e.at.getTime()).reduce((max, t) => Math.max(max, t), 0)`);
+    const latestExpr = jsmql.expr(`$.events.map(e => e.at.getTime()).reduce((max, t) => [max, t].max(), 0)`);
     const rows = await db
       .collection("shipments")
       .aggregate([{ $match: { _id: ID.shipment(1) } }, { $addFields: { latest: latestExpr } }])

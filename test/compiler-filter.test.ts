@@ -54,7 +54,7 @@ describe("compiler/emit/filter — comparisons", () => {
   it("falls back to $expr where the query language has no form", () => {
     expect(filter("$.a > $.b")).toEqual({ $expr: { $gt: ["$a", "$b"] } });
     expect(filter("$.a + 1 === 2")).toEqual({ $expr: { $eq: [{ $add: ["$a", 1] }, 2] } });
-    expect(filter("Math.abs($.a) === 2")).toEqual({ $expr: { $eq: [{ $abs: "$a" }, 2] } });
+    expect(filter("$.a.abs() === 2")).toEqual({ $expr: { $eq: [{ $abs: "$a" }, 2] } });
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
     expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
@@ -309,8 +309,8 @@ describe("compiler/emit/filter — methods and operators", () => {
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
     // The query cell answers null, and the fallback asks the VALUE lowering, which
     // arrives under `$expr`.
-    // A receiver PROVEN to be no string is refused before either: `Math.abs` returns a number.
-    expect(() => filter('Math.abs($.n).startsWith("A")')).toThrow(/not available on a 'number'/);
+    // A receiver PROVEN to be no string is refused before either: `.abs()` returns a number.
+    expect(() => filter('$.n.abs().startsWith("A")')).toThrow(/not available on a 'number'/);
     /** The `.some` / `.every` value lowering over `input`; a missing array reads as empty (HR5). */
     const overItems = (input: string, op: "$anyElementTrue" | "$allElementsTrue", as: string, body: unknown) => ({
       [op]: { $map: { input: { $ifNull: [input, []] }, as, in: body } },

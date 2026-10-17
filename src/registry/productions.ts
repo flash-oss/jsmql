@@ -952,7 +952,7 @@ export const PRODUCTIONS = {
     doc: "`Number.isInteger(n)`, `Date.now()`.",
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
-    // `Math.max(a, b)` is a MethodCall whose object is the name `Math`. `Math.PI` is a
+    // `Date.UTC(y, m)` is a MethodCall whose object is the name `Date`. `Math.PI` is a
     // MemberAccess. Every namespace shares these two node types. The parser does not
     // know which namespace it reads, and it does not need to know.
     becomes: ["MethodCall", "MemberAccess"],
@@ -1004,7 +1004,7 @@ export const PRODUCTIONS = {
   }),
 
   unappliedReference: production({
-    doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Math.abs)`.",
+    doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Number)`.",
     tokens: ["identifier"],
     spelling: "String",
     // A bare name that the developer does not apply is still only a name. The

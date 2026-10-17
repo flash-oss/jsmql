@@ -341,7 +341,7 @@ export function checkSlots(
     if (n !== null && !Number.isInteger(n)) {
       const what = i === -1 ? "receiver" : `argument ${i + 1}`;
       throw new CodegenError(
-        `'${spell(name)}' ${what} must be an integer. The server takes whole numbers here. It got ${n}. Write an integer literal, or round the value with 'Math.ceil(…)' or 'Math.floor(…)'.`,
+        `'${spell(name)}' ${what} must be an integer. The server takes whole numbers here. It got ${n}. Write an integer literal, or round the value with '.ceil()' or '.floor()'.`,
         e!.pos,
       );
     }

@@ -39,7 +39,7 @@ One row per rule, in `RULES` order
 | `mutatorTwin` | `$.items.sort();` | `$.items = $.items.toSorted();` — the row's `immutableTwin` |
 | `mutatorSpread` | `$.items.push(9);` | `$.items = [...$.items, 9];` — the row's `asArrayLiteral` |
 | `mutatorForm` | `$.items.pop();` | `$.items = $.items.slice(0, -1);` — the row's `mutatorForm`, JSMQL by argument count |
-| `packSpread` | `Math.max(...$.a, 1)` | `Math.max([...$.a, 1])` — one list, for a rule that reads one (`args.spread`) |
+| `packSpread` | `$.o.assign(...$.docs, x)` | `$.o.assign([...$.docs, x])` — one list, for a rule that reads one (`args.spread`) |
 | `iterateeShorthand` | `$.items.filter({ a: 1 })` | `$.items.filter(x => x.a === 1)` |
 
 ## Position, and why the pass needs it
@@ -176,7 +176,7 @@ field `qty.$gt` equal to 5. The value road reads a `$`-named segment through
 field path (measured).
 
 `bareCallable` is a callable GLOBAL handed over unapplied — `$.items.map(String)`,
-`$.items.filter(Boolean)`, `$.items.map(Math.abs)`, `$.items.map(ObjectId)` — and
+`$.items.filter(Boolean)`, `$.items.map(ObjectId)` — and
 it means the arrow that applies the global to the element, `x => String(x)`.
 The row's `iterateeSlots` decides which slots take it. The rewrite only tells a
 callable global apart from a binding, and a name that needs `new` (`Date`) is
@@ -233,7 +233,7 @@ JavaScript computes where the two differ. That is why a month added to 31
 January gives the last day of February (`$dateAdd` clamps). That is why
 `.startOf("week")` gives the Sunday (`$dateTrunc`'s default). That is why
 `.diff` counts the boundaries crossed (`$dateDiff`). That is why
-`Math.round(0.5)` gives 0. The server's answer is the answer of JSMQL's own
+`(0.5).round()` gives 0. The server's answer is the answer of JSMQL's own
 lowering, not of the nearest raw operator. So `({ a: 1 }).entries()` folds
 to `[["a", 1]]`, which its `$map` over `$objectToArray` gives. Only a raw
 `$objectToArray(…)` gives `{ k, v }` documents.
@@ -298,8 +298,8 @@ one on `$$` / `$$$`. `$$.push(...$$$.coll)` spreads a collection into the
 stream, and the union road reads that spread itself.
 
 ```
-Math.max(...$.a, 1)
-  packed   → {"$max":{"$concatArrays":["$a",[1]]}}
+$.o.assign(...$.docs, { z: 1 })
+  packed   → {"$mergeObjects":{"$concatArrays":[["$o"],{"$ifNull":["$docs",[]]},[{"z":1}]]}}
 $.a.indexOf(...$.b)
   not packed (the rule reads one argument) → ✗ refused: the spread
 ```

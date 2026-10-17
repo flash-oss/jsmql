@@ -235,8 +235,8 @@ export type NodeName = AstNode["type"];
 /**
  * What can carry a name. The first group holds the JavaScript value types.
  * `stream` is the `$$` document stream. The second group holds the namespace
- * receivers. The parser folds `Math.max(a, b)` into one node whose name is
- * `max` and whose receiver is `Math`, the same shape as `$.rows.max()`.
+ * receivers. The parser folds `Math.round(x)` into one node whose name is
+ * `round` and whose receiver is `Math`, the same shape as `$.n.round()`.
  */
 export type Family =
   | "string"
@@ -1331,8 +1331,8 @@ type ByArgs<In, Out> = {
 
 /**
  * A renderer. It holds one rule for every family, or one rule PER family. The
- * count of arguments can differ by receiver as well as by position: `Math.max(a, b)`
- * takes arguments, `$.rows.max()` takes none, and both are the `max` entry. Every
+ * count of arguments can differ by receiver as well as by position: `$.n.round(2)`
+ * takes a precision, the compiler refuses `Math.round(x)`, and both are the `round` entry. Every
  * family that `on` lists must appear, with a rule or with a refusal that says why.
  * No family that `on` omits can appear. `uncertain` answers a receiver whose family
  * the compiler cannot prove. See `Uncertain` for when a row must state it.

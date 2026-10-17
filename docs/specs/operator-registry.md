@@ -48,7 +48,7 @@ $exists(1)              →  { $exists: 1 }                     the server refus
 
 On an operator that is NOT object-form, a lone object literal is a value (`$mergeObjects({ a: 1 })` → `{ $mergeObjects: { a: 1 } }`). A no-argument call emits `{ $op: {} }` (`$rand()` → `{ $rand: {} }`). For an operator with both a single and a list form (`$min`, `$round`, …), the argument count decides which form applies.
 
-The compiler refuses JSMQL code that has no MQL inside a `$op(…)` call. A JavaScript spread is one example: the refusal names the JS form that takes it (`Math.min(...xs)`), or the single-array form. A spread or a computed key in the object body of an object-form operator is another one. An arrow gets the checks of its own lowering, for example the element predicate of `$elemMatch`.
+The compiler refuses JSMQL code that has no MQL inside a `$op(…)` call. A JavaScript spread is one example: the refusal names the JS form that takes it (`xs.min()`), or the single-array form. A spread or a computed key in the object body of an object-form operator is another one. An arrow gets the checks of its own lowering, for example the element predicate of `$elemMatch`.
 
 ## `$literal`
 

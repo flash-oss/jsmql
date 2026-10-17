@@ -241,7 +241,7 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
 
   it("rounds a half to the EVEN neighbour, which is what `$round` does", () => {
     expect(valueOf("(3.5).round()")).toBe(4);
-    expect(valueOf("Math.round(0.5)")).toBe(0);
+    expect(valueOf("(0.5).round()")).toBe(0);
   });
 
   it("counts a string in code points, which is what `$strLenCP` does", () => {
@@ -258,13 +258,13 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
     // IEEE-754 pins down sqrt and the algebraic operations, and leaves every
     // transcendental free. Measured against mongod, eleven of the twenty-nine
     // differ — so those run on the server, where the answer is the server's.
-    expect(valueOf("Math.sqrt(16)")).toBe(4);
-    expect(valueOf("Math.abs(-5)")).toBe(5);
-    expect(valueOf("Math.max(3, 7)")).toBe(7);
+    expect(valueOf("(16).sqrt()")).toBe(4);
+    expect(valueOf("(-5).abs()")).toBe(5);
+    expect(valueOf("[3, 7].max()")).toBe(7);
     expect(valueOf("Math.PI")).toBe(Math.PI);
-    expect(valueOf("Math.atanh(0.25)")).toBe("(not constant)");
-    expect(valueOf("Math.cos(0.1)")).toBe("(not constant)");
-    expect(valueOf("Math.log2(3)")).toBe("(not constant)");
+    expect(valueOf("(0.25).atanh()")).toBe("(not constant)");
+    expect(valueOf("(0.1).cos()")).toBe("(not constant)");
+    expect(valueOf("(3).log2()")).toBe("(not constant)");
   });
 
   it("folds `Object.entries` to JavaScript's [key, value] pairs, as the runtime lowering gives them", () => {

@@ -172,14 +172,15 @@ function pathOf(target: Expr, pos: number): string {
   throw E.updateTargetNeedsField(pos);
 }
 
-/** `$.n = Math.min($.n, 5)` is `$min: { n: 5 }` — the SAME path on both sides. */
+/** `$.n = [$.n, 5].min()` is `$min: { n: 5 }` — the SAME path on both sides. */
 function minMax(v: Expr, path: string): { op: "$min" | "$max"; value: Expr } | null {
-  if (v.type !== "MethodCall" || v.object.type !== "Ident" || v.object.name !== "Math") return null;
+  if (v.type !== "MethodCall" || v.object.type !== "ArrayLiteral" || v.args.length !== 0) return null;
   if (v.name !== "min" && v.name !== "max") return null;
-  const [self, other] = v.args;
-  if (v.args.length !== 2 || self === undefined || other === undefined) return null;
-  if (self.type === "SpreadElement" || other.type === "SpreadElement") return null;
+  const [self, other] = v.object.elements;
+  if (v.object.elements.length !== 2 || self === undefined || other === undefined) return null;
   if (self.type !== "FieldRef" || self.path !== path) return null;
+  if (other.type === "SpreadElement" || other.type === "FuncDecl" || other.type === "UpdateFilter") return null;
+  if (other.type === "AssignExpr" || other.type === "DeleteStmt") return null;
   return { op: v.name === "min" ? "$min" : "$max", value: other };
 }
 

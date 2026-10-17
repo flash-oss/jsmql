@@ -53,7 +53,7 @@ The same rule applies to the [function form](#function-form). An **expression-bo
 9. [String Methods](#string-methods)
 10. [Array Methods](#array-methods)
 11. [Lambda Functions](#lambda-functions)
-12. [Math Functions](#math-functions)
+12. [Number Methods](#number-methods)
 13. [Type Casting](#type-casting)
 14. [Date Operations](#date-operations)
 15. [Escape Hatch (Direct Operator Form)](#escape-hatch-direct-operator-form)
@@ -184,7 +184,7 @@ A JSMQL expression is a **subset of JavaScript** that compiles to MongoDB aggreg
 
 - Literals: numbers (with numeric separators `1_000_000`), strings, booleans, `null`, arrays, objects
 - Template literals: `` `hello, ${$.name}!` ``
-- Spread: `[...$.arr]`, `{ ...$.obj }`, `Math.max(...$.scores)`
+- Spread: `[...$.arr]`, `{ ...$.obj }`, `({}).assign(...$.docs)`
 - Field references: `$.fieldName`, `$.nested.path`
 - Optional chaining: `$.a?.b`, `$.a?.[0]`, `$.name?.trim()`
 - Bracket access: `$.items[0]`, `$.arr[$.idx]`
@@ -195,7 +195,7 @@ A JSMQL expression is a **subset of JavaScript** that compiles to MongoDB aggreg
 - Ternary operator: `? :`
 - String methods: `.trim()`, `.toLowerCase()`, `.startsWith()`, etc.
 - Array methods: `.map()`, `.filter()`, `.flat()`, `.join()`, etc.
-- Math functions and constants: `Math.floor()`, `Math.min()`, `Math.PI`, etc.
+- Number methods and the `Math` constants: `$.n.floor()`, `[$.a, $.b].min()`, `Math.PI`, etc.
 - Type casting: `Number()`, `String()`, `typeof`, etc.
 - Date operations: `new Date()`, `Date.now()`, `.getFullYear()`, `.toISOString()`, etc.
 - Lambda functions: `x => expr`, `(a, b) => expr`
@@ -459,7 +459,7 @@ The behaviour matches JavaScript exactly. A line comment ends at a LineTerminato
 As in JavaScript, JSMQL allows a single trailing comma after the last item of a comma-separated list, and ignores it. This works **everywhere** a list appears: call arguments, array and object literals, and arrow / `function` parameter lists. So code your formatter has already touched — prettier and oxfmt add a trailing comma when they break a list across lines — pastes straight in.
 
 ```js
-Math.max($.a, $.b,)                       // call args
+$.y.atan2($.x,)                           // call args
 [1, 2, 3,]                                // array
 { name: $.name, age: $.age, }             // object
 $.items.map((x, i,) => x * i)             // lambda params + call args
@@ -2221,7 +2221,7 @@ $.scores.map(Number)            // coerce strings to numbers
 $.counts.keys().map(ObjectId)         // object keys are strings — cast them back
 // → { $map: { input: { … }, as: "v", in: { $toObjectId: "$$v" } } }
 
-$.scores.map(Math.floor)        // round each element down
+$.scores.map(x => x.floor())    // round each element down
 
 $.stamps.map(Date)              // convert each element to a date
 // → { $map: { input: { $ifNull: ["$stamps", []] }, as: "x", in: { $toDate: "$$x" } } }
@@ -2236,7 +2236,7 @@ The bare form is for **arrays of values**. A pipeline stream carries documents, 
 
 **`Date(…)` without `new` is a date, not a string.** JavaScript's `Date()` ignores its arguments and returns the current time as a string. In JSMQL, `Date(…)` means `new Date(…)`, as every value constructor does (`ObjectId(…)`, `Decimal128(…)`): `Date()` is the current date, and `Date(x)` converts `x`. So `$.stamps.map(Date)` converts each element, where JavaScript gives the same string for every element.
 
-**`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Math.trunc(Number(<value>))` for the whole number `parseInt` would give.
+**`parseInt` and `parseFloat` are not JSMQL names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript, because the index arrives as the radix. MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is `12`, but `Number("12abc")` is `NaN` — and `$toDouble` refuses `"12abc"` on the server. JSMQL refuses both, and the error message names `Number(<value>)`, or `Number(<value>).trunc()` for the whole number `parseInt` would give.
 
 **`Set`, `Map` and `RegExp` are not JSMQL names.** MongoDB has no set type, so an array method does each set operation (see [Set operations on arrays](#set-operations-on-arrays)). MongoDB has no map type either, so write an object, or build one from pairs with `pairs.fromEntries()`. A regular expression is a literal (`/^ab/i`). For a pattern built at run time, write `$regexMatch({ input: …, regex: … })`. Each spelling (`new Set(…)`, `Set(…)`, `new Map(…)`, `Map(…)`, `new RegExp(…)`, `RegExp(…)`) gets an error that names these forms.
 
@@ -2459,7 +2459,7 @@ The body of the IIFE can reference outer `$.fields` freely. Only the lambda para
 Inside a pipeline, you can give an arrow function a **name** — `const f = (a) => …` — and call it by that name, as a named IIFE. The declaration itself emits nothing. Each call expands the body inline as its own `$let`, so you can declare a helper once and reuse it across many fields, without storing anything in the document:
 
 ```js
-const money = (n) => Math.round(n * 100) / 100;
+const money = (n) => (n * 100).round() / 100;
 $ = {
   subtotal: money($.price * $.qty),
   tax:      money($.price * $.qty * $.taxRate),
@@ -2467,7 +2467,7 @@ $ = {
 };
 // → [{ $replaceWith: {
 //       subtotal: { $let: { vars: { n: { $multiply: ["$price", "$qty"] } },
-//                           in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] } } },
+//                           in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] } } },
 //       tax:      { $let: { vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } }, in: { …same… } } },
 //       total:    { $let: { vars: { n: { $multiply: ["$price", "$qty", { $add: [1, "$taxRate"] }] } }, in: { …same… } } },
 //   } }]
@@ -2490,7 +2490,7 @@ $ = {
 The **`function` keyword** is a second spelling of the same thing. Write it however you would write JavaScript. It works everywhere an arrow does: as a declaration, as an inline callback, and as the `jsmql(fn)` input. A `function` declaration is *self-terminating*: it needs no `;` after the `}`, exactly like JS:
 
 ```js
-function money(n) { return Math.round(n * 100) / 100 }
+function money(n) { return (n * 100).round() / 100 }
 $ = { subtotal: money($.price), tax: money($.tax) };
 // …identical MQL to `const money = (n) => …`
 
@@ -2511,53 +2511,58 @@ Notes:
 
 ---
 
-## Math Functions
+## Number Methods
 
-Use `Math.*` for numeric operations:
+A number method reads the number before the dot:
 
 ```js
-Math.abs($.delta)                  // { $abs: "$delta" }
-Math.ceil($.avg)                   // { $ceil: "$avg" }
-Math.floor($.avg)                  // { $floor: "$avg" }
-Math.round($.avg)                  // { $round: ["$avg", 0] }
-Math.pow($.base, 2)                // { $pow: ["$base", 2] }
-Math.sqrt($.variance)              // { $sqrt: "$variance" }
-Math.exp($.rate)                   // { $exp: "$rate" }
-Math.log($.value)                  // { $ln: "$value" } (natural log)
-Math.log2($.value)                 // { $log: ["$value", 2] }
-Math.log10($.value)                // { $log10: "$value" }
-Math.trunc($.avg)                  // { $trunc: "$avg" }
-Math.sign($.delta)                 // { $cmp: ["$delta", 0] } (-1 / 0 / 1)
-Math.cbrt($.x)                     // { $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, { $divide: [1, 3] }] }] }
-                                   // the sign is factored out: Math.cbrt(-8) is -2 in JavaScript,
+$.delta.abs()                      // { $abs: "$delta" }
+$.avg.ceil()                       // { $ceil: "$avg" }
+$.avg.floor()                      // { $floor: "$avg" }
+$.avg.floor(1)                     // { $divide: [{ $floor: { $multiply: ["$avg", 10] } }, 10] }
+$.avg.round()                      // { $round: "$avg" }
+$.avg.round(2)                     // { $round: ["$avg", 2] }   (2 decimal places)
+$.avg.trunc()                      // { $trunc: "$avg" }
+$.avg.trunc(2)                     // { $trunc: ["$avg", 2] }
+$.base ** 2                        // { $pow: ["$base", 2] }
+$.variance.sqrt()                  // { $sqrt: "$variance" }
+$.x.cbrt()                         // { $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, 0.3333333333333333] }] }
+                                   // the sign is factored out: (-8).cbrt() is -2, as in JavaScript,
                                    // and $pow of a negative base to a fractional exponent is not that
-Math.hypot($.a, $.b)               // sqrt(a² + b²) via $sqrt + $add + $pow
-Math.random()                      // { $rand: {} }
+$.rate.exp()                       // { $exp: "$rate" }
+$.value.log()                      // { $ln: "$value" }   (natural log)
+$.value.log($.base)                // { $log: ["$value", "$base"] }
+$.value.log(10)                    // { $log10: "$value" }
+$.value.log2()                     // { $log: ["$value", 2] }
+$.value.log10()                    // { $log10: "$value" }
+$.delta.sign()                     // { $multiply: [{ $cmp: ["$delta", 0] }, { $pow: ["$delta", 0] }] }   (-1 / 0 / 1)
+$.a.hypot($.b)                     // { $sqrt: { $add: [{ $pow: ["$a", 2] }, { $pow: ["$b", 2] }] } }
 
-Math.min($.a, $.b, $.c)            // { $min: ["$a", "$b", "$c"] }
-Math.max($.scores)                 // { $max: "$scores" }   (single array arg)
-Math.max(...$.scores)              // { $max: "$scores" }   (spread is sugar for the above)
-Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
+[$.a, $.b, $.c].min()              // { $min: ["$a", "$b", "$c"] }
+$.scores.max()                     // { $max: "$scores" }
+[$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
+
+A number method on a missing or `null` number gives `null`, under a dot and under `?.`. The `$pow` factor of `.sign()` is `1` for a number and `null` for a missing value, so the product is `null` there. See [HR5](LANG_RULES.md). `.clamp()`, `.inRange()` and `.range()` give a safe value under a dot instead; see [lodash number methods](#lodash-number-methods).
 
 ### Trigonometry
 
 All angles are in radians (matches both JS and MongoDB).
 
 ```js
-Math.sin($.angle)                  // { $sin: "$angle" }
-Math.cos($.angle)                  // { $cos: "$angle" }
-Math.tan($.angle)                  // { $tan: "$angle" }
-Math.asin($.x)                     // { $asin: "$x" }
-Math.acos($.x)                     // { $acos: "$x" }
-Math.atan($.x)                     // { $atan: "$x" }
-Math.atan2($.y, $.x)               // { $atan2: ["$y", "$x"] }
-Math.sinh($.x)                     // { $sinh: "$x" }
-Math.cosh($.x)                     // { $cosh: "$x" }
-Math.tanh($.x)                     // { $tanh: "$x" }
-Math.asinh($.x)                    // { $asinh: "$x" }
-Math.acosh($.x)                    // { $acosh: "$x" }
-Math.atanh($.x)                    // { $atanh: "$x" }
+$.angle.sin()                      // { $sin: "$angle" }
+$.angle.cos()                      // { $cos: "$angle" }
+$.angle.tan()                      // { $tan: "$angle" }
+$.x.asin()                         // { $asin: "$x" }
+$.x.acos()                         // { $acos: "$x" }
+$.x.atan()                         // { $atan: "$x" }
+$.y.atan2($.x)                     // { $atan2: ["$y", "$x"] }
+$.x.sinh()                         // { $sinh: "$x" }
+$.x.cosh()                         // { $cosh: "$x" }
+$.x.tanh()                         // { $tanh: "$x" }
+$.x.asinh()                        // { $asinh: "$x" }
+$.x.acosh()                        // { $acosh: "$x" }
+$.x.atanh()                        // { $atanh: "$x" }
 ```
 
 MongoDB has no JS equivalent for degree/radian conversion. Use the escape hatch:
@@ -2566,21 +2571,23 @@ $degreesToRadians($.degAngle)      // { $degreesToRadians: "$degAngle" }
 $radiansToDegrees($.radAngle)      // { $radiansToDegrees: "$radAngle" }
 ```
 
-### Constants
+### `Math`
+
+`Math` holds the members that take no value:
 
 ```js
+Math.random()                      // { $rand: {} }
 Math.PI                            // 3.141592653589793
 Math.E                             // 2.718281828459045
 ```
 
-**Note:** `Math.round(x)` rounds to the nearest integer (`{ $round: [x, 0] }`). To round to N decimal places, use the `$round()` escape hatch. JS has no equivalent:
-```js
-$round($.value, 2)                 // { $round: ["$value", 2] } (round to 2 decimal places)
-```
+Each other `Math` member says the same thing as a number method or an operator, and one capability gets one spelling. The name still parses, so the error names the form that works:
 
-**Note:** `Math.log()` is the natural logarithm. For another base, use the `$log()` escape hatch:
 ```js
-$log($.value, 10)                  // { $log: ["$value", 10] } (log base 10)
+Math.abs($.delta)                  // ✗ not a JSMQL name; write $.delta.abs()
+Math.pow($.base, 2)                // ✗ not a JSMQL name; write $.base ** 2
+Math.max($.a, $.b)                 // ✗ not a JSMQL name; write [$.a, $.b].max()
+$.scores.map(Math.floor)           // ✗ not a JSMQL name; write $.scores.map(x => x.floor())
 ```
 
 ---
@@ -2593,7 +2600,7 @@ $log($.value, 10)                  // { $log: ["$value", 10] } (log base 10)
 Number($.stringField)              // { $toDouble: "$stringField" }
 String($.numField)                 // { $toString: "$numField" }
 Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
-Math.trunc(Number($.stringField))  // { $trunc: { $toDouble: "$stringField" } } — the whole number
+Number($.stringField).trunc()      // { $trunc: { $toDouble: "$stringField" } } — the whole number
 ```
 
 `Boolean(x)` follows JavaScript's truthy and falsy rules. `Boolean("")` is `false`, `Boolean(0)` is `false`, and `Boolean([])` is `true`. To get MongoDB's raw `$toBool`, call the operator directly: `$toBool($.x)`. Here `""` is truthy and `null` stays `null`.
@@ -2631,7 +2638,7 @@ $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
 $.n.inRange(10)        // 0 <= n < 10   (checked with $min/$max so negative ranges swap)
 $.n.inRange(5, 10)     // 5 <= n < 10
 $.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))   // a date reads the same range test
-$.n.round()            // { $round: ["$n", 0] }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
+$.n.round()            // { $round: "$n" }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
 $.n.round(2)           // { $round: ["$n", 2] }
 $.n.ceil()             // { $ceil: "$n" }
 $.n.ceil(2)            // scale by 10² via $pow, $ceil, scale back
@@ -2654,7 +2661,7 @@ $.from.range($.to, 2)    // { $range: [{ $ifNull: ["$from", 0] }, { $ifNull: ["$
 
 - **With no step, the range counts down when `start` is more than `end`**, as lodash does. MongoDB's `$range` counts up by 1 and gives `[]` there. So the compiler adds the step `-1` for two constant bounds, and a `$cond` for a bound that it reads at run time. A computed bound, for example `$.weeks + 1`, binds once in a `$let`.
 - **A missing or `null` bound reads as 0**, as lodash reads it. `$range` stops the command on `null`, so the compiler adds `$ifNull`. The answer is never `null`, and a chain after it adds no `$ifNull`. Under `?.`, the chain gives `null`, as every method does.
-- **Each bound and the step must be an integer.** lodash accepts `_.range(0, 1, 0.25)`, but `$range` counts in whole numbers. The compiler refuses a constant with a fraction, and names `Math.ceil(…)` and `Math.floor(…)`. The server refuses a fraction that it reads at run time.
+- **Each bound and the step must be an integer.** lodash accepts `_.range(0, 1, 0.25)`, but `$range` counts in whole numbers. The compiler refuses a constant with a fraction, and names `.ceil()` and `.floor()`. The server refuses a fraction that it reads at run time.
 - **The step cannot be 0.** lodash repeats the start value for a step of 0, but the server refuses it. The compiler refuses a constant 0, and names `n.range().map(() => start)`. The server refuses a 0 that it reads at run time, as it refuses a division by zero.
 
 The `$range(…)` escape hatch stays raw MQL: `$range(5)` is `{ $range: 5 }`.
@@ -3153,7 +3160,7 @@ the same `{ $op: […] }`. One argument that is not an array literal is one
 operand, as written: `$setUnion($.a)` gives `{ $setUnion: "$a" }`. The server
 reads it as one operand, and it refuses a count that the operator does not take.
 `$op(...)` does not accept the JS spread, because MQL has no spread. Pass one
-array instead, or use the JS-method form where it applies (`Math.max(...$.scores)`).
+array instead, or use the JS-method form where it applies (`$.scores.max()`).
 
 ### Object Operations
 
@@ -3187,20 +3194,19 @@ Object.assign($.f, $.x);           // ✗ not a JSMQL name; write $.f = { ...$.f
 
 ### Spread in Variadic Calls
 
-A JavaScript static that takes a list (`Math.min` / `Math.max`) takes `...arr`, and passes the whole array through as the operator's value. `.assign()` reads a spread the same way:
+`.assign()` takes `...arr`, and passes the whole array through as the operator's value:
 
 ```js
-Math.max(...$.scores)              // { $max: "$scores" }
 ({}).assign(...$.docs)             // { $mergeObjects: "$docs" }
 ```
 
-When you mix spread with non-spread arguments, JSMQL wraps each non-spread value in a single-element array and joins them with `$concatArrays`:
+An array literal joins spread and non-spread elements with `$concatArrays`, so a list method takes a mixed list as its receiver:
 
 ```js
-Math.min($.a, ...$.others)         // { $min: { $concatArrays: [["$a"], "$others"] } }
+[$.a, ...$.others].min()           // { $min: { $concatArrays: [["$a"], { $ifNull: ["$others", []] }] } }
 ```
 
-**The `$op(…)` escape hatch takes no spread.** `$op(value)` is `{ $op: value }` and `$op(a, b)` is `{ $op: [a, b] }` ([HR2](LANG_RULES.md)); a spread has no MQL of its own. JSMQL refuses `$concatArrays(...$.arrs)` and `$foo(...$.arr)` alike, and the message names the forms that work: the operands one by one, the single array (`$concatArrays($.arrs)`), or the JavaScript spelling (`Math.max(...)`, `[...a, ...b]`, `.concat()`).
+**The `$op(…)` escape hatch takes no spread.** `$op(value)` is `{ $op: value }` and `$op(a, b)` is `{ $op: [a, b] }` ([HR2](LANG_RULES.md)); a spread has no MQL of its own. JSMQL refuses `$concatArrays(...$.arrs)` and `$foo(...$.arr)` alike, and the message names the forms that work: the operands one by one, the single array (`$concatArrays($.arrs)`), or the JavaScript spelling (`arr.max()`, `({}).assign(...arr)`, `[...a, ...b]`, `.concat()`).
 
 `$getField` and `$setField` are useful when a field name is dynamic or contains special characters.
 
@@ -3976,7 +3982,7 @@ jsmql(`$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }];`)
 jsmql(`$$ = [{
   count: $$.reduce((acc, d) => acc + 1, 0),
   total: $$.reduce((acc, d) => acc + d.amount, 0),
-  best:  $$.reduce((acc, d) => Math.max(acc, d.score), 0)
+  best:  $$.reduce((acc, d) => [acc, d.score].max(), 0)
 }];`)
 // → [{ $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" }, best: { $max: "$score" } } },
 //    { $replaceWith: { count: "$count", total: "$total", best: "$best" } }]
@@ -3990,14 +3996,14 @@ jsmql(`$$ = [$$.reduce(
     ...acc,
     count: acc.count + 1,
     total: acc.total + d.amount,
-    best:  Math.max(acc.best, d.score)
+    best:  [acc.best, d.score].max()
   }),
   { count: 0, total: 0, best: 0 }
 )];`)
 // → identical to the multi-aggregate scalar wrap above
 ```
 
-Both forms support the same per-key reducer bodies: `acc + d.<field>` (or `acc.<key> + d.<field>` in the object form) lowers to `$sum`; `acc + 1` lowers to `$sum: 1` (count); `Math.max(acc, d.<field>)` lowers to `$max`; `Math.min(acc, d.<field>)` lowers to `$min`. In the object form, each entry must reference `acc.<sameKey>` as the accumulator side, and the init object must declare the same key set as the body. An extra or missing key on either side throws — in JS this would silently work, but it would mean something different.
+Both forms support the same per-key reducer bodies: `acc + d.<field>` (or `acc.<key> + d.<field>` in the object form) lowers to `$sum`; `acc + 1` lowers to `$sum: 1` (count); `[acc, d.<field>].max()` lowers to `$max`; `[acc, d.<field>].min()` lowers to `$min`. In the object form, each entry must reference `acc.<sameKey>` as the accumulator side, and the init object must declare the same key set as the body. An extra or missing key on either side throws — in JS this would silently work, but it would mean something different.
 
 The `init` value is required for JS faithfulness, but the MQL accumulators have their own neutral elements, so its actual value does not matter. Dictionary-build reducers (`(acc, d) => ({...acc, [d.k]: d.v})`) and other richer body shapes are future work.
 
@@ -4707,7 +4713,7 @@ db.users.updateOne(
 jsmql.update("$.name = $.name.toUpperCase()");   // ✗ the value comes from the document, and an update document takes only constants; use the pipeline form
 ```
 
-Output is the **update document**: one key per update operator, the shape `updateOne`, `updateMany`, and the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`; `+=` / `-=` / `++` / `--` to `$inc`; `*=` to `$mul`; `delete` to `$unset`; `= new Date()` to `$currentDate`; `Math.min` / `Math.max` of the field and a constant to `$min` / `$max`; `.push(x)` to `$push`; `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. JSMQL refuses two writes to one path.
+Output is the **update document**: one key per update operator, the shape `updateOne`, `updateMany`, and the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`; `+=` / `-=` / `++` / `--` to `$inc`; `*=` to `$mul`; `delete` to `$unset`; `= new Date()` to `$currentDate`; `[$.f, c].min()` / `[$.f, c].max()` of the field and a constant to `$min` / `$max`; `.push(x)` to `$push`; `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. JSMQL refuses two writes to one path.
 
 The values are **constants**. MongoDB's document-form update reads `"$b"` as the string `"$b"`, not as the field. So JSMQL refuses a value computed from the document, and names the pipeline form instead (`jsmql.pipeline("$.a = $.b + 1;")` or `jsmql()`). `updateOne` accepts that form too, and MongoDB evaluates it server-side.
 
@@ -5557,8 +5563,5 @@ A: A substring match, always: `.includes(x)` is a string method. Membership in a
 
 **Q: Does `?.` actually short-circuit?**
 A: For a bare READ it is sugar. MongoDB already returns null or missing when a path crosses a missing field, so `$.a?.b?.c` and `$.a.b.c` are the same MQL. Once the chain feeds a consumer that is not null-safe, the `?.` adds a real `$ifNull` neutral value. The table under [Optional Chaining](#optional-chaining) lists which consumer takes which neutral value.
-
-**Q: How do `Math.max(...$.arr)` and `Math.max($.arr)` differ?**
-A: They produce identical MQL (`{ $max: "$arr" }`). The spread form is JS-natural sugar only.
 
 ---

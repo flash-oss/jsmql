@@ -69,7 +69,7 @@ function refuse(spelled: string, role: Role, pos: number, what = "raw MQL"): Cod
   return new CodegenError(`'${spelled}' is ${what}, and raw MQL cannot be ${role}.`, pos);
 }
 
-/** A call's name as the message spells it: `Math.max`, `Date`. */
+/** A call's name as the message spells it: `Date.UTC`, `Date`. */
 function calleeSpelling(callee: unknown): string {
   if (!isNode(callee)) return "…";
   if (callee.type === "Ident") return callee.name as string;
@@ -197,7 +197,7 @@ function walk(node: unknown, ctx: Context, role: Role, query: boolean, road: Roa
     case "MethodCall": {
       const name = node.name as string;
       const recv = node.object as Any;
-      // A static call names its global: `Math.max()`, not `.max()`.
+      // A static call names its global: `Date.UTC()`, not `.UTC()`.
       const global = recv.type === "Ident" && isGlobalName(recv.name as string) ? (recv.name as string) : "";
       const spelled = `${global}.${(node.wrote as string | undefined) ?? name}`;
       if (name.startsWith("$")) {

@@ -1514,13 +1514,13 @@ describe("scientific projection (hypot, log2/log10, sign, cbrt, PI, E)", { featu
       expect(
         jsmql.expr`
 {
-  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),
-  octave: Math.log2($.frequency / 440),
-  decibels: Math.log10($.amplitude) * 20,
+  distance: ($.point.x - $.origin.x).hypot($.point.y - $.origin.y),
+  octave: ($.frequency / 440).log2(),
+  decibels: $.amplitude.log10() * 20,
   fovRad: $.fovDeg * Math.PI / 180,
   growthFactor: Math.E ** $.rate,
-  trend: Math.sign($.delta),
-  cubeSide: Math.cbrt($.volume)
+  trend: $.delta.sign(),
+  cubeSide: $.volume.cbrt()
 }
       `,
       ).toEqual({
@@ -1536,8 +1536,8 @@ describe("scientific projection (hypot, log2/log10, sign, cbrt, PI, E)", { featu
         decibels: { $multiply: [{ $log10: "$amplitude" }, 20] },
         fovRad: { $divide: [{ $multiply: ["$fovDeg", 3.141592653589793] }, 180] },
         growthFactor: { $pow: [2.718281828459045, "$rate"] },
-        trend: { $cmp: ["$delta", 0] },
-        cubeSide: { $multiply: [{ $cmp: ["$volume", 0] }, { $pow: [{ $abs: "$volume" }, { $divide: [1, 3] }] }] },
+        trend: { $multiply: [{ $cmp: ["$delta", 0] }, { $pow: ["$delta", 0] }] },
+        cubeSide: { $multiply: [{ $cmp: ["$volume", 0] }, { $pow: [{ $abs: "$volume" }, 0.3333333333333333] }] },
       });
     },
   );
@@ -1580,12 +1580,12 @@ describe("score normalisation with grouping", { features: ["Arithmetic and Math"
   );
 });
 
-describe("age decade bucket through Math.floor", { features: ["Arithmetic and Math"] }, () => {
+describe("age decade bucket through .floor()", { features: ["Arithmetic and Math"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { ageDecade: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`Math.floor($.age / 10) * 10`)).toEqual({
+      expect(jsmql.expr(`($.age / 10).floor() * 10`)).toEqual({
         $multiply: [{ $floor: { $divide: ["$age", 10] } }, 10],
       });
     },
@@ -2181,12 +2181,12 @@ describe("moderator membership check through [...a, ...b]", { features: ["Array 
   });
 });
 
-describe("Math.max(...arr) - Math.min(...arr) with Array.isArray guard", { features: ["Array spread"] }, () => {
+describe("arr.max() - arr.min() with Array.isArray guard", { features: ["Array spread"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.students.aggregate([{ $addFields: { range: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0`)).toEqual({
+      expect(jsmql.expr(`Array.isArray($.scores) ? $.scores.max() - $.scores.min() : 0`)).toEqual({
         $cond: {
           if: { $isArray: ["$scores"] },
           then: { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] },
@@ -2242,7 +2242,7 @@ describe("shopping cart total with 10_000 cap", { features: ["Numeric separators
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { total: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`Math.min(10_000, $.lines.sumBy(l => l.qty * l.price))`)).toEqual({
+      expect(jsmql.expr(`[10_000, $.lines.sumBy(l => l.qty * l.price)].min()`)).toEqual({
         $min: [10000, { $sum: { $map: { input: "$lines", as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } } } }],
       });
     },
@@ -2265,12 +2265,12 @@ describe("normalise a string-or-number field with typeof", { features: ["Type ch
   );
 });
 
-describe("days since last login (Math.abs + .diff + ?? + new Date)", { features: ["Date and time"] }, () => {
+describe("days since last login (.abs() + .diff + ?? + new Date)", { features: ["Date and time"] }, () => {
   it(
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { daysSinceLogin: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`Math.abs(new Date().diff($.lastLoginAt, "day") ?? -1)`)).toEqual({
+      expect(jsmql.expr(`(new Date().diff($.lastLoginAt, "day") ?? -1).abs()`)).toEqual({
         $abs: { $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: "$$NOW", unit: "day" } }, -1] },
       });
     },
@@ -2294,7 +2294,7 @@ describe("days since event (Date.now + .getTime + 86_400_000)", { features: ["Da
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.events.aggregate([{ $addFields: { daysSinceEvent: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)`)).toEqual({
+      expect(jsmql.expr(`((Date.now() - $.event.ts.getTime()) / 86_400_000).floor()`)).toEqual({
         $floor: { $divide: [{ $subtract: [{ $toLong: "$$NOW" }, { $toLong: "$event.ts" }] }, 86400000] },
       });
     },
@@ -2355,7 +2355,7 @@ describe("discount breakdown — bind once, reuse across fields", { features: ["
           in: {
             finalPrice: { $subtract: ["$price", "$$discount"] },
             savings: "$$discount",
-            savingsPercent: { $round: [{ $multiply: [{ $divide: ["$$discount", "$price"] }, 100] }, 0] },
+            savingsPercent: { $round: { $multiply: [{ $divide: ["$$discount", "$price"] }, 100] } },
           },
         },
       });
@@ -2370,7 +2370,7 @@ describe("order pricing — declare a helper once, reuse across fields", { featu
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     expect(
       jsmql(`
-const money = (n) => Math.round(n * 100) / 100;
+const money = (n) => (n * 100).round() / 100;
 $ = {
   subtotal: money($.price * $.qty),
   tax: money($.price * $.qty * $.taxRate),
@@ -2383,19 +2383,19 @@ $ = {
           subtotal: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty"] } },
-              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
             },
           },
           tax: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
-              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
             },
           },
           total: {
             $let: {
               vars: { n: { $multiply: ["$price", "$qty", { $add: [1, "$taxRate"] }] } },
-              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+              in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
             },
           },
         },
@@ -2414,7 +2414,7 @@ describe(
     it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
       expect(
         jsmql(`
-function money(n) { return Math.round(n * 100) / 100 }
+function money(n) { return (n * 100).round() / 100 }
 $ = {
   subtotal: money($.price * $.qty),
   tax: money($.price * $.qty * $.taxRate),
@@ -2426,13 +2426,13 @@ $ = {
             subtotal: {
               $let: {
                 vars: { n: { $multiply: ["$price", "$qty"] } },
-                in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+                in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
               },
             },
             tax: {
               $let: {
                 vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
-                in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+                in: { $divide: [{ $round: { $multiply: ["$$n", 100] } }, 100] },
               },
             },
           },
@@ -2991,8 +2991,8 @@ $match($.placedAt >= new Date("2026-05-01") && $.placedAt < new Date("2026-06-01
 $$ = [{
   orders:    $$.reduce((acc, o) => acc + 1, 0),
   revenue:   $$.reduce((acc, o) => acc + o.total, 0),
-  biggest:   $$.reduce((acc, o) => Math.max(acc, o.total), 0),
-  smallest:  $$.reduce((acc, o) => Math.min(acc, o.total), 0)
+  biggest:   $$.reduce((acc, o) => [acc, o.total].max(), 0),
+  smallest:  $$.reduce((acc, o) => [acc, o.total].min(), 0)
 }];
         `,
       ).toEqual([
@@ -3034,7 +3034,7 @@ describe(
         // The object-returning reducer wrap and the scalar wrap lower to the
         // same `$group` + `$replaceWith` pair — pick whichever reads best at
         // the call site. The reducer body names every accumulator inline;
-        // each `acc.<key> + …` / `Math.max(acc.<key>, …)` becomes one
+        // each `acc.<key> + …` / `[acc.<key>, …].max()` becomes one
         // accumulator on the `$group`.
         expect(
           jsmql`
@@ -3044,8 +3044,8 @@ $$ = [$$.reduce(
     ...acc,
     orders:   acc.orders + 1,
     revenue:  acc.revenue + o.total,
-    biggest:  Math.max(acc.biggest, o.total),
-    smallest: Math.min(acc.smallest, o.total)
+    biggest:  [acc.biggest, o.total].max(),
+    smallest: [acc.smallest, o.total].min()
   }),
   { orders: 0, revenue: 0, biggest: 0, smallest: 0 }
 )];

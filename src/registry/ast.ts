@@ -4,12 +4,12 @@
 //
 // ── NAME-BLIND ───────────────────────────────────────────────────────────────
 //
-// The parser never checks a name against a set. `Math.max(a, b)` and
-// `$.rows.max()` are ONE node type whose receiver differs, because they are one
-// name on two receivers, and `names.ts` already says which families `max` serves:
+// The parser never checks a name against a set. `Math.round(x)` and
+// `$.n.round()` are ONE node type whose receiver differs, because they are one
+// name on two receivers, and `names.ts` already says which families `round` serves:
 //
-//   Math.max($.a, $.b)   MethodCall { name: "max", object: Ident("Math") }
-//   $.rows.max()         MethodCall { name: "max", object: FieldRef("rows") }
+//   Math.round($.a)      MethodCall { name: "round", object: Ident("Math") }
+//   $.n.round()          MethodCall { name: "round", object: FieldRef("n") }
 //
 // So there is no node type per NAME. A tree that knew particular names would need
 // one for each — MathCall, MathConst, ObjectCall, NumberStatic, NewSet, NewDate,

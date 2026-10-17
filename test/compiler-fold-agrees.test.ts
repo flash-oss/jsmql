@@ -7,9 +7,9 @@
 // writes down, never that the server agrees — and "agrees" is the entire claim a
 // fold makes. Every rule the fold has that LOOKS like an arbitrary restriction
 // was put there by a failure of this suite:
-//   Math.atanh(0.25)         JavaScript 0.25541281188299536   server …3
+//   (0.25).atanh()           JavaScript 0.25541281188299536   server …3
 //   123456789 * 987654321    JavaScript …260                  server …269
-//   Math.round(0.5)          JavaScript 1                     server 0
+//   (0.5).round()            JavaScript 1                     server 0
 //
 // It skips itself when no mongod is listening, so `npm test` stays green.
 
@@ -72,17 +72,17 @@ const EXPRESSIONS: readonly string[] = [
   "({ a: 5 }).a",
   '"abcd".length()',
   // Math — only the exactly-specified ones fold, and those must agree
-  "Math.sqrt(16)",
-  "Math.abs(-5)",
-  "Math.floor(1.5)",
-  "Math.ceil(1.2)",
-  "Math.trunc(2.7)",
-  "Math.sign(-3)",
-  "Math.min(3, 7)",
-  "Math.max(3, 7)",
+  "(16).sqrt()",
+  "(-5).abs()",
+  "(1.5).floor()",
+  "(1.2).ceil()",
+  "(2.7).trunc()",
+  "(-3).sign()",
+  "[3, 7].min()",
+  "[3, 7].max()",
   "Math.PI",
   "Math.E",
-  "Math.round(0.5)",
+  "(0.5).round()",
   // statics
   "Number.isInteger(4)",
   "Number.isInteger(4.5)",

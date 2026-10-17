@@ -650,8 +650,15 @@ export function holderOf(e: Expr, env: Env): string | null {
 }
 
 function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): unknown {
-  // `Math.abs` on its own names a function. Only a call or a callback slot gives it a value.
+  // `Math.random` on its own names a function. Only a call or a callback slot gives it a value.
   if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
+    // A static the row refuses (`Math.floor`) answers with that refusal, which names the one spelling.
+    if (!lowersOn(node.name, node.object.name)) {
+      return lowerValue(
+        { type: "MethodCall", object: node.object, name: node.name, args: [], optional: false, pos: node.pos },
+        env,
+      );
+    }
     throw E.unappliedReference(node.object.name, node.name, node.pos);
   }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env);

@@ -449,7 +449,7 @@ describe("compiler/emit — string methods", () => {
   it("refuses what JavaScript refuses, and names the type the method takes", () => {
     expect(() => expr("$.s.matchAll(/a/)")).toThrow(/needs the 'g' flag/);
     expect(() => expr('$.s.truncate({ separator: " " })')).toThrow(/has no parameter 'separator'/);
-    expect(() => expr("Math.abs($.n).trim()")).toThrow(/not available on a 'number'.*toString/);
+    expect(() => expr("$.n.abs().trim()")).toThrow(/not available on a 'number'.*toString/);
     expect(() => expr('$.s.startsWith("A").trim()')).toThrow(/not available on a 'bool'/);
     expect(() => expr("$.csv.split(',').toUpperCase()")).toThrow(/Map over the array first/);
   });
@@ -2076,7 +2076,7 @@ describe("compiler/emit — number ranges", () => {
 
   it("refuses a zero step and a fractional bound, and names the alternative", () => {
     expect(() => expr("(0).range(5, 0)")).toThrow(/cannot be 0.*n\.range\(\)\.map/);
-    expect(() => expr("(0.5).range(3)")).toThrow(/receiver must be an integer.*Math\.ceil/);
+    expect(() => expr("(0.5).range(3)")).toThrow(/receiver must be an integer.*\.ceil\(\)/);
     expect(() => expr("(0).range(2.5)")).toThrow(/argument 1 must be an integer/);
     expect(() => expr("$.n.rangeRight($.m, 1.5)")).toThrow(/argument 2 must be an integer/);
     expect(() => expr("$.n.range(1, 2, 3)")).toThrow(/\.range\(\[end\[, step\]\]\)/);
@@ -2088,34 +2088,47 @@ describe("compiler/emit — number ranges", () => {
 });
 
 describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
-  it("lowers each Math function to its operator", () => {
-    expect(compiled("Math.abs($.neg)", () => Math.abs(DOC.neg))).toEqual({ $abs: "$neg" });
-    expect(compiled("Math.sqrt($.n)", () => Math.sqrt(DOC.n))).toEqual({ $sqrt: "$n" });
-    expect(compiled("Math.cbrt($.neg)", () => Math.cbrt(DOC.neg))).toEqual({
-      $multiply: [{ $cmp: ["$neg", 0] }, { $pow: [{ $abs: "$neg" }, { $divide: [1, 3] }] }],
+  it("lowers each number method that a Math member names to its operator", () => {
+    expect(compiled("$.neg.abs()", () => Math.abs(DOC.neg))).toEqual({ $abs: "$neg" });
+    expect(compiled("$.n.sqrt()", () => Math.sqrt(DOC.n))).toEqual({ $sqrt: "$n" });
+    expect(compiled("$.neg.cbrt()", () => Math.cbrt(DOC.neg))).toEqual({
+      $multiply: [{ $cmp: ["$neg", 0] }, { $pow: [{ $abs: "$neg" }, 0.3333333333333333] }],
     });
-    expect(compiled("Math.sign($.neg)", () => Math.sign(DOC.neg))).toEqual({ $cmp: ["$neg", 0] });
-    expect(compiled("Math.trunc($.n)", () => Math.trunc(DOC.n))).toEqual({ $trunc: "$n" });
-    expect(compiled("Math.round($.n)", () => Math.round(DOC.n))).toEqual({ $round: ["$n", 0] });
-    expect(compiled("Math.ceil($.n)", () => Math.ceil(DOC.n))).toEqual({ $ceil: "$n" });
-    expect(compiled("Math.floor($.n)", () => Math.floor(DOC.n))).toEqual({ $floor: "$n" });
-    expect(compiled("Math.log($.n)", () => Math.log(DOC.n))).toEqual({ $ln: "$n" });
-    expect(compiled("Math.log2($.n)", () => Math.log2(DOC.n))).toEqual({ $log: ["$n", 2] });
-    expect(compiled("Math.log10($.n)", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
-    expect(compiled("Math.exp($.neg)", () => Math.exp(DOC.neg))).toEqual({ $exp: "$neg" });
-    expect(compiled("Math.pow($.neg, 3)", () => Math.pow(DOC.neg, 3))).toEqual({ $pow: ["$neg", 3] });
-    expect(compiled("Math.hypot($.neg, 4)", () => Math.hypot(DOC.neg, 4))).toEqual({
+    expect(compiled("$.neg.sign()", () => Math.sign(DOC.neg))).toEqual({
+      $multiply: [{ $cmp: ["$neg", 0] }, { $pow: ["$neg", 0] }],
+    });
+    // `$cmp` alone gives -1 for a missing value; the `$pow` factor makes the answer null
+    expect(compiled("$.nope.sign()", () => null)).toEqual({
+      $multiply: [{ $cmp: ["$nope", 0] }, { $pow: ["$nope", 0] }],
+    });
+    expect(compiled("$.n.trunc()", () => Math.trunc(DOC.n))).toEqual({ $trunc: "$n" });
+    expect(compiled("$.n.trunc(2)", () => Math.trunc(DOC.n * 100) / 100)).toEqual({ $trunc: ["$n", 2] });
+    expect(compiled("$.n.round()", () => Math.round(DOC.n))).toEqual({ $round: "$n" });
+    expect(compiled("$.n.ceil()", () => Math.ceil(DOC.n))).toEqual({ $ceil: "$n" });
+    expect(compiled("$.n.floor()", () => Math.floor(DOC.n))).toEqual({ $floor: "$n" });
+    expect(compiled("$.n.log()", () => Math.log(DOC.n))).toEqual({ $ln: "$n" });
+    expect(compiled("$.n.log2()", () => Math.log2(DOC.n))).toEqual({ $log: ["$n", 2] });
+    expect(compiled("$.n.log10()", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
+    // `.log(base)` takes a base, and the constant 10 has an operator of its own
+    expect(compiled("$.n.log(10)", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
+    expect(expr("$.n.log($.b)")).toEqual({ $log: ["$n", "$b"] });
+    expect(compiled("$.n.floor(1)", () => Math.floor(DOC.n * 10) / 10)).toEqual({
+      $divide: [{ $floor: { $multiply: ["$n", 10] } }, 10],
+    });
+    expect(compiled("$.neg.exp()", () => Math.exp(DOC.neg))).toEqual({ $exp: "$neg" });
+    expect(compiled("$.neg ** 3", () => Math.pow(DOC.neg, 3))).toEqual({ $pow: ["$neg", 3] });
+    expect(compiled("$.neg.hypot(4)", () => Math.hypot(DOC.neg, 4))).toEqual({
       $sqrt: { $add: [{ $pow: ["$neg", 2] }, { $pow: [4, 2] }] },
     });
-    expect(compiled("Math.atan2($.neg, 4)", () => Math.atan2(DOC.neg, 4))).toEqual({ $atan2: ["$neg", 4] });
-    expect(compiled("Math.sin($.n)", () => Math.sin(DOC.n))).toEqual({ $sin: "$n" });
-    expect(compiled("Math.acos($.n / 10)", () => Math.acos(DOC.n / 10))).toEqual({ $acos: { $divide: ["$n", 10] } });
-    expect(compiled("Math.tanh($.n)", () => Math.tanh(DOC.n))).toEqual({ $tanh: "$n" });
-    expect(compiled("Math.asinh($.n)", () => Math.asinh(DOC.n))).toEqual({ $asinh: "$n" });
-    expect(compiled("Math.min($.neg, $.n)", () => Math.min(DOC.neg, DOC.n))).toEqual({ $min: ["$neg", "$n"] });
-    expect(compiled("Math.max(...$.a)", () => Math.max(...DOC.a))).toEqual({ $max: "$a" });
-    expect(compiled("Math.max(...$.a, 9)", () => Math.max(...DOC.a, 9))).toEqual({
-      $max: { $concatArrays: ["$a", [9]] },
+    expect(compiled("$.neg.atan2(4)", () => Math.atan2(DOC.neg, 4))).toEqual({ $atan2: ["$neg", 4] });
+    expect(compiled("$.n.sin()", () => Math.sin(DOC.n))).toEqual({ $sin: "$n" });
+    expect(compiled("($.n / 10).acos()", () => Math.acos(DOC.n / 10))).toEqual({ $acos: { $divide: ["$n", 10] } });
+    expect(compiled("$.n.tanh()", () => Math.tanh(DOC.n))).toEqual({ $tanh: "$n" });
+    expect(compiled("$.n.asinh()", () => Math.asinh(DOC.n))).toEqual({ $asinh: "$n" });
+    expect(compiled("[$.neg, $.n].min()", () => Math.min(DOC.neg, DOC.n))).toEqual({ $min: ["$neg", "$n"] });
+    expect(compiled("$.a.max()", () => Math.max(...DOC.a))).toEqual({ $max: "$a" });
+    expect(compiled("[...$.a, 9].max()", () => Math.max(...DOC.a, 9))).toEqual({
+      $max: { $concatArrays: [{ $ifNull: ["$a", []] }, [9]] },
     });
     expect(expr("Math.random()")).toEqual({ $rand: {} });
   });
@@ -2233,9 +2246,6 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
           ],
         },
       },
-    });
-    expect(compiled("[$.neg, $.n].map(Math.abs)", () => [DOC.neg, DOC.n].map(Math.abs))).toEqual({
-      $map: { input: ["$neg", "$n"], as: "x", in: { $abs: "$$x" } },
     });
     expect(compiled("$.a.some(Number.isInteger)", () => DOC.a.some(Number.isInteger))).toEqual({
       $anyElementTrue: {
@@ -2474,7 +2484,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
   it("packs a spread into the one list a variadic method reads", () => {
     // a constant spread folds to the call JavaScript makes: one argument per element
     expect(expr("[1].concat(...[[2], 3])")).toEqual([1, 2, 3]);
-    expect(expr("Math.max(...[1, 5], 7)")).toBe(7);
+    expect(expr("[...[1, 5], 7].max()")).toBe(7);
     // each element of a spread is an argument of its own, and follows concat's rule
     expect(compiled("$.a.concat(...$.b, 1)", () => DOC.a.concat(...DOC.b, 1))).toEqual({
       $concatArrays: [
@@ -2975,30 +2985,29 @@ const NEVER_NULL: Readonly<Record<string, readonly [string, string?]>> = {
   round: ["$.n.round(1)"],
   ceil: ["$.n.ceil()"],
   floor: ["$.n.floor()"],
-  abs: ["Math.abs($.neg)"],
-  sqrt: ["Math.sqrt($.n)"],
-  exp: ["Math.exp($.neg)"],
-  log: ["Math.log($.n)"],
-  log2: ["Math.log2($.n)"],
-  log10: ["Math.log10($.n)"],
-  trunc: ["Math.trunc($.n)"],
-  sign: ["Math.sign($.neg)"],
-  cbrt: ["Math.cbrt($.neg)"],
-  sin: ["Math.sin($.n)"],
-  cos: ["Math.cos($.n)"],
-  tan: ["Math.tan($.n)"],
-  asin: ["Math.asin(0.5)"],
-  acos: ["Math.acos(0.5)"],
-  atan: ["Math.atan($.n)"],
-  sinh: ["Math.sinh(1)"],
-  cosh: ["Math.cosh(1)"],
-  tanh: ["Math.tanh($.n)"],
-  asinh: ["Math.asinh($.n)"],
-  acosh: ["Math.acosh($.n)"],
-  atanh: ["Math.atanh(0.5)"],
-  pow: ["Math.pow($.n, 2)"],
-  atan2: ["Math.atan2($.n, 1)"],
-  hypot: ["Math.hypot($.n, 1)"],
+  abs: ["$.neg.abs()"],
+  sqrt: ["$.n.sqrt()"],
+  exp: ["$.neg.exp()"],
+  log: ["$.n.log()"],
+  log2: ["$.n.log2()"],
+  log10: ["$.n.log10()"],
+  trunc: ["$.n.trunc()"],
+  sign: ["$.neg.sign()"],
+  cbrt: ["$.neg.cbrt()"],
+  sin: ["$.n.sin()"],
+  cos: ["$.n.cos()"],
+  tan: ["$.n.tan()"],
+  asin: ["(0.5).asin()"],
+  acos: ["(0.5).acos()"],
+  atan: ["$.n.atan()"],
+  sinh: ["(1).sinh()"],
+  cosh: ["(1).cosh()"],
+  tanh: ["$.n.tanh()"],
+  asinh: ["$.n.asinh()"],
+  acosh: ["$.n.acosh()"],
+  atanh: ["(0.5).atanh()"],
+  atan2: ["$.n.atan2(1)"],
+  hypot: ["$.n.hypot(1)"],
   random: ["Math.random()"],
   PI: ["Math.PI"],
   E: ["Math.E"],
@@ -3094,6 +3103,29 @@ const PASSES_NULL: Readonly<Record<string, readonly [string, string]>> = {
   round: ["$.nope?.round(2)", "$.mo.d?.round()"],
   ceil: ["$.nope?.ceil(1)", "$.mo.d?.ceil()"],
   floor: ["$.nope?.floor(1)", "$.mo.d?.floor()"],
+  abs: ["$.nope?.abs()", "$.mo.d?.abs()"],
+  sqrt: ["$.nope?.sqrt()", "$.mo.d?.sqrt()"],
+  exp: ["$.nope?.exp()", "$.mo.d?.exp()"],
+  log: ["$.nope?.log(2)", "$.mo.d?.log(2)"],
+  log2: ["$.nope?.log2()", "$.mo.d?.log2()"],
+  log10: ["$.nope?.log10()", "$.mo.d?.log10()"],
+  trunc: ["$.nope?.trunc()", "$.mo.d?.trunc()"],
+  sign: ["$.nope?.sign()", "$.mo.d?.sign()"],
+  cbrt: ["$.nope?.cbrt()", "$.mo.d?.cbrt()"],
+  sin: ["$.nope?.sin()", "$.mo.d?.sin()"],
+  cos: ["$.nope?.cos()", "$.mo.d?.cos()"],
+  tan: ["$.nope?.tan()", "$.mo.d?.tan()"],
+  asin: ["$.nope?.asin()", "$.mo.d?.asin()"],
+  acos: ["$.nope?.acos()", "$.mo.d?.acos()"],
+  atan: ["$.nope?.atan()", "$.mo.d?.atan()"],
+  sinh: ["$.nope?.sinh()", "$.mo.d?.sinh()"],
+  cosh: ["$.nope?.cosh()", "$.mo.d?.cosh()"],
+  tanh: ["$.nope?.tanh()", "$.mo.d?.tanh()"],
+  asinh: ["$.nope?.asinh()", "$.mo.d?.asinh()"],
+  acosh: ["$.nope?.acosh()", "$.mo.d?.acosh()"],
+  atanh: ["$.nope?.atanh()", "$.mo.d?.atanh()"],
+  atan2: ["$.nope?.atan2($.n)", "$.mo.d?.atan2($.n)"],
+  hypot: ["$.nope?.hypot(1)", "$.mo.d?.hypot(1)"],
 };
 
 describe("registry — every `neverNull` and `readsNullAsEmpty` claim has a measurement", () => {

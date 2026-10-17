@@ -3648,20 +3648,66 @@ declare global {
     words(pattern?: string | RegExp): string[];
   }
   interface Number {
+    /** The absolute value — `Math.abs`. */
+    abs(): number;
+    /** The arccosine, in radians — `Math.acos`. */
+    acos(): number;
+    /** The inverse hyperbolic cosine, in radians — `Math.acosh`. */
+    acosh(): number;
+    /** The arcsine, in radians — `Math.asin`. */
+    asin(): number;
+    /** The inverse hyperbolic sine, in radians — `Math.asinh`. */
+    asinh(): number;
+    /** The arctangent, in radians — `Math.atan`. */
+    atan(): number;
+    /** The angle of the point (x, this) — `Math.atan2`. */
+    atan2(x: number): number;
+    /** The inverse hyperbolic tangent, in radians — `Math.atanh`. */
+    atanh(): number;
+    /** The cube root — `Math.cbrt`. */
+    cbrt(): number;
     /** Round up to `precision` decimals — `_.ceil`. */
     ceil(precision?: number): number;
     /** Clamp within `[lower, upper]` — `_.clamp`. */
     clamp(lower: number, upper: number): number;
+    /** The cosine, in radians — `Math.cos`. */
+    cos(): number;
+    /** The hyperbolic cosine, in radians — `Math.cosh`. */
+    cosh(): number;
+    /** e to the power of the value — `Math.exp`. */
+    exp(): number;
     /** Round down to `precision` decimals — `_.floor`. */
     floor(precision?: number): number;
+    /** The square root of the sum of squares — `Math.hypot`. */
+    hypot(...values: number[]): number;
     /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
     inRange(start: number, end?: number): boolean;
+    /** The natural logarithm, or the logarithm to `base` — `Math.log`. */
+    log(base?: number): number;
+    /** The base-10 logarithm — `Math.log10`. */
+    log10(): number;
+    /** The base-2 logarithm — `Math.log2`. */
+    log2(): number;
     /** The integers from the start up to, but not including, the end — `_.range`. */
     range(end?: number, step?: number): number[];
     /** The `.range()` array in reverse order — `_.rangeRight`. */
     rangeRight(end?: number, step?: number): number[];
     /** Round to `precision` decimals — `_.round`. */
     round(precision?: number): number;
+    /** -1, 0 or 1 — `Math.sign`. */
+    sign(): number;
+    /** The sine, in radians — `Math.sin`. */
+    sin(): number;
+    /** The hyperbolic sine, in radians — `Math.sinh`. */
+    sinh(): number;
+    /** The square root — `Math.sqrt`. */
+    sqrt(): number;
+    /** The tangent, in radians — `Math.tan`. */
+    tan(): number;
+    /** The hyperbolic tangent, in radians — `Math.tanh`. */
+    tanh(): number;
+    /** Drop the digits after `precision` decimals — `Math.trunc`. */
+    trunc(precision?: number): number;
   }
   interface Date {
     /** Clamp within `[lower, upper]` — `_.clamp`. */

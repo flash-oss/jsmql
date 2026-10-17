@@ -26,7 +26,7 @@ const EQUIVALENT: [string, string][] = [
   // a bare callable global is the arrow that applies it
   ["$.items.map(String)", "$.items.map(x => String(x))"],
   ["$.items.filter(Boolean)", "$.items.filter(x => Boolean(x))"],
-  ["$.items.map(Math.abs)", "$.items.map(x => Math.abs(x))"],
+  ["$.items.map(Math.random)", "$.items.map(x => Math.random(x))"],
   // compound assignment on a field
   ["$.a += 1;", "$.a = $.a + 1;"],
   ["$.a -= 2;", "$.a = $.a - 2;"],

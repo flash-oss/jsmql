@@ -505,13 +505,14 @@ export const indexedPairs = (arr: unknown): Record<string, unknown> => ({
  * ceil(2) of -1.234 → -1.23. Each one is the answer of JavaScript.
  */
 export const atPrecision = (op: "$ceil" | "$floor", value: unknown, precision: unknown): unknown => {
-  const scale = { $pow: [10, precision] };
+  // A constant precision folds: MEASURED, `{ $pow: [10, p] }` is `10 ** p` for -7 ≤ p ≤ 15.
+  const scale = typeof precision === "number" ? 10 ** precision : { $pow: [10, precision] };
   return { $divide: [{ [op]: { $multiply: [value, scale] } }, scale] };
 };
 
-/** `Math.cbrt` keeps the sign, because `$pow` of a negative base to a fractional exponent is NaN on the server. */
+/** `.cbrt()` keeps the sign, because `$pow` of a negative base to a fractional exponent is NaN on the server. */
 export const cbrt = (v: unknown): Record<string, unknown> => ({
-  $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, { $divide: [1, 3] }] }],
+  $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, 1 / 3] }],
 });
 
 /** A number, and neither NaN nor an infinity. The test reads `$toString`, because the server holds NaN equal to itself. */

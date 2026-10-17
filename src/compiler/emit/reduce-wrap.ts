@@ -9,7 +9,7 @@
 // required and unread, because MongoDB's accumulators have their own neutral elements.
 //
 //   acc + d.total          → { $sum: "$total" }      acc + 1            → { $sum: 1 }
-//   Math.max(acc, d.x)     → { $max: "$x" }          Math.min(acc, d.x) → { $min: "$x" }
+//   [acc, d.x].max()       → { $max: "$x" }          [acc, d.x].min()   → { $min: "$x" }
 //   acc ?? d.x             → { $first: "$x" }        d.x                → { $last: "$x" }
 //   [...acc, d.x]          → { $push: "$x" }         acc.concat(d.x)    → { $push: "$x" }
 //
@@ -25,7 +25,7 @@ type Accumulator = { op: "$sum" | "$max" | "$min" | "$first" | "$last" | "$push"
 
 /**
  * The seed folded in, as JavaScript would fold it: `acc + d.x` from 10 is the sum plus 10,
- * `Math.max` from 5 is the max with 5, `[...acc, d.x]` from `[0]` is `[0, …]`,
+ * `.max()` from 5 is the max with 5, `[...acc, d.x]` from `[0]` is `[0, …]`,
  * and `acc ?? d.x` from a non-null seed IS the seed. `$last` reads no seed. The
  * compiler refuses a seed that is not a constant, because it cannot start a MongoDB accumulator.
  */
@@ -117,12 +117,13 @@ function accumulatorOf(body: Expr, isAcc: (e: Expr) => boolean, param: string): 
   }
   if (
     body.type === "MethodCall" &&
-    body.object.type === "Ident" &&
-    body.object.name === "Math" &&
+    body.object.type === "ArrayLiteral" &&
     (body.name === "max" || body.name === "min") &&
-    body.args.length === 2
+    body.args.length === 0 &&
+    body.object.elements.length === 2 &&
+    body.object.elements.every((e) => e.type !== "SpreadElement")
   ) {
-    const [a, b] = body.args as readonly Expr[];
+    const [a, b] = body.object.elements as readonly Expr[];
     const other = isAcc(a) ? b : isAcc(b) ? a : null;
     const f = other === null ? null : fieldOf(other, param);
     if (f !== null) return { op: body.name === "max" ? "$max" : "$min", value: "$" + f };

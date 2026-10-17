@@ -1733,15 +1733,15 @@ describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary th
     ]);
   });
 
-  it("Math.max → $max accumulator", () => {
-    expect(jsmql("$$ = [{ best: $$.reduce((acc, d) => Math.max(acc, d.score), 0) }];")).toEqual([
+  it("[acc, d.x].max() → $max accumulator", () => {
+    expect(jsmql("$$ = [{ best: $$.reduce((acc, d) => [acc, d.score].max(), 0) }];")).toEqual([
       { $group: { _id: null, best: { $max: "$score" } } },
       { $replaceWith: { best: { $max: [0, "$best"] } } },
     ]);
   });
 
-  it("Math.min → $min accumulator", () => {
-    expect(jsmql("$$ = [{ worst: $$.reduce((acc, d) => Math.min(acc, d.score), 0) }];")).toEqual([
+  it("[acc, d.x].min() → $min accumulator", () => {
+    expect(jsmql("$$ = [{ worst: $$.reduce((acc, d) => [acc, d.score].min(), 0) }];")).toEqual([
       { $group: { _id: null, worst: { $min: "$score" } } },
       { $replaceWith: { worst: { $min: [0, "$worst"] } } },
     ]);
@@ -1750,7 +1750,7 @@ describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary th
   it("multiple keyed accumulators share one $group", () => {
     expect(
       jsmql(
-        "$$ = [{ count: $$.reduce((acc, d) => acc + 1, 0), total: $$.reduce((acc, d) => acc + d.amount, 0), best: $$.reduce((acc, d) => Math.max(acc, d.score), 0) }];",
+        "$$ = [{ count: $$.reduce((acc, d) => acc + 1, 0), total: $$.reduce((acc, d) => acc + d.amount, 0), best: $$.reduce((acc, d) => [acc, d.score].max(), 0) }];",
       ),
     ).toEqual([
       { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" }, best: { $max: "$score" } } },
@@ -1783,7 +1783,7 @@ describe("$$ = [{ key: $$.reduce(…) }] wrap — JS-faithful fold-to-summary th
 
   it("unrecognised reducer body inside the wrap is rejected with the supported-shapes list", () => {
     expect(() => jsmql("$$ = [{ total: $$.reduce((acc, d) => acc * d.x, 1) }];")).toThrow(
-      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc + d.<field>' ($sum), 'acc + 1' ($sum: 1), 'Math.max(acc, d.<field>)' / 'Math.min(…)' ($max / $min), 'acc ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc, d.<field>]' or 'acc.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
+      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc + d.<field>' ($sum), 'acc + 1' ($sum: 1), '[acc, d.<field>].max()' / '.min()' ($max / $min), 'acc ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc, d.<field>]' or 'acc.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
     );
   });
 });
@@ -1799,7 +1799,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
   it("multiple keyed accumulators in one reducer → one $group across all keys", () => {
     expect(
       jsmql(
-        "$$ = [$$.reduce((acc, d) => ({ ...acc, count: acc.count + 1, total: acc.total + d.amount, best: Math.max(acc.best, d.score) }), { count: 0, total: 0, best: 0 })];",
+        "$$ = [$$.reduce((acc, d) => ({ ...acc, count: acc.count + 1, total: acc.total + d.amount, best: [acc.best, d.score].max() }), { count: 0, total: 0, best: 0 })];",
       ),
     ).toEqual([
       { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" }, best: { $max: "$score" } } },
@@ -1814,8 +1814,8 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
     ]);
   });
 
-  it("Math.min on a keyed accumulator → $min", () => {
-    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, low: Math.min(acc.low, d.score) }), { low: 0 })];")).toEqual([
+  it(".min() on a keyed accumulator → $min", () => {
+    expect(jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, low: [acc.low, d.score].min() }), { low: 0 })];")).toEqual([
       { $group: { _id: null, low: { $min: "$score" } } },
       { $replaceWith: { low: { $min: [0, "$low"] } } },
     ]);
@@ -1869,13 +1869,13 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, …}), {…})] — object-return
         "$$ = [$$.reduce((acc, d) => ({ count: acc.count + 1, total: acc.count + d.amount }), { count: 0, total: 0 })];",
       ),
     ).toThrow(
-      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc.total + d.<field>' ($sum), 'acc.total + 1' ($sum: 1), 'Math.max(acc.total, d.<field>)' / 'Math.min(…)' ($max / $min), 'acc.total ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc.total, d.<field>]' or 'acc.total.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
+      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc.total + d.<field>' ($sum), 'acc.total + 1' ($sum: 1), '[acc.total, d.<field>].max()' / '.min()' ($max / $min), 'acc.total ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc.total, d.<field>]' or 'acc.total.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
     );
   });
 
   it("unrecognised body-entry shape is rejected with the supported-shapes list", () => {
     expect(() => jsmql("$$ = [$$.reduce((acc, d) => ({ total: acc.total * d.x }), { total: 1 })];")).toThrow(
-      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc.total + d.<field>' ($sum), 'acc.total + 1' ($sum: 1), 'Math.max(acc.total, d.<field>)' / 'Math.min(…)' ($max / $min), 'acc.total ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc.total, d.<field>]' or 'acc.total.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
+      "This reducer body spells no MongoDB accumulator. The shapes that do: 'acc.total + d.<field>' ($sum), 'acc.total + 1' ($sum: 1), '[acc.total, d.<field>].max()' / '.min()' ($max / $min), 'acc.total ?? d.<field>' ($first), 'd.<field>' ($last), '[...acc.total, d.<field>]' or 'acc.total.concat(d.<field>)' ($push). For anything else write '$group({ … })'.",
     );
   });
 });

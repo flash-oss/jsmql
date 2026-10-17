@@ -380,17 +380,17 @@ describe("compiler/parse — precedence and associativity come from the rows", (
 
 describe("compiler/parse — name-blind", () => {
   it("reads a namespace call as a method call on a plain name", () => {
-    expect(parseExpression("Math.max($.a, $.b)")).toMatchObject({
+    expect(parseExpression("Math.round($.a)")).toMatchObject({
       type: "MethodCall",
-      name: "max",
+      name: "round",
       object: { type: "Ident", name: "Math" },
     });
   });
 
   it("reads a value-receiver call of the SAME name identically", () => {
-    expect(parseExpression("$.rows.max()")).toMatchObject({
+    expect(parseExpression("$.rows.round()")).toMatchObject({
       type: "MethodCall",
-      name: "max",
+      name: "round",
       object: { type: "FieldRef", path: "rows" },
     });
   });

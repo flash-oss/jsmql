@@ -25,7 +25,7 @@ describe("compiler/emit/lower — literals and references", () => {
     expect(expr("`n=${$.n}`")).toEqual({ $concat: ["n=", { $toString: "$n" }] });
     // a row that states `returns: "string"` needs no $toString; an unknown one does
     expect(expr("`a${String($.n)}`")).toEqual({ $concat: ["a", { $toString: "$n" }] });
-    expect(expr("`a${Math.abs($.n)}`")).toEqual({ $concat: ["a", { $toString: { $abs: "$n" } }] });
+    expect(expr("`a${$.n.abs()}`")).toEqual({ $concat: ["a", { $toString: { $abs: "$n" } }] });
   });
 
   it("refuses the literals that have no value", () => {
@@ -256,8 +256,8 @@ describe("compiler/emit/lower — calls", () => {
 
   it("refuses a name from a closed set with a suggestion", () => {
     expect(() => expr("$.s.trimm()")).toThrow(/Unknown method '.trimm\(\)' at position 3. Did you mean '.trim\(\)'/);
-    expect(() => expr("Math.flor($.x)")).toThrow(
-      /Unknown method 'Math.flor\(\)' at position 4. Did you mean 'Math.floor'/,
+    expect(() => expr("Math.randon()")).toThrow(
+      /Unknown method 'Math.randon\(\)' at position 4. Did you mean 'Math.random'/,
     );
   });
 });

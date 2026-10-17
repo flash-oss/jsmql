@@ -62,16 +62,13 @@ describe("compiler/passes/fold — every case label is a callable row on that fa
   }
 
   it("folds a namespace call only for a name the registry lists on that namespace", () => {
-    // `Math.max`, `Number.isInteger` — `foldNamespaceCall` opens one `if (namespace === "X")`
-    // block per namespace. A block reads its names from `case` labels, from a
-    // `name === "…"` test, or (for `Math`) from the MATH table.
+    // `Number.isInteger`, `Date.UTC` — `foldNamespaceCall` opens one `if (namespace === "X")`
+    // block per namespace. A block reads its names from `case` labels, or from a
+    // `name === "…"` test.
     const src = source("fold-methods.ts");
     const start = src.indexOf("function foldNamespaceCall(");
     const body = src.slice(start, start + 1 + src.slice(start + 1).search(/\n(?:export )?(?:function|const) /));
     const blocks = body.split(/if \(namespace === "/).slice(1);
-    const math = src.slice(src.indexOf("const MATH"), src.indexOf("\n};", src.indexOf("const MATH")));
-    const mathNames = [...math.matchAll(/^ {2}([A-Za-z]+): /gm)].map((m) => m[1]);
-    expect(mathNames.length, "the MATH table has rows").toBeGreaterThan(5);
 
     const pairs: [namespace: string, name: string][] = [];
     for (const block of blocks) {
@@ -79,12 +76,11 @@ describe("compiler/passes/fold — every case label is a callable row on that fa
       const names = [
         ...[...block.matchAll(/case "([A-Za-z_]+)":/g)].map((m) => m[1]),
         ...[...block.matchAll(/name === "([A-Za-z_]+)"/g)].map((m) => m[1]),
-        ...(block.includes("MATH[name]") ? mathNames : []),
       ];
       expect(names.length, `the ${ns} block folds some name`).toBeGreaterThan(0);
       for (const name of names) pairs.push([ns, name]);
     }
-    expect([...new Set(pairs.map(([ns]) => ns))].sort()).toEqual(["Date", "Math", "Number"]);
+    expect([...new Set(pairs.map(([ns]) => ns))].sort()).toEqual(["Date", "Number"]);
 
     const wrong: string[] = [];
     for (const [ns, name] of pairs) {
