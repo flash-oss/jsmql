@@ -190,9 +190,15 @@ The array methods do each set operation, with the lodash name where lodash has o
 
 Reconsider only if MongoDB gains a set type.
 
+### A second spelling for one capability (`Object.keys(o)` beside `o.keys()`, `Math.abs(x)` beside `x.abs()`)
+
+The developer rejected this. One capability gets one spelling, and the shorter spelling wins. Two spellings of one capability make each codebase pick one, and they give a reader two forms to learn. So a JavaScript static is not a JSMQL name when a method or an operator says the same thing in fewer characters. For example, write `o.keys()` for `Object.keys(o)`, and write `a ** b` for `Math.pow(a, b)`. The name still parses, and its row refuses it and names the one spelling. `Object.groupBy` and `Set` are earlier cases of the same rule. A static stays when it is the shorter spelling, for example `Date.now()`, or when it has no other spelling, for example `Number.isInteger(x)`. The rows in `src/registry/names.ts` hold the live list. See [docs/LANGUAGE.md § Object Operations](LANGUAGE.md#object-operations) and [§ Number Methods](LANGUAGE.md#number-methods).
+
+Reconsider a name only if its static becomes the shorter spelling.
+
 ### Spread in the `$op(…)` escape hatch (`$setUnion(...$.arrs)`)
 
-The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`Math.max(...)`, `Object.assign(...)`, `[...a, ...b]`, `.concat()`).
+The developer rejected this. The escape hatch is raw MQL: `$op(value)` lowers to `{ $op: value }` and `$op(a, b)` to `{ $op: [a, b] }` (HR2), and a spread has no MQL to lower to. `$op(...list)` would have to become `{ $op: list }`, which is `$op(list)` — the single-array form that already exists — or `{ $op: { $concatArrays: [...] } }`, a second spelling for what `[...a, ...b]` and `.concat()` already say. The compiler refuses a spread in every `$op(…)` call, known or unknown, and the message names the forms that work: the operands one by one, the single array, or the JavaScript spelling (`[…].max()`, `({}).assign(...arr)`, the object spread `{ ...a, ...b }`, `[...a, ...b]`, `.concat()`).
 
 ### Checks on the escape hatch (`$op(…)`, `$stage(…)`, a raw `{ $op: … }` document)
 
