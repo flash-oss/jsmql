@@ -1702,16 +1702,20 @@ It yields `""`, as in JS.
 **`.indexOfSubstring(searchString[, position])`** has the API of JavaScript's
 `String.prototype.indexOf`. JavaScript has no other name for it, so JSMQL gives it a name of
 its own (SR3). It lowers to `$indexOfCP`, so the index counts code points. `"😀a".indexOfSubstring("a")`
-is 1, and JavaScript's `.indexOf` gives 2 there. A constant `position` reads as its integer part, as in
-JavaScript, and it is never below 0. `$indexOfCP` refuses a negative start, so a run-time `position`
-takes `{ $max: [0, …] }`. A fractional or `null` run-time `position` makes the server stop the query.
+is 1, and JavaScript's `.indexOf` gives 2 there.
+
+`position` takes an integer: a fractional or a string constant is a compile-time error (HR7). A
+negative `position` reads as 0, as in JavaScript. `$indexOfCP` refuses a negative start, so a
+run-time `position` takes `{ $max: [0, …] }`. A missing or `null` value also reads as 0. A fractional
+run-time value makes the server stop the query.
+
 On a missing or `null` receiver the method gives `null`, with a dot or with `?.`. One case
 differs from JavaScript: an empty `searchString` at a `position` at or past the end gives -1.
 JavaScript gives the length of the string.
 
 ```js
 $.s.indexOfSubstring("b", -3)      // { $indexOfCP: ["$s", "b"] }      — a negative start reads as 0
-$.s.indexOfSubstring("b", 1.7)     // { $indexOfCP: ["$s", "b", 1] }
+$.s.indexOfSubstring("b", 1.7)     // ✗ position takes an integer
 $.s.indexOfSubstring("b", $.from)  // { $indexOfCP: ["$s", "b", { $max: [0, "$from"] }] }
 "abc".indexOfSubstring("", 3)      // -1   — JavaScript gives 3
 ```

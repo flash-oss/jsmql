@@ -103,7 +103,7 @@ const EXPRESSIONS: readonly string[] = [
   '"hello".includes("ell")',
   '"hello".indexOfSubstring("l")',
   '"hello".indexOfSubstring("l", 3)',
-  '"hello".indexOfSubstring("l", -2.5)',
+  '"hello".indexOfSubstring("l", -2)',
   '"abc".indexOfSubstring("", 3)',
   '"".indexOfSubstring("")',
   '"hello".charAt(1)',

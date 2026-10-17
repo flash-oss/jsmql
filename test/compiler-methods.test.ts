@@ -182,14 +182,11 @@ describe("compiler/emit — string methods", () => {
     expect(compiled("$.csv.substring(1, 3)", (d) => d.csv.substring(1, 3))).toEqual({
       $cond: [{ $lte: ["$csv", null] }, null, { $substrCP: ["$csv", 1, 2] }],
     });
-    // `.indexOfSubstring()` is JavaScript's `String.prototype.indexOf`. A constant start reads
-    // as its integer part, at least 0, because `$indexOfCP` refuses a negative or fractional one.
+    // `.indexOfSubstring()` is JavaScript's `String.prototype.indexOf`. A negative position
+    // reads as 0, as in JavaScript, because `$indexOfCP` refuses a negative start.
     expect(compiled('$.csv.indexOfSubstring("b")', (d) => d.csv.indexOf("b"))).toEqual({ $indexOfCP: ["$csv", "b"] });
     expect(compiled('$.csv.indexOfSubstring(",", 2)', (d) => d.csv.indexOf(",", 2))).toEqual({
       $indexOfCP: ["$csv", ",", 2],
-    });
-    expect(compiled('$.csv.indexOfSubstring(",", 1.9)', (d) => d.csv.indexOf(",", 1.9))).toEqual({
-      $indexOfCP: ["$csv", ",", 1],
     });
     expect(compiled('$.csv.indexOfSubstring("a", -2)', (d) => d.csv.indexOf("a", -2))).toEqual({
       $indexOfCP: ["$csv", "a"],
@@ -1914,6 +1911,13 @@ describe("compiler/emit — array methods", () => {
       "For the position of a value in an array, write '.indexOf(value)'.",
     );
     expect(() => expr("$.s.indexOfSubstring(1)")).toThrow("'indexOfSubstring' expects a string, but got a number.");
+    // the position is an integer: `$indexOfCP` refuses a fractional start (HR7)
+    expect(() => expr('$.s.indexOfSubstring("b", 1.9)')).toThrow(
+      "'indexOfSubstring' expects an integer, but got a number.",
+    );
+    expect(() => expr('$.s.indexOfSubstring("b", "2")')).toThrow(
+      "'indexOfSubstring' expects an integer, but got a string.",
+    );
     expect(() => expr("$.a.map(5)")).toThrow(/takes an arrow/);
     expect(() => expr("$.a.map((a, b, c, d) => a)")).toThrow(/at most 3 parameters/);
   });

@@ -4759,18 +4759,13 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "searchString[, position]", allowed: [1, 2], slotType: { 0: "string" } },
-      // MEASURED: `$indexOfCP` refuses a negative, a fractional and a null start. JavaScript
-      // reads a constant as its integer part, at least 0. The lowering drops a start of 0, the default.
+      args: { sig: "searchString[, position]", allowed: [1, 2], slotType: { 0: "string", 1: "int" } },
+      // MEASURED: `$indexOfCP` refuses a negative start. JavaScript reads a negative position
+      // as 0, the default. So a constant one drops, and a run-time one takes `$max`.
       emit: ({ recv, args, value }) => {
-        if (args.length === 1) return { $indexOfCP: [recv, value(args[0])] };
-        const start = args[1];
-        const lit =
-          start.type === "NumberLiteral" && Number.isFinite(start.value)
-            ? Math.max(0, Math.trunc(start.value))
-            : literalIndexValue(start);
-        if (lit !== null && lit <= 0) return { $indexOfCP: [recv, value(args[0])] };
-        return { $indexOfCP: [recv, value(args[0]), lit ?? clampNonNegativeIndex(start, value(start))] };
+        const start = args.length === 2 ? literalIndexValue(args[1]) : 0;
+        if (start !== null && start <= 0) return { $indexOfCP: [recv, value(args[0])] };
+        return { $indexOfCP: [recv, value(args[0]), start ?? clampNonNegativeIndex(args[1], value(args[1]))] };
       },
     },
     stream: unsupported("'.indexOfSubstring()' has no stream form: it produces a value, not a stream of documents."),
