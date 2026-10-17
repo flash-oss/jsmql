@@ -206,6 +206,28 @@ Four more facts belong to this rule:
 
 The error names no other spelling. A developer who writes raw MQL knows MQL, and can write the whole expression in one of the two forms.
 
+**HR7 — JSMQL refuses a value of the wrong kind.**
+
+Each method, operator and argument slot states the kind of value that it takes. A kind is, for example, a number, a string, an array, a date or a document. The rule also applies to the elements of a receiver: a row can demand one kind for each element of an array. When the compiler can prove that a value has another kind, it refuses the program, even when the server accepts the MQL. A value of unknown kind passes, and the server decides. A bare field path has an unknown kind.
+
+The escape hatch gives the server's own behaviour. An `$op(…)` call passes each value as written, by HR2. So the escape hatch is the one spelling for the permissive behaviour of MongoDB.
+
+Three consequences follow from the rule:
+
+- The compiler refuses a `===` between two values of proven different kinds. The test is always false.
+- The compiler refuses a membership test of the wrong kind, for the same reason. An example is `.has(1)` on a proven array of strings.
+- The compiler refuses a literal `null` where the slot needs a kind. `null` is not that kind.
+
+```js
+[1, "a"].max()               // ✗ .max() takes numbers; the array holds a number and a string
+$max(1, "a")                 // → { $max: [1, "a"] }   as written, by HR2
+"a" + 1                      // ✗ + takes operands of one kind
+$.str + 1                    // → { $add: ["$str", 1] }   unknown kind: the server decides
+$.str.trim() + 1             // ✗ .trim() gives a string
+$.a = "x"; $.b = $.a + 1;    // ✗ the stage proved that a is a string
+({}).assign("a")             // ✗ .assign() takes documents
+```
+
 ## SOFT RULES
 
 **SR1 — JSMQL guesses what you mean.** Sometimes a construct can lower in more than one way. Then JSMQL selects the meaning that a developer most probably intends. It accepts the short, idiomatic form, and does not ask for the most literal form. The guess is careful. The compiler does not guess when the meaning is not clear, or when the probable meaning gives invalid MQL. In these cases, it throws an error that names the fix.
